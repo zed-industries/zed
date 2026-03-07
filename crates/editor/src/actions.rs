@@ -546,6 +546,8 @@ actions!(
         Format,
         /// Formats only the selected text.
         FormatSelections,
+        /// Formats the markdown table around the cursor, aligning columns.
+        FormatMarkdownTable,
         /// Goes to the declaration of the symbol at cursor.
         GoToDeclaration,
         /// Goes to declaration in a split pane.

@@ -266,6 +266,7 @@ impl EditorElement {
         register_action(editor, window, Editor::sort_lines_by_length);
         register_action(editor, window, Editor::sort_lines_case_sensitive);
         register_action(editor, window, Editor::sort_lines_case_insensitive);
+        register_action(editor, window, Editor::format_markdown_table);
         register_action(editor, window, Editor::reverse_lines);
         register_action(editor, window, Editor::shuffle_lines);
         register_action(editor, window, Editor::rotate_selections_forward);

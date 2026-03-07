@@ -31,6 +31,7 @@ settings.workspace = true
 sum_tree.workspace = true
 theme.workspace = true
 ui.workspace = true
+unicode-width.workspace = true
 util.workspace = true
 
 [dev-dependencies]

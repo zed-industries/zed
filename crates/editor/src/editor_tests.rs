@@ -6099,6 +6099,72 @@ async fn test_convert_to_sentence_case(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_format_markdown_table_cursor_in_table(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+
+    // Cursor inside a table with no selection: should detect and format the table.
+    // After the range replacement the cursor falls to the end of the replaced region.
+    cx.set_state(indoc! {"
+        | Name | Age | City |
+        | --- | --- | --- |
+        | Alice | 30 | New Yorkˇ |
+        | Bob | 25 | LA |
+    "});
+    cx.update_editor(|e, window, cx| {
+        e.format_markdown_table(&FormatMarkdownTable, window, cx)
+    });
+    cx.assert_editor_state(indoc! {"
+        | Name  | Age | City     |
+        | ----- | --- | -------- |
+        | Alice | 30  | New York |
+        | Bob   | 25  | LA       |ˇ
+    "});
+}
+
+#[gpui::test]
+async fn test_format_markdown_table_with_selection(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+
+    // Explicit selection spanning the table: the selected rows get formatted.
+    // After the range replacement the selection collapses to the end of the replaced region.
+    cx.set_state(indoc! {"
+        «| A | B |
+        | --- | --- |
+        | hello | world |ˇ»
+    "});
+    cx.update_editor(|e, window, cx| {
+        e.format_markdown_table(&FormatMarkdownTable, window, cx)
+    });
+    cx.assert_editor_state(indoc! {"
+        | A     | B     |
+        | ----- | ----- |
+        | hello | world |ˇ
+    "});
+}
+
+#[gpui::test]
+async fn test_format_markdown_table_cursor_not_in_table(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+
+    // Cursor on a line that is not a table: should be a no-op
+    cx.set_state(indoc! {"
+        This is just textˇ
+    "});
+    cx.update_editor(|e, window, cx| {
+        e.format_markdown_table(&FormatMarkdownTable, window, cx)
+    });
+    cx.assert_editor_state(indoc! {"
+        This is just textˇ
+    "});
+}
+
+#[gpui::test]
 async fn test_manipulate_text(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 

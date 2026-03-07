@@ -11503,6 +11503,108 @@ impl Editor {
         })
     }
 
+    pub fn format_markdown_table(
+        &mut self,
+        _: &FormatMarkdownTable,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        use markdown::table_format;
+
+        self.hide_mouse_cursor(HideMouseCursorOrigin::TypingAction, cx);
+
+        let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
+        let buffer = self.buffer.read(cx).snapshot(cx);
+        let selections = self.selections.all::<Point>(&display_map);
+        let max_row = buffer.max_point().row;
+
+        let mut edits: Vec<(Range<Point>, String)> = Vec::new();
+
+        for selection in &selections {
+            let (start_row, end_row) = if selection.start == selection.end {
+                // Cursor with no selection: scan for table boundaries
+                let cursor_row = selection.start.row;
+                if !Self::looks_like_table_row(
+                    &buffer.text_for_range(
+                        Point::new(cursor_row, 0)
+                            ..Point::new(cursor_row, buffer.line_len(MultiBufferRow(cursor_row))),
+                    )
+                    .collect::<String>(),
+                ) {
+                    continue;
+                }
+
+                let mut start = cursor_row;
+                while start > 0 {
+                    let prev = start - 1;
+                    let line: String = buffer
+                        .text_for_range(
+                            Point::new(prev, 0)
+                                ..Point::new(prev, buffer.line_len(MultiBufferRow(prev))),
+                        )
+                        .collect();
+                    if !Self::looks_like_table_row(&line) {
+                        break;
+                    }
+                    start = prev;
+                }
+
+                let mut end = cursor_row;
+                while end < max_row {
+                    let next = end + 1;
+                    let line: String = buffer
+                        .text_for_range(
+                            Point::new(next, 0)
+                                ..Point::new(next, buffer.line_len(MultiBufferRow(next))),
+                        )
+                        .collect();
+                    if !Self::looks_like_table_row(&line) {
+                        break;
+                    }
+                    end = next;
+                }
+
+                (start, end)
+            } else {
+                (selection.start.row, selection.end.row)
+            };
+
+            let start_point = Point::new(start_row, 0);
+            let end_point =
+                Point::new(end_row, buffer.line_len(MultiBufferRow(end_row)));
+
+            // Skip if this range overlaps with an already-collected edit
+            if edits
+                .iter()
+                .any(|(range, _)| start_point < range.end && end_point > range.start)
+            {
+                continue;
+            }
+
+            let text: String = buffer.text_for_range(start_point..end_point).collect();
+
+            if let Some(formatted) = table_format::format_markdown_table(&text) {
+                if formatted != text {
+                    edits.push((start_point..end_point, formatted));
+                }
+            }
+        }
+
+        if edits.is_empty() {
+            return;
+        }
+
+        self.transact(window, cx, |this, _window, cx| {
+            this.buffer.update(cx, |buffer, cx| {
+                buffer.edit(edits, None, cx);
+            });
+        });
+    }
+
+    fn looks_like_table_row(line: &str) -> bool {
+        markdown::table_format::looks_like_table_row(line)
+    }
+
     pub fn unique_lines_case_insensitive(
         &mut self,
         _: &UniqueLinesCaseInsensitive,

@@ -1,4 +1,5 @@
 pub mod parser;
+pub mod table_format;
 mod path_range;
 
 use base64::Engine as _;
