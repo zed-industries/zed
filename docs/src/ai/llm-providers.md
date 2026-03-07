@@ -733,6 +733,75 @@ Example adding routing preferences to a model:
 
 These routing controls let you fine‑tune cost, capability, and reliability trade‑offs without changing the model name you select in the UI.
 
+### Tensorix {#tensorix}
+
+[Tensorix](https://tensorix.ai) provides 50+ open-source models through an OpenAI-compatible API with EU-hosted inference and zero data retention.
+
+1. Sign up at [app.tensorix.ai](https://app.tensorix.ai/register) and generate an API key
+2. Open the settings view (`agent: open settings`) and look for the **Add Provider** button
+3. Choose **OpenAI Compatible** and set the provider name to `Tensorix`
+4. Set the API URL to `https://api.tensorix.ai/v1`
+5. Set `TENSORIX_API_KEY` in your environment
+
+```json [settings]
+{
+  "language_models": {
+    "openai_compatible": {
+      "Tensorix": {
+        "api_url": "https://api.tensorix.ai/v1",
+        "available_models": [
+          {
+            "name": "z-ai/glm-5",
+            "display_name": "GLM-5",
+            "max_tokens": 203000,
+            "capabilities": {
+              "tools": true,
+              "images": false
+            }
+          },
+          {
+            "name": "deepseek/deepseek-chat-v3.1",
+            "display_name": "DeepSeek V3.1",
+            "max_tokens": 164000,
+            "capabilities": {
+              "tools": true,
+              "images": false
+            }
+          },
+          {
+            "name": "deepseek/deepseek-r1-0528",
+            "display_name": "DeepSeek R1",
+            "max_tokens": 164000,
+            "capabilities": {
+              "tools": true,
+              "images": false
+            }
+          },
+          {
+            "name": "minimax/minimax-m2.5",
+            "display_name": "MiniMax M2.5",
+            "max_tokens": 197000,
+            "capabilities": {
+              "tools": true,
+              "images": false
+            }
+          },
+          {
+            "name": "moonshotai/kimi-k2.5",
+            "display_name": "Kimi K2.5",
+            "max_tokens": 262000,
+            "capabilities": {
+              "tools": true,
+              "images": true
+            }
+          }
+        ]
+      }
+    }
+  }
+}
+```
+
 ### Vercel AI Gateway {#vercel-ai-gateway}
 
 [Vercel AI Gateway](https://vercel.com/ai-gateway) provides access to many models through a single OpenAI-compatible endpoint.
