@@ -71,7 +71,7 @@ use project::{Project, ProjectPath, Worktree};
 use prompt_store::{PromptBuilder, PromptStore, UserPromptId};
 use rules_library::{RulesLibrary, open_rules_library};
 use search::{BufferSearchBar, buffer_search};
-use settings::{Settings, update_settings_file};
+use settings::{Settings, SettingsStore, update_settings_file};
 use theme::ThemeSettings;
 use ui::{
     Button, ButtonLike, Callout, ContextMenu, ContextMenuEntry, DocumentationSide, KeyBinding,
@@ -870,6 +870,22 @@ impl AgentPanel {
         } else {
             None
         };
+
+        let mut was_enabled = AgentSettings::get_global(cx).enabled(cx);
+        cx.observe_global::<SettingsStore>(move |this, cx| {
+            let is_enabled = AgentSettings::get_global(cx).enabled(cx);
+            if was_enabled != is_enabled {
+                was_enabled = is_enabled;
+                if !is_enabled {
+                    this.active_view = ActiveView::Uninitialized;
+                    this.previous_view = None;
+                    this.background_threads.clear();
+                    cx.emit(PanelEvent::Close);
+                }
+                cx.notify();
+            }
+        })
+        .detach();
 
         let mut panel = Self {
             workspace_id,
@@ -4633,7 +4649,7 @@ mod tests {
     use feature_flags::FeatureFlagAppExt;
     use fs::FakeFs;
     use gpui::{TestAppContext, VisualTestContext};
-    use project::Project;
+    use project::{DisableAiSettings, Project};
     use serde_json::json;
     use workspace::MultiWorkspace;
 
@@ -4986,6 +5002,88 @@ mod tests {
                 "Thread B (idle) should not have been retained in background_views"
             );
         });
+    }
+
+    #[gpui::test]
+    async fn test_disable_ai_drops_active_and_background_connection_views(cx: &mut TestAppContext) {
+        let (panel, mut cx) = setup_panel(cx).await;
+
+        cx.update(|_, cx| {
+            DisableAiSettings::register(cx);
+        });
+
+        // Open thread A and keep it generating so it goes to background when B opens.
+        let connection_a = StubAgentConnection::new();
+        open_thread_with_connection(&panel, connection_a.clone(), &mut cx);
+        send_message(&panel, &mut cx);
+
+        let session_id_a = active_session_id(&panel, &cx);
+
+        cx.update(|_, cx| {
+            connection_a.send_update(
+                session_id_a.clone(),
+                acp::SessionUpdate::AgentMessageChunk(acp::ContentChunk::new("chunk".into())),
+                cx,
+            );
+        });
+        cx.run_until_parked();
+
+        // Open thread B — thread A (still generating) moves to background_threads.
+        let connection_b = StubAgentConnection::new();
+        open_thread_with_connection(&panel, connection_b.clone(), &mut cx);
+        send_message(&panel, &mut cx);
+
+        let session_id_b = active_session_id(&panel, &cx);
+        cx.update(|_, cx| {
+            connection_b.send_update(
+                session_id_b,
+                acp::SessionUpdate::AgentMessageChunk(acp::ContentChunk::new("chunk".into())),
+                cx,
+            );
+        });
+        cx.run_until_parked();
+
+        // Capture weak refs to both ConnectionView entities before disabling AI.
+        let (weak_view_a, weak_view_b) = panel.read_with(&cx, |panel, _cx| {
+            let weak_b = panel.active_connection_view().unwrap().downgrade();
+            let weak_a = panel
+                .background_threads
+                .get(&session_id_a)
+                .unwrap()
+                .downgrade();
+            assert_eq!(panel.background_threads.len(), 1);
+            (weak_a, weak_b)
+        });
+
+        // Disable AI.
+        cx.update(|_, cx| {
+            DisableAiSettings::override_global(DisableAiSettings { disable_ai: true }, cx);
+        });
+        cx.run_until_parked();
+
+        // active_view and background_threads should be cleared.
+        panel.read_with(&cx, |panel, _cx| {
+            assert!(
+                matches!(panel.active_view, ActiveView::Uninitialized),
+                "active_view should be Uninitialized after disabling AI"
+            );
+            assert!(
+                panel.background_threads.is_empty(),
+                "background_threads should be empty after disabling AI"
+            );
+        });
+
+        // Both ConnectionView entities should have been dropped (no strong refs remain),
+        // which cascades to dropping AcpThread and releasing the Rc<dyn AgentConnection>,
+        // triggering AcpConnection::drop() and killing the child processes.
+        assert!(
+            weak_view_a.upgrade().is_none(),
+            "Background ConnectionView (thread A) should have been dropped"
+        );
+        assert!(
+            weak_view_b.upgrade().is_none(),
+            "Active ConnectionView (thread B) should have been dropped"
+        );
     }
 
     #[gpui::test]

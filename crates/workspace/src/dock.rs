@@ -1028,6 +1028,7 @@ pub mod test {
         pub position: DockPosition,
         pub zoomed: bool,
         pub active: bool,
+        pub enabled: bool,
         pub focus_handle: FocusHandle,
         pub size: Pixels,
         pub activation_priority: u32,
@@ -1042,6 +1043,7 @@ pub mod test {
                 position,
                 zoomed: false,
                 active: false,
+                enabled: true,
                 focus_handle: cx.focus_handle(),
                 size: px(300.),
                 activation_priority,
@@ -1111,6 +1113,10 @@ pub mod test {
 
         fn activation_priority(&self) -> u32 {
             self.activation_priority
+        }
+
+        fn enabled(&self, _cx: &App) -> bool {
+            self.enabled
         }
     }
 
