@@ -1,5 +1,5 @@
-use acp_thread::AgentSessionInfo;
-use agent::{NativeAgentServer, ThreadStore};
+use acp_thread::{AgentSessionInfo, AgentSessionList};
+use agent::{ClaudeCodeSessionIndex, ClaudeCodeSessionList, NativeAgentServer, ThreadStore};
 use agent_client_protocol as acp;
 use agent_servers::{AgentServer, AgentServerDelegate};
 use agent_settings::AgentSettings;
@@ -15,6 +15,7 @@ use project::Project;
 use prompt_store::PromptStore;
 use serde::{Deserialize, Serialize};
 use settings::{Settings as _, update_settings_file};
+use std::rc::Rc;
 use std::sync::Arc;
 use ui::{App, Context, IconName, IntoElement, ParentElement, Render, Styled, Window};
 use util::ResultExt;
@@ -127,6 +128,27 @@ impl AgentsPanel {
         let thread_store = cx.new(|cx| ThreadStore::new(cx));
         let history = cx.new(|cx| AcpThreadHistory::new(None, window, cx));
 
+        // Check for Claude Code CLI sessions in the project directory
+        let project_path = project
+            .read(cx)
+            .worktrees(cx)
+            .next()
+            .map(|worktree| worktree.read(cx).abs_path().to_path_buf());
+
+        if let Some(project_path) = project_path {
+            if let Some(index) = ClaudeCodeSessionIndex::for_project(&project_path) {
+                log::info!(
+                    "AgentsPanel: Found Claude Code sessions for project {:?}",
+                    project_path
+                );
+                let session_list: Rc<dyn AgentSessionList> =
+                    Rc::new(ClaudeCodeSessionList::new(index));
+                history.update(cx, |history, cx| {
+                    history.set_session_list(Some(session_list), cx);
+                });
+            }
+        }
+
         let history_handle = history.clone();
         let connect_project = project.clone();
         let connect_thread_store = thread_store.clone();
@@ -194,23 +216,102 @@ impl AgentsPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some(thread_id) = &serialized_pane.thread_id else {
+        if serialized_pane.tabs.is_empty() {
             return;
-        };
+        }
 
-        let SerializedHistoryEntryId::AcpThread(id) = thread_id;
-        let session_id = acp::SessionId::new(id.clone());
-        if let Some(entry) = self.history.read(cx).session_for_id(&session_id) {
-            self.open_thread(
-                entry,
-                serialized_pane.expanded,
-                serialized_pane.width,
-                window,
-                cx,
-            );
-        } else {
+        let mut entries_to_restore = Vec::new();
+        let mut has_pending = false;
+
+        for serialized_tab in &serialized_pane.tabs {
+            let SerializedHistoryEntryId::AcpThread(id) = &serialized_tab.thread_id;
+            let session_id = acp::SessionId::new(id.clone());
+            if let Some(entry) = self.history.read(cx).session_for_id(&session_id) {
+                entries_to_restore.push((entry, serialized_tab.custom_name.clone()));
+            } else {
+                has_pending = true;
+            }
+        }
+
+        if entries_to_restore.is_empty() {
+            self.pending_restore = Some(serialized_pane);
+            return;
+        }
+
+        self.restore_tabs_from_entries(
+            entries_to_restore,
+            serialized_pane.active_tab_index,
+            serialized_pane.expanded,
+            serialized_pane.width,
+            window,
+            cx,
+        );
+
+        if has_pending {
             self.pending_restore = Some(serialized_pane);
         }
+    }
+
+    fn restore_tabs_from_entries(
+        &mut self,
+        entries: Vec<(AgentSessionInfo, Option<String>)>,
+        _active_tab_index: usize,
+        expanded: bool,
+        width: Option<Pixels>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if entries.is_empty() {
+            return;
+        }
+
+        let fs = self.fs.clone();
+        let workspace = self.workspace.clone();
+        let project = self.project.clone();
+        let thread_store = self.thread_store.clone();
+        let prompt_store = self.prompt_store.clone();
+
+        let agent_thread_pane = cx.new(|cx| {
+            let mut pane = AgentThreadPane::new(workspace.clone(), cx);
+
+            for (entry, _custom_name) in entries {
+                pane.open_thread(
+                    entry,
+                    fs.clone(),
+                    workspace.clone(),
+                    project.clone(),
+                    thread_store.clone(),
+                    prompt_store.clone(),
+                    window,
+                    cx,
+                );
+            }
+
+            if let Some(width) = width {
+                pane.set_width(Some(width), cx);
+            }
+            pane.set_expanded(expanded, cx);
+            pane
+        });
+
+        let state_subscription = cx.subscribe(&agent_thread_pane, Self::handle_utility_pane_event);
+        let close_subscription = cx.subscribe(&agent_thread_pane, Self::handle_close_pane_event);
+
+        self._subscriptions.push(state_subscription);
+        self._subscriptions.push(close_subscription);
+
+        let slot = self.utility_slot(window, cx);
+        let panel_id = cx.entity_id();
+
+        if let Some(workspace) = self.workspace.upgrade() {
+            workspace.update(cx, |workspace, cx| {
+                workspace.register_utility_pane(slot, panel_id, agent_thread_pane.clone(), cx);
+            });
+        }
+
+        self.agent_thread_pane = Some(agent_thread_pane);
+        self.serialize(cx);
+        cx.notify();
     }
 
     fn handle_utility_pane_event(
@@ -270,19 +371,48 @@ impl AgentsPanel {
         let Some(pending) = self.pending_restore.as_ref() else {
             return;
         };
-        let Some(thread_id) = &pending.thread_id else {
+
+        if pending.tabs.is_empty() {
             self.pending_restore = None;
             return;
-        };
+        }
 
-        let SerializedHistoryEntryId::AcpThread(id) = thread_id;
-        let session_id = acp::SessionId::new(id.clone());
-        let Some(entry) = self.history.read(cx).session_for_id(&session_id) else {
+        let mut entries_to_restore = Vec::new();
+        let mut still_pending_tabs = Vec::new();
+
+        for serialized_tab in &pending.tabs {
+            let SerializedHistoryEntryId::AcpThread(id) = &serialized_tab.thread_id;
+            let session_id = acp::SessionId::new(id.clone());
+            if let Some(entry) = self.history.read(cx).session_for_id(&session_id) {
+                entries_to_restore.push((entry, serialized_tab.custom_name.clone()));
+            } else {
+                still_pending_tabs.push(serialized_tab.clone());
+            }
+        }
+
+        if entries_to_restore.is_empty() {
             return;
-        };
+        }
 
         let pending = self.pending_restore.take().expect("pending restore");
-        self.open_thread(entry, pending.expanded, pending.width, window, cx);
+
+        self.restore_tabs_from_entries(
+            entries_to_restore,
+            pending.active_tab_index,
+            pending.expanded,
+            pending.width,
+            window,
+            cx,
+        );
+
+        if !still_pending_tabs.is_empty() {
+            self.pending_restore = Some(SerializedAgentThreadPane {
+                expanded: pending.expanded,
+                width: pending.width,
+                tabs: still_pending_tabs,
+                active_tab_index: 0,
+            });
+        }
     }
 
     fn open_thread(
@@ -293,23 +423,32 @@ impl AgentsPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let entry_id = entry.session_id.clone();
         self.pending_restore = None;
-
-        if let Some(existing_pane) = &self.agent_thread_pane {
-            if existing_pane.read(cx).thread_id() == Some(entry_id) {
-                existing_pane.update(cx, |pane, cx| {
-                    pane.set_expanded(true, cx);
-                });
-                return;
-            }
-        }
 
         let fs = self.fs.clone();
         let workspace = self.workspace.clone();
         let project = self.project.clone();
         let thread_store = self.thread_store.clone();
         let prompt_store = self.prompt_store.clone();
+
+        if let Some(existing_pane) = &self.agent_thread_pane {
+            existing_pane.update(cx, |pane, cx| {
+                pane.open_thread(
+                    entry,
+                    fs,
+                    workspace,
+                    project,
+                    thread_store,
+                    prompt_store,
+                    window,
+                    cx,
+                );
+                pane.set_expanded(true, cx);
+            });
+            self.serialize(cx);
+            cx.notify();
+            return;
+        }
 
         let agent_thread_pane = cx.new(|cx| {
             let mut pane = AgentThreadPane::new(workspace.clone(), cx);

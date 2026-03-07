@@ -1,7 +1,8 @@
 use crate::{
     BufferSearchBar, FocusSearch, NextHistoryQuery, PreviousHistoryQuery, ReplaceAll, ReplaceNext,
     SearchOption, SearchOptions, SearchSource, SelectNextMatch, SelectPreviousMatch,
-    ToggleCaseSensitive, ToggleIncludeIgnored, ToggleRegex, ToggleReplace, ToggleWholeWord,
+    ToggleCaseSensitive, ToggleExcludeBuildFolders, ToggleIncludeIgnored, ToggleRegex,
+    ToggleReplace, ToggleWholeWord,
     buffer_search::Deploy,
     search_bar::{
         ActionButtonState, alignment_element, input_base_styles, render_action_button,
@@ -48,6 +49,21 @@ use workspace::{
     item::{Item, ItemEvent, ItemHandle, SaveOptions},
     searchable::{CollapseDirection, Direction, SearchEvent, SearchableItem, SearchableItemHandle},
 };
+
+/// Default folder patterns to exclude when the "Exclude Build Folders" toggle is enabled.
+pub const DEFAULT_BUILD_FOLDER_PATTERNS: &[&str] = &[
+    "**/dist/**",
+    "**/build/**",
+    "**/out/**",
+    "**/node_modules/**",
+    "**/target/**",
+    "**/.git/**",
+    "**/vendor/**",
+    "**/__pycache__/**",
+    "**/.next/**",
+    "**/.nuxt/**",
+    "**/.cache/**",
+];
 
 actions!(
     project_search,
@@ -100,6 +116,12 @@ pub fn init(cx: &mut App) {
         register_workspace_action(workspace, move |search_bar, _: &ToggleRegex, window, cx| {
             search_bar.toggle_search_option(SearchOptions::REGEX, window, cx);
         });
+        register_workspace_action(
+            workspace,
+            move |search_bar, _: &ToggleExcludeBuildFolders, window, cx| {
+                search_bar.toggle_search_option(SearchOptions::EXCLUDE_BUILD_FOLDERS, window, cx);
+            },
+        );
         register_workspace_action(
             workspace,
             move |search_bar, action: &ToggleReplace, window, cx| {
@@ -1245,7 +1267,7 @@ impl ProjectSearchView {
                 }
             })
             .unwrap_or(PathMatcher::default());
-        let excluded_files = self
+        let mut excluded_files = self
             .filters_enabled
             .then(|| {
                 match self.parse_path_matches(self.excluded_files_editor.read(cx).text(cx), cx) {
@@ -1270,6 +1292,25 @@ impl ProjectSearchView {
                 }
             })
             .unwrap_or(PathMatcher::default());
+
+        // If exclude build folders is enabled, merge default patterns with user's exclude patterns
+        if self
+            .search_options
+            .contains(SearchOptions::EXCLUDE_BUILD_FOLDERS)
+        {
+            let path_style = self.entity.read(cx).project.read(cx).path_style(cx);
+            let search_settings = &EditorSettings::get_global(cx).search;
+
+            // Collect all patterns: user's exclude patterns + default patterns + custom patterns
+            let mut all_patterns: Vec<String> =
+                excluded_files.sources().map(|s| s.to_owned()).collect();
+            all_patterns.extend(DEFAULT_BUILD_FOLDER_PATTERNS.iter().map(|s| s.to_string()));
+            all_patterns.extend(search_settings.custom_build_folder_patterns.iter().cloned());
+
+            if let Ok(merged) = PathMatcher::new(&all_patterns, path_style) {
+                excluded_files = merged;
+            }
+        }
 
         // If the project contains multiple visible worktrees, we match the
         // include/exclude patterns against full paths to allow them to be
@@ -2067,6 +2108,11 @@ impl Render for ProjectSearchBar {
                         focus_handle.clone(),
                     ))
                     .child(SearchOption::Regex.as_button(
+                        search.search_options,
+                        SearchSource::Project(cx),
+                        focus_handle.clone(),
+                    ))
+                    .child(SearchOption::ExcludeBuildFolders.as_button(
                         search.search_options,
                         SearchSource::Project(cx),
                         focus_handle.clone(),

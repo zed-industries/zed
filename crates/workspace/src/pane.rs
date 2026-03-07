@@ -2933,6 +2933,13 @@ impl Pane {
                         close_pinned: false,
                     };
                     if let Some(pane) = pane.upgrade() {
+                        if let Some(item) = pane.read(cx).item_for_index(ix) {
+                            if let Some(custom_entries) =
+                                item.tab_context_menu_entries(window, cx)
+                            {
+                                menu = menu.extend(custom_entries).separator();
+                            }
+                        }
                         menu = menu
                             .entry(
                                 "Close",
@@ -3597,8 +3604,16 @@ impl Pane {
             })
             .when_some(custom_bg_color, |this, color| this.bg(color))
             .when(is_preview, |this| this.italic())
-            .on_click(cx.listener(move |pane: &mut Self, _, window, cx| {
-                pane.activate_item(ix, true, true, window, cx)
+            .on_click(cx.listener(move |pane: &mut Self, event: &ClickEvent, window, cx| {
+                if event.click_count() == 2 {
+                    if let Some(item) = pane.item_for_index(ix) {
+                        if let Some(task) = item.on_tab_double_click(window, cx) {
+                            task.detach();
+                        }
+                    }
+                } else {
+                    pane.activate_item(ix, true, true, window, cx)
+                }
             }))
             .on_mouse_down(
                 MouseButton::Middle,
@@ -3681,6 +3696,13 @@ impl Pane {
                     };
 
                     if let Some(pane) = pane.upgrade() {
+                        if let Some(item) = pane.read(cx).item_for_index(ix) {
+                            if let Some(custom_entries) =
+                                item.tab_context_menu_entries(window, cx)
+                            {
+                                menu = menu.extend(custom_entries).separator();
+                            }
+                        }
                         menu = menu
                             .entry(
                                 "Close",

@@ -37,6 +37,8 @@ actions!(
         ToggleIncludeIgnored,
         /// Toggles regular expression mode.
         ToggleRegex,
+        /// Toggles excluding build folders from search.
+        ToggleExcludeBuildFolders,
         /// Toggles the replace interface.
         ToggleReplace,
         /// Toggles searching within selection only.
@@ -71,6 +73,7 @@ bitflags! {
         const ONE_MATCH_PER_LINE = 1 << SearchOption::OneMatchPerLine as u8;
         /// If set, reverse direction when finding the active match
         const BACKWARDS = 1 << SearchOption::Backwards as u8;
+        const EXCLUDE_BUILD_FOLDERS = 1 << SearchOption::ExcludeBuildFolders as u8;
     }
 }
 
@@ -83,6 +86,7 @@ pub enum SearchOption {
     Regex,
     OneMatchPerLine,
     Backwards,
+    ExcludeBuildFolders,
 }
 
 pub(crate) enum SearchSource<'a, 'b> {
@@ -103,6 +107,7 @@ impl SearchOption {
             SearchOption::Regex => "Use Regular Expressions",
             SearchOption::OneMatchPerLine => "One Match Per Line",
             SearchOption::Backwards => "Search Backwards",
+            SearchOption::ExcludeBuildFolders => "Exclude Build Folders",
         }
     }
 
@@ -112,6 +117,7 @@ impl SearchOption {
             SearchOption::CaseSensitive => ui::IconName::CaseSensitive,
             SearchOption::IncludeIgnored => ui::IconName::Sliders,
             SearchOption::Regex => ui::IconName::Regex,
+            SearchOption::ExcludeBuildFolders => ui::IconName::FolderSearch,
             _ => panic!("{self:?} is not a named SearchOption"),
         }
     }
@@ -122,6 +128,7 @@ impl SearchOption {
             SearchOption::CaseSensitive => &ToggleCaseSensitive,
             SearchOption::IncludeIgnored => &ToggleIncludeIgnored,
             SearchOption::Regex => &ToggleRegex,
+            SearchOption::ExcludeBuildFolders => &ToggleExcludeBuildFolders,
             _ => panic!("{self:?} is not a toggle action"),
         }
     }
@@ -182,6 +189,10 @@ impl SearchOptions {
         options.set(SearchOptions::CASE_SENSITIVE, settings.case_sensitive);
         options.set(SearchOptions::INCLUDE_IGNORED, settings.include_ignored);
         options.set(SearchOptions::REGEX, settings.regex);
+        options.set(
+            SearchOptions::EXCLUDE_BUILD_FOLDERS,
+            settings.exclude_build_folders,
+        );
         options
     }
 }

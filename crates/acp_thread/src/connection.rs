@@ -37,6 +37,18 @@ pub trait AgentConnection {
         cx: &mut App,
     ) -> Task<Result<Entity<AcpThread>>>;
 
+    /// Load an existing thread by session ID.
+    /// Returns None if the connection doesn't support loading sessions.
+    fn load_thread(
+        self: Rc<Self>,
+        _session_id: &acp::SessionId,
+        _project: Entity<Project>,
+        _cwd: &Path,
+        _cx: &mut App,
+    ) -> Option<Task<Result<Entity<AcpThread>>>> {
+        None
+    }
+
     fn auth_methods(&self) -> &[acp::AuthMethod];
 
     fn authenticate(&self, method: acp::AuthMethodId, cx: &mut App) -> Task<Result<()>>;

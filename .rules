@@ -136,3 +136,7 @@ Other entities can then register a callback to handle these events by doing `cx.
 ## Build guidelines
 
 - Use `./script/clippy` instead of `cargo clippy`
+- **NEVER use `--release` flag** unless explicitly asked for a production build
+- Always use dev builds for testing: `cargo run` (not `cargo run --release`)
+- Release builds take 10x longer and max out CPU - only use when specifically requested
+- To run alongside production Zed, use: `ZED_RELEASE_CHANNEL=nightly cargo run`

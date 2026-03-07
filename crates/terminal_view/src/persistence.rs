@@ -2,7 +2,7 @@ use anyhow::Result;
 use async_recursion::async_recursion;
 use collections::HashSet;
 use futures::{StreamExt as _, stream::FuturesUnordered};
-use gpui::{AppContext as _, AsyncWindowContext, Axis, Entity, Task, WeakEntity};
+use gpui::{AppContext as _, AsyncWindowContext, Axis, Entity, Hsla, Task, WeakEntity};
 use project::Project;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
@@ -23,6 +23,54 @@ use crate::{
     TerminalView, default_working_directory,
     terminal_panel::{TerminalPanel, new_terminal_pane},
 };
+
+/// Serializable representation of Hsla color for database storage
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+pub(crate) struct SerializedHsla {
+    pub h: f32,
+    pub s: f32,
+    pub l: f32,
+    pub a: f32,
+}
+
+impl From<Hsla> for SerializedHsla {
+    fn from(color: Hsla) -> Self {
+        Self {
+            h: color.h,
+            s: color.s,
+            l: color.l,
+            a: color.a,
+        }
+    }
+}
+
+impl From<SerializedHsla> for Hsla {
+    fn from(color: SerializedHsla) -> Self {
+        Self {
+            h: color.h,
+            s: color.s,
+            l: color.l,
+            a: color.a,
+        }
+    }
+}
+
+fn serialize_hsla(color: Option<Hsla>) -> Option<String> {
+    color.and_then(|c| serde_json::to_string(&SerializedHsla::from(c)).ok())
+}
+
+fn deserialize_hsla(json: Option<String>) -> Option<Hsla> {
+    json.and_then(|s| serde_json::from_str::<SerializedHsla>(&s).ok())
+        .map(Hsla::from)
+}
+
+/// Data structure for terminal customizations retrieved from database
+pub struct TerminalData {
+    pub working_directory: Option<PathBuf>,
+    pub terminal_name: Option<String>,
+    pub tab_color: Option<Hsla>,
+    pub text_color: Option<Hsla>,
+}
 
 pub(crate) fn serialize_pane_group(
     pane_group: &PaneGroup,
@@ -424,6 +472,12 @@ impl Domain for TerminalDb {
             ALTER TABLE terminals ADD COLUMN working_directory_path TEXT;
             UPDATE terminals SET working_directory_path = CAST(working_directory AS TEXT);
         ),
+        // Add columns for terminal customizations (name, tab color, text color)
+        sql!(
+            ALTER TABLE terminals ADD COLUMN terminal_name TEXT;
+            ALTER TABLE terminals ADD COLUMN tab_color TEXT;
+            ALTER TABLE terminals ADD COLUMN text_color TEXT;
+        ),
     ];
 }
 
@@ -442,43 +496,68 @@ impl TerminalDb {
         }
     }
 
-    pub async fn save_working_directory(
+    pub async fn save_terminal(
         &self,
         item_id: ItemId,
         workspace_id: WorkspaceId,
         working_directory: PathBuf,
+        terminal_name: Option<String>,
+        tab_color: Option<Hsla>,
+        text_color: Option<Hsla>,
     ) -> Result<()> {
         log::debug!(
-            "Saving working directory {working_directory:?} for item {item_id} in workspace {workspace_id:?}"
+            "Saving terminal {item_id} in workspace {workspace_id:?}: cwd={working_directory:?}, name={terminal_name:?}"
         );
+        let tab_color_json = serialize_hsla(tab_color);
+        let text_color_json = serialize_hsla(text_color);
         let query =
-            "INSERT INTO terminals(item_id, workspace_id, working_directory, working_directory_path)
-            VALUES (?1, ?2, ?3, ?4)
+            "INSERT INTO terminals(item_id, workspace_id, working_directory, working_directory_path, terminal_name, tab_color, text_color)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
             ON CONFLICT DO UPDATE SET
                 item_id = ?1,
                 workspace_id = ?2,
                 working_directory = ?3,
-                working_directory_path = ?4"
+                working_directory_path = ?4,
+                terminal_name = ?5,
+                tab_color = ?6,
+                text_color = ?7"
         ;
         self.write(move |conn| {
             let mut statement = Statement::prepare(conn, query)?;
             let mut next_index = statement.bind(&item_id, 1)?;
             next_index = statement.bind(&workspace_id, next_index)?;
             next_index = statement.bind(&working_directory, next_index)?;
-            statement.bind(
+            next_index = statement.bind(
                 &working_directory.to_string_lossy().into_owned(),
                 next_index,
             )?;
+            next_index = statement.bind(&terminal_name, next_index)?;
+            next_index = statement.bind(&tab_color_json, next_index)?;
+            statement.bind(&text_color_json, next_index)?;
             statement.exec()
         })
         .await
     }
 
-    query! {
-        pub fn get_working_directory(item_id: ItemId, workspace_id: WorkspaceId) -> Result<Option<PathBuf>> {
-            SELECT working_directory
+    pub fn get_terminal(
+        &self,
+        item_id: ItemId,
+        workspace_id: WorkspaceId,
+    ) -> Result<Option<TerminalData>> {
+        self.select_row_bound(sql!(
+            SELECT working_directory, terminal_name, tab_color, text_color
             FROM terminals
             WHERE item_id = ? AND workspace_id = ?
-        }
+        ))?((item_id, workspace_id))
+        .map(|row: Option<(Option<PathBuf>, Option<String>, Option<String>, Option<String>)>| {
+            row.map(|(working_directory, terminal_name, tab_color_json, text_color_json)| {
+                TerminalData {
+                    working_directory,
+                    terminal_name,
+                    tab_color: deserialize_hsla(tab_color_json),
+                    text_color: deserialize_hsla(text_color_json),
+                }
+            })
+        })
     }
 }

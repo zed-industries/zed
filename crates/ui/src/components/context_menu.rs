@@ -28,6 +28,7 @@ struct OpenSubmenu {
     entity: Entity<ContextMenu>,
     trigger_bounds: Option<Bounds<Pixels>>,
     offset: Option<Pixels>,
+    flip_left: bool,
     _dismiss_subscription: Subscription,
 }
 
@@ -1198,6 +1199,7 @@ impl ContextMenu {
             entity: submenu,
             trigger_bounds,
             offset: None,
+            flip_left: false,
             _dismiss_subscription: dismiss_subscription,
         });
 
@@ -1405,7 +1407,18 @@ impl ContextMenu {
                 if matches!(&this.submenu_state, SubmenuState::Open(_))
                     || this.selected_index == Some(ix)
                 {
-                    this.submenu_safety_threshold_x = Some(event.position.x - px(100.0));
+                    // Adjust threshold based on submenu position
+                    let flip_left = matches!(
+                        &this.submenu_state,
+                        SubmenuState::Open(open) if open.flip_left
+                    );
+                    if flip_left {
+                        // Submenu is on left, threshold is to the right of mouse
+                        this.submenu_safety_threshold_x = Some(event.position.x + px(100.0));
+                    } else {
+                        // Submenu is on right, threshold is to the left of mouse
+                        this.submenu_safety_threshold_x = Some(event.position.x - px(100.0));
+                    }
                 }
 
                 cx.notify();
@@ -1438,7 +1451,17 @@ impl ContextMenu {
                             this.clear_selected();
                             window.focus(&this.focus_handle.clone(), cx);
                             this.hover_target = HoverTarget::MainMenu;
-                            this.submenu_safety_threshold_x = Some(mouse_pos.x - px(50.0));
+
+                            // Adjust threshold based on submenu position
+                            let flip_left = matches!(
+                                &this.submenu_state,
+                                SubmenuState::Open(open) if open.flip_left
+                            );
+                            if flip_left {
+                                this.submenu_safety_threshold_x = Some(mouse_pos.x + px(50.0));
+                            } else {
+                                this.submenu_safety_threshold_x = Some(mouse_pos.x - px(50.0));
+                            }
 
                             if let Some(ContextMenuItem::Submenu { builder, .. }) =
                                 this.items.get(ix)
@@ -1541,6 +1564,7 @@ impl ContextMenu {
         ix: usize,
         submenu: Entity<ContextMenu>,
         offset: Pixels,
+        flip_left: bool,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let bounds_cell = self.main_menu_observed_bounds.clone();
@@ -1557,11 +1581,19 @@ impl ContextMenu {
         .top_0()
         .left_0();
 
+        let (anchor_corner, position_style) = if flip_left {
+            // Position submenu to the left of the parent menu
+            (Corner::TopRight, true)
+        } else {
+            // Position submenu to the right of the parent menu (default)
+            (Corner::TopLeft, false)
+        };
+
         div()
             .id(("submenu-container", ix))
             .absolute()
-            .left_full()
-            .ml_neg_0p5()
+            .when(position_style, |el| el.right_full().mr_neg_0p5())
+            .when(!position_style, |el| el.left_full().ml_neg_0p5())
             .top(offset)
             .on_hover(cx.listener(|this, hovered, _, _| {
                 if *hovered {
@@ -1570,7 +1602,7 @@ impl ContextMenu {
             }))
             .child(
                 anchored()
-                    .anchor(Corner::TopLeft)
+                    .anchor(anchor_corner)
                     .snap_to_window_with_margin(px(8.0))
                     .child(
                         div()
@@ -1780,15 +1812,22 @@ impl ContextMenu {
                                         });
                                     } else {
                                         parent_clone.update(cx, |parent, cx| {
-                                            if matches!(
-                                                &parent.submenu_state,
-                                                SubmenuState::Open(_)
-                                            ) {
-                                                // Only close if mouse is to the left of the safety threshold
+                                            if let SubmenuState::Open(open_submenu) =
+                                                &parent.submenu_state
+                                            {
+                                                // Only close if mouse moved away from the submenu
                                                 // (prevents accidental close when moving diagonally toward submenu)
                                                 let should_close = parent
                                                     .submenu_safety_threshold_x
-                                                    .map(|threshold_x| mouse_pos.x < threshold_x)
+                                                    .map(|threshold_x| {
+                                                        if open_submenu.flip_left {
+                                                            // Submenu is on left, close if mouse moved right
+                                                            mouse_pos.x > threshold_x
+                                                        } else {
+                                                            // Submenu is on right, close if mouse moved left
+                                                            mouse_pos.x < threshold_x
+                                                        }
+                                                    })
                                                     .unwrap_or(true);
 
                                                 if should_close {
@@ -1945,8 +1984,9 @@ impl Render for ContextMenu {
             SubmenuState::Open(open_submenu) => {
                 let is_initializing = open_submenu.offset.is_none();
 
+                let menu_bounds = self.main_menu_observed_bounds.get();
+
                 let computed_offset = if is_initializing {
-                    let menu_bounds = self.main_menu_observed_bounds.get();
                     let trigger_bounds = open_submenu
                         .trigger_bounds
                         .or_else(|| self.submenu_trigger_bounds.get());
@@ -1961,13 +2001,38 @@ impl Render for ContextMenu {
                     None
                 };
 
+                // Calculate whether to flip submenu to the left side
+                // when there's not enough space on the right
+                let flip_left = if is_initializing {
+                    if let Some(menu_bounds) = menu_bounds {
+                        // Estimate submenu width (menus have min_w of 200px)
+                        let estimated_submenu_width = px(200.0);
+                        let space_on_right =
+                            window_size.width - menu_bounds.right();
+                        let space_on_left = menu_bounds.left();
+                        // Flip if not enough space on right and more space on left
+                        space_on_right < estimated_submenu_width
+                            && space_on_left > space_on_right
+                    } else {
+                        false
+                    }
+                } else {
+                    open_submenu.flip_left
+                };
+
                 if let Some(offset) = open_submenu.offset.or(computed_offset) {
                     if open_submenu.offset.is_none() {
                         open_submenu.offset = Some(offset);
+                        open_submenu.flip_left = flip_left;
                     }
 
                     focus_submenu = Some(open_submenu.entity.read(cx).focus_handle.clone());
-                    Some((open_submenu.item_index, open_submenu.entity.clone(), offset))
+                    Some((
+                        open_submenu.item_index,
+                        open_submenu.entity.clone(),
+                        offset,
+                        open_submenu.flip_left,
+                    ))
                 } else {
                     None
                 }
@@ -2135,8 +2200,8 @@ impl Render for ContextMenu {
                             .child(render_aside(aside, cx))
                     }))
                 })
-                .when_some(submenu_container, |this, (ix, submenu, offset)| {
-                    this.child(self.render_submenu_container(ix, submenu, offset, cx))
+                .when_some(submenu_container, |this, (ix, submenu, offset, flip_left)| {
+                    this.child(self.render_submenu_container(ix, submenu, offset, flip_left, cx))
                 })
         } else {
             v_flex()
@@ -2146,8 +2211,8 @@ impl Render for ContextMenu {
                 .justify_end()
                 .children(aside.map(|(_, aside)| render_aside(aside, cx)))
                 .child(render_menu(cx, window))
-                .when_some(submenu_container, |this, (ix, submenu, offset)| {
-                    this.child(self.render_submenu_container(ix, submenu, offset, cx))
+                .when_some(submenu_container, |this, (ix, submenu, offset, flip_left)| {
+                    this.child(self.render_submenu_container(ix, submenu, offset, flip_left, cx))
                 })
         }
     }

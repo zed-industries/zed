@@ -2147,8 +2147,13 @@ impl Terminal {
         }
     }
 
-    pub fn set_title_override(&mut self, title: Option<String>) {
+    pub fn title_override(&self) -> Option<&str> {
+        self.title_override.as_deref()
+    }
+
+    pub fn set_title_override(&mut self, title: Option<String>, cx: &mut Context<Self>) {
         self.title_override = title;
+        cx.emit(Event::TitleChanged);
     }
 
     pub fn tab_color(&self) -> Option<Hsla> {

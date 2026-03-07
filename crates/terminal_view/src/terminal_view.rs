@@ -34,8 +34,8 @@ use terminal_path_like_target::{hover_path_like_target, open_path_like_target};
 use terminal_scrollbar::TerminalScrollHandle;
 use terminal_slash_command::TerminalSlashCommand;
 use ui::{
-    ContextMenu, Divider, Headline, HeadlineSize, ScrollAxes, Scrollbars, Tooltip, WithScrollbar,
-    prelude::*,
+    ContextMenu, ContextMenuItem, Divider, Headline, HeadlineSize, ScrollAxes, Scrollbars, Tooltip,
+    WithScrollbar, prelude::*,
     scrollbars::{self, GlobalSetting, ScrollbarVisibility},
 };
 use util::ResultExt;
@@ -231,12 +231,12 @@ impl RenameTerminalModal {
     fn confirm(&mut self, _: &Confirm, _window: &mut Window, cx: &mut Context<Self>) {
         let new_name = self.editor.read(cx).text(cx);
         if new_name.is_empty() {
-            self.terminal.update(cx, |term, _| {
-                term.set_title_override(None);
+            self.terminal.update(cx, |term, cx| {
+                term.set_title_override(None, cx);
             });
         } else if new_name != self.current_title.as_ref() {
-            self.terminal.update(cx, |term, _| {
-                term.set_title_override(Some(new_name));
+            self.terminal.update(cx, |term, cx| {
+                term.set_title_override(Some(new_name), cx);
             });
         }
         cx.emit(DismissEvent);
@@ -312,6 +312,7 @@ pub struct TerminalView {
     mode: TerminalMode,
     blinking_terminal_enabled: bool,
     cwd_serialized: bool,
+    customization_dirty: bool,
     hover: Option<HoverTarget>,
     hover_tooltip_update: Task<()>,
     workspace_id: Option<WorkspaceId>,
@@ -455,6 +456,7 @@ impl TerminalView {
             scroll_top: Pixels::ZERO,
             scroll_handle,
             cwd_serialized: false,
+            customization_dirty: false,
             ime_state: None,
             _subscriptions,
             _terminal_subscriptions: terminal_subscriptions,
@@ -726,6 +728,8 @@ impl TerminalView {
     ) {
         self.terminal
             .update(cx, |term, _| term.set_tab_color(Some(action.0)));
+        self.customization_dirty = true;
+        cx.emit(ItemEvent::UpdateTab);
         cx.notify();
     }
 
@@ -736,6 +740,8 @@ impl TerminalView {
         cx: &mut Context<Self>,
     ) {
         self.terminal.update(cx, |term, _| term.set_tab_color(None));
+        self.customization_dirty = true;
+        cx.emit(ItemEvent::UpdateTab);
         cx.notify();
     }
 
@@ -747,6 +753,8 @@ impl TerminalView {
     ) {
         self.terminal
             .update(cx, |term, _| term.set_tab_text_color(Some(action.0)));
+        self.customization_dirty = true;
+        cx.emit(ItemEvent::UpdateTab);
         cx.notify();
     }
 
@@ -758,6 +766,8 @@ impl TerminalView {
     ) {
         self.terminal
             .update(cx, |term, _| term.set_tab_text_color(None));
+        self.customization_dirty = true;
+        cx.emit(ItemEvent::UpdateTab);
         cx.notify();
     }
 
@@ -1177,6 +1187,7 @@ fn subscribe_for_terminal_events(
                 }
 
                 Event::TitleChanged => {
+                    terminal_view.customization_dirty = true;
                     cx.emit(ItemEvent::UpdateTab);
                 }
 
@@ -1461,6 +1472,91 @@ impl Item for TerminalView {
         true
     }
 
+    fn on_tab_double_click(
+        &mut self,
+        window: &mut gpui::Window,
+        cx: &mut gpui::Context<Self>,
+    ) -> Option<Task<()>> {
+        self.show_rename_modal(window, cx);
+        None
+    }
+
+    fn tab_context_menu_entries(
+        &self,
+        _window: &gpui::Window,
+        _cx: &App,
+    ) -> Option<Vec<ContextMenuItem>> {
+        use ui::ContextMenuEntry;
+        let focus = self.focus_handle.clone();
+        let focus2 = self.focus_handle.clone();
+        let focus3 = self.focus_handle.clone();
+        Some(vec![
+            ContextMenuItem::Entry(
+                ContextMenuEntry::new("Rename Terminal")
+                    .action(Box::new(RenameTerminal))
+                    .handler(move |window, cx| {
+                        focus.dispatch_action(&RenameTerminal, window, cx);
+                    }),
+            ),
+            ContextMenuItem::Submenu {
+                label: "Tab Color".into(),
+                icon: None,
+                icon_color: None,
+                builder: Rc::new(move |menu, _, _| {
+                    let focus = focus2.clone();
+                    let mut menu = menu;
+                    for (name, color) in TERMINAL_TAB_COLORS {
+                        let focus = focus.clone();
+                        let action = SetTerminalTabColor(*color);
+                        menu = menu.entry(
+                            *name,
+                            Some(Box::new(action.clone())),
+                            move |window, cx| {
+                                focus.dispatch_action(&action, window, cx);
+                            },
+                        );
+                    }
+                    let focus = focus2.clone();
+                    menu.separator().entry(
+                        "Clear Color",
+                        Some(Box::new(ClearTerminalTabColor)),
+                        move |window, cx| {
+                            focus.dispatch_action(&ClearTerminalTabColor, window, cx);
+                        },
+                    )
+                }),
+            },
+            ContextMenuItem::Submenu {
+                label: "Text Color".into(),
+                icon: None,
+                icon_color: None,
+                builder: Rc::new(move |menu, _, _| {
+                    let focus = focus3.clone();
+                    let mut menu = menu;
+                    for (name, color) in TERMINAL_TAB_TEXT_COLORS {
+                        let focus = focus.clone();
+                        let action = SetTerminalTabTextColor(*color);
+                        menu = menu.entry(
+                            *name,
+                            Some(Box::new(action.clone())),
+                            move |window, cx| {
+                                focus.dispatch_action(&action, window, cx);
+                            },
+                        );
+                    }
+                    let focus = focus3.clone();
+                    menu.separator().entry(
+                        "Clear Color",
+                        Some(Box::new(ClearTerminalTabTextColor)),
+                        move |window, cx| {
+                            focus.dispatch_action(&ClearTerminalTabTextColor, window, cx);
+                        },
+                    )
+                }),
+            },
+        ])
+    }
+
     fn tab_content(&self, params: TabContentParams, _window: &Window, cx: &App) -> AnyElement {
         let terminal = self.terminal().read(cx);
         let title = terminal.title(true);
@@ -1687,10 +1783,15 @@ impl SerializableItem for TerminalView {
         }
 
         if let Some((cwd, workspace_id)) = terminal.working_directory().zip(self.workspace_id) {
+            let terminal_name = terminal.title_override().map(|s| s.to_string());
+            let tab_color = terminal.tab_color();
+            let text_color = terminal.tab_text_color();
+
             self.cwd_serialized = true;
+            self.customization_dirty = false;
             Some(cx.background_spawn(async move {
                 TERMINAL_DB
-                    .save_working_directory(item_id, workspace_id, cwd)
+                    .save_terminal(item_id, workspace_id, cwd, terminal_name, tab_color, text_color)
                     .await
             }))
         } else {
@@ -1699,7 +1800,7 @@ impl SerializableItem for TerminalView {
     }
 
     fn should_serialize(&self, _: &Self::Event) -> bool {
-        !self.cwd_serialized
+        !self.cwd_serialized || self.customization_dirty
     }
 
     fn deserialize(
@@ -1711,29 +1812,49 @@ impl SerializableItem for TerminalView {
         cx: &mut App,
     ) -> Task<anyhow::Result<Entity<Self>>> {
         window.spawn(cx, async move |cx| {
-            let cwd = cx
-                .update(|_window, cx| {
-                    let from_db = TERMINAL_DB
-                        .get_working_directory(item_id, workspace_id)
+            let terminal_data = cx
+                .update(|_window, _cx| {
+                    TERMINAL_DB
+                        .get_terminal(item_id, workspace_id)
                         .log_err()
-                        .flatten();
-                    if from_db
-                        .as_ref()
-                        .is_some_and(|from_db| !from_db.as_os_str().is_empty())
-                    {
-                        from_db
-                    } else {
-                        workspace
-                            .upgrade()
-                            .and_then(|workspace| default_working_directory(workspace.read(cx), cx))
-                    }
+                        .flatten()
                 })
                 .ok()
                 .flatten();
 
+            let cwd = terminal_data
+                .as_ref()
+                .and_then(|data| data.working_directory.clone())
+                .filter(|cwd| !cwd.as_os_str().is_empty())
+                .or_else(|| {
+                    cx.update(|_window, cx| {
+                        workspace
+                            .upgrade()
+                            .and_then(|workspace| default_working_directory(workspace.read(cx), cx))
+                    })
+                    .ok()
+                    .flatten()
+                });
+
             let terminal = project
                 .update(cx, |project, cx| project.create_terminal_shell(cwd, cx))
                 .await?;
+
+            // Apply customizations from database
+            if let Some(data) = terminal_data {
+                let _ = terminal.update(cx, |term, cx| {
+                    if let Some(name) = data.terminal_name {
+                        term.set_title_override(Some(name), cx);
+                    }
+                    if let Some(color) = data.tab_color {
+                        term.set_tab_color(Some(color));
+                    }
+                    if let Some(color) = data.text_color {
+                        term.set_tab_text_color(Some(color));
+                    }
+                });
+            }
+
             cx.update(|window, cx| {
                 cx.new(|cx| {
                     TerminalView::new(

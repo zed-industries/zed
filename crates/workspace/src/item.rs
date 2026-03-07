@@ -32,7 +32,7 @@ use std::{
     time::Duration,
 };
 use theme::Theme;
-use ui::{Color, Icon, IntoElement, Label, LabelCommon};
+use ui::{Color, ContextMenuItem, Icon, IntoElement, Label, LabelCommon};
 use util::ResultExt;
 
 pub const LEADER_UPDATE_THROTTLE: Duration = Duration::from_millis(200);
@@ -216,6 +216,25 @@ pub trait Item: Focusable + EventEmitter<Self::Event> + Render + Sized {
     /// `tab_tooltip_text`.
     fn tab_tooltip_content(&self, cx: &App) -> Option<TabTooltipContent> {
         self.tab_tooltip_text(cx).map(TabTooltipContent::Text)
+    }
+
+    /// Returns custom context menu entries for the tab.
+    ///
+    /// These entries will be added to the tab's right-click context menu
+    /// before the standard close/pin options.
+    fn tab_context_menu_entries(&self, _window: &Window, _cx: &App) -> Option<Vec<ContextMenuItem>> {
+        None
+    }
+
+    /// Called when the user double-clicks on the tab.
+    ///
+    /// Override this to provide custom double-click behavior (e.g., rename).
+    fn on_tab_double_click(
+        &mut self,
+        _window: &mut Window,
+        _cx: &mut Context<Self>,
+    ) -> Option<Task<()>> {
+        None
     }
 
     fn to_item_events(_event: &Self::Event, _f: impl FnMut(ItemEvent)) {}
@@ -458,6 +477,8 @@ pub trait ItemHandle: 'static + Send {
     fn tab_background_color(&self, cx: &App) -> Option<gpui::Hsla>;
     fn tab_tooltip_text(&self, cx: &App) -> Option<SharedString>;
     fn tab_tooltip_content(&self, cx: &App) -> Option<TabTooltipContent>;
+    fn tab_context_menu_entries(&self, window: &Window, cx: &App) -> Option<Vec<ContextMenuItem>>;
+    fn on_tab_double_click(&self, window: &mut Window, cx: &mut App) -> Option<Task<()>>;
     fn telemetry_event_text(&self, cx: &App) -> Option<&'static str>;
     fn dragged_tab_content(
         &self,
@@ -611,6 +632,14 @@ impl<T: Item> ItemHandle for Entity<T> {
 
     fn tab_tooltip_text(&self, cx: &App) -> Option<SharedString> {
         self.read(cx).tab_tooltip_text(cx)
+    }
+
+    fn tab_context_menu_entries(&self, window: &Window, cx: &App) -> Option<Vec<ContextMenuItem>> {
+        self.read(cx).tab_context_menu_entries(window, cx)
+    }
+
+    fn on_tab_double_click(&self, window: &mut Window, cx: &mut App) -> Option<Task<()>> {
+        self.update(cx, |this, cx| this.on_tab_double_click(window, cx))
     }
 
     fn dragged_tab_content(

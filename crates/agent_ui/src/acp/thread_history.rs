@@ -120,6 +120,7 @@ impl AcpThreadHistory {
 
     fn update_visible_items(&mut self, preserve_selected_item: bool, cx: &mut Context<Self>) {
         let entries = self.sessions.clone();
+        log::info!("AcpThreadHistory::update_visible_items called with {} entries", entries.len());
         let new_list_items = if self.search_query.is_empty() {
             self.add_list_separators(entries, cx)
         } else {
@@ -133,7 +134,8 @@ impl AcpThreadHistory {
 
         self._update_task = cx.spawn(async move |this, cx| {
             let new_visible_items = new_list_items.await;
-            this.update(cx, |this, cx| {
+            log::info!("AcpThreadHistory: new_visible_items ready, count = {}", new_visible_items.len());
+            let update_result = this.update(cx, |this, cx| {
                 let new_selected_index = if let Some(history_entry) = selected_history_entry {
                     new_visible_items
                         .iter()
@@ -148,10 +150,13 @@ impl AcpThreadHistory {
                 };
 
                 this.visible_items = new_visible_items;
+                log::info!("AcpThreadHistory: visible_items set, count = {}", this.visible_items.len());
                 this.set_selected_index(new_selected_index, Bias::Right, cx);
                 cx.notify();
-            })
-            .ok();
+            });
+            if update_result.is_err() {
+                log::error!("AcpThreadHistory: Failed to update entity in update_visible_items");
+            }
         });
     }
 
@@ -215,15 +220,18 @@ impl AcpThreadHistory {
                     ..
                 } = response;
 
-                this.update(cx, |this, cx| {
+                let update_result = this.update(cx, |this, cx| {
                     if is_first_page {
                         this.sessions = page_sessions;
                     } else {
                         this.sessions.extend(page_sessions);
                     }
+                    log::info!("AcpThreadHistory: Sessions populated, count = {}", this.sessions.len());
                     this.update_visible_items(preserve_selected_item, cx);
-                })
-                .ok();
+                });
+                if update_result.is_err() {
+                    log::error!("AcpThreadHistory: Failed to update entity in refresh_sessions");
+                }
 
                 is_first_page = false;
                 match next_cursor {
