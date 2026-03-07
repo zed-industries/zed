@@ -835,6 +835,52 @@ mod test {
     }
 
     #[gpui::test]
+    async fn test_search_under_cursor_uses_language_word_characters(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new_typescript(cx).await;
+
+        cx.set_state(
+            "ˇa.b
+a.b
+a
+b
+",
+            Mode::Normal,
+        );
+
+        cx.simulate_keystrokes("*");
+        cx.run_until_parked();
+        cx.assert_state(
+            "a.b
+ˇa.b
+a
+b
+",
+            Mode::Normal,
+        );
+
+        cx.simulate_keystrokes("n");
+        cx.assert_state(
+            "ˇa.b
+a.b
+a
+b
+",
+            Mode::Normal,
+        );
+
+        cx.simulate_keystrokes("g *");
+        cx.run_until_parked();
+        cx.assert_state(
+            "a.b
+a.b
+ˇa
+b
+",
+            Mode::Normal,
+        );
+    }
+
+    #[gpui::test]
     async fn test_search(cx: &mut gpui::TestAppContext) {
         let mut cx = VimTestContext::new(cx, true).await;
 

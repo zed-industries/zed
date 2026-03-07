@@ -33,9 +33,7 @@ use gpui::{
     Render, Subscription, Task, WeakEntity, Window, actions,
 };
 use insert::{NormalBefore, TemporaryNormal};
-use language::{
-    CharKind, CharScopeContext, CursorShape, Point, Selection, SelectionGoal, TransactionId,
-};
+use language::{CharKind, CursorShape, Point, Selection, SelectionGoal, TransactionId};
 pub use mode_indicator::ModeIndicator;
 use motion::Motion;
 use multi_buffer::ToPoint as _;
@@ -1554,8 +1552,7 @@ impl Vim {
                 .newest::<MultiBufferOffset>(&snapshot.display_snapshot);
 
             let snapshot = snapshot.buffer_snapshot();
-            let (range, kind) =
-                snapshot.surrounding_word(selection.start, Some(CharScopeContext::Completion));
+            let (range, kind) = snapshot.surrounding_word(selection.start, None);
             if kind == Some(CharKind::Word) {
                 let text: String = snapshot.text_for_range(range).collect();
                 if !text.trim().is_empty() {
