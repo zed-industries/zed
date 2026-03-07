@@ -509,7 +509,20 @@ impl RealFs {
 #[async_trait::async_trait]
 impl Fs for RealFs {
     async fn create_dir(&self, path: &Path) -> Result<()> {
-        Ok(smol::fs::create_dir_all(path).await?)
+        match smol::fs::create_dir_all(path).await {
+            Ok(()) => Ok(()),
+            Err(err) if err.kind() == io::ErrorKind::PermissionDenied => {
+                #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+                {
+                    log::info!("create_dir got PermissionDenied, retrying with sudo: {:?}", path);
+                    let quoted = quote_path(path)?;
+                    return run_cmd_via_sudo(&format!("mkdir -p {quoted}")).await;
+                }
+                #[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
+                Err(err.into())
+            }
+            Err(err) => Err(err.into()),
+        }
     }
 
     async fn create_symlink(&self, path: &Path, target: PathBuf) -> Result<()> {
@@ -583,8 +596,21 @@ impl Fs for RealFs {
             }
         }
 
-        smol::fs::copy(source, target).await?;
-        Ok(())
+        match smol::fs::copy(source, target).await {
+            Ok(_) => Ok(()),
+            Err(err) if err.kind() == io::ErrorKind::PermissionDenied => {
+                #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+                {
+                    log::info!("copy_file got PermissionDenied, retrying with sudo");
+                    let quoted_src = quote_path(source)?;
+                    let quoted_dst = quote_path(target)?;
+                    return run_cmd_via_sudo(&format!("cp {quoted_src} {quoted_dst}")).await;
+                }
+                #[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
+                Err(err.into())
+            }
+            Err(err) => Err(err.into()),
+        }
     }
 
     async fn rename(&self, source: &Path, target: &Path, options: RenameOptions) -> Result<()> {
@@ -602,8 +628,21 @@ impl Fs for RealFs {
             }
         }
 
-        smol::fs::rename(source, target).await?;
-        Ok(())
+        match smol::fs::rename(source, target).await {
+            Ok(()) => Ok(()),
+            Err(err) if err.kind() == io::ErrorKind::PermissionDenied => {
+                #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+                {
+                    log::info!("rename got PermissionDenied, retrying with sudo");
+                    let quoted_src = quote_path(source)?;
+                    let quoted_dst = quote_path(target)?;
+                    return run_cmd_via_sudo(&format!("mv {quoted_src} {quoted_dst}")).await;
+                }
+                #[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
+                Err(err.into())
+            }
+            Err(err) => Err(err.into()),
+        }
     }
 
     async fn remove_dir(&self, path: &Path, options: RemoveOptions) -> Result<()> {
@@ -616,6 +655,17 @@ impl Fs for RealFs {
             Ok(()) => Ok(()),
             Err(err) if err.kind() == io::ErrorKind::NotFound && options.ignore_if_not_exists => {
                 Ok(())
+            }
+            Err(err) if err.kind() == io::ErrorKind::PermissionDenied => {
+                #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+                {
+                    log::info!("remove_dir got PermissionDenied, retrying with sudo: {:?}", path);
+                    let quoted = quote_path(path)?;
+                    let flag = if options.recursive { "-rf" } else { "-d" };
+                    return run_cmd_via_sudo(&format!("rm {flag} {quoted}")).await;
+                }
+                #[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
+                Err(err.into())
             }
             Err(err) => Err(err)?,
         }
@@ -642,6 +692,16 @@ impl Fs for RealFs {
             Ok(()) => Ok(()),
             Err(err) if err.kind() == io::ErrorKind::NotFound && options.ignore_if_not_exists => {
                 Ok(())
+            }
+            Err(err) if err.kind() == io::ErrorKind::PermissionDenied => {
+                #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+                {
+                    log::info!("remove_file got PermissionDenied, retrying with sudo: {:?}", path);
+                    let quoted = quote_path(path)?;
+                    return run_cmd_via_sudo(&format!("rm {quoted}")).await;
+                }
+                #[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
+                Err(err.into())
             }
             Err(err) => Err(err)?,
         }
@@ -823,15 +883,36 @@ impl Fs for RealFs {
                 .await
                 .with_context(|| format!("Failed to create directory at {:?}", path))?;
         }
-        let file = smol::fs::File::create(path)
-            .await
-            .with_context(|| format!("Failed to create file at {:?}", path))?;
-        let mut writer = smol::io::BufWriter::with_capacity(buffer_size, file);
-        for chunk in text::chunks_with_line_ending(text, line_ending) {
-            writer.write_all(chunk.as_bytes()).await?;
+        match smol::fs::File::create(path).await {
+            Ok(file) => {
+                let mut writer = smol::io::BufWriter::with_capacity(buffer_size, file);
+                for chunk in text::chunks_with_line_ending(text, line_ending) {
+                    writer.write_all(chunk.as_bytes()).await?;
+                }
+                writer.flush().await?;
+                Ok(())
+            }
+            Err(err) if err.kind() == io::ErrorKind::PermissionDenied => {
+                #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+                {
+                    log::info!("save got PermissionDenied, retrying with sudo: {:?}", path);
+                    let mut content = Vec::with_capacity(buffer_size);
+                    for chunk in text::chunks_with_line_ending(text, line_ending) {
+                        content.extend_from_slice(chunk.as_bytes());
+                    }
+                    write_via_sudo(path, &content).await
+                }
+                #[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
+                {
+                    Err(anyhow::Error::new(err)
+                        .context(format!("Failed to create file at {:?}", path)))
+                }
+            }
+            Err(err) => {
+                Err(anyhow::Error::new(err)
+                    .context(format!("Failed to create file at {:?}", path)))
+            }
         }
-        writer.flush().await?;
-        Ok(())
     }
 
     async fn write(&self, path: &Path, content: &[u8]) -> Result<()> {
@@ -840,14 +921,33 @@ impl Fs for RealFs {
                 .await
                 .with_context(|| format!("Failed to create directory at {:?}", path))?;
         }
-        let path = path.to_owned();
+        let path_owned = path.to_owned();
         let contents = content.to_owned();
-        self.executor
-            .spawn(async move {
-                std::fs::write(path, contents)?;
-                Ok(())
+        let result: Result<()> = self
+            .executor
+            .spawn({
+                let path_owned = path_owned.clone();
+                let contents = contents.clone();
+                async move {
+                    std::fs::write(&path_owned, &contents)?;
+                    Ok(())
+                }
             })
-            .await
+            .await;
+
+        match result {
+            Ok(()) => Ok(()),
+            Err(err) => {
+                #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+                if err.downcast_ref::<io::Error>()
+                    .is_some_and(|e: &io::Error| e.kind() == io::ErrorKind::PermissionDenied)
+                {
+                    log::info!("write got PermissionDenied, retrying with sudo: {:?}", path_owned);
+                    return write_via_sudo(&path_owned, &contents).await;
+                }
+                Err(err)
+            }
+        }
     }
 
     async fn canonicalize(&self, path: &Path) -> Result<PathBuf> {
@@ -1181,6 +1281,178 @@ impl Fs for RealFs {
         );
         res
     }
+}
+
+#[cfg(any(target_os = "linux", target_os = "freebsd"))]
+fn quote_path(path: &Path) -> Result<String> {
+    let path_str = path.to_string_lossy();
+    shlex::try_quote(&path_str)
+        .map(|q| q.into_owned())
+        .map_err(|err| anyhow!("failed to quote path {:?}: {err}", path))
+}
+
+#[cfg(any(target_os = "linux", target_os = "freebsd"))]
+async fn run_cmd_via_sudo(shell_cmd: &str) -> Result<()> {
+    let mut errors = Vec::new();
+
+    // 1. Try pkexec (graphical polkit prompt, like VS Code does).
+    match run_shell_elevated("pkexec", &["--disable-internal-agent"], shell_cmd).await {
+        Ok(()) => return Ok(()),
+        Err(err) => {
+            log::info!("pkexec failed: {err}");
+            errors.push(format!("pkexec: {err}"));
+        }
+    }
+
+    // 2. Try sudo -A with a graphical askpass helper (zenity or kdialog).
+    match try_sudo_with_askpass(shell_cmd).await {
+        Ok(()) => return Ok(()),
+        Err(err) => {
+            log::info!("sudo -A (askpass) failed: {err}");
+            errors.push(format!("sudo -A: {err}"));
+        }
+    }
+
+    // 3. Last resort: plain sudo (only works with NOPASSWD configured).
+    match run_shell_elevated("sudo", &[], shell_cmd).await {
+        Ok(()) => return Ok(()),
+        Err(err) => {
+            log::info!("plain sudo failed: {err}");
+            errors.push(format!("sudo: {err}"));
+        }
+    }
+
+    anyhow::bail!(
+        "All elevation methods failed: {}. \
+         Install a polkit authentication agent, or configure passwordless sudo.",
+        errors.join("; ")
+    );
+}
+
+#[cfg(any(target_os = "linux", target_os = "freebsd"))]
+async fn write_via_sudo(path: &Path, content: &[u8]) -> Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+    use tempfile::NamedTempFile;
+
+    let temp_file = smol::unblock({
+        let content = content.to_vec();
+        let parent = path.parent().unwrap_or(paths::temp_dir()).to_path_buf();
+        move || -> Result<NamedTempFile> {
+            let mut temp = NamedTempFile::new_in(&parent)
+                .or_else(|_| NamedTempFile::new_in(paths::temp_dir()))
+                .context("failed to create temp file for elevated write")?;
+            temp.as_file()
+                .set_permissions(std::fs::Permissions::from_mode(0o644))?;
+            temp.write_all(&content)?;
+            temp.flush()?;
+            Ok(temp)
+        }
+    })
+    .await?;
+
+    let quoted_target = quote_path(path)?;
+    let temp_path = temp_file.path().to_path_buf();
+    let temp_str = temp_path.to_string_lossy();
+    let quoted_temp = shlex::try_quote(&temp_str)
+        .map_err(|err| anyhow!("failed to quote temp path: {err}"))?;
+
+    run_cmd_via_sudo(&format!("cat {quoted_temp} > {quoted_target}")).await
+}
+
+#[cfg(any(target_os = "linux", target_os = "freebsd"))]
+async fn try_sudo_with_askpass(shell_cmd: &str) -> Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+
+    // Try zenity first, then kdialog. Use full paths discovered at runtime.
+    let askpass_tool = find_askpass_tool().await
+        .context("no graphical askpass tool (zenity/kdialog) found")?;
+
+    let askpass_script = smol::unblock({
+        let askpass_tool = askpass_tool.clone();
+        move || -> Result<tempfile::TempPath> {
+            let script = tempfile::Builder::new()
+                .prefix("zed-askpass-")
+                .suffix(".sh")
+                .tempfile_in(paths::temp_dir())?;
+            writeln!(
+                script.as_file(),
+                "#!/bin/sh\nexec {} 2>/dev/null",
+                askpass_tool
+            )?;
+            script
+                .as_file()
+                .set_permissions(std::fs::Permissions::from_mode(0o700))?;
+            // Close the write handle so the script can be executed (avoids ETXTBSY).
+            Ok(script.into_temp_path())
+        }
+    })
+    .await?;
+
+    let askpass_path = askpass_script.to_string_lossy().to_string();
+
+    let output = smol::process::Command::new("sudo")
+        .args(["-A", "sh", "-c", shell_cmd])
+        .env("SUDO_ASKPASS", &askpass_path)
+        .stdin(smol::process::Stdio::null())
+        .stdout(smol::process::Stdio::null())
+        .stderr(smol::process::Stdio::piped())
+        .output()
+        .await
+        .context("failed to run sudo -A")?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        anyhow::bail!("{}", stderr.trim());
+    }
+    Ok(())
+}
+
+#[cfg(any(target_os = "linux", target_os = "freebsd"))]
+async fn find_askpass_tool() -> Option<String> {
+    let candidates = [
+        "zenity --password --title='Zed — Authentication Required'",
+        "kdialog --password 'Zed — Authentication Required'",
+    ];
+
+    let check_tools = ["zenity", "kdialog"];
+    for (tool, full_cmd) in check_tools.iter().zip(candidates.iter()) {
+        let result = smol::process::Command::new("sh")
+            .args(["-c", &format!("command -v {tool}")])
+            .stdin(smol::process::Stdio::null())
+            .stdout(smol::process::Stdio::null())
+            .stderr(smol::process::Stdio::null())
+            .status()
+            .await;
+        if result.is_ok_and(|s| s.success()) {
+            return Some(full_cmd.to_string());
+        }
+    }
+    None
+}
+
+#[cfg(any(target_os = "linux", target_os = "freebsd"))]
+async fn run_shell_elevated(
+    program: &str,
+    extra_args: &[&str],
+    shell_cmd: &str,
+) -> Result<()> {
+    let mut args: Vec<&str> = extra_args.to_vec();
+    args.extend(["sh", "-c", shell_cmd]);
+
+    let output = smol::process::Command::new(program)
+        .args(&args)
+        .stdin(smol::process::Stdio::null())
+        .stdout(smol::process::Stdio::null())
+        .stderr(smol::process::Stdio::piped())
+        .output()
+        .await
+        .with_context(|| format!("failed to run {program}"))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        anyhow::bail!("{}", stderr.trim());
+    }
+    Ok(())
 }
 
 #[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
