@@ -45,8 +45,47 @@ impl Editor {
         } else {
             let buffer_snapshot = buffer.read(cx).snapshot();
             let syntax = cx.theme().syntax().clone();
-            cx.background_executor()
-                .spawn(async move { buffer_snapshot.outline(Some(&syntax)).items })
+            let semantic_tokens = language_settings(
+                buffer_snapshot.language().map(|l| l.name()),
+                buffer_snapshot.file(),
+                cx,
+            )
+            .semantic_tokens;
+            let semantic_tokens_enabled = semantic_tokens.enabled();
+            let use_tree_sitter_for_syntax = semantic_tokens.use_tree_sitter();
+
+            if semantic_tokens_enabled {
+                cx.spawn(async move |editor, cx| {
+                    let mut items = cx
+                        .background_executor()
+                        .spawn(async move { buffer_snapshot.outline(Some(&syntax)).items })
+                        .await;
+                    editor
+                        .update(cx, |editor, cx| {
+                            let syntax = cx.theme().syntax().clone();
+                            let display_snapshot =
+                                editor.display_map.update(cx, |map, cx| map.snapshot(cx));
+                            let buffer_handle = editor.buffer.read(cx).buffer(buffer_id);
+                            if let Some(buffer_handle) = buffer_handle {
+                                let snapshot = buffer_handle.read(cx).snapshot();
+                                apply_highlights(
+                                    &mut items,
+                                    buffer_id,
+                                    &snapshot,
+                                    &display_snapshot,
+                                    &syntax,
+                                    use_tree_sitter_for_syntax,
+                                    source_text_search_range,
+                                );
+                            }
+                        })
+                        .ok();
+                    items
+                })
+            } else {
+                cx.background_executor()
+                    .spawn(async move { buffer_snapshot.outline(Some(&syntax)).items })
+            }
         }
     }
 
@@ -221,6 +260,14 @@ impl Editor {
                                     &snapshot,
                                     &display_snapshot,
                                     &syntax,
+                                    language_settings(
+                                        snapshot.language().map(|l| l.name()),
+                                        snapshot.file(),
+                                        cx,
+                                    )
+                                    .semantic_tokens
+                                    .use_tree_sitter(),
+                                    symbol_search_range,
                                 );
                             }
                         }
@@ -239,32 +286,59 @@ fn lsp_symbols_enabled(buffer: &Buffer, cx: &App) -> bool {
         .lsp_enabled()
 }
 
-/// Applies combined syntax + semantic token highlights to LSP document symbol
-/// outline items that were built without highlights by the project layer.
+/// Applies combined syntax + semantic token highlights to outline items by
+/// mapping token styles from a selected buffer search range.
 fn apply_highlights(
     items: &mut [OutlineItem<text::Anchor>],
     buffer_id: BufferId,
     buffer_snapshot: &BufferSnapshot,
     display_snapshot: &DisplaySnapshot,
     syntax_theme: &SyntaxTheme,
+    use_tree_sitter_for_syntax: bool,
+    symbol_search_range: fn(&OutlineItem<text::Anchor>, &BufferSnapshot) -> Range<usize>,
 ) {
+    let fetch_highlights = |buffer_range: Range<usize>| {
+        display_snapshot.highlights_for_buffer_range(
+            buffer_id,
+            buffer_range,
+            syntax_theme,
+            use_tree_sitter_for_syntax,
+        )
+    };
+
     for item in items {
-        let symbol_range = item.range.to_offset(buffer_snapshot);
+        let symbol_range = symbol_search_range(item, buffer_snapshot);
         let selection_start = item.source_range_for_text.start.to_offset(buffer_snapshot);
 
         if let Some(highlights) = highlights_from_buffer(
             &item.text,
             0,
-            buffer_id,
             buffer_snapshot,
-            display_snapshot,
             symbol_range,
             selection_start,
-            syntax_theme,
+            &fetch_highlights,
         ) {
             item.highlight_ranges = highlights;
         }
     }
+}
+
+/// Uses the full symbol range for text search. Needed for LSP items where
+/// the enriched text (e.g. "struct Foo") may span beyond `source_range_for_text`.
+fn symbol_search_range(
+    item: &OutlineItem<text::Anchor>,
+    buffer_snapshot: &BufferSnapshot,
+) -> Range<usize> {
+    item.range.to_offset(buffer_snapshot)
+}
+
+/// Uses the source text range for search. Appropriate for tree-sitter items
+/// where the outline text is assembled directly from captures within this range.
+fn source_text_search_range(
+    item: &OutlineItem<text::Anchor>,
+    buffer_snapshot: &BufferSnapshot,
+) -> Range<usize> {
+    item.source_range_for_text.to_offset(buffer_snapshot)
 }
 
 /// Finds where the symbol name appears in the buffer and returns combined
@@ -277,12 +351,10 @@ fn apply_highlights(
 fn highlights_from_buffer(
     name: &str,
     name_offset_in_text: usize,
-    buffer_id: BufferId,
     buffer_snapshot: &BufferSnapshot,
-    display_snapshot: &DisplaySnapshot,
     symbol_range: Range<usize>,
     selection_start_offset: usize,
-    syntax_theme: &SyntaxTheme,
+    fetch_highlights: &impl Fn(Range<usize>) -> Vec<(Range<usize>, HighlightStyle)>,
 ) -> Option<Vec<(Range<usize>, HighlightStyle)>> {
     if name.is_empty() {
         return None;
@@ -310,12 +382,9 @@ fn highlights_from_buffer(
         if let Some(found_at) = buffer_text.find(name) {
             let name_start_offset = search_start + found_at;
             let name_end_offset = name_start_offset + name.len();
-            let result = highlights_for_buffer_range(
+            let result = map_highlight_ranges(
                 name_offset_in_text,
-                name_start_offset..name_end_offset,
-                buffer_id,
-                display_snapshot,
-                syntax_theme,
+                fetch_highlights(name_start_offset..name_end_offset),
             );
             if result.is_some() {
                 return result;
@@ -344,13 +413,9 @@ fn highlights_from_buffer(
             let buf_word_start = range_start_offset + buf_search_from + found_in_buf;
             let buf_word_end = buf_word_start + word.len();
             let text_cursor = name_offset_in_text + name_word_start;
-            if let Some(mut word_highlights) = highlights_for_buffer_range(
-                text_cursor,
-                buf_word_start..buf_word_end,
-                buffer_id,
-                display_snapshot,
-                syntax_theme,
-            ) {
+            if let Some(mut word_highlights) =
+                map_highlight_ranges(text_cursor, fetch_highlights(buf_word_start..buf_word_end))
+            {
                 got_any = true;
                 highlights.append(&mut word_highlights);
             }
@@ -362,17 +427,12 @@ fn highlights_from_buffer(
     got_any.then_some(highlights)
 }
 
-/// Gets combined (tree-sitter + semantic token) highlights for a buffer byte
-/// range via the editor's display snapshot, then shifts the returned ranges
-/// so they start at `text_cursor_start` (the position in the outline item text).
-fn highlights_for_buffer_range(
+/// Shifts 0-based highlight ranges so they start at `text_cursor_start`
+/// (the position of the matched text within the outline item text).
+fn map_highlight_ranges(
     text_cursor_start: usize,
-    buffer_range: Range<usize>,
-    buffer_id: BufferId,
-    display_snapshot: &DisplaySnapshot,
-    syntax_theme: &SyntaxTheme,
+    raw: Vec<(Range<usize>, HighlightStyle)>,
 ) -> Option<Vec<(Range<usize>, HighlightStyle)>> {
-    let raw = display_snapshot.combined_highlights(buffer_id, buffer_range, syntax_theme);
     if raw.is_empty() {
         return None;
     }
