@@ -134,11 +134,61 @@ pub struct ChatOptions {
 pub struct ChatResponseDelta {
     pub model: String,
     pub created_at: String,
+    #[serde(deserialize_with = "deserialize_chat_message")]
     pub message: ChatMessage,
     pub done_reason: Option<String>,
     pub done: bool,
     pub prompt_eval_count: Option<u64>,
     pub eval_count: Option<u64>,
+}
+
+#[derive(Deserialize)]
+struct IncomingChatMessage {
+    #[serde(default)]
+    role: String,
+    #[serde(default)]
+    content: String,
+    #[serde(default)]
+    tool_calls: Option<Vec<OllamaToolCall>>,
+    #[serde(default)]
+    images: Option<Vec<String>>,
+    #[serde(default)]
+    thinking: Option<String>,
+    #[serde(default)]
+    tool_name: Option<String>,
+}
+
+fn deserialize_chat_message<'de, D>(deserializer: D) -> std::result::Result<ChatMessage, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let incoming = IncomingChatMessage::deserialize(deserializer)?;
+
+    match incoming.role.as_str() {
+        "assistant" | "" => Ok(ChatMessage::Assistant {
+            content: incoming.content,
+            tool_calls: incoming.tool_calls,
+            images: incoming.images,
+            thinking: incoming.thinking,
+        }),
+        "user" => Ok(ChatMessage::User {
+            content: incoming.content,
+            images: incoming.images,
+        }),
+        "system" => Ok(ChatMessage::System {
+            content: incoming.content,
+        }),
+        "tool" => Ok(ChatMessage::Tool {
+            tool_name: incoming.tool_name.unwrap_or_default(),
+            content: incoming.content,
+        }),
+        _ => Ok(ChatMessage::Assistant {
+            content: incoming.content,
+            tool_calls: incoming.tool_calls,
+            images: incoming.images,
+            thinking: incoming.thinking,
+        }),
+    }
 }
 
 #[derive(Serialize, Deserialize)]
@@ -174,7 +224,7 @@ pub struct ModelDetails {
 
 #[derive(Debug)]
 pub struct ModelShow {
-    pub capabilities: Vec<String>,
+    pub capabilities: Option<Vec<String>>,
     pub context_length: Option<u64>,
     pub architecture: Option<String>,
 }
@@ -200,14 +250,14 @@ impl<'de> Deserialize<'de> for ModelShow {
             where
                 A: MapAccess<'de>,
             {
-                let mut capabilities: Vec<String> = Vec::new();
+                let mut capabilities: Option<Vec<String>> = None;
                 let mut architecture: Option<String> = None;
                 let mut context_length: Option<u64> = None;
 
                 while let Some(key) = map.next_key::<String>()? {
                     match key.as_str() {
                         "capabilities" => {
-                            capabilities = map.next_value()?;
+                            capabilities = Some(map.next_value()?);
                         }
                         "model_info" => {
                             let model_info: Value = map.next_value()?;
@@ -244,16 +294,24 @@ impl<'de> Deserialize<'de> for ModelShow {
 
 impl ModelShow {
     pub fn supports_tools(&self) -> bool {
-        // .contains expects &String, which would require an additional allocation
-        self.capabilities.iter().any(|v| v == "tools")
+        match self.capabilities.as_ref() {
+            // Some Ollama-compatible APIs omit capabilities from /api/show.
+            // Assume tools are supported to avoid false negatives in UI and request shaping.
+            None => true,
+            Some(capabilities) => capabilities.iter().any(|v| v == "tools"),
+        }
     }
 
     pub fn supports_vision(&self) -> bool {
-        self.capabilities.iter().any(|v| v == "vision")
+        self.capabilities
+            .as_ref()
+            .is_some_and(|capabilities| capabilities.iter().any(|v| v == "vision"))
     }
 
     pub fn supports_thinking(&self) -> bool {
-        self.capabilities.iter().any(|v| v == "thinking")
+        self.capabilities
+            .as_ref()
+            .is_some_and(|capabilities| capabilities.iter().any(|v| v == "thinking"))
     }
 }
 
@@ -418,6 +476,26 @@ mod tests {
     }
 
     #[test]
+    fn parse_streaming_completion_with_empty_role() {
+        let partial = serde_json::json!({
+        "model": "llama3.2",
+        "created_at": "2023-08-04T08:52:19.385406455-07:00",
+        "message": {
+            "role": "",
+            "content": "Hello"
+        },
+        "done": false
+        });
+
+        let result: ChatResponseDelta = serde_json::from_value(partial).unwrap();
+
+        match result.message {
+            ChatMessage::Assistant { content, .. } => assert_eq!(content, "Hello"),
+            _ => panic!("Expected assistant message"),
+        }
+    }
+
+    #[test]
     fn parse_tool_call() {
         let response = serde_json::json!({
             "model": "llama3.2:3b",
@@ -516,11 +594,36 @@ mod tests {
 
         let result: ModelShow = serde_json::from_value(response).unwrap();
         assert!(result.supports_tools());
-        assert!(result.capabilities.contains(&"tools".to_string()));
-        assert!(result.capabilities.contains(&"completion".to_string()));
+        assert!(result
+            .capabilities
+            .as_ref()
+            .is_some_and(|caps| caps.contains(&"tools".to_string())));
+        assert!(result
+            .capabilities
+            .as_ref()
+            .is_some_and(|caps| caps.contains(&"completion".to_string())));
 
         assert_eq!(result.architecture, Some("llama".to_string()));
         assert_eq!(result.context_length, Some(131072));
+    }
+
+    #[test]
+    fn parse_show_model_without_capabilities_assumes_tools_support() {
+        let response = serde_json::json!({
+            "details": {
+                "format": "gguf",
+                "family": "gpt-oss",
+                "families": ["gpt-oss"],
+                "parameter_size": "20.91 B",
+                "quantization_level": "MOSTLY_Q4_K_M"
+            }
+        });
+
+        let result: ModelShow = serde_json::from_value(response).unwrap();
+        assert!(result.supports_tools());
+        assert!(!result.supports_vision());
+        assert!(!result.supports_thinking());
+        assert!(result.capabilities.is_none());
     }
 
     #[test]
