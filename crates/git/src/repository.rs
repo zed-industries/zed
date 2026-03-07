@@ -230,6 +230,50 @@ pub struct FileHistoryEntry {
     pub commit_timestamp: i64,
     pub author_name: SharedString,
     pub author_email: SharedString,
+    /// Parent commit SHAs (space-separated in git, parsed into Vec)
+    pub parents: Vec<SharedString>,
+    /// Branch/tag refs pointing to this commit (e.g. "origin/main", "HEAD -> main")
+    pub refs: Vec<SharedString>,
+}
+
+/// Graph layout information for a commit in the visualization
+#[derive(Clone, Debug, Default)]
+pub struct CommitGraphLayout {
+    /// Which column (lane) this commit occupies
+    pub column: usize,
+    /// Total number of active columns at this point
+    pub column_count: usize,
+    /// Colors for each active lane (index into color palette)
+    pub lane_colors: Vec<usize>,
+    /// Whether this commit is a merge (has multiple parents)
+    pub is_merge: bool,
+    /// Connections to draw: (from_column, to_column, color_index)
+    pub connections: Vec<GraphConnection>,
+}
+
+/// A connection line in the graph
+#[derive(Clone, Debug)]
+pub struct GraphConnection {
+    /// Source column
+    pub from_col: usize,
+    /// Target column
+    pub to_col: usize,
+    /// Color index for this line
+    pub color: usize,
+    /// Whether this is continuing down or branching
+    pub connection_type: GraphConnectionType,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum GraphConnectionType {
+    /// Straight line down
+    Straight,
+    /// Line curving to the left
+    CurveLeft,
+    /// Line curving to the right
+    CurveRight,
+    /// Merge line coming from another column
+    Merge,
 }
 
 #[derive(Debug, Clone)]
@@ -242,6 +286,8 @@ pub struct FileHistory {
 pub struct BranchHistory {
     pub entries: Vec<FileHistoryEntry>,
     pub branch_name: Option<String>,
+    /// Graph layout information for each entry (same order as entries)
+    pub graph_layouts: Vec<CommitGraphLayout>,
 }
 
 #[derive(Debug)]
@@ -1666,6 +1712,8 @@ impl GitRepository for RealGitRepository {
                             commit_timestamp,
                             author_name,
                             author_email,
+                            parents: Vec::new(), // File history doesn't need parents for graph
+                            refs: Vec::new(),    // File history doesn't need refs
                         });
                     }
                 }
@@ -1689,12 +1737,16 @@ impl GitRepository for RealGitRepository {
                 let commit_delimiter =
                     concat!("<<COMMIT_END-", "3f8a9c2e-7d4b-4e1a-9f6c-8b5d2a1e4c3f>>",);
 
+                // Format: SHA, parents, subject, body, timestamp, author name, author email, refs
+                // %D gives refs without the parentheses (e.g. "HEAD -> main, origin/main")
                 let format_string = format!(
-                    "--pretty=format:%H%x00%s%x00%B%x00%at%x00%an%x00%ae{}",
+                    "--pretty=format:%H%x00%P%x00%s%x00%B%x00%at%x00%an%x00%ae%x00%D{}",
                     commit_delimiter
                 );
 
-                let mut args = vec!["--no-optional-locks", "log", &format_string];
+                // Show commits from all branches for proper graph visualization (like VS Code)
+                // --all: include all refs, --topo-order: show branches together
+                let mut args = vec!["--no-optional-locks", "log", "--all", "--topo-order", &format_string];
 
                 let skip_str;
                 let limit_str;
@@ -1736,13 +1788,33 @@ impl GitRepository for RealGitRepository {
                     }
 
                     let fields: Vec<&str> = commit_block.split('\0').collect();
-                    if fields.len() >= 6 {
+                    if fields.len() >= 8 {
                         let sha = fields[0].trim().to_string().into();
-                        let subject = fields[1].trim().to_string().into();
-                        let message = fields[2].trim().to_string().into();
-                        let commit_timestamp = fields[3].trim().parse().unwrap_or(0);
-                        let author_name = fields[4].trim().to_string().into();
-                        let author_email = fields[5].trim().to_string().into();
+                        // Parse parent SHAs (space-separated)
+                        let parents: Vec<SharedString> = fields[1]
+                            .trim()
+                            .split_whitespace()
+                            .map(|s| s.to_string().into())
+                            .collect();
+                        let subject = fields[2].trim().to_string().into();
+                        let message = fields[3].trim().to_string().into();
+                        let commit_timestamp = fields[4].trim().parse().unwrap_or(0);
+                        let author_name = fields[5].trim().to_string().into();
+                        let author_email = fields[6].trim().to_string().into();
+                        // Parse refs (comma-separated, e.g. "HEAD -> main, origin/main, tag: v1.0")
+                        let refs: Vec<SharedString> = fields[7]
+                            .trim()
+                            .split(", ")
+                            .filter(|s| !s.is_empty())
+                            .map(|s| {
+                                // Clean up "HEAD -> " prefix if present
+                                if let Some(branch) = s.strip_prefix("HEAD -> ") {
+                                    branch.to_string().into()
+                                } else {
+                                    s.to_string().into()
+                                }
+                            })
+                            .collect();
 
                         entries.push(FileHistoryEntry {
                             sha,
@@ -1751,13 +1823,19 @@ impl GitRepository for RealGitRepository {
                             commit_timestamp,
                             author_name,
                             author_email,
+                            parents,
+                            refs,
                         });
                     }
                 }
 
+                // Calculate graph layouts for all entries
+                let graph_layouts = calculate_graph_layouts(&entries);
+
                 Ok(BranchHistory {
                     entries,
                     branch_name,
+                    graph_layouts,
                 })
             })
             .boxed()
@@ -2516,6 +2594,143 @@ impl GitRepository for RealGitRepository {
         }
         .boxed()
     }
+}
+
+/// Calculate graph layouts for commit entries to create VS Code-style visualization
+/// This algorithm assigns columns (lanes) to commits and tracks connections between them
+fn calculate_graph_layouts(entries: &[FileHistoryEntry]) -> Vec<CommitGraphLayout> {
+    use std::collections::HashMap;
+
+    if entries.is_empty() {
+        return Vec::new();
+    }
+
+    let mut layouts = Vec::with_capacity(entries.len());
+
+    // Map from SHA to index for quick lookups (kept for future reference)
+    let _sha_to_index: HashMap<&str, usize> = entries
+        .iter()
+        .enumerate()
+        .map(|(i, e)| (e.sha.as_ref(), i))
+        .collect();
+
+    // Active lanes: maps SHA to column index
+    // Each lane tracks which commit SHA it's waiting for
+    let mut active_lanes: Vec<Option<SharedString>> = Vec::new();
+
+    // Color assignment: deterministic based on first commit that started the lane
+    let mut lane_colors: Vec<usize> = Vec::new();
+
+    for (idx, entry) in entries.iter().enumerate() {
+        let mut layout = CommitGraphLayout::default();
+        layout.is_merge = entry.parents.len() > 1;
+
+        // Find which column this commit should be in
+        // Look for a lane that's waiting for this commit
+        let mut my_column: Option<usize> = None;
+        for (col, lane) in active_lanes.iter().enumerate() {
+            if let Some(waiting_sha) = lane {
+                if waiting_sha.as_ref() == entry.sha.as_ref() {
+                    my_column = Some(col);
+                    break;
+                }
+            }
+        }
+
+        // If no lane is waiting for us, create a new lane
+        let column = my_column.unwrap_or_else(|| {
+            // Find first empty lane or create new one
+            if let Some(col) = active_lanes.iter().position(|l| l.is_none()) {
+                col
+            } else {
+                active_lanes.push(None);
+                // Assign color based on column index
+                lane_colors.push(active_lanes.len() - 1);
+                active_lanes.len() - 1
+            }
+        });
+
+        layout.column = column;
+
+        // Build connections
+        let mut connections = Vec::new();
+
+        // First parent continues straight down in our column
+        if let Some(first_parent) = entry.parents.first() {
+            active_lanes[column] = Some(first_parent.clone());
+            connections.push(GraphConnection {
+                from_col: column,
+                to_col: column,
+                color: lane_colors.get(column).copied().unwrap_or(column),
+                connection_type: GraphConnectionType::Straight,
+            });
+        } else {
+            // No parents (root commit) - lane ends
+            active_lanes[column] = None;
+        }
+
+        // Additional parents create merge lines
+        for (parent_idx, parent_sha) in entry.parents.iter().enumerate().skip(1) {
+            // Find or create a lane for this parent
+            let parent_col = if let Some(col) = active_lanes
+                .iter()
+                .position(|l| l.as_ref().map(|s| s.as_ref()) == Some(parent_sha.as_ref()))
+            {
+                col
+            } else {
+                // Create new lane for this parent
+                if let Some(col) = active_lanes.iter().position(|l| l.is_none()) {
+                    active_lanes[col] = Some(parent_sha.clone());
+                    if col >= lane_colors.len() {
+                        lane_colors.push(idx + parent_idx);
+                    }
+                    col
+                } else {
+                    active_lanes.push(Some(parent_sha.clone()));
+                    lane_colors.push(idx + parent_idx);
+                    active_lanes.len() - 1
+                }
+            };
+
+            let connection_type = if parent_col < column {
+                GraphConnectionType::CurveLeft
+            } else if parent_col > column {
+                GraphConnectionType::CurveRight
+            } else {
+                GraphConnectionType::Merge
+            };
+
+            connections.push(GraphConnection {
+                from_col: column,
+                to_col: parent_col,
+                color: lane_colors.get(parent_col).copied().unwrap_or(parent_col),
+                connection_type,
+            });
+        }
+
+        // Add pass-through lines for other active lanes
+        for (col, lane) in active_lanes.iter().enumerate() {
+            if col != column && lane.is_some() {
+                // Check if we already have a connection to this column
+                if !connections.iter().any(|c| c.to_col == col) {
+                    connections.push(GraphConnection {
+                        from_col: col,
+                        to_col: col,
+                        color: lane_colors.get(col).copied().unwrap_or(col),
+                        connection_type: GraphConnectionType::Straight,
+                    });
+                }
+            }
+        }
+
+        layout.connections = connections;
+        layout.column_count = active_lanes.iter().filter(|l| l.is_some()).count().max(1);
+        layout.lane_colors = lane_colors.clone();
+
+        layouts.push(layout);
+    }
+
+    layouts
 }
 
 fn git_status_args(path_prefixes: &[RepoPath]) -> Vec<OsString> {

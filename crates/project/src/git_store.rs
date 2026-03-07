@@ -4202,6 +4202,8 @@ impl Repository {
                                 commit_timestamp: entry.commit_timestamp,
                                 author_name: entry.author_name.into(),
                                 author_email: entry.author_email.into(),
+                                parents: Vec::new(), // Proto doesn't have parents for file history
+                                refs: Vec::new(),    // Proto doesn't have refs for file history
                             })
                             .collect(),
                         path: RepoPath::from_proto(&response.path)?,
