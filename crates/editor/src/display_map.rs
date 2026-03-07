@@ -169,6 +169,7 @@ pub enum HighlightKey {
     SearchWithinRange,
     SelectedTextHighlight,
     SyntaxTreeView(usize),
+    UnicodeShortcodeHighlight,
     VimExchange,
 }
 
