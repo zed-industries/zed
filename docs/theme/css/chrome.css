@@ -795,7 +795,7 @@ ul#searchresults span.teaser em {
   display: flex;
   flex-direction: column;
   padding: 16px;
-  overflow-y: auto;
+  overflow-y: hidden;
 
   border-radius: 8px;
   background: var(--popover-bg);
@@ -859,4 +859,14 @@ ul#searchresults span.teaser em {
   .theme-popup {
     right: 15px;
   }
+}
+
+.search-modal #searchbar-outer {
+  flex-shrink: 0;
+}
+
+#searchresults-outer {
+  overflow-y: auto;
+  flex: 1;
+  min-height: 0;
 }
