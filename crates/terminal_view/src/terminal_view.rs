@@ -1351,9 +1351,16 @@ impl Item for TerminalView {
             None => (IconName::Terminal, Color::Muted, None),
         };
 
+        let self_handle = self.self_handle.clone();
         h_flex()
             .gap_1()
             .group("term-tab-icon")
+            .track_focus(&self.focus_handle)
+            .on_action(move |action: &RenameTerminal, window, cx| {
+                self_handle
+                    .update(cx, |this, cx| this.rename_terminal(action, window, cx))
+                    .ok();
+            })
             .child(
                 h_flex()
                     .group("term-tab-icon")
