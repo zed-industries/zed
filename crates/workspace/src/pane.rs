@@ -2384,8 +2384,14 @@ impl Pane {
                 })?
                 .await?;
             } else if can_save_as && is_singleton {
-                let suggested_name =
-                    cx.update(|_window, cx| item.suggested_filename(cx).to_string())?;
+                let (suggested_name, initial_directory) = cx.update(|_window, cx| {
+                    let name = item.suggested_filename(cx).to_string();
+                    let dir = item.project_path(cx).and_then(|project_path| {
+                        let abs_path = project.read(cx).absolute_path(&project_path, cx)?;
+                        abs_path.parent().map(|p| p.to_path_buf())
+                    });
+                    (name, dir)
+                })?;
                 let new_path = pane.update_in(cx, |pane, window, cx| {
                     pane.activate_item(item_ix, true, true, window, cx);
                     pane.workspace.update(cx, |workspace, cx| {
@@ -2397,7 +2403,13 @@ impl Pane {
                         } else {
                             DirectoryLister::Project(workspace.project().clone())
                         };
-                        workspace.prompt_for_new_path(lister, Some(suggested_name), window, cx)
+                        workspace.prompt_for_new_path(
+                            lister,
+                            Some(suggested_name),
+                            initial_directory,
+                            window,
+                            cx,
+                        )
                     })
                 })??;
                 let Some(new_path) = new_path.await.ok().flatten().into_iter().flatten().next()

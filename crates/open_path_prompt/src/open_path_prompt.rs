@@ -196,7 +196,7 @@ impl OpenPathPrompt {
     ) {
         workspace.set_prompt_for_open_path(Box::new(|workspace, lister, window, cx| {
             let (tx, rx) = futures::channel::oneshot::channel();
-            Self::prompt_for_open_path(workspace, lister, false, None, tx, window, cx);
+            Self::prompt_for_open_path(workspace, lister, false, None, None, tx, window, cx);
             rx
         }));
     }
@@ -207,9 +207,17 @@ impl OpenPathPrompt {
         _: &mut Context<Workspace>,
     ) {
         workspace.set_prompt_for_new_path(Box::new(
-            |workspace, lister, suggested_name, window, cx| {
+            |workspace, lister, suggested_name, initial_directory, window, cx| {
                 let (tx, rx) = futures::channel::oneshot::channel();
-                Self::prompt_for_new_path(workspace, lister, suggested_name, tx, window, cx);
+                Self::prompt_for_new_path(
+                    workspace,
+                    lister,
+                    suggested_name,
+                    initial_directory,
+                    tx,
+                    window,
+                    cx,
+                );
                 rx
             },
         ));
@@ -220,6 +228,7 @@ impl OpenPathPrompt {
         lister: DirectoryLister,
         creating_path: bool,
         suggested_name: Option<String>,
+        initial_directory: Option<PathBuf>,
         tx: oneshot::Sender<Option<Vec<PathBuf>>>,
         window: &mut Window,
         cx: &mut Context<Workspace>,
@@ -228,10 +237,11 @@ impl OpenPathPrompt {
             let delegate =
                 OpenPathDelegate::new(tx, lister.clone(), creating_path, cx).show_hidden();
             let picker = Picker::uniform_list(delegate, window, cx).width(rems(34.));
-            let mut query = lister.default_query(cx);
-            if let Some(suggested_name) = suggested_name {
-                query.push_str(&suggested_name);
-            }
+            let query = build_initial_query(
+                || lister.default_query(cx),
+                suggested_name,
+                initial_directory,
+            );
             picker.set_query(&query, window, cx);
             picker
         });
@@ -241,12 +251,42 @@ impl OpenPathPrompt {
         workspace: &mut Workspace,
         lister: DirectoryLister,
         suggested_name: Option<String>,
+        initial_directory: Option<PathBuf>,
         tx: oneshot::Sender<Option<Vec<PathBuf>>>,
         window: &mut Window,
         cx: &mut Context<Workspace>,
     ) {
-        Self::prompt_for_open_path(workspace, lister, true, suggested_name, tx, window, cx);
+        Self::prompt_for_open_path(
+            workspace,
+            lister,
+            true,
+            suggested_name,
+            initial_directory,
+            tx,
+            window,
+            cx,
+        );
     }
+}
+
+fn build_initial_query(
+    default_query: impl FnOnce() -> String,
+    suggested_name: Option<String>,
+    initial_directory: Option<PathBuf>,
+) -> String {
+    let mut query = if let Some(initial_dir) = initial_directory {
+        let mut dir_str = initial_dir.to_string_lossy().into_owned();
+        if !dir_str.ends_with(std::path::MAIN_SEPARATOR) {
+            dir_str.push(std::path::MAIN_SEPARATOR);
+        }
+        dir_str
+    } else {
+        default_query()
+    };
+    if let Some(suggested_name) = suggested_name {
+        query.push_str(&suggested_name);
+    }
+    query
 }
 
 impl PickerDelegate for OpenPathDelegate {
@@ -929,9 +969,11 @@ fn get_dir_and_suffix(query: String, path_style: PathStyle) -> (String, String) 
 
 #[cfg(test)]
 mod tests {
+    use std::path::PathBuf;
+
     use util::paths::PathStyle;
 
-    use super::get_dir_and_suffix;
+    use super::{build_initial_query, get_dir_and_suffix};
 
     #[test]
     fn test_get_dir_and_suffix_with_windows_style() {
@@ -1032,5 +1074,62 @@ mod tests {
         let (dir, suffix) = get_dir_and_suffix("/root/.hidden".into(), PathStyle::Posix);
         assert_eq!(dir, "/root/");
         assert_eq!(suffix, ".hidden");
+    }
+
+    #[test]
+    fn test_build_initial_query_uses_initial_directory() {
+        let initial_directory = PathBuf::from("base_dir");
+        let query = build_initial_query(|| "ignored".to_string(), None, Some(initial_directory));
+        let expected = format!("base_dir{}", std::path::MAIN_SEPARATOR);
+        assert_eq!(query, expected);
+    }
+
+    #[test]
+    fn test_build_initial_query_preserves_trailing_separator() {
+        let initial_directory = PathBuf::from(format!("base_dir{}", std::path::MAIN_SEPARATOR));
+        let query = build_initial_query(|| "ignored".to_string(), None, Some(initial_directory));
+        let expected = format!("base_dir{}", std::path::MAIN_SEPARATOR);
+        assert_eq!(query, expected);
+    }
+
+    #[test]
+    fn test_build_initial_query_no_initial_directory() {
+        let query = build_initial_query(|| "ignored".to_string(), None, None);
+        let expected = "ignored";
+        assert_eq!(query, expected);
+    }
+
+    #[test]
+    fn test_build_initial_query_nested_directories() {
+        let query = build_initial_query(
+            || {
+                format!(
+                    "base_dir{}inner_dir{}dir{}",
+                    std::path::MAIN_SEPARATOR,
+                    std::path::MAIN_SEPARATOR,
+                    std::path::MAIN_SEPARATOR,
+                )
+            },
+            Some("file.txt".to_string()),
+            None,
+        );
+        let expected = format!(
+            "base_dir{}inner_dir{}dir{}file.txt",
+            std::path::MAIN_SEPARATOR,
+            std::path::MAIN_SEPARATOR,
+            std::path::MAIN_SEPARATOR,
+        );
+        assert_eq!(query, expected);
+    }
+
+    #[test]
+    fn test_build_initial_query_appends_suggested_name() {
+        let query = build_initial_query(
+            || format!("base_dir{}", std::path::MAIN_SEPARATOR),
+            Some("file.txt".to_string()),
+            None,
+        );
+        let expected = format!("base_dir{}file.txt", std::path::MAIN_SEPARATOR);
+        assert_eq!(query, expected);
     }
 }
