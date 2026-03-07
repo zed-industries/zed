@@ -3011,6 +3011,13 @@ impl ProjectPanel {
         if target_entry.is_file() || (target_entry.is_dir() && target_entry.id == source.entry_id) {
             new_path.pop();
         }
+
+        let source_worktree = self
+            .project
+            .read(cx)
+            .worktree_for_entry(source.entry_id, cx)?;
+        let source_entry = source_worktree.read(cx).entry_for_id(source.entry_id)?;
+
         let clipboard_entry_file_name = self
             .project
             .read(cx)
@@ -3019,8 +3026,18 @@ impl ProjectPanel {
             .file_name()?
             .to_string();
         new_path.push(RelPath::unix(&clipboard_entry_file_name).unwrap());
-        let extension = new_path.extension().map(|s| s.to_string());
-        let file_name_without_extension = new_path.file_stem()?.to_string();
+
+        // For files, insert the disambiguation before the extension. For directories, always append
+        // it to the end of the directory name (dots are valid characters in directory names).
+        let (extension, file_name_without_extension) = if source_entry.is_file() {
+            (
+                new_path.extension().map(|s| s.to_string()),
+                new_path.file_stem()?.to_string(),
+            )
+        } else {
+            (None, clipboard_entry_file_name.clone())
+        };
+
         let file_name_len = file_name_without_extension.len();
         let mut disambiguation_range = None;
         let mut ix = 0;
