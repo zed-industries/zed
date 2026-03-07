@@ -932,6 +932,21 @@ impl WrapSnapshot {
         WrapRow(0)
     }
 
+    pub fn prev_excerpt_boundary(&self, row: WrapRow) -> WrapRow {
+        let buffer_point = self.to_point(WrapPoint::new(row, 0), Bias::Left);
+        let Some(excerpt) = self
+            .buffer_snapshot()
+            .excerpt_containing(buffer_point..buffer_point)
+        else {
+            return row;
+        };
+        let Some(range) = self.buffer_snapshot().range_for_excerpt(excerpt.id()) else {
+            return row;
+        };
+        let start = self.make_wrap_point(range.start, Bias::Left);
+        start.row()
+    }
+
     #[ztracing::instrument(skip_all)]
     pub fn next_row_boundary(&self, mut point: WrapPoint) -> Option<WrapRow> {
         point.0 += Point::new(1, 0);
