@@ -115,7 +115,7 @@ const FILE_SUFFIXES_BY_ICON_KEY: &[(&str, &[&str])] = &[
             "xlsx",
         ],
     ),
-    ("elixir", &["eex", "ex", "exs", "heex"]),
+    ("elixir", &["eex", "ex", "exs", "heex", "leex", "neex"]),
     ("elm", &["elm"]),
     (
         "erlang",
