@@ -29,7 +29,7 @@ use git::repository::{
     UpstreamTrackingStatus, get_git_committer,
 };
 use git::stash::GitStash;
-use git::status::StageStatus;
+use git::status::{DiffStat, StageStatus};
 use git::{Amend, Signoff, ToggleStaged, repository::RepoPath, status::FileStatus};
 use git::{
     ExpandCommitEditor, GitHostingProviderRegistry, RestoreTrackedFiles, StageAll, StashAll,
@@ -56,6 +56,7 @@ use project::{
     project_settings::{GitPathStyle, ProjectSettings},
 };
 use prompt_store::{BuiltInPrompt, PromptId, PromptStore, RULES_FILE_NAMES};
+use proto::RpcError;
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsStore, StatusStyle};
 use smallvec::SmallVec;
@@ -123,6 +124,13 @@ actions!(
         Open,
     ]
 );
+
+/// Opens the Git Graph Tab at a specific commit.
+#[derive(Clone, PartialEq, serde::Deserialize, schemars::JsonSchema, gpui::Action)]
+#[action(namespace = git_graph)]
+pub struct OpenAtCommit {
+    pub sha: String,
+}
 
 fn prompt<T>(
     msg: &str,
@@ -525,6 +533,7 @@ pub struct GitStatusEntry {
     pub(crate) repo_path: RepoPath,
     pub(crate) status: FileStatus,
     pub(crate) staging: StageStatus,
+    pub(crate) diff_stat: Option<DiffStat>,
 }
 
 impl GitStatusEntry {
@@ -645,6 +654,7 @@ pub struct GitPanel {
     local_committer_task: Option<Task<()>>,
     bulk_staging: Option<BulkStaging>,
     stash_entries: GitStash,
+
     _settings_subscription: Subscription,
 }
 
@@ -707,17 +717,24 @@ impl GitPanel {
             let mut was_tree_view = GitPanelSettings::get_global(cx).tree_view;
             let mut was_file_icons = GitPanelSettings::get_global(cx).file_icons;
             let mut was_folder_icons = GitPanelSettings::get_global(cx).folder_icons;
+            let mut was_diff_stats = GitPanelSettings::get_global(cx).diff_stats;
             cx.observe_global_in::<SettingsStore>(window, move |this, window, cx| {
                 let settings = GitPanelSettings::get_global(cx);
                 let sort_by_path = settings.sort_by_path;
                 let tree_view = settings.tree_view;
                 let file_icons = settings.file_icons;
                 let folder_icons = settings.folder_icons;
+                let diff_stats = settings.diff_stats;
                 if tree_view != was_tree_view {
                     this.view_mode = GitPanelViewMode::from_settings(cx);
                 }
+
+                let mut update_entries = false;
                 if sort_by_path != was_sort_by_path || tree_view != was_tree_view {
                     this.bulk_staging.take();
+                    update_entries = true;
+                }
+                if (diff_stats != was_diff_stats) || update_entries {
                     this.update_visible_entries(window, cx);
                 }
                 if file_icons != was_file_icons || folder_icons != was_folder_icons {
@@ -727,6 +744,7 @@ impl GitPanel {
                 was_tree_view = tree_view;
                 was_file_icons = file_icons;
                 was_folder_icons = folder_icons;
+                was_diff_stats = diff_stats;
             })
             .detach();
 
@@ -763,9 +781,7 @@ impl GitPanel {
                 move |this, _git_store, event, window, cx| match event {
                     GitStoreEvent::RepositoryUpdated(
                         _,
-                        RepositoryEvent::StatusesChanged
-                        | RepositoryEvent::BranchChanged
-                        | RepositoryEvent::MergeHeadsChanged,
+                        RepositoryEvent::StatusesChanged | RepositoryEvent::BranchChanged,
                         true,
                     )
                     | GitStoreEvent::RepositoryAdded
@@ -2751,6 +2767,7 @@ impl GitPanel {
                     temperature,
                     thinking_allowed: false,
                     thinking_effort: None,
+                    speed: None,
                 };
 
                 let stream = model.stream_completion_text(request, cx);
@@ -3187,18 +3204,16 @@ impl GitPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AskPassDelegate {
-        let this = cx.weak_entity();
+        let workspace = self.workspace.clone();
         let operation = operation.into();
         let window = window.window_handle();
         AskPassDelegate::new(&mut cx.to_async(), move |prompt, tx, cx| {
             window
                 .update(cx, |_, window, cx| {
-                    this.update(cx, |this, cx| {
-                        this.workspace.update(cx, |workspace, cx| {
-                            workspace.toggle_modal(window, cx, |window, cx| {
-                                AskPassModal::new(operation.clone(), prompt.into(), tx, window, cx)
-                            });
-                        })
+                    workspace.update(cx, |workspace, cx| {
+                        workspace.toggle_modal(window, cx, |window, cx| {
+                            AskPassModal::new(operation.clone(), prompt.into(), tx, window, cx)
+                        });
                     })
                 })
                 .ok();
@@ -3273,10 +3288,8 @@ impl GitPanel {
         let mut new_co_authors = Vec::new();
         let project = self.project.read(cx);
 
-        let Some(room) = self
-            .workspace
-            .upgrade()
-            .and_then(|workspace| workspace.read(cx).active_call()?.read(cx).room().cloned())
+        let Some(room) =
+            call::ActiveCall::try_global(cx).and_then(|call| call.read(cx).room().cloned())
         else {
             return Vec::default();
         };
@@ -3544,6 +3557,7 @@ impl GitPanel {
                 repo_path: entry.repo_path.clone(),
                 status: entry.status,
                 staging,
+                diff_stat: entry.diff_stat,
             };
 
             if staging.has_staged() {
@@ -3580,6 +3594,7 @@ impl GitPanel {
                             repo_path: ops.repo_path.clone(),
                             status: status.status,
                             staging: StageStatus::Staged,
+                            diff_stat: status.diff_stat,
                         });
             }
         }
@@ -5147,6 +5162,8 @@ impl GitPanel {
                 }
             });
 
+        let id_for_diff_stat = id.clone();
+
         h_flex()
             .id(id)
             .h(self.list_item_height())
@@ -5163,6 +5180,16 @@ impl GitPanel {
             .hover(|s| s.bg(hover_bg))
             .active(|s| s.bg(active_bg))
             .child(name_row)
+            .when(GitPanelSettings::get_global(cx).diff_stats, |el| {
+                el.when_some(entry.diff_stat, move |this, stat| {
+                    let id = format!("diff-stat-{}", id_for_diff_stat);
+                    this.child(ui::DiffStat::new(
+                        id,
+                        stat.added as usize,
+                        stat.deleted as usize,
+                    ))
+                })
+            })
             .child(
                 div()
                     .id(checkbox_wrapper_id)
@@ -5575,14 +5602,28 @@ impl GitPanel {
     }
 }
 
+#[cfg(any(test, feature = "test-support"))]
+impl GitPanel {
+    pub fn new_test(
+        workspace: &mut Workspace,
+        window: &mut Window,
+        cx: &mut Context<Workspace>,
+    ) -> Entity<Self> {
+        Self::new(workspace, window, cx)
+    }
+
+    pub fn active_repository(&self) -> Option<&Entity<Repository>> {
+        self.active_repository.as_ref()
+    }
+}
+
 impl Render for GitPanel {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let project = self.project.read(cx);
         let has_entries = !self.entries.is_empty();
-        let room = self
-            .workspace
-            .upgrade()
-            .and_then(|workspace| workspace.read(cx).active_call()?.read(cx).room().cloned());
+        let room = self.workspace.upgrade().and_then(|_workspace| {
+            call::ActiveCall::try_global(cx).and_then(|call| call.read(cx).room().cloned())
+        });
 
         let has_write_access = self.has_write_access(cx);
 
@@ -6368,7 +6409,7 @@ pub(crate) fn show_error_toast(
     cx: &mut App,
 ) {
     let action = action.into();
-    let message = e.to_string().trim().to_string();
+    let message = format_git_error_toast_message(&e);
     if message
         .matches(git::repository::REMOTE_CANCELLED_BY_USER)
         .next()
@@ -6391,6 +6432,20 @@ pub(crate) fn show_error_toast(
             });
             workspace.toggle_status_toast(toast, cx)
         });
+    }
+}
+
+fn rpc_error_raw_message_from_chain(error: &anyhow::Error) -> Option<&str> {
+    error
+        .chain()
+        .find_map(|cause| cause.downcast_ref::<RpcError>().map(RpcError::raw_message))
+}
+
+fn format_git_error_toast_message(error: &anyhow::Error) -> String {
+    if let Some(message) = rpc_error_raw_message_from_chain(error) {
+        message.trim().to_string()
+    } else {
+        error.to_string().trim().to_string()
     }
 }
 
@@ -6423,6 +6478,47 @@ mod tests {
             editor::init(cx);
             crate::init(cx);
         });
+    }
+
+    #[test]
+    fn test_format_git_error_toast_message_prefers_raw_rpc_message() {
+        let rpc_error = RpcError::from_proto(
+            &proto::Error {
+                message:
+                    "Your local changes to the following files would be overwritten by merge\n"
+                        .to_string(),
+                code: proto::ErrorCode::Internal as i32,
+                tags: Default::default(),
+            },
+            "Pull",
+        );
+
+        let message = format_git_error_toast_message(&rpc_error);
+        assert_eq!(
+            message,
+            "Your local changes to the following files would be overwritten by merge"
+        );
+    }
+
+    #[test]
+    fn test_format_git_error_toast_message_prefers_raw_rpc_message_when_wrapped() {
+        let rpc_error = RpcError::from_proto(
+            &proto::Error {
+                message:
+                    "Your local changes to the following files would be overwritten by merge\n"
+                        .to_string(),
+                code: proto::ErrorCode::Internal as i32,
+                tags: Default::default(),
+            },
+            "Pull",
+        );
+        let wrapped = rpc_error.context("sending pull request");
+
+        let message = format_git_error_toast_message(&wrapped);
+        assert_eq!(
+            message,
+            "Your local changes to the following files would be overwritten by merge"
+        );
     }
 
     #[gpui::test]
@@ -6498,11 +6594,19 @@ mod tests {
                     repo_path: repo_path("crates/gpui/gpui.rs"),
                     status: StatusCode::Modified.worktree(),
                     staging: StageStatus::Unstaged,
+                    diff_stat: Some(DiffStat {
+                        added: 1,
+                        deleted: 1,
+                    }),
                 }),
                 GitListEntry::Status(GitStatusEntry {
                     repo_path: repo_path("crates/util/util.rs"),
                     status: StatusCode::Modified.worktree(),
                     staging: StageStatus::Unstaged,
+                    diff_stat: Some(DiffStat {
+                        added: 1,
+                        deleted: 1,
+                    }),
                 },),
             ],
         );
@@ -6523,11 +6627,19 @@ mod tests {
                     repo_path: repo_path("crates/gpui/gpui.rs"),
                     status: StatusCode::Modified.worktree(),
                     staging: StageStatus::Unstaged,
+                    diff_stat: Some(DiffStat {
+                        added: 1,
+                        deleted: 1,
+                    }),
                 }),
                 GitListEntry::Status(GitStatusEntry {
                     repo_path: repo_path("crates/util/util.rs"),
                     status: StatusCode::Modified.worktree(),
                     staging: StageStatus::Unstaged,
+                    diff_stat: Some(DiffStat {
+                        added: 1,
+                        deleted: 1,
+                    }),
                 },),
             ],
         );

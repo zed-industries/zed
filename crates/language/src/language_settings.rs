@@ -12,7 +12,7 @@ use itertools::{Either, Itertools};
 use settings::{DocumentFoldingRanges, DocumentSymbols, IntoGpui, SemanticTokens};
 
 pub use settings::{
-    CompletionSettingsContent, EditPredictionPromptFormat, EditPredictionProvider,
+    AutoIndentMode, CompletionSettingsContent, EditPredictionPromptFormat, EditPredictionProvider,
     EditPredictionsMode, FormatOnSave, Formatter, FormatterList, InlayHintKind,
     LanguageSettingsContent, LspInsertMode, RewrapBehavior, ShowWhitespaceSetting, SoftWrap,
     WordsCompletionMode,
@@ -144,8 +144,8 @@ pub struct LanguageSettings {
     /// Whether to use additional LSP queries to format (and amend) the code after
     /// every "trigger" symbol input, defined by LSP server capabilities.
     pub use_on_type_format: bool,
-    /// Whether indentation should be adjusted based on the context whilst typing.
-    pub auto_indent: bool,
+    /// Controls automatic indentation behavior when typing.
+    pub auto_indent: AutoIndentMode,
     /// Whether indentation of pasted content should be adjusted based on the context.
     pub auto_indent_on_paste: bool,
     /// Controls how the editor handles the autoclosed characters.
@@ -227,6 +227,22 @@ pub struct IndentGuideSettings {
     ///
     /// Default: Disabled
     pub background_coloring: settings::IndentGuideBackgroundColoring,
+}
+
+impl IndentGuideSettings {
+    /// Returns the clamped line width in pixels for an indent guide based on
+    /// whether it is active, or `None` when line coloring is disabled.
+    pub fn visible_line_width(&self, active: bool) -> Option<u32> {
+        if self.coloring == settings::IndentGuideColoring::Disabled {
+            return None;
+        }
+        let width = if active {
+            self.active_line_width
+        } else {
+            self.line_width
+        };
+        Some(width.clamp(1, 10))
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -380,8 +396,7 @@ impl InlayHintSettings {
     }
 }
 
-/// The settings for edit predictions, such as [GitHub Copilot](https://github.com/features/copilot)
-/// or [Supermaven](https://supermaven.com).
+/// The settings for edit predictions, such as [GitHub Copilot](https://github.com/features/copilot).
 #[derive(Clone, Debug, Default)]
 pub struct EditPredictionSettings {
     /// The provider that supplies edit predictions.

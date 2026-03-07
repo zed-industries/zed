@@ -228,7 +228,7 @@ impl Vim {
         editor.highlight_background(
             HighlightKey::HighlightOnYank,
             &ranges_to_highlight,
-            |_, colors| colors.colors().editor_document_highlight_read_background,
+            |_, colors| colors.colors().vim_yank_background,
             cx,
         );
         cx.spawn(async move |this, cx| {

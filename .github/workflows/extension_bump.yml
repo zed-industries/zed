@@ -38,10 +38,10 @@ jobs:
       name: extension_bump::compare_versions
       run: |
         CURRENT_VERSION="$(sed -n 's/^version = \"\(.*\)\"/\1/p' < extension.toml | tr -d '[:space:]')"
-        PR_PARENT_SHA="${{ github.event.pull_request.head.sha }}"
 
-        if [[ -n "$PR_PARENT_SHA" ]]; then
-            git checkout "$PR_PARENT_SHA"
+        if [[ "$GITHUB_EVENT_NAME" == "pull_request" ]]; then
+            PR_FORK_POINT="$(git merge-base origin/main HEAD)"
+            git checkout "$PR_FORK_POINT"
         elif BRANCH_PARENT_SHA="$(git merge-base origin/main origin/zed-zippy-autobump)"; then
             git checkout "$BRANCH_PARENT_SHA"
         else
@@ -64,7 +64,7 @@ jobs:
     - check_version_changed
     if: |-
       (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions') &&
-      (inputs.force-bump == 'true' || needs.check_version_changed.outputs.version_changed == 'false')
+      (inputs.force-bump == true || needs.check_version_changed.outputs.version_changed == 'false')
     runs-on: namespace-profile-2x4-ubuntu-2404
     steps:
     - id: generate-token
@@ -82,8 +82,6 @@ jobs:
     - id: bump-version
       name: extension_bump::bump_version
       run: |
-        OLD_VERSION="${{ needs.check_version_changed.outputs.current_version }}"
-
         BUMP_FILES=("extension.toml")
         if [[ -f "Cargo.toml" ]]; then
             BUMP_FILES+=("Cargo.toml")
@@ -93,7 +91,7 @@ jobs:
             --search "version = \"{current_version}"\" \
             --replace "version = \"{new_version}"\" \
             --current-version "$OLD_VERSION" \
-            --no-configured-files ${{ inputs.bump-type }} "${BUMP_FILES[@]}"
+            --no-configured-files "$BUMP_TYPE" "${BUMP_FILES[@]}"
 
         if [[ -f "Cargo.toml" ]]; then
             cargo update --workspace
@@ -102,6 +100,9 @@ jobs:
         NEW_VERSION="$(sed -n 's/^version = \"\(.*\)\"/\1/p' < extension.toml | tr -d '[:space:]')"
 
         echo "new_version=${NEW_VERSION}" >> "$GITHUB_OUTPUT"
+      env:
+        OLD_VERSION: ${{ needs.check_version_changed.outputs.current_version }}
+        BUMP_TYPE: ${{ inputs.bump-type }}
     - name: extension_bump::create_pull_request
       uses: peter-evans/create-pull-request@v7
       with:

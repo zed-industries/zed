@@ -89,8 +89,8 @@ Configure language servers in Settings ({#kb zed::OpenSettings}) under Languages
   "languages": {
     "Python": {
       "language_servers": [
-        // Disable basedpyright and enable ty, and otherwise
-        // use the default configuration.
+        // Disable basedpyright and enable ty, and include all
+        // other registered language servers (ruff, pylsp, pyright).
         "ty",
         "!basedpyright",
         "..."

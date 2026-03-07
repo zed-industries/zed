@@ -44,22 +44,6 @@ pub fn ai_privacy_and_security(cx: &App) -> String {
     )
 }
 
-/// Returns the URL to Zed AI's external agents documentation.
-pub fn external_agents_docs(cx: &App) -> String {
-    format!(
-        "{server_url}/docs/ai/external-agents",
-        server_url = server_url(cx)
-    )
-}
-
-/// Returns the URL to Zed agent servers documentation.
-pub fn agent_server_docs(cx: &App) -> String {
-    format!(
-        "{server_url}/docs/extensions/agent-servers",
-        server_url = server_url(cx)
-    )
-}
-
 /// Returns the URL to Zed's edit prediction documentation.
 pub fn edit_prediction_docs(cx: &App) -> String {
     format!(
