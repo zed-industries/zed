@@ -4,8 +4,12 @@ use editor::actions::OpenExcerpts;
 
 use crate::StartThreadIn;
 use gpui::{Corner, List};
-use language_model::{LanguageModelEffortLevel, Speed};
+use language_model::{
+    LanguageModelEffortLevel, LanguageModelRegistry, LanguageModelRequest,
+    LanguageModelRequestMessage, Role, Speed,
+};
 use settings::update_settings_file;
+use std::hash::{Hash, Hasher};
 use ui::{ButtonLike, SplitButton, SplitButtonStyle, Tab};
 use workspace::SERIALIZATION_THROTTLE_TIME;
 
@@ -243,6 +247,7 @@ pub struct ThreadView {
     pub queued_message_editor_subscriptions: Vec<Subscription>,
     pub last_synced_queue_length: usize,
     pub turn_fields: TurnFields,
+    rules_token_counts: RulesTokenCounts,
     pub discarded_partial_edits: HashSet<agent_client_protocol::ToolCallId>,
     pub is_loading_contents: bool,
     pub new_server_version_available: Option<SharedString>,
@@ -285,6 +290,14 @@ pub struct TurnFields {
     pub turn_generation: usize,
     pub turn_started_at: Option<Instant>,
     pub turn_tokens: Option<u64>,
+}
+
+#[derive(Default)]
+struct RulesTokenCounts {
+    user_rules_tokens: Option<u64>,
+    project_rules_tokens: Option<u64>,
+    last_rules_hash: Option<u64>,
+    pending_task: Option<Task<()>>,
 }
 
 impl ThreadView {
@@ -474,6 +487,7 @@ impl ThreadView {
             queued_message_editor_subscriptions: Vec::new(),
             last_synced_queue_length: 0,
             turn_fields: TurnFields::default(),
+            rules_token_counts: RulesTokenCounts::default(),
             discarded_partial_edits: HashSet::default(),
             is_loading_contents: false,
             new_server_version_available: None,
@@ -3013,10 +3027,189 @@ impl ThreadView {
             .is_some_and(|model| model.supports_split_token_display())
     }
 
-    fn render_token_usage(&self, cx: &mut Context<Self>) -> Option<impl IntoElement> {
-        let thread = self.thread.read(cx);
-        let usage = thread.token_usage()?;
-        let is_generating = thread.status() != ThreadStatus::Idle;
+    fn rules_context_snapshot(
+        &self,
+        cx: &Context<Self>,
+    ) -> Option<(usize, usize, String, String, u64)> {
+        let thread = self.as_native_thread(cx)?;
+        let project_context = thread.read(cx).project_context().read(cx);
+
+        let user_rules_count = project_context.user_rules.len();
+        let project_rules_count = project_context
+            .worktrees
+            .iter()
+            .filter(|worktree| worktree.rules_file.is_some())
+            .count();
+
+        if user_rules_count == 0 && project_rules_count == 0 {
+            return None;
+        }
+
+        let user_rules_text = project_context
+            .user_rules
+            .iter()
+            .map(|user_rules| user_rules.contents.as_str())
+            .collect::<Vec<_>>()
+            .join("\n\n");
+
+        let project_rules_text = project_context
+            .worktrees
+            .iter()
+            .filter_map(|worktree| worktree.rules_file.as_ref())
+            .map(|rules_file| rules_file.text.as_str())
+            .collect::<Vec<_>>()
+            .join("\n\n");
+
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        user_rules_text.hash(&mut hasher);
+        project_rules_text.hash(&mut hasher);
+
+        Some((
+            user_rules_count,
+            project_rules_count,
+            user_rules_text,
+            project_rules_text,
+            hasher.finish(),
+        ))
+    }
+
+    fn build_rules_token_request(contents: String) -> LanguageModelRequest {
+        LanguageModelRequest {
+            thread_id: None,
+            prompt_id: None,
+            intent: None,
+            messages: vec![LanguageModelRequestMessage {
+                role: Role::System,
+                content: vec![contents.into()],
+                cache: false,
+                reasoning_details: None,
+            }],
+            tools: Vec::new(),
+            tool_choice: None,
+            stop: Vec::new(),
+            temperature: None,
+            thinking_allowed: true,
+            thinking_effort: None,
+            speed: None,
+        }
+    }
+
+    fn rules_count_label(count: usize, token_count: Option<u64>, label: &str) -> String {
+        match token_count {
+            Some(token_count) => format!(
+                "{} {} • {} tokens",
+                count,
+                label,
+                crate::text_thread_editor::humanize_token_count(token_count)
+            ),
+            None => format!("{count} {label} • Counting…"),
+        }
+    }
+
+    fn ensure_rules_token_counts(
+        &mut self,
+        snapshot: Option<(usize, usize, String, String, u64)>,
+        cx: &mut Context<Self>,
+    ) {
+        let Some((
+            user_rules_count,
+            project_rules_count,
+            user_rules_text,
+            project_rules_text,
+            rules_hash,
+        )) = snapshot
+        else {
+            self.rules_token_counts = RulesTokenCounts::default();
+            return;
+        };
+
+        let rules_changed = self.rules_token_counts.last_rules_hash != Some(rules_hash);
+        if rules_changed {
+            self.rules_token_counts.last_rules_hash = Some(rules_hash);
+            self.rules_token_counts.user_rules_tokens = None;
+            self.rules_token_counts.project_rules_tokens = None;
+            self.rules_token_counts.pending_task = None;
+        }
+
+        let should_count_user = user_rules_count > 0 && !user_rules_text.is_empty();
+        let should_count_project = project_rules_count > 0 && !project_rules_text.is_empty();
+
+        if !should_count_user && !should_count_project {
+            return;
+        }
+
+        let needs_user = should_count_user && self.rules_token_counts.user_rules_tokens.is_none();
+        let needs_project =
+            should_count_project && self.rules_token_counts.project_rules_tokens.is_none();
+
+        if !needs_user && !needs_project {
+            return;
+        }
+
+        if self.rules_token_counts.pending_task.is_some() {
+            return;
+        }
+
+        let model = self
+            .as_native_thread(cx)
+            .and_then(|thread| thread.read(cx).model().cloned())
+            .or_else(|| {
+                LanguageModelRegistry::read_global(cx)
+                    .default_model()
+                    .map(|configured| configured.model)
+            });
+
+        let Some(model) = model else {
+            return;
+        };
+
+        self.rules_token_counts.pending_task = Some(cx.spawn(async move |this, cx| {
+            let result: anyhow::Result<(Option<u64>, Option<u64>)> = async {
+                let user_tokens = if needs_user {
+                    let request = Self::build_rules_token_request(user_rules_text);
+                    let token_task = cx.update(|cx| model.count_tokens(request, cx)).await?;
+                    Some(token_task)
+                } else {
+                    None
+                };
+
+                let project_tokens = if needs_project {
+                    let request = Self::build_rules_token_request(project_rules_text);
+                    let token_task = cx.update(|cx| model.count_tokens(request, cx)).await?;
+                    Some(token_task)
+                } else {
+                    None
+                };
+
+                Ok((user_tokens, project_tokens))
+            }
+            .await;
+
+            this.update(cx, |this, cx| {
+                this.rules_token_counts.pending_task = None;
+                match result {
+                    Ok((user_tokens, project_tokens)) => {
+                        this.rules_token_counts.user_rules_tokens = user_tokens;
+                        this.rules_token_counts.project_rules_tokens = project_tokens;
+                    }
+                    Err(error) => {
+                        log::error!("Failed to count rules tokens: {:?}", error);
+                    }
+                }
+                cx.notify();
+            })
+            .log_err();
+        }));
+    }
+
+    fn render_token_usage(&mut self, cx: &mut Context<Self>) -> Option<impl IntoElement> {
+        let (usage, is_generating) = {
+            let thread = self.thread.read(cx);
+            (
+                thread.token_usage()?.clone(),
+                thread.status() != ThreadStatus::Idle,
+            )
+        };
         let show_split = self.supports_split_token_display(cx);
 
         let separator_color = Color::Custom(cx.theme().colors().text_muted.opacity(0.5));
@@ -3120,19 +3313,35 @@ impl ThreadView {
 
             let percentage = format!("{}%", (progress_ratio * 100.0).round() as u32);
 
-            let (user_rules_count, project_rules_count) = self
-                .as_native_thread(cx)
-                .map(|thread| {
-                    let project_context = thread.read(cx).project_context().read(cx);
-                    let user_rules = project_context.user_rules.len();
-                    let project_rules = project_context
-                        .worktrees
-                        .iter()
-                        .filter(|wt| wt.rules_file.is_some())
-                        .count();
-                    (user_rules, project_rules)
+            let rules_snapshot = self.rules_context_snapshot(cx);
+            let (user_rules_count, project_rules_count) = rules_snapshot
+                .as_ref()
+                .map(|(user_rules_count, project_rules_count, _, _, _)| {
+                    (*user_rules_count, *project_rules_count)
                 })
                 .unwrap_or((0, 0));
+
+            self.ensure_rules_token_counts(rules_snapshot, cx);
+
+            let user_rules_label = if user_rules_count > 0 {
+                Some(Self::rules_count_label(
+                    user_rules_count,
+                    self.rules_token_counts.user_rules_tokens,
+                    "user rules",
+                ))
+            } else {
+                None
+            };
+
+            let project_rules_label = if project_rules_count > 0 {
+                Some(Self::rules_count_label(
+                    project_rules_count,
+                    self.rules_token_counts.project_rules_tokens,
+                    "project rules",
+                ))
+            } else {
+                None
+            };
 
             Some(
                 h_flex()
@@ -3151,6 +3360,8 @@ impl ThreadView {
                     )
                     .tooltip(Tooltip::element({
                         move |_, cx| {
+                            let user_rules_label = user_rules_label.clone();
+                            let project_rules_label = project_rules_label.clone();
                             v_flex()
                                 .min_w_40()
                                 .child(
@@ -3167,32 +3378,29 @@ impl ThreadView {
                                         .child(Label::new("/").color(separator_color))
                                         .child(Label::new(max.clone()).color(Color::Muted)),
                                 )
-                                .when(user_rules_count > 0 || project_rules_count > 0, |this| {
-                                    this.child(
-                                        v_flex()
-                                            .mt_1p5()
-                                            .pt_1p5()
-                                            .border_t_1()
-                                            .border_color(cx.theme().colors().border_variant)
-                                            .child(
-                                                Label::new("Rules")
-                                                    .color(Color::Muted)
-                                                    .size(LabelSize::Small),
-                                            )
-                                            .when(user_rules_count > 0, |this| {
-                                                this.child(Label::new(format!(
-                                                    "{} user rules",
-                                                    user_rules_count
-                                                )))
-                                            })
-                                            .when(project_rules_count > 0, |this| {
-                                                this.child(Label::new(format!(
-                                                    "{} project rules",
-                                                    project_rules_count
-                                                )))
-                                            }),
-                                    )
-                                })
+                                .when(
+                                    user_rules_label.is_some() || project_rules_label.is_some(),
+                                    |this| {
+                                        this.child(
+                                            v_flex()
+                                                .mt_1p5()
+                                                .pt_1p5()
+                                                .border_t_1()
+                                                .border_color(cx.theme().colors().border_variant)
+                                                .child(
+                                                    Label::new("Rules")
+                                                        .color(Color::Muted)
+                                                        .size(LabelSize::Small),
+                                                )
+                                                .when_some(user_rules_label, |this, label| {
+                                                    this.child(Label::new(label))
+                                                })
+                                                .when_some(project_rules_label, |this, label| {
+                                                    this.child(Label::new(label))
+                                                }),
+                                        )
+                                    },
+                                )
                                 .into_any_element()
                         }
                     }))
