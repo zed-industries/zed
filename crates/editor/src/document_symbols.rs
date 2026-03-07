@@ -6,7 +6,7 @@ use futures::future::join_all;
 use gpui::{App, Context, HighlightStyle, Task};
 use itertools::Itertools as _;
 use language::language_settings::language_settings;
-use language::{Buffer, BufferSnapshot, OutlineItem};
+use language::{Buffer, OutlineItem};
 use multi_buffer::{Anchor, MultiBufferSnapshot};
 use text::{Bias, BufferId, OffsetRangeExt as _, ToOffset as _};
 use theme::{ActiveTheme as _, SyntaxTheme};
@@ -213,15 +213,17 @@ impl Editor {
                             editor.display_map.update(cx, |map, cx| map.snapshot(cx));
                         let mut highlighted_results = results;
                         for (buffer_id, items) in &mut highlighted_results {
-                            if let Some(buffer) = editor.buffer.read(cx).buffer(*buffer_id) {
-                                let snapshot = buffer.read(cx).snapshot();
-                                apply_highlights(
-                                    items,
-                                    *buffer_id,
-                                    &snapshot,
+                            for item in items {
+                                if let Some(highlights) = highlights_from_buffer(
+                                    editor,
                                     &display_snapshot,
+                                    &item,
+                                    *buffer_id,
                                     &syntax,
-                                );
+                                    cx,
+                                ) {
+                                    item.highlight_ranges = highlights;
+                                }
                             }
                         }
                         editor.lsp_document_symbols.extend(highlighted_results);
@@ -239,34 +241,6 @@ fn lsp_symbols_enabled(buffer: &Buffer, cx: &App) -> bool {
         .lsp_enabled()
 }
 
-/// Applies combined syntax + semantic token highlights to LSP document symbol
-/// outline items that were built without highlights by the project layer.
-fn apply_highlights(
-    items: &mut [OutlineItem<text::Anchor>],
-    buffer_id: BufferId,
-    buffer_snapshot: &BufferSnapshot,
-    display_snapshot: &DisplaySnapshot,
-    syntax_theme: &SyntaxTheme,
-) {
-    for item in items {
-        let symbol_range = item.range.to_offset(buffer_snapshot);
-        let selection_start = item.source_range_for_text.start.to_offset(buffer_snapshot);
-
-        if let Some(highlights) = highlights_from_buffer(
-            &item.text,
-            0,
-            buffer_id,
-            buffer_snapshot,
-            display_snapshot,
-            symbol_range,
-            selection_start,
-            syntax_theme,
-        ) {
-            item.highlight_ranges = highlights;
-        }
-    }
-}
-
 /// Finds where the symbol name appears in the buffer and returns combined
 /// (tree-sitter + semantic token) highlights for those positions.
 ///
@@ -275,19 +249,29 @@ fn apply_highlights(
 /// to word-by-word matching for cases like `impl<T> Trait<T> for Type`
 /// where the LSP name doesn't appear verbatim in the buffer.
 fn highlights_from_buffer(
-    name: &str,
-    name_offset_in_text: usize,
-    buffer_id: BufferId,
-    buffer_snapshot: &BufferSnapshot,
+    editor: &Editor,
     display_snapshot: &DisplaySnapshot,
-    symbol_range: Range<usize>,
-    selection_start_offset: usize,
+    item: &OutlineItem<text::Anchor>,
+    buffer_id: BufferId,
     syntax_theme: &SyntaxTheme,
+    cx: &App,
 ) -> Option<Vec<(Range<usize>, HighlightStyle)>> {
+    let name = &item.text;
     if name.is_empty() {
         return None;
     }
 
+    let (_, buffer_snapshot, _) = editor
+        .buffer()
+        .read(cx)
+        .excerpts_for_buffer(buffer_id, cx)
+        .into_iter()
+        .find(|(_, buffer_snapshot, _)| {
+            item.range.start.is_valid(&buffer_snapshot) && item.range.end.is_valid(&buffer_snapshot)
+        })?;
+
+    let symbol_range = item.range.to_offset(&buffer_snapshot);
+    let selection_start_offset = item.source_range_for_text.start.to_offset(&buffer_snapshot);
     let range_start_offset = symbol_range.start;
     let range_end_offset = symbol_range.end;
 
@@ -311,7 +295,7 @@ fn highlights_from_buffer(
             let name_start_offset = search_start + found_at;
             let name_end_offset = name_start_offset + name.len();
             let result = highlights_for_buffer_range(
-                name_offset_in_text,
+                0,
                 name_start_offset..name_end_offset,
                 buffer_id,
                 display_snapshot,
@@ -343,9 +327,8 @@ fn highlights_from_buffer(
         if let Some(found_in_buf) = buffer_text[buf_search_from..].find(word) {
             let buf_word_start = range_start_offset + buf_search_from + found_in_buf;
             let buf_word_end = buf_word_start + word.len();
-            let text_cursor = name_offset_in_text + name_word_start;
             if let Some(mut word_highlights) = highlights_for_buffer_range(
-                text_cursor,
+                name_word_start,
                 buf_word_start..buf_word_end,
                 buffer_id,
                 display_snapshot,
