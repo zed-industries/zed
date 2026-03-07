@@ -8416,6 +8416,7 @@ impl Editor {
 
         self.update_hovered_link(
             position_map.point_for_position(mouse_position),
+            Some(mouse_position),
             &position_map.snapshot,
             modifiers,
             window,
