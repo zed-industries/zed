@@ -2203,6 +2203,7 @@
     "anthropic": {
       "api_url": "https://api.anthropic.com",
     },
+    "anthropic_compatible": {},
     "bedrock": {},
     "google": {
       "api_url": "https://generativelanguage.googleapis.com",
