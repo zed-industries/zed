@@ -1965,6 +1965,155 @@ async fn test_remote_agent_fs_tool_calls(cx: &mut TestAppContext, server_cx: &mu
 }
 
 #[gpui::test]
+async fn test_remote_registry_npx_agent_fails_without_working_node(
+    cx: &mut TestAppContext,
+    server_cx: &mut TestAppContext,
+) {
+    let fs = FakeFs::new(server_cx.executor());
+    fs.insert_tree(path!("/project"), json!({})).await;
+
+    let (project, _headless_project) = init_test(&fs, cx, server_cx).await;
+    project
+        .update(cx, |project, cx| {
+            project.find_or_create_worktree(path!("/project"), true, cx)
+        })
+        .await
+        .unwrap();
+
+    // Configure a registry agent with a CLAUDE_CODE_EXECUTABLE override on the
+    // client side. This simulates what a NixOS user would do: they set the env
+    // override hoping it bypasses npm, but the registry agent's get_command()
+    // calls npm_command() first, which fails when Node.js is unavailable.
+    cx.update_global::<SettingsStore, _>(|settings_store, cx| {
+        settings_store
+            .set_user_settings(
+                &json!({
+                    "agent_servers": {
+                        "claude-acp": {
+                            "type": "registry",
+                            "env": {
+                                "CLAUDE_CODE_EXECUTABLE": "/nix/store/some-hash/bin/claude"
+                            }
+                        }
+                    }
+                })
+                .to_string(),
+                cx,
+            )
+            .unwrap();
+    });
+
+    cx.run_until_parked();
+    server_cx.run_until_parked();
+
+    // The registry agent doesn't appear because NodeRuntime is unavailable in the
+    // test (init_test uses NodeRuntime::unavailable()), and registry agents require
+    // the AgentRegistryStore to have loaded the agent metadata. On NixOS, even if
+    // the agent metadata were present, get_command() would fail at the npm_command()
+    // call because the Zed-managed Node.js binary can't execute.
+    //
+    // This mirrors the real bug: the CLAUDE_CODE_EXECUTABLE env override is only
+    // applied AFTER npm_command() succeeds (in LocalRegistryNpxAgent::get_command),
+    // so it can't help when Node.js itself is broken.
+    let names = project.update(cx, |project, cx| {
+        project
+            .agent_server_store()
+            .read(cx)
+            .external_agents()
+            .map(|name| name.to_string())
+            .collect::<Vec<_>>()
+    });
+    pretty_assertions::assert_eq!(names, Vec::<String>::new());
+}
+
+#[gpui::test]
+async fn test_remote_custom_agent_settings_forwarded_to_server(
+    cx: &mut TestAppContext,
+    server_cx: &mut TestAppContext,
+) {
+    let fs = FakeFs::new(server_cx.executor());
+    fs.insert_tree(path!("/project"), json!({})).await;
+
+    let (project, _headless_project) = init_test(&fs, cx, server_cx).await;
+    project
+        .update(cx, |project, cx| {
+            project.find_or_create_worktree(path!("/project"), true, cx)
+        })
+        .await
+        .unwrap();
+
+    // Verify no agents exist initially.
+    let names = project.update(cx, |project, cx| {
+        project
+            .agent_server_store()
+            .read(cx)
+            .external_agents()
+            .map(|name| name.to_string())
+            .collect::<Vec<_>>()
+    });
+    pretty_assertions::assert_eq!(names, Vec::<String>::new());
+
+    // Set a custom agent on the CLIENT side. User settings are forwarded to the
+    // remote server via UpdateUserSettings, so the remote's AgentServerStore
+    // picks them up and registers the agent.
+    cx.update_global::<SettingsStore, _>(|settings_store, cx| {
+        settings_store
+            .set_user_settings(
+                &json!({
+                    "agent_servers": {
+                        "my-agent": {
+                            "type": "custom",
+                            "command": "/usr/bin/my-agent",
+                            "args": ["--serve"],
+                            "env": {
+                                "MY_VAR": "my-val"
+                            }
+                        }
+                    }
+                })
+                .to_string(),
+                cx,
+            )
+            .unwrap();
+    });
+
+    cx.run_until_parked();
+    server_cx.run_until_parked();
+
+    // Custom agents ARE forwarded and visible on the client.
+    let names = project.update(cx, |project, cx| {
+        project
+            .agent_server_store()
+            .read(cx)
+            .external_agents()
+            .map(|name| name.to_string())
+            .collect::<Vec<_>>()
+    });
+    pretty_assertions::assert_eq!(names, ["my-agent"]);
+
+    // Verify the command includes the env vars from client settings.
+    let command = project
+        .update(cx, |project, cx| {
+            project.agent_server_store().update(cx, |store, cx| {
+                store
+                    .get_external_agent(&"my-agent".into())
+                    .unwrap()
+                    .get_command(
+                        HashMap::default(),
+                        None,
+                        None,
+                        &mut cx.to_async(),
+                    )
+            })
+        })
+        .await
+        .unwrap();
+    assert_eq!(command.args, vec!["/usr/bin/my-agent".to_string(), "--serve".to_string()]);
+    let env = command.env.unwrap();
+    assert_eq!(env.get("MY_VAR").map(|s| s.as_str()), Some("my-val"));
+}
+
+#[gpui::test]
 async fn test_remote_external_agent_server(
     cx: &mut TestAppContext,
     server_cx: &mut TestAppContext,
