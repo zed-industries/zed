@@ -7644,6 +7644,31 @@ impl EditorElement {
                 .max(0.01);
 
             move |event: &ScrollWheelEvent, phase, window, cx| {
+                // Ctrl+scroll (Cmd+scroll on macOS) zooms the buffer font size.
+                if event.modifiers.control || event.modifiers.platform {
+                    if phase == DispatchPhase::Bubble && hitbox.should_handle_scroll(window) {
+                        let delta_y = match event.delta {
+                            ScrollDelta::Pixels(pixels) => pixels.y.into(),
+                            ScrollDelta::Lines(lines) => lines.y,
+                        };
+                        if delta_y > 0.0 {
+                            window.dispatch_action(
+                                Box::new(zed_actions::IncreaseBufferFontSize { persist: false }),
+                                cx,
+                            );
+                        } else if delta_y < 0.0 {
+                            window.dispatch_action(
+                                Box::new(zed_actions::DecreaseBufferFontSize { persist: false }),
+                                cx,
+                            );
+                        }
+                        if delta_y != 0.0 {
+                            cx.stop_propagation();
+                            return;
+                        }
+                    }
+                }
+
                 let scroll_sensitivity = {
                     if event.modifiers.alt {
                         fast_scroll_sensitivity
