@@ -5,6 +5,7 @@ use zed_extension_api::{self as zed, LanguageServerId, Result, serde_json::json}
 const BINARY_NAME: &str = "vscode-html-language-server";
 const SERVER_PATH: &str =
     "node_modules/@zed-industries/vscode-langservers-extracted/bin/vscode-html-language-server";
+const WRAPPER_PATH: &str = "node_modules/server-wrapper.js";
 const PACKAGE_NAME: &str = "@zed-industries/vscode-langservers-extracted";
 
 struct HtmlExtension {
@@ -19,7 +20,7 @@ impl HtmlExtension {
     fn server_script_path(&mut self, language_server_id: &LanguageServerId) -> Result<String> {
         let server_exists = self.server_exists();
         if self.cached_binary_path.is_some() && server_exists {
-            return Ok(SERVER_PATH.to_string());
+            return Ok(WRAPPER_PATH.to_string());
         }
 
         zed::set_language_server_installation_status(
@@ -51,7 +52,37 @@ impl HtmlExtension {
                 }
             }
         }
-        Ok(SERVER_PATH.to_string())
+
+        self.write_wrapper_script()?;
+
+        Ok(WRAPPER_PATH.to_string())
+    }
+
+    fn write_wrapper_script(&self) -> Result<()> {
+        // The vscode-html-language-server's built-in JavaScript mode loads TypeScript
+        // type definitions (lib.dom.d.ts, lib.es5.d.ts) using a hardcoded relative path
+        // that resolves incorrectly for the extracted package. This wrapper patches
+        // fs.readFileSync to redirect those reads to the actual TypeScript lib location.
+        let wrapper_content = r#"const path = require('path');
+const fs = require('fs');
+const origReadFileSync = fs.readFileSync;
+const tsLibPath = path.dirname(require.resolve('typescript/lib/lib.d.ts'));
+const pkgRoot = path.join(
+  __dirname,
+  '@zed-industries/vscode-langservers-extracted'
+);
+const brokenBase = path.join(pkgRoot, 'node_modules/typescript/lib');
+fs.readFileSync = function(filePath) {
+  if (typeof filePath === 'string' && filePath.startsWith(brokenBase)) {
+    arguments[0] = filePath.replace(brokenBase, tsLibPath);
+  }
+  return origReadFileSync.apply(this, arguments);
+};
+require('./@zed-industries/vscode-langservers-extracted/packages/html/lib/node/htmlServerMain.js');
+"#;
+        fs::write(WRAPPER_PATH, wrapper_content)
+            .map_err(|error| format!("failed to write server wrapper script: {error}"))?;
+        Ok(())
     }
 }
 
@@ -76,7 +107,7 @@ impl zed::Extension for HtmlExtension {
         } else {
             let server_path = self.server_script_path(language_server_id)?;
             env::current_dir()
-                .unwrap()
+                .map_err(|error| format!("failed to get current directory: {error}"))?
                 .join(&server_path)
                 .to_string_lossy()
                 .to_string()
@@ -107,7 +138,10 @@ impl zed::Extension for HtmlExtension {
         _server_id: &LanguageServerId,
         _worktree: &zed_extension_api::Worktree,
     ) -> Result<Option<zed_extension_api::serde_json::Value>> {
-        let initialization_options = json!({"provideFormatter": true });
+        let initialization_options = json!({
+            "provideFormatter": true,
+            "embeddedLanguages": { "css": true, "javascript": true }
+        });
         Ok(Some(initialization_options))
     }
 }
