@@ -375,7 +375,19 @@ impl TransportDelegate {
                 .body
                 .clone()
                 .and_then(|body| serde_json::from_value::<ErrorResponse>(body).ok())
-                .and_then(|response| response.error.map(|msg| msg.format))
+                .and_then(|response| {
+                    response.error.map(|msg| {
+                        let mut result = msg.format;
+                        if let Some(serde_json::Value::Object(variables)) = msg.variables {
+                            for (key, value) in variables {
+                                if let serde_json::Value::String(substitution) = value {
+                                    result = result.replace(&format!("{{{key}}}"), &substitution);
+                                }
+                            }
+                        }
+                        result
+                    })
+                })
                 .or_else(|| response.message.clone())
             {
                 anyhow::bail!(error_message);
@@ -1016,5 +1028,108 @@ impl Transport for FakeTransport {
     #[cfg(any(test, feature = "test-support"))]
     fn as_fake(&self) -> &FakeTransport {
         self
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    fn make_error_response(body: Option<serde_json::Value>) -> Response {
+        Response {
+            seq: 1,
+            request_seq: 1,
+            success: false,
+            command: "launch".to_string(),
+            message: Some("Failed".to_string()),
+            body,
+        }
+    }
+
+    #[test]
+    fn test_process_response_interpolates_variables() {
+        let response = make_error_response(Some(json!({
+            "error": {
+                "id": 1,
+                "format": "{response_message}",
+                "variables": {
+                    "response_message": "Please use the `program-binary` option to specify an executable"
+                }
+            }
+        })));
+
+        let err = TransportDelegate::process_response(response).unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("Please use the `program-binary` option"),
+            "Expected interpolated message, got: {}",
+            err
+        );
+    }
+
+    #[test]
+    fn test_process_response_interpolates_multiple_variables() {
+        let response = make_error_response(Some(json!({
+            "error": {
+                "id": 1,
+                "format": "Error in {module}: {detail}",
+                "variables": {
+                    "module": "probe-rs",
+                    "detail": "connection failed"
+                }
+            }
+        })));
+
+        let err = TransportDelegate::process_response(response).unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("Error in probe-rs: connection failed"),
+            "Expected interpolated message, got: {}",
+            err
+        );
+    }
+
+    #[test]
+    fn test_process_response_without_variables() {
+        let response = make_error_response(Some(json!({
+            "error": {
+                "id": 1,
+                "format": "A plain error message"
+            }
+        })));
+
+        let err = TransportDelegate::process_response(response).unwrap_err();
+        assert!(
+            err.to_string().contains("A plain error message"),
+            "Expected plain format string, got: {}",
+            err
+        );
+    }
+
+    #[test]
+    fn test_process_response_falls_back_to_response_message() {
+        let response = make_error_response(None);
+
+        let err = TransportDelegate::process_response(response).unwrap_err();
+        assert!(
+            err.to_string().contains("Failed"),
+            "Expected fallback message, got: {}",
+            err
+        );
+    }
+
+    #[test]
+    fn test_process_response_success() {
+        let response = Response {
+            seq: 1,
+            request_seq: 1,
+            success: true,
+            command: "launch".to_string(),
+            message: None,
+            body: None,
+        };
+
+        assert!(TransportDelegate::process_response(response).is_ok());
     }
 }
