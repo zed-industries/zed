@@ -62,7 +62,7 @@ use gpui::{
     AnyWindowHandle, Bounds, ClipboardItem, CursorStyle, DisplayId, FileDropEvent, Keystroke,
     Modifiers, ModifiersChangedEvent, MouseButton, Pixels, PlatformDisplay, PlatformInput,
     PlatformKeyboardLayout, PlatformWindow, Point, RequestFrameOptions, ScrollDelta, Size,
-    TouchPhase, WindowParams, point, px,
+    TouchPhase, WindowButtonLayout, WindowParams, point, px,
 };
 use gpui_wgpu::{CompositorGpuHint, GpuContext};
 
@@ -472,9 +472,22 @@ impl X11Client {
                             window.window.set_appearance(appearance);
                         }
                     }
-                    XDPEvent::CursorTheme(_) | XDPEvent::CursorSize(_) => {
-                        // noop, X11 manages this for us.
+                    XDPEvent::ButtonLayout(layout_str) => {
+                        let layout = WindowButtonLayout::parse(&layout_str);
+                        client.with_common(|common| common.button_layout = layout);
+                        let window_ids: Vec<_> =
+                            client.0.borrow().windows.keys().copied().collect();
+                        for window_id in window_ids {
+                            if let Some(window) = client.0.borrow_mut().windows.get_mut(&window_id)
+                            {
+                                window.window.refresh(RequestFrameOptions {
+                                    require_presentation: false,
+                                    force_render: true,
+                                });
+                            }
+                        }
                     }
+                    XDPEvent::CursorTheme(_) | XDPEvent::CursorSize(_) => {}
                 }
             })
             .map_err(|err| anyhow!("Failed to initialize XDP event source: {err:?}"))?;
