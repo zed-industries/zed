@@ -1,3 +1,4 @@
+use extension_host::{CopyInstalledExtensionsIntoClipboard, installed_extensions_for_clipboard};
 use gpui::{App, ClipboardItem, PromptLevel, actions};
 use system_specs::{CopySystemSpecsIntoClipboard, SystemSpecs};
 use util::ResultExt;
@@ -64,6 +65,17 @@ pub fn init(cx: &mut App) {
                     .await
                 })
                 .detach();
+            })
+            .register_action(|_, _: &CopyInstalledExtensionsIntoClipboard, window, cx| {
+                let clipboard_text = installed_extensions_for_clipboard(cx);
+                cx.write_to_clipboard(ClipboardItem::new_string(clipboard_text.clone()));
+                drop(window.prompt(
+                    PromptLevel::Info,
+                    "Copied into clipboard",
+                    Some(&clipboard_text),
+                    &["OK"],
+                    cx,
+                ));
             })
             .register_action(|_, _: &RequestFeature, _, cx| {
                 cx.open_url(REQUEST_FEATURE_URL);
