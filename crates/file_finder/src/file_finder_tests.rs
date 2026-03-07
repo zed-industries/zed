@@ -510,6 +510,86 @@ async fn test_row_column_numbers_query_inside_file(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_row_column_numbers_query_inside_unicode_file(cx: &mut TestAppContext) {
+    let app_state = init_test(cx);
+
+    let first_file_name = "first.rs";
+    let first_file_contents = "a这个b";
+    app_state
+        .fs
+        .as_fake()
+        .insert_tree(
+            path!("/src"),
+            json!({
+                "test": {
+                    first_file_name: first_file_contents,
+                    "second.rs": "// Second Rust file",
+                }
+            }),
+        )
+        .await;
+
+    let project = Project::test(app_state.fs.clone(), [path!("/src").as_ref()], cx).await;
+
+    let (picker, workspace, cx) = build_find_picker(project, cx);
+
+    let file_query = &first_file_name[..3];
+    let file_row: u32 = 1;
+    let file_column: u32 = 3;
+    let query_inside_file = format!("{file_query}:{file_row}:{file_column}");
+    picker
+        .update_in(cx, |finder, window, cx| {
+            finder
+                .delegate
+                .update_matches(query_inside_file.to_string(), window, cx)
+        })
+        .await;
+    picker.update(cx, |finder, _| {
+        assert_match_at_position(finder, 1, &query_inside_file.to_string());
+        let finder = &finder.delegate;
+        let latest_search_query = finder
+            .latest_search_query
+            .as_ref()
+            .expect("Finder should have a query after the update_matches call");
+        assert_eq!(latest_search_query.raw_query, query_inside_file);
+        assert_eq!(latest_search_query.file_query_end, Some(file_query.len()));
+        assert_eq!(latest_search_query.path_position.row, Some(file_row));
+        assert_eq!(latest_search_query.path_position.column, Some(file_column));
+    });
+
+    cx.dispatch_action(Confirm);
+
+    let editor = cx.update(|_, cx| workspace.read(cx).active_item_as::<Editor>(cx).unwrap());
+    cx.executor().advance_clock(Duration::from_secs(2));
+
+    editor.update(cx, |editor, cx| {
+        let selections = editor.selections.ranges::<text::Point>(&editor.display_snapshot(cx));
+        assert_eq!(
+            selections.len(),
+            1,
+            "Expected to have 1 selection (caret) after file finder confirm, but got: {selections:?}"
+        );
+        let caret_selection = selections.into_iter().next().unwrap();
+        assert_eq!(
+            caret_selection.start, caret_selection.end,
+            "Caret selection should have its start and end at the same position"
+        );
+
+        let Some(buffer) = editor.buffer().read(cx).as_singleton() else {
+            panic!("Expected singleton buffer in opened editor");
+        };
+        let buffer_snapshot = buffer.read(cx).snapshot();
+        let expected_point = buffer_snapshot
+            .text
+            .point_for_row_and_column_from_external_source(file_row - 1, file_column - 1);
+        assert_eq!(
+            caret_selection.start, expected_point,
+            "File finder should map external column indices to buffer byte offsets for Unicode text"
+        );
+    });
+}
+
+#[gpui::test]
 async fn test_row_column_numbers_query_outside_file(cx: &mut TestAppContext) {
     let app_state = init_test(cx);
 
