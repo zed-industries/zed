@@ -8890,6 +8890,18 @@ pub fn open_paths(
         )
         .await;
 
+        // If replace_window is specified, use it directly instead of searching
+        // for existing windows.
+        if let Some(replace_window) = open_options.replace_window.as_ref() {
+            let replace_window = replace_window.clone();
+            cx.update(|cx| {
+                if let Ok(multi_workspace) = replace_window.read(cx) {
+                    let active_workspace = multi_workspace.workspace().clone();
+                    existing = Some((replace_window, active_workspace));
+                }
+            });
+        }
+
         // Fallback: if no workspace contains the paths and all paths are files,
         // prefer an existing local workspace window (active window first).
         if open_options.open_new_workspace.is_none() && existing.is_none() {
@@ -13432,6 +13444,56 @@ mod tests {
             assert!(workspace.right_dock().read(cx).is_open());
             assert!(panel.read(cx).focus_handle(cx).contains_focused(window, cx));
         });
+    }
+
+    #[gpui::test]
+    async fn test_replace_window_is_used_when_provided(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            "/root",
+            json!({
+                "file.txt": "test content",
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs.clone(), ["root".as_ref()], cx).await;
+        let multi_workspace =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+
+        let workspace = multi_workspace
+            .read_with(cx, |mw, _| mw.workspace().clone())
+            .unwrap();
+        let cx = &mut VisualTestContext::from_window(multi_workspace.clone().into(), cx);
+
+        // Call open_paths with replace_window set
+        let open_result = workspace
+            .update_in(cx, |workspace, window, cx| {
+                workspace.open_paths(
+                    vec!["/root/file.txt".into()],
+                    OpenOptions {
+                        visible: Some(OpenVisible::All),
+                        replace_window: Some(multi_workspace.clone()),
+                        ..Default::default()
+                    },
+                    None,
+                    window,
+                    cx,
+                )
+            })
+            .unwrap()
+            .await;
+
+        // Verify that the file was opened successfully
+        assert_eq!(open_result.len(), 1);
+        assert!(open_result[0].is_some());
+
+        // Verify the file is in the active pane
+        let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
+        let paths = pane_items_paths(&pane, cx);
+        assert!(paths.contains(&"root/file.txt".to_string()));
     }
 
     #[gpui::test]
