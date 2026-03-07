@@ -1097,6 +1097,7 @@ mod tests {
     #[derive(Clone)]
     struct TestSessionList {
         sessions: Vec<AgentSessionInfo>,
+        captured_cwd: Arc<Mutex<Option<Option<PathBuf>>>>,
         updates_tx: smol::channel::Sender<SessionListUpdate>,
         updates_rx: smol::channel::Receiver<SessionListUpdate>,
     }
@@ -1106,9 +1107,14 @@ mod tests {
             let (tx, rx) = smol::channel::unbounded();
             Self {
                 sessions,
+                captured_cwd: Arc::new(Mutex::new(None)),
                 updates_tx: tx,
                 updates_rx: rx,
             }
+        }
+
+        fn captured_cwd(&self) -> Option<Option<PathBuf>> {
+            self.captured_cwd.lock().unwrap().clone()
         }
 
         fn send_update(&self, update: SessionListUpdate) {
@@ -1119,9 +1125,10 @@ mod tests {
     impl AgentSessionList for TestSessionList {
         fn list_sessions(
             &self,
-            _request: AgentSessionListRequest,
+            request: AgentSessionListRequest,
             _cx: &mut App,
         ) -> Task<anyhow::Result<AgentSessionListResponse>> {
+            *self.captured_cwd.lock().unwrap() = Some(request.cwd);
             Task::ready(Ok(AgentSessionListResponse::new(self.sessions.clone())))
         }
 
@@ -1694,5 +1701,22 @@ mod tests {
 
         let date = NaiveDate::from_ymd_opt(2022, 12, 28).unwrap();
         assert_eq!(TimeBucket::from_dates(new_year, date), TimeBucket::ThisWeek);
+    }
+
+    #[gpui::test]
+    async fn test_refresh_passes_cwd_to_list_sessions(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let session_list = Rc::new(TestSessionList::new(vec![test_session("s-1", "First")]));
+
+        let (history, cx) = cx.add_window_view(|window, cx| ThreadHistory::new(None, window, cx));
+
+        let cwd = PathBuf::from("/projects/my-project");
+        history.update(cx, |history, cx| {
+            history.set_session_list(Some(session_list.clone()), Some(cwd.clone()), cx);
+        });
+        cx.run_until_parked();
+
+        assert_eq!(session_list.captured_cwd(), Some(Some(cwd)));
     }
 }
