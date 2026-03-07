@@ -1102,4 +1102,74 @@ mod tests {
         cx.simulate_keystrokes("ctrl-b [");
         test.update(cx, |test, _| assert_eq!(test.text.borrow().as_str(), "["))
     }
+
+    #[derive(Clone)]
+    struct ImeTestView(FocusHandle);
+
+    impl Element for ImeTestView {
+        type RequestLayoutState = ();
+        type PrepaintState = ();
+        fn id(&self) -> Option<ElementId> { Some("ime-test".into()) }
+        fn source_location(&self) -> Option<&'static panic::Location<'static>> { None }
+        fn request_layout(&mut self, _: Option<&GlobalElementId>, _: Option<&InspectorElementId>, window: &mut Window, cx: &mut App) -> (LayoutId, ()) {
+            (window.request_layout(Style::default(), [], cx), ())
+        }
+        fn prepaint(&mut self, _: Option<&GlobalElementId>, _: Option<&InspectorElementId>, _: Bounds<Pixels>, _: &mut (), window: &mut Window, cx: &mut App) {
+            window.set_focus_handle(&self.0, cx);
+        }
+        fn paint(&mut self, _: Option<&GlobalElementId>, _: Option<&InspectorElementId>, _: Bounds<Pixels>, _: &mut (), _: &mut (), window: &mut Window, cx: &mut App) {
+            let mut ctx = KeyContext::default();
+            ctx.add("ImeTest");
+            window.set_key_context(ctx);
+            window.handle_input(&self.0, self.clone(), cx);
+            window.on_action(std::any::TypeId::of::<TestAction>(), |_, _, _, _| {});
+        }
+    }
+
+    impl IntoElement for ImeTestView {
+        type Element = Self;
+        fn into_element(self) -> Self { self }
+    }
+
+    impl InputHandler for ImeTestView {
+        fn selected_text_range(&mut self, _: bool, _: &mut Window, _: &mut App) -> Option<UTF16Selection> { None }
+        fn marked_text_range(&mut self, _: &mut Window, _: &mut App) -> Option<Range<usize>> { None }
+        fn text_for_range(&mut self, _: Range<usize>, _: &mut Option<Range<usize>>, _: &mut Window, _: &mut App) -> Option<String> { None }
+        fn replace_text_in_range(&mut self, _: Option<Range<usize>>, _: &str, _: &mut Window, _: &mut App) {}
+        fn replace_and_mark_text_in_range(&mut self, _: Option<Range<usize>>, _: &str, _: Option<Range<usize>>, _: &mut Window, _: &mut App) {}
+        fn unmark_text(&mut self, _: &mut Window, _: &mut App) {}
+        fn bounds_for_range(&mut self, _: Range<usize>, _: &mut Window, _: &mut App) -> Option<Bounds<Pixels>> { None }
+        fn character_index_for_point(&mut self, _: Point<Pixels>, _: &mut Window, _: &mut App) -> Option<usize> { None }
+    }
+
+    impl Render for ImeTestView {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement { self.clone() }
+    }
+
+    #[crate::test]
+    fn test_ime_keystroke_skips_chord_pending(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            cx.bind_keys([KeyBinding::new("g g", TestAction, Some("ImeTest"))]);
+        });
+
+        let (view, cx) = cx.add_window_view(|_, cx| ImeTestView(cx.focus_handle()));
+        let focus_handle = view.update(cx, |view, _| view.0.clone());
+        cx.update(|window, cx| {
+            window.focus(&focus_handle, cx);
+            window.activate_window();
+        });
+
+        // Korean IME: physical 'g' → 'ㅎ'. Should NOT enter chord pending.
+        cx.update(|window, cx| {
+            window.dispatch_keystroke(Keystroke { key: "g".into(), key_char: Some("ㅎ".into()), modifiers: Default::default() }, cx);
+        });
+        cx.run_until_parked();
+        cx.update(|window, _| assert!(!window.has_pending_keystrokes()));
+
+        // English: physical 'g' → 'g'. SHOULD enter chord pending.
+        cx.update(|window, cx| {
+            window.dispatch_keystroke(Keystroke { key: "g".into(), key_char: Some("g".into()), modifiers: Default::default() }, cx);
+        });
+        cx.update(|window, _| assert!(window.has_pending_keystrokes()));
+    }
 }
