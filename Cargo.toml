@@ -785,7 +785,7 @@ wasm-bindgen = "0.2.113"
 web-time = "1.1.0"
 wgpu = { git = "https://github.com/zed-industries/wgpu", rev = "465557eccfe77c840a9b4936f1408da9503372c4" }
 windows-core = "0.61"
-yawc = "0.2.5"
+yawc = "0.3.3"
 zeroize = "1.8"
 zstd = "0.11"
 
