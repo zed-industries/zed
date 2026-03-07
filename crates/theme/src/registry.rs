@@ -12,9 +12,9 @@ use thiserror::Error;
 use util::ResultExt;
 
 use crate::{
-    Appearance, AppearanceContent, ChevronIcons, DEFAULT_ICON_THEME_NAME, DirectoryIcons,
-    IconDefinition, IconTheme, Theme, ThemeFamily, ThemeFamilyContent, default_icon_theme,
-    read_icon_theme, read_user_theme, refine_theme_family,
+    Appearance, ChevronIcons, DEFAULT_ICON_THEME_NAME, DirectoryIcons, IconAppearance,
+    IconAppearanceContent, IconDefinition, IconTheme, Theme, ThemeFamily, ThemeFamilyContent,
+    default_icon_theme, read_icon_theme, read_user_theme, refine_theme_family,
 };
 
 /// The metadata for a theme.
@@ -24,6 +24,15 @@ pub struct ThemeMeta {
     pub name: SharedString,
     /// The appearance of the theme.
     pub appearance: Appearance,
+}
+
+/// The metadata for an icon theme.
+#[derive(Debug, Clone)]
+pub struct IconThemeMeta {
+    /// The name of the icon theme.
+    pub name: SharedString,
+    /// The appearance of the icon theme.
+    pub appearance: IconAppearance,
 }
 
 /// An error indicating that the theme with the given name was not found.
@@ -243,12 +252,12 @@ impl ThemeRegistry {
     }
 
     /// Returns the metadata of all icon themes in the registry.
-    pub fn list_icon_themes(&self) -> Vec<ThemeMeta> {
+    pub fn list_icon_themes(&self) -> Vec<IconThemeMeta> {
         self.state
             .read()
             .icon_themes
             .values()
-            .map(|theme| ThemeMeta {
+            .map(|theme| IconThemeMeta {
                 name: theme.name.clone(),
                 appearance: theme.appearance,
             })
@@ -320,8 +329,9 @@ impl ThemeRegistry {
                 id: uuid::Uuid::new_v4().to_string(),
                 name: icon_theme.name.into(),
                 appearance: match icon_theme.appearance {
-                    AppearanceContent::Light => Appearance::Light,
-                    AppearanceContent::Dark => Appearance::Dark,
+                    IconAppearanceContent::Light => IconAppearance::Light,
+                    IconAppearanceContent::Dark => IconAppearance::Dark,
+                    IconAppearanceContent::Monochrome => IconAppearance::Monochrome,
                 },
                 directory_icons: DirectoryIcons {
                     collapsed: icon_theme.directory_icons.collapsed.map(resolve_icon_path),

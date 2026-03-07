@@ -8,7 +8,7 @@ use picker::{Picker, PickerDelegate};
 use settings::{Settings as _, SettingsStore, update_settings_file};
 use std::sync::Arc;
 use theme::{
-    Appearance, IconThemeName, IconThemeSelection, SystemAppearance, ThemeMeta, ThemeRegistry,
+    Appearance, IconThemeMeta, IconThemeName, IconThemeSelection, SystemAppearance, ThemeRegistry,
     ThemeSettings,
 };
 use ui::{ListItem, ListItemSpacing, prelude::*, v_flex};
@@ -52,7 +52,7 @@ impl Render for IconThemeSelector {
 
 pub(crate) struct IconThemeSelectorDelegate {
     fs: Arc<dyn Fs>,
-    themes: Vec<ThemeMeta>,
+    themes: Vec<IconThemeMeta>,
     matches: Vec<StringMatch>,
     original_theme: IconThemeName,
     selection_completed: bool,
@@ -88,8 +88,8 @@ impl IconThemeSelectorDelegate {
 
         themes.sort_unstable_by(|a, b| {
             a.appearance
-                .is_light()
-                .cmp(&b.appearance.is_light())
+                .sort_order()
+                .cmp(&b.appearance.sort_order())
                 .then(a.name.cmp(&b.name))
         });
         let matches = themes
