@@ -40,7 +40,7 @@ use client::{
     proto::{self, ErrorCode, PanelId, PeerId},
 };
 use collections::{HashMap, HashSet, hash_map};
-use dock::{Dock, DockPosition, PanelButtons, PanelHandle, RESIZE_HANDLE_SIZE};
+use dock::{Dock, DockPosition, PanelButtons, PanelHandle, SideDockButtons, RESIZE_HANDLE_SIZE};
 use fs::Fs;
 use futures::{
     Future, FutureExt, StreamExt,
@@ -312,8 +312,12 @@ actions!(
         ToggleEditPrediction,
         /// Toggles the left dock.
         ToggleLeftDock,
+        /// Toggles the left side dock.
+        ToggleLeftSideDock,
         /// Toggles the right dock.
         ToggleRightDock,
+        /// Toggles the right side dock.
+        ToggleRightSideDock,
         /// Toggles zoom on the active pane.
         ToggleZoom,
         /// Toggles read-only mode for the active item (if supported by that item).
@@ -1292,6 +1296,10 @@ pub struct Workspace {
     left_dock: Entity<Dock>,
     bottom_dock: Entity<Dock>,
     right_dock: Entity<Dock>,
+    left_side_dock: Entity<Dock>,
+    right_side_dock: Entity<Dock>,
+    left_side_dock_buttons: Entity<SideDockButtons>,
+    right_side_dock_buttons: Entity<SideDockButtons>,
     panes: Vec<Entity<Pane>>,
     active_worktree_override: Option<WorktreeId>,
     panes_by_item: HashMap<EntityId, WeakEntity<Pane>>,
@@ -1611,9 +1619,16 @@ impl Workspace {
         let left_dock = Dock::new(DockPosition::Left, modal_layer.clone(), window, cx);
         let bottom_dock = Dock::new(DockPosition::Bottom, modal_layer.clone(), window, cx);
         let right_dock = Dock::new(DockPosition::Right, modal_layer.clone(), window, cx);
+        let left_side_dock = Dock::new(DockPosition::LeftSide, modal_layer.clone(), window, cx);
+        let right_side_dock =
+            Dock::new(DockPosition::RightSide, modal_layer.clone(), window, cx);
         let left_dock_buttons = cx.new(|cx| PanelButtons::new(left_dock.clone(), cx));
         let bottom_dock_buttons = cx.new(|cx| PanelButtons::new(bottom_dock.clone(), cx));
         let right_dock_buttons = cx.new(|cx| PanelButtons::new(right_dock.clone(), cx));
+        let left_side_dock_buttons =
+            cx.new(|cx| SideDockButtons::new(left_side_dock.clone(), cx));
+        let right_side_dock_buttons =
+            cx.new(|cx| SideDockButtons::new(right_side_dock.clone(), cx));
         let status_bar = cx.new(|cx| {
             let mut status_bar = StatusBar::new(&center_pane.clone(), window, cx);
             status_bar.add_left_item(left_dock_buttons, window, cx);
@@ -1706,6 +1721,10 @@ impl Workspace {
             left_dock,
             bottom_dock,
             right_dock,
+            left_side_dock,
+            right_side_dock,
+            left_side_dock_buttons,
+            right_side_dock_buttons,
             _panels_task: None,
             project: project.clone(),
             follower_states: Default::default(),
@@ -2032,8 +2051,14 @@ impl Workspace {
         &self.right_dock
     }
 
-    pub fn all_docks(&self) -> [&Entity<Dock>; 3] {
-        [&self.left_dock, &self.bottom_dock, &self.right_dock]
+    pub fn all_docks(&self) -> [&Entity<Dock>; 5] {
+        [
+            &self.left_dock,
+            &self.bottom_dock,
+            &self.right_dock,
+            &self.left_side_dock,
+            &self.right_side_dock,
+        ]
     }
 
     pub fn capture_dock_state(&self, _window: &Window, cx: &App) -> DockStructure {
@@ -2060,6 +2085,18 @@ impl Workspace {
             .map(|panel| panel.persistent_name().to_string());
         let bottom_dock_zoom = self.zoomed_position == Some(DockPosition::Bottom);
 
+        let left_side_active_panel = self
+            .left_side_dock
+            .read(cx)
+            .active_panel()
+            .map(|panel| panel.persistent_name().to_string());
+
+        let right_side_active_panel = self
+            .right_side_dock
+            .read(cx)
+            .active_panel()
+            .map(|panel| panel.persistent_name().to_string());
+
         DockStructure {
             left: DockData {
                 visible: left_visible,
@@ -2076,6 +2113,16 @@ impl Workspace {
                 active_panel: bottom_active_panel,
                 zoom: bottom_dock_zoom,
             },
+            left_side: DockData {
+                visible: false,
+                active_panel: left_side_active_panel,
+                zoom: false,
+            },
+            right_side: DockData {
+                visible: false,
+                active_panel: right_side_active_panel,
+                zoom: false,
+            },
         }
     }
 
@@ -2089,6 +2136,8 @@ impl Workspace {
             (&self.left_dock, docks.left),
             (&self.bottom_dock, docks.bottom),
             (&self.right_dock, docks.right),
+            (&self.left_side_dock, docks.left_side),
+            (&self.right_side_dock, docks.right_side),
         ] {
             dock.update(cx, |dock, cx| {
                 dock.serialized_dock = Some(data);
@@ -2111,6 +2160,8 @@ impl Workspace {
             DockPosition::Left => &self.left_dock,
             DockPosition::Bottom => &self.bottom_dock,
             DockPosition::Right => &self.right_dock,
+            DockPosition::LeftSide => &self.left_side_dock,
+            DockPosition::RightSide => &self.right_side_dock,
         }
     }
 
@@ -6615,6 +6666,16 @@ impl Workspace {
                 },
             ))
             .on_action(cx.listener(
+                |workspace: &mut Workspace, _: &ToggleLeftSideDock, window, cx| {
+                    workspace.toggle_dock(DockPosition::LeftSide, window, cx);
+                },
+            ))
+            .on_action(cx.listener(
+                |workspace: &mut Workspace, _: &ToggleRightSideDock, window, cx| {
+                    workspace.toggle_dock(DockPosition::RightSide, window, cx);
+                },
+            ))
+            .on_action(cx.listener(
                 |workspace: &mut Workspace, _: &CloseActiveDock, window, cx| {
                     if !workspace.close_active_dock(window, cx) {
                         cx.propagate();
@@ -7081,6 +7142,8 @@ impl Workspace {
             DockPosition::Left => self.resize_left_dock(panel_size + px, window, cx),
             DockPosition::Right => self.resize_right_dock(panel_size + px, window, cx),
             DockPosition::Bottom => self.resize_bottom_dock(panel_size + px, window, cx),
+            DockPosition::LeftSide => self.resize_left_side_dock(panel_size + px, window, cx),
+            DockPosition::RightSide => self.resize_right_side_dock(panel_size + px, window, cx),
         }
     }
 
@@ -7143,6 +7206,20 @@ impl Workspace {
             } else {
                 bottom_dock.resize_active_panel(Some(size), window, cx);
             }
+        });
+    }
+
+    fn resize_left_side_dock(&mut self, new_size: Pixels, window: &mut Window, cx: &mut App) {
+        let size = new_size.min(self.bounds.right() - RESIZE_HANDLE_SIZE);
+        self.left_side_dock.update(cx, |dock, cx| {
+            dock.resize_active_panel(Some(size), window, cx);
+        });
+    }
+
+    fn resize_right_side_dock(&mut self, new_size: Pixels, window: &mut Window, cx: &mut App) {
+        let size = new_size.max(self.bounds.left() - RESIZE_HANDLE_SIZE);
+        self.right_side_dock.update(cx, |dock, cx| {
+            dock.resize_active_panel(Some(size), window, cx);
         });
     }
 
@@ -7659,6 +7736,22 @@ impl Render for Workspace {
                                                             cx,
                                                         )
                                                     });
+
+                                                    this.left_side_dock.update(cx, |dock, cx| {
+                                                        dock.clamp_panel_size(
+                                                            bounds.size.width,
+                                                            window,
+                                                            cx,
+                                                        )
+                                                    });
+
+                                                    this.right_side_dock.update(cx, |dock, cx| {
+                                                        dock.clamp_panel_size(
+                                                            bounds.size.width,
+                                                            window,
+                                                            cx,
+                                                        )
+                                                    });
                                                 }
                                             })
                                         },
@@ -7704,6 +7797,22 @@ impl Render for Workspace {
                                                             cx,
                                                         );
                                                     }
+                                                    DockPosition::LeftSide => {
+                                                        workspace.resize_left_side_dock(
+                                                            e.event.position.x
+                                                                - workspace.bounds.left(),
+                                                            window,
+                                                            cx,
+                                                        );
+                                                    }
+                                                    DockPosition::RightSide => {
+                                                        workspace.resize_right_side_dock(
+                                                            workspace.bounds.right()
+                                                                - e.event.position.x,
+                                                            window,
+                                                            cx,
+                                                        );
+                                                    }
                                                 };
                                                 workspace.serialize_workspace(window, cx);
                                             }
@@ -7711,7 +7820,17 @@ impl Render for Workspace {
                                     ))
 
                                 })
-                                .child({
+                                .child(
+                                    h_flex()
+                                        .h_full()
+                                        .child(self.left_side_dock_buttons.clone())
+                                        .children(self.render_dock(
+                                            DockPosition::LeftSide,
+                                            &self.left_side_dock,
+                                            window,
+                                            cx,
+                                        ))
+                                        .child({
                                     match bottom_dock_layout {
                                         BottomDockLayout::Full => div()
                                             .flex()
@@ -7961,6 +8080,14 @@ impl Render for Workspace {
                                             )),
                                     }
                                 })
+                                        .children(self.render_dock(
+                                            DockPosition::RightSide,
+                                            &self.right_side_dock,
+                                            window,
+                                            cx,
+                                        ))
+                                        .child(self.right_side_dock_buttons.clone()),
+                                )
                                 .children(self.zoomed.as_ref().and_then(|view| {
                                     let zoomed_view = view.upgrade()?;
                                     let div = div()
@@ -7981,6 +8108,8 @@ impl Render for Workspace {
                                         Some(DockPosition::Left) => div.right_2().border_r_1(),
                                         Some(DockPosition::Right) => div.left_2().border_l_1(),
                                         Some(DockPosition::Bottom) => div.top_2().border_t_1(),
+                                        Some(DockPosition::LeftSide) => div.right_2().border_r_1(),
+                                        Some(DockPosition::RightSide) => div.left_2().border_l_1(),
                                         None => {
                                             div.top_2().bottom_2().left_2().right_2().border_1()
                                         }

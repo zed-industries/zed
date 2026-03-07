@@ -970,6 +970,14 @@ impl Domain for WorkspaceDb {
         sql!(
             ALTER TABLE remote_connections ADD COLUMN use_podman BOOLEAN;
         ),
+        sql!(
+            ALTER TABLE workspaces ADD COLUMN left_side_dock_visible INTEGER;
+            ALTER TABLE workspaces ADD COLUMN left_side_dock_active_panel TEXT;
+            ALTER TABLE workspaces ADD COLUMN left_side_dock_zoom INTEGER;
+            ALTER TABLE workspaces ADD COLUMN right_side_dock_visible INTEGER;
+            ALTER TABLE workspaces ADD COLUMN right_side_dock_active_panel TEXT;
+            ALTER TABLE workspaces ADD COLUMN right_side_dock_zoom INTEGER;
+        ),
     ];
 
     // Allow recovering from bad migration that was initially shipped to nightly
@@ -1058,6 +1066,12 @@ impl WorkspaceDb {
                     bottom_dock_visible,
                     bottom_dock_active_panel,
                     bottom_dock_zoom,
+                    left_side_dock_visible,
+                    left_side_dock_active_panel,
+                    left_side_dock_zoom,
+                    right_side_dock_visible,
+                    right_side_dock_active_panel,
+                    right_side_dock_zoom,
                     window_id
                 FROM workspaces
                 WHERE
@@ -1154,6 +1168,12 @@ impl WorkspaceDb {
                     bottom_dock_visible,
                     bottom_dock_active_panel,
                     bottom_dock_zoom,
+                    left_side_dock_visible,
+                    left_side_dock_active_panel,
+                    left_side_dock_zoom,
+                    right_side_dock_visible,
+                    right_side_dock_active_panel,
+                    right_side_dock_zoom,
                     window_id,
                     remote_connection_id
                 FROM workspaces
@@ -1432,11 +1452,17 @@ impl WorkspaceDb {
                         bottom_dock_visible,
                         bottom_dock_active_panel,
                         bottom_dock_zoom,
+                        left_side_dock_visible,
+                        left_side_dock_active_panel,
+                        left_side_dock_zoom,
+                        right_side_dock_visible,
+                        right_side_dock_active_panel,
+                        right_side_dock_zoom,
                         session_id,
                         window_id,
                         timestamp
                     )
-                    VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, CURRENT_TIMESTAMP)
+                    VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, CURRENT_TIMESTAMP)
                     ON CONFLICT DO
                     UPDATE SET
                         paths = ?2,
@@ -1451,8 +1477,14 @@ impl WorkspaceDb {
                         bottom_dock_visible = ?11,
                         bottom_dock_active_panel = ?12,
                         bottom_dock_zoom = ?13,
-                        session_id = ?14,
-                        window_id = ?15,
+                        left_side_dock_visible = ?14,
+                        left_side_dock_active_panel = ?15,
+                        left_side_dock_zoom = ?16,
+                        right_side_dock_visible = ?17,
+                        right_side_dock_active_panel = ?18,
+                        right_side_dock_zoom = ?19,
+                        session_id = ?20,
+                        window_id = ?21,
                         timestamp = CURRENT_TIMESTAMP
                 );
                 let mut prepared_query = conn.exec_bound(query)?;

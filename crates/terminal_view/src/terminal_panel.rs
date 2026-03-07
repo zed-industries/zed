@@ -1529,6 +1529,8 @@ impl Panel for TerminalPanel {
             TerminalDockPosition::Left => DockPosition::Left,
             TerminalDockPosition::Bottom => DockPosition::Bottom,
             TerminalDockPosition::Right => DockPosition::Right,
+            TerminalDockPosition::LeftSide => DockPosition::LeftSide,
+            TerminalDockPosition::RightSide => DockPosition::RightSide,
         }
     }
 
@@ -1547,6 +1549,8 @@ impl Panel for TerminalPanel {
                 DockPosition::Left => TerminalDockPosition::Left,
                 DockPosition::Bottom => TerminalDockPosition::Bottom,
                 DockPosition::Right => TerminalDockPosition::Right,
+                DockPosition::LeftSide => TerminalDockPosition::LeftSide,
+                DockPosition::RightSide => TerminalDockPosition::RightSide,
             };
             settings.terminal.get_or_insert_default().dock = Some(dock);
         });
@@ -1555,16 +1559,20 @@ impl Panel for TerminalPanel {
     fn size(&self, window: &Window, cx: &App) -> Pixels {
         let settings = TerminalSettings::get_global(cx);
         match self.position(window, cx) {
-            DockPosition::Left | DockPosition::Right => {
-                self.width.unwrap_or(settings.default_width)
-            }
+            DockPosition::Left
+            | DockPosition::Right
+            | DockPosition::LeftSide
+            | DockPosition::RightSide => self.width.unwrap_or(settings.default_width),
             DockPosition::Bottom => self.height.unwrap_or(settings.default_height),
         }
     }
 
     fn set_size(&mut self, size: Option<Pixels>, window: &mut Window, cx: &mut Context<Self>) {
         match self.position(window, cx) {
-            DockPosition::Left | DockPosition::Right => self.width = size,
+            DockPosition::Left
+            | DockPosition::Right
+            | DockPosition::LeftSide
+            | DockPosition::RightSide => self.width = size,
             DockPosition::Bottom => self.height = size,
         }
         cx.notify();

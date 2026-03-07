@@ -628,7 +628,13 @@ impl Panel for NotificationPanel {
     }
 
     fn position_is_valid(&self, position: DockPosition) -> bool {
-        matches!(position, DockPosition::Left | DockPosition::Right)
+        matches!(
+            position,
+            DockPosition::Left
+                | DockPosition::Right
+                | DockPosition::LeftSide
+                | DockPosition::RightSide
+        )
     }
 
     fn set_position(&mut self, position: DockPosition, _: &mut Window, cx: &mut Context<Self>) {

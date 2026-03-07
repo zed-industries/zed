@@ -4987,11 +4987,19 @@ impl Panel for OutlinePanel {
         match OutlinePanelSettings::get_global(cx).dock {
             DockSide::Left => DockPosition::Left,
             DockSide::Right => DockPosition::Right,
+            DockSide::LeftSide => DockPosition::LeftSide,
+            DockSide::RightSide => DockPosition::RightSide,
         }
     }
 
     fn position_is_valid(&self, position: DockPosition) -> bool {
-        matches!(position, DockPosition::Left | DockPosition::Right)
+        matches!(
+            position,
+            DockPosition::Left
+                | DockPosition::Right
+                | DockPosition::LeftSide
+                | DockPosition::RightSide
+        )
     }
 
     fn set_position(&mut self, position: DockPosition, _: &mut Window, cx: &mut Context<Self>) {
@@ -4999,6 +5007,8 @@ impl Panel for OutlinePanel {
             let dock = match position {
                 DockPosition::Left | DockPosition::Bottom => DockSide::Left,
                 DockPosition::Right => DockSide::Right,
+                DockPosition::LeftSide => DockSide::LeftSide,
+                DockPosition::RightSide => DockSide::RightSide,
             };
             settings.outline_panel.get_or_insert_default().dock = Some(dock);
         });

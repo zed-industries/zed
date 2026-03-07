@@ -2040,6 +2040,8 @@ fn terminal_selections_if_panel_open(workspace: &Entity<Workspace>, cx: &App) ->
         TerminalDockPosition::Left => DockPosition::Left,
         TerminalDockPosition::Bottom => DockPosition::Bottom,
         TerminalDockPosition::Right => DockPosition::Right,
+        TerminalDockPosition::LeftSide => DockPosition::LeftSide,
+        TerminalDockPosition::RightSide => DockPosition::RightSide,
     };
     let dock_is_open = workspace
         .read(cx)

@@ -540,6 +540,8 @@ pub enum DockPosition {
     Left,
     Bottom,
     Right,
+    LeftSide,
+    RightSide,
 }
 
 /// Settings for slash commands.
@@ -979,6 +981,8 @@ pub struct OutlinePanelSettingsContent {
 pub enum DockSide {
     Left,
     Right,
+    LeftSide,
+    RightSide,
 }
 
 #[derive(
