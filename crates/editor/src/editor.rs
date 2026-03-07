@@ -21202,12 +21202,12 @@ impl Editor {
     pub fn wrap_guides(&self, cx: &App) -> SmallVec<[(usize, bool); 2]> {
         let mut wrap_guides = smallvec![];
 
-        if self.show_wrap_guides == Some(false) {
-            return wrap_guides;
-        }
-
         let settings = self.buffer.read(cx).language_settings(cx);
-        if settings.show_wrap_guides {
+        let currently_enabled = self.show_wrap_guides.unwrap_or_else(|| {
+                settings.show_wrap_guides
+        });
+
+        if currently_enabled {
             match self.soft_wrap_mode(cx) {
                 SoftWrap::Column(soft_wrap) => {
                     wrap_guides.push((soft_wrap as usize, true));
@@ -21316,6 +21316,17 @@ impl Editor {
             };
             self.soft_wrap_mode_override = Some(soft_wrap);
         }
+        cx.notify();
+    }
+
+    pub fn toggle_wrap_guides(&mut self, _: &ToggleWrapGuides, _: &mut Window, cx: &mut Context<Self>) {
+        let currently_enabled = self.show_wrap_guides.unwrap_or_else(|| {
+            self.buffer
+                .read(cx)
+                .language_settings(cx)
+                .show_wrap_guides
+        });
+        self.show_wrap_guides = Some(!currently_enabled);
         cx.notify();
     }
 
