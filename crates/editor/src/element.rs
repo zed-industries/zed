@@ -3566,18 +3566,18 @@ impl EditorElement {
         gutter_dimensions: GutterDimensions,
         line_height: Pixels,
         scroll_position: gpui::Point<ScrollOffset>,
-        rows: Range<DisplayRow>,
         buffer_rows: &[RowInfo],
         snapshot: &EditorSnapshot,
         window: &mut Window,
         cx: &mut App,
-    ) -> Arc<HashMap<MultiBufferRow, DiffHunkSignLayout>> {
+    ) -> Vec<DiffHunkSignLayout> {
         let show_git_gutter = snapshot.show_git_diff_gutter.unwrap_or_else(|| {
             matches!(
                 ProjectSettings::get_global(cx).git.git_gutter,
                 GitGutterSetting::TrackedFiles | GitGutterSetting::TrackedFilesWithSigns
             )
         });
+
         let show_git_gutter_signs = show_git_gutter
             && snapshot.show_git_diff_hunk_signs_gutter.unwrap_or_else(|| {
                 matches!(
@@ -3585,74 +3585,72 @@ impl EditorElement {
                     GitGutterSetting::TrackedFilesWithSigns
                 )
             });
+
         if !show_git_gutter_signs {
-            return Arc::default();
+            return Vec::default();
         }
-        let mut diff_hunk_signs: HashMap<MultiBufferRow, DiffHunkSignLayout> = HashMap::default();
-        let scroll_top = scroll_position.y * ScrollPixelOffset::from(line_height);
 
         let is_light = cx.theme().appearance().is_light();
         let gutter_bg_color = cx.theme().colors().editor_gutter_background;
+        let scroll_top = scroll_position.y * ScrollPixelOffset::from(line_height);
 
-        for (ix, row_info) in buffer_rows.iter().enumerate() {
-            let Some(diff_status) = row_info.diff_status else {
-                continue;
-            };
+        buffer_rows
+            .iter()
+            .enumerate()
+            .filter_map(|(ix, row_info)| {
+                let Some(diff_status) = row_info.diff_status else {
+                    return None;
+                };
 
-            let (diff_sign, color) = match diff_status.kind {
-                DiffHunkStatusKind::Added => (
-                    "+",
-                    compute_diff_hunk_sign_color(
-                        is_light,
-                        gutter_bg_color,
-                        cx.theme().colors().version_control_added,
+                let (diff_sign, color) = match diff_status.kind {
+                    DiffHunkStatusKind::Added => (
+                        "+",
+                        compute_diff_hunk_sign_color(
+                            is_light,
+                            gutter_bg_color,
+                            cx.theme().colors().version_control_added,
+                        ),
                     ),
-                ),
-                DiffHunkStatusKind::Modified => (
-                    "~",
-                    compute_diff_hunk_sign_color(
-                        is_light,
-                        gutter_bg_color,
-                        cx.theme().colors().version_control_modified,
+                    DiffHunkStatusKind::Modified => (
+                        "~",
+                        compute_diff_hunk_sign_color(
+                            is_light,
+                            gutter_bg_color,
+                            cx.theme().colors().version_control_modified,
+                        ),
                     ),
-                ),
-                DiffHunkStatusKind::Deleted => (
-                    "-",
-                    compute_diff_hunk_sign_color(
-                        is_light,
-                        gutter_bg_color,
-                        cx.theme().colors().version_control_deleted,
+                    DiffHunkStatusKind::Deleted => (
+                        "-",
+                        compute_diff_hunk_sign_color(
+                            is_light,
+                            gutter_bg_color,
+                            cx.theme().colors().version_control_deleted,
+                        ),
                     ),
-                ),
-            };
-            let shaped_line = self.shape_line_number(SharedString::from(diff_sign), color, window);
-            let line_origin = gutter_hitbox.map(|gutter_hitbox| {
-                gutter_hitbox.origin
-                    + point(
-                        gutter_hitbox.size.width
-                            - gutter_dimensions.right_padding
-                            - gutter_dimensions.diff_hunk_signs_width
-                            + (gutter_dimensions.diff_hunk_signs_width - shaped_line.width) / 2.0,
-                        ix as f32 * line_height
-                            - Pixels::from(scroll_top % ScrollPixelOffset::from(line_height)),
-                    )
-            });
+                };
 
-            let display_row = DisplayRow(rows.start.0 + ix as u32);
-            let buffer_row = DisplayPoint::new(display_row, 0).to_point(snapshot).row;
-            let multi_buffer_row = MultiBufferRow(buffer_row);
+                let shaped_line =
+                    self.shape_line_number(SharedString::from(diff_sign), color, window);
 
-            diff_hunk_signs.insert(
-                multi_buffer_row,
-                DiffHunkSignLayout {
-                    segment: DiffHunkSignSegment {
-                        shaped_line,
-                        origin: line_origin,
-                    },
-                },
-            );
-        }
-        Arc::new(diff_hunk_signs)
+                let line_origin = gutter_hitbox.map(|gutter_hitbox| {
+                    gutter_hitbox.origin
+                        + point(
+                            gutter_hitbox.size.width
+                                - gutter_dimensions.right_padding
+                                - gutter_dimensions.diff_hunk_signs_width
+                                + (gutter_dimensions.diff_hunk_signs_width - shaped_line.width)
+                                    / 2.0,
+                            ix as f32 * line_height
+                                - Pixels::from(scroll_top % ScrollPixelOffset::from(line_height)),
+                        )
+                });
+
+                Some(DiffHunkSignLayout {
+                    shaped_line,
+                    origin: line_origin,
+                })
+            })
+            .collect_vec()
     }
 
     fn layout_crease_toggles(
@@ -6319,17 +6317,13 @@ impl EditorElement {
         cx: &mut App,
     ) {
         let line_height = layout.position_map.line_height;
-        for diff_hunk_sign_layout in layout.diff_hunk_signs.values() {
-            let DiffHunkSignSegment {
-                shaped_line,
-                origin,
-            } = &diff_hunk_sign_layout.segment;
-            let Some(origin) = origin else {
-                continue;
-            };
-            shaped_line
-                .paint(*origin, line_height, TextAlign::Left, None, window, cx)
-                .log_err();
+        for diff_hunk_sign_layout in &layout.diff_hunk_signs {
+            if let Some(origin) = diff_hunk_sign_layout.origin {
+                diff_hunk_sign_layout
+                    .shaped_line
+                    .paint(origin, line_height, TextAlign::Left, None, window, cx)
+                    .log_err();
+            }
         }
     }
 
@@ -10261,7 +10255,6 @@ impl Element for EditorElement {
                         gutter_dimensions,
                         line_height,
                         scroll_position,
-                        start_row..end_row,
                         &row_infos,
                         &snapshot,
                         window,
@@ -11378,7 +11371,7 @@ pub struct EditorLayout {
     highlighted_rows: BTreeMap<DisplayRow, LineHighlight>,
     line_elements: SmallVec<[AnyElement; 1]>,
     line_numbers: Arc<HashMap<MultiBufferRow, LineNumberLayout>>,
-    diff_hunk_signs: Arc<HashMap<MultiBufferRow, DiffHunkSignLayout>>,
+    diff_hunk_signs: Vec<DiffHunkSignLayout>,
     display_hunks: Vec<(DisplayDiffHunk, Option<Hitbox>)>,
     blamed_display_rows: Option<Vec<AnyElement>>,
     inline_diagnostics: HashMap<DisplayRow, AnyElement>,
@@ -11594,14 +11587,9 @@ struct LineNumberLayout {
 }
 
 #[derive(Debug)]
-struct DiffHunkSignSegment {
+struct DiffHunkSignLayout {
     shaped_line: ShapedLine,
     origin: Option<gpui::Point<Pixels>>,
-}
-
-#[derive(Debug)]
-struct DiffHunkSignLayout {
-    segment: DiffHunkSignSegment,
 }
 
 struct ColoredRange<T> {
@@ -12853,7 +12841,6 @@ mod tests {
                     gutter_dimensions,
                     line_height,
                     gpui::Point::default(),
-                    DisplayRow(0)..DisplayRow(4),
                     &row_infos,
                     &snapshot,
                     window,
@@ -12863,31 +12850,10 @@ mod tests {
             })
             .unwrap();
         assert_eq!(diff_hunk_signs_enabled.len(), 3);
-        assert_eq!(
-            diff_hunk_signs_enabled[&MultiBufferRow(0)]
-                .segment
-                .shaped_line
-                .text
-                .as_ref(),
-            "+"
-        );
-        assert_eq!(
-            diff_hunk_signs_enabled[&MultiBufferRow(1)]
-                .segment
-                .shaped_line
-                .text
-                .as_ref(),
-            "~"
-        );
-        assert_eq!(
-            diff_hunk_signs_enabled[&MultiBufferRow(2)]
-                .segment
-                .shaped_line
-                .text
-                .as_ref(),
-            "-"
-        );
-        assert!(diff_hunk_signs_enabled.get(&MultiBufferRow(3)).is_none());
+        assert_eq!(diff_hunk_signs_enabled[0].shaped_line.text.as_ref(), "+");
+        assert_eq!(diff_hunk_signs_enabled[1].shaped_line.text.as_ref(), "~");
+        assert_eq!(diff_hunk_signs_enabled[2].shaped_line.text.as_ref(), "-");
+        assert!(diff_hunk_signs_enabled.get(3).is_none());
 
         cx.update(|cx| {
             settings::SettingsStore::update_global(cx, |store, cx| {
@@ -12926,7 +12892,6 @@ mod tests {
                     gutter_dimensions,
                     line_height,
                     gpui::Point::default(),
-                    DisplayRow(0)..DisplayRow(4),
                     &row_infos,
                     &snapshot,
                     window,
