@@ -146,7 +146,7 @@ pub use workspace_settings::{
     AutosaveSetting, BottomDockLayout, RestoreOnStartupBehavior, StatusBarSettings, TabBarSettings,
     WorkspaceSettings,
 };
-use zed_actions::{Spawn, feedback::FileBugReport};
+use zed_actions::{Spawn, feedback::FileBugReport, theme_mode::Toggle};
 
 use crate::{item::ItemBufferKind, notifications::NotificationId};
 use crate::{
@@ -6505,6 +6505,7 @@ impl Workspace {
             .on_action(cx.listener(Self::move_item_to_pane_at_index))
             .on_action(cx.listener(Self::move_focused_panel_to_next_position))
             .on_action(cx.listener(Self::toggle_edit_predictions_all_files))
+            .on_action(cx.listener(Self::toggle_theme_mode))
             .on_action(cx.listener(|workspace, _: &Unfollow, window, cx| {
                 let pane = workspace.active_pane().clone();
                 workspace.unfollow_in_pane(&pane, window, cx);
@@ -7156,6 +7157,23 @@ impl Workspace {
         let show_edit_predictions = all_language_settings(None, cx).show_edit_predictions(None, cx);
         update_settings_file(fs, cx, move |file, _| {
             file.project.all_languages.defaults.show_edit_predictions = Some(!show_edit_predictions)
+        });
+    }
+
+    fn toggle_theme_mode(&mut self, _: &Toggle, _window: &mut Window, cx: &mut Context<Self>) {
+        let current_mode = ThemeSettings::get_global(cx).theme.mode();
+        let next_mode = match current_mode {
+            Some(theme::ThemeAppearanceMode::Light) => theme::ThemeAppearanceMode::Dark,
+            Some(theme::ThemeAppearanceMode::Dark) => theme::ThemeAppearanceMode::Light,
+            Some(theme::ThemeAppearanceMode::System) | None => match cx.theme().appearance() {
+                theme::Appearance::Light => theme::ThemeAppearanceMode::Dark,
+                theme::Appearance::Dark => theme::ThemeAppearanceMode::Light,
+            },
+        };
+
+        let fs = self.project().read(cx).fs().clone();
+        settings::update_settings_file(fs, cx, move |settings, _cx| {
+            theme::set_mode(settings, next_mode);
         });
     }
 

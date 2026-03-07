@@ -1491,8 +1491,9 @@ mod tests {
     use std::num::NonZeroU32;
 
     use crate::{
-        ClosePosition, ItemSettingsContent, VsCodeSettingsSource, default_settings,
-        settings_content::LanguageSettingsContent, test_settings,
+        ClosePosition, ItemSettingsContent, ThemeAppearanceMode, ThemeSelection,
+        VsCodeSettingsSource, default_settings, settings_content::LanguageSettingsContent,
+        test_settings,
     };
 
     use super::*;
@@ -1676,6 +1677,118 @@ mod tests {
         assert_eq!(
             store.get::<AutoUpdateSetting>(None),
             &AutoUpdateSetting { auto_update: false }
+        );
+    }
+
+    #[gpui::test]
+    fn test_toggle_theme_mode_in_dynamic_theme_selection(cx: &mut App) {
+        let mut store = SettingsStore::new(cx, &test_settings());
+
+        check_settings_update(
+            &mut store,
+            r#"{
+                "theme": {
+                    "mode": "light",
+                    "light": "One Light",
+                    "dark": "One Dark"
+                }
+            }"#
+            .unindent(),
+            |settings| {
+                if let Some(ThemeSelection::Dynamic { mode, .. }) = settings.theme.theme.as_mut() {
+                    *mode = ThemeAppearanceMode::Dark;
+                }
+            },
+            r#"{
+                "theme": {
+                    "mode": "dark",
+                    "light": "One Light",
+                    "dark": "One Dark"
+                }
+            }"#
+            .unindent(),
+            cx,
+        );
+
+        check_settings_update(
+            &mut store,
+            r#"{
+                "theme": {
+                    "mode": "dark",
+                    "light": "One Light",
+                    "dark": "One Dark"
+                }
+            }"#
+            .unindent(),
+            |settings| {
+                if let Some(ThemeSelection::Dynamic { mode, .. }) = settings.theme.theme.as_mut() {
+                    *mode = ThemeAppearanceMode::Light;
+                }
+            },
+            r#"{
+                "theme": {
+                    "mode": "light",
+                    "light": "One Light",
+                    "dark": "One Dark"
+                }
+            }"#
+            .unindent(),
+            cx,
+        );
+
+        check_settings_update(
+            &mut store,
+            r#"{
+                "theme": {
+                    "mode": "system",
+                    "light": "One Light",
+                    "dark": "One Dark"
+                }
+            }"#
+            .unindent(),
+            |settings| {
+                if let Some(ThemeSelection::Dynamic { mode, .. }) = settings.theme.theme.as_mut() {
+                    *mode = ThemeAppearanceMode::Dark;
+                }
+            },
+            r#"{
+                "theme": {
+                    "mode": "dark",
+                    "light": "One Light",
+                    "dark": "One Dark"
+                }
+            }"#
+            .unindent(),
+            cx,
+        );
+    }
+
+    #[gpui::test]
+    fn test_toggle_theme_mode_switches_static_to_dynamic_theme_selection(cx: &mut App) {
+        let mut store = SettingsStore::new(cx, &test_settings());
+
+        check_settings_update(
+            &mut store,
+            r#"{
+                "theme": "One Dark"
+            }"#
+            .unindent(),
+            |settings| {
+                settings.theme.theme = Some(ThemeSelection::Dynamic {
+                    mode: ThemeAppearanceMode::System,
+                    light: ThemeName("One Light".into()),
+                    dark: ThemeName("One Dark".into()),
+                });
+            },
+            r#"{
+                "theme": {
+                    "mode": "system",
+                    "light": "One Light",
+                    "dark": "One Dark"
+                }
+            }"#
+            .unindent(),
+            cx,
         );
     }
 

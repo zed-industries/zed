@@ -4874,6 +4874,7 @@ mod tests {
                 "task",
                 "terminal",
                 "terminal_panel",
+                "theme_mode",
                 "theme_selector",
                 "toast",
                 "toolchain",

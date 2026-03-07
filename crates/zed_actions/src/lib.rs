@@ -325,6 +325,12 @@ pub mod feedback {
     );
 }
 
+pub mod theme_mode {
+    use gpui::actions;
+
+    actions!(theme_mode, [Toggle]);
+}
+
 pub mod theme_selector {
     use gpui::Action;
     use schemars::JsonSchema;
