@@ -95,7 +95,6 @@ gpui_util.workspace = true
 waker-fn = "1.2.0"
 lyon = "1.0"
 pin-project = "1.1.10"
-circular-buffer.workspace = true
 spin = "0.10.0"
 pollster.workspace = true
 url.workspace = true
