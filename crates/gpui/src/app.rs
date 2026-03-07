@@ -2613,13 +2613,6 @@ impl<'a, T> Drop for GpuiBorrow<'a, T> {
     }
 }
 
-impl Drop for App {
-    fn drop(&mut self) {
-        self.foreground_executor.close();
-        self.background_executor.close();
-    }
-}
-
 #[cfg(test)]
 mod test {
     use std::{cell::RefCell, rc::Rc};
