@@ -320,7 +320,23 @@ impl WgpuRenderer {
             format: surface_format,
             width: clamped_width.max(1),
             height: clamped_height.max(1),
-            present_mode: wgpu::PresentMode::Fifo,
+            // Prefer Mailbox (triple-buffering) to avoid blocking in
+            // get_current_texture() during mobile lifecycle transitions
+            // (e.g. Android rotation, background/foreground).  Fifo blocks
+            // on VSync and can deadlock if the compositor is frozen.
+            present_mode: if surface_caps
+                .present_modes
+                .contains(&wgpu::PresentMode::Mailbox)
+            {
+                wgpu::PresentMode::Mailbox
+            } else if surface_caps
+                .present_modes
+                .contains(&wgpu::PresentMode::AutoNoVsync)
+            {
+                wgpu::PresentMode::AutoNoVsync
+            } else {
+                wgpu::PresentMode::Fifo
+            },
             desired_maximum_frame_latency: 2,
             alpha_mode,
             view_formats: vec![],
@@ -1036,6 +1052,14 @@ impl WgpuRenderer {
     }
 
     pub fn draw(&mut self, scene: &Scene) {
+        // Bail out early if the surface has been unconfigured (e.g. during
+        // Android background/rotation transitions).  Attempting to acquire
+        // a texture from an unconfigured surface can block indefinitely on
+        // some drivers (Adreno).
+        if !self.surface_configured {
+            return;
+        }
+
         let last_error = self.last_error.lock().unwrap().take();
         if let Some(error) = last_error {
             self.failed_frame_count += 1;
@@ -1606,6 +1630,81 @@ impl WgpuRenderer {
             offset,
             size: Some(size),
         })
+    }
+
+    /// Mark the surface as unconfigured so rendering is skipped until a new
+    /// surface is provided via [`replace_surface`](Self::replace_surface).
+    ///
+    /// This does **not** drop the renderer — the device, queue, atlas, and
+    /// pipelines stay alive.  Use this when the native window is destroyed
+    /// (e.g. Android `TerminateWindow`) but you intend to re-create the
+    /// surface later without losing cached atlas textures.
+    pub fn unconfigure_surface(&mut self) {
+        self.surface_configured = false;
+        // Drop intermediate textures since they reference the old surface size.
+        self.path_intermediate_texture = None;
+        self.path_intermediate_view = None;
+        self.path_msaa_texture = None;
+        self.path_msaa_view = None;
+    }
+
+    /// Replace the wgpu surface with a new one (e.g. after Android destroys
+    /// and recreates the native window).  Keeps the device, queue, atlas, and
+    /// all pipelines intact so cached `AtlasTextureId`s remain valid.
+    ///
+    /// The `instance` **must** be the same [`wgpu::Instance`] that was used to
+    /// create the adapter and device (i.e. from the [`WgpuContext`]).  Using a
+    /// different instance will cause a "Device does not exist" panic because
+    /// the wgpu device is bound to its originating instance.
+    #[cfg(not(target_family = "wasm"))]
+    pub fn replace_surface<W: HasWindowHandle + HasDisplayHandle>(
+        &mut self,
+        window: &W,
+        config: WgpuSurfaceConfig,
+        instance: &wgpu::Instance,
+    ) -> anyhow::Result<()> {
+        let window_handle = window
+            .window_handle()
+            .map_err(|e| anyhow::anyhow!("Failed to get window handle: {e}"))?;
+        let display_handle = window
+            .display_handle()
+            .map_err(|e| anyhow::anyhow!("Failed to get display handle: {e}"))?;
+
+        let target = wgpu::SurfaceTargetUnsafe::RawHandle {
+            raw_display_handle: display_handle.as_raw(),
+            raw_window_handle: window_handle.as_raw(),
+        };
+
+        let surface = unsafe {
+            instance
+                .create_surface_unsafe(target)
+                .map_err(|e| anyhow::anyhow!("Failed to create surface: {e}"))?
+        };
+
+        let width = (config.size.width.0 as u32).max(1);
+        let height = (config.size.height.0 as u32).max(1);
+
+        let alpha_mode = if config.transparent {
+            self.transparent_alpha_mode
+        } else {
+            self.opaque_alpha_mode
+        };
+
+        self.surface_config.width = width;
+        self.surface_config.height = height;
+        self.surface_config.alpha_mode = alpha_mode;
+        surface.configure(&self.device, &self.surface_config);
+
+        self.surface = surface;
+        self.surface_configured = true;
+
+        // Invalidate intermediate textures — they'll be recreated lazily.
+        self.path_intermediate_texture = None;
+        self.path_intermediate_view = None;
+        self.path_msaa_texture = None;
+        self.path_msaa_view = None;
+
+        Ok(())
     }
 
     pub fn destroy(&mut self) {
