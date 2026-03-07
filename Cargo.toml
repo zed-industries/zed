@@ -41,6 +41,7 @@ members = [
     "crates/component",
     "crates/component_preview",
     "crates/context_server",
+    "crates/context_server_tools",
     "crates/copilot",
     "crates/copilot_chat",
     "crates/crashes",
@@ -294,6 +295,7 @@ command_palette_hooks = { path = "crates/command_palette_hooks" }
 component = { path = "crates/component" }
 component_preview = { path = "crates/component_preview" }
 context_server = { path = "crates/context_server" }
+context_server_tools = { path = "crates/context_server_tools" }
 copilot = { path = "crates/copilot" }
 copilot_chat = { path = "crates/copilot_chat" }
 copilot_ui = { path = "crates/copilot_ui" }

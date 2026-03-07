@@ -1201,6 +1201,10 @@ fn initialize_pane(
             toolbar.add_item(lsp_log_item, window, cx);
             let dap_log_item = cx.new(|_| debugger_tools::DapLogToolbarItemView::new());
             toolbar.add_item(dap_log_item, window, cx);
+            let context_server_log_item =
+                cx.new(|_| context_server_tools::ContextServerLogToolbarItemView::new());
+            toolbar.add_item(context_server_log_item, window, cx);
+
             let acp_tools_item = cx.new(|_| acp_tools::AcpToolsToolbarItemView::new());
             toolbar.add_item(acp_tools_item, window, cx);
             let telemetry_log_item =
