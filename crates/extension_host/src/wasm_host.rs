@@ -561,6 +561,25 @@ fn wasm_engine(executor: &BackgroundExecutor) -> wasmtime::Engine {
             // back to the executor at regular intervals.
             config.epoch_interruption(true);
 
+            // Disable AVX-512 features to prevent SIGILL crashes on CPUs where these
+            // instructions may be reported as available by CPUID but are not fully
+            // functional. This can happen on:
+            // - Hybrid CPUs (like Intel Alder Lake-N) where E-cores don't support AVX-512
+            // - Systems with kernel mitigations (GDS/Downfall) that disable AVX at runtime
+            // See: https://github.com/bytecodealliance/wasmtime/issues/3809
+            #[cfg(target_arch = "x86_64")]
+            {
+                // SAFETY: These flags disable CPU features rather than enable them,
+                // which cannot cause unsoundness - it only affects performance.
+                unsafe {
+                    config.cranelift_flag_set("has_avx512bitalg", "false");
+                    config.cranelift_flag_set("has_avx512dq", "false");
+                    config.cranelift_flag_set("has_avx512f", "false");
+                    config.cranelift_flag_set("has_avx512vbmi", "false");
+                    config.cranelift_flag_set("has_avx512vl", "false");
+                }
+            }
+
             let engine = wasmtime::Engine::new(&config).unwrap();
 
             // It might be safer to do this on a non-async thread to make sure it makes progress
@@ -1105,5 +1124,19 @@ mod tests {
             result.is_err(),
             "symlink escape through deep non-existent path should be rejected, but got: {result:?}",
         );
+    }
+
+    #[gpui::test]
+    async fn test_wasm_engine_creates_successfully(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        // This test verifies that the wasm engine can be created successfully
+        // with the AVX-512 features disabled. The engine creation would fail
+        // if the cranelift flags were invalid.
+        let executor = cx.background_executor.clone();
+
+        // If this doesn't panic, the engine was created successfully with
+        // the conservative CPU feature settings (AVX-512 disabled).
+        let _engine = wasm_engine(&executor);
     }
 }
