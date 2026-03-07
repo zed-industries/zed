@@ -419,6 +419,7 @@ pub struct Pane {
     welcome_page: Option<Entity<crate::welcome::WelcomePage>>,
 
     pub in_center_group: bool,
+    pub in_satellite: bool,
 }
 
 pub struct ActivationHistoryEntry {
@@ -586,6 +587,7 @@ impl Pane {
             project_item_restoration_data: HashMap::default(),
             welcome_page: None,
             in_center_group: false,
+            in_satellite: false,
         }
     }
 
@@ -3004,6 +3006,7 @@ impl Pane {
         let is_pinned = self.is_tab_pinned(ix);
 
         let pane = cx.entity().downgrade();
+        let in_satellite = self.in_satellite;
         let menu_context = item.item_focus_handle(cx);
         let item_handle = item.boxed_clone();
 
@@ -3271,12 +3274,31 @@ impl Pane {
                         }
                     };
 
-                    // Add custom item-specific actions
+                    // Add custom item-specific actions, filtering out detach when already in satellite
+                    let extra_actions: Vec<_> = if in_satellite {
+                        extra_actions
+                            .into_iter()
+                            .filter(|(_, action)| {
+                                action
+                                    .as_any()
+                                    .downcast_ref::<super::DetachActiveItem>()
+                                    .is_none()
+                            })
+                            .collect()
+                    } else {
+                        extra_actions
+                    };
                     if !extra_actions.is_empty() {
                         menu = menu.separator();
                         for (label, action) in extra_actions {
                             menu = menu.action(label, action);
                         }
+                    }
+
+                    if in_satellite {
+                        menu = menu
+                            .separator()
+                            .action("Move to Main Window", Box::new(super::ReattachActiveItem));
                     }
 
                     menu.context(menu_context)
@@ -4085,6 +4107,9 @@ fn default_render_tab_bar_buttons(
     cx: &mut Context<Pane>,
 ) -> (Option<AnyElement>, Option<AnyElement>) {
     if !pane.has_focus(window, cx) && !pane.context_menu_focused(window, cx) {
+        return (None, None);
+    }
+    if pane.in_satellite {
         return (None, None);
     }
     let (can_clone, can_split_move) = match pane.active_item() {
