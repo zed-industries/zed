@@ -45,6 +45,10 @@ pub struct WorkspaceSettingsContent {
     ///
     /// Default: off
     pub autosave: Option<AutosaveSetting>,
+    /// When to save all dirty buffers before running a task.
+    ///
+    /// Default: always
+    pub save_before_task_run: Option<SaveBeforeTaskRun>,
     /// Controls previous session restoration in freshly launched Zed instance.
     /// Values: empty_tab, last_workspace, last_session, launchpad
     /// Default: last_session
@@ -902,4 +906,28 @@ impl DocumentSymbols {
     pub fn lsp_enabled(&self) -> bool {
         self == &Self::On
     }
+}
+
+/// When to save all dirty buffers before running a task.
+#[derive(
+    Default,
+    Debug,
+    Copy,
+    Clone,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    MergeFrom,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum SaveBeforeTaskRun {
+    /// Save without prompting.
+    #[default]
+    Always,
+    /// Do not save.
+    Never,
 }
