@@ -500,14 +500,15 @@ impl MultiWorkspace {
     }
 
     pub fn move_workspace(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.workspaces().len() < 1 {
+        if !multi_workspace_enabled(cx) || self.workspaces.len() <= 1 {
             return;
         }
-        // let workspace = self.workspace().clone();
-        // let app_state = workspace.read(cx).app_state().clone();
-        // let index = self.active_workspace_index();
-        // self.remove_workspace(index, window, cx);
-        // open_workspace(workspace, app_state, cx).log_err();
+        let workspace = self.workspace();
+        let app_state = workspace.read(cx).app_state().clone();
+        let project = workspace.read(cx).project().clone();
+        let index = self.active_workspace_index;
+        self.remove_workspace(index, window, cx);
+        open_project(project, app_state, cx).detach_and_log_err(cx);
     }
 
     pub fn duplicate_workspace(&mut self, cx: &mut Context<Self>) {
