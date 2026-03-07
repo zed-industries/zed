@@ -1161,6 +1161,11 @@ pub struct WhichKeySettingsContent {
     ///
     /// Default: 700
     pub delay_ms: Option<u64>,
+    /// Keystroke sequences to filter out from the which-key display.
+    /// Each entry is a space-separated sequence of keystrokes, e.g. "ctrl-w ctrl-a".
+    ///
+    /// Default: includes vim modifier variants and ctrl-w duplicates
+    pub filtered_keystrokes: Option<Vec<String>>,
 }
 
 #[derive(Default, Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]

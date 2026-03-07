@@ -2392,6 +2392,34 @@
     "enabled": false,
     // Delay in milliseconds before showing the which-key popup.
     "delay_ms": 1000,
+    // Keystroke sequences to filter out from the which-key display.
+    "filtered_keystrokes": [
+      // Modifiers on normal vim commands
+      "g h",
+      "g j",
+      "g k",
+      "g l",
+      "g $",
+      "g ^",
+      // Duplicate keys with "ctrl" held, e.g. "ctrl-w ctrl-a" is duplicate of "ctrl-w a"
+      "ctrl-w ctrl-a",
+      "ctrl-w ctrl-c",
+      "ctrl-w ctrl-h",
+      "ctrl-w ctrl-j",
+      "ctrl-w ctrl-k",
+      "ctrl-w ctrl-l",
+      "ctrl-w ctrl-n",
+      "ctrl-w ctrl-o",
+      "ctrl-w ctrl-p",
+      "ctrl-w ctrl-q",
+      "ctrl-w ctrl-s",
+      "ctrl-w ctrl-v",
+      "ctrl-w ctrl-w",
+      "ctrl-w ctrl-]",
+      "ctrl-w ctrl-shift-w",
+      "ctrl-w ctrl-g t",
+      "ctrl-w ctrl-g shift-t"
+    ],
   },
   // The server to connect to. If the environment variable
   // ZED_SERVER_URL is set, it will override this setting.
