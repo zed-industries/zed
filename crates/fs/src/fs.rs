@@ -489,15 +489,7 @@ impl RealFs {
                     }
                 }
                 std::path::Component::Normal(_) => {
-                    if let Ok(link) = std::fs::read_link(new_path.join(component)) {
-                        let link = match &strip_prefix {
-                            Some(e) => link.strip_prefix(e).unwrap_or(&link),
-                            None => &link,
-                        };
-                        new_path.extend(link);
-                    } else {
-                        new_path.push(component);
-                    }
+                    new_path.push(component);
                 }
             }
         }
