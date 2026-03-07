@@ -1316,11 +1316,14 @@ impl Window {
             Box::new(move || {
                 handle
                     .update(&mut cx, |_, window, _cx| {
-                        for (area, hitbox) in &window.rendered_frame.window_control_hitboxes {
-                            if window.mouse_hit_test.ids.contains(&hitbox.id) {
-                                return Some(*area);
+                        if let Some(hitbox_id) = (&window.mouse_hit_test.ids).into_iter().next() {
+                            for (area, hitbox) in &window.rendered_frame.window_control_hitboxes {
+                                if hitbox.id == *hitbox_id {
+                                    return Some(*area);
+                                }
                             }
                         }
+
                         None
                     })
                     .log_err()
