@@ -12600,7 +12600,11 @@ impl Editor {
     ) {
         self.manipulate_text(window, cx, |text| {
             text.split('\n')
-                .map(|line| line.to_case(Case::Title))
+                .map(|line| {
+                    let trimmed = line.trim_start();
+                    let indent = &line[..line.len() - trimmed.len()];
+                    format!("{}{}", indent, trimmed.to_case(Case::Title))
+                })
                 .join("\n")
         })
     }
@@ -12631,7 +12635,11 @@ impl Editor {
     ) {
         self.manipulate_text(window, cx, |text| {
             text.split('\n')
-                .map(|line| line.to_case(Case::UpperCamel))
+                .map(|line| {
+                    let trimmed = line.trim_start();
+                    let indent = &line[..line.len() - trimmed.len()];
+                    format!("{}{}", indent, trimmed.to_case(Case::UpperCamel))
+                })
                 .join("\n")
         })
     }
@@ -12642,7 +12650,15 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.manipulate_text(window, cx, |text| text.to_case(Case::Camel))
+        self.manipulate_text(window, cx, |text| {
+            text.split('\n')
+                .map(|line| {
+                    let trimmed = line.trim_start();
+                    let indent = &line[..line.len() - trimmed.len()];
+                    format!("{}{}", indent, trimmed.to_case(Case::Camel))
+                })
+                .join("\n")
+        })
     }
 
     pub fn convert_to_opposite_case(
