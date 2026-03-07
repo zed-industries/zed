@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 pub use settings::AlternateScroll;
 
 use settings::{
-    IntoGpui, PathHyperlinkRegex, RegisterSetting, ShowScrollbar, TerminalBlink,
+    IntoGpui, PathHyperlinkRegex, RegisterSetting, RightClickBehavior, ShowScrollbar, TerminalBlink,
     TerminalDockPosition, TerminalLineHeight, VenvSettings, WorkingDirectory,
     merge_from::MergeFrom,
 };
@@ -38,6 +38,7 @@ pub struct TerminalSettings {
     pub option_as_meta: bool,
     pub copy_on_select: bool,
     pub keep_selection_on_copy: bool,
+    pub right_click_behavior: RightClickBehavior,
     pub button: bool,
     pub dock: TerminalDockPosition,
     pub default_width: Pixels,
@@ -105,6 +106,7 @@ impl settings::Settings for TerminalSettings {
             option_as_meta: user_content.option_as_meta.unwrap(),
             copy_on_select: user_content.copy_on_select.unwrap(),
             keep_selection_on_copy: user_content.keep_selection_on_copy.unwrap(),
+            right_click_behavior: user_content.right_click_behavior.unwrap_or_default(),
             button: user_content.button.unwrap(),
             dock: user_content.dock.unwrap(),
             default_width: px(user_content.default_width.unwrap()),

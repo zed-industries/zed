@@ -1708,6 +1708,13 @@
     "copy_on_select": false,
     // Whether to keep the text selection after copying it to the clipboard.
     "keep_selection_on_copy": true,
+    // What happens on right-click in the terminal.
+    // May take 2 values:
+    //  1. Show the context menu:
+    //         "context_menu"
+    //  2. Copy selected text, or paste if no selection:
+    //         "copy_paste"
+    "right_click_behavior": "context_menu",
     // Whether to show the terminal button in the status bar
     "button": true,
     // Any key-value pairs added to this list will be added to the terminal's
