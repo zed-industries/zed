@@ -743,6 +743,10 @@ pub struct ProjectPanelSettingsContent {
     ///
     /// Default: true
     pub diagnostic_badges: Option<bool>,
+    /// Whether to sort files and directories case-sensitive in the project panel.
+    ///
+    /// Default: false
+    pub case_sensitive: Option<bool>,
 }
 
 #[derive(

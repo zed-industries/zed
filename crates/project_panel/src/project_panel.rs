@@ -2515,7 +2515,8 @@ impl ProjectPanel {
                 .collect();
 
         let mode = ProjectPanelSettings::get_global(cx).sort_mode;
-        sort_worktree_entries_with_mode(&mut siblings, mode);
+        let case_sensitive = ProjectPanelSettings::get_global(cx).case_sensitive;
+        sort_worktree_entries_with_mode(&mut siblings, mode, case_sensitive);
         let sibling_entry_index = siblings
             .iter()
             .position(|sibling| sibling.id == latest_entry.id)?;
@@ -3833,6 +3834,7 @@ impl ProjectPanel {
         let auto_collapse_dirs = settings.auto_fold_dirs;
         let hide_gitignore = settings.hide_gitignore;
         let sort_mode = settings.sort_mode;
+        let case_sensitive = settings.case_sensitive;
         let project = self.project.read(cx);
         let repo_snapshots = project.git_store().read(cx).repo_snapshots(cx);
 
@@ -4067,6 +4069,7 @@ impl ProjectPanel {
                         par_sort_worktree_entries_with_mode(
                             &mut visible_worktree_entries,
                             sort_mode,
+                            case_sensitive,
                         );
                         new_state.visible_entries.push(VisibleEntriesForWorktree {
                             worktree_id,
@@ -7082,41 +7085,43 @@ impl ClipboardEntry {
 }
 
 #[inline]
-fn cmp_directories_first(a: &Entry, b: &Entry) -> cmp::Ordering {
-    util::paths::compare_rel_paths((&a.path, a.is_file()), (&b.path, b.is_file()))
+fn cmp_directories_first(a: &Entry, b: &Entry, case_sensitive: bool) -> cmp::Ordering {
+    util::paths::compare_rel_paths((&a.path, a.is_file()), (&b.path, b.is_file()), case_sensitive)
 }
 
 #[inline]
-fn cmp_mixed(a: &Entry, b: &Entry) -> cmp::Ordering {
-    util::paths::compare_rel_paths_mixed((&a.path, a.is_file()), (&b.path, b.is_file()))
+fn cmp_mixed(a: &Entry, b: &Entry, case_sensitive: bool) -> cmp::Ordering {
+    util::paths::compare_rel_paths_mixed((&a.path, a.is_file()), (&b.path, b.is_file()), case_sensitive)
 }
 
 #[inline]
-fn cmp_files_first(a: &Entry, b: &Entry) -> cmp::Ordering {
-    util::paths::compare_rel_paths_files_first((&a.path, a.is_file()), (&b.path, b.is_file()))
+fn cmp_files_first(a: &Entry, b: &Entry, case_sensitive: bool) -> cmp::Ordering {
+    util::paths::compare_rel_paths_files_first((&a.path, a.is_file()), (&b.path, b.is_file()), case_sensitive)
 }
 
 #[inline]
-fn cmp_with_mode(a: &Entry, b: &Entry, mode: &settings::ProjectPanelSortMode) -> cmp::Ordering {
+fn cmp_with_mode(a: &Entry, b: &Entry, mode: &settings::ProjectPanelSortMode, case_sensitive: bool) -> cmp::Ordering {
     match mode {
-        settings::ProjectPanelSortMode::DirectoriesFirst => cmp_directories_first(a, b),
-        settings::ProjectPanelSortMode::Mixed => cmp_mixed(a, b),
-        settings::ProjectPanelSortMode::FilesFirst => cmp_files_first(a, b),
+        settings::ProjectPanelSortMode::DirectoriesFirst => cmp_directories_first(a, b, case_sensitive),
+        settings::ProjectPanelSortMode::Mixed => cmp_mixed(a, b, case_sensitive),
+        settings::ProjectPanelSortMode::FilesFirst => cmp_files_first(a, b, case_sensitive),
     }
 }
 
 pub fn sort_worktree_entries_with_mode(
     entries: &mut [impl AsRef<Entry>],
     mode: settings::ProjectPanelSortMode,
+    case_sensitive: bool,
 ) {
-    entries.sort_by(|lhs, rhs| cmp_with_mode(lhs.as_ref(), rhs.as_ref(), &mode));
+    entries.sort_by(|lhs, rhs| cmp_with_mode(lhs.as_ref(), rhs.as_ref(), &mode, case_sensitive));
 }
 
 pub fn par_sort_worktree_entries_with_mode(
     entries: &mut Vec<GitEntry>,
     mode: settings::ProjectPanelSortMode,
+    case_sensitive: bool,
 ) {
-    entries.par_sort_by(|lhs, rhs| cmp_with_mode(lhs, rhs, &mode));
+    entries.par_sort_by(|lhs, rhs| cmp_with_mode(lhs, rhs, &mode, case_sensitive));
 }
 
 #[cfg(test)]
