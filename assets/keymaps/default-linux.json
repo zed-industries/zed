@@ -63,6 +63,13 @@
     },
   },
   {
+    "context": "menu && FilePathNavMenu",
+    "bindings": {
+      "tab": "menu::SelectNextTarget",
+      "shift-tab": "menu::SelectPreviousTarget",
+    },
+  },
+  {
     "context": "Editor",
     "bindings": {
       "escape": "editor::Cancel",
