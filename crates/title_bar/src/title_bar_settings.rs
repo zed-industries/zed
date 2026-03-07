@@ -1,6 +1,8 @@
+use gpui::Hsla;
 use settings::{RegisterSetting, Settings, SettingsContent};
+use theme::try_parse_color;
 
-#[derive(Copy, Clone, Debug, RegisterSetting)]
+#[derive(Clone, Debug, RegisterSetting)]
 pub struct TitleBarSettings {
     pub show_branch_icon: bool,
     pub show_onboarding_banner: bool,
@@ -10,6 +12,7 @@ pub struct TitleBarSettings {
     pub show_sign_in: bool,
     pub show_user_menu: bool,
     pub show_menus: bool,
+    pub background: Option<Hsla>,
 }
 
 impl Settings for TitleBarSettings {
@@ -24,6 +27,10 @@ impl Settings for TitleBarSettings {
             show_sign_in: content.show_sign_in.unwrap(),
             show_user_menu: content.show_user_menu.unwrap(),
             show_menus: content.show_menus.unwrap(),
+            background: content
+                .background
+                .as_ref()
+                .and_then(|c| try_parse_color(c).ok()),
         }
     }
 }

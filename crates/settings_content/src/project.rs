@@ -10,7 +10,8 @@ use util::serde::default_true;
 
 use crate::{
     AllLanguageSettingsContent, DelayMs, ExtendingVec, ParseStatus, ProjectTerminalSettingsContent,
-    RootUserSettings, SaturatingBool, SlashCommandSettings, fallible_options,
+    RootUserSettings, SaturatingBool, SlashCommandSettings, TitleBarSettingsContent,
+    fallible_options,
 };
 
 #[with_fallible_options]
@@ -84,6 +85,9 @@ pub struct ProjectSettingsContent {
     ///
     /// Default: false
     pub disable_ai: Option<SaturatingBool>,
+
+    /// Configuration for the title bar.
+    pub title_bar: Option<TitleBarSettingsContent>,
 }
 
 #[with_fallible_options]

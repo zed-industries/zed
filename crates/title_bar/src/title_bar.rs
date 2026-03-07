@@ -35,8 +35,7 @@ use project::{
     DisableAiSettings, Project, git_store::GitStoreEvent, trusted_worktrees::TrustedWorktrees,
 };
 use remote::RemoteConnectionOptions;
-use settings::Settings;
-use settings::WorktreeId;
+use settings::{Settings, SettingsLocation, WorktreeId};
 use std::sync::Arc;
 use theme::ActiveTheme;
 use title_bar_settings::TitleBarSettings;
@@ -46,6 +45,7 @@ use ui::{
 };
 use update_version::UpdateVersion;
 use util::ResultExt;
+use util::rel_path::RelPath;
 use workspace::{
     MultiWorkspace, ToggleWorkspaceSidebar, ToggleWorktreeSecurity, Workspace,
     notifications::NotifyResultExt,
@@ -160,7 +160,26 @@ pub struct TitleBar {
 
 impl Render for TitleBar {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let title_bar_settings = *TitleBarSettings::get_global(cx);
+        // Get settings location from first visible worktree for local settings override
+        let settings_location =
+            self.project
+                .read(cx)
+                .visible_worktrees(cx)
+                .next()
+                .map(|worktree| {
+                    let worktree = worktree.read(cx);
+                    SettingsLocation {
+                        worktree_id: worktree.id(),
+                        path: RelPath::empty(),
+                    }
+                });
+
+        let title_bar_settings = TitleBarSettings::get(settings_location, cx).clone();
+
+        // Set background override on platform titlebar
+        self.platform_titlebar.update(cx, |titlebar, _| {
+            titlebar.set_background_override(title_bar_settings.background);
+        });
 
         let show_menus = show_menus(cx);
 
