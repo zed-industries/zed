@@ -73,7 +73,7 @@ use crate::ui::{AgentNotification, AgentNotificationEvent};
 use crate::{
     AgentDiffPane, AgentInitialContent, AgentPanel, AllowAlways, AllowOnce, AuthorizeToolCall,
     ClearMessageQueue, CycleFavoriteModels, CycleModeSelector, CycleThinkingEffort,
-    EditFirstQueuedMessage, ExpandMessageEditor, Follow, KeepAll, NewThread, OpenAddContextMenu,
+    EditFirstQueuedMessage, ExpandMessageEditor, Follow, KeepAll, NewNativeAgentThreadFromSummary, NewThread, OpenAddContextMenu,
     OpenAgentDiff, OpenHistory, RejectAll, RejectOnce, RemoveFirstQueuedMessage, SendImmediately,
     SendNextQueuedMessage, ToggleFastMode, ToggleProfileSelector, ToggleThinkingEffortMenu,
     ToggleThinkingMode, UndoLastReject,
@@ -1435,6 +1435,53 @@ impl ConnectionView {
             AcpThreadEvent::TokenUsageUpdated => {
                 self.update_turn_tokens(cx);
                 self.emit_token_limit_telemetry_if_needed(thread, cx);
+
+                let settings = AgentSettings::get_global(cx);
+                if settings.auto_compact {
+                    let compact_trigger = {
+                        let thread_read = thread.read(cx);
+                        thread_read.token_usage().and_then(|token_usage| {
+                            if token_usage.max_tokens > 0 {
+                                let ratio = token_usage.used_tokens as f32
+                                    / token_usage.max_tokens as f32;
+                                if ratio >= settings.auto_compact_threshold {
+                                    Some((ratio, thread_read.session_id().clone()))
+                                } else {
+                                    None
+                                }
+                            } else {
+                                None
+                            }
+                        })
+                    };
+
+                    if let Some((ratio, session_id)) = compact_trigger {
+                        let should_trigger = self.active_thread().is_some_and(|active| {
+                            !active.read(cx).auto_compact_triggered
+                        });
+
+                        if should_trigger {
+                            log::info!(
+                                "Token usage ratio {} exceeds threshold {}, triggering auto compact",
+                                ratio,
+                                settings.auto_compact_threshold
+                            );
+
+                            if let Some(active) = self.active_thread() {
+                                active.update(cx, |active, _| {
+                                    active.auto_compact_triggered = true;
+                                });
+                            }
+
+                            window.dispatch_action(
+                                Box::new(NewNativeAgentThreadFromSummary {
+                                    from_session_id: session_id,
+                                }),
+                                cx,
+                            );
+                        }
+                    }
+                }
             }
             AcpThreadEvent::AvailableCommandsUpdated(available_commands) => {
                 let mut available_commands = available_commands.clone();

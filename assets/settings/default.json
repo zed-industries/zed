@@ -1117,6 +1117,12 @@
     //
     // Default: false
     "show_turn_stats": false,
+    // Whether to automatically compact conversation context when approaching token limits.
+    // Default: false
+    "auto_compact": false,
+    // Token usage ratio (0.0-1.0) that triggers auto-compact.
+    // Default: 0.95
+    "auto_compact_threshold": 0.95,
   },
   // Whether the screen sharing icon is shown in the os status bar.
   "show_call_status_icon": true,
