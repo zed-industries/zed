@@ -5999,6 +5999,23 @@ impl Repository {
         })
     }
 
+    pub fn is_commit_pushed(
+        &mut self,
+        sha: git::Oid,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<bool>> {
+        let receiver = self.send_job(None, move |repo, _cx| async move {
+            match repo {
+                RepositoryState::Local(LocalRepositoryState { backend, .. }) => {
+                    backend.is_commit_pushed(sha).await
+                }
+                RepositoryState::Remote(_) => Ok(false),
+            }
+        });
+        cx.background_executor()
+            .spawn(async move { receiver.await? })
+    }
+
     pub fn checkpoint(&mut self) -> oneshot::Receiver<Result<GitRepositoryCheckpoint>> {
         self.send_job(None, |repo, _cx| async move {
             match repo {

@@ -855,6 +855,8 @@ pub struct GitGraph {
     commit_details_split_state: Entity<SplitState>,
     selected_repo_id: Option<RepositoryId>,
     changed_files_scroll_handle: UniformListScrollHandle,
+    is_selected_commit_pushed: Option<bool>,
+    _is_commit_pushed_task: Option<Task<()>>,
     pending_select_sha: Option<Oid>,
 }
 
@@ -953,6 +955,8 @@ impl GitGraph {
             commit_details_split_state: cx.new(|_cx| SplitState::new()),
             selected_repo_id: active_repository,
             changed_files_scroll_handle: UniformListScrollHandle::new(),
+            is_selected_commit_pushed: None,
+            _is_commit_pushed_task: None,
             pending_select_sha: None,
         };
 
@@ -1031,6 +1035,8 @@ impl GitGraph {
                 // NOTE: this fixes an loading performance regression
                 if repository.read(cx).scan_id > 1 {
                     self.graph_data.clear();
+                    self.is_selected_commit_pushed = None;
+                    self._is_commit_pushed_task = None;
                     cx.notify();
                 }
             }
@@ -1199,6 +1205,8 @@ impl GitGraph {
         self.selected_entry_idx = Some(idx);
         self.selected_commit_diff = None;
         self.selected_commit_diff_stats = None;
+        self.is_selected_commit_pushed = None;
+        self._is_commit_pushed_task = None;
         self.changed_files_scroll_handle
             .scroll_to_item(0, ScrollStrategy::Top);
         self.table_interaction_state.update(cx, |state, cx| {
@@ -1213,6 +1221,7 @@ impl GitGraph {
         };
 
         let sha = commit.data.sha.to_string();
+        let commit_oid = commit.data.sha;
 
         let Some(repository) = self.get_selected_repository(cx) else {
             return;
@@ -1230,6 +1239,16 @@ impl GitGraph {
                 })
                 .ok();
             }
+        }));
+
+        let pushed_task = repository.update(cx, |repo, cx| repo.is_commit_pushed(commit_oid, cx));
+        self._is_commit_pushed_task = Some(cx.spawn(async move |this, cx| {
+            let pushed = pushed_task.await.unwrap_or(false);
+            this.update(cx, |this, cx| {
+                this.is_selected_commit_pushed = Some(pushed);
+                cx.notify();
+            })
+            .ok();
         }));
 
         cx.notify();
@@ -1429,6 +1448,8 @@ impl GitGraph {
                                     this.selected_commit_diff = None;
                                     this.selected_commit_diff_stats = None;
                                     this._commit_diff_task = None;
+                                    this.is_selected_commit_pushed = None;
+                                    this._is_commit_pushed_task = None;
                                     cx.notify();
                                 })),
                         ),
@@ -1566,42 +1587,44 @@ impl GitGraph {
                                         .detach();
                                     })
                             })
-                            .when_some(remote.clone(), |this, remote| {
-                                let provider_name = remote.host.name();
-                                let icon = match provider_name.as_str() {
-                                    "GitHub" => IconName::Github,
-                                    _ => IconName::Link,
-                                };
-                                let parsed_remote = ParsedGitRemote {
-                                    owner: remote.owner.as_ref().into(),
-                                    repo: remote.repo.as_ref().into(),
-                                };
-                                let params = BuildCommitPermalinkParams {
-                                    sha: full_sha.as_ref(),
-                                };
-                                let url = remote
-                                    .host
-                                    .build_commit_permalink(&parsed_remote, params)
-                                    .to_string();
+                            .when(self.is_selected_commit_pushed == Some(true), |this| {
+                                this.when_some(remote.clone(), |this, remote| {
+                                    let provider_name = remote.host.name();
+                                    let icon = match provider_name.as_str() {
+                                        "GitHub" => IconName::Github,
+                                        _ => IconName::Link,
+                                    };
+                                    let parsed_remote = ParsedGitRemote {
+                                        owner: remote.owner.as_ref().into(),
+                                        repo: remote.repo.as_ref().into(),
+                                    };
+                                    let params = BuildCommitPermalinkParams {
+                                        sha: full_sha.as_ref(),
+                                    };
+                                    let url = remote
+                                        .host
+                                        .build_commit_permalink(&parsed_remote, params)
+                                        .to_string();
 
-                                this.child(
-                                    Button::new(
-                                        "view-on-provider",
-                                        format!("View on {}", provider_name),
+                                    this.child(
+                                        Button::new(
+                                            "view-on-provider",
+                                            format!("View on {}", provider_name),
+                                        )
+                                        .icon(icon)
+                                        .icon_size(IconSize::Small)
+                                        .icon_color(Color::Muted)
+                                        .icon_position(IconPosition::Start)
+                                        .label_size(LabelSize::Small)
+                                        .truncate(true)
+                                        .color(Color::Muted)
+                                        .on_click(
+                                            move |_, _, cx| {
+                                                cx.open_url(&url);
+                                            },
+                                        ),
                                     )
-                                    .icon(icon)
-                                    .icon_size(IconSize::Small)
-                                    .icon_color(Color::Muted)
-                                    .icon_position(IconPosition::Start)
-                                    .label_size(LabelSize::Small)
-                                    .truncate(true)
-                                    .color(Color::Muted)
-                                    .on_click(
-                                        move |_, _, cx| {
-                                            cx.open_url(&url);
-                                        },
-                                    ),
-                                )
+                                })
                             }),
                     ),
             )

@@ -67,6 +67,7 @@ pub struct CommitView {
     multibuffer: Entity<MultiBuffer>,
     repository: Entity<Repository>,
     remote: Option<GitRemote>,
+    is_commit_pushed: Option<bool>,
 }
 
 struct GitBlob {
@@ -387,6 +388,27 @@ impl CommitView {
             })
         });
 
+        let is_commit_pushed = if remote.is_some() && stash.is_none() {
+            let sha: Option<git::Oid> = commit.sha.parse().ok();
+            if let Some(sha) = sha {
+                let task = repository.update(cx, |repo, cx| repo.is_commit_pushed(sha, cx));
+                cx.spawn(async move |this, cx| {
+                    let pushed = task.await.unwrap_or(false);
+                    this.update(cx, |this, cx| {
+                        this.is_commit_pushed = Some(pushed);
+                        cx.notify();
+                    })
+                    .log_err();
+                })
+                .detach();
+                None
+            } else {
+                Some(false)
+            }
+        } else {
+            Some(false)
+        };
+
         Self {
             commit,
             editor,
@@ -394,6 +416,7 @@ impl CommitView {
             stash,
             repository,
             remote,
+            is_commit_pushed,
         }
     }
 
@@ -462,6 +485,37 @@ impl CommitView {
             local_offset,
             time_format::TimestampFormat::MediumAbsolute,
         );
+
+        let remote_info = self
+            .remote
+            .as_ref()
+            .filter(|_| self.stash.is_none())
+            .filter(|_| self.is_commit_pushed == Some(true))
+            .map(|remote| {
+                let provider = remote.host.name();
+                let parsed_remote = ParsedGitRemote {
+                    owner: remote.owner.as_ref().into(),
+                    repo: remote.repo.as_ref().into(),
+                };
+                let params = BuildCommitPermalinkParams { sha: &commit.sha };
+                let url = remote
+                    .host
+                    .build_commit_permalink(&parsed_remote, params)
+                    .to_string();
+                (provider, url)
+            });
+
+        let (additions, deletions) = self.calculate_changed_lines(cx);
+
+        let commit_diff_stat = if additions > 0 || deletions > 0 {
+            Some(DiffStat::new(
+                "commit-diff-stat",
+                additions as usize,
+                deletions as usize,
+            ))
+        } else {
+            None
+        };
 
         let gutter_width = self.editor.update(cx, |editor, cx| {
             let snapshot = editor.snapshot(window, cx);
@@ -979,6 +1033,7 @@ impl Item for CommitView {
                 stash: self.stash,
                 repository: self.repository.clone(),
                 remote: self.remote.clone(),
+                is_commit_pushed: self.is_commit_pushed,
             }
         })))
     }
