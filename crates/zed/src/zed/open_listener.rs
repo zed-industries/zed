@@ -471,6 +471,10 @@ async fn open_workspaces(
     env: Option<collections::HashMap<String, String>>,
     cx: &mut AsyncApp,
 ) -> Result<()> {
+    if should_skip_no_arg_workspace_open(&paths, &diff_paths, open_new_workspace, cx) {
+        return Ok(());
+    }
+
     if paths.is_empty() && diff_paths.is_empty() && open_new_workspace != Some(true) {
         return restore_or_create_workspace(app_state, cx).await;
     }
@@ -580,6 +584,21 @@ async fn open_workspaces(
     anyhow::ensure!(!errored, "failed to open a workspace");
 
     Ok(())
+}
+
+fn should_skip_no_arg_workspace_open(
+    paths: &[String],
+    diff_paths: &[[String; 2]],
+    open_new_workspace: Option<bool>,
+    cx: &mut AsyncApp,
+) -> bool {
+    // For CLI opens with no paths, no diffs, and no explicit `--new`, do not
+    // create/restore another workspace if a local workspace window already
+    // exists.
+    paths.is_empty()
+        && diff_paths.is_empty()
+        && open_new_workspace != Some(true)
+        && cx.update(|cx| !workspace::local_workspace_windows(cx).is_empty())
 }
 
 async fn open_local_workspace(
@@ -1300,6 +1319,88 @@ mod tests {
             .await;
 
         assert!(!errored_reuse);
+    }
+
+    #[gpui::test]
+    async fn test_no_duplicate_workspace_when_windows_already_exist(cx: &mut TestAppContext) {
+        let app_state = init_test(cx);
+
+        let root_dir = if cfg!(windows) { "C:\\root" } else { "/root" };
+        let file_path = if cfg!(windows) {
+            "C:\\root\\file.txt"
+        } else {
+            "/root/file.txt"
+        };
+
+        app_state.fs.create_dir(Path::new(root_dir)).await.unwrap();
+        app_state
+            .fs
+            .create_file(Path::new(file_path), Default::default())
+            .await
+            .unwrap();
+        app_state
+            .fs
+            .save(
+                Path::new(file_path),
+                &Rope::from("content"),
+                LineEnding::Unix,
+            )
+            .await
+            .unwrap();
+
+        // Open workspace normally (simulating macOS restoration creating a window)
+        let (response_tx, _response_rx) = ipc::channel::<CliResponse>().unwrap();
+
+        cx.spawn({
+            let app_state = app_state.clone();
+            let response_tx = response_tx.clone();
+            |mut cx| async move {
+                open_local_workspace(
+                    vec![file_path.to_string()],
+                    vec![],
+                    false,
+                    workspace::OpenOptions::default(),
+                    &response_tx,
+                    &app_state,
+                    &mut cx,
+                )
+                .await
+            }
+        })
+        .await;
+
+        // Count workspace windows after first open
+        let initial_window_count = cx.update(|cx| workspace::local_workspace_windows(cx).len());
+        assert_eq!(initial_window_count, 1, "Should have one workspace window");
+
+        // Now call open_workspaces with empty paths (simulating CLI with no args)
+        cx.spawn({
+            let app_state = app_state.clone();
+            |mut cx| async move {
+                open_workspaces(
+                    vec![], // Empty paths
+                    vec![], // Empty diff_paths
+                    false,  // diff_all
+                    None,   // open_new_workspace
+                    false,  // reuse
+                    &response_tx,
+                    false, // wait
+                    app_state,
+                    None, // env
+                    &mut cx,
+                )
+                .await
+            }
+        })
+        .await
+        .ok();
+
+        // Count workspace windows after second call
+        let final_window_count = cx.update(|cx| workspace::local_workspace_windows(cx).len());
+        assert_eq!(
+            final_window_count, 1,
+            "Should still have only one workspace window (no duplicate)"
+        );
     }
 
     #[gpui::test]
