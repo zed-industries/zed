@@ -5095,6 +5095,10 @@ impl BufferSnapshot {
         iter::from_fn(move || {
             loop {
                 let mat = syntax_matches.peek()?;
+                if mat.depth > 0 {
+                    syntax_matches.advance();
+                    continue;
+                }
 
                 let test_range = test_configs[mat.grammar_index].and_then(|test_configs| {
                     let mut run_range = None;
