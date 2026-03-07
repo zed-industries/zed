@@ -641,7 +641,7 @@ pub(crate) fn compute_diff_between_snapshots(
     Some((diff, new_start_point..new_end_point))
 }
 
-fn buffer_path_with_id_fallback(
+pub(crate) fn buffer_path_with_id_fallback(
     file: Option<&Arc<dyn File>>,
     snapshot: &TextBufferSnapshot,
     cx: &App,
