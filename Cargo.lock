@@ -10803,7 +10803,7 @@ dependencies = [
 [[package]]
 name = "naga"
 version = "28.0.1"
-source = "git+https://github.com/zed-industries/wgpu?rev=0343151f535c8386df3c1db014cd42f44470e4c0#0343151f535c8386df3c1db014cd42f44470e4c0"
+source = "git+https://github.com/zed-industries/wgpu?rev=465557eccfe77c840a9b4936f1408da9503372c4#465557eccfe77c840a9b4936f1408da9503372c4"
 dependencies = [
  "arrayvec",
  "bit-set",
@@ -20081,7 +20081,7 @@ checksum = "a751b3277700db47d3e574514de2eced5e54dc8a5436a3bf7a0b248b2cee16f3"
 [[package]]
 name = "wgpu"
 version = "28.0.1"
-source = "git+https://github.com/zed-industries/wgpu?rev=0343151f535c8386df3c1db014cd42f44470e4c0#0343151f535c8386df3c1db014cd42f44470e4c0"
+source = "git+https://github.com/zed-industries/wgpu?rev=465557eccfe77c840a9b4936f1408da9503372c4#465557eccfe77c840a9b4936f1408da9503372c4"
 dependencies = [
  "arrayvec",
  "bitflags 2.10.0",
@@ -20110,7 +20110,7 @@ dependencies = [
 [[package]]
 name = "wgpu-core"
 version = "28.0.1"
-source = "git+https://github.com/zed-industries/wgpu?rev=0343151f535c8386df3c1db014cd42f44470e4c0#0343151f535c8386df3c1db014cd42f44470e4c0"
+source = "git+https://github.com/zed-industries/wgpu?rev=465557eccfe77c840a9b4936f1408da9503372c4#465557eccfe77c840a9b4936f1408da9503372c4"
 dependencies = [
  "arrayvec",
  "bit-set",
@@ -20141,7 +20141,7 @@ dependencies = [
 [[package]]
 name = "wgpu-core-deps-apple"
 version = "28.0.1"
-source = "git+https://github.com/zed-industries/wgpu?rev=0343151f535c8386df3c1db014cd42f44470e4c0#0343151f535c8386df3c1db014cd42f44470e4c0"
+source = "git+https://github.com/zed-industries/wgpu?rev=465557eccfe77c840a9b4936f1408da9503372c4#465557eccfe77c840a9b4936f1408da9503372c4"
 dependencies = [
  "wgpu-hal",
 ]
@@ -20149,7 +20149,7 @@ dependencies = [
 [[package]]
 name = "wgpu-core-deps-emscripten"
 version = "28.0.1"
-source = "git+https://github.com/zed-industries/wgpu?rev=0343151f535c8386df3c1db014cd42f44470e4c0#0343151f535c8386df3c1db014cd42f44470e4c0"
+source = "git+https://github.com/zed-industries/wgpu?rev=465557eccfe77c840a9b4936f1408da9503372c4#465557eccfe77c840a9b4936f1408da9503372c4"
 dependencies = [
  "wgpu-hal",
 ]
@@ -20157,7 +20157,7 @@ dependencies = [
 [[package]]
 name = "wgpu-core-deps-windows-linux-android"
 version = "28.0.1"
-source = "git+https://github.com/zed-industries/wgpu?rev=0343151f535c8386df3c1db014cd42f44470e4c0#0343151f535c8386df3c1db014cd42f44470e4c0"
+source = "git+https://github.com/zed-industries/wgpu?rev=465557eccfe77c840a9b4936f1408da9503372c4#465557eccfe77c840a9b4936f1408da9503372c4"
 dependencies = [
  "wgpu-hal",
 ]
@@ -20165,7 +20165,7 @@ dependencies = [
 [[package]]
 name = "wgpu-hal"
 version = "28.0.1"
-source = "git+https://github.com/zed-industries/wgpu?rev=0343151f535c8386df3c1db014cd42f44470e4c0#0343151f535c8386df3c1db014cd42f44470e4c0"
+source = "git+https://github.com/zed-industries/wgpu?rev=465557eccfe77c840a9b4936f1408da9503372c4#465557eccfe77c840a9b4936f1408da9503372c4"
 dependencies = [
  "android_system_properties",
  "arrayvec",
@@ -20212,7 +20212,7 @@ dependencies = [
 [[package]]
 name = "wgpu-types"
 version = "28.0.1"
-source = "git+https://github.com/zed-industries/wgpu?rev=0343151f535c8386df3c1db014cd42f44470e4c0#0343151f535c8386df3c1db014cd42f44470e4c0"
+source = "git+https://github.com/zed-industries/wgpu?rev=465557eccfe77c840a9b4936f1408da9503372c4#465557eccfe77c840a9b4936f1408da9503372c4"
 dependencies = [
  "bitflags 2.10.0",
  "bytemuck",
