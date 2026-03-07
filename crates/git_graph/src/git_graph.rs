@@ -1185,7 +1185,12 @@ impl GitGraph {
 
     fn select_next(&mut self, _: &SelectNext, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(selected_entry_idx) = &self.selected_entry_idx {
-            self.select_entry(selected_entry_idx.saturating_add(1), cx);
+            self.select_entry(
+                selected_entry_idx
+                    .saturating_add(1)
+                    .min(self.graph_data.commits.len().saturating_sub(1)),
+                cx,
+            );
         } else {
             self.select_prev(&SelectPrevious, window, cx);
         }
