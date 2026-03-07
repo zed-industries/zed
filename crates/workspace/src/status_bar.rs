@@ -70,12 +70,14 @@ impl StatusBar {
     fn render_left_tools(&self) -> impl IntoElement {
         h_flex()
             .gap_1()
+            .min_w_0()
             .overflow_x_hidden()
             .children(self.left_items.iter().map(|item| item.to_any()))
     }
 
     fn render_right_tools(&self) -> impl IntoElement {
         h_flex()
+            .flex_shrink_0()
             .gap_1()
             .overflow_x_hidden()
             .children(self.right_items.iter().rev().map(|item| item.to_any()))
