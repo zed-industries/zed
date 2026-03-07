@@ -329,8 +329,14 @@ impl WelcomePage {
                     .unwrap_or_else(|| "Untitled".to_string());
                 (IconName::Folder, name)
             }
-            SerializedWorkspaceLocation::Remote(_) => {
-                (IconName::Server, "Remote Project".to_string())
+            SerializedWorkspaceLocation::Remote(connection_options) => {
+                let path = paths.paths().first().map(|p| p.as_path());
+                let project_name = path
+                    .and_then(|p| p.file_name())
+                    .map(|n| n.to_string_lossy().to_string())
+                    .unwrap_or_else(|| "Remote Project".to_string());
+                let name = format!("{} ({})", project_name, connection_options.display_name());
+                (IconName::Server, name)
             }
         };
 
