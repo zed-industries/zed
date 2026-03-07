@@ -1,10 +1,12 @@
 mod binding;
+mod binding_input;
 mod context;
 
 pub use binding::*;
+pub use binding_input::*;
 pub use context::*;
 
-use crate::{Action, AsKeystroke, Keystroke, is_no_action};
+use crate::{Action, AsKeystroke, Keystroke, Modifiers, MouseButton, ScrollDirection, is_no_action};
 use collections::{HashMap, HashSet};
 use smallvec::SmallVec;
 use std::any::TypeId;
@@ -93,7 +95,7 @@ impl Keymap {
             for null_ix in &self.no_action_binding_indices {
                 if null_ix > ix {
                     let null_binding = &self.bindings[*null_ix];
-                    if null_binding.keystrokes == binding.keystrokes {
+                    if null_binding.input == binding.input {
                         let null_binding_matches =
                             match (&null_binding.context_predicate, &binding.context_predicate) {
                                 (None, _) => true,
@@ -198,10 +200,10 @@ impl Keymap {
                 continue;
             }
             if is_no_action(&*binding.action) {
-                pending.remove(&&binding.keystrokes);
+                pending.remove(&&binding.input);
                 continue;
             }
-            pending.insert(&binding.keystrokes);
+            pending.insert(&binding.input);
         }
 
         (bindings, !pending.is_empty())
@@ -249,6 +251,89 @@ impl Keymap {
             .into_iter()
             .map(|(_, _, binding)| binding.clone())
             .collect::<Vec<_>>()
+    }
+
+    /// Find all bindings that match a mouse click event.
+    /// Returns bindings in precedence order (higher precedence first).
+    pub fn bindings_for_mouse(
+        &self,
+        button: MouseButton,
+        modifiers: Modifiers,
+        click_count: usize,
+        context_stack: &[KeyContext],
+    ) -> SmallVec<[KeyBinding; 1]> {
+        let mut matched_bindings = SmallVec::<[(usize, BindingIndex, &KeyBinding); 1]>::new();
+
+        for (ix, binding) in self.bindings().enumerate().rev() {
+            if !binding.is_mouse_binding() {
+                continue;
+            }
+
+            let Some(depth) = self.binding_enabled(binding, context_stack) else {
+                continue;
+            };
+
+            if !binding.match_mouse(button, modifiers, click_count) {
+                continue;
+            }
+
+            matched_bindings.push((depth, BindingIndex(ix), binding));
+        }
+
+        matched_bindings.sort_by(|(depth_a, ix_a, _), (depth_b, ix_b, _)| {
+            depth_b.cmp(depth_a).then(ix_b.cmp(ix_a))
+        });
+
+        let mut bindings: SmallVec<[_; 1]> = SmallVec::new();
+        for (_, _, binding) in matched_bindings {
+            if is_no_action(&*binding.action) {
+                break;
+            }
+            bindings.push(binding.clone());
+        }
+
+        bindings
+    }
+
+    /// Find all bindings that match a scroll event.
+    /// Returns bindings in precedence order (higher precedence first).
+    pub fn bindings_for_scroll(
+        &self,
+        direction: ScrollDirection,
+        modifiers: Modifiers,
+        context_stack: &[KeyContext],
+    ) -> SmallVec<[KeyBinding; 1]> {
+        let mut matched_bindings = SmallVec::<[(usize, BindingIndex, &KeyBinding); 1]>::new();
+
+        for (ix, binding) in self.bindings().enumerate().rev() {
+            if !binding.is_scroll_binding() {
+                continue;
+            }
+
+            let Some(depth) = self.binding_enabled(binding, context_stack) else {
+                continue;
+            };
+
+            if !binding.match_scroll(direction, modifiers) {
+                continue;
+            }
+
+            matched_bindings.push((depth, BindingIndex(ix), binding));
+        }
+
+        matched_bindings.sort_by(|(depth_a, ix_a, _), (depth_b, ix_b, _)| {
+            depth_b.cmp(depth_a).then(ix_b.cmp(ix_a))
+        });
+
+        let mut bindings: SmallVec<[_; 1]> = SmallVec::new();
+        for (_, _, binding) in matched_bindings {
+            if is_no_action(&*binding.action) {
+                break;
+            }
+            bindings.push(binding.clone());
+        }
+
+        bindings
     }
 }
 
@@ -714,7 +799,7 @@ mod tests {
         fn assert_bindings(keymap: &Keymap, action: &dyn Action, expected: &[&str]) {
             let actual = keymap
                 .bindings_for_action(action)
-                .map(|binding| binding.keystrokes[0].inner().unparse())
+                .filter_map(|binding| binding.keystrokes().first().map(|k| k.inner().unparse()))
                 .collect::<Vec<_>>();
             assert_eq!(actual, expected, "{:?}", action);
         }
@@ -746,5 +831,144 @@ mod tests {
         assert_eq!(result.len(), 2);
         assert!(result[0].action.partial_eq(&ActionBeta {}));
         assert!(result[1].action.partial_eq(&ActionAlpha {}));
+    }
+
+    #[test]
+    fn test_scroll_bindings_for_zoom() {
+        use crate::{Modifiers, ScrollDirection};
+
+        let mut keymap = Keymap::default();
+
+        // Simulate zoom bindings: ctrl-scroll-up for zoom in, ctrl-scroll-down for zoom out
+        let zoom_in_binding = KeyBinding::new_scroll("ctrl-scroll-up", ActionAlpha {}, None);
+        let zoom_out_binding = KeyBinding::new_scroll("ctrl-scroll-down", ActionBeta {}, None);
+
+        keymap.add_bindings([zoom_in_binding, zoom_out_binding]);
+
+        let ctrl_mods = Modifiers {
+            control: true,
+            ..Default::default()
+        };
+        let no_mods = Modifiers::default();
+
+        // ctrl-scroll-up should match zoom in
+        let result = keymap.bindings_for_scroll(ScrollDirection::Up, ctrl_mods, &[]);
+        assert_eq!(result.len(), 1);
+        assert!(result[0].action.partial_eq(&ActionAlpha {}));
+
+        // ctrl-scroll-down should match zoom out
+        let result = keymap.bindings_for_scroll(ScrollDirection::Down, ctrl_mods, &[]);
+        assert_eq!(result.len(), 1);
+        assert!(result[0].action.partial_eq(&ActionBeta {}));
+
+        // scroll without modifiers should not match any binding
+        let result = keymap.bindings_for_scroll(ScrollDirection::Up, no_mods, &[]);
+        assert!(result.is_empty());
+
+        let result = keymap.bindings_for_scroll(ScrollDirection::Down, no_mods, &[]);
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn test_scroll_bindings_with_context() {
+        use crate::{Modifiers, ScrollDirection};
+
+        let mut keymap = Keymap::default();
+
+        // Add scroll bindings with context - only active in Editor
+        let editor_zoom_in =
+            KeyBinding::new_scroll("ctrl-scroll-up", ActionAlpha {}, Some("Editor"));
+        let editor_zoom_out =
+            KeyBinding::new_scroll("ctrl-scroll-down", ActionBeta {}, Some("Editor"));
+
+        keymap.add_bindings([editor_zoom_in, editor_zoom_out]);
+
+        let ctrl_mods = Modifiers {
+            control: true,
+            ..Default::default()
+        };
+
+        // Should match in Editor context
+        let editor_context = vec![KeyContext::parse("Editor").unwrap()];
+        let result = keymap.bindings_for_scroll(ScrollDirection::Up, ctrl_mods, &editor_context);
+        assert_eq!(result.len(), 1);
+        assert!(result[0].action.partial_eq(&ActionAlpha {}));
+
+        // Should not match in Terminal context
+        let terminal_context = vec![KeyContext::parse("Terminal").unwrap()];
+        let result = keymap.bindings_for_scroll(ScrollDirection::Up, ctrl_mods, &terminal_context);
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn test_mouse_bindings() {
+        use crate::{Modifiers, MouseButton};
+
+        let mut keymap = Keymap::default();
+
+        // Add mouse bindings for common operations
+        let cmd_click = KeyBinding::new_mouse("cmd-mouse1", ActionAlpha {}, Some("Editor"));
+        let alt_click = KeyBinding::new_mouse("alt-mouse1", ActionBeta {}, Some("Editor"));
+        let middle_click = KeyBinding::new_mouse("mouse3", ActionGamma {}, Some("Editor"));
+
+        keymap.add_bindings([cmd_click, alt_click, middle_click]);
+
+        let editor_context = vec![KeyContext::parse("Editor").unwrap()];
+
+        // cmd-mouse1 should match
+        let cmd_mods = Modifiers {
+            platform: true,
+            ..Default::default()
+        };
+        let result = keymap.bindings_for_mouse(MouseButton::Left, cmd_mods, 1, &editor_context);
+        assert_eq!(result.len(), 1);
+        assert!(result[0].action.partial_eq(&ActionAlpha {}));
+
+        // alt-mouse1 should match
+        let alt_mods = Modifiers {
+            alt: true,
+            ..Default::default()
+        };
+        let result = keymap.bindings_for_mouse(MouseButton::Left, alt_mods, 1, &editor_context);
+        assert_eq!(result.len(), 1);
+        assert!(result[0].action.partial_eq(&ActionBeta {}));
+
+        // mouse3 (middle click) should match
+        let no_mods = Modifiers::default();
+        let result = keymap.bindings_for_mouse(MouseButton::Middle, no_mods, 1, &editor_context);
+        assert_eq!(result.len(), 1);
+        assert!(result[0].action.partial_eq(&ActionGamma {}));
+
+        // Plain left click should not match any custom binding
+        let result = keymap.bindings_for_mouse(MouseButton::Left, no_mods, 1, &editor_context);
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn test_mouse_bindings_double_click() {
+        use crate::{Modifiers, MouseButton};
+
+        let mut keymap = Keymap::default();
+
+        // Single click and double click should be distinguishable
+        let single_click = KeyBinding::new_mouse("alt-mouse1", ActionAlpha {}, None);
+        let double_click = KeyBinding::new_mouse("alt-double-mouse1", ActionBeta {}, None);
+
+        keymap.add_bindings([single_click, double_click]);
+
+        let alt_mods = Modifiers {
+            alt: true,
+            ..Default::default()
+        };
+
+        // Single click (click_count=1) should match single click binding
+        let result = keymap.bindings_for_mouse(MouseButton::Left, alt_mods, 1, &[]);
+        assert_eq!(result.len(), 1);
+        assert!(result[0].action.partial_eq(&ActionAlpha {}));
+
+        // Double click (click_count=2) should match double click binding
+        let result = keymap.bindings_for_mouse(MouseButton::Left, alt_mods, 2, &[]);
+        assert_eq!(result.len(), 1);
+        assert!(result[0].action.partial_eq(&ActionBeta {}));
     }
 }
