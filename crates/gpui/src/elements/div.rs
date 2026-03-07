@@ -65,6 +65,10 @@ pub struct DragMoveEvent<T> {
 
     /// The bounds of this element.
     pub bounds: Bounds<Pixels>,
+
+    /// Whether the cursor is currently outside the originating window's viewport.
+    pub is_external: bool,
+
     drag: PhantomData<T>,
     dragged_item: Arc<dyn Any>,
 }
@@ -327,6 +331,7 @@ impl Interactivity {
                         &DragMoveEvent {
                             event: event.clone(),
                             bounds: hitbox.bounds,
+                            is_external: drag.is_external,
                             drag: PhantomData,
                             dragged_item: Arc::clone(&drag.value),
                         },
@@ -2342,6 +2347,7 @@ impl Interactivity {
                             return;
                         }
 
+                        let is_external = !window.viewport_bounds().contains(&event.position);
                         let mut pending_mouse_down = pending_mouse_down.borrow_mut();
                         if let Some(mouse_down) = pending_mouse_down.clone()
                             && !cx.has_active_drag()
@@ -2358,10 +2364,18 @@ impl Interactivity {
                                 value: drag_value,
                                 cursor_offset,
                                 cursor_style: drag_cursor_style,
+                                is_external,
                             });
                             pending_mouse_down.take();
                             window.refresh();
                             cx.stop_propagation();
+                        } else if let Some(active_drag) = &mut cx.active_drag
+                            && active_drag.is_external != is_external
+                        {
+                            active_drag.is_external = is_external;
+                            if !is_external {
+                                window.refresh();
+                            }
                         }
                     }
                 });
