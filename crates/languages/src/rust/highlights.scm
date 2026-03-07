@@ -103,9 +103,13 @@
 "#" @punctuation.special
 
 [
+  "auto"
   "as"
   "async"
+  "await"
+  "become"
   "const"
+  "~const"
   "default"
   "dyn"
   "enum"
@@ -113,12 +117,15 @@
   "fn"
   "impl"
   "let"
-  "macro_rules!"
+  "macro_rules"
+  "macro"
   "mod"
   "move"
   "pub"
   "raw"
   "ref"
+  "return"
+  "safe"
   "static"
   "struct"
   "for"
@@ -171,6 +178,8 @@
 ] @comment
 
 [
+  (line_outer_doc_comment)
+  (block_outer_doc_comment)
   (line_comment
     (doc_comment))
   (block_comment
