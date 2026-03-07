@@ -18347,6 +18347,61 @@ fn test_refresh_selections_while_selecting_with_mouse(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+fn test_disjoint_in_range_with_stale_selections(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let buffer = cx.new(|cx| Buffer::local(sample_text(3, 4, 'a'), cx));
+    let mut excerpt1_id = None;
+    let multibuffer = cx.new(|cx| {
+        let mut multibuffer = MultiBuffer::new(ReadWrite);
+        excerpt1_id = multibuffer
+            .push_excerpts(
+                buffer.clone(),
+                [
+                    ExcerptRange::new(Point::new(0, 0)..Point::new(1, 4)),
+                    ExcerptRange::new(Point::new(1, 0)..Point::new(2, 4)),
+                ],
+                cx,
+            )
+            .into_iter()
+            .next();
+        assert_eq!(multibuffer.read(cx).text(), "aaaa\nbbbb\nbbbb\ncccc");
+        multibuffer
+    });
+
+    let editor = cx.add_window(|window, cx| {
+        let mut editor = build_editor(multibuffer.clone(), window, cx);
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+            s.select_ranges([
+                Point::new(0, 0)..Point::new(0, 2),
+                Point::new(1, 1)..Point::new(1, 3),
+                Point::new(2, 0)..Point::new(2, 2),
+            ])
+        });
+        editor
+    });
+
+    multibuffer.update(cx, |multibuffer, cx| {
+        multibuffer.remove_excerpts([excerpt1_id.unwrap()], cx);
+    });
+
+    _ = editor.update(cx, |editor, window, cx| {
+        let snapshot = editor.snapshot(window, cx);
+        let start_anchor = snapshot.anchor_before(Point::new(0, 0));
+        let end_anchor = snapshot.anchor_after(snapshot.max_point());
+
+        let selections: Vec<Selection<Point>> = editor
+            .selections
+            .disjoint_in_range(start_anchor..end_anchor, &snapshot);
+
+        assert!(
+            !selections.is_empty() || editor.selections.disjoint_anchors().is_empty(),
+            "disjoint_in_range should not panic with stale selections"
+        );
+    });
+}
+
+#[gpui::test]
 async fn test_extra_newline_insertion(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 

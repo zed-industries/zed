@@ -227,6 +227,12 @@ impl SelectionsCollection {
             Ok(ix) => ix + 1,
             Err(ix) => ix,
         };
+        // Guard against inconsistent state where binary search produces start > end.
+        // This can happen when selections reference stale/removed excerpts whose
+        // anchor comparisons yield inconsistent ordering.
+        if start_ix > end_ix {
+            return Vec::new();
+        }
         resolve_selections_wrapping_blocks(&self.disjoint[start_ix..end_ix], snapshot).collect()
     }
 
