@@ -124,6 +124,12 @@ pub struct TerminalSettingsContent {
     ///
     /// Default: true
     pub keep_selection_on_copy: Option<bool>,
+    /// What happens on right-click in the terminal. "context_menu" shows the
+    /// context menu (default). "copy_paste" copies the selection if there is
+    /// one, otherwise pastes from the clipboard (no menu).
+    ///
+    /// Default: context_menu
+    pub right_click_behavior: Option<RightClickBehavior>,
     /// Whether to show the terminal button in the status bar.
     ///
     /// Default: true
@@ -171,6 +177,30 @@ pub struct TerminalSettingsContent {
     /// Default: 45
     #[serde(serialize_with = "crate::serialize_optional_f32_with_two_decimal_places")]
     pub minimum_contrast: Option<f32>,
+}
+
+/// Behavior on right-click in the terminal.
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    Default,
+    Serialize,
+    Deserialize,
+    PartialEq,
+    Eq,
+    JsonSchema,
+    MergeFrom,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum RightClickBehavior {
+    /// Show the context menu on right click.
+    #[default]
+    ContextMenu,
+    /// Copy selection if any, otherwise paste from clipboard (no menu).
+    CopyPaste,
 }
 
 /// Shell configuration to open the terminal with.

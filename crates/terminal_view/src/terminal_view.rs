@@ -19,7 +19,7 @@ use persistence::TERMINAL_DB;
 use project::{Project, ProjectEntryId, search::SearchQuery};
 use schemars::JsonSchema;
 use serde::Deserialize;
-use settings::{Settings, SettingsStore, TerminalBlink, WorkingDirectory};
+use settings::{RightClickBehavior, Settings, SettingsStore, TerminalBlink, WorkingDirectory};
 use std::{
     any::Any,
     cmp,
@@ -1241,12 +1241,34 @@ impl Render for TerminalView {
                 MouseButton::Right,
                 cx.listener(|this, event: &MouseDownEvent, window, cx| {
                     if !this.terminal.read(cx).mouse_mode(event.modifiers.shift) {
-                        if this.terminal.read(cx).last_content.selection.is_none() {
-                            this.terminal.update(cx, |terminal, _| {
-                                terminal.select_word_at_event_position(event);
-                            });
-                        };
-                        this.deploy_context_menu(event.position, window, cx);
+                        let right_click_behavior =
+                            TerminalSettings::get_global(cx).right_click_behavior;
+                        match right_click_behavior {
+                            RightClickBehavior::CopyPaste => {
+                                let has_selection = this
+                                    .terminal
+                                    .read(cx)
+                                    .last_content
+                                    .selection_text
+                                    .as_ref()
+                                    .is_some_and(|text| !text.is_empty());
+                                if has_selection {
+                                    this.terminal.update(cx, |terminal, _| {
+                                        terminal.copy(Some(false));
+                                    });
+                                } else {
+                                    window.dispatch_action(Box::new(Paste), cx);
+                                }
+                            }
+                            RightClickBehavior::ContextMenu => {
+                                if this.terminal.read(cx).last_content.selection.is_none() {
+                                    this.terminal.update(cx, |terminal, _| {
+                                        terminal.select_word_at_event_position(event);
+                                    });
+                                };
+                                this.deploy_context_menu(event.position, window, cx);
+                            }
+                        }
                         cx.notify();
                     }
                 }),
