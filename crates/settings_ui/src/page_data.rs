@@ -1436,7 +1436,7 @@ fn editor_page() -> SettingsPage {
         ]
     }
 
-    fn which_key_section() -> [SettingsPageItem; 3] {
+    fn which_key_section() -> [SettingsPageItem; 4] {
         [
             SettingsPageItem::SectionHeader("Which-key Menu"),
             SettingsPageItem::SettingItem(SettingItem {
@@ -1472,6 +1472,30 @@ fn editor_page() -> SettingsPage {
                         settings_content.which_key.get_or_insert_default().delay_ms = value;
                     },
                 }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Filtered Keystrokes",
+                description: "Keystroke sequences to filter out from the which-key display.",
+                field: Box::new(
+                    SettingField {
+                        json_path: Some("which_key.filtered_keystrokes"),
+                        pick: |settings_content| {
+                            settings_content
+                                .which_key
+                                .as_ref()
+                                .and_then(|settings| settings.filtered_keystrokes.as_ref())
+                        },
+                        write: |settings_content, value| {
+                            settings_content
+                                .which_key
+                                .get_or_insert_default()
+                                .filtered_keystrokes = value;
+                        },
+                    }
+                    .unimplemented(),
+                ),
                 metadata: None,
                 files: USER,
             }),
