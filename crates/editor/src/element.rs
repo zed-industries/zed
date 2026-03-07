@@ -2266,6 +2266,36 @@ impl EditorElement {
         }
     }
 
+    fn prepaint_gutter_diff_hunk_signs(
+        &self,
+        diff_hunk_signs: &mut [DiffHunkSignLayout],
+        gutter_dimensions: &GutterDimensions,
+        line_height: Pixels,
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        for diff_hunk_sign in diff_hunk_signs.iter_mut() {
+            if let Some(origin) = diff_hunk_sign.origin {
+                let available_space = size(AvailableSpace::MinContent, AvailableSpace::MinContent);
+                let icon_size = diff_hunk_sign
+                    .icon
+                    .layout_as_root(available_space, window, cx);
+
+                let centered_offset = point(
+                    (gutter_dimensions.diff_hunk_signs_width - icon_size.width) / 2.0,
+                    (line_height - icon_size.height) / 2.0,
+                );
+
+                let alignment_tweaks = point(px(1.0), px(-0.5));
+                let centered_origin = origin + centered_offset + alignment_tweaks;
+
+                diff_hunk_sign
+                    .icon
+                    .prepaint_as_root(centered_origin, available_space, window, cx);
+            }
+        }
+    }
+
     fn prepaint_expand_toggles(
         &self,
         expand_toggles: &mut [Option<(AnyElement, gpui::Point<Pixels>)>],
@@ -3568,7 +3598,7 @@ impl EditorElement {
         scroll_position: gpui::Point<ScrollOffset>,
         buffer_rows: &[RowInfo],
         snapshot: &EditorSnapshot,
-        window: &mut Window,
+        _window: &mut Window,
         cx: &mut App,
     ) -> Vec<DiffHunkSignLayout> {
         let show_git_gutter = snapshot.show_git_diff_gutter.unwrap_or_else(|| {
@@ -3592,7 +3622,8 @@ impl EditorElement {
 
         let is_light = cx.theme().appearance().is_light();
         let gutter_bg_color = cx.theme().colors().editor_gutter_background;
-        let scroll_top = scroll_position.y * ScrollPixelOffset::from(line_height);
+        let scroll_line_height = ScrollPixelOffset::from(line_height);
+        let scroll_top_line_height = scroll_position.y * scroll_line_height % scroll_line_height;
 
         buffer_rows
             .iter()
@@ -3602,9 +3633,9 @@ impl EditorElement {
                     return None;
                 };
 
-                let (diff_sign, color) = match diff_status.kind {
+                let (icon_name, color) = match diff_status.kind {
                     DiffHunkStatusKind::Added => (
-                        "+",
+                        IconName::Plus,
                         compute_diff_hunk_sign_color(
                             is_light,
                             gutter_bg_color,
@@ -3612,7 +3643,7 @@ impl EditorElement {
                         ),
                     ),
                     DiffHunkStatusKind::Modified => (
-                        "~",
+                        IconName::Diff,
                         compute_diff_hunk_sign_color(
                             is_light,
                             gutter_bg_color,
@@ -3620,7 +3651,7 @@ impl EditorElement {
                         ),
                     ),
                     DiffHunkStatusKind::Deleted => (
-                        "-",
+                        IconName::Dash,
                         compute_diff_hunk_sign_color(
                             is_light,
                             gutter_bg_color,
@@ -3629,25 +3660,26 @@ impl EditorElement {
                     ),
                 };
 
-                let shaped_line =
-                    self.shape_line_number(SharedString::from(diff_sign), color, window);
+                let icon = Icon::new(icon_name)
+                    .size(IconSize::Indicator)
+                    .color(Color::Custom(color))
+                    .into_any_element();
 
-                let line_origin = gutter_hitbox.map(|gutter_hitbox| {
-                    gutter_hitbox.origin
-                        + point(
-                            gutter_hitbox.size.width
-                                - gutter_dimensions.right_padding
-                                - gutter_dimensions.diff_hunk_signs_width
-                                + (gutter_dimensions.diff_hunk_signs_width - shaped_line.width)
-                                    / 2.0,
-                            ix as f32 * line_height
-                                - Pixels::from(scroll_top % ScrollPixelOffset::from(line_height)),
-                        )
+                let origin = gutter_hitbox.map(|gutter_hitbox| {
+                    let position = point(
+                        gutter_hitbox.size.width
+                            - gutter_dimensions.right_padding
+                            - gutter_dimensions.diff_hunk_signs_width,
+                        ix as f32 * line_height - Pixels::from(scroll_top_line_height),
+                    );
+                    gutter_hitbox.origin + position
                 });
 
                 Some(DiffHunkSignLayout {
-                    shaped_line,
-                    origin: line_origin,
+                    icon,
+                    origin,
+                    #[cfg(test)]
+                    icon_name,
                 })
             })
             .collect_vec()
@@ -6316,14 +6348,8 @@ impl EditorElement {
         window: &mut Window,
         cx: &mut App,
     ) {
-        let line_height = layout.position_map.line_height;
-        for diff_hunk_sign_layout in &layout.diff_hunk_signs {
-            if let Some(origin) = diff_hunk_sign_layout.origin {
-                diff_hunk_sign_layout
-                    .shaped_line
-                    .paint(origin, line_height, TextAlign::Left, None, window, cx)
-                    .log_err();
-            }
+        for diff_hunk_sign_layout in layout.diff_hunk_signs.iter_mut() {
+            diff_hunk_sign_layout.icon.paint(window, cx);
         }
     }
 
@@ -10250,7 +10276,7 @@ impl Element for EditorElement {
                         window,
                         cx,
                     );
-                    let diff_hunk_signs = self.layout_gutter_diff_hunk_signs(
+                    let mut diff_hunk_signs = self.layout_gutter_diff_hunk_signs(
                         Some(&gutter_hitbox),
                         gutter_dimensions,
                         line_height,
@@ -11020,6 +11046,14 @@ impl Element for EditorElement {
                         self.prepaint_expand_toggles(&mut expand_toggles, window, cx)
                     });
 
+                    self.prepaint_gutter_diff_hunk_signs(
+                        &mut diff_hunk_signs,
+                        &gutter_dimensions,
+                        line_height,
+                        window,
+                        cx,
+                    );
+
                     let wrap_guides = self.layout_wrap_guides(
                         em_advance,
                         scroll_position,
@@ -11586,10 +11620,11 @@ struct LineNumberLayout {
     segments: SmallVec<[LineNumberSegment; 1]>,
 }
 
-#[derive(Debug)]
 struct DiffHunkSignLayout {
-    shaped_line: ShapedLine,
+    icon: AnyElement,
     origin: Option<gpui::Point<Pixels>>,
+    #[cfg(test)]
+    icon_name: IconName,
 }
 
 struct ColoredRange<T> {
@@ -12850,9 +12885,18 @@ mod tests {
             })
             .unwrap();
         assert_eq!(diff_hunk_signs_enabled.len(), 3);
-        assert_eq!(diff_hunk_signs_enabled[0].shaped_line.text.as_ref(), "+");
-        assert_eq!(diff_hunk_signs_enabled[1].shaped_line.text.as_ref(), "~");
-        assert_eq!(diff_hunk_signs_enabled[2].shaped_line.text.as_ref(), "-");
+        assert_eq!(
+            diff_hunk_signs_enabled.get(0).unwrap().icon_name,
+            IconName::Plus
+        );
+        assert_eq!(
+            diff_hunk_signs_enabled.get(1).unwrap().icon_name,
+            IconName::Diff
+        );
+        assert_eq!(
+            diff_hunk_signs_enabled.get(2).unwrap().icon_name,
+            IconName::Dash
+        );
         assert!(diff_hunk_signs_enabled.get(3).is_none());
 
         cx.update(|cx| {
