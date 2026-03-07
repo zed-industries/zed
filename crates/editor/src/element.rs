@@ -8784,10 +8784,11 @@ impl LineWithInvisibles {
         let text_style = &editor_style.text;
         let mut layouts = Vec::with_capacity(max_line_count);
         let mut fragments: SmallVec<[LineFragment; 1]> = SmallVec::new();
-        let mut line = String::new();
+        let mut line_scratchspace = String::new();
+        let mut line_ingested_utf8_bytes = 0;
         let mut invisibles = Vec::new();
         let mut width = Pixels::ZERO;
-        let mut len = 0;
+        let mut line_sum_of_fragment_lens_utf8_bytes = 0;
         let mut styles = Vec::new();
         let mut non_whitespace_added = false;
         let mut row = 0;
@@ -8805,23 +8806,28 @@ impl LineWithInvisibles {
             replacement: None,
         }]) {
             if let Some(replacement) = highlighted_chunk.replacement {
-                if !line.is_empty() {
+                if !line_scratchspace.is_empty() {
                     let segments = bg_segments_per_row.get(row).map(|v| &v[..]).unwrap_or(&[]);
                     let text_runs: &[TextRun] = if segments.is_empty() {
                         &styles
                     } else {
-                        &Self::split_runs_by_bg_segments(&styles, segments, min_contrast, len)
+                        &Self::split_runs_by_bg_segments(
+                            &styles,
+                            segments,
+                            min_contrast,
+                            line_sum_of_fragment_lens_utf8_bytes,
+                        )
                     };
                     let shaped_line = window.text_system().shape_line(
-                        line.clone().into(),
+                        line_scratchspace.clone().into(),
                         font_size,
                         text_runs,
                         None,
                     );
                     width += shaped_line.width;
-                    len += shaped_line.len;
+                    line_sum_of_fragment_lens_utf8_bytes += shaped_line.len;
                     fragments.push(LineFragment::Text(shaped_line));
-                    line.clear();
+                    line_scratchspace.clear();
                     styles.clear();
                 }
 
@@ -8857,13 +8863,14 @@ impl LineWithInvisibles {
                         );
 
                         width += size.width;
-                        len += highlighted_chunk.text.len();
+                        line_sum_of_fragment_lens_utf8_bytes += highlighted_chunk.text.len();
                         fragments.push(LineFragment::Element {
                             id: renderer.id,
                             element: Some(element),
                             size,
                             len: highlighted_chunk.text.len(),
                         });
+                        line_ingested_utf8_bytes += highlighted_chunk.text.len();
                     }
                     ChunkReplacement::Str(x) => {
                         let text_style = if let Some(style) = highlighted_chunk.style {
@@ -8886,8 +8893,9 @@ impl LineWithInvisibles {
                             .with_len(highlighted_chunk.text.len());
 
                         width += line_layout.width;
-                        len += highlighted_chunk.text.len();
-                        fragments.push(LineFragment::Text(line_layout))
+                        line_sum_of_fragment_lens_utf8_bytes += highlighted_chunk.text.len();
+                        line_ingested_utf8_bytes += line_layout.len;
+                        fragments.push(LineFragment::Text(line_layout));
                     }
                 }
             } else {
@@ -8897,26 +8905,32 @@ impl LineWithInvisibles {
                         let text_runs = if segments.is_empty() {
                             &styles
                         } else {
-                            &Self::split_runs_by_bg_segments(&styles, segments, min_contrast, len)
+                            &Self::split_runs_by_bg_segments(
+                                &styles,
+                                segments,
+                                min_contrast,
+                                line_sum_of_fragment_lens_utf8_bytes,
+                            )
                         };
                         let shaped_line = window.text_system().shape_line(
-                            line.clone().into(),
+                            line_scratchspace.clone().into(),
                             font_size,
                             text_runs,
                             None,
                         );
                         width += shaped_line.width;
-                        len += shaped_line.len;
+                        line_sum_of_fragment_lens_utf8_bytes += shaped_line.len;
                         fragments.push(LineFragment::Text(shaped_line));
                         layouts.push(Self {
                             width: mem::take(&mut width),
-                            len: mem::take(&mut len),
+                            len: mem::take(&mut line_sum_of_fragment_lens_utf8_bytes),
                             fragments: mem::take(&mut fragments),
                             invisibles: std::mem::take(&mut invisibles),
                             font_size,
                         });
+                        line_ingested_utf8_bytes = 0;
 
-                        line.clear();
+                        line_scratchspace.clear();
                         styles.clear();
                         row += 1;
                         line_exceeded_max_len = false;
@@ -8933,8 +8947,8 @@ impl LineWithInvisibles {
                             Cow::Borrowed(text_style)
                         };
 
-                        if line.len() + line_chunk.len() > max_line_len {
-                            let mut chunk_len = max_line_len - line.len();
+                        if line_scratchspace.len() + line_chunk.len() > max_line_len {
+                            let mut chunk_len = max_line_len - line_scratchspace.len();
                             while !line_chunk.is_char_boundary(chunk_len) {
                                 chunk_len -= 1;
                             }
@@ -8958,8 +8972,9 @@ impl LineWithInvisibles {
                             if highlighted_chunk.is_tab {
                                 if non_whitespace_added || !is_soft_wrapped {
                                     invisibles.push(Invisible::Tab {
-                                        line_start_offset: line.len(),
-                                        line_end_offset: line.len() + line_chunk.len(),
+                                        line_start_offset: line_ingested_utf8_bytes,
+                                        line_end_offset: line_ingested_utf8_bytes
+                                            + line_chunk.len(),
                                     });
                                 }
                             } else {
@@ -8971,17 +8986,18 @@ impl LineWithInvisibles {
                                             && (non_whitespace_added || !is_soft_wrapped)
                                         {
                                             Some(Invisible::Whitespace {
-                                                line_offset: line.len() + index,
+                                                line_offset: line_ingested_utf8_bytes + index,
                                             })
                                         } else {
                                             None
                                         }
                                     },
-                                ))
+                                ));
                             }
                         }
 
-                        line.push_str(line_chunk);
+                        line_scratchspace.push_str(line_chunk);
+                        line_ingested_utf8_bytes += line_chunk.len();
                     }
                 }
             }
@@ -12985,7 +13001,7 @@ mod tests {
     fn test_all_invisibles_drawing(cx: &mut TestAppContext) {
         const TAB_SIZE: u32 = 4;
 
-        let input_text = "\t \t|\t| a b";
+        let input_text = "\t \t|\t| a b c ";
         let expected_invisibles = vec![
             Invisible::Tab {
                 line_start_offset: 0,
@@ -13006,14 +13022,17 @@ mod tests {
                 line_offset: TAB_SIZE as usize * 3 + 1,
             },
             Invisible::Whitespace {
-                line_offset: TAB_SIZE as usize * 3 + 3,
+                line_offset: TAB_SIZE as usize * 3 + 5,
+            },
+            Invisible::Whitespace {
+                line_offset: TAB_SIZE as usize * 3 + 7,
             },
         ];
         assert_eq!(
             expected_invisibles.len(),
             input_text
                 .chars()
-                .filter(|initial_char| initial_char.is_whitespace())
+                .filter(|initial_char| initial_char.is_ascii_whitespace())
                 .count(),
             "Hardcoded expected invisibles differ from the actual ones in '{input_text}'"
         );
