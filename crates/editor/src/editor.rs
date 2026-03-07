@@ -11677,6 +11677,27 @@ impl Editor {
         self.restore_hunks_in_ranges(selections, window, cx);
     }
 
+    /// Restores the diff hunks in the editor's selections and moves the cursor
+    /// to the next diff hunk, wrapping around to the beginning of the buffer
+    /// if there are no more hunks after the cursor.
+    pub fn restore_and_next(
+        &mut self,
+        _: &::git::RestoreAndNext,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let selections = self
+            .selections
+            .all(&self.display_snapshot(cx))
+            .into_iter()
+            .map(|selection| selection.range())
+            .collect();
+
+        self.hide_mouse_cursor(HideMouseCursorOrigin::TypingAction, cx);
+        self.restore_hunks_in_ranges(selections, window, cx);
+        self.go_to_next_hunk(&Default::default(), window, cx);
+    }
+
     pub fn restore_hunks_in_ranges(
         &mut self,
         ranges: Vec<Range<Point>>,

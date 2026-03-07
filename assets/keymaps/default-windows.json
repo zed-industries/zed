@@ -983,6 +983,7 @@
       "ctrl-shift-enter": "git::Amend",
       "ctrl-space": "git::StageAll",
       "ctrl-shift-space": "git::UnstageAll",
+      "ctrl-k ctrl-r": "git::RestoreAndNext",
     },
   },
   {
