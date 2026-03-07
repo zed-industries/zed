@@ -95,3 +95,6 @@ pub enum SymbolKind {
     TypeParameter,
     Other(i32),
 }
+
+// Re-export VirtualDocumentConfig from lsp crate to avoid circular dependencies
+pub use lsp::VirtualDocumentConfig;

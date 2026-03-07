@@ -1179,17 +1179,26 @@ impl LanguageServer {
     }
 
     /// Removes a request handler registers via [`Self::on_request`].
-    pub fn remove_request_handler<T: request::Request>(&self) {
+    pub fn remove_request_handler<T>(&self)
+    where
+        T: 'static + request::Request,
+    {
         self.notification_handlers.lock().remove(T::METHOD);
     }
 
     /// Removes a notification handler registers via [`Self::on_notification`].
-    pub fn remove_notification_handler<T: notification::Notification>(&self) {
+    pub fn remove_notification_handler<T>(&self)
+    where
+        T: 'static + notification::Notification,
+    {
         self.notification_handlers.lock().remove(T::METHOD);
     }
 
     /// Checks if a notification handler has been registered via [`Self::on_notification`].
-    pub fn has_notification_handler<T: notification::Notification>(&self) -> bool {
+    pub fn has_notification_handler<T>(&self) -> bool
+    where
+        T: 'static + notification::Notification,
+    {
         self.notification_handlers.lock().contains_key(T::METHOD)
     }
 
@@ -1396,6 +1405,100 @@ impl LanguageServer {
         )
     }
 
+    fn create_response_handler<R>(
+        executor: &BackgroundExecutor,
+        tx: oneshot::Sender<Result<R>>,
+    ) -> ResponseHandler
+    where
+        R: 'static + Send + DeserializeOwned,
+    {
+        let executor = executor.clone();
+        Box::new(move |result| {
+            executor.spawn(async move {
+                let response = match result {
+                    Ok(response) => match serde_json::from_str(&response) {
+                        Ok(deserialized) => Ok(deserialized),
+                        Err(error) => {
+                            log::error!(
+                                "failed to deserialize response: {}. response: {:?}",
+                                error,
+                                response
+                            );
+                            Err(error).context("failed to deserialize response")
+                        }
+                    },
+                    Err(error) => Err(anyhow!("{}", error.message)),
+                };
+                _ = tx.send(response);
+            })
+        })
+    }
+
+    /// Sends a custom LSP request with a dynamic method name.
+    pub fn request_custom<M, P, R>(&self, method: M, params: P) -> impl LspRequestFuture<R>
+    where
+        M: Into<String>,
+        P: Serialize + 'static,
+        R: 'static + Send + DeserializeOwned,
+    {
+        let method: String = method.into();
+        let id = self.next_id.fetch_add(1, SeqCst);
+        let message = serde_json::to_string(&Request {
+            jsonrpc: JSON_RPC_VERSION,
+            id: RequestId::Int(id),
+            method: &method,
+            params,
+        })
+        .unwrap();
+
+        let (tx, rx) = oneshot::channel();
+        let handle_response = self
+            .response_handlers
+            .lock()
+            .as_mut()
+            .context("server shut down")
+            .map(|handlers| {
+                handlers.insert(
+                    RequestId::Int(id),
+                    Self::create_response_handler(&self.executor, tx),
+                );
+            });
+
+        let send = self
+            .outbound_tx
+            .try_send(message)
+            .context("failed to write to language server's stdin");
+
+        let started = Instant::now();
+        LspRequest::new(id, async move {
+            if let Err(e) = handle_response {
+                return ConnectionResult::Result(Err(e));
+            }
+            if let Err(e) = send {
+                return ConnectionResult::Result(Err(e));
+            }
+
+            select! {
+                response = rx.fuse() => {
+                    let elapsed = started.elapsed();
+                    log::trace!("Took {elapsed:?} to receive response to custom request {method:?} id {id}");
+                    match response {
+                        Ok(response_result) => ConnectionResult::Result(response_result),
+                        Err(Canceled) => {
+                            log::error!("Server reset connection for request {method:?} id {id}");
+                            ConnectionResult::ConnectionReset
+                        },
+                    }
+                }
+
+                _ = self.executor.timer(DEFAULT_LSP_REQUEST_TIMEOUT).fuse() => {
+                    log::error!("Request {method:?} id {id} timed out");
+                    ConnectionResult::Timeout
+                }
+            }
+        })
+    }
+
     fn request_internal_with_timer<T, U>(
         next_id: &AtomicI32,
         response_handlers: &Arc<Mutex<Option<HashMap<RequestId, ResponseHandler>>>>,
@@ -1425,25 +1528,9 @@ impl LanguageServer {
             .as_mut()
             .context("server shut down")
             .map(|handlers| {
-                let executor = executor.clone();
                 handlers.insert(
                     RequestId::Int(id),
-                    Box::new(move |result| {
-                        executor
-                            .spawn(async move {
-                                let response = match result {
-                                    Ok(response) => match serde_json::from_str(&response) {
-                                        Ok(deserialized) => Ok(deserialized),
-                                        Err(error) => {
-                                            log::error!("failed to deserialize response from language server: {}. response from language server: {:?}", error, response);
-                                            Err(error).context("failed to deserialize response")
-                                        }
-                                    }
-                                    Err(error) => Err(anyhow!("{}", error.message)),
-                                };
-                                tx.send(response).ok();
-                            })
-                    }),
+                    Self::create_response_handler(executor, tx),
                 );
             });
 
@@ -1483,7 +1570,7 @@ impl LanguageServer {
                     match response {
                         Ok(response_result) => ConnectionResult::Result(response_result),
                         Err(Canceled) => {
-                            log::error!("Server reset connection for a request {method:?} id {id}");
+                            log::error!("Server reset connection for {method:?} id {id}");
                             ConnectionResult::ConnectionReset
                         },
                     }
@@ -1789,12 +1876,189 @@ impl Drop for Subscription {
     }
 }
 
-/// Mock language server for use in tests.
+/// Trait for building LSP request parameters for virtual document content requests.
+///
+/// This trait allows extensions to customize how request parameters are constructed
+/// for fetching virtual document contents from language servers. Implementations
+/// can build any JSON structure needed by the language server.
+///
+/// # Example
+/// ```
+/// use lsp::{VirtualDocumentParamBuilder, Uri, Position};
+/// use serde_json::Value;
+///
+/// struct MyCustomBuilder;
+///
+/// impl VirtualDocumentParamBuilder for MyCustomBuilder {
+///     fn build_params(&self, uri: &Uri, position: Option<Position>) -> Value {
+///         serde_json::json!({
+///             "documentUri": uri.to_string(),
+///             "includeMetadata": true,
+///         })
+///     }
+/// }
+/// ```
+pub trait VirtualDocumentParamBuilder: std::fmt::Debug + Send + Sync {
+    /// Build the LSP request parameters for the given URI and optional position.
+    ///
+    /// The returned `Value` will be sent as the `params` field in the LSP request.
+    fn build_params(&self, uri: &Uri, position: Option<Position>) -> Value;
+}
+
+/// Preset builder that sends only the URI as a `TextDocumentIdentifier`.
+///
+/// This is the most common format, used by language servers like JDTLS.
+/// The request parameters will be: `{ "uri": "<document-uri>" }`
+#[derive(Debug, Clone)]
+pub struct UriParamBuilder;
+
+impl VirtualDocumentParamBuilder for UriParamBuilder {
+    fn build_params(&self, uri: &Uri, _position: Option<Position>) -> Value {
+        serde_json::to_value(TextDocumentIdentifier { uri: uri.clone() })
+            .expect("TextDocumentIdentifier should serialize")
+    }
+}
+
+/// Preset builder that sends the URI as a raw string.
+///
+/// Some language servers expect just the URI string directly as the parameter.
+/// The request parameters will be: `"<document-uri>"`
+#[derive(Debug, Clone)]
+pub struct RawUriParamBuilder;
+
+impl VirtualDocumentParamBuilder for RawUriParamBuilder {
+    fn build_params(&self, uri: &Uri, _position: Option<Position>) -> Value {
+        Value::String(uri.to_string())
+    }
+}
+
+/// Preset builder that sends URI and position as `TextDocumentPositionParams`.
+///
+/// Used by language servers that need to know where in the document the request
+/// originated (e.g., for macro expansions in rust-analyzer).
+/// The request parameters will be:
+/// `{ "textDocument": { "uri": "<document-uri>" }, "position": { "line": N, "character": M } }`
+///
+/// Note: If position is not available, falls back to position (0, 0).
+#[derive(Debug, Clone)]
+pub struct UriWithPositionParamBuilder;
+
+impl VirtualDocumentParamBuilder for UriWithPositionParamBuilder {
+    fn build_params(&self, uri: &Uri, position: Option<Position>) -> Value {
+        let pos = position.unwrap_or(Position {
+            line: 0,
+            character: 0,
+        });
+        serde_json::to_value(TextDocumentPositionParams {
+            text_document: TextDocumentIdentifier { uri: uri.clone() },
+            position: pos,
+        })
+        .expect("TextDocumentPositionParams should serialize")
+    }
+}
+
+/// Configuration for handling virtual documents (decompiled code, generated sources, etc.)
+#[derive(Clone)]
+pub struct VirtualDocumentConfig {
+    /// The URI scheme to handle (e.g., "jdt" for jdt:// URIs)
+    pub scheme: String,
+    /// The LSP request method to call to get document contents (e.g., "java/classFileContents")
+    pub content_request_method: String,
+    /// The language name for syntax highlighting (e.g., "Java")
+    pub language_name: String,
+    /// The LSP language ID to use when registering the document (e.g., "java")
+    pub language_id: String,
+    /// Builder for constructing LSP request parameters.
+    /// Extensions can provide custom implementations or use preset builders like
+    /// `UriParamBuilder`, `RawUriParamBuilder`, or `UriWithPositionParamBuilder`.
+    pub param_builder: Arc<dyn VirtualDocumentParamBuilder>,
+}
+
+impl std::fmt::Debug for VirtualDocumentConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("VirtualDocumentConfig")
+            .field("scheme", &self.scheme)
+            .field("content_request_method", &self.content_request_method)
+            .field("language_name", &self.language_name)
+            .field("language_id", &self.language_id)
+            .field("param_builder", &self.param_builder)
+            .finish()
+    }
+}
+
+impl VirtualDocumentConfig {
+    /// Create a new config with the UriParamBuilder (most common format).
+    pub fn new(
+        scheme: impl Into<String>,
+        content_request_method: impl Into<String>,
+        language_name: impl Into<String>,
+        language_id: impl Into<String>,
+    ) -> Self {
+        Self {
+            scheme: scheme.into(),
+            content_request_method: content_request_method.into(),
+            language_name: language_name.into(),
+            language_id: language_id.into(),
+            param_builder: Arc::new(UriParamBuilder),
+        }
+    }
+
+    /// Create a new config with RawUriParamBuilder.
+    pub fn with_raw_uri(
+        scheme: impl Into<String>,
+        content_request_method: impl Into<String>,
+        language_name: impl Into<String>,
+        language_id: impl Into<String>,
+    ) -> Self {
+        Self {
+            scheme: scheme.into(),
+            content_request_method: content_request_method.into(),
+            language_name: language_name.into(),
+            language_id: language_id.into(),
+            param_builder: Arc::new(RawUriParamBuilder),
+        }
+    }
+
+    /// Create a new config with UriWithPositionParamBuilder.
+    pub fn with_position(
+        scheme: impl Into<String>,
+        content_request_method: impl Into<String>,
+        language_name: impl Into<String>,
+        language_id: impl Into<String>,
+    ) -> Self {
+        Self {
+            scheme: scheme.into(),
+            content_request_method: content_request_method.into(),
+            language_name: language_name.into(),
+            language_id: language_id.into(),
+            param_builder: Arc::new(UriWithPositionParamBuilder),
+        }
+    }
+
+    /// Create a new config with a custom parameter builder.
+    pub fn with_builder(
+        scheme: impl Into<String>,
+        content_request_method: impl Into<String>,
+        language_name: impl Into<String>,
+        language_id: impl Into<String>,
+        builder: Arc<dyn VirtualDocumentParamBuilder>,
+    ) -> Self {
+        Self {
+            scheme: scheme.into(),
+            content_request_method: content_request_method.into(),
+            language_name: language_name.into(),
+            language_id: language_id.into(),
+            param_builder: builder,
+        }
+    }
+}
+
 #[cfg(any(test, feature = "test-support"))]
 #[derive(Clone)]
 pub struct FakeLanguageServer {
     pub binary: LanguageServerBinary,
     pub server: Arc<LanguageServer>,
+    #[allow(dead_code)]
     notifications_rx: channel::Receiver<(String, String)>,
 }
 
