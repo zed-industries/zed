@@ -48,6 +48,8 @@ mod code_completion_tests;
 #[cfg(test)]
 mod edit_prediction_tests;
 #[cfg(test)]
+mod editor_block_comment_tests;
+#[cfg(test)]
 mod editor_tests;
 mod signature_help;
 #[cfg(any(test, feature = "test-support"))]
@@ -16193,6 +16195,236 @@ impl Editor {
             )?,
         }
         Ok(())
+    }
+
+    pub fn toggle_block_comments(
+        &mut self,
+        _: &ToggleBlockComments,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.read_only(cx) {
+            return;
+        }
+        self.hide_mouse_cursor(HideMouseCursorOrigin::TypingAction, cx);
+        self.transact(window, cx, |this, _window, cx| {
+            let mut selections = this
+                .selections
+                .all::<MultiBufferPoint>(&this.display_snapshot(cx));
+            let mut edits = Vec::new();
+            let snapshot = this.buffer.read(cx).read(cx);
+            let empty_str: Arc<str> = Arc::default();
+            let mut markers_inserted = Vec::new();
+
+            for selection in &mut selections {
+                let start_point = selection.start;
+                let mut end_point = selection.end;
+
+                // Visual line mode: move end back to end of previous line.
+                // Only adjust when the line at end_point has content — column 0
+                // on an empty line is the actual end-of-line, not a trailing newline.
+                if end_point.column == 0
+                    && end_point.row > start_point.row
+                    && snapshot.line_len(MultiBufferRow(end_point.row)) > 0
+                {
+                    end_point.row -= 1;
+                    end_point.column = snapshot.line_len(MultiBufferRow(end_point.row));
+                }
+
+                let language = if let Some(language) =
+                    snapshot.language_scope_at(Point::new(start_point.row, start_point.column))
+                {
+                    language
+                } else {
+                    continue;
+                };
+
+                let Some(BlockCommentConfig {
+                    start: comment_start,
+                    end: comment_end,
+                    ..
+                }) = language.block_comment()
+                else {
+                    continue;
+                };
+
+                let prefix_needle = comment_start.trim_end().as_bytes();
+                let suffix_needle = comment_end.trim_start().as_bytes();
+
+                // Collect full lines spanning the selection as the search region
+                let region_start = Point::new(start_point.row, 0);
+                let region_end = Point::new(
+                    end_point.row,
+                    snapshot.line_len(MultiBufferRow(end_point.row)),
+                );
+                let region_bytes: Vec<u8> = snapshot
+                    .bytes_in_range(region_start..region_end)
+                    .flatten()
+                    .copied()
+                    .collect();
+
+                let to_byte = |target: Point| -> usize {
+                    let mut point = region_start;
+                    for (i, &b) in region_bytes.iter().enumerate() {
+                        if point == target {
+                            return i;
+                        }
+                        if b == b'\n' {
+                            point.row += 1;
+                            point.column = 0;
+                        } else {
+                            point.column += 1;
+                        }
+                    }
+                    region_bytes.len()
+                };
+
+                let to_point = |offset: usize| -> Point {
+                    let mut point = region_start;
+                    for &b in &region_bytes[..offset] {
+                        if b == b'\n' {
+                            point.row += 1;
+                            point.column = 0;
+                        } else {
+                            point.column += 1;
+                        }
+                    }
+                    point
+                };
+
+                let start_byte = to_byte(start_point);
+                let end_byte = to_byte(end_point);
+
+                let mut is_commented = false;
+                let mut prefix_range = start_point..start_point;
+                let mut suffix_range = end_point..end_point;
+
+                // Find rightmost /* at or before the selection end
+                if let Some(prefix_pos) = region_bytes[..end_byte.min(region_bytes.len())]
+                    .windows(prefix_needle.len())
+                    .rposition(|w| w == prefix_needle)
+                {
+                    let after_prefix = prefix_pos + prefix_needle.len();
+
+                    // Find the first */ after that /*
+                    if let Some(suffix_pos) = region_bytes[after_prefix..]
+                        .windows(suffix_needle.len())
+                        .position(|w| w == suffix_needle)
+                        .map(|p| p + after_prefix)
+                    {
+                        let suffix_end = suffix_pos + suffix_needle.len();
+
+                        // Case 1: /* ... */ surrounds the selection
+                        let markers_surround = prefix_pos <= start_byte
+                            && suffix_end >= end_byte
+                            && start_byte < suffix_end;
+
+                        // Case 2: selection contains /* ... */ (only whitespace padding)
+                        let selection_contains = start_byte <= prefix_pos
+                            && suffix_end <= end_byte
+                            && region_bytes[start_byte..prefix_pos]
+                                .iter()
+                                .all(|&b| b.is_ascii_whitespace())
+                            && region_bytes[suffix_end..end_byte]
+                                .iter()
+                                .all(|&b| b.is_ascii_whitespace());
+
+                        if markers_surround || selection_contains {
+                            is_commented = true;
+                            let prefix_pt = to_point(prefix_pos);
+                            let suffix_pt = to_point(suffix_pos);
+                            prefix_range = prefix_pt
+                                ..Point::new(
+                                    prefix_pt.row,
+                                    prefix_pt.column + prefix_needle.len() as u32,
+                                );
+                            suffix_range = suffix_pt
+                                ..Point::new(
+                                    suffix_pt.row,
+                                    suffix_pt.column + suffix_needle.len() as u32,
+                                );
+                        }
+                    }
+                }
+
+                if is_commented {
+                    // Also remove the space after /* and before */
+                    if snapshot
+                        .bytes_in_range(prefix_range.end..snapshot.max_point())
+                        .flatten()
+                        .next()
+                        == Some(&b' ')
+                    {
+                        prefix_range.end.column += 1;
+                    }
+                    if suffix_range.start.column > 0 {
+                        let before =
+                            Point::new(suffix_range.start.row, suffix_range.start.column - 1);
+                        if snapshot
+                            .bytes_in_range(before..suffix_range.start)
+                            .flatten()
+                            .next()
+                            == Some(&b' ')
+                        {
+                            suffix_range.start.column -= 1;
+                        }
+                    }
+
+                    edits.push((prefix_range, empty_str.clone()));
+                    edits.push((suffix_range, empty_str.clone()));
+                } else {
+                    let prefix: Arc<str> = if comment_start.ends_with(' ') {
+                        comment_start.clone()
+                    } else {
+                        format!("{} ", comment_start).into()
+                    };
+                    let suffix: Arc<str> = if comment_end.starts_with(' ') {
+                        comment_end.clone()
+                    } else {
+                        format!(" {}", comment_end).into()
+                    };
+
+                    edits.push((start_point..start_point, prefix.clone()));
+                    edits.push((end_point..end_point, suffix.clone()));
+                    markers_inserted.push((
+                        selection.id,
+                        prefix.len(),
+                        suffix.len(),
+                        selection.is_empty(),
+                        end_point.row,
+                    ));
+                }
+            }
+
+            drop(snapshot);
+            this.buffer.update(cx, |buffer, cx| {
+                buffer.edit(edits, None, cx);
+            });
+
+            let mut selections = this
+                .selections
+                .all::<MultiBufferPoint>(&this.display_snapshot(cx));
+            for selection in &mut selections {
+                if let Some((_, prefix_len, suffix_len, was_empty, suffix_row)) = markers_inserted
+                    .iter()
+                    .find(|(id, _, _, _, _)| *id == selection.id)
+                {
+                    if *was_empty {
+                        selection.start.column = selection
+                            .start
+                            .column
+                            .saturating_sub((*prefix_len + *suffix_len) as u32);
+                    } else {
+                        selection.start.column =
+                            selection.start.column.saturating_sub(*prefix_len as u32);
+                        if selection.end.row == *suffix_row {
+                            selection.end.column += *suffix_len as u32;
+                        }
+                    }
+                }
+            }
+            this.change_selections(Default::default(), _window, cx, |s| s.select(selections));
+        });
     }
 
     pub fn toggle_comments(
