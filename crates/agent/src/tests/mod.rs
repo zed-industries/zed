@@ -1863,6 +1863,370 @@ async fn test_mcp_tool_truncation(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_mcp_tool_image_response(cx: &mut TestAppContext) {
+    struct TestCase {
+        name: &'static str,
+        server_name: &'static str,
+        tool_name: &'static str,
+        response_content: Vec<context_server::types::ToolResponseContent>,
+        expected_ui_content: Vec<acp::ToolCallContent>,
+    }
+
+    let test_image_base64 = test_png_base64();
+
+    let test_cases = vec![
+        TestCase {
+            name: "image only",
+            server_name: "image_server",
+            tool_name: "get_image",
+            response_content: vec![context_server::types::ToolResponseContent::Image {
+                data: test_image_base64.clone(),
+                mime_type: "image/png".into(),
+            }],
+            expected_ui_content: vec![acp::ToolCallContent::Content(acp::Content::new(
+                acp::ContentBlock::Image(acp::ImageContent::new(
+                    test_image_base64.clone(),
+                    "image/png".to_string(),
+                )),
+            ))],
+        },
+        TestCase {
+            name: "mixed text and image",
+            server_name: "mixed_server",
+            tool_name: "analyze",
+            response_content: vec![
+                context_server::types::ToolResponseContent::Text {
+                    text: "Analysis results: Found 5 items.".into(),
+                },
+                context_server::types::ToolResponseContent::Image {
+                    data: test_image_base64.clone(),
+                    mime_type: "image/png".into(),
+                },
+            ],
+            expected_ui_content: vec![
+                acp::ToolCallContent::Content(acp::Content::new(acp::ContentBlock::Text(
+                    acp::TextContent::new("Analysis results: Found 5 items.".to_string()),
+                ))),
+                acp::ToolCallContent::Content(acp::Content::new(acp::ContentBlock::Image(
+                    acp::ImageContent::new(test_image_base64.clone(), "image/png".to_string()),
+                ))),
+            ],
+        },
+        TestCase {
+            name: "multiple images returns first",
+            server_name: "multi_image_server",
+            tool_name: "get_images",
+            response_content: vec![
+                context_server::types::ToolResponseContent::Image {
+                    data: test_image_base64.clone(),
+                    mime_type: "image/png".into(),
+                },
+                context_server::types::ToolResponseContent::Image {
+                    data: "c2Vjb25kX2ltYWdl".into(),
+                    mime_type: "image/png".into(),
+                },
+            ],
+            expected_ui_content: vec![
+                acp::ToolCallContent::Content(acp::Content::new(acp::ContentBlock::Image(
+                    acp::ImageContent::new(test_image_base64.clone(), "image/png".to_string()),
+                ))),
+                acp::ToolCallContent::Content(acp::Content::new(acp::ContentBlock::Image(
+                    acp::ImageContent::new("c2Vjb25kX2ltYWdl".to_string(), "image/png".to_string()),
+                ))),
+            ],
+        },
+    ];
+
+    for test_case in test_cases {
+        let ThreadTest {
+            model,
+            thread,
+            context_server_store,
+            fs,
+            ..
+        } = setup(cx, TestModel::Fake).await;
+        let fake_model = model.as_fake();
+
+        fake_model.set_supports_images(true);
+
+        fs.insert_file(
+            paths::settings_file(),
+            json!({
+                "agent": {
+                    "tool_permissions": { "default": "allow" },
+                    "profiles": {
+                        "test": {
+                            "name": "Test Profile",
+                            "enable_all_context_servers": true,
+                            "tools": {}
+                        },
+                    }
+                }
+            })
+            .to_string()
+            .into_bytes(),
+        )
+        .await;
+        cx.run_until_parked();
+        thread.update(cx, |thread, cx| {
+            thread.set_profile(AgentProfileId("test".into()), cx)
+        });
+
+        let mut mcp_tool_calls = setup_context_server(
+            test_case.server_name,
+            vec![context_server::types::Tool {
+                name: test_case.tool_name.into(),
+                description: Some("Test tool".into()),
+                input_schema: json!({"type": "object", "properties": {}}),
+                output_schema: None,
+                annotations: None,
+            }],
+            &context_server_store,
+            cx,
+        );
+
+        let mut events = thread.update(cx, |thread, cx| {
+            thread
+                .send(UserMessageId::new(), ["Run the tool"], cx)
+                .unwrap()
+        });
+        cx.run_until_parked();
+
+        fake_model.send_last_completion_stream_event(LanguageModelCompletionEvent::ToolUse(
+            LanguageModelToolUse {
+                id: "tool_1".into(),
+                name: test_case.tool_name.into(),
+                raw_input: json!({}).to_string(),
+                input: json!({}),
+                is_input_complete: true,
+                thought_signature: None,
+            },
+        ));
+        fake_model.end_last_completion_stream();
+        cx.run_until_parked();
+
+        let (tool_call_params, tool_call_response) = mcp_tool_calls.next().await.unwrap();
+        assert_eq!(
+            tool_call_params.name, test_case.tool_name,
+            "case: {}",
+            test_case.name
+        );
+        tool_call_response
+            .send(context_server::types::CallToolResponse {
+                content: test_case.response_content,
+                is_error: None,
+                meta: None,
+                structured_content: None,
+            })
+            .unwrap();
+        cx.run_until_parked();
+
+        // Verify update_fields was called with the correct UI content.
+        let mut found_content_update = false;
+        while let Some(event) = events.next().now_or_never() {
+            if let Some(Ok(ThreadEvent::ToolCallUpdate(
+                acp_thread::ToolCallUpdate::UpdateFields(update),
+            ))) = event
+            {
+                if let Some(content) = &update.fields.content {
+                    if !content.is_empty() {
+                        assert_eq!(
+                            content, &test_case.expected_ui_content,
+                            "case: {}",
+                            test_case.name
+                        );
+                        found_content_update = true;
+                        break;
+                    }
+                }
+            }
+        }
+        assert!(
+            found_content_update,
+            "case: {}: expected update_fields with content",
+            test_case.name
+        );
+
+        let completion = fake_model.pending_completions().pop().unwrap();
+        let tool_results: Vec<_> = completion
+            .messages
+            .last()
+            .unwrap()
+            .content
+            .iter()
+            .filter_map(|c| match c {
+                MessageContent::ToolResult(result) => Some(result),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(tool_results.len(), 1, "case: {}", test_case.name);
+        let tool_result = tool_results[0];
+
+        match &tool_result.content {
+            language_model::LanguageModelToolResultContent::Image(image) => {
+                assert_eq!(
+                    image.source.as_ref(),
+                    test_image_base64.as_str(),
+                    "case: {}",
+                    test_case.name
+                );
+                // Verify that size was extracted from the image
+                let size = image
+                    .size
+                    .as_ref()
+                    .unwrap_or_else(|| panic!("case: {}: expected size to be set", test_case.name));
+                assert_eq!(size.width.0, 1, "case: {}", test_case.name);
+                assert_eq!(size.height.0, 1, "case: {}", test_case.name);
+            }
+            _ => panic!(
+                "case: {}: expected image content in tool result, got: {:?}",
+                test_case.name, tool_result.content
+            ),
+        }
+
+        fake_model.send_last_completion_stream_text_chunk("Done!");
+        fake_model.end_last_completion_stream();
+        events.collect::<Vec<_>>().await;
+    }
+}
+
+#[gpui::test]
+async fn test_mcp_tool_image_restored_on_replay(cx: &mut TestAppContext) {
+    let ThreadTest {
+        model,
+        thread,
+        context_server_store,
+        fs,
+        ..
+    } = setup(cx, TestModel::Fake).await;
+    let fake_model = model.as_fake();
+
+    fake_model.set_supports_images(true);
+
+    fs.insert_file(
+        paths::settings_file(),
+        json!({
+            "agent": {
+                "tool_permissions": { "default": "allow" },
+                "profiles": {
+                    "test": {
+                        "name": "Test Profile",
+                        "enable_all_context_servers": true,
+                        "tools": {}
+                    },
+                }
+            }
+        })
+        .to_string()
+        .into_bytes(),
+    )
+    .await;
+    cx.run_until_parked();
+    thread.update(cx, |thread, cx| {
+        thread.set_profile(AgentProfileId("test".into()), cx)
+    });
+
+    let test_image_base64 = test_png_base64();
+
+    let mut mcp_tool_calls = setup_context_server(
+        "image_replay_server",
+        vec![context_server::types::Tool {
+            name: "get_screenshot".into(),
+            description: Some("Returns a screenshot".into()),
+            input_schema: json!({"type": "object", "properties": {}}),
+            output_schema: None,
+            annotations: None,
+        }],
+        &context_server_store,
+        cx,
+    );
+
+    let events = thread.update(cx, |thread, cx| {
+        thread
+            .send(UserMessageId::new(), ["Take a screenshot"], cx)
+            .unwrap()
+    });
+    cx.run_until_parked();
+
+    fake_model.send_last_completion_stream_event(LanguageModelCompletionEvent::ToolUse(
+        LanguageModelToolUse {
+            id: "tool_1".into(),
+            name: "get_screenshot".into(),
+            raw_input: json!({}).to_string(),
+            input: json!({}),
+            is_input_complete: true,
+            thought_signature: None,
+        },
+    ));
+    fake_model.end_last_completion_stream();
+    cx.run_until_parked();
+
+    let (tool_call_params, tool_call_response) = mcp_tool_calls.next().await.unwrap();
+    assert_eq!(tool_call_params.name, "get_screenshot");
+    tool_call_response
+        .send(context_server::types::CallToolResponse {
+            content: vec![context_server::types::ToolResponseContent::Image {
+                data: test_image_base64.clone(),
+                mime_type: "image/png".into(),
+            }],
+            is_error: None,
+            meta: None,
+            structured_content: None,
+        })
+        .unwrap();
+    cx.run_until_parked();
+
+    // Complete the turn
+    let _completion = fake_model.pending_completions().pop().unwrap();
+    fake_model.send_last_completion_stream_text_chunk("Here's the screenshot!");
+    fake_model
+        .send_last_completion_stream_event(LanguageModelCompletionEvent::Stop(StopReason::EndTurn));
+    fake_model.end_last_completion_stream();
+    events.collect::<Vec<_>>().await;
+
+    // Simulate app restart: disconnect the MCP server
+    context_server_store.update(cx, |store, cx| {
+        let _ = store.stop_server(&ContextServerId("image_replay_server".into()), cx);
+    });
+    cx.run_until_parked();
+
+    // Replay the thread (simulates loading a saved thread after restart)
+    let mut replay_events = thread.update(cx, |thread, cx| thread.replay(cx));
+
+    let mut found_image_content = false;
+    while let Some(event) = replay_events.next().await {
+        let event = event.unwrap();
+        if let ThreadEvent::ToolCallUpdate(acp_thread::ToolCallUpdate::UpdateFields(update)) =
+            &event
+        {
+            if update.tool_call_id.to_string() == "tool_1" {
+                if let Some(content) = &update.fields.content {
+                    for item in content {
+                        if let acp::ToolCallContent::Content(acp::Content {
+                            content: acp::ContentBlock::Image(image),
+                            ..
+                        }) = item
+                        {
+                            assert_eq!(
+                                image.data, test_image_base64,
+                                "Image data should be restored from saved tool result"
+                            );
+                            assert_eq!(image.mime_type, "image/png");
+                            found_image_content = true;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    assert!(
+        found_image_content,
+        "Image content should be restored when replaying tool call"
+    );
+}
+
+#[gpui::test]
 #[cfg_attr(not(feature = "e2e"), ignore)]
 async fn test_cancellation(cx: &mut TestAppContext) {
     let ThreadTest { thread, .. } = setup(cx, TestModel::Sonnet4).await;
@@ -3968,6 +4332,14 @@ fn setup_context_server(
     });
     cx.run_until_parked();
     mcp_tool_calls_rx
+}
+
+/// Returns a base64-encoded 1x1 red pixel PNG for testing.
+///
+/// This is a minimal valid PNG image suitable for use in MCP image response tests.
+fn test_png_base64() -> String {
+    // 1x1 red pixel PNG (RGBA [255, 0, 0, 255])
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFBQIAX8jx0gAAAABJRU5ErkJggg==".to_string()
 }
 
 #[gpui::test]

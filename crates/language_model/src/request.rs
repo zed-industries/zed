@@ -102,6 +102,32 @@ impl LanguageModelImage {
         }
     }
 
+    pub fn from_base64(base64_data: impl Into<SharedString>) -> Self {
+        let source: SharedString = base64_data.into();
+        let size = Self::extract_size_from_base64(&source);
+        Self { source, size }
+    }
+
+    fn extract_size_from_base64(base64_data: &str) -> Option<Size<DevicePixels>> {
+        use base64::Engine;
+        use image::ImageReader;
+
+        let bytes = base64::engine::general_purpose::STANDARD
+            .decode(base64_data.as_bytes())
+            .ok()?;
+
+        let (width, height) = ImageReader::new(Cursor::new(&bytes))
+            .with_guessed_format()
+            .ok()?
+            .into_dimensions()
+            .ok()?;
+
+        Some(size(
+            DevicePixels(width as i32),
+            DevicePixels(height as i32),
+        ))
+    }
+
     pub fn from_image(data: Arc<Image>, cx: &mut App) -> Task<Option<Self>> {
         cx.background_spawn(async move {
             let image_bytes = Cursor::new(data.bytes());
@@ -719,5 +745,73 @@ mod tests {
         let json = r#"[1, 2, 3]"#;
         let result: Result<LanguageModelToolResultContent, _> = serde_json::from_str(json);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_from_base64_extracts_png_dimensions() {
+        // 1x1 red pixel PNG
+        let base64_1x1 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFBQIAX8jx0gAAAABJRU5ErkJggg==";
+        let image = LanguageModelImage::from_base64(base64_1x1);
+
+        assert_eq!(image.source.as_ref(), base64_1x1);
+        let size = image.size.expect("size should be extracted from PNG");
+        assert_eq!(size.width.0, 1);
+        assert_eq!(size.height.0, 1);
+    }
+
+    #[test]
+    fn test_from_base64_extracts_larger_png_dimensions() {
+        // Create a 10x20 PNG
+        let mut img = image::RgbaImage::new(10, 20);
+        for y in 0..20 {
+            for x in 0..10 {
+                img.put_pixel(x, y, image::Rgba([255, 0, 0, 255]));
+            }
+        }
+        let mut png_bytes = Vec::new();
+        image::DynamicImage::ImageRgba8(img)
+            .write_with_encoder(PngEncoder::new(&mut png_bytes))
+            .expect("png encoding should succeed");
+
+        let base64_data = base64::engine::general_purpose::STANDARD.encode(&png_bytes);
+        let image = LanguageModelImage::from_base64(base64_data.clone());
+
+        assert_eq!(image.source.as_ref(), base64_data.as_str());
+        let size = image.size.expect("size should be extracted from PNG");
+        assert_eq!(size.width.0, 10);
+        assert_eq!(size.height.0, 20);
+    }
+
+    #[test]
+    fn test_from_base64_handles_invalid_data() {
+        // Invalid base64
+        let image = LanguageModelImage::from_base64("not valid base64!!!");
+        assert!(image.size.is_none());
+
+        // Valid base64 but not an image
+        let not_image_base64 = base64::engine::general_purpose::STANDARD.encode(b"hello world");
+        let image = LanguageModelImage::from_base64(not_image_base64);
+        assert!(image.size.is_none());
+
+        // Empty string
+        let image = LanguageModelImage::from_base64("");
+        assert!(image.size.is_none());
+    }
+
+    #[test]
+    fn test_from_base64_with_jpeg() {
+        // Create a simple 5x5 JPEG
+        let img = image::RgbImage::from_fn(5, 5, |_, _| image::Rgb([128, 64, 32]));
+        let mut jpeg_bytes = Vec::new();
+        image::DynamicImage::ImageRgb8(img)
+            .write_with_encoder(image::codecs::jpeg::JpegEncoder::new(&mut jpeg_bytes))
+            .expect("jpeg encoding should succeed");
+
+        let base64_data = base64::engine::general_purpose::STANDARD.encode(&jpeg_bytes);
+        let image = LanguageModelImage::from_base64(base64_data);
+
+        let size = image.size.expect("size should be extracted from JPEG");
+        assert_eq!(size.width.0, 5);
+        assert_eq!(size.height.0, 5);
     }
 }
