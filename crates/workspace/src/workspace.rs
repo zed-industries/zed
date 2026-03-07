@@ -8854,10 +8854,9 @@ pub fn open_workspace_by_id(
 pub fn open_project(
     project: Entity<Project>,
     app_state: Arc<AppState>,
-    cx: &mut Context<MultiWorkspace>,
+    cx: &mut App,
 ) -> Task<anyhow::Result<WindowHandle<MultiWorkspace>>> {
-    cx.spawn(async move |_, cx| {
-        let workspace_id = DB.next_id().await.unwrap_or_else(|_| Default::default());
+    cx.spawn(async move |cx| {
         let window_bounds_override = window_bounds_env_override();
 
         let (window_bounds, display) = if let Some(bounds) = window_bounds_override {
@@ -8878,8 +8877,9 @@ pub fn open_project(
             let app_state = app_state.clone();
             let project = project.clone();
             move |window, cx| {
-                let workspace =
-                    cx.new(|cx| Workspace::new(Some(workspace_id), project, app_state, window, cx));
+                // TODO: assign an ID to the workspace so that it can be persisted
+                // currently persistance layer expects 1 workspace per root paths
+                let workspace = cx.new(|cx| Workspace::new(None, project, app_state, window, cx));
                 cx.new(|cx| MultiWorkspace::new(workspace, window, cx))
             }
         })?;
