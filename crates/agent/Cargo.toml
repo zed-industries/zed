@@ -18,6 +18,7 @@ e2e = []
 workspace = true
 
 [dependencies]
+base64.workspace = true
 acp_thread.workspace = true
 action_log.workspace = true
 agent-client-protocol.workspace = true
@@ -57,6 +58,7 @@ rust-embed.workspace = true
 schemars.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+serde_yml.workspace = true
 settings.workspace = true
 shell_command_parser.workspace = true
 smallvec.workspace = true

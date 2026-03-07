@@ -243,3 +243,28 @@ impl Future for WaitForFlag {
         })
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use gpui::TestAppContext;
+
+    #[gpui::test]
+    fn test_enabled_for_all(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            // Initially, with no FeatureFlags global, it should be enabled
+            assert!(cx.has_flag::<AgentV2FeatureFlag>());
+            assert!(cx.has_flag::<SubagentsFeatureFlag>());
+
+            // After updating flags with an empty list, it should still be enabled
+            cx.update_flags(false, vec![]);
+            assert!(cx.has_flag::<AgentV2FeatureFlag>());
+            assert!(cx.has_flag::<SubagentsFeatureFlag>());
+
+            // Even if explicitly disabled by the server, it should still be enabled because of enabled_for_all()
+            cx.update_flags(false, vec!["other".to_string()]);
+            assert!(cx.has_flag::<AgentV2FeatureFlag>());
+            assert!(cx.has_flag::<SubagentsFeatureFlag>());
+        });
+    }
+}
