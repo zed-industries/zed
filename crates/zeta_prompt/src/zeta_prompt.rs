@@ -1,3 +1,5 @@
+pub mod excerpt_ranges;
+
 use anyhow::{Result, anyhow};
 use serde::{Deserialize, Serialize};
 use std::fmt::Write;
@@ -5,6 +7,10 @@ use std::ops::Range;
 use std::path::Path;
 use std::sync::Arc;
 use strum::{EnumIter, IntoEnumIterator as _, IntoStaticStr};
+
+pub use crate::excerpt_ranges::{
+    ExcerptRanges, compute_editable_and_context_ranges, compute_legacy_excerpt_ranges,
+};
 
 pub const CURSOR_MARKER: &str = "<|user_cursor|>";
 pub const MAX_PROMPT_TOKENS: usize = 4096;
@@ -18,31 +24,6 @@ fn estimate_tokens(bytes: usize) -> usize {
     bytes / 3
 }
 
-/// Pre-computed byte offset ranges within `cursor_excerpt` for different
-/// editable and context token budgets. Allows the server to select the
-/// appropriate ranges for whichever model it uses.
-#[derive(Clone, Debug, Default, PartialEq, Hash, Serialize, Deserialize)]
-pub struct ExcerptRanges {
-    /// Editable region computed with a 150-token budget.
-    pub editable_150: Range<usize>,
-    /// Editable region computed with a 180-token budget.
-    pub editable_180: Range<usize>,
-    /// Editable region computed with a 350-token budget.
-    pub editable_350: Range<usize>,
-    /// Editable region computed with a 350-token budget.
-    pub editable_512: Option<Range<usize>>,
-    /// Context boundary when using editable_150 with 350 tokens of additional context.
-    pub editable_150_context_350: Range<usize>,
-    /// Context boundary when using editable_180 with 350 tokens of additional context.
-    pub editable_180_context_350: Range<usize>,
-    /// Context boundary when using editable_350 with 150 tokens of additional context.
-    pub editable_350_context_150: Range<usize>,
-    pub editable_350_context_512: Option<Range<usize>>,
-    pub editable_350_context_1024: Option<Range<usize>>,
-    pub context_4096: Option<Range<usize>>,
-    pub context_8192: Option<Range<usize>>,
-}
-
 #[derive(Clone, Debug, PartialEq, Hash, Serialize, Deserialize)]
 pub struct ZetaPromptInput {
     pub cursor_path: Arc<Path>,
@@ -54,6 +35,12 @@ pub struct ZetaPromptInput {
     pub related_files: Vec<RelatedFile>,
     /// These ranges let the server select model-appropriate subsets.
     pub excerpt_ranges: ExcerptRanges,
+    /// Byte offset ranges within `cursor_excerpt` for all syntax nodes that
+    /// contain `cursor_offset_in_excerpt`, ordered from innermost to outermost.
+    /// When present, the server uses these to compute editable/context ranges
+    /// instead of `excerpt_ranges`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub syntax_ranges: Option<Vec<Range<usize>>>,
     /// The name of the edit prediction model experiment to use.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub experiment: Option<String>,
@@ -222,6 +209,21 @@ pub fn special_tokens_for_format(format: ZetaFormat) -> &'static [&'static str] 
     }
 }
 
+/// Returns the (editable_token_limit, context_token_limit) for a given format.
+pub fn token_limits_for_format(format: ZetaFormat) -> (usize, usize) {
+    match format {
+        ZetaFormat::V0112MiddleAtEnd | ZetaFormat::V0113Ordered => (150, 350),
+        ZetaFormat::V0114180EditableRegion => (180, 350),
+        ZetaFormat::V0120GitMergeMarkers
+        | ZetaFormat::V0131GitMergeMarkersPrefix
+        | ZetaFormat::V0211Prefill
+        | ZetaFormat::V0211SeedCoder
+        | ZetaFormat::v0226Hashline
+        | ZetaFormat::V0304SeedNoEdits => (350, 150),
+        ZetaFormat::V0304VariableEdit => (1024, 0),
+    }
+}
+
 pub fn excerpt_ranges_for_format(
     format: ZetaFormat,
     ranges: &ExcerptRanges,
@@ -246,8 +248,9 @@ pub fn excerpt_ranges_for_format(
         ),
         ZetaFormat::V0304VariableEdit => {
             let context = ranges
-                .context_8192
+                .editable_350_context_1024
                 .clone()
+                .or(ranges.editable_350_context_512.clone())
                 .unwrap_or_else(|| ranges.editable_350_context_150.clone());
             (context.clone(), context)
         }
@@ -534,7 +537,18 @@ pub fn resolve_cursor_region(
     input: &ZetaPromptInput,
     format: ZetaFormat,
 ) -> (&str, Range<usize>, Range<usize>, usize) {
-    let (editable_range, context_range) = excerpt_range_for_format(format, &input.excerpt_ranges);
+    let (editable_range, context_range) = if let Some(syntax_ranges) = &input.syntax_ranges {
+        let (editable_tokens, context_tokens) = token_limits_for_format(format);
+        compute_editable_and_context_ranges(
+            &input.cursor_excerpt,
+            input.cursor_offset_in_excerpt,
+            syntax_ranges,
+            editable_tokens,
+            context_tokens,
+        )
+    } else {
+        excerpt_range_for_format(format, &input.excerpt_ranges)
+    };
     let context_start = context_range.start;
     let context_text = &input.cursor_excerpt[context_range.clone()];
     let adjusted_editable =
@@ -3806,6 +3820,7 @@ mod tests {
                 editable_350_context_150: context_range,
                 ..Default::default()
             },
+            syntax_ranges: None,
             experiment: None,
             in_open_source_repo: false,
             can_collect_data: false,
@@ -3835,6 +3850,7 @@ mod tests {
                 editable_350_context_150: context_range,
                 ..Default::default()
             },
+            syntax_ranges: None,
             experiment: None,
             in_open_source_repo: false,
             can_collect_data: false,
@@ -4418,6 +4434,7 @@ mod tests {
                 editable_350_context_150: 0..excerpt.len(),
                 ..Default::default()
             },
+            syntax_ranges: None,
             experiment: None,
             in_open_source_repo: false,
             can_collect_data: false,
@@ -4481,6 +4498,7 @@ mod tests {
                 editable_350_context_150: 0..28,
                 ..Default::default()
             },
+            syntax_ranges: None,
             experiment: None,
             in_open_source_repo: false,
             can_collect_data: false,
@@ -4539,6 +4557,7 @@ mod tests {
                 editable_350_context_150: context_range.clone(),
                 ..Default::default()
             },
+            syntax_ranges: None,
             experiment: None,
             in_open_source_repo: false,
             can_collect_data: false,

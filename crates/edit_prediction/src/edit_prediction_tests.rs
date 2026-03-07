@@ -1890,6 +1890,7 @@ async fn test_edit_prediction_basic_interpolation(cx: &mut TestAppContext) {
             cursor_offset_in_excerpt: 0,
             excerpt_start_row: None,
             excerpt_ranges: Default::default(),
+            syntax_ranges: None,
             experiment: None,
             in_open_source_repo: false,
             can_collect_data: false,

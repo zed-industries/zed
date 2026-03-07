@@ -678,6 +678,7 @@ mod tests {
                 editable_350_context_150: 0..content.len(),
                 ..Default::default()
             },
+            syntax_ranges: None,
             experiment: None,
             in_open_source_repo: false,
             can_collect_data: false,
