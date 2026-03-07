@@ -427,7 +427,12 @@ impl DispatchTree {
             .bindings_for_action(action)
             .rev()
             .find(|binding| {
-                Self::binding_matches_predicate_and_not_shadowed(&keymap, binding, context_stack)
+                !binding.has_xf86_keystroke()
+                    && Self::binding_matches_predicate_and_not_shadowed(
+                        &keymap,
+                        binding,
+                        context_stack,
+                    )
             })
             .cloned()
     }
@@ -689,6 +694,67 @@ mod tests {
         let keybinding = tree.bindings_for_action(&TestAction, &contexts);
 
         assert!(keybinding[0].action.partial_eq(&TestAction))
+    }
+
+    #[test]
+    fn test_xf86_bindings_hidden_from_highest_precedence_but_still_dispatch() {
+        let keymap = Keymap::new(vec![
+            KeyBinding::new("new", TestAction, None),
+            KeyBinding::new("cmd-n", TestAction, None),
+        ]);
+
+        let mut registry = ActionRegistry::default();
+        registry.load_action::<TestAction>();
+
+        let keymap = Rc::new(RefCell::new(keymap));
+        let mut tree = DispatchTree::new(keymap, Rc::new(registry));
+
+        let contexts = vec![KeyContext::parse("Workspace").unwrap()];
+
+        // The XF86 binding ("new") should be excluded from the highest precedence
+        // binding used for display in menus and keybinding hints.
+        let binding = tree.highest_precedence_binding_for_action(&TestAction, &contexts);
+        assert!(binding.is_some(), "should find a non-XF86 binding");
+        assert_eq!(
+            binding.as_ref().map(|b| b.keystrokes[0].key()),
+            Some("n"),
+            "should pick cmd-n, not the XF86 'new' binding"
+        );
+
+        // Both bindings should still appear in the full bindings list.
+        let all_bindings = tree.bindings_for_action(&TestAction, &contexts);
+        assert_eq!(all_bindings.len(), 2, "both bindings should be present");
+
+        // The XF86 key should still dispatch when pressed.
+        let node_id = tree.push_node();
+        tree.pop_node();
+        let dispatch_path = tree.dispatch_path(node_id);
+
+        let result = tree.dispatch_key(SmallVec::new(), Keystroke::parse("new").unwrap(), &dispatch_path);
+        assert_eq!(result.bindings.len(), 1, "XF86 'new' key should still dispatch");
+        assert!(result.bindings[0].action.partial_eq(&TestAction));
+    }
+
+    #[test]
+    fn test_xf86_only_binding_hidden_from_highest_precedence() {
+        // When the only binding for an action is an XF86 key,
+        // highest_precedence should return None.
+        let keymap = Keymap::new(vec![KeyBinding::new("save", TestAction, None)]);
+
+        let mut registry = ActionRegistry::default();
+        registry.load_action::<TestAction>();
+
+        let keymap = Rc::new(RefCell::new(keymap));
+        let tree = DispatchTree::new(keymap, Rc::new(registry));
+
+        let contexts = vec![KeyContext::parse("Workspace").unwrap()];
+
+        let binding = tree.highest_precedence_binding_for_action(&TestAction, &contexts);
+        assert!(binding.is_none(), "XF86-only binding should not appear for display");
+
+        // But it should still be in the full bindings list.
+        let all_bindings = tree.bindings_for_action(&TestAction, &contexts);
+        assert_eq!(all_bindings.len(), 1);
     }
 
     #[test]
