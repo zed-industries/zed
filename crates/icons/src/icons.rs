@@ -113,6 +113,7 @@ pub enum IconName {
     ExpandUp,
     ExpandVertical,
     Eye,
+    EyeOff,
     FastForward,
     FastForwardOff,
     File,
