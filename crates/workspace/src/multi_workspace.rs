@@ -673,6 +673,8 @@ impl MultiWorkspace {
         let project = workspace.read(cx).project().clone();
         let index = self.active_workspace_index;
         self.remove_workspace(index, window, cx);
+        // TODO: This will lose the state of the workspace being moved
+        // like open items etc..
         open_project(project, app_state, cx).detach_and_log_err(cx);
     }
 
