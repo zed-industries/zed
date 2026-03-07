@@ -14,6 +14,7 @@ use http_client::HttpClient;
 use language::{LanguageConfig, LanguageName, LanguageQueries, LoadedLanguage};
 use lsp::LanguageServerName;
 use node_runtime::NodeRuntime;
+use util::{paths::PathStyle, rel_path::RelPath};
 
 use crate::wasm_host::{WasmExtension, WasmHost};
 
@@ -137,7 +138,8 @@ impl HeadlessExtensionStore {
         }
 
         for language_path in &manifest.languages {
-            let language_path = extension_dir.join(language_path);
+            let language_path = extension_dir
+                .join(RelPath::new(language_path.as_path(), PathStyle::Windows)?.as_std_path());
             let config = fs.load(&language_path.join("config.toml")).await?;
             let mut config = ::toml::from_str::<LanguageConfig>(&config)?;
 
@@ -192,13 +194,19 @@ impl HeadlessExtensionStore {
         }
 
         for (debug_adapter, meta) in &manifest.debug_adapters {
-            let schema_path = extension::build_debug_adapter_schema_path(debug_adapter, meta);
+            let schema_path = extension_dir.join(
+                RelPath::new(
+                    &extension::build_debug_adapter_schema_path(debug_adapter, meta),
+                    PathStyle::Windows,
+                )?
+                .as_std_path(),
+            );
 
             this.update(cx, |this, _cx| {
                 this.proxy.register_debug_adapter(
                     wasm_extension.clone(),
                     debug_adapter.clone(),
-                    &extension_dir.join(schema_path),
+                    &schema_path,
                 );
             })?;
             log::info!("Loaded debug adapter: {}", debug_adapter);
