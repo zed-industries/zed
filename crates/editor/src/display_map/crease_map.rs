@@ -12,6 +12,13 @@ use crate::{BlockStyle, FoldPlaceholder, RenderBlock};
 #[derive(Copy, Clone, Default, Debug, Eq, PartialEq, PartialOrd, Ord, Hash)]
 pub struct CreaseId(usize);
 
+impl CreaseId {
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn from_raw(id: usize) -> Self {
+        Self(id)
+    }
+}
+
 pub struct CreaseMap {
     snapshot: CreaseSnapshot,
     next_id: CreaseId,

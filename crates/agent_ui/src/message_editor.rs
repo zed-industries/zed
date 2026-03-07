@@ -205,8 +205,9 @@ impl MessageEditor {
                 {
                     editor.update(cx, |editor, cx| {
                         let snapshot = editor.snapshot(window, cx);
-                        this.mention_set
-                            .update(cx, |mention_set, _cx| mention_set.remove_invalid(&snapshot));
+                        this.mention_set.update(cx, |mention_set, cx| {
+                            mention_set.remove_invalid(&snapshot, cx)
+                        });
 
                         let new_hints = this
                             .command_hint(snapshot.buffer())
@@ -725,6 +726,7 @@ impl MessageEditor {
                         Some(mention_uri.clone()),
                         Some(self.workspace.clone()),
                         None,
+                        self.mention_set.downgrade(),
                         self.editor.clone(),
                         window,
                         cx,
@@ -763,8 +765,8 @@ impl MessageEditor {
                         })
                         .shared();
 
-                    self.mention_set.update(cx, |mention_set, _cx| {
-                        mention_set.insert_mention(crease_id, mention_uri.clone(), mention_task)
+                    self.mention_set.update(cx, |mention_set, cx| {
+                        mention_set.insert_mention(crease_id, mention_uri.clone(), mention_task, cx)
                     });
                 }
             }
@@ -838,6 +840,7 @@ impl MessageEditor {
                             Some(mention_uri.clone()),
                             Some(self.workspace.clone()),
                             None,
+                            self.mention_set.downgrade(),
                             self.editor.clone(),
                             window,
                             cx,
@@ -859,8 +862,13 @@ impl MessageEditor {
                             .spawn(async move |_, _| task.await.map_err(|e| e.to_string()))
                             .shared();
 
-                        self.mention_set.update(cx, |mention_set, _cx| {
-                            mention_set.insert_mention(crease_id, mention_uri.clone(), task.clone())
+                        self.mention_set.update(cx, |mention_set, cx| {
+                            mention_set.insert_mention(
+                                crease_id,
+                                mention_uri.clone(),
+                                task.clone(),
+                                cx,
+                            )
                         });
 
                         // Drop the tx after inserting to signal the crease is ready
@@ -1021,6 +1029,7 @@ impl MessageEditor {
             Some(mention_uri.clone()),
             Some(self.workspace.clone()),
             None,
+            self.mention_set.downgrade(),
             self.editor.clone(),
             window,
             cx,
@@ -1035,8 +1044,8 @@ impl MessageEditor {
         }))
         .shared();
 
-        self.mention_set.update(cx, |mention_set, _| {
-            mention_set.insert_mention(crease_id, mention_uri, mention_task);
+        self.mention_set.update(cx, |mention_set, cx| {
+            mention_set.insert_mention(crease_id, mention_uri, mention_task, cx);
         });
     }
 
@@ -1381,6 +1390,7 @@ impl MessageEditor {
                 Some(mention_uri.clone()),
                 Some(self.workspace.clone()),
                 None,
+                self.mention_set.downgrade(),
                 self.editor.clone(),
                 window,
                 cx,
@@ -1389,11 +1399,12 @@ impl MessageEditor {
             };
             drop(tx);
 
-            self.mention_set.update(cx, |mention_set, _cx| {
+            self.mention_set.update(cx, |mention_set, cx| {
                 mention_set.insert_mention(
                     crease_id,
                     mention_uri.clone(),
                     Task::ready(Ok(mention)).shared(),
+                    cx,
                 )
             });
         }
