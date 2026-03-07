@@ -85,6 +85,36 @@ fn preprocess_json_schema(json: &mut Value) -> Result<()> {
             obj.insert("properties".to_string(), Value::Object(Default::default()));
         }
     }
+
+    // OpenAI API requires non-missing `items` for arrays
+    if let Value::Object(obj) = json
+        && matches!(obj.get("type"), Some(Value::String(s)) if s == "array")
+    {
+        if !obj.contains_key("items") {
+            obj.insert("items".to_string(), Value::Object(Default::default()));
+        } else if let Some(items) = obj.get_mut("items")
+            && matches!(items, Value::Bool(_))
+        {
+            // OpenAI's schema validator is stricter than JSON Schema: normalize boolean schemas to object form.
+            *items = Value::Object(Default::default());
+        }
+    }
+
+    // Recursively process nested objects and arrays
+    match json {
+        Value::Object(obj) => {
+            for value in obj.values_mut() {
+                preprocess_json_schema(value)?;
+            }
+        }
+        Value::Array(arr) => {
+            for item in arr.iter_mut() {
+                preprocess_json_schema(item)?;
+            }
+        }
+        _ => {}
+    }
+
     Ok(())
 }
 
@@ -123,6 +153,18 @@ fn adapt_to_json_schema_subset(json: &mut Value) -> Result<()> {
                 || obj.contains_key("allOf"))
         {
             obj.insert("type".to_string(), Value::String("string".to_string()));
+        }
+
+        // Ensure arrays have an `items` field
+        if matches!(obj.get("type"), Some(Value::String(s)) if s == "array") {
+            if !obj.contains_key("items") {
+                obj.insert("items".to_string(), Value::Object(Default::default()));
+            } else if let Some(items) = obj.get_mut("items")
+                && matches!(items, Value::Bool(_))
+            {
+                // Normalize boolean schemas to object form for maximum compatibility with strict validators.
+                *items = Value::Object(Default::default());
+            }
         }
 
         // Handle oneOf -> anyOf conversion
@@ -378,6 +420,205 @@ mod tests {
                     }
                 },
                 "additionalProperties": true
+            })
+        );
+    }
+
+    #[test]
+    fn test_preprocess_json_schema_adds_items_to_array() {
+        let mut json = json!({
+            "type": "array"
+        });
+
+        preprocess_json_schema(&mut json).unwrap();
+
+        assert_eq!(
+            json,
+            json!({
+                "type": "array",
+                "items": {}
+            })
+        );
+    }
+
+    #[test]
+    fn test_preprocess_json_schema_preserves_array_items() {
+        let mut json = json!({
+            "type": "array",
+            "items": {
+                "type": "string"
+            }
+        });
+
+        preprocess_json_schema(&mut json).unwrap();
+
+        assert_eq!(
+            json,
+            json!({
+                "type": "array",
+                "items": {
+                    "type": "string"
+                }
+            })
+        );
+    }
+
+    #[test]
+    fn test_preprocess_json_schema_normalizes_boolean_array_items() {
+        let mut json = json!({
+            "type": "array",
+            "items": true
+        });
+
+        preprocess_json_schema(&mut json).unwrap();
+
+        assert_eq!(
+            json,
+            json!({
+                "type": "array",
+                "items": {}
+            })
+        );
+
+        let mut json = json!({
+            "type": "array",
+            "items": false
+        });
+
+        preprocess_json_schema(&mut json).unwrap();
+
+        assert_eq!(
+            json,
+            json!({
+                "type": "array",
+                "items": {}
+            })
+        );
+    }
+
+    #[test]
+    fn test_preprocess_json_schema_handles_nested_arrays() {
+        let mut json = json!({
+            "type": "object",
+            "properties": {
+                "values": {
+                    "type": "array"
+                }
+            }
+        });
+
+        preprocess_json_schema(&mut json).unwrap();
+
+        assert_eq!(
+            json,
+            json!({
+                "type": "object",
+                "properties": {
+                    "values": {
+                        "type": "array",
+                        "items": {}
+                    }
+                },
+                "additionalProperties": false
+            })
+        );
+    }
+
+    #[test]
+    fn test_transform_adds_items_to_array() {
+        let mut json = json!({
+            "type": "array"
+        });
+
+        adapt_to_json_schema_subset(&mut json).unwrap();
+
+        assert_eq!(
+            json,
+            json!({
+                "type": "array",
+                "items": {}
+            })
+        );
+    }
+
+    #[test]
+    fn test_transform_preserves_array_items() {
+        let mut json = json!({
+            "type": "array",
+            "items": {
+                "type": "string"
+            }
+        });
+
+        adapt_to_json_schema_subset(&mut json).unwrap();
+
+        assert_eq!(
+            json,
+            json!({
+                "type": "array",
+                "items": {
+                    "type": "string"
+                }
+            })
+        );
+    }
+
+    #[test]
+    fn test_transform_normalizes_boolean_array_items() {
+        let mut json = json!({
+            "type": "array",
+            "items": true
+        });
+
+        adapt_to_json_schema_subset(&mut json).unwrap();
+
+        assert_eq!(
+            json,
+            json!({
+                "type": "array",
+                "items": {}
+            })
+        );
+
+        let mut json = json!({
+            "type": "array",
+            "items": false
+        });
+
+        adapt_to_json_schema_subset(&mut json).unwrap();
+
+        assert_eq!(
+            json,
+            json!({
+                "type": "array",
+                "items": {}
+            })
+        );
+    }
+
+    #[test]
+    fn test_transform_handles_nested_arrays() {
+        let mut json = json!({
+            "type": "object",
+            "properties": {
+                "values": {
+                    "type": "array"
+                }
+            }
+        });
+
+        adapt_to_json_schema_subset(&mut json).unwrap();
+
+        assert_eq!(
+            json,
+            json!({
+                "type": "object",
+                "properties": {
+                    "values": {
+                        "type": "array",
+                        "items": {}
+                    }
+                }
             })
         );
     }
