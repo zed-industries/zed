@@ -176,6 +176,18 @@ pub struct EditorSettingsContent {
     /// Default: FindAllReferences
     pub go_to_definition_fallback: Option<GoToDefinitionFallback>,
 
+    /// How to position the cursor when navigating to a definition.
+    ///
+    /// Can be a simple strategy: "fit", "center", "focused", "top", "bottom"
+    ///
+    /// Or an object for relative positioning:
+    /// - {"strategy": "center_relative", "offset": -10} - negative=above center, positive=below
+    /// - {"strategy": "top_relative", "offset": 5} - 5 lines from top
+    /// - {"strategy": "bottom_relative", "offset": 10} - 10 lines from bottom
+    ///
+    /// Default: "fit"
+    pub go_to_definition_autoscroll: Option<GoToDefinitionAutoscroll>,
+
     /// Jupyter REPL settings.
     pub jupyter: Option<JupyterContent>,
 
@@ -724,6 +736,46 @@ pub enum GoToDefinitionFallback {
     /// Looks up references of the same symbol instead.
     #[default]
     FindAllReferences,
+}
+
+/// Autoscroll strategy for navigating to definitions.
+///
+/// Default: "fit"
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema, MergeFrom)]
+#[serde(untagged, rename_all = "snake_case")]
+pub enum GoToDefinitionAutoscroll {
+    /// Simple strategy name: "fit", "center", "focused", "top", "bottom"
+    Simple(GoToDefinitionAutoscrollStrategy),
+    /// Strategy with numeric offset for relative positioning
+    WithOffset {
+        /// Strategy name: "center_relative", "top_relative", or "bottom_relative"
+        strategy: String,
+        /// Offset value. For center_relative: negative=above center, positive=below center.
+        /// For top_relative/bottom_relative: number of lines from top/bottom.
+        offset: isize,
+    },
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq, JsonSchema, MergeFrom, strum::VariantArray, strum::VariantNames)]
+#[serde(rename_all = "snake_case")]
+pub enum GoToDefinitionAutoscrollStrategy {
+    /// Scroll minimally to fit the target on screen (original behavior)
+    #[default]
+    Fit,
+    /// Center the target vertically
+    Center,
+    /// Place target near the top with vertical_scroll_margin
+    Focused,
+    /// Place target at the top
+    Top,
+    /// Place target at the bottom
+    Bottom,
+}
+
+impl Default for GoToDefinitionAutoscroll {
+    fn default() -> Self {
+        Self::Simple(GoToDefinitionAutoscrollStrategy::Fit)
+    }
 }
 
 /// Determines when the mouse cursor should be hidden in an editor or input box.
