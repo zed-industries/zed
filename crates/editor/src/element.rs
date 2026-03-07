@@ -35,6 +35,8 @@ use crate::{
 };
 use buffer_diff::{DiffHunkStatus, DiffHunkStatusKind};
 use collections::{BTreeMap, HashMap};
+use std::sync::Mutex;
+use crate::smooth_cursor::SmoothCursorManager;
 use feature_flags::{DiffReviewFeatureFlag, FeatureFlagAppExt as _};
 use file_icons::FileIcons;
 use git::{Oid, blame::BlameEntry, commit::ParsedCommitMessage, status::FileStatus};
@@ -6821,10 +6823,39 @@ impl EditorElement {
     }
 
     fn paint_cursors(&mut self, layout: &mut EditorLayout, window: &mut Window, cx: &mut App) {
-        for cursor in &mut layout.visible_cursors {
-            cursor.paint(layout.content_origin, window, cx);
+        // Entity ID as a stable u64 key for the per-editor spring table.
+        let editor_id: u64 = self.editor.entity_id().as_u64();
+        // Collect target positions (cursor origin relative to content area).
+        let targets: Vec<_> = layout
+            .visible_cursors
+            .iter()
+            .map(|c| c.origin)
+            .collect();
+        // Advance springs and get smoothed positions.
+        let smoothed = {
+            let mut managers = SMOOTH_CURSOR_MANAGERS.lock().unwrap();
+            let mgr = managers
+                .entry(editor_id)
+                .or_insert_with(SmoothCursorManager::new);
+                        mgr.tick(&targets)
+        };
+        // If any spring is still moving, request another frame immediately.
+        {
+            let managers = SMOOTH_CURSOR_MANAGERS.lock().unwrap();
+            if let Some(mgr) = managers.get(&editor_id) {
+                if mgr.is_animating() {
+                    window.request_animation_frame();
+                }
+            }
         }
-    }
+        // Paint cursors at their smoothed positions.
+        for (cursor, smoothed_origin) in layout.visible_cursors.iter_mut().zip(smoothed) {
+            let old_origin = cursor.origin;
+            cursor.origin = smoothed_origin;
+            cursor.paint(layout.content_origin, window, cx);
+            cursor.origin = old_origin;
+        }
+        }
 
     fn paint_scrollbars(&mut self, layout: &mut EditorLayout, window: &mut Window, cx: &mut App) {
         let Some(scrollbars_layout) = layout.scrollbars_layout.take() else {
