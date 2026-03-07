@@ -26,6 +26,8 @@ If you're looking for concrete ideas:
 - [Triaged bugs with confirmed steps to reproduce](https://github.com/zed-industries/zed/issues?q=is%3Aissue%20state%3Aopen%20type%3ABug%20label%3Astate%3Areproducible).
 - [Area labels](https://github.com/zed-industries/zed/labels?q=area%3A*) to browse bugs in a specific part of the product you care about (after clicking on an area label, add type:Bug to the search).
 
+If you're thinking about proposing or building a larger feature, read the [Zed Feature Process](./docs/src/development/feature-process.md) for how we think about feature design — what context to provide, what integration points to consider, and how to put together a strong proposal.
+
 ## Sending changes
 
 The Zed culture values working code and synchronous conversations over long

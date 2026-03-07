@@ -57,6 +57,9 @@ pub enum MentionUri {
     TerminalSelection {
         line_count: u32,
     },
+    GitDiff {
+        base_ref: String,
+    },
 }
 
 impl MentionUri {
@@ -208,6 +211,10 @@ impl MentionUri {
                         .parse::<u32>()
                         .unwrap_or(0);
                     Ok(Self::TerminalSelection { line_count })
+                } else if path.starts_with("/agent/git-diff") {
+                    let base_ref =
+                        single_query_param(&url, "base")?.unwrap_or_else(|| "main".to_string());
+                    Ok(Self::GitDiff { base_ref })
                 } else {
                     bail!("invalid zed url: {:?}", input);
                 }
@@ -237,12 +244,48 @@ impl MentionUri {
                     format!("Terminal ({} lines)", line_count)
                 }
             }
+            MentionUri::GitDiff { base_ref } => format!("Branch Diff ({})", base_ref),
             MentionUri::Selection {
                 abs_path: path,
                 line_range,
                 ..
             } => selection_name(path.as_deref(), line_range),
             MentionUri::Fetch { url } => url.to_string(),
+        }
+    }
+
+    pub fn tooltip_text(&self) -> Option<SharedString> {
+        match self {
+            MentionUri::File { abs_path } | MentionUri::Directory { abs_path } => {
+                Some(abs_path.to_string_lossy().into_owned().into())
+            }
+            MentionUri::Symbol {
+                abs_path,
+                line_range,
+                ..
+            } => Some(
+                format!(
+                    "{}:{}-{}",
+                    abs_path.display(),
+                    line_range.start(),
+                    line_range.end()
+                )
+                .into(),
+            ),
+            MentionUri::Selection {
+                abs_path: Some(path),
+                line_range,
+                ..
+            } => Some(
+                format!(
+                    "{}:{}-{}",
+                    path.display(),
+                    line_range.start(),
+                    line_range.end()
+                )
+                .into(),
+            ),
+            _ => None,
         }
     }
 
@@ -262,6 +305,7 @@ impl MentionUri {
             MentionUri::TerminalSelection { .. } => IconName::Terminal.path().into(),
             MentionUri::Selection { .. } => IconName::Reader.path().into(),
             MentionUri::Fetch { .. } => IconName::ToolWeb.path().into(),
+            MentionUri::GitDiff { .. } => IconName::GitBranch.path().into(),
         }
     }
 
@@ -358,6 +402,11 @@ impl MentionUri {
                 let mut url = Url::parse("zed:///agent/terminal-selection").unwrap();
                 url.query_pairs_mut()
                     .append_pair("lines", &line_count.to_string());
+                url
+            }
+            MentionUri::GitDiff { base_ref } => {
+                let mut url = Url::parse("zed:///agent/git-diff").unwrap();
+                url.query_pairs_mut().append_pair("base", base_ref);
                 url
             }
         }

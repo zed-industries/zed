@@ -76,7 +76,7 @@ jobs:
             "X-GitHub-Api-Version" = "2022-11-28"
         }
         $body = @{ branch = "master" } | ConvertTo-Json
-        $uri = "https://api.github.com/repos/${{ github.repository_owner }}/winget-pkgs/merge-upstream"
+        $uri = "https://api.github.com/repos/$env:GITHUB_REPOSITORY_OWNER/winget-pkgs/merge-upstream"
         try {
             Invoke-RestMethod -Uri $uri -Method Post -Headers $headers -Body $body -ContentType "application/json"
             Write-Host "Successfully synced winget-pkgs fork"
@@ -131,11 +131,10 @@ jobs:
     runs-on: namespace-profile-2x4-ubuntu-2404
     steps:
     - name: release::send_slack_message
-      run: |
-        curl -X POST -H 'Content-type: application/json'\
-         --data '{"text":"❌ ${{ github.workflow }} failed: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"}' "$SLACK_WEBHOOK"
+      run: 'curl -X POST -H ''Content-type: application/json'' --data "$(jq -n --arg text "$SLACK_MESSAGE" ''{"text": $text}'')" "$SLACK_WEBHOOK"'
       env:
         SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK_WORKFLOW_FAILURES }}
+        SLACK_MESSAGE: '❌ ${{ github.workflow }} failed: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}'
 defaults:
   run:
     shell: bash -euxo pipefail {0}

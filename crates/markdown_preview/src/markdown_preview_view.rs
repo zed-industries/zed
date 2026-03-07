@@ -259,7 +259,7 @@ impl MarkdownPreviewView {
         if let Some(buffer) = buffer.as_singleton()
             && let Some(language) = buffer.read(cx).language()
         {
-            return language.name() == "Markdown".into();
+            return language.name() == "Markdown";
         }
         false
     }
@@ -312,6 +312,10 @@ impl MarkdownPreviewView {
         cx: &mut Context<Self>,
     ) {
         if let Some(state) = &self.active_editor {
+            // if there is already a task to update the ui and the current task is also debounced (not high priority), do nothing
+            if wait_for_debounce && self.parsing_markdown_task.is_some() {
+                return;
+            }
             self.parsing_markdown_task = Some(self.parse_markdown_in_background(
                 wait_for_debounce,
                 state.editor.clone(),
@@ -355,6 +359,7 @@ impl MarkdownPreviewView {
                 let scroll_top = view.list_state.logical_scroll_top();
                 view.list_state.reset(markdown_blocks_count);
                 view.list_state.scroll_to(scroll_top);
+                view.parsing_markdown_task = None;
                 cx.notify();
             })
         })
@@ -525,15 +530,10 @@ impl Item for MarkdownPreviewView {
     fn tab_content_text(&self, _detail: usize, cx: &App) -> SharedString {
         self.active_editor
             .as_ref()
-            .and_then(|editor_state| {
+            .map(|editor_state| {
                 let buffer = editor_state.editor.read(cx).buffer().read(cx);
-                let buffer = buffer.as_singleton()?;
-                let file = buffer.read(cx).file()?;
-                let local_file = file.as_local()?;
-                local_file
-                    .abs_path(cx)
-                    .file_name()
-                    .map(|name| format!("Preview {}", name.to_string_lossy()).into())
+                let title = buffer.title(cx);
+                format!("Preview {}", title).into()
             })
             .unwrap_or_else(|| SharedString::from("Markdown Preview"))
     }
@@ -542,7 +542,7 @@ impl Item for MarkdownPreviewView {
         Some("Markdown Preview Opened")
     }
 
-    fn to_item_events(_event: &Self::Event, _f: impl FnMut(workspace::item::ItemEvent)) {}
+    fn to_item_events(_event: &Self::Event, _f: &mut dyn FnMut(workspace::item::ItemEvent)) {}
 }
 
 impl Render for MarkdownPreviewView {

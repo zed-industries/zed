@@ -1,3 +1,8 @@
+---
+title: Deno
+description: "Configure Deno language support in Zed, including language servers, formatting, and debugging."
+---
+
 # Deno
 
 Deno support is available through the [Deno extension](https://github.com/zed-extensions/deno).
@@ -6,7 +11,9 @@ Deno support is available through the [Deno extension](https://github.com/zed-ex
 
 ## Deno Configuration
 
-To use the Deno Language Server with TypeScript and TSX files, you will likely wish to disable the default language servers and enable deno by adding the following to your `settings.json`:
+To use the Deno Language Server with TypeScript and TSX files, you will likely wish to disable the default language servers and enable Deno.
+
+Configure language servers and formatters in Settings ({#kb zed::OpenSettings}) under Languages > JavaScript/TypeScript/TSX, or add to your settings file:
 
 ```json [settings]
 {
@@ -59,7 +66,7 @@ TBD: Deno TypeScript REPL instructions [docs/repl#typescript-deno](../repl.md#ty
 
 ## Configuration completion
 
-To get completions for `deno.json` or `package.json` you can add the following to your `settings.json`: (More info here https://zed.dev/docs/languages/json)
+To get completions for `deno.json` or `package.json`, add the following to your settings file ([how to edit](../configuring-zed.md#settings-files)). For more details, see [JSON](./json.md).
 
 ```json [settings]
 "lsp": {
@@ -115,7 +122,7 @@ To run deno tasks like tests from the ui, add this to `.zed/tasks.json`
 [
   {
     "label": "deno test",
-    "command": "deno test -A --filter '/^$ZED_CUSTOM_DENO_TEST_NAME$/' '$ZED_FILE'",
+    "command": "deno test -A '$ZED_FILE'",
     "tags": ["js-test"]
   }
 ]

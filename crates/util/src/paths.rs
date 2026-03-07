@@ -1,4 +1,3 @@
-use anyhow::Context;
 use globset::{GlobBuilder, GlobSet, GlobSetBuilder};
 use itertools::Itertools;
 use regex::Regex;
@@ -9,20 +8,19 @@ use std::error::Error;
 use std::fmt::{Display, Formatter};
 use std::mem;
 use std::path::StripPrefixError;
-use std::sync::{Arc, OnceLock};
+use std::sync::Arc;
 use std::{
     ffi::OsStr,
     path::{Path, PathBuf},
     sync::LazyLock,
 };
 
+use crate::rel_path::RelPath;
 use crate::rel_path::RelPathBuf;
-use crate::{rel_path::RelPath, shell::ShellKind};
-
-static HOME_DIR: OnceLock<PathBuf> = OnceLock::new();
 
 /// Returns the path to the user's home directory.
 pub fn home_dir() -> &'static PathBuf {
+    static HOME_DIR: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
     HOME_DIR.get_or_init(|| {
         if cfg!(any(test, feature = "test-support")) {
             if cfg!(target_os = "macos") {
@@ -56,6 +54,13 @@ pub trait PathExt {
     where
         Self: From<&'a Path>,
     {
+        #[cfg(target_family = "wasm")]
+        {
+            std::str::from_utf8(bytes)
+                .map(Path::new)
+                .map(Into::into)
+                .map_err(Into::into)
+        }
         #[cfg(unix)]
         {
             use std::os::unix::prelude::OsStrExt;
@@ -63,6 +68,7 @@ pub trait PathExt {
         }
         #[cfg(windows)]
         {
+            use anyhow::Context;
             use tendril::fmt::{Format, WTF8};
             WTF8::validate(bytes)
                 .then(|| {
@@ -86,11 +92,17 @@ pub trait PathExt {
     fn multiple_extensions(&self) -> Option<String>;
 
     /// Try to make a shell-safe representation of the path.
-    fn try_shell_safe(&self, shell_kind: ShellKind) -> anyhow::Result<String>;
+    #[cfg(not(target_family = "wasm"))]
+    fn try_shell_safe(&self, shell_kind: crate::shell::ShellKind) -> anyhow::Result<String>;
 }
 
 impl<T: AsRef<Path>> PathExt for T {
     fn compact(&self) -> PathBuf {
+        #[cfg(target_family = "wasm")]
+        {
+            self.as_ref().to_path_buf()
+        }
+        #[cfg(not(target_family = "wasm"))]
         if cfg!(any(target_os = "linux", target_os = "freebsd")) || cfg!(target_os = "macos") {
             match self.as_ref().strip_prefix(home_dir().as_path()) {
                 Ok(relative_path) => {
@@ -164,7 +176,9 @@ impl<T: AsRef<Path>> PathExt for T {
         Some(parts.into_iter().join("."))
     }
 
-    fn try_shell_safe(&self, shell_kind: ShellKind) -> anyhow::Result<String> {
+    #[cfg(not(target_family = "wasm"))]
+    fn try_shell_safe(&self, shell_kind: crate::shell::ShellKind) -> anyhow::Result<String> {
+        use anyhow::Context;
         let path_str = self
             .as_ref()
             .to_str()
@@ -428,7 +442,17 @@ impl PathStyle {
             .find_map(|sep| parent.strip_suffix(sep))
             .unwrap_or(parent);
         let child = child.to_str()?;
-        let stripped = child.strip_prefix(parent)?;
+
+        // Match behavior of std::path::Path, which is case-insensitive for drive letters (e.g., "C:" == "c:")
+        let stripped = if self.is_windows()
+            && child.as_bytes().get(1) == Some(&b':')
+            && parent.as_bytes().get(1) == Some(&b':')
+            && child.as_bytes()[0].eq_ignore_ascii_case(&parent.as_bytes()[0])
+        {
+            child[2..].strip_prefix(&parent[2..])?
+        } else {
+            child.strip_prefix(parent)?
+        };
         if let Some(relative) = self
             .separators()
             .iter()
@@ -785,7 +809,7 @@ impl PathWithPosition {
         })
     }
 
-    pub fn to_string(&self, path_to_string: impl Fn(&PathBuf) -> String) -> String {
+    pub fn to_string(&self, path_to_string: &dyn Fn(&PathBuf) -> String) -> String {
         let path_string = path_to_string(&self.path);
         if let Some(row) = self.row {
             if let Some(column) = self.column {
@@ -1174,8 +1198,8 @@ pub fn compare_rel_paths_mixed(
                 let ordering = match (a_key, b_key) {
                     (Some(a), Some(b)) => natural_sort_no_tiebreak(a, b)
                         .then_with(|| match (a_leaf_file, b_leaf_file) {
-                            (true, false) if a == b => Ordering::Greater,
-                            (false, true) if a == b => Ordering::Less,
+                            (true, false) if a.eq_ignore_ascii_case(b) => Ordering::Greater,
+                            (false, true) if a.eq_ignore_ascii_case(b) => Ordering::Less,
                             _ => Ordering::Equal,
                         })
                         .then_with(|| {
@@ -1817,6 +1841,35 @@ mod tests {
     }
 
     #[perf]
+    fn compare_rel_paths_mixed_same_name_different_case_file_and_dir() {
+        let mut paths = vec![
+            (RelPath::unix("Hello.txt").unwrap(), true),
+            (RelPath::unix("hello").unwrap(), false),
+        ];
+        paths.sort_by(|&a, &b| compare_rel_paths_mixed(a, b));
+        assert_eq!(
+            paths,
+            vec![
+                (RelPath::unix("hello").unwrap(), false),
+                (RelPath::unix("Hello.txt").unwrap(), true),
+            ]
+        );
+
+        let mut paths = vec![
+            (RelPath::unix("hello").unwrap(), false),
+            (RelPath::unix("Hello.txt").unwrap(), true),
+        ];
+        paths.sort_by(|&a, &b| compare_rel_paths_mixed(a, b));
+        assert_eq!(
+            paths,
+            vec![
+                (RelPath::unix("hello").unwrap(), false),
+                (RelPath::unix("Hello.txt").unwrap(), true),
+            ]
+        );
+    }
+
+    #[perf]
     fn compare_rel_paths_mixed_with_nested_paths() {
         // Test that nested paths still work correctly
         let mut paths = vec![
@@ -1951,8 +2004,8 @@ mod tests {
         assert_eq!(
             paths,
             vec![
-                (RelPath::unix("A/B.txt").unwrap(), true),
                 (RelPath::unix("a/b/c.txt").unwrap(), true),
+                (RelPath::unix("A/B.txt").unwrap(), true),
                 (RelPath::unix("a.txt").unwrap(), true),
                 (RelPath::unix("A.txt").unwrap(), true),
             ]
