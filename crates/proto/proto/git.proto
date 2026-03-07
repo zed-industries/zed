@@ -583,6 +583,13 @@ message GitCreateWorktree {
   optional string commit = 5;
 }
 
+message GitRemoveWorktree {
+  uint64 project_id = 1;
+  uint64 repository_id = 2;
+  string path = 3;
+  bool force = 4;
+}
+
 message RunGitHook {
   enum GitHook {
     PRE_COMMIT = 0;

@@ -474,7 +474,8 @@ message Envelope {
 
     SpawnKernel spawn_kernel = 426;
     SpawnKernelResponse spawn_kernel_response = 427;
-    KillKernel kill_kernel = 428; // current max
+    KillKernel kill_kernel = 428;
+    GitRemoveWorktree git_remove_worktree = 431; // current max
   }
 
   reserved 87 to 88;
