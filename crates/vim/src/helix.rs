@@ -362,6 +362,39 @@ impl Vim {
             (left_kind != right_kind && left_kind != CharKind::Whitespace) || at_newline
         }
     }
+    fn is_subword_boundary_right(
+        ignore_punctuation: bool,
+    ) -> impl FnMut(char, char, &CharClassifier) -> bool {
+        move |left, right, classifier| {
+            let left_kind = classifier.kind_with(left, ignore_punctuation);
+            let right_kind = classifier.kind_with(right, ignore_punctuation);
+            let at_newline = (left == '\n') ^ (right == '\n');
+
+            let is_word_start = left_kind != right_kind && right_kind != CharKind::Whitespace;
+            let is_separator = |c: char| "_$=".contains(c);
+            let is_subword_start = (is_separator(left) && !is_separator(right))
+                || (left.is_lowercase() && right.is_uppercase());
+
+            is_word_start || (is_subword_start && !right.is_whitespace()) || at_newline
+        }
+    }
+
+    fn is_subword_boundary_left(
+        ignore_punctuation: bool,
+    ) -> impl FnMut(char, char, &CharClassifier) -> bool {
+        move |left, right, classifier| {
+            let left_kind = classifier.kind_with(left, ignore_punctuation);
+            let right_kind = classifier.kind_with(right, ignore_punctuation);
+            let at_newline = (left == '\n') ^ (right == '\n');
+
+            let is_word_end = left_kind != right_kind && left_kind != CharKind::Whitespace;
+            let is_separator = |c: char| "_$=".contains(c);
+            let is_subword_end = (!is_separator(left) && is_separator(right))
+                || (left.is_lowercase() && right.is_uppercase());
+
+            is_word_end || (is_subword_end && !left.is_whitespace()) || at_newline
+        }
+    }
 
     pub fn helix_move_cursor(
         &mut self,
@@ -385,6 +418,22 @@ impl Vim {
             }
             Motion::PreviousWordEnd { ignore_punctuation } => {
                 let mut is_boundary = Self::is_boundary_right(ignore_punctuation);
+                self.helix_find_range_backward(times, window, cx, &mut is_boundary)
+            }
+            Motion::NextSubwordStart { ignore_punctuation } => {
+                let mut is_boundary = Self::is_subword_boundary_right(ignore_punctuation);
+                self.helix_find_range_forward(times, window, cx, &mut is_boundary)
+            }
+            Motion::NextSubwordEnd { ignore_punctuation } => {
+                let mut is_boundary = Self::is_subword_boundary_left(ignore_punctuation);
+                self.helix_find_range_forward(times, window, cx, &mut is_boundary)
+            }
+            Motion::PreviousSubwordStart { ignore_punctuation } => {
+                let mut is_boundary = Self::is_subword_boundary_left(ignore_punctuation);
+                self.helix_find_range_backward(times, window, cx, &mut is_boundary)
+            }
+            Motion::PreviousSubwordEnd { ignore_punctuation } => {
+                let mut is_boundary = Self::is_subword_boundary_right(ignore_punctuation);
                 self.helix_find_range_backward(times, window, cx, &mut is_boundary)
             }
             Motion::EndOfLine { .. } => {
@@ -930,6 +979,67 @@ mod test {
         cx.simulate_keystroke("b");
 
         cx.assert_state("aa\n«ˇ  »bb", Mode::HelixNormal);
+    }
+
+    #[gpui::test]
+    async fn test_subword_motions(cx: &mut gpui::TestAppContext) {
+        use crate::motion::{NextSubwordEnd, NextSubwordStart, PreviousSubwordStart};
+
+        let mut cx = VimTestContext::new(cx, true).await;
+        cx.enable_helix();
+
+        // Test NextSubwordEnd selects the subword (camelCase)
+        cx.set_state("ˇgetUserName", Mode::HelixNormal);
+        cx.dispatch_action(NextSubwordEnd {
+            ignore_punctuation: false,
+        });
+        cx.assert_state("«getˇ»UserName", Mode::HelixNormal);
+
+        cx.dispatch_action(NextSubwordEnd {
+            ignore_punctuation: false,
+        });
+        cx.assert_state("get«Userˇ»Name", Mode::HelixNormal);
+
+        // Test PreviousSubwordStart selects the subword
+        cx.set_state("getUserNameˇ", Mode::HelixNormal);
+        cx.dispatch_action(PreviousSubwordStart {
+            ignore_punctuation: false,
+        });
+        cx.assert_state("getUser«ˇName»", Mode::HelixNormal);
+
+        cx.dispatch_action(PreviousSubwordStart {
+            ignore_punctuation: false,
+        });
+        cx.assert_state("get«ˇUser»Name", Mode::HelixNormal);
+
+        // Test with snake_case
+        cx.set_state("ˇget_user_name", Mode::HelixNormal);
+        cx.dispatch_action(NextSubwordEnd {
+            ignore_punctuation: false,
+        });
+        cx.assert_state("«getˇ»_user_name", Mode::HelixNormal);
+
+        cx.dispatch_action(NextSubwordStart {
+            ignore_punctuation: false,
+        });
+        cx.assert_state("get«_ˇ»user_name", Mode::HelixNormal);
+
+        cx.dispatch_action(NextSubwordStart {
+            ignore_punctuation: false,
+        });
+        cx.assert_state("get_«user_ˇ»name", Mode::HelixNormal);
+
+        // Test with = as subword boundary
+        cx.set_state("ˇfoo=bar", Mode::HelixNormal);
+        cx.dispatch_action(NextSubwordEnd {
+            ignore_punctuation: false,
+        });
+        cx.assert_state("«fooˇ»=bar", Mode::HelixNormal);
+
+        cx.dispatch_action(NextSubwordStart {
+            ignore_punctuation: false,
+        });
+        cx.assert_state("foo«=ˇ»bar", Mode::HelixNormal);
     }
 
     #[gpui::test]
