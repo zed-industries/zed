@@ -87,13 +87,13 @@ impl ThemePreviewTile {
         let colors = theme.colors();
         let syntax = theme.syntax();
 
-        let keyword_color = syntax.get("keyword").color;
-        let function_color = syntax.get("function").color;
-        let string_color = syntax.get("string").color;
-        let comment_color = syntax.get("comment").color;
-        let variable_color = syntax.get("variable").color;
-        let type_color = syntax.get("type").color;
-        let punctuation_color = syntax.get("punctuation").color;
+        let keyword_color = syntax.style_for_name("keyword").and_then(|s| s.color);
+        let function_color = syntax.style_for_name("function").and_then(|s| s.color);
+        let string_color = syntax.style_for_name("string").and_then(|s| s.color);
+        let comment_color = syntax.style_for_name("comment").and_then(|s| s.color);
+        let variable_color = syntax.style_for_name("variable").and_then(|s| s.color);
+        let type_color = syntax.style_for_name("type").and_then(|s| s.color);
+        let punctuation_color = syntax.style_for_name("punctuation").and_then(|s| s.color);
 
         let syntax_colors = [
             keyword_color,
