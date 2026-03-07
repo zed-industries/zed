@@ -261,6 +261,23 @@ impl StoredEvent {
             return false;
         }
 
+        // Anchors must belong to the same buffer as the snapshot we're converting them with.
+        // Buffers can be swapped out between operations, leaving stale anchors.
+        let snapshot_buffer_id = new_snapshot.remote_id();
+        let anchor_matches_snapshot =
+            |anchor: &Anchor| anchor.buffer_id.is_none_or(|id| id == snapshot_buffer_id);
+
+        let all_anchors_valid = anchor_matches_snapshot(&self.edit_range.start)
+            && anchor_matches_snapshot(&self.edit_range.end)
+            && anchor_matches_snapshot(&next_old_event.edit_range.start)
+            && anchor_matches_snapshot(&next_old_event.edit_range.end)
+            && anchor_matches_snapshot(&last_edit_range.start)
+            && anchor_matches_snapshot(&last_edit_range.end);
+
+        if !all_anchors_valid {
+            return false;
+        }
+
         let a_is_predicted = matches!(
             self.event.as_ref(),
             zeta_prompt::Event::BufferChange {
