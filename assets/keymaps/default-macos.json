@@ -1330,6 +1330,8 @@
   {
     "context": "MarkdownPreview",
     "bindings": {
+      "cmd-a": "editor::SelectAll",
+      "cmd-c": "markdown::Copy",
       "pageup": "markdown::ScrollPageUp",
       "pagedown": "markdown::ScrollPageDown",
       "up": "markdown::ScrollUp",
