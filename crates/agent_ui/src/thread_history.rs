@@ -9,7 +9,7 @@ use gpui::{
     App, Entity, EventEmitter, FocusHandle, Focusable, ScrollStrategy, Task,
     UniformListScrollHandle, WeakEntity, Window, uniform_list,
 };
-use std::{fmt::Display, ops::Range, rc::Rc};
+use std::{fmt::Display, ops::Range, path::PathBuf, rc::Rc};
 use text::Bias;
 use time::{OffsetDateTime, UtcOffset};
 use ui::{
@@ -29,6 +29,7 @@ fn thread_title(entry: &AgentSessionInfo) -> &SharedString {
 
 pub struct ThreadHistory {
     session_list: Option<Rc<dyn AgentSessionList>>,
+    cwd: Option<PathBuf>,
     sessions: Vec<AgentSessionInfo>,
     scroll_handle: UniformListScrollHandle,
     selected_index: usize,
@@ -99,6 +100,7 @@ impl ThreadHistory {
 
         let mut this = Self {
             session_list: None,
+            cwd: None,
             sessions: Vec::new(),
             scroll_handle,
             selected_index: 0,
@@ -116,7 +118,7 @@ impl ThreadHistory {
             _refresh_task: Task::ready(()),
             _watch_task: None,
         };
-        this.set_session_list(session_list, cx);
+        this.set_session_list(session_list, None, cx);
         this
     }
 
@@ -160,6 +162,7 @@ impl ThreadHistory {
     pub fn set_session_list(
         &mut self,
         session_list: Option<Rc<dyn AgentSessionList>>,
+        cwd: Option<PathBuf>,
         cx: &mut Context<Self>,
     ) {
         if let (Some(current), Some(next)) = (&self.session_list, &session_list)
@@ -169,6 +172,7 @@ impl ThreadHistory {
         }
 
         self.session_list = session_list;
+        self.cwd = cwd;
         self.sessions.clear();
         self.visible_items.clear();
         self.selected_index = 0;
@@ -271,6 +275,7 @@ impl ThreadHistory {
             self.update_visible_items(preserve_selected_item, cx);
             return;
         };
+        let cwd = self.cwd.clone();
 
         // If a new refresh arrives while pagination is in progress, the previous
         // `_refresh_task` is cancelled. This is intentional (latest refresh wins),
@@ -281,6 +286,7 @@ impl ThreadHistory {
 
             loop {
                 let request = AgentSessionListRequest {
+                    cwd: cwd.clone(),
                     cursor: cursor.clone(),
                     ..Default::default()
                 };
