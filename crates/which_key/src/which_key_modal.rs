@@ -14,7 +14,7 @@ use ui::{
 };
 use workspace::{ModalView, Workspace};
 
-use crate::FILTERED_KEYSTROKES;
+use crate::which_key_settings::WhichKeySettings;
 
 pub struct WhichKeyModal {
     _workspace: WeakEntity<Workspace>,
@@ -66,11 +66,11 @@ impl WhichKeyModal {
             return;
         };
         let bindings = window.possible_bindings_for_input(pending_keys);
+        let filtered = &WhichKeySettings::get_global(cx).filtered_keystrokes;
 
         let mut binding_data = bindings
             .iter()
             .map(|binding| {
-                // Map to keystrokes
                 (
                     binding
                         .keystrokes()
@@ -81,10 +81,8 @@ impl WhichKeyModal {
                 )
             })
             .filter(|(keystrokes, _action)| {
-                // Check if this binding matches any filtered keystroke pattern
-                !FILTERED_KEYSTROKES.iter().any(|filtered| {
-                    keystrokes.len() >= filtered.len()
-                        && keystrokes[..filtered.len()] == filtered[..]
+                !filtered.iter().any(|f| {
+                    keystrokes.len() >= f.len() && keystrokes[..f.len()] == f[..]
                 })
             })
             .map(|(keystrokes, action)| {
