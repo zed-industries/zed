@@ -916,12 +916,21 @@ pub struct PrettierSettingsContent {
     strum::VariantArray,
     strum::VariantNames,
 )]
-#[serde(rename_all = "lowercase")]
+#[serde(rename_all = "camelCase")]
 pub enum FormatOnSave {
     /// Files should be formatted on save.
     On,
     /// Files should not be formatted on save.
     Off,
+    /// Only lines modified since the last commit are formatted on save.
+    /// Requires source control and LSP range formatting support.
+    /// If no git diff is available or if the LSP doesn't support
+    /// range formatting, formatting is skipped.
+    Modifications,
+    /// Only lines modified since the last commit are formatted on save.
+    /// Requires LSP range formatting support. If no git diff is
+    /// available (e.g., untracked file), falls back to formatting the whole file.
+    ModificationsIfAvailable,
 }
 
 /// Controls which formatters should be used when formatting code.
@@ -1220,5 +1229,35 @@ mod test {
                 .expect("options were flattened")
                 .contains_key("tabWidth")
         );
+    }
+
+    #[test]
+    fn test_format_on_save_modifications_deserialization() {
+        let raw = r#"{"format_on_save": "modifications"}"#;
+        let settings: LanguageSettingsContent =
+            serde_json::from_str(raw).expect("Failed to parse format_on_save: modifications");
+        assert_eq!(settings.format_on_save, Some(FormatOnSave::Modifications));
+    }
+
+    #[test]
+    fn test_format_on_save_modifications_roundtrip() {
+        let format_on_save = FormatOnSave::Modifications;
+        let json = serde_json::to_string(&format_on_save)
+            .expect("Failed to serialize FormatOnSave::Modifications");
+        assert_eq!(json, "\"modifications\"");
+        let deserialized: FormatOnSave =
+            serde_json::from_str(&json).expect("Failed to deserialize FormatOnSave::Modifications");
+        assert_eq!(deserialized, FormatOnSave::Modifications);
+    }
+
+    #[test]
+    fn test_format_on_save_modifications_if_available_roundtrip() {
+        let format_on_save = FormatOnSave::ModificationsIfAvailable;
+        let json = serde_json::to_string(&format_on_save)
+            .expect("Failed to serialize FormatOnSave::ModificationsIfAvailable");
+        assert_eq!(json, "\"modificationsIfAvailable\"");
+        let deserialized: FormatOnSave = serde_json::from_str(&json)
+            .expect("Failed to deserialize FormatOnSave::ModificationsIfAvailable");
+        assert_eq!(deserialized, FormatOnSave::ModificationsIfAvailable);
     }
 }
