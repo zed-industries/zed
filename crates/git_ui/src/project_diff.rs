@@ -10,8 +10,10 @@ use anyhow::{Context as _, Result, anyhow};
 use buffer_diff::{BufferDiff, DiffHunkSecondaryStatus};
 use collections::{HashMap, HashSet};
 use editor::{
-    Addon, Editor, EditorEvent, EditorSettings, SelectionEffects, SplittableEditor,
+    Addon, Bias, DisplayPoint, Editor, EditorEvent, EditorSettings, SelectionEffects,
+    SplittableEditor,
     actions::{GoToHunk, GoToPreviousHunk, SendReviewToAgent},
+    display_map::DisplayRow,
     multibuffer_context_lines,
     scroll::Autoscroll,
 };
@@ -77,6 +79,7 @@ pub struct ProjectDiff {
     workspace: WeakEntity<Workspace>,
     focus_handle: FocusHandle,
     pending_scroll: Option<PathKey>,
+    last_synced_visible_path: Option<ProjectPath>,
     review_comment_count: usize,
     _task: Task<Result<()>>,
     _subscription: Subscription,
@@ -447,6 +450,7 @@ impl ProjectDiff {
             multibuffer,
             buffer_diff_subscriptions: Default::default(),
             pending_scroll: None,
+            last_synced_visible_path: None,
             review_comment_count: 0,
             _task: task,
             _subscription: Subscription::join(
@@ -512,6 +516,53 @@ impl ProjectDiff {
             worktree_id: file.worktree_id(cx),
             path: file.path().clone(),
         })
+    }
+
+    fn visible_path_at_scroll_top(
+        &self,
+        window: &Window,
+        cx: &mut Context<Self>,
+    ) -> Option<ProjectPath> {
+        let focused_editor = self.editor.read(cx).focused_editor().clone();
+        focused_editor
+            .update(cx, |editor, cx| {
+                let snapshot = editor.snapshot(window, cx);
+                let max_row = snapshot.max_point().row().0;
+                let scroll_top_row = snapshot.scroll_position().y.max(0.).floor() as u32;
+                let display_point = DisplayPoint::new(DisplayRow(scroll_top_row.min(max_row)), 0);
+                let position = snapshot.display_point_to_anchor(display_point, Bias::Left);
+
+                let multi_buffer = editor.buffer().read(cx);
+                let (_, buffer, _) = multi_buffer.excerpt_containing(position, cx)?;
+                let file = buffer.read(cx).file()?;
+                Some(ProjectPath {
+                    worktree_id: file.worktree_id(cx),
+                    path: file.path().clone(),
+                })
+            })
+    }
+
+    fn sync_git_panel_selection(
+        &mut self,
+        project_path: ProjectPath,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.last_synced_visible_path.as_ref() == Some(&project_path) {
+            return;
+        }
+
+        self.workspace
+            .update(cx, |workspace, cx| {
+                if let Some(git_panel) = workspace.panel::<GitPanel>(cx) {
+                    let project_path = project_path.clone();
+                    git_panel.update(cx, |git_panel, cx| {
+                        git_panel.select_entry_by_path(project_path, window, cx)
+                    });
+                }
+            })
+            .ok();
+        self.last_synced_visible_path = Some(project_path);
     }
 
     fn move_to_beginning(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -658,19 +709,20 @@ impl ProjectDiff {
         cx: &mut Context<Self>,
     ) {
         match event {
+            EditorEvent::ScrollPositionChanged {
+                local: true,
+                autoscroll: false,
+            } => {
+                let Some(project_path) = self.visible_path_at_scroll_top(window, cx) else {
+                    return;
+                };
+                self.sync_git_panel_selection(project_path, window, cx);
+            }
             EditorEvent::SelectionsChanged { local: true } => {
                 let Some(project_path) = self.active_path(cx) else {
                     return;
                 };
-                self.workspace
-                    .update(cx, |workspace, cx| {
-                        if let Some(git_panel) = workspace.panel::<GitPanel>(cx) {
-                            git_panel.update(cx, |git_panel, cx| {
-                                git_panel.select_entry_by_path(project_path, window, cx)
-                            })
-                        }
-                    })
-                    .ok();
+                self.sync_git_panel_selection(project_path, window, cx);
             }
             EditorEvent::Saved => {
                 self._task = cx.spawn_in(window, async move |this, cx| {
@@ -898,6 +950,7 @@ impl ProjectDiff {
                 });
             }
             this.pending_scroll.take();
+            this.last_synced_visible_path.take();
             cx.notify();
         })?;
 
@@ -2959,6 +3012,83 @@ mod tests {
         let mut cx = EditorTestContext::for_editor_in(editor, cx).await;
 
         cx.assert_excerpts_with_selections("[EXCERPT]\nˇ# My cool project\nDetails to come.\n");
+    }
+
+    #[gpui::test]
+    async fn test_scroll_updates_git_panel_selection(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        cx.update(|cx| {
+            cx.update_global::<SettingsStore, _>(|store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings.git_panel.get_or_insert_default().sort_by_path = Some(true);
+                });
+            });
+        });
+
+        let fs = FakeFs::new(cx.executor());
+        let head_file = (0..120)
+            .map(|line| format!("line {line}"))
+            .collect::<Vec<_>>()
+            .join("\n")
+            + "\n";
+        let changed_a = (0..120)
+            .map(|line| format!("A {line}"))
+            .collect::<Vec<_>>()
+            .join("\n")
+            + "\n";
+        let changed_z = (0..120)
+            .map(|line| format!("Z {line}"))
+            .collect::<Vec<_>>()
+            .join("\n")
+            + "\n";
+
+        fs.insert_tree(
+            path!("/project"),
+            json!({
+                ".git": {},
+                "a.txt": changed_a,
+                "z.txt": changed_z,
+            }),
+        )
+        .await;
+        fs.set_head_and_index_for_repo(
+            Path::new(path!("/project/.git")),
+            &[("a.txt", head_file.clone()), ("z.txt", head_file)],
+        );
+
+        let project = Project::test(fs, [Path::new(path!("/project"))], cx).await;
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
+        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
+
+        cx.run_until_parked();
+        cx.focus(&workspace);
+        cx.update(|window, cx| {
+            window.dispatch_action(project_diff::Diff.boxed_clone(), cx);
+        });
+        cx.run_until_parked();
+
+        let item = workspace.update(cx, |workspace, cx| {
+            workspace.active_item_as::<ProjectDiff>(cx).unwrap()
+        });
+        let editor = item.read_with(cx, |item, cx| item.editor.read(cx).rhs_editor().clone());
+
+        let initial_path = item.read_with(cx, |item, cx| item.active_path(cx).unwrap());
+        assert_eq!(initial_path.path, rel_path("a.txt").into_arc());
+
+        editor.update_in(cx, |editor, window, cx| {
+            editor.set_scroll_position(gpui::point(0., 10_000.), window, cx);
+        });
+        cx.run_until_parked();
+
+        let synced_path = item.read_with(cx, |item, _| {
+            item.last_synced_visible_path
+                .as_ref()
+                .expect("visible path should be synced after scroll")
+                .clone()
+        });
+        assert_eq!(synced_path.path, rel_path("z.txt").into_arc());
     }
 
     #[gpui::test]
