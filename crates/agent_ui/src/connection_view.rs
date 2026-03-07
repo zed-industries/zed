@@ -781,6 +781,18 @@ impl ConnectionView {
                         }
 
                         let id = current.read(cx).thread.read(cx).session_id().clone();
+                        let session_list = if connection.supports_session_history() {
+                            connection.session_list(cx)
+                        } else {
+                            None
+                        };
+                        history.update(cx, |history, cx| {
+                            history.set_session_list(
+                                session_list,
+                                Some(session_cwd.to_path_buf()),
+                                cx,
+                            );
+                        });
                         this.set_server_state(
                             ServerState::Connected(ConnectedServerState {
                                 connection,
@@ -2955,7 +2967,7 @@ pub(crate) mod tests {
         let list_a: Rc<dyn AgentSessionList> =
             Rc::new(StubSessionList::new(vec![session_a.clone()]));
         history.update(cx, |history, cx| {
-            history.set_session_list(Some(list_a), cx);
+            history.set_session_list(Some(list_a), None, cx);
         });
         cx.run_until_parked();
 
@@ -2971,7 +2983,7 @@ pub(crate) mod tests {
         let list_b: Rc<dyn AgentSessionList> =
             Rc::new(StubSessionList::new(vec![session_b.clone()]));
         history.update(cx, |history, cx| {
-            history.set_session_list(Some(list_b), cx);
+            history.set_session_list(Some(list_b), None, cx);
         });
         cx.run_until_parked();
 
