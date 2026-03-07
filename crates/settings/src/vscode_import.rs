@@ -853,6 +853,7 @@ impl VsCodeSettings {
             }),
             default_height: None,
             default_width: None,
+            margin_top: None,
             dock: None,
             font_fallbacks,
             font_family,

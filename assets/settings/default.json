@@ -1642,6 +1642,8 @@
     "default_width": 640,
     // Default height when the terminal is docked to the bottom.
     "default_height": 320,
+    // Top margin of the terminal (in pixels).
+    "margin_top": 4,
     // What working directory to use when launching the terminal.
     // May take 5 values:
     // 1. Use the current file's directory, falling back to the project
