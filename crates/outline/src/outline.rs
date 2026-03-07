@@ -183,11 +183,12 @@ impl OutlineView {
 struct OutlineViewDelegate {
     outline_view: WeakEntity<OutlineView>,
     active_editor: Entity<Editor>,
-    outline: Outline<Anchor>,
+    outline: Arc<Outline<Anchor>>,
     selected_match_index: usize,
     prev_scroll_position: Option<Point<ScrollOffset>>,
     matches: Vec<StringMatch>,
     last_query: String,
+    match_update_count: usize,
 }
 
 enum OutlineRowHighlights {}
@@ -207,7 +208,8 @@ impl OutlineViewDelegate {
             selected_match_index: 0,
             prev_scroll_position: Some(editor.update(cx, |editor, cx| editor.scroll_position(cx))),
             active_editor: editor,
-            outline,
+            outline: Arc::new(outline),
+            match_update_count: 0,
         }
     }
 
@@ -280,8 +282,10 @@ impl PickerDelegate for OutlineViewDelegate {
         window: &mut Window,
         cx: &mut Context<Picker<OutlineViewDelegate>>,
     ) -> Task<()> {
-        let selected_index;
-        if query.is_empty() {
+        self.match_update_count = self.match_update_count.wrapping_add(1);
+        let match_update_count = self.match_update_count;
+        let is_query_empty = query.is_empty();
+        if is_query_empty {
             self.restore_active_editor(window, cx);
             self.matches = self
                 .outline
@@ -295,7 +299,6 @@ impl PickerDelegate for OutlineViewDelegate {
                     string: Default::default(),
                 })
                 .collect();
-
             let (buffer, cursor_offset) = self.active_editor.update(cx, |editor, cx| {
                 let buffer = editor.buffer().read(cx).snapshot(cx);
                 let cursor_offset = editor
@@ -304,7 +307,8 @@ impl PickerDelegate for OutlineViewDelegate {
                     .head();
                 (buffer, cursor_offset)
             });
-            selected_index = self
+
+            let selected_index = self
                 .outline
                 .items
                 .iter()
@@ -322,25 +326,85 @@ impl PickerDelegate for OutlineViewDelegate {
                     };
                     (ix, depth, distance_to_closest_endpoint)
                 })
-                .max_by_key(|(_, depth, distance)| (*depth, Reverse(*distance)))
+                .max_by_key(|(ix, depth, distance)| (*depth, Reverse(*distance), Reverse(*ix)))
                 .map(|(ix, _, _)| ix)
                 .unwrap_or(0);
-        } else {
-            self.matches = smol::block_on(
-                self.outline
-                    .search(&query, cx.background_executor().clone()),
-            );
-            selected_index = self
-                .matches
-                .iter()
-                .enumerate()
-                .max_by_key(|(_, m)| OrderedFloat(m.score))
-                .map(|(ix, _)| ix)
-                .unwrap_or(0);
+
+            self.last_query = query;
+            self.set_selected_index(selected_index, !self.last_query.is_empty(), cx);
+            return Task::ready(());
         }
-        self.last_query = query;
-        self.set_selected_index(selected_index, !self.last_query.is_empty(), cx);
-        Task::ready(())
+
+        let outline = self.outline.clone();
+        cx.spawn_in(window, async move |this, cx| {
+            let matches = outline
+                .search(&query, cx.background_executor().clone())
+                .await;
+            let _ = this.update(cx, |this, cx| {
+                if this.delegate.match_update_count != match_update_count {
+                    return;
+                }
+
+                this.delegate.matches = matches;
+                let (buffer, cursor_offset) =
+                    this.delegate.active_editor.update(cx, |editor, cx| {
+                        let buffer = editor.buffer().read(cx).snapshot(cx);
+                        let cursor_offset = editor
+                            .selections
+                            .newest::<MultiBufferOffset>(&editor.display_snapshot(cx))
+                            .head();
+                        (buffer, cursor_offset)
+                    });
+
+                let selected_index = this
+                    .delegate
+                    .matches
+                    .iter()
+                    .enumerate()
+                    .max_by(|(ix_1, m_1), (ix_2, m_2)| {
+                        OrderedFloat(m_1.score)
+                            .cmp(&OrderedFloat(m_2.score))
+                            .then_with(|| {
+                                let item_1 = &this.delegate.outline.items[m_1.candidate_id];
+                                let item_2 = &this.delegate.outline.items[m_2.candidate_id];
+                                let range_1 = item_1.range.to_offset(&buffer);
+                                let range_2 = item_2.range.to_offset(&buffer);
+                                let depth_1 =
+                                    range_1.contains(&cursor_offset).then_some(item_1.depth);
+                                let depth_2 =
+                                    range_2.contains(&cursor_offset).then_some(item_2.depth);
+
+                                depth_1
+                                    .cmp(&depth_2)
+                                    .then_with(|| {
+                                        let distance_1 = cmp::min(
+                                            (range_1.start.0 as isize - cursor_offset.0 as isize)
+                                                .abs(),
+                                            (range_1.end.0 as isize - cursor_offset.0 as isize)
+                                                .abs(),
+                                        );
+                                        let distance_2 = cmp::min(
+                                            (range_2.start.0 as isize - cursor_offset.0 as isize)
+                                                .abs(),
+                                            (range_2.end.0 as isize - cursor_offset.0 as isize)
+                                                .abs(),
+                                        );
+                                        distance_2.cmp(&distance_1)
+                                    })
+                                    .then_with(|| ix_2.cmp(ix_1))
+                            })
+                    })
+                    .map(|(ix, _)| ix)
+                    .unwrap_or(0);
+
+                this.delegate.last_query = query.clone();
+                this.delegate.set_selected_index(
+                    selected_index,
+                    !this.delegate.last_query.is_empty(),
+                    cx,
+                );
+            });
+        })
     }
 
     fn confirm(
@@ -584,6 +648,110 @@ mod tests {
         );
         // On confirm, should place the caret on the first row of the highlighted rows range.
         assert_single_caret_at_row(&editor, expected_first_highlighted_row, cx);
+    }
+
+    #[gpui::test]
+    async fn test_outline_filtered_selection_prefers_cursor_proximity_over_last_tie(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/dir"),
+            json!({
+                "a.rs": indoc! {"
+                    struct A;
+                    impl A {
+                        fn f(&self) {}
+                        fn g(&self) {}
+                    }
+
+                    struct B;
+                    impl B {
+                        fn f(&self) {}
+                        fn g(&self) {}
+                    }
+
+                    struct C;
+                    impl C {
+                        fn f(&self) {}
+                        fn g(&self) {}
+                    }
+                "}
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs, [path!("/dir").as_ref()], cx).await;
+        project.read_with(cx, |project, _| {
+            project.languages().add(language::rust_lang())
+        });
+
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+
+        let workspace = cx.read(|cx| workspace.read(cx).workspace().clone());
+        let worktree_id = workspace.update(cx, |workspace, cx| {
+            workspace.project().update(cx, |project, cx| {
+                project.worktrees(cx).next().unwrap().read(cx).id()
+            })
+        });
+        let _buffer = project
+            .update(cx, |project, cx| {
+                project.open_local_buffer(path!("/dir/a.rs"), cx)
+            })
+            .await
+            .unwrap();
+        let editor = workspace
+            .update_in(cx, |workspace, window, cx| {
+                workspace.open_path((worktree_id, rel_path("a.rs")), None, true, window, cx)
+            })
+            .await
+            .unwrap()
+            .downcast::<Editor>()
+            .unwrap();
+
+        assert_single_caret_at_row(&editor, 0, cx);
+        let outline_view = open_outline_view(&workspace, cx);
+        outline_view
+            .update_in(cx, |outline_view, window, cx| {
+                outline_view
+                    .delegate
+                    .update_matches("f".to_string(), window, cx)
+            })
+            .await;
+
+        let (selected_id, first_scored_id, last_scored_id, scored_match_count) = outline_view
+            .read_with(cx, |outline_view, _| {
+                let delegate = &outline_view.delegate;
+                let selected_match = &delegate.matches[delegate.selected_match_index];
+                let scored_ids = delegate
+                    .matches
+                    .iter()
+                    .filter(|m| m.score > 0.0)
+                    .map(|m| m.candidate_id)
+                    .collect::<Vec<_>>();
+                (
+                    selected_match.candidate_id,
+                    *scored_ids.first().unwrap(),
+                    *scored_ids.last().unwrap(),
+                    scored_ids.len(),
+                )
+            });
+
+        assert!(
+            scored_match_count > 1,
+            "Expected multiple scored matches for `f` in outline filtering"
+        );
+        assert_eq!(
+            selected_id, first_scored_id,
+            "With cursor near top, outline filtering should select the nearest top match"
+        );
+        assert_ne!(
+            selected_id, last_scored_id,
+            "Selection should not default to the last scored match"
+        );
     }
 
     fn open_outline_view(
