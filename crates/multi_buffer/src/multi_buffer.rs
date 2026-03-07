@@ -81,6 +81,8 @@ pub struct MultiBuffer {
     excerpts_by_path: BTreeMap<PathKey, Vec<ExcerptId>>,
     /// Mapping from excerpt IDs to their path key.
     paths_by_excerpt: HashMap<ExcerptId, PathKey>,
+    /// Original anchored ranges per path, used to rebuild excerpts with different context line counts.
+    anchored_ranges_by_path: BTreeMap<PathKey, (Entity<Buffer>, Arc<[Range<text::Anchor>]>)>,
     /// Mapping from buffer IDs to their diff states
     diffs: HashMap<BufferId, DiffState>,
     subscriptions: Topic<MultiBufferOffset>,
@@ -1184,6 +1186,7 @@ impl MultiBuffer {
             title: None,
             excerpts_by_path: Default::default(),
             paths_by_excerpt: Default::default(),
+            anchored_ranges_by_path: Default::default(),
             buffer_changed_since_sync: Default::default(),
             history: History::default(),
         }
@@ -1221,6 +1224,7 @@ impl MultiBuffer {
             buffers,
             excerpts_by_path: Default::default(),
             paths_by_excerpt: Default::default(),
+            anchored_ranges_by_path: self.anchored_ranges_by_path.clone(),
             diffs: diff_bases,
             subscriptions: Default::default(),
             singleton: self.singleton,
@@ -1927,6 +1931,7 @@ impl MultiBuffer {
         let removed_buffer_ids = std::mem::take(&mut self.buffers).into_keys().collect();
         self.excerpts_by_path.clear();
         self.paths_by_excerpt.clear();
+        self.anchored_ranges_by_path.clear();
         let MultiBufferSnapshot {
             excerpts,
             buffer_locators,

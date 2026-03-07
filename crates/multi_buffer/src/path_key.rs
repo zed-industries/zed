@@ -1,4 +1,4 @@
-use std::{mem, ops::Range, sync::Arc};
+use std::{mem, ops::Range, pin::Pin, sync::Arc};
 
 use collections::HashSet;
 use gpui::{App, AppContext, Context, Entity};
@@ -156,14 +156,28 @@ impl MultiBuffer {
         context_line_count: u32,
         cx: &Context<Self>,
     ) -> impl Future<Output = Vec<Range<Anchor>>> + use<> {
+        self.set_anchored_excerpts_for_path_arc(path_key, buffer, ranges.into(), context_line_count, cx)
+    }
+
+    fn set_anchored_excerpts_for_path_arc(
+        &self,
+        path_key: PathKey,
+        buffer: Entity<Buffer>,
+        ranges: Arc<[Range<text::Anchor>]>,
+        context_line_count: u32,
+        cx: &Context<Self>,
+    ) -> impl Future<Output = Vec<Range<Anchor>>> + use<> {
         let buffer_snapshot = buffer.read(cx).snapshot();
         let multi_buffer = cx.weak_entity();
         let mut app = cx.to_async();
+        let stored_path_key = path_key.clone();
+        let stored_buffer = buffer.clone();
+        let stored_ranges = ranges.clone();
         async move {
             let snapshot = buffer_snapshot.clone();
             let (excerpt_ranges, new, counts) = app
                 .background_spawn(async move {
-                    let ranges = ranges.into_iter().map(|range| range.to_point(&snapshot));
+                    let ranges = ranges.iter().map(|range| range.to_point(&snapshot));
                     let excerpt_ranges =
                         build_excerpt_ranges(ranges, context_line_count, &snapshot);
                     let (new, counts) = Self::merge_excerpt_ranges(&excerpt_ranges);
@@ -173,6 +187,10 @@ impl MultiBuffer {
 
             multi_buffer
                 .update(&mut app, move |multi_buffer, cx| {
+                    multi_buffer.anchored_ranges_by_path.insert(
+                        stored_path_key,
+                        (stored_buffer, stored_ranges),
+                    );
                     let (ranges, _) = multi_buffer.set_merged_excerpt_ranges_for_path(
                         path_key,
                         buffer,
@@ -187,6 +205,36 @@ impl MultiBuffer {
                 .ok()
                 .unwrap_or_default()
         }
+    }
+
+    pub fn rebuild_excerpts_with_context_lines(
+        &mut self,
+        context_line_count: u32,
+        cx: &mut Context<Self>,
+    ) -> Vec<Pin<Box<dyn Future<Output = Vec<Range<Anchor>>>>>> {
+        // Preserve anchored ranges across clear() so that has_anchored_ranges()
+        // remains true while the returned futures are still pending.
+        let preserved = mem::take(&mut self.anchored_ranges_by_path);
+        self.clear(cx);
+        self.anchored_ranges_by_path = preserved;
+
+        self.anchored_ranges_by_path
+            .iter()
+            .map(|(path_key, (buffer, ranges))| {
+                let future = self.set_anchored_excerpts_for_path_arc(
+                    path_key.clone(),
+                    buffer.clone(),
+                    ranges.clone(),
+                    context_line_count,
+                    cx,
+                );
+                Box::pin(future) as Pin<Box<dyn Future<Output = Vec<Range<Anchor>>>>>
+            })
+            .collect()
+    }
+
+    pub fn has_anchored_ranges(&self) -> bool {
+        !self.anchored_ranges_by_path.is_empty()
     }
 
     pub(super) fn expand_excerpts_with_paths(

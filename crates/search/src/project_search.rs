@@ -236,6 +236,8 @@ pub struct ProjectSearch {
     search_id: usize,
     no_results: Option<bool>,
     limit_reached: bool,
+    context_line_count: u32,
+    pending_rebuild: Option<Task<()>>,
     search_history_cursor: SearchHistoryCursor,
     search_included_history_cursor: SearchHistoryCursor,
     search_excluded_history_cursor: SearchHistoryCursor,
@@ -247,6 +249,7 @@ enum InputPanel {
     Replacement,
     Exclude,
     Include,
+    ContextLines,
 }
 
 pub struct ProjectSearchView {
@@ -262,6 +265,7 @@ pub struct ProjectSearchView {
     search_id: usize,
     included_files_editor: Entity<Editor>,
     excluded_files_editor: Entity<Editor>,
+    context_line_editor: Entity<Editor>,
     filters_enabled: bool,
     replace_enabled: bool,
     included_opened_only: bool,
@@ -294,6 +298,8 @@ impl ProjectSearch {
             search_id: 0,
             no_results: None,
             limit_reached: false,
+            context_line_count: multibuffer_context_lines(cx),
+            pending_rebuild: None,
             search_history_cursor: Default::default(),
             search_included_history_cursor: Default::default(),
             search_excluded_history_cursor: Default::default(),
@@ -313,6 +319,8 @@ impl ProjectSearch {
             search_id: self.search_id,
             no_results: self.no_results,
             limit_reached: self.limit_reached,
+            context_line_count: self.context_line_count,
+            pending_rebuild: None,
             search_history_cursor: self.search_history_cursor.clone(),
             search_included_history_cursor: self.search_included_history_cursor.clone(),
             search_excluded_history_cursor: self.search_excluded_history_cursor.clone(),
@@ -331,6 +339,41 @@ impl ProjectSearch {
             SearchInputKind::Include => &mut self.search_included_history_cursor,
             SearchInputKind::Exclude => &mut self.search_excluded_history_cursor,
         }
+    }
+
+    fn set_context_line_count(&mut self, count: u32, cx: &mut Context<Self>) {
+        if count == self.context_line_count {
+            return;
+        }
+        self.context_line_count = count;
+        if self.pending_search.is_some()
+            || !self.excerpts.read(cx).has_anchored_ranges()
+        {
+            return;
+        }
+        self.rebuild_excerpts(cx);
+    }
+
+    fn rebuild_excerpts(&mut self, cx: &mut Context<Self>) {
+        let context_line_count = self.context_line_count;
+
+        let futures = self.excerpts.update(cx, |excerpts, cx| {
+            excerpts.rebuild_excerpts_with_context_lines(context_line_count, cx)
+        });
+
+        self.match_ranges.clear();
+        let mut ordered_futures = futures.into_iter().collect::<FuturesOrdered<_>>();
+        self.pending_rebuild = Some(cx.spawn(async move |project_search, cx| {
+            while let Some(ranges) = ordered_futures.next().await {
+                smol::future::yield_now().await;
+                project_search
+                    .update(cx, |project_search, cx| {
+                        project_search.match_ranges.extend(ranges);
+                        cx.notify();
+                    })
+                    .log_err();
+            }
+        }));
     }
 
     fn search(&mut self, query: SearchQuery, cx: &mut Context<Self>) {
@@ -394,6 +437,7 @@ impl ProjectSearch {
                 limit_reached |= has_reached_limit;
                 let mut new_ranges = project_search
                     .update(cx, |project_search, cx| {
+                        let context_line_count = project_search.context_line_count;
                         project_search.excerpts.update(cx, |excerpts, cx| {
                             buffers_with_ranges
                                 .into_iter()
@@ -402,7 +446,7 @@ impl ProjectSearch {
                                         PathKey::for_buffer(&buffer, cx),
                                         buffer,
                                         ranges,
-                                        multibuffer_context_lines(cx),
+                                        context_line_count,
                                         cx,
                                     )
                                 })
@@ -936,6 +980,21 @@ impl ProjectSearchView {
             }),
         );
 
+        let initial_context_lines = entity.read(cx).context_line_count;
+        let context_line_editor = cx.new(|cx| {
+            let mut editor = Editor::single_line(window, cx);
+            editor.set_text(initial_context_lines.to_string(), window, cx);
+            editor
+        });
+        subscriptions.push(cx.subscribe(
+            &context_line_editor,
+            |this, _editor, event: &EditorEvent, cx| {
+                if let EditorEvent::Blurred = event {
+                    this.apply_context_line_count(cx);
+                }
+            },
+        ));
+
         let focus_handle = cx.focus_handle();
         subscriptions.push(cx.on_focus(&focus_handle, window, |_, window, cx| {
             cx.on_next_frame(window, |this, window, cx| {
@@ -979,6 +1038,7 @@ impl ProjectSearchView {
             active_match_index: None,
             included_files_editor,
             excluded_files_editor,
+            context_line_editor,
             filters_enabled,
             replace_enabled: false,
             included_opened_only: false,
@@ -1221,6 +1281,22 @@ impl ProjectSearchView {
     }
 
     fn search(&mut self, cx: &mut Context<Self>) {
+        if self.panels_with_errors.remove(&InputPanel::ContextLines).is_some() {
+            let default_count = multibuffer_context_lines(cx);
+            self.entity.update(cx, |model, cx| {
+                model.set_context_line_count(default_count, cx);
+            });
+            self.context_line_editor.update(cx, |editor, cx| {
+                editor
+                    .buffer()
+                    .read(cx)
+                    .as_singleton()
+                    .expect("context line editor should be a singleton buffer")
+                    .update(cx, |buffer, cx| {
+                        buffer.set_text(default_count.to_string(), cx);
+                    });
+            });
+        }
         let open_buffers = if self.included_opened_only {
             self.workspace
                 .update(cx, |workspace, cx| self.open_buffers(cx, workspace))
@@ -1520,6 +1596,31 @@ impl ProjectSearchView {
         }
 
         cx.emit(ViewEvent::UpdateTab);
+        cx.notify();
+    }
+
+    fn apply_context_line_count(&mut self, cx: &mut Context<Self>) {
+        let text = self.context_line_editor.read(cx).text(cx);
+        match text.parse::<u32>() {
+            Ok(count) if count <= 32 => {
+                self.panels_with_errors.remove(&InputPanel::ContextLines);
+                self.entity.update(cx, |project_search, cx| {
+                    project_search.set_context_line_count(count, cx);
+                });
+            }
+            Ok(_) => {
+                self.panels_with_errors.insert(
+                    InputPanel::ContextLines,
+                    "Maximum context lines is 32".to_string(),
+                );
+            }
+            Err(_) => {
+                self.panels_with_errors.insert(
+                    InputPanel::ContextLines,
+                    "Invalid number".to_string(),
+                );
+            }
+        }
         cx.notify();
     }
 
@@ -2024,6 +2125,7 @@ impl ProjectSearchBar {
             })
         }
     }
+
 }
 
 impl Render for ProjectSearchBar {
@@ -2041,6 +2143,7 @@ impl Render for ProjectSearchBar {
             input_base_styles(search.border_color_for(panel, cx), |div| match panel {
                 InputPanel::Query | InputPanel::Replacement => div.w(input_width),
                 InputPanel::Include | InputPanel::Exclude => div.flex_grow(),
+                InputPanel::ContextLines => div,
             })
         };
         let theme_colors = cx.theme().colors();
@@ -2163,6 +2266,52 @@ impl Render for ProjectSearchBar {
                         this.tooltip(Tooltip::text(
                             "Search Limits Reached\nTry narrowing your search",
                         ))
+                    }),
+            )
+            .child(
+                h_flex()
+                    .id("project-search-context-lines")
+                    .ml_2()
+                    .gap_1()
+                    .tooltip(Tooltip::text(
+                        search
+                            .panels_with_errors
+                            .get(&InputPanel::ContextLines)
+                            .map_or("Context Lines".to_string(), |error| error.clone()),
+                    ))
+                    .child(
+                        Icon::new(IconName::Menu)
+                            .size(IconSize::Small)
+                            .color(Color::Muted),
+                    )
+                    .child({
+                        let search_view = self.active_project_search.clone();
+                        let context_line_border =
+                            search.border_color_for(InputPanel::ContextLines, cx);
+                        div()
+                            .w(rems_from_px(40.))
+                            .items_center()
+                            .border_1()
+                            .border_color(context_line_border)
+                            .rounded_sm()
+                            .px_0p5()
+                            .on_action(cx.listener(
+                                move |_this, _: &Confirm, window, cx| {
+                                    if let Some(search_view) = search_view.as_ref() {
+                                        search_view.update(cx, |view, cx| {
+                                            view.apply_context_line_count(cx);
+                                            view.results_editor
+                                                .focus_handle(cx)
+                                                .focus(window, cx);
+                                        });
+                                    }
+                                },
+                            ))
+                            .child(render_text_input(
+                                &search.context_line_editor,
+                                None,
+                                cx,
+                            ))
                     }),
             );
 
