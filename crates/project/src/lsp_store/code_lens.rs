@@ -36,6 +36,12 @@ impl CodeLensData {
 }
 
 impl LspStore {
+    pub(super) fn invalidate_code_lens(&mut self) {
+        for lsp_data in self.lsp_data.values_mut() {
+            lsp_data.code_lens = None;
+        }
+    }
+
     pub fn code_lens_actions(
         &mut self,
         buffer: &Entity<Buffer>,
@@ -220,7 +226,8 @@ impl LspStore {
         _: TypedEnvelope<proto::RefreshCodeLens>,
         mut cx: AsyncApp,
     ) -> Result<proto::Ack> {
-        this.update(&mut cx, |_, cx| {
+        this.update(&mut cx, |this, cx| {
+            this.invalidate_code_lens();
             cx.emit(LspStoreEvent::RefreshCodeLens);
         });
         Ok(proto::Ack {})

@@ -112,11 +112,13 @@ impl Render for QuickActionBar {
         let supports_inlay_hints = editor.update(cx, |editor, cx| editor.supports_inlay_hints(cx));
         let supports_semantic_tokens =
             editor.update(cx, |editor, cx| editor.supports_semantic_tokens(cx));
+        let supports_code_lens = editor.update(cx, |editor, cx| editor.supports_code_lens(cx));
         let editor_value = editor.read(cx);
         let selection_menu_enabled = editor_value.selection_menu_enabled(cx);
         let inlay_hints_enabled = editor_value.inlay_hints_enabled();
         let inline_values_enabled = editor_value.inline_values_enabled();
         let semantic_highlights_enabled = editor_value.semantic_highlights_enabled();
+        let code_lens_enabled = editor_value.code_lens_enabled();
         let is_full = editor_value.mode().is_full();
         let diagnostics_enabled = editor_value.diagnostics_max_severity != DiagnosticSeverity::Off;
         let supports_inline_diagnostics = editor_value.inline_diagnostics_enabled();
@@ -394,6 +396,29 @@ impl Render for QuickActionBar {
                                                 .update(cx, |editor, cx| {
                                                     editor.toggle_semantic_highlights(
                                                         &editor::actions::ToggleSemanticHighlights,
+                                                        window,
+                                                        cx,
+                                                    );
+                                                })
+                                                .ok();
+                                        }
+                                    },
+                                );
+                            }
+
+                            if supports_code_lens {
+                                menu = menu.toggleable_entry(
+                                    "Code Lens",
+                                    code_lens_enabled,
+                                    IconPosition::Start,
+                                    Some(editor::actions::ToggleCodeLens.boxed_clone()),
+                                    {
+                                        let editor = editor.clone();
+                                        move |window, cx| {
+                                            editor
+                                                .update(cx, |editor, cx| {
+                                                    editor.toggle_code_lens_action(
+                                                        &editor::actions::ToggleCodeLens,
                                                         window,
                                                         cx,
                                                     );

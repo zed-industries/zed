@@ -450,6 +450,23 @@ When enabled, this setting will automatically close tabs for files that have bee
 
 Note: Dirty files (files with unsaved changes) will not be automatically closed even when this setting is enabled, ensuring you don't lose unsaved work.
 
+## Code Lens
+
+- Description: Whether to display code lenses from language servers above code elements. Code lenses show contextual information such as reference counts, implementations, and other metadata provided by the language server.
+- Setting: `code_lens`
+- Default: `off`
+
+**Options**
+
+1. `off`: Do not display code lenses.
+2. `on`: Display code lenses from language servers above code elements.
+
+```json [settings]
+{
+  "code_lens": "on"
+}
+```
+
 ## Confirm Quit
 
 - Description: Whether or not to prompt the user to confirm before closing the application.

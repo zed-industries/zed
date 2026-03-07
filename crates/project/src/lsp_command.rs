@@ -7,6 +7,7 @@ use crate::{
     LocationLink, LspAction, LspPullDiagnostics, MarkupContent, PrepareRenameResponse,
     ProjectTransaction, PulledDiagnostics, ResolveState,
     lsp_store::{LocalLspStore, LspFoldingRange, LspStore},
+    project_settings::ProjectSettings,
 };
 use anyhow::{Context as _, Result};
 use async_trait::async_trait;
@@ -33,6 +34,7 @@ use lsp::{
     OneOf, RenameOptions, ServerCapabilities,
 };
 use serde_json::Value;
+use settings::Settings as _;
 use signature_help::{lsp_to_proto_signature, proto_to_lsp_signature};
 use std::{
     cmp::Reverse, collections::hash_map, mem, ops::Range, path::Path, str::FromStr, sync::Arc,
@@ -3867,31 +3869,44 @@ impl LspCommand for GetCodeLens {
                     format!("Missing the language server that just returned a response {server_id}")
                 })
         })?;
-        let server_capabilities = language_server.capabilities();
-        let available_commands = server_capabilities
-            .execute_command_provider
-            .as_ref()
-            .map(|options| options.commands.as_slice())
-            .unwrap_or_default();
-        Ok(message
-            .unwrap_or_default()
+
+        let can_resolve = Self::can_resolve_lens(&language_server.capabilities());
+        let mut code_lenses = message.unwrap_or_default();
+
+        if can_resolve {
+            let request_timeout = cx.update(|cx| {
+                ProjectSettings::get_global(cx)
+                    .global_lsp_settings
+                    .get_request_timeout()
+            });
+
+            for lens in &mut code_lenses {
+                if lens.command.is_none() {
+                    match language_server
+                        .request::<lsp::request::CodeLensResolve>(lens.clone(), request_timeout)
+                        .await
+                        .into_response()
+                    {
+                        Ok(resolved) => *lens = resolved,
+                        Err(e) => log::warn!("Failed to resolve code lens: {e:#}"),
+                    }
+                }
+            }
+        }
+
+        Ok(code_lenses
             .into_iter()
-            .filter(|code_lens| {
-                code_lens
-                    .command
-                    .as_ref()
-                    .is_none_or(|command| available_commands.contains(&command.command))
-            })
             .map(|code_lens| {
                 let code_lens_range = range_from_lsp(code_lens.range);
                 let start = snapshot.clip_point_utf16(code_lens_range.start, Bias::Left);
                 let end = snapshot.clip_point_utf16(code_lens_range.end, Bias::Right);
                 let range = snapshot.anchor_before(start)..snapshot.anchor_after(end);
+                let resolved = code_lens.command.is_some();
                 CodeAction {
                     server_id,
                     range,
                     lsp_action: LspAction::CodeLens(code_lens),
-                    resolved: false,
+                    resolved,
                 }
             })
             .collect())
