@@ -4211,8 +4211,8 @@ async fn test_tab_in_leading_whitespace_auto_indents_lines(cx: &mut TestAppConte
     );
     cx.update_buffer(|buffer, cx| buffer.set_language(Some(language), cx));
 
-    // test when all cursors are not at suggested indent
-    // then simply move to their suggested indent location
+    // multi-cursor on different rows: Tab inserts uniform tab instead of
+    // jumping to language-suggested indent
     cx.set_state(indoc! {"
         const a: B = (
             c(
@@ -4224,13 +4224,12 @@ async fn test_tab_in_leading_whitespace_auto_indents_lines(cx: &mut TestAppConte
     cx.assert_editor_state(indoc! {"
         const a: B = (
             c(
-                ˇ
-            ˇ)
+            ˇ
+            ˇ    )
         );
     "});
 
-    // test cursor already at suggested indent not moving when
-    // other cursors are yet to reach their suggested indents
+    // multi-cursor on different rows: all cursors get uniform tab inserted
     cx.set_state(indoc! {"
         ˇ
         const a: B = (
@@ -4242,36 +4241,34 @@ async fn test_tab_in_leading_whitespace_auto_indents_lines(cx: &mut TestAppConte
         ˇ    )
         );
     "});
-    cx.update_editor(|e, window, cx| e.tab(&Tab, window, cx));
-    cx.assert_editor_state(indoc! {"
-        ˇ
-        const a: B = (
-            c(
-                d(
-                    ˇ
-                )
-                ˇ
-            ˇ)
-        );
-    "});
-    // test when all cursors are at suggested indent then tab is inserted
     cx.update_editor(|e, window, cx| e.tab(&Tab, window, cx));
     cx.assert_editor_state(indoc! {"
             ˇ
         const a: B = (
             c(
                 d(
-                        ˇ
+            ˇ
                 )
-                    ˇ
-                ˇ)
+            ˇ
+            ˇ    )
+        );
+    "});
+    // second Tab press: another uniform tab inserted at each cursor
+    cx.update_editor(|e, window, cx| e.tab(&Tab, window, cx));
+    cx.assert_editor_state(indoc! {"
+                ˇ
+        const a: B = (
+            c(
+                d(
+                ˇ
+                )
+                ˇ
+                ˇ    )
         );
     "});
 
-    // test when current indent is less than suggested indent,
-    // we adjust line to match suggested indent and move cursor to it
-    //
-    // when no other cursor is at word boundary, all of them should move
+    // multi-cursor on different rows with varying indentation:
+    // uniform tab inserted at each cursor position
     cx.set_state(indoc! {"
         const a: B = (
             c(
@@ -4286,16 +4283,14 @@ async fn test_tab_in_leading_whitespace_auto_indents_lines(cx: &mut TestAppConte
         const a: B = (
             c(
                 d(
-                    ˇ
-                ˇ)
-            ˇ)
+            ˇ
+            ˇ   )
+            ˇ   )
         );
     "});
 
-    // test when current indent is less than suggested indent,
-    // we adjust line to match suggested indent and move cursor to it
-    //
-    // when some other cursor is at word boundary, it should not move
+    // multi-cursor on different rows: cursor not at column 0 gets
+    // spaces to next tab stop
     cx.set_state(indoc! {"
         const a: B = (
             c(
@@ -4310,16 +4305,13 @@ async fn test_tab_in_leading_whitespace_auto_indents_lines(cx: &mut TestAppConte
         const a: B = (
             c(
                 d(
-                    ˇ
-                ˇ)
+            ˇ
+            ˇ   )
             ˇ)
         );
     "});
 
-    // test when current indent is more than suggested indent,
-    // we just move cursor to current indent instead of suggested indent
-    //
-    // when no other cursor is at word boundary, all of them should move
+    // multi-cursor on different rows with over-indented lines
     cx.set_state(indoc! {"
         const a: B = (
             c(
@@ -4334,9 +4326,9 @@ async fn test_tab_in_leading_whitespace_auto_indents_lines(cx: &mut TestAppConte
         const a: B = (
             c(
                 d(
-                    ˇ
-                        ˇ)
-            ˇ)
+            ˇ
+            ˇ                )
+            ˇ   )
         );
     "});
     cx.update_editor(|e, window, cx| e.tab(&Tab, window, cx));
@@ -4344,16 +4336,14 @@ async fn test_tab_in_leading_whitespace_auto_indents_lines(cx: &mut TestAppConte
         const a: B = (
             c(
                 d(
-                        ˇ
-                            ˇ)
-                ˇ)
+                ˇ
+                ˇ                )
+                ˇ   )
         );
     "});
 
-    // test when current indent is more than suggested indent,
-    // we just move cursor to current indent instead of suggested indent
-    //
-    // when some other cursor is at word boundary, it doesn't move
+    // multi-cursor on different rows: cursor already past leading
+    // whitespace gets tab to next tab stop
     cx.set_state(indoc! {"
         const a: B = (
             c(
@@ -4368,13 +4358,13 @@ async fn test_tab_in_leading_whitespace_auto_indents_lines(cx: &mut TestAppConte
         const a: B = (
             c(
                 d(
-                    ˇ
-                        ˇ)
-            ˇ)
+            ˇ
+            ˇ                )
+                ˇ)
         );
     "});
 
-    // handle auto-indent when there are multiple cursors on the same line
+    // multi-cursor on same and different rows: uniform tab inserted
     cx.set_state(indoc! {"
         const a: B = (
             c(
@@ -4386,8 +4376,8 @@ async fn test_tab_in_leading_whitespace_auto_indents_lines(cx: &mut TestAppConte
     cx.assert_editor_state(indoc! {"
         const a: B = (
             c(
-                ˇ
-            ˇ)
+            ˇ        ˇ
+            ˇ    )
         );
     "});
 }
@@ -4581,10 +4571,61 @@ async fn test_indent_yaml_non_comments_with_multiple_cursors(cx: &mut TestAppCon
     cx.update_editor(|e, window, cx| e.tab(&Tab, window, cx));
 
     cx.assert_editor_state(
+        r#"    ˇingress:
+    ˇ  api:
+    ˇ    enabled: false
+    ˇ    pathType: Prefix
+"#,
+    );
+}
+
+#[gpui::test]
+async fn test_multicursor_input_does_not_break_yaml_indentation(cx: &mut TestAppContext) {
+    // Regression test for issue #21334:
+    // When using multi-cursor to insert characters at the beginning of indented YAML lines,
+    // autoindent would re-evaluate indentation based on modified adjacent lines, causing
+    // unwanted indentation changes.
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+    let yaml_language = languages::language("yaml", tree_sitter_yaml::LANGUAGE.into());
+    cx.update_buffer(|buffer, cx| buffer.set_language(Some(yaml_language), cx));
+
+    cx.set_state(
         r#"ˇingress:
-    ˇapi:
-        ˇenabled: false
-        ˇpathType: Prefix
+ˇ  api:
+ˇ    enabled: false
+ˇ    pathType: Prefix
+ˇ  console:
+ˇ    enabled: false
+ˇ    pathType: Prefix
+"#,
+    );
+
+    cx.update_editor(|e, window, cx| e.handle_input("#", window, cx));
+    cx.wait_for_autoindent_applied().await;
+
+    cx.assert_editor_state(
+        r#"#ˇingress:
+#ˇ  api:
+#ˇ    enabled: false
+#ˇ    pathType: Prefix
+#ˇ  console:
+#ˇ    enabled: false
+#ˇ    pathType: Prefix
+"#,
+    );
+
+    // Undo should restore the original state
+    cx.update_editor(|e, window, cx| e.undo(&crate::actions::Undo, window, cx));
+    cx.assert_editor_state(
+        r#"ˇingress:
+ˇ  api:
+ˇ    enabled: false
+ˇ    pathType: Prefix
+ˇ  console:
+ˇ    enabled: false
+ˇ    pathType: Prefix
 "#,
     );
 }
@@ -27222,19 +27263,19 @@ async fn test_tab_in_leading_whitespace_auto_indents_for_python(cx: &mut TestApp
     cx.wait_for_autoindent_applied().await;
     cx.assert_editor_state(indoc! {"
         def main():
-            ˇfor item in items:
-                ˇwhile item.active:
-                    ˇif item.value > 10:
-                        ˇcontinue
-                    ˇelif item.value < 0:
-                        ˇbreak
-                    ˇelse:
-                        ˇwith item.context() as ctx:
-                            ˇyield count
-                ˇelse:
-                    ˇlog('while else')
-            ˇelse:
-                ˇlog('for else')
+            ˇ    for item in items:
+            ˇ        while item.active:
+            ˇ            if item.value > 10:
+            ˇ                continue
+            ˇ            elif item.value < 0:
+            ˇ                break
+            ˇ            else:
+            ˇ                with item.context() as ctx:
+            ˇ                    yield count
+            ˇ        else:
+            ˇ            log('while else')
+            ˇ    else:
+            ˇ        log('for else')
     "});
     // test relative indent is preserved when tab
     // for `if`, `elif`, `else`, `while`, `with` and `for`
@@ -27242,19 +27283,19 @@ async fn test_tab_in_leading_whitespace_auto_indents_for_python(cx: &mut TestApp
     cx.wait_for_autoindent_applied().await;
     cx.assert_editor_state(indoc! {"
         def main():
-                ˇfor item in items:
-                    ˇwhile item.active:
-                        ˇif item.value > 10:
-                            ˇcontinue
-                        ˇelif item.value < 0:
-                            ˇbreak
-                        ˇelse:
-                            ˇwith item.context() as ctx:
-                                ˇyield count
-                    ˇelse:
-                        ˇlog('while else')
-                ˇelse:
-                    ˇlog('for else')
+                ˇ    for item in items:
+                ˇ        while item.active:
+                ˇ            if item.value > 10:
+                ˇ                continue
+                ˇ            elif item.value < 0:
+                ˇ                break
+                ˇ            else:
+                ˇ                with item.context() as ctx:
+                ˇ                    yield count
+                ˇ        else:
+                ˇ            log('while else')
+                ˇ    else:
+                ˇ        log('for else')
     "});
 
     // test cursor move to start of each line on tab
@@ -27276,16 +27317,16 @@ async fn test_tab_in_leading_whitespace_auto_indents_for_python(cx: &mut TestApp
     cx.wait_for_autoindent_applied().await;
     cx.assert_editor_state(indoc! {"
         def main():
-            ˇtry:
-                ˇfetch()
-            ˇexcept ValueError:
-                ˇhandle_error()
-            ˇelse:
-                ˇmatch value:
-                    ˇcase _:
-            ˇfinally:
-                ˇdef status():
-                    ˇreturn 0
+            ˇ    try:
+            ˇ        fetch()
+            ˇ    except ValueError:
+            ˇ        handle_error()
+            ˇ    else:
+            ˇ        match value:
+            ˇ            case _:
+            ˇ    finally:
+            ˇ        def status():
+            ˇ            return 0
     "});
     // test relative indent is preserved when tab
     // for `try`, `except`, `else`, `finally`, `match` and `def`
@@ -27293,16 +27334,16 @@ async fn test_tab_in_leading_whitespace_auto_indents_for_python(cx: &mut TestApp
     cx.wait_for_autoindent_applied().await;
     cx.assert_editor_state(indoc! {"
         def main():
-                ˇtry:
-                    ˇfetch()
-                ˇexcept ValueError:
-                    ˇhandle_error()
-                ˇelse:
-                    ˇmatch value:
-                        ˇcase _:
-                ˇfinally:
-                    ˇdef status():
-                        ˇreturn 0
+                ˇ    try:
+                ˇ        fetch()
+                ˇ    except ValueError:
+                ˇ        handle_error()
+                ˇ    else:
+                ˇ        match value:
+                ˇ            case _:
+                ˇ    finally:
+                ˇ        def status():
+                ˇ            return 0
     "});
 }
 
@@ -27682,36 +27723,36 @@ async fn test_tab_in_leading_whitespace_auto_indents_for_bash(cx: &mut TestAppCo
     cx.wait_for_autoindent_applied().await;
     cx.assert_editor_state(indoc! {"
         function main() {
-            ˇfor item in $items; do
-                ˇwhile [ -n \"$item\" ]; do
-                    ˇif [ \"$value\" -gt 10 ]; then
-                        ˇcontinue
-                    ˇelif [ \"$value\" -lt 0 ]; then
-                        ˇbreak
-                    ˇelse
-                        ˇecho \"$item\"
-                    ˇfi
-                ˇdone
-            ˇdone
-        ˇ}
+            ˇ    for item in $items; do
+            ˇ        while [ -n \"$item\" ]; do
+            ˇ            if [ \"$value\" -gt 10 ]; then
+            ˇ                continue
+            ˇ            elif [ \"$value\" -lt 0 ]; then
+            ˇ                break
+            ˇ            else
+            ˇ                echo \"$item\"
+            ˇ            fi
+            ˇ        done
+            ˇ    done
+            ˇ}
     "});
     // test relative indent is preserved when tab
     cx.update_editor(|e, window, cx| e.tab(&Tab, window, cx));
     cx.wait_for_autoindent_applied().await;
     cx.assert_editor_state(indoc! {"
         function main() {
-                ˇfor item in $items; do
-                    ˇwhile [ -n \"$item\" ]; do
-                        ˇif [ \"$value\" -gt 10 ]; then
-                            ˇcontinue
-                        ˇelif [ \"$value\" -lt 0 ]; then
-                            ˇbreak
-                        ˇelse
-                            ˇecho \"$item\"
-                        ˇfi
-                    ˇdone
-                ˇdone
-            ˇ}
+                ˇ    for item in $items; do
+                ˇ        while [ -n \"$item\" ]; do
+                ˇ            if [ \"$value\" -gt 10 ]; then
+                ˇ                continue
+                ˇ            elif [ \"$value\" -lt 0 ]; then
+                ˇ                break
+                ˇ            else
+                ˇ                echo \"$item\"
+                ˇ            fi
+                ˇ        done
+                ˇ    done
+                ˇ}
     "});
 
     // test cursor move to start of each line on tab
@@ -27735,18 +27776,18 @@ async fn test_tab_in_leading_whitespace_auto_indents_for_bash(cx: &mut TestAppCo
     cx.wait_for_autoindent_applied().await;
     cx.assert_editor_state(indoc! {"
         function handle() {
-            ˇcase \"$1\" in
-                ˇstart)
-                    ˇecho \"a\"
-                    ˇ;;
-                ˇstop)
-                    ˇecho \"b\"
-                    ˇ;;
-                ˇ*)
-                    ˇecho \"c\"
-                    ˇ;;
-            ˇesac
-        ˇ}
+            ˇ    case \"$1\" in
+            ˇ        start)
+            ˇ            echo \"a\"
+            ˇ            ;;
+            ˇ        stop)
+            ˇ            echo \"b\"
+            ˇ            ;;
+            ˇ        *)
+            ˇ            echo \"c\"
+            ˇ            ;;
+            ˇ    esac
+            ˇ}
     "});
 }
 
