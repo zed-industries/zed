@@ -491,7 +491,7 @@ async fn test_ssh_collaboration_git_worktrees(
         .unwrap();
     assert_eq!(worktrees.len(), 2);
     assert_eq!(worktrees[1].path, worktree_directory.join("feature-branch"));
-    assert_eq!(worktrees[1].ref_name.as_ref(), "refs/heads/feature-branch");
+    assert_eq!(worktrees[1].ref_name.as_ref().map(|r| r.as_ref()), Some("refs/heads/feature-branch"));
     assert_eq!(worktrees[1].sha.as_ref(), "abc123");
 
     let server_worktrees = {

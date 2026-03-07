@@ -681,7 +681,7 @@ impl PickerDelegate for WorktreeListDelegate {
                         matches.push(WorktreeEntry {
                             worktree: GitWorktree {
                                 path: Default::default(),
-                                ref_name: format!("refs/heads/{query}").into(),
+                                ref_name: Some(format!("refs/heads/{query}").into()),
                                 sha: Default::default(),
                             },
                             positions: Vec::new(),

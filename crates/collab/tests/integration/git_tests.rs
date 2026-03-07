@@ -234,7 +234,7 @@ async fn test_remote_git_worktrees(
     assert_eq!(worktrees.len(), 2);
     assert_eq!(worktrees[0].path, PathBuf::from(path!("/project")));
     assert_eq!(worktrees[1].path, worktree_directory.join("feature-branch"));
-    assert_eq!(worktrees[1].ref_name.as_ref(), "refs/heads/feature-branch");
+    assert_eq!(worktrees[1].ref_name.as_ref().map(|r| r.as_ref()), Some("refs/heads/feature-branch"));
     assert_eq!(worktrees[1].sha.as_ref(), "abc123");
 
     // Verify from the host side that the worktree was actually created
@@ -286,7 +286,7 @@ async fn test_remote_git_worktrees(
 
     let feature_worktree = worktrees
         .iter()
-        .find(|worktree| worktree.ref_name.as_ref() == "refs/heads/feature-branch")
+        .find(|worktree| worktree.ref_name.as_ref().map(|r| r.as_ref()) == Some("refs/heads/feature-branch"))
         .expect("should find feature-branch worktree");
     assert_eq!(
         feature_worktree.path,
@@ -295,7 +295,7 @@ async fn test_remote_git_worktrees(
 
     let bugfix_worktree = worktrees
         .iter()
-        .find(|worktree| worktree.ref_name.as_ref() == "refs/heads/bugfix-branch")
+        .find(|worktree| worktree.ref_name.as_ref().map(|r| r.as_ref()) == Some("refs/heads/bugfix-branch"))
         .expect("should find bugfix-branch worktree");
     assert_eq!(
         bugfix_worktree.path,
