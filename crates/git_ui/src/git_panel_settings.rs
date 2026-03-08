@@ -2,7 +2,7 @@ use editor::EditorSettings;
 use gpui::Pixels;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use settings::{RegisterSetting, Settings, StatusStyle};
+use settings::{RegisterSetting, Settings, StageFoldBehavior, StatusStyle};
 use ui::{
     px,
     scrollbars::{ScrollbarVisibility, ShowScrollbar},
@@ -26,6 +26,7 @@ pub struct GitPanelSettings {
     pub collapse_untracked_diff: bool,
     pub tree_view: bool,
     pub diff_stats: bool,
+    pub stage_fold_behavior: StageFoldBehavior,
 }
 
 impl ScrollbarVisibility for GitPanelSettings {
@@ -60,6 +61,7 @@ impl Settings for GitPanelSettings {
             collapse_untracked_diff: git_panel.collapse_untracked_diff.unwrap(),
             tree_view: git_panel.tree_view.unwrap(),
             diff_stats: git_panel.diff_stats.unwrap(),
+            stage_fold_behavior: git_panel.stage_fold_behavior.unwrap(),
         }
     }
 }

@@ -925,6 +925,12 @@
     //
     // Default: true
     "diff_stats": true,
+    // Controls whether file diffs automatically collapse/expand when
+    // staging or unstaging via the checkmark in the diff view.
+    //
+    // Choices: collapse_and_expand, collapse, none
+    // Default: collapse_and_expand
+    "stage_fold_behavior": "collapse_and_expand",
   },
   "message_editor": {
     // Whether to automatically replace emoji shortcodes with emoji characters.
