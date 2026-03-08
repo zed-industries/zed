@@ -113,6 +113,7 @@ members = [
     "crates/icons",
     "crates/image_viewer",
     "crates/input_latency_ui",
+    "crates/pdf_viewer",
     "crates/inspector_ui",
     "crates/install_cli",
     "crates/journal",
@@ -385,6 +386,7 @@ http_proxy = { path = "crates/http_proxy" }
 icons = { path = "crates/icons" }
 image_viewer = { path = "crates/image_viewer" }
 input_latency_ui = { path = "crates/input_latency_ui" }
+pdf_viewer = { path = "crates/pdf_viewer" }
 inspector_ui = { path = "crates/inspector_ui" }
 install_cli = { path = "crates/install_cli" }
 journal = { path = "crates/journal" }
@@ -1012,6 +1014,13 @@ khronos-egl = { git = "https://github.com/zed-industries/khronos-egl", rev = "42
 # per-crate scratch dirs are sufficient. Upstream issue:
 # https://github.com/dtolnay/cxx/issues/1752
 scratch = { path = "tooling/corgi/patches/scratch" }
+hayro = { git = "https://github.com/dsturnbull/hayro", rev = "58de31aebb3bc89de5184a392e164247800c2844" }
+hayro-interpret = { git = "https://github.com/dsturnbull/hayro", rev = "58de31aebb3bc89de5184a392e164247800c2844" }
+hayro-syntax = { git = "https://github.com/dsturnbull/hayro", rev = "58de31aebb3bc89de5184a392e164247800c2844" }
+hayro-font = { git = "https://github.com/dsturnbull/hayro", rev = "58de31aebb3bc89de5184a392e164247800c2844" }
+hayro-ccitt = { git = "https://github.com/dsturnbull/hayro", rev = "58de31aebb3bc89de5184a392e164247800c2844" }
+hayro-jbig2 = { git = "https://github.com/dsturnbull/hayro", rev = "58de31aebb3bc89de5184a392e164247800c2844" }
+hayro-jpeg2000 = { git = "https://github.com/dsturnbull/hayro", rev = "58de31aebb3bc89de5184a392e164247800c2844" }
 
 [profile.dev]
 split-debuginfo = "unpacked"
