@@ -118,8 +118,9 @@ pub fn write_editable_with_markers(
 /// Parse model output that uses the marker format.
 ///
 /// Returns `(start_marker_num, end_marker_num, content_between_markers)`.
-/// The content has format-level newlines (after start marker, before end
-/// marker) stripped so it corresponds to the raw editable region text.
+/// The leading format-level newline after the start marker is stripped.
+/// Trailing newlines are preserved so blank-line endings in the editable
+/// region are not lost.
 pub fn extract_marker_span(text: &str) -> Result<(usize, usize, String)> {
     let first_tag_start = text
         .find(MARKER_TAG_PREFIX)
@@ -157,10 +158,7 @@ pub fn extract_marker_span(text: &str) -> Result<(usize, usize, String)> {
     if text.as_bytes().get(content_start) == Some(&b'\n') {
         content_start += 1;
     }
-    let mut content_end = last_tag_start;
-    if content_end > content_start && text.as_bytes().get(content_end - 1) == Some(&b'\n') {
-        content_end -= 1;
-    }
+    let content_end = last_tag_start;
 
     let content = &text[content_start..content_end.max(content_start)];
     Ok((start_num, end_num, content.to_string()))
@@ -390,7 +388,7 @@ mod tests {
         let (start, end, content) = extract_marker_span(text).unwrap();
         assert_eq!(start, 2);
         assert_eq!(end, 3);
-        assert_eq!(content, "    new content");
+        assert_eq!(content, "    new content\n");
     }
 
     #[test]
@@ -399,7 +397,7 @@ mod tests {
         let (start, end, content) = extract_marker_span(text).unwrap();
         assert_eq!(start, 1);
         assert_eq!(end, 4);
-        assert_eq!(content, "line1\nline2\nline3");
+        assert_eq!(content, "line1\nline2\nline3\n");
     }
 
     #[test]
@@ -408,6 +406,14 @@ mod tests {
         let output = "<|marker_1|>\naaa\nBBB\nccc\n<|marker_2|>";
         let result = apply_marker_span(old, output).unwrap();
         assert_eq!(result, "aaa\nBBB\nccc\n");
+    }
+
+    #[test]
+    fn test_apply_marker_span_preserves_trailing_blank_line() {
+        let old = "/\nresult\n\n";
+        let output = "<|marker_1|>\n//\nresult\n\n<|marker_2|>";
+        let result = apply_marker_span(old, output).unwrap();
+        assert_eq!(result, "//\nresult\n\n");
     }
 
     #[test]
