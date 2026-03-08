@@ -71,6 +71,6 @@ impl FeatureFlag for TerminalSandboxFeatureFlag {
     const NAME: &'static str = "agent-git-worktrees";
 
     fn enabled_for_staff() -> bool {
-        false
+        true
     }
 }
