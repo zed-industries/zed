@@ -1576,6 +1576,7 @@ impl Vim {
                 globals.dot_recording = true;
                 globals.recording_actions = Default::default();
                 globals.recording_count = None;
+                globals.recording_register_for_dot = self.selected_register;
 
                 let selections = self.editor().map(|editor| {
                     editor.update(cx, |editor, cx| {

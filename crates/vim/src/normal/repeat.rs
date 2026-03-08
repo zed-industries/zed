@@ -250,6 +250,10 @@ impl Vim {
         Vim::take_forced_motion(cx);
         let count = Vim::take_count(cx);
 
+        if self.selected_register.is_none() {
+            self.selected_register = cx.global::<VimGlobals>().recorded_register;
+        }
+
         let Some((mut actions, selection, mode)) = Vim::update_globals(cx, |globals, _| {
             let actions = globals.recorded_actions.clone();
             if actions.is_empty() {
@@ -402,7 +406,7 @@ mod test {
     use gpui::EntityInputHandler;
 
     use crate::{
-        VimGlobals,
+        Vim, VimGlobals,
         state::Mode,
         test::{NeovimBackedTestContext, VimTestContext},
     };
@@ -439,6 +443,88 @@ mod test {
         cx.run_until_parked();
         cx.simulate_shared_keystrokes(".").await;
         cx.shared_state().await.assert_eq("THE QUICK ˇbrown fox");
+    }
+
+    #[gpui::test]
+    async fn test_dot_repeat_paste(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+
+        cx.set_state("ˇhello\n", Mode::Normal);
+        cx.simulate_keystrokes("y y p");
+        cx.assert_state("hello\nˇhello\n", Mode::Normal);
+        cx.simulate_keystrokes(".");
+        cx.assert_state("hello\nhello\nˇhello\n", Mode::Normal);
+    }
+
+    #[gpui::test]
+    async fn test_dot_repeat_registers(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+
+        // test that dot repeat respects the blackhole register
+        cx.set_state(
+            indoc! {"
+            ˇtocopytext
+            1
+            2
+            3
+        "},
+            Mode::Normal,
+        );
+        cx.simulate_keystrokes("y y j \" _ d d . p");
+        cx.assert_state(
+            indoc! {"
+            tocopytext
+            3
+            ˇtocopytext
+        "},
+            Mode::Normal,
+        );
+
+        // test that dot repeat respects a named register
+        cx.set_state(
+            indoc! {"
+            ˇtocopytext
+            1
+            2
+            3
+        "},
+            Mode::Normal,
+        );
+        cx.simulate_keystrokes("y y j \" 1 y y j j \" 1 p .");
+        cx.assert_state(
+            indoc! {"
+            tocopytext
+            1
+            2
+            3
+            1
+            ˇ1
+        "},
+            Mode::Normal,
+        );
+
+        // test that providing a register to . overrides the recorded register
+        cx.set_state(
+            indoc! {"
+            ˇtocopytext
+            1
+            2
+            3
+        "},
+            Mode::Normal,
+        );
+        cx.simulate_keystrokes("y y j \" a d d j \" b .");
+        cx.assert_state("tocopytext\n2\nˇ", Mode::Normal);
+        // register a should still have 1
+        // register b should have 3
+        cx.update(|_, cx| {
+            Vim::update_globals(cx, |globals, cx| {
+                let reg_a = globals.read_register(Some('a'), None, cx).unwrap();
+                assert_eq!(reg_a.text, "1\n");
+                let reg_b = globals.read_register(Some('b'), None, cx).unwrap();
+                assert_eq!(reg_b.text, "3\n");
+            });
+        });
     }
 
     #[gpui::test]
