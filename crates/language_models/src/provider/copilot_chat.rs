@@ -2,6 +2,7 @@ use std::pin::Pin;
 use std::str::FromStr as _;
 use std::sync::Arc;
 
+use anthropic::AnthropicModelMode;
 use anyhow::{Result, anyhow};
 use cloud_llm_client::CompletionIntent;
 use collections::HashMap;
@@ -21,8 +22,8 @@ use http_client::StatusCode;
 use language::language_settings::all_language_settings;
 use language_model::{
     AuthenticateError, IconOrSvg, LanguageModel, LanguageModelCompletionError,
-    LanguageModelCompletionEvent, LanguageModelCostInfo, LanguageModelId, LanguageModelName,
-    LanguageModelProvider, LanguageModelProviderId, LanguageModelProviderName,
+    LanguageModelCompletionEvent, LanguageModelCostInfo, LanguageModelEffortLevel, LanguageModelId,
+    LanguageModelName, LanguageModelProvider, LanguageModelProviderId, LanguageModelProviderName,
     LanguageModelProviderState, LanguageModelRequest, LanguageModelRequestMessage,
     LanguageModelToolChoice, LanguageModelToolResultContent, LanguageModelToolSchemaFormat,
     LanguageModelToolUse, MessageContent, RateLimiter, Role, StopReason, TokenUsage,
@@ -31,6 +32,7 @@ use settings::SettingsStore;
 use ui::prelude::*;
 use util::debug_panic;
 
+use crate::provider::anthropic::{AnthropicEventMapper, into_anthropic};
 use crate::provider::util::parse_tool_arguments;
 
 const PROVIDER_ID: LanguageModelProviderId = LanguageModelProviderId::new("copilot_chat");
@@ -255,6 +257,34 @@ impl LanguageModel for CopilotChatLanguageModel {
         self.model.supports_vision()
     }
 
+    fn supports_thinking(&self) -> bool {
+        self.model.supports_thinking() || self.model.supports_adaptive_thinking()
+    }
+
+    fn supported_effort_levels(&self) -> Vec<LanguageModelEffortLevel> {
+        if self.model.supports_adaptive_thinking() {
+            vec![
+                LanguageModelEffortLevel {
+                    name: "Low".into(),
+                    value: "low".into(),
+                    is_default: false,
+                },
+                LanguageModelEffortLevel {
+                    name: "Medium".into(),
+                    value: "medium".into(),
+                    is_default: false,
+                },
+                LanguageModelEffortLevel {
+                    name: "High".into(),
+                    value: "high".into(),
+                    is_default: true,
+                },
+            ]
+        } else {
+            vec![]
+        }
+    }
+
     fn tool_input_format(&self) -> LanguageModelToolSchemaFormat {
         match self.model.vendor() {
             ModelVendor::OpenAI | ModelVendor::Anthropic => {
@@ -333,6 +363,73 @@ impl LanguageModel for CopilotChatLanguageModel {
             | CompletionIntent::CreateFile
             | CompletionIntent::EditFile => false,
         });
+
+        if self.model.supports_messages() {
+            let location = intent_to_chat_location(request.intent);
+            let model = self.model.clone();
+            let request_limiter = self.request_limiter.clone();
+            let future = cx.spawn(async move |cx| {
+                let effort = request
+                    .thinking_effort
+                    .as_ref()
+                    .and_then(|e| anthropic::Effort::from_str(e).ok());
+
+                let mut anthropic_request = into_anthropic(
+                    request,
+                    model.id().to_string(),
+                    0.0,
+                    model.max_output_tokens() as u64,
+                    if model.supports_adaptive_thinking() {
+                        AnthropicModelMode::Thinking {
+                            budget_tokens: Some(4_096),
+                        }
+                    } else if model.supports_thinking() {
+                        let budget = compute_thinking_budget(
+                            model.min_thinking_budget(),
+                            model.max_output_tokens() as u32,
+                        );
+                        AnthropicModelMode::Thinking {
+                            budget_tokens: budget,
+                        }
+                    } else {
+                        AnthropicModelMode::Default
+                    },
+                );
+
+                if model.supports_adaptive_thinking() && anthropic_request.thinking.is_some() {
+                    anthropic_request.thinking = Some(anthropic::Thinking::Adaptive);
+                    anthropic_request.output_config = Some(anthropic::OutputConfig { effort });
+                }
+
+                let anthropic_beta = if !model.supports_adaptive_thinking()
+                    && anthropic_request.thinking.is_some()
+                {
+                    Some("interleaved-thinking-2025-05-14".to_string())
+                } else {
+                    None
+                };
+
+                let body =
+                    serde_json::to_string(&anthropic_request).map_err(|e| anyhow::anyhow!(e))?;
+
+                let stream = CopilotChat::stream_messages(
+                    body,
+                    location,
+                    is_user_initiated,
+                    anthropic_beta,
+                    cx.clone(),
+                );
+
+                request_limiter
+                    .stream(async move {
+                        let events = stream.await?;
+                        let mapper = AnthropicEventMapper::new();
+                        Ok(mapper.map_stream(events).boxed())
+                    })
+                    .await
+            });
+            return async move { Ok(future.await?.boxed()) }.boxed();
+        }
 
         if self.model.supports_response() {
             let location = intent_to_chat_location(request.intent);
@@ -778,42 +875,8 @@ fn into_copilot_chat(
     model: &CopilotChatModel,
     request: LanguageModelRequest,
 ) -> Result<CopilotChatRequest> {
-    let location = intent_to_chat_location(request.intent);
     let temperature = request.temperature;
     let tool_choice = request.tool_choice;
-
-    let thinking_budget = if model.vendor() == ModelVendor::Anthropic
-        && location == ChatLocation::Agent
-        && request.thinking_allowed
-    {
-        let has_assistant_messages = request
-            .messages
-            .iter()
-            .any(|msg| msg.role == Role::Assistant);
-
-        let messages_contain_thinking = request
-            .messages
-            .iter()
-            .filter(|msg| msg.role == Role::Assistant)
-            .any(|msg| msg.reasoning_details.is_some());
-
-        let disable_thinking = has_assistant_messages && !messages_contain_thinking;
-
-        if disable_thinking {
-            None
-        } else {
-            let configured_budget: u32 = 4000;
-            let max_output = model.max_output_tokens() as u32;
-            let normalized_budget = configured_budget.max(1024);
-            Some(
-                normalized_budget
-                    .min(32000)
-                    .min(max_output.saturating_sub(1)),
-            )
-        }
-    } else {
-        None
-    };
 
     let mut request_messages: Vec<LanguageModelRequestMessage> = Vec::new();
     for message in request.messages {
@@ -983,8 +1046,15 @@ fn into_copilot_chat(
             LanguageModelToolChoice::Any => ToolChoice::Any,
             LanguageModelToolChoice::None => ToolChoice::None,
         }),
-        thinking_budget,
+        thinking_budget: None,
     })
+}
+
+fn compute_thinking_budget(min_budget: Option<u32>, max_output_tokens: u32) -> Option<u32> {
+    let configured_budget: u32 = 16000;
+    let min_budget = min_budget.unwrap_or(1024);
+    let normalized = configured_budget.max(min_budget);
+    Some(normalized.min(max_output_tokens.saturating_sub(1)))
 }
 
 fn intent_to_chat_location(intent: Option<CompletionIntent>) -> ChatLocation {

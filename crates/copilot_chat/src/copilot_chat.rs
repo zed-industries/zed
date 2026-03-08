@@ -52,6 +52,10 @@ impl CopilotChatConfiguration {
         format!("{}/responses", api_endpoint)
     }
 
+    pub fn messages_url(&self, api_endpoint: &str) -> String {
+        format!("{}/v1/messages", api_endpoint)
+    }
+
     pub fn models_url(&self, api_endpoint: &str) -> String {
         format!("{}/models", api_endpoint)
     }
@@ -203,6 +207,14 @@ struct ModelSupportedFeatures {
     parallel_tool_calls: bool,
     #[serde(default)]
     vision: bool,
+    #[serde(default)]
+    thinking: bool,
+    #[serde(default)]
+    adaptive_thinking: bool,
+    #[serde(default)]
+    max_thinking_budget: Option<u32>,
+    #[serde(default)]
+    min_thinking_budget: Option<u32>,
 }
 
 #[derive(Clone, Copy, Serialize, Deserialize, Debug, Eq, PartialEq)]
@@ -282,6 +294,31 @@ impl Model {
             && self
                 .supported_endpoints
                 .contains(&ModelSupportedEndpoint::Responses)
+    }
+
+    pub fn supports_messages(&self) -> bool {
+        self.supported_endpoints
+            .contains(&ModelSupportedEndpoint::Messages)
+    }
+
+    pub fn supports_thinking(&self) -> bool {
+        self.capabilities.supports.thinking
+    }
+
+    pub fn supports_adaptive_thinking(&self) -> bool {
+        self.capabilities.supports.adaptive_thinking
+    }
+
+    pub fn max_thinking_budget(&self) -> Option<u32> {
+        self.capabilities.supports.max_thinking_budget
+    }
+
+    pub fn min_thinking_budget(&self) -> Option<u32> {
+        self.capabilities.supports.min_thinking_budget
+    }
+
+    pub fn family(&self) -> &str {
+        &self.capabilities.family
     }
 
     pub fn multiplier(&self) -> f64 {
@@ -619,6 +656,29 @@ impl CopilotChat {
         .await
     }
 
+    pub async fn stream_messages(
+        body: String,
+        location: ChatLocation,
+        is_user_initiated: bool,
+        anthropic_beta: Option<String>,
+        mut cx: AsyncApp,
+    ) -> Result<BoxStream<'static, Result<anthropic::Event, anthropic::AnthropicError>>> {
+        let (client, oauth_token, api_endpoint, configuration) =
+            Self::get_auth_details(&mut cx).await?;
+
+        let api_url = configuration.messages_url(&api_endpoint);
+        stream_messages(
+            client.clone(),
+            oauth_token,
+            api_url,
+            body,
+            is_user_initiated,
+            location,
+            anthropic_beta,
+        )
+        .await
+    }
+
     async fn get_auth_details(
         cx: &mut AsyncApp,
     ) -> Result<(
@@ -948,6 +1008,62 @@ async fn stream_completion(
 
         Ok(futures::stream::once(async move { Ok(response) }).boxed())
     }
+}
+
+async fn stream_messages(
+    client: Arc<dyn HttpClient>,
+    oauth_token: String,
+    api_url: String,
+    body: String,
+    is_user_initiated: bool,
+    location: ChatLocation,
+    anthropic_beta: Option<String>,
+) -> Result<BoxStream<'static, Result<anthropic::Event, anthropic::AnthropicError>>> {
+    let mut request_builder = copilot_request_headers(
+        HttpRequest::builder().method(Method::POST).uri(&api_url),
+        &oauth_token,
+        Some(is_user_initiated),
+        Some(location),
+    );
+
+    if let Some(beta) = &anthropic_beta {
+        request_builder = request_builder.header("anthropic-beta", beta.as_str());
+    }
+
+    let request = request_builder.body(AsyncBody::from(body))?;
+    let mut response = client.send(request).await?;
+
+    if !response.status().is_success() {
+        let mut body = String::new();
+        response.body_mut().read_to_string(&mut body).await?;
+        anyhow::bail!("Failed to connect to API: {} {}", response.status(), body);
+    }
+
+    let reader = BufReader::new(response.into_body());
+    Ok(reader
+        .lines()
+        .filter_map(|line| async move {
+            match line {
+                Ok(line) => {
+                    let line = line
+                        .strip_prefix("data: ")
+                        .or_else(|| line.strip_prefix("data:"))?;
+                    match serde_json::from_str(line) {
+                        Ok(event) => Some(Ok(event)),
+                        Err(error) => {
+                            log::error!(
+                                "Failed to parse Copilot messages stream event: `{}`\nResponse: `{}`",
+                                error,
+                                line,
+                            );
+                            Some(Err(anthropic::AnthropicError::DeserializeResponse(error)))
+                        }
+                    }
+                }
+                Err(error) => Some(Err(anthropic::AnthropicError::ReadResponse(error))),
+            }
+        })
+        .boxed())
 }
 
 #[cfg(test)]
