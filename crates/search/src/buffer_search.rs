@@ -973,7 +973,7 @@ impl BufferSearchBar {
             if deploy.focus {
                 let mut handle = self.query_editor.focus_handle(cx);
                 let mut select_query = true;
-                if deploy.replace_enabled && handle.is_focused(window) {
+                if deploy.replace_enabled {
                     handle = self.replacement_editor.focus_handle(cx);
                     select_query = false;
                 };
