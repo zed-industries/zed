@@ -8,8 +8,12 @@ path = "src/settings_sync.rs"
 
 [dependencies]
 anyhow = { workspace = true }
+chrono = { workspace = true }
+fs = { workspace = true }
+git2 = { workspace = true }
 gpui = { workspace = true }
 log = { workspace = true }
+paths = { workspace = true }
 schemars = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 settings = { workspace = true }

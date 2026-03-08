@@ -15764,8 +15764,12 @@ name = "settings_sync"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "chrono",
+ "fs",
+ "git2",
  "gpui",
  "log",
+ "paths",
  "schemars",
  "serde",
  "settings",
