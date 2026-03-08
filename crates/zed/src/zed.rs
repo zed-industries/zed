@@ -1078,37 +1078,44 @@ fn register_actions(
         })
         .register_action({
             let app_state = Arc::downgrade(&app_state);
-            move |_, _: &CloseProject, window, cx| {
+            move |workspace, _: &CloseProject, window, cx| {
                 let Some(window_handle) = window.window_handle().downcast::<MultiWorkspace>() else {
                     return;
                 };
                 if let Some(app_state) = app_state.upgrade() {
-                    open_new(
-                        workspace::OpenOptions {
-                            replace_window: Some(window_handle),
-                            ..Default::default()
-                        },
-                        app_state,
-                        cx,
-                        |workspace, window, cx| {
-                            cx.activate(true);
-                            // Create buffer synchronously to avoid flicker
-                            let project = workspace.project().clone();
-                            let buffer = project.update(cx, |project, cx| {
-                                project.create_local_buffer("", None, true, cx)
-                            });
-                            let editor = cx.new(|cx| {
-                                Editor::for_buffer(buffer, Some(project), window, cx)
-                            });
-                            workspace.add_item_to_active_pane(
-                                Box::new(editor),
-                                None,
-                                true,
-                                window,
+                    let remove_task = workspace.remove_from_session(window, cx);
+                    cx.spawn_in(window, async move |_, cx| {
+                        remove_task.await;
+                        let task = cx.update(|_window, cx| {
+                            open_new(
+                                workspace::OpenOptions {
+                                    replace_window: Some(window_handle),
+                                    ..Default::default()
+                                },
+                                app_state,
                                 cx,
-                            );
-                        },
-                    )
+                                |workspace, window, cx| {
+                                    cx.activate(true);
+                                    // Create buffer synchronously to avoid flicker
+                                    let project = workspace.project().clone();
+                                    let buffer = project.update(cx, |project, cx| {
+                                        project.create_local_buffer("", None, true, cx)
+                                    });
+                                    let editor = cx.new(|cx| {
+                                        Editor::for_buffer(buffer, Some(project), window, cx)
+                                    });
+                                    workspace.add_item_to_active_pane(
+                                        Box::new(editor),
+                                        None,
+                                        true,
+                                        window,
+                                        cx,
+                                    );
+                                },
+                            )
+                        })?;
+                        task.await
+                    })
                     .detach_and_log_err(cx);
                 }
             }
