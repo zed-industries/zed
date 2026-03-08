@@ -34,6 +34,7 @@ db.workspace = true
 derive_more.workspace = true
 feature_flags.workspace = true
 fs.workspace = true
+diffy.workspace = true
 futures.workspace = true
 git.workspace = true
 gpui.workspace = true
