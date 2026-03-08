@@ -668,6 +668,15 @@ impl Item for MarkdownPreviewView {
             .unwrap_or_else(|| SharedString::from("Markdown Preview"))
     }
 
+    fn deactivated(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
+        let path = self.current_displayed_path(cx);
+        if let Some(nav_history) = &mut self.nav_history {
+            if let Some(path) = path {
+                nav_history.push(Some(MarkdownPreviewNavigationData { path }), cx);
+            }
+        }
+    }
+
     fn set_nav_history(
         &mut self,
         history: ItemNavHistory,
