@@ -1,5 +1,6 @@
 use anyhow::Result;
 use collections::HashMap;
+use feature_flags::{FeatureFlagAppExt, TerminalSandboxFeatureFlag};
 use gpui::{App, AppContext as _, Context, Entity, Task, WeakEntity};
 
 use futures::{FutureExt, future::Shared};
@@ -61,6 +62,7 @@ impl Project {
     pub fn create_terminal_task(
         &mut self,
         spawn_task: SpawnInTerminal,
+        sandbox_config: Option<terminal::terminal_settings::SandboxConfig>,
         cx: &mut Context<Self>,
     ) -> Task<Result<Entity<Terminal>>> {
         let is_via_remote = self.remote_client.is_some();
@@ -256,6 +258,7 @@ impl Project {
                         cx,
                         activation_script,
                         path_style,
+                        sandbox_config,
                     ))
                 })??
                 .await?;
@@ -405,6 +408,31 @@ impl Project {
                             None => (settings.shell, env),
                         }
                     };
+
+                    // Resolve sandbox config for the user terminal (feature-flagged)
+                    let sandbox_config = settings.sandbox.as_ref().and_then(|sandbox| {
+                        if !cx.has_flag::<TerminalSandboxFeatureFlag>() {
+                            return None;
+                        }
+                        if !sandbox.enabled.unwrap_or(false) {
+                            return None;
+                        }
+                        let apply_to = sandbox.apply_to.unwrap_or_default();
+                        match apply_to {
+                            settings::SandboxApplyTo::Terminal | settings::SandboxApplyTo::Both => {
+                            }
+                            _ => return None,
+                        }
+                        let project_dir = local_path
+                            .as_ref()
+                            .map(|p| p.to_path_buf())
+                            .unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
+                        Some(terminal::terminal_settings::SandboxConfig::from_settings(
+                            sandbox,
+                            project_dir,
+                        ))
+                    });
+
                     anyhow::Ok(TerminalBuilder::new(
                         local_path.map(|path| path.to_path_buf()),
                         None,
@@ -421,6 +449,7 @@ impl Project {
                         cx,
                         activation_script,
                         path_style,
+                        sandbox_config,
                     ))
                 })??
                 .await?;

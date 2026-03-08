@@ -1850,6 +1850,23 @@
     // Timeout for hover and Cmd-click path hyperlink discovery in milliseconds. Specifying a
     // timeout of `0` will disable path hyperlinking in terminal.
     "path_hyperlink_timeout_ms": 1,
+    // Terminal sandboxing settings. When enabled, restricts which directories
+    // the shell process can access using OS-level kernel-enforced mechanisms.
+    //
+    // macOS uses Seatbelt (sandbox_init), Linux uses Landlock.
+    // Windows sandboxing is not yet supported.
+    "sandbox": {
+      // Whether terminal sandboxing is enabled.
+      "enabled": false,
+      // Which terminal types get sandboxed:
+      // "terminal" - only the user's interactive terminal panel
+      // "tool" - only the agent's terminal tool
+      // "both" - both
+      // "neither" - sandbox settings are defined but not applied
+      "apply_to": "both",
+      // Whether to allow network access from the sandboxed terminal.
+      "allow_network": true,
+    },
   },
   "code_actions_on_format": {},
   // Settings related to running tasks.

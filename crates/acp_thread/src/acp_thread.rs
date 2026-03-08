@@ -2442,6 +2442,7 @@ impl AcpThread {
                                 env,
                                 ..Default::default()
                             },
+                            None,
                             cx,
                         )
                     })
@@ -2901,6 +2902,7 @@ mod tests {
                     cx,
                     vec![],
                     PathStyle::local(),
+                    None,
                 )
             })
             .await

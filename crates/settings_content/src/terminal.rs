@@ -63,6 +63,81 @@ pub struct ProjectTerminalSettingsContent {
     ///
     /// Default: 1
     pub path_hyperlink_timeout_ms: Option<u64>,
+    /// Sandbox settings for the terminal.
+    pub sandbox: Option<SandboxSettingsContent>,
+}
+
+#[derive(Debug, Default, Clone, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom)]
+pub struct SandboxSettingsContent {
+    /// Whether terminal sandboxing is enabled.
+    ///
+    /// Default: false
+    pub enabled: Option<bool>,
+
+    /// Which terminal types get sandboxed.
+    /// - "terminal": only the user's interactive terminal panel
+    /// - "tool": only the agent's terminal tool
+    /// - "both": both
+    /// - "neither": sandbox settings are defined but not applied
+    ///
+    /// Default: "both"
+    pub apply_to: Option<SandboxApplyTo>,
+
+    /// System paths the shell needs to function. These have OS-specific
+    /// defaults built into Zed. Set a category to an explicit array to
+    /// replace the default. Set to `[]` to deny all access of that type.
+    /// Leave as `null` to use the OS-specific default.
+    pub system_paths: Option<SystemPathsSettingsContent>,
+
+    /// Additional directories to allow read+execute access to (binaries, toolchains).
+    /// These are for user-specific tool directories, not system paths.
+    pub additional_executable_paths: Option<Vec<String>>,
+
+    /// Additional directories to allow read-only access to.
+    pub additional_read_only_paths: Option<Vec<String>>,
+
+    /// Additional directories to allow read+write access to.
+    pub additional_read_write_paths: Option<Vec<String>>,
+
+    /// Whether to allow network access from the sandboxed terminal.
+    ///
+    /// Default: true
+    pub allow_network: Option<bool>,
+
+    /// Environment variables to pass through to the sandboxed terminal.
+    /// All other env vars from the parent process are stripped.
+    ///
+    /// Default: ["PATH", "HOME", "USER", "SHELL", "LANG", "TERM", "TERM_PROGRAM",
+    ///           "CARGO_HOME", "RUSTUP_HOME", "GOPATH", "EDITOR", "VISUAL",
+    ///           "XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_RUNTIME_DIR",
+    ///           "SSH_AUTH_SOCK", "GPG_TTY", "COLORTERM"]
+    pub allowed_env_vars: Option<Vec<String>>,
+}
+
+#[derive(Debug, Default, Clone, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom)]
+pub struct SystemPathsSettingsContent {
+    /// Paths with read+execute access (binaries, shared libraries).
+    pub executable: Option<Vec<String>>,
+
+    /// Paths with read-only access (config files, data, certificates).
+    pub read_only: Option<Vec<String>>,
+
+    /// Paths with read+write access (devices, temp directories, IPC sockets).
+    pub read_write: Option<Vec<String>>,
+}
+
+#[derive(Debug, Default, Clone, Copy, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom)]
+#[serde(rename_all = "snake_case")]
+pub enum SandboxApplyTo {
+    /// Only the user's interactive terminal panel
+    Terminal,
+    /// Only the agent's terminal tool
+    Tool,
+    /// Both terminal panel and agent terminal tool
+    #[default]
+    Both,
+    /// Sandbox settings are defined but not applied
+    Neither,
 }
 
 #[with_fallible_options]

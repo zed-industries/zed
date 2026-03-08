@@ -3,8 +3,17 @@ pub mod mappings;
 pub use alacritty_terminal;
 
 mod pty_info;
+#[cfg(unix)]
+pub mod sandbox_exec;
+#[cfg(target_os = "linux")]
+pub mod sandbox_linux;
+#[cfg(target_os = "macos")]
+pub mod sandbox_macos;
 mod terminal_hyperlinks;
 pub mod terminal_settings;
+
+#[cfg(unix)]
+pub use sandbox_exec::sandbox_exec_main;
 
 use alacritty_terminal::{
     Term,
@@ -441,6 +450,7 @@ impl TerminalBuilder {
         cx: &App,
         activation_script: Vec<String>,
         path_style: PathStyle,
+        sandbox_config: Option<terminal_settings::SandboxConfig>,
     ) -> Task<Result<TerminalBuilder>> {
         let version = release_channel::AppVersion::global(cx);
         let background_executor = cx.background_executor().clone();
@@ -459,6 +469,26 @@ impl TerminalBuilder {
             }
 
             insert_zed_terminal_env(&mut env, &version);
+
+            // When sandbox is enabled, filter env vars to only the allowed set.
+            // Zed-specific vars (inserted above) are always kept.
+            if let Some(ref sandbox) = sandbox_config {
+                let allowed: collections::HashSet<&str> = sandbox
+                    .allowed_env_vars
+                    .iter()
+                    .map(|s| s.as_str())
+                    .collect();
+                let zed_vars = [
+                    "ZED_TERM",
+                    "TERM_PROGRAM",
+                    "TERM",
+                    "COLORTERM",
+                    "TERM_PROGRAM_VERSION",
+                ];
+                env.retain(|key, _| {
+                    allowed.contains(key.as_str()) || zed_vars.contains(&key.as_str())
+                });
+            }
 
             #[derive(Default)]
             struct ShellParams {
@@ -527,6 +557,45 @@ impl TerminalBuilder {
                         params.args.clone().unwrap_or_default(),
                     )
                 });
+
+                // When sandbox is enabled, wrap the shell with the Zed binary
+                // invoked as `--sandbox-exec <config> -- <shell> [args...]`.
+                // The Zed binary applies the OS-level sandbox and execs the
+                // real shell, avoiding the need to modify the alacritty fork.
+                #[cfg(unix)]
+                let alac_shell = if let Some(ref sandbox) = sandbox_config {
+                    let exec_config = sandbox_exec::SandboxExecConfig::from_sandbox_config(sandbox);
+                    let config_json = exec_config.to_json();
+
+                    let zed_binary =
+                        std::env::current_exe().unwrap_or_else(|_| PathBuf::from("zed"));
+
+                    let mut args =
+                        vec!["--sandbox-exec".to_string(), config_json, "--".to_string()];
+
+                    // Append the real shell command after `--`
+                    if let Some(ref params) = shell_params {
+                        args.push(params.program.clone());
+                        if let Some(ref shell_args) = params.args {
+                            args.extend(shell_args.clone());
+                        }
+                    } else {
+                        // System shell: resolve it and start as login shell
+                        // so profile files (.zprofile, .bash_profile, etc.) are sourced.
+                        // Normally alacritty uses /usr/bin/login for this, but the
+                        // sandbox wrapper bypasses that, so we pass -l explicitly.
+                        let system_shell = util::get_default_system_shell();
+                        args.push(system_shell);
+                        args.push("-l".to_string());
+                    }
+
+                    Some(alacritty_terminal::tty::Shell::new(
+                        zed_binary.to_string_lossy().into_owned(),
+                        args,
+                    ))
+                } else {
+                    alac_shell
+                };
 
                 alacritty_terminal::tty::Options {
                     shell: alac_shell,
@@ -2310,6 +2379,7 @@ impl Terminal {
             cx,
             self.activation_script.clone(),
             self.path_style,
+            None,
         )
     }
 }
@@ -2597,6 +2667,7 @@ mod tests {
                     cx,
                     vec![],
                     PathStyle::local(),
+                    None,
                 )
             })
             .await
@@ -2743,6 +2814,7 @@ mod tests {
                     cx,
                     Vec::new(),
                     PathStyle::local(),
+                    None,
                 )
             })
             .await
@@ -2819,6 +2891,7 @@ mod tests {
                     cx,
                     Vec::new(),
                     PathStyle::local(),
+                    None,
                 )
             })
             .await
@@ -3307,6 +3380,7 @@ mod tests {
                         cx,
                         vec![],
                         PathStyle::local(),
+                        None,
                     )
                 })
                 .await

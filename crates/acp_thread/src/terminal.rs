@@ -1,10 +1,12 @@
 use agent_client_protocol as acp;
 use anyhow::Result;
+use feature_flags::{FeatureFlagAppExt, TerminalSandboxFeatureFlag};
 use futures::{FutureExt as _, future::Shared};
 use gpui::{App, AppContext, AsyncApp, Context, Entity, Task};
 use language::LanguageRegistry;
 use markdown::Markdown;
 use project::Project;
+use settings::Settings;
 use std::{
     path::PathBuf,
     process::ExitStatus,
@@ -238,6 +240,40 @@ pub async fn create_terminal_entity(
         .redirect_stdin_to_dev_null()
         .build(Some(command.clone()), &args);
 
+    // Resolve sandbox config for the agent terminal tool (feature-flagged)
+    let sandbox_config = project.update(cx, |project, cx| {
+        if !cx.has_flag::<TerminalSandboxFeatureFlag>() {
+            return None;
+        }
+        let settings_location = cwd.as_ref().and_then(|cwd| {
+            let path: Arc<std::path::Path> = Arc::from(cwd.as_ref());
+            project
+                .find_worktree(&path, cx)
+                .map(|(worktree, _)| settings::SettingsLocation {
+                    worktree_id: worktree.read(cx).id(),
+                    path: util::rel_path::RelPath::empty(),
+                })
+        });
+        let settings = terminal::terminal_settings::TerminalSettings::get(settings_location, cx);
+        settings.sandbox.as_ref().and_then(|sandbox| {
+            if !sandbox.enabled.unwrap_or(false) {
+                return None;
+            }
+            let apply_to = sandbox.apply_to.unwrap_or_default();
+            match apply_to {
+                settings::SandboxApplyTo::Tool | settings::SandboxApplyTo::Both => {}
+                _ => return None,
+            }
+            let project_dir = cwd
+                .clone()
+                .unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
+            Some(terminal::terminal_settings::SandboxConfig::from_settings(
+                sandbox,
+                project_dir,
+            ))
+        })
+    });
+
     project
         .update(cx, |project, cx| {
             project.create_terminal_task(
@@ -248,6 +284,7 @@ pub async fn create_terminal_entity(
                     env,
                     ..Default::default()
                 },
+                sandbox_config,
                 cx,
             )
         })

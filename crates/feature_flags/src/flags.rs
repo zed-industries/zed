@@ -62,3 +62,15 @@ impl FeatureFlag for StreamingEditFileToolFeatureFlag {
         true
     }
 }
+
+pub struct TerminalSandboxFeatureFlag;
+
+impl FeatureFlag for TerminalSandboxFeatureFlag {
+    // Reusing an existing flag string from the database.
+    // This will be replaced with a dedicated string later.
+    const NAME: &'static str = "agent-git-worktrees";
+
+    fn enabled_for_staff() -> bool {
+        false
+    }
+}

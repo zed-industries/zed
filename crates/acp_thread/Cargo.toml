@@ -24,6 +24,7 @@ buffer_diff.workspace = true
 chrono.workspace = true
 collections.workspace = true
 multi_buffer.workspace = true
+feature_flags.workspace = true
 file_icons.workspace = true
 futures.workspace = true
 gpui.workspace = true

@@ -191,6 +191,15 @@ fn main() {
         return;
     }
 
+    // `zed --sandbox-exec` Makes zed operate as a sandbox wrapper:
+    // apply OS-level sandbox, filter env vars, then exec the real shell.
+    #[cfg(unix)]
+    if let Some(config_json) = &args.sandbox_exec {
+        terminal::sandbox_exec_main(config_json, &args.paths_or_urls);
+        // sandbox_exec_main never returns (it execs the real shell)
+        unreachable!("sandbox_exec_main should have called exec");
+    }
+
     // `zed --crash-handler` Makes zed operate in minidump crash handler mode
     if let Some(socket) = &args.crash_handler {
         crashes::crash_server(socket.as_path());
@@ -1662,6 +1671,13 @@ struct Args {
 
     #[arg(long, hide = true)]
     dump_all_actions: bool,
+
+    /// Run as a sandbox wrapper: apply OS-level sandbox, filter env, then exec
+    /// the real shell. The value is a base64-encoded JSON sandbox config.
+    /// Remaining arguments after `--` are the real shell command.
+    #[cfg(unix)]
+    #[arg(long, hide = true)]
+    sandbox_exec: Option<String>,
 
     /// Output current environment variables as JSON to stdout
     #[arg(long, hide = true)]

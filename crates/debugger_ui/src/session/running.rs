@@ -1149,6 +1149,7 @@ impl RunningState {
                     .update(cx, |project, cx| {
                         project.create_terminal_task(
                             task_with_shell.clone(),
+                            None,
                             cx,
                         )
                     }).await?;
@@ -1318,8 +1319,9 @@ impl RunningState {
         let workspace = self.workspace.clone();
         let weak_project = project.downgrade();
 
-        let terminal_task =
-            project.update(cx, |project, cx| project.create_terminal_task(kind, cx));
+        let terminal_task = project.update(cx, |project, cx| {
+            project.create_terminal_task(kind, None, cx)
+        });
         let terminal_task = cx.spawn_in(window, async move |_, cx| {
             let terminal = terminal_task.await?;
 

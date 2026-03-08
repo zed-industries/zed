@@ -14,6 +14,7 @@ dependencies = [
  "chrono",
  "collections",
  "env_logger 0.11.8",
+ "feature_flags",
  "file_icons",
  "futures 0.3.31",
  "gpui",
@@ -9339,6 +9340,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "landlock"
+version = "0.4.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "49fefd6652c57d68aaa32544a4c0e642929725bdc1fd929367cdeb673ab81088"
+dependencies = [
+ "enumflags2",
+ "libc",
+ "thiserror 2.0.17",
+]
+
+[[package]]
 name = "language"
 version = "0.1.0"
 dependencies = [
@@ -13155,6 +13167,7 @@ dependencies = [
  "encoding_rs",
  "extension",
  "fancy-regex",
+ "feature_flags",
  "fs",
  "futures 0.3.31",
  "fuzzy",
@@ -17390,6 +17403,7 @@ dependencies = [
  "futures 0.3.31",
  "gpui",
  "itertools 0.14.0",
+ "landlock",
  "libc",
  "log",
  "parking_lot",
