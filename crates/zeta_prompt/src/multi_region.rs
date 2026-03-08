@@ -93,6 +93,7 @@ pub fn write_editable_with_markers(
     cursor_marker: &str,
 ) {
     let marker_offsets = compute_marker_offsets(editable_text);
+    let mut cursor_placed = false;
     for (i, &offset) in marker_offsets.iter().enumerate() {
         let marker_num = i + 1;
         if !output.is_empty() && !output.ends_with('\n') {
@@ -103,7 +104,11 @@ pub fn write_editable_with_markers(
         if let Some(&next_offset) = marker_offsets.get(i + 1) {
             output.push('\n');
             let block = &editable_text[offset..next_offset];
-            if cursor_offset_in_editable >= offset && cursor_offset_in_editable <= next_offset {
+            if !cursor_placed
+                && cursor_offset_in_editable >= offset
+                && cursor_offset_in_editable <= next_offset
+            {
+                cursor_placed = true;
                 let cursor_in_block = cursor_offset_in_editable - offset;
                 output.push_str(&block[..cursor_in_block]);
                 output.push_str(cursor_marker);
