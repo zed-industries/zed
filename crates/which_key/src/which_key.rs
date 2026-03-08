@@ -1,11 +1,11 @@
 //! Which-key support for Zed.
 
 mod which_key_modal;
-mod which_key_settings;
+pub(crate) mod which_key_settings;
 
-use gpui::{App, Keystroke};
+use gpui::App;
 use settings::Settings;
-use std::{sync::LazyLock, time::Duration};
+use std::time::Duration;
 use util::ResultExt;
 use which_key_modal::WhichKeyModal;
 use which_key_settings::WhichKeySettings;
@@ -56,43 +56,3 @@ pub fn init(cx: &mut App) {
     })
     .detach();
 }
-
-// Hard-coded list of keystrokes to filter out from which-key display
-pub static FILTERED_KEYSTROKES: LazyLock<Vec<Vec<Keystroke>>> = LazyLock::new(|| {
-    [
-        // Modifiers on normal vim commands
-        "g h",
-        "g j",
-        "g k",
-        "g l",
-        "g $",
-        "g ^",
-        // Duplicate keys with "ctrl" held, e.g. "ctrl-w ctrl-a" is duplicate of "ctrl-w a"
-        "ctrl-w ctrl-a",
-        "ctrl-w ctrl-c",
-        "ctrl-w ctrl-h",
-        "ctrl-w ctrl-j",
-        "ctrl-w ctrl-k",
-        "ctrl-w ctrl-l",
-        "ctrl-w ctrl-n",
-        "ctrl-w ctrl-o",
-        "ctrl-w ctrl-p",
-        "ctrl-w ctrl-q",
-        "ctrl-w ctrl-s",
-        "ctrl-w ctrl-v",
-        "ctrl-w ctrl-w",
-        "ctrl-w ctrl-]",
-        "ctrl-w ctrl-shift-w",
-        "ctrl-w ctrl-g t",
-        "ctrl-w ctrl-g shift-t",
-    ]
-    .iter()
-    .filter_map(|s| {
-        let keystrokes: Result<Vec<_>, _> = s
-            .split(' ')
-            .map(|keystroke_str| Keystroke::parse(keystroke_str))
-            .collect();
-        keystrokes.ok()
-    })
-    .collect()
-});
