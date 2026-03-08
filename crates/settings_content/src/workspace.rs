@@ -743,6 +743,24 @@ pub struct ProjectPanelSettingsContent {
     ///
     /// Default: true
     pub diagnostic_badges: Option<bool>,
+    /// Settings for file nesting.
+    pub file_nesting: Option<FileNestingSettings>,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema, PartialEq, MergeFrom)]
+#[serde(rename_all = "snake_case")]
+pub struct FileNestingSettings {
+    /// Whether to enable file nesting in the project panel.
+    /// When enabled, files will be nested under parent entries according to the specified patterns.
+    /// If disabled, the patterns will be ignored and no nesting will occur.
+    /// Default: false
+    pub enabled: Option<bool>,
+
+    /// The map of file patterns to nest.
+    /// The key is the parent pattern, and the value is the child pattern.
+    ///
+    /// Example: `{"*.ts": "$(capture).js"}`
+    pub patterns: Option<HashMap<String, String>>,
 }
 
 #[derive(
