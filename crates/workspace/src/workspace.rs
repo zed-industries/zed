@@ -2858,8 +2858,35 @@ impl Workspace {
                     .count()
             })?;
 
+            // On macOS, if the user has configured on_last_window_closed = "quit_app" and this
+            // is the last window, treat the close like a quit and preserve the session so that
+            // unsaved buffers can be restored on next launch.
             #[cfg(target_os = "macos")]
-            let save_last_workspace = false;
+            let save_last_workspace = {
+                let remaining_workspaces = cx.update(|_window, cx| {
+                    cx.windows()
+                        .iter()
+                        .filter_map(|window| window.downcast::<MultiWorkspace>())
+                        .filter_map(|multi_workspace| {
+                            multi_workspace
+                                .update(cx, |multi_workspace, _, cx| {
+                                    multi_workspace.workspace().read(cx).removing
+                                })
+                                .ok()
+                        })
+                        .filter(|removing| !removing)
+                        .count()
+                })?;
+                close_intent != CloseIntent::ReplaceWindow
+                    && remaining_workspaces == 0
+                    && cx
+                        .update(|_window, cx| {
+                            WorkspaceSettings::get_global(cx)
+                                .on_last_window_closed
+                                .is_quit_app()
+                        })
+                        .unwrap_or(false)
+            };
 
             // On Linux and Windows, closing the last window should restore the last workspace.
             #[cfg(not(target_os = "macos"))]
@@ -6283,6 +6310,12 @@ impl Workspace {
                 let docks = build_serialized_docks(self, window, cx);
                 let db = WorkspaceDb::global(cx);
                 let kvp = db::kvp::KeyValueStore::global(cx);
+                // Only clear session_id when explicitly detached via remove_from_session(),
+                // which calls session_id.take() before serializing. If session_id is still
+                // set here, items may not have finished loading yet (Editor::new_in_workspace
+                // is async), so preserve the session binding to avoid a race where this
+                // set_session_id(None) lands after a later save_workspace(session_id).
+                let session_id = self.session_id.clone();
                 window.spawn(cx, async move |_| {
                     db.set_window_open_status(
                         database_id,
@@ -6291,7 +6324,9 @@ impl Workspace {
                     )
                     .await
                     .log_err();
-                    db.set_session_id(database_id, None).await.log_err();
+                    if session_id.is_none() {
+                        db.set_session_id(database_id, None).await.log_err();
+                    }
                     persistence::write_default_dock_state(&kvp, docks)
                         .await
                         .log_err();
@@ -6403,11 +6438,11 @@ impl Workspace {
             let mut center_items = None;
 
             // Traverse the splits tree and add to things
-            if let Some((group, active_pane, items)) = serialized_workspace
+            let deserialized = serialized_workspace
                 .center_group
                 .deserialize(&project, serialized_workspace.id, workspace.clone(), cx)
-                .await
-            {
+                .await;
+            if let Some((group, active_pane, items)) = deserialized {
                 center_items = Some(items);
                 center_group = Some((group, active_pane))
             }

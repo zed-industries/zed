@@ -95,6 +95,7 @@ impl Connection {
             }
 
             if did_migrate {
+                log::debug!("migrate: did_migrate=true for domain '{domain}', running orphan cleanup");
                 self.delete_rows_with_orphaned_foreign_key_references()?;
                 self.exec("PRAGMA foreign_key_check;")?()?;
             }
