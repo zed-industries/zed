@@ -119,6 +119,9 @@ impl SshRunningKernel {
             let mut command = util::command::new_command(&command_template.program);
             command.args(&command_template.args);
             command.envs(&command_template.env);
+            if let Some(path) = command_template.cwd {
+                command.current_dir(path);
+            }
 
             let mut ssh_tunnel_process = command.spawn().context("failed to spawn ssh tunnel")?;
 

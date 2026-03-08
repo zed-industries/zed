@@ -95,7 +95,8 @@ use project::{
     trusted_worktrees::{RemoteHostLocation, TrustedWorktrees, TrustedWorktreesEvent},
 };
 use remote::{
-    RemoteClientDelegate, RemoteConnection, RemoteConnectionOptions,
+    GuixContainerConnectionOptions, GuixSettings, RemoteClientDelegate, RemoteConnection,
+    RemoteConnectionOptions,
     remote_client::ConnectionIdentifier,
 };
 use schemars::JsonSchema;
@@ -8898,6 +8899,77 @@ pub fn open_workspace_by_id(
     })
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct GuixWorkspaceDescriptor {
+    manifest_path: PathBuf,
+    project_root: PathBuf,
+}
+
+async fn find_guix_workspace_for_path(
+    path: &Path,
+    fs: &Arc<dyn Fs>,
+) -> Option<GuixWorkspaceDescriptor> {
+    let mut current = if fs.is_dir(path).await {
+        path.to_path_buf()
+    } else {
+        path.parent()?.to_path_buf()
+    };
+
+    if let Ok(canonical) = fs.canonicalize(&current).await {
+        current = canonical;
+    }
+
+    loop {
+        let manifest_path = current.join("manifest.scm");
+        if fs.is_file(&manifest_path).await {
+            return Some(GuixWorkspaceDescriptor {
+                manifest_path,
+                project_root: current,
+            });
+        }
+        if !current.pop() {
+            return None;
+        }
+    }
+}
+
+async fn detect_guix_workspace(
+    abs_paths: &[PathBuf],
+    fs: Arc<dyn Fs>,
+) -> Option<GuixWorkspaceDescriptor> {
+    let mut descriptor = None;
+    for path in abs_paths {
+        let candidate = find_guix_workspace_for_path(path, &fs).await?;
+        if descriptor
+            .as_ref()
+            .is_some_and(|existing: &GuixWorkspaceDescriptor| existing.project_root != candidate.project_root)
+        {
+            return None;
+        }
+        descriptor = Some(candidate);
+    }
+    descriptor
+}
+
+pub async fn guix_connection_options_for_paths(
+    abs_paths: &[PathBuf],
+    app_state: &Arc<AppState>,
+    cx: &AsyncApp,
+) -> Option<RemoteConnectionOptions> {
+    let descriptor = detect_guix_workspace(abs_paths, app_state.fs.clone()).await?;
+    let shell_options = cx.update(|cx| {
+        GuixSettings::get_global(cx)
+            .shell_options_for(&descriptor.manifest_path, &descriptor.project_root)
+    });
+    Some(RemoteConnectionOptions::GuixContainer(
+        GuixContainerConnectionOptions {
+            manifest_path: descriptor.manifest_path.display().to_string(),
+            project_root: descriptor.project_root.display().to_string(),
+            shell_options,
+        },
+    ))
+}
+
 #[allow(clippy::type_complexity)]
 pub fn open_paths(
     abs_paths: &[PathBuf],
@@ -10019,8 +10091,10 @@ mod tests {
         UpdateGlobal, VisualTestContext, px,
     };
     use project::{Project, ProjectEntryId};
+    use remote::GuixShellOptions;
     use serde_json::json;
     use settings::SettingsStore;
+    use tempfile::tempdir;
     use util::path;
     use util::rel_path::rel_path;
 
@@ -13646,6 +13720,135 @@ mod tests {
 
         let settings_text = SettingsStore::load_settings(&settings_fs).await.unwrap();
         assert!(settings_text.contains(r#""mode": "light""#));
+    }
+
+    #[gpui::test]
+    async fn test_manifest_workspace_detects_guix_connection_options(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let mut app_state = cx.update(AppState::test);
+        let real_fs: Arc<dyn fs::Fs> = Arc::new(fs::RealFs::new(None, cx.executor()));
+        cx.update(|cx| <dyn fs::Fs>::set_global(real_fs.clone(), cx));
+        Arc::get_mut(&mut app_state).unwrap().fs = real_fs;
+
+        let dir = tempdir().unwrap();
+        let project_root = dir.path().join("project");
+        let src_dir = project_root.join("src");
+        let manifest_path = project_root.join("manifest.scm");
+        let source_path = src_dir.join("main.rs");
+
+        std::fs::create_dir_all(&src_dir).unwrap();
+        std::fs::write(&manifest_path, "(specifications->manifest '())\n").unwrap();
+        std::fs::write(&source_path, "fn main() {}\n").unwrap();
+
+        let async_cx = cx.to_async();
+        let options =
+            guix_connection_options_for_paths(&[source_path.clone()], &app_state, &async_cx)
+                .await
+                .expect("manifest.scm should select the Guix transport");
+
+        let RemoteConnectionOptions::GuixContainer(options) = options else {
+            panic!("expected GuixContainer options");
+        };
+
+        assert_eq!(PathBuf::from(options.project_root), project_root);
+        assert_eq!(PathBuf::from(options.manifest_path), manifest_path);
+        assert_eq!(options.shell_options, GuixShellOptions::default());
+    }
+
+    #[gpui::test]
+    async fn test_manifest_workspace_detects_same_root_for_multiple_paths(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+
+        let mut app_state = cx.update(AppState::test);
+        let real_fs: Arc<dyn fs::Fs> = Arc::new(fs::RealFs::new(None, cx.executor()));
+        cx.update(|cx| <dyn fs::Fs>::set_global(real_fs.clone(), cx));
+        Arc::get_mut(&mut app_state).unwrap().fs = real_fs;
+
+        let dir = tempdir().unwrap();
+        let project_root = dir.path().join("project");
+        let src_dir = project_root.join("src");
+        let nested_dir = project_root.join("tests");
+        let manifest_path = project_root.join("manifest.scm");
+        let source_path = src_dir.join("main.rs");
+        let test_path = nested_dir.join("integration.rs");
+
+        std::fs::create_dir_all(&src_dir).unwrap();
+        std::fs::create_dir_all(&nested_dir).unwrap();
+        std::fs::write(&manifest_path, "(specifications->manifest '())\n").unwrap();
+        std::fs::write(&source_path, "fn main() {}\n").unwrap();
+        std::fs::write(&test_path, "#[test] fn it_works() {}\n").unwrap();
+
+        let async_cx = cx.to_async();
+        let options =
+            guix_connection_options_for_paths(&[source_path.clone(), test_path], &app_state, &async_cx)
+                .await
+                .expect("paths under one manifest should select the Guix transport");
+
+        let RemoteConnectionOptions::GuixContainer(options) = options else {
+            panic!("expected GuixContainer options");
+        };
+
+        assert_eq!(PathBuf::from(options.project_root), project_root);
+        assert_eq!(PathBuf::from(options.manifest_path), manifest_path);
+    }
+
+    #[gpui::test]
+    async fn test_manifest_workspace_rejects_paths_from_different_manifests(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+
+        let mut app_state = cx.update(AppState::test);
+        let real_fs: Arc<dyn fs::Fs> = Arc::new(fs::RealFs::new(None, cx.executor()));
+        cx.update(|cx| <dyn fs::Fs>::set_global(real_fs.clone(), cx));
+        Arc::get_mut(&mut app_state).unwrap().fs = real_fs;
+
+        let dir = tempdir().unwrap();
+        let project_a = dir.path().join("project-a");
+        let project_b = dir.path().join("project-b");
+        let source_a = project_a.join("src/main.rs");
+        let source_b = project_b.join("src/main.rs");
+
+        std::fs::create_dir_all(source_a.parent().unwrap()).unwrap();
+        std::fs::create_dir_all(source_b.parent().unwrap()).unwrap();
+        std::fs::write(project_a.join("manifest.scm"), "(specifications->manifest '())\n").unwrap();
+        std::fs::write(project_b.join("manifest.scm"), "(specifications->manifest '())\n").unwrap();
+        std::fs::write(&source_a, "fn main() {}\n").unwrap();
+        std::fs::write(&source_b, "fn main() {}\n").unwrap();
+
+        let async_cx = cx.to_async();
+        let options =
+            guix_connection_options_for_paths(&[source_a, source_b], &app_state, &async_cx).await;
+
+        assert!(
+            options.is_none(),
+            "paths under different manifests should not collapse into one Guix connection"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_manifest_workspace_returns_none_without_manifest(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let mut app_state = cx.update(AppState::test);
+        let real_fs: Arc<dyn fs::Fs> = Arc::new(fs::RealFs::new(None, cx.executor()));
+        cx.update(|cx| <dyn fs::Fs>::set_global(real_fs.clone(), cx));
+        Arc::get_mut(&mut app_state).unwrap().fs = real_fs;
+
+        let dir = tempdir().unwrap();
+        let project_root = dir.path().join("project");
+        let source_path = project_root.join("src/main.rs");
+
+        std::fs::create_dir_all(source_path.parent().unwrap()).unwrap();
+        std::fs::write(&source_path, "fn main() {}\n").unwrap();
+
+        let async_cx = cx.to_async();
+        let options = guix_connection_options_for_paths(&[source_path], &app_state, &async_cx).await;
+
+        assert!(options.is_none(), "workspace without manifest.scm should stay local");
     }
 
     fn dirty_project_item(id: u64, path: &str, cx: &mut App) -> Entity<TestProjectItem> {

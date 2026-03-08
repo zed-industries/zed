@@ -364,6 +364,7 @@ impl RemoteConnection for SshRemoteConnection {
             program: "ssh".into(),
             args,
             env: Default::default(),
+            cwd: None,
         })
     }
 
@@ -1719,6 +1720,7 @@ fn build_command_posix(
         program: "ssh".into(),
         args,
         env: ssh_env,
+        cwd: None,
     })
 }
 
@@ -1822,6 +1824,7 @@ fn build_command_windows(
         program: "ssh".into(),
         args,
         env: ssh_env,
+        cwd: None,
     })
 }
 

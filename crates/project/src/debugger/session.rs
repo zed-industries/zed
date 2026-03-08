@@ -2919,9 +2919,13 @@ impl Session {
 
                 let child = remote_client.update(cx, |client, _| {
                     let command = client.build_forward_ports_command(port_forwards)?;
-                    let child = new_command(command.program)
-                        .args(command.args)
-                        .envs(command.env)
+                    let mut child = new_command(command.program);
+                    child.args(command.args);
+                    child.envs(command.env);
+                    if let Some(path) = command.cwd {
+                        child.current_dir(path);
+                    }
+                    let child = child
                         .spawn()
                         .context("spawning port forwarding process")?;
                     anyhow::Ok(child)

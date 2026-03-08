@@ -210,6 +210,7 @@ impl RemoteConnection for MockRemoteConnection {
             program: "mock".into(),
             args: shell_args,
             env: env.clone(),
+            cwd: None,
         })
     }
 
@@ -224,6 +225,7 @@ impl RemoteConnection for MockRemoteConnection {
                     format!("{local_port}:{host}:{remote_port}")
                 }))
                 .collect(),
+            cwd: None,
             env: Default::default(),
         })
     }
