@@ -1,0 +1,61 @@
+# CI E2E test image — builds Go test server and slow-mcp-server from source,
+# uses pre-built Zed binary.
+#
+# Context: this directory (crates/external_websocket_sync/e2e-test/).
+# Everything is built from the Zed repo source already present here.
+#
+# External files placed into context by CI before build:
+#   zed-binary   — pre-built Zed binary (from build-zed step)
+#   helix-go.mod — Helix go.mod (for helix-ws-test-server replace directive)
+#   helix-go.sum — Helix go.sum
+#   helix-api/   — Helix api/ source tree
+
+# Stage 1: Build Go test server with real Helix server code
+FROM golang:1.25-alpine AS go-builder
+COPY helix-go.mod /helix/go.mod
+COPY helix-go.sum /helix/go.sum
+COPY helix-api /helix/api
+COPY helix-ws-test-server /app
+WORKDIR /app
+RUN apk add --no-cache gcc g++ musl-dev && \
+    sed -i 's|../../../../../helix|/helix|g' go.mod && \
+    go mod tidy && \
+    CGO_ENABLED=1 go build -ldflags '-extldflags "-static"' -o /helix-ws-test-server .
+
+# Stage 2: Build slow-mcp-server (standalone, no external deps)
+FROM golang:1.25-alpine AS mcp-builder
+COPY slow-mcp-server /app
+WORKDIR /app
+RUN CGO_ENABLED=0 go build -o /slow-mcp-server .
+
+# Stage 3: Runtime
+FROM ubuntu:25.10
+ENV DEBIAN_FRONTEND=noninteractive
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libxkbcommon0 libxkbcommon-x11-0 libwayland-client0 libvulkan1 \
+    libx11-xcb1 libxcb-shape0 libxcb-xfixes0 \
+    libxcb-randr0 libxcb-render0 \
+    libxcb-shm0 libxcb-glx0 libxcb-xkb1 \
+    libxcb1 libx11-6 \
+    libfontconfig1 libfreetype6 \
+    libssl3t64 libsqlite3-0 libzstd1 ca-certificates \
+    libasound2t64 \
+    libatk1.0-0t64 libgtk-3-0t64 \
+    xvfb x11-utils dbus \
+    mesa-vulkan-drivers \
+    imagemagick \
+    && rm -rf /var/lib/apt/lists/*
+COPY --from=go-builder /helix-ws-test-server /usr/local/bin/helix-ws-test-server
+COPY --from=mcp-builder /slow-mcp-server /usr/local/bin/slow-mcp-server
+COPY zed-binary /usr/local/bin/zed
+RUN chmod +x /usr/local/bin/zed /usr/local/bin/helix-ws-test-server /usr/local/bin/slow-mcp-server
+COPY run_e2e.sh /test/run_e2e.sh
+RUN chmod +x /test/run_e2e.sh
+ENV DISPLAY=:99
+ENV VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/lvp_icd.json
+ENV LIBGL_ALWAYS_SOFTWARE=1
+ENV ZED_ALLOW_EMULATED_GPU=1
+ENV ZED_ALLOW_ROOT=true
+WORKDIR /test
+RUN mkdir -p /test/project && echo "# Test Project" > /test/project/README.md
+ENTRYPOINT ["/test/run_e2e.sh"]

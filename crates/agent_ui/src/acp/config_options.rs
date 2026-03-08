@@ -116,6 +116,19 @@ impl ConfigOptionsView {
         true
     }
 
+    /// Returns the current model value ID string for the Model config option, if one exists.
+    pub fn current_model_value(&self) -> Option<String> {
+        let config_id = self.first_config_option_id(acp::SessionConfigOptionCategory::Model)?;
+        let option = self.config_options.config_options().into_iter().find(|opt| opt.id == config_id)?;
+        match &option.kind {
+            acp::SessionConfigKind::Select(select) => {
+                // Return the value ID (e.g. "claude-sonnet-4-5-latest"), falling back to name
+                Some(select.current_value.0.to_string())
+            }
+            _ => None,
+        }
+    }
+
     fn first_config_option_id(
         &self,
         category: acp::SessionConfigOptionCategory,
