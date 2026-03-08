@@ -398,6 +398,11 @@ impl LanguageModel for CopilotChatLanguageModel {
 
                 anthropic_request.temperature = None;
 
+                // The Copilot proxy doesn't support eager_input_streaming on tools.
+                for tool in &mut anthropic_request.tools {
+                    tool.eager_input_streaming = false;
+                }
+
                 if model.supports_adaptive_thinking() {
                     if anthropic_request.thinking.is_some() {
                         anthropic_request.thinking = Some(anthropic::Thinking::Adaptive);

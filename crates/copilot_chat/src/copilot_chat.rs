@@ -860,7 +860,7 @@ pub(crate) fn copilot_request_headers(
                 option_env!("CARGO_PKG_VERSION").unwrap_or("unknown")
             ),
         )
-        .header("X-GitHub-Api-Version", "2025-05-01")
+        .header("X-GitHub-Api-Version", "2025-10-01")
         .when_some(is_user_initiated, |builder, is_user_initiated| {
             builder.header(
                 "X-Initiator",
