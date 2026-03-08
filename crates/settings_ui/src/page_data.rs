@@ -5499,7 +5499,7 @@ fn panels_page() -> SettingsPage {
         ]
     }
 
-    fn git_panel_section() -> [SettingsPageItem; 15] {
+    fn git_panel_section() -> [SettingsPageItem; 16] {
         [
             SettingsPageItem::SectionHeader("Git Panel"),
             SettingsPageItem::SettingItem(SettingItem {
@@ -5734,6 +5734,28 @@ fn panels_page() -> SettingsPage {
                             .git_panel
                             .get_or_insert_default()
                             .commit_title_max_length = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Stage Fold Behavior",
+                description: "Controls whether file diffs automatically collapse/expand when staging or unstaging via the checkmark in the diff view.",
+                field: Box::new(SettingField {
+                    json_path: Some("git_panel.stage_fold_behavior"),
+                    pick: |settings_content| {
+                        settings_content
+                            .git_panel
+                            .as_ref()?
+                            .stage_fold_behavior
+                            .as_ref()
+                    },
+                    write: |settings_content, value, _| {
+                        settings_content
+                            .git_panel
+                            .get_or_insert_default()
+                            .stage_fold_behavior = value;
                     },
                 }),
                 metadata: None,

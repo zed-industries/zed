@@ -716,6 +716,12 @@ pub struct GitPanelSettingsContent {
     ///
     /// Default: 72
     pub commit_title_max_length: Option<usize>,
+
+    /// Controls whether file diffs automatically collapse/expand when
+    /// staging or unstaging via the checkmark in the diff view.
+    ///
+    /// Default: collapse_and_expand
+    pub stage_fold_behavior: Option<StageFoldBehavior>,
 }
 
 #[derive(
@@ -737,6 +743,28 @@ pub enum StatusStyle {
     #[default]
     Icon,
     LabelColor,
+}
+
+#[derive(
+    Default,
+    Copy,
+    Clone,
+    Debug,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    MergeFrom,
+    PartialEq,
+    Eq,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum StageFoldBehavior {
+    #[default]
+    CollapseAndExpand,
+    Collapse,
+    None,
 }
 
 #[with_fallible_options]
