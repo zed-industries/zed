@@ -381,15 +381,15 @@ impl LanguageModel for CopilotChatLanguageModel {
                     model.max_output_tokens() as u64,
                     if model.supports_adaptive_thinking() {
                         AnthropicModelMode::Thinking {
-                            budget_tokens: Some(4_096),
+                            budget_tokens: None,
                         }
                     } else if model.supports_thinking() {
-                        let budget = compute_thinking_budget(
-                            model.min_thinking_budget(),
-                            model.max_output_tokens() as u32,
-                        );
                         AnthropicModelMode::Thinking {
-                            budget_tokens: budget,
+                            budget_tokens: compute_thinking_budget(
+                                model.min_thinking_budget(),
+                                model.max_thinking_budget(),
+                                model.max_output_tokens() as u32,
+                            ),
                         }
                     } else {
                         AnthropicModelMode::Default
@@ -398,9 +398,11 @@ impl LanguageModel for CopilotChatLanguageModel {
 
                 anthropic_request.temperature = None;
 
-                if model.supports_adaptive_thinking() && anthropic_request.thinking.is_some() {
-                    anthropic_request.thinking = Some(anthropic::Thinking::Adaptive);
-                    anthropic_request.output_config = Some(anthropic::OutputConfig { effort });
+                if model.supports_adaptive_thinking() {
+                    if anthropic_request.thinking.is_some() {
+                        anthropic_request.thinking = Some(anthropic::Thinking::Adaptive);
+                        anthropic_request.output_config = Some(anthropic::OutputConfig { effort });
+                    }
                 }
 
                 let anthropic_beta =
@@ -410,14 +412,11 @@ impl LanguageModel for CopilotChatLanguageModel {
                         None
                     };
 
-                let body = {
-                    let mut value =
-                        serde_json::to_value(&anthropic_request).map_err(|e| anyhow::anyhow!(e))?;
-                    if let Some(obj) = value.as_object_mut() {
-                        obj.insert("stream".to_string(), serde_json::Value::Bool(true));
-                    }
-                    serde_json::to_string(&value).map_err(|e| anyhow::anyhow!(e))?
-                };
+                let body = serde_json::to_string(&anthropic::StreamingRequest {
+                    base: anthropic_request,
+                    stream: true,
+                })
+                .map_err(|e| anyhow::anyhow!(e))?;
 
                 let stream = CopilotChat::stream_messages(
                     body,
@@ -1057,11 +1056,20 @@ fn into_copilot_chat(
     })
 }
 
-fn compute_thinking_budget(min_budget: Option<u32>, max_output_tokens: u32) -> Option<u32> {
+fn compute_thinking_budget(
+    min_budget: Option<u32>,
+    max_budget: Option<u32>,
+    max_output_tokens: u32,
+) -> Option<u32> {
     let configured_budget: u32 = 16000;
     let min_budget = min_budget.unwrap_or(1024);
+    let max_budget = max_budget.unwrap_or(max_output_tokens.saturating_sub(1));
     let normalized = configured_budget.max(min_budget);
-    Some(normalized.min(max_output_tokens.saturating_sub(1)))
+    Some(
+        normalized
+            .min(max_budget)
+            .min(max_output_tokens.saturating_sub(1)),
+    )
 }
 
 fn intent_to_chat_location(intent: Option<CompletionIntent>) -> ChatLocation {

@@ -860,7 +860,6 @@ pub(crate) fn copilot_request_headers(
                 option_env!("CARGO_PKG_VERSION").unwrap_or("unknown")
             ),
         )
-        .header("Copilot-Integration-Id", "vscode-chat")
         .header("X-GitHub-Api-Version", "2025-05-01")
         .when_some(is_user_initiated, |builder, is_user_initiated| {
             builder.header(
@@ -888,8 +887,7 @@ async fn request_models(
         &oauth_token,
         None,
         None,
-    )
-    .header("x-github-api-version", "2025-05-01");
+    );
 
     let request = request_builder.body(AsyncBody::empty())?;
 
@@ -1048,7 +1046,7 @@ async fn stream_messages(
                     let line = line
                         .strip_prefix("data: ")
                         .or_else(|| line.strip_prefix("data:"))?;
-                    if line.starts_with("[DONE]") {
+                    if line.starts_with("[DONE]") || line.is_empty() {
                         return None;
                     }
                     match serde_json::from_str(line) {
