@@ -311,6 +311,12 @@ impl Model {
         self.capabilities.supports.adaptive_thinking
     }
 
+    pub fn can_think(&self) -> bool {
+        self.supports_thinking()
+            || self.supports_adaptive_thinking()
+            || self.max_thinking_budget().is_some()
+    }
+
     pub fn max_thinking_budget(&self) -> Option<u32> {
         self.capabilities.supports.max_thinking_budget
     }
@@ -1681,6 +1687,11 @@ mod tests {
                     tool_calls: true,
                     parallel_tool_calls: false,
                     vision: false,
+                    thinking: false,
+                    adaptive_thinking: false,
+                    max_thinking_budget: None,
+                    min_thinking_budget: None,
+                    reasoning_effort: vec![],
                 },
                 model_type: "chat".to_string(),
                 tokenizer: None,

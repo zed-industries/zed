@@ -321,9 +321,7 @@ pub async fn stream_response(
             .filter_map(|line| async move {
                 match line {
                     Ok(line) => {
-                        let line = line
-                            .strip_prefix("data: ")
-                            .or_else(|| line.strip_prefix("data:"))?;
+                        let line = line.strip_prefix("data: ")?;
                         if line.starts_with("[DONE]") || line.is_empty() {
                             return None;
                         }

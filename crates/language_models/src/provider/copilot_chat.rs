@@ -258,9 +258,7 @@ impl LanguageModel for CopilotChatLanguageModel {
     }
 
     fn supports_thinking(&self) -> bool {
-        self.model.supports_thinking()
-            || self.model.supports_adaptive_thinking()
-            || self.model.max_thinking_budget().is_some()
+        self.model.can_think()
     }
 
     fn supported_effort_levels(&self) -> Vec<LanguageModelEffortLevel> {
@@ -384,7 +382,7 @@ impl LanguageModel for CopilotChatLanguageModel {
                         AnthropicModelMode::Thinking {
                             budget_tokens: None,
                         }
-                    } else if model.supports_thinking() || model.max_thinking_budget().is_some() {
+                    } else if model.can_think() {
                         AnthropicModelMode::Thinking {
                             budget_tokens: compute_thinking_budget(
                                 model.min_thinking_budget(),
@@ -411,9 +409,7 @@ impl LanguageModel for CopilotChatLanguageModel {
                     }
                 }
 
-                let anthropic_beta = if !model.supports_adaptive_thinking()
-                    && (model.supports_thinking() || model.max_thinking_budget().is_some())
-                {
+                let anthropic_beta = if !model.supports_adaptive_thinking() && model.can_think() {
                     Some("interleaved-thinking-2025-05-14".to_string())
                 } else {
                     None
