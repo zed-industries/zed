@@ -1455,6 +1455,56 @@ mod foo «1{
         );
     }
 
+    #[gpui::test]
+    // reproduction of #47846
+    async fn test_bracket_colorization_with_folds(cx: &mut gpui::TestAppContext) {
+        init_test(cx, |language_settings| {
+            language_settings.defaults.colorize_brackets = Some(true);
+        });
+        let mut cx = EditorLspTestContext::new(
+            Arc::into_inner(rust_lang()).unwrap(),
+            lsp::ServerCapabilities::default(),
+            cx,
+        )
+        .await;
+
+        // Generate a large function body. When folded, this collapses
+        // to a single display line, making small_function visible on screen.
+        let mut big_body = String::new();
+        for i in 0..700 {
+            big_body.push_str(&format!("    let var_{i:04} = ({i});\n"));
+        }
+        let source = format!(
+            "ˇfn big_function() {{\n{big_body}}}\n\nfn small_function() {{\n    let x = (1, (2, 3));\n}}\n"
+        );
+
+        cx.set_state(&source);
+        cx.executor().advance_clock(Duration::from_millis(100));
+        cx.executor().run_until_parked();
+
+        cx.update_editor(|editor, window, cx| {
+            editor.fold_ranges(
+                vec![Point::new(0, 0)..Point::new(701, 1)],
+                false,
+                window,
+                cx,
+            );
+        });
+
+        // trigger re-colorization after fold
+        cx.update_editor(|editor, _window, cx| {
+            editor.colorize_brackets(true, cx);
+        });
+        cx.executor().advance_clock(Duration::from_millis(100));
+        cx.executor().run_until_parked();
+
+        let markup_after = bracket_colors_markup(&mut cx);
+        assert!(
+            markup_after.contains("small_function«"),
+            "small_function brackets should be colored when visible on screen after folding.\nMarkup:\n{markup_after}"
+        );
+    }
+
     fn separate_with_comment_lines(head: &str, tail: &str, comment_lines: usize) -> String {
         let mut result = head.to_string();
         result.push_str("\n");
