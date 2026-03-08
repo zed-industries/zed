@@ -1,7 +1,7 @@
 use crash_handler::{CrashEventResult, CrashHandler};
 use futures::future::BoxFuture;
 use log::info;
-use minidumper::{Client, LoopAction, MinidumpBinary};
+use minidumper::{Client, LoopAction, MinidumpBinary, Server, SocketName};
 use parking_lot::Mutex;
 use release_channel::{RELEASE_CHANNEL, ReleaseChannel};
 use serde::{Deserialize, Serialize};
@@ -128,7 +128,7 @@ async fn connect_and_keepalive(crash_init: InitCrashHandler, handler: CrashHandl
     let retry_frequency = Duration::from_millis(100);
     let mut maybe_client = None;
     while maybe_client.is_none() {
-        if let Ok(client) = Client::with_name(socket_name.as_path()) {
+        if let Ok(client) = Client::with_name(SocketName::Path(&socket_name)) {
             maybe_client = Some(client);
             info!("connected to crash handler process after {elapsed:?}");
             break;
@@ -446,7 +446,7 @@ fn spawn_crash_handler_windows(exe: &Path, socket_name: &Path) {
 }
 
 pub fn crash_server(socket: &Path) {
-    let Ok(mut server) = minidumper::Server::with_name(socket) else {
+    let Ok(mut server) = Server::with_name(SocketName::Path(socket)) else {
         log::info!("Couldn't create socket, there may already be a running crash server");
         return;
     };

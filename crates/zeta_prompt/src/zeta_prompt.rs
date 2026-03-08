@@ -470,12 +470,19 @@ pub fn encode_patch_as_output_for_format(
     }
 }
 
+pub struct ParsedOutput {
+    /// Text that should replace the editable region
+    pub new_editable_region: String,
+    /// The byte range within `cursor_excerpt` that this replacement applies to
+    pub range_in_excerpt: Range<usize>,
+}
+
 /// Parse model output for the given zeta format
 pub fn parse_zeta2_model_output(
     output: &str,
     format: ZetaFormat,
     prompt_inputs: &ZetaPromptInput,
-) -> Result<(Range<usize>, String)> {
+) -> Result<ParsedOutput> {
     let output = match output_end_marker_for_format(format) {
         Some(marker) => output.strip_suffix(marker).unwrap_or(output),
         None => output,
@@ -509,7 +516,11 @@ pub fn parse_zeta2_model_output(
 
     let range_in_excerpt =
         range_in_context.start + context_start..range_in_context.end + context_start;
-    Ok((range_in_excerpt, output))
+
+    Ok(ParsedOutput {
+        new_editable_region: output,
+        range_in_excerpt,
+    })
 }
 
 pub fn excerpt_range_for_format(
@@ -4612,9 +4623,12 @@ mod tests {
         assert_eq!(cleaned, "");
     }
 
-    fn apply_edit(excerpt: &str, range: &Range<usize>, new_text: &str) -> String {
+    fn apply_edit(excerpt: &str, parsed_output: &ParsedOutput) -> String {
         let mut result = excerpt.to_string();
-        result.replace_range(range.clone(), new_text);
+        result.replace_range(
+            parsed_output.range_in_excerpt.clone(),
+            &parsed_output.new_editable_region,
+        );
         result
     }
 
@@ -4632,7 +4646,7 @@ mod tests {
             editable_start,
         );
 
-        let (range, text) = parse_zeta2_model_output(
+        let output = parse_zeta2_model_output(
             "editable new\n>>>>>>> UPDATED\n",
             ZetaFormat::V0131GitMergeMarkersPrefix,
             &input,
@@ -4640,7 +4654,7 @@ mod tests {
         .unwrap();
 
         assert_eq!(
-            apply_edit(excerpt, &range, &text),
+            apply_edit(excerpt, &output),
             "before ctx\nctx start\neditable new\nctx end\nafter ctx\n"
         );
     }
@@ -4658,10 +4672,10 @@ mod tests {
         );
 
         let format = ZetaFormat::V0131GitMergeMarkersPrefix;
-        let (range, text) =
+        let output =
             parse_zeta2_model_output("bbb\nccc\n>>>>>>> UPDATED\n", format, &input).unwrap();
 
-        assert_eq!(apply_edit(excerpt, &range, &text), excerpt);
+        assert_eq!(apply_edit(excerpt, &output), excerpt);
     }
 
     #[test]
@@ -4670,14 +4684,11 @@ mod tests {
         let input = make_input_with_context_range(excerpt, 0..excerpt.len(), 0..excerpt.len(), 0);
 
         let format = ZetaFormat::V0131GitMergeMarkersPrefix;
-        let (range1, text1) =
+        let output1 =
             parse_zeta2_model_output("new content\n>>>>>>> UPDATED\n", format, &input).unwrap();
-        let (range2, text2) = parse_zeta2_model_output("new content\n", format, &input).unwrap();
+        let output2 = parse_zeta2_model_output("new content\n", format, &input).unwrap();
 
-        assert_eq!(
-            apply_edit(excerpt, &range1, &text1),
-            apply_edit(excerpt, &range2, &text2)
-        );
-        assert_eq!(apply_edit(excerpt, &range1, &text1), "new content\n");
+        assert_eq!(apply_edit(excerpt, &output1), apply_edit(excerpt, &output2));
+        assert_eq!(apply_edit(excerpt, &output1), "new content\n");
     }
 }

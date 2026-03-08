@@ -21,11 +21,11 @@ agent-client-protocol.workspace = true
 agent_ui.workspace = true
 chrono.workspace = true
 editor.workspace = true
+feature_flags.workspace = true
 fs.workspace = true
 gpui.workspace = true
 menu.workspace = true
 project.workspace = true
-recent_projects.workspace = true
 settings.workspace = true
 theme.workspace = true
 ui.workspace = true
@@ -40,7 +40,6 @@ agent_ui = { workspace = true, features = ["test-support"] }
 assistant_text_thread = { workspace = true, features = ["test-support"] }
 editor.workspace = true
 language_model = { workspace = true, features = ["test-support"] }
-recent_projects = { workspace = true, features = ["test-support"] }
 serde_json.workspace = true
 feature_flags.workspace = true
 fs = { workspace = true, features = ["test-support"] }

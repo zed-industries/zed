@@ -27,9 +27,9 @@ mod workspace_settings;
 pub use crate::notifications::NotificationFrame;
 pub use dock::Panel;
 pub use multi_workspace::{
-    DraggedSidebar, FocusWorkspaceSidebar, MultiWorkspace, NewWorkspaceInWindow,
-    NextWorkspaceInWindow, PreviousWorkspaceInWindow, Sidebar, SidebarEvent, SidebarHandle,
-    ToggleWorkspaceSidebar,
+    DraggedSidebar, FocusWorkspaceSidebar, MultiWorkspace, MultiWorkspaceEvent,
+    NewWorkspaceInWindow, NextWorkspaceInWindow, PreviousWorkspaceInWindow, Sidebar, SidebarEvent,
+    SidebarHandle, ToggleWorkspaceSidebar,
 };
 pub use path_list::{PathList, SerializedPathList};
 pub use toast_layer::{ToastAction, ToastLayer, ToastView};
@@ -1251,6 +1251,7 @@ pub enum Event {
     ZoomChanged,
     ModalOpened,
     Activate,
+    PanelAdded(AnyView),
 }
 
 #[derive(Debug, Clone)]
@@ -2162,10 +2163,13 @@ impl Workspace {
 
         let dock_position = panel.position(window, cx);
         let dock = self.dock_at_position(dock_position);
+        let any_panel = panel.to_any();
 
         dock.update(cx, |dock, cx| {
             dock.add_panel(panel, self.weak_self.clone(), window, cx)
         });
+
+        cx.emit(Event::PanelAdded(any_panel));
     }
 
     pub fn remove_panel<T: Panel>(
@@ -7149,7 +7153,17 @@ impl Workspace {
     }
 
     fn resize_left_dock(&mut self, new_size: Pixels, window: &mut Window, cx: &mut App) {
-        let size = new_size.min(self.bounds.right() - RESIZE_HANDLE_SIZE);
+        let workspace_width = self.bounds.size.width;
+        let mut size = new_size.min(workspace_width - RESIZE_HANDLE_SIZE);
+
+        self.right_dock.read_with(cx, |right_dock, cx| {
+            let right_dock_size = right_dock
+                .active_panel_size(window, cx)
+                .unwrap_or(Pixels::ZERO);
+            if right_dock_size + size > workspace_width {
+                size = workspace_width - right_dock_size
+            }
+        });
 
         self.left_dock.update(cx, |left_dock, cx| {
             if WorkspaceSettings::get_global(cx)
@@ -7164,13 +7178,14 @@ impl Workspace {
     }
 
     fn resize_right_dock(&mut self, new_size: Pixels, window: &mut Window, cx: &mut App) {
-        let mut size = new_size.max(self.bounds.left() - RESIZE_HANDLE_SIZE);
+        let workspace_width = self.bounds.size.width;
+        let mut size = new_size.min(workspace_width - RESIZE_HANDLE_SIZE);
         self.left_dock.read_with(cx, |left_dock, cx| {
             let left_dock_size = left_dock
                 .active_panel_size(window, cx)
                 .unwrap_or(Pixels::ZERO);
-            if left_dock_size + size > self.bounds.right() {
-                size = self.bounds.right() - left_dock_size
+            if left_dock_size + size > workspace_width {
+                size = workspace_width - left_dock_size
             }
         });
         self.right_dock.update(cx, |right_dock, cx| {
@@ -7731,6 +7746,7 @@ impl Render for Workspace {
                                             {
                                                 workspace.previous_dock_drag_coordinates =
                                                     Some(e.event.position);
+
                                                 match e.drag(cx).0 {
                                                     DockPosition::Left => {
                                                         workspace.resize_left_dock(

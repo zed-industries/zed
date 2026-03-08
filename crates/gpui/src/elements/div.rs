@@ -2517,18 +2517,24 @@ impl Interactivity {
                 );
             }
 
+            // We unconditionally bind both the mouse up and mouse down active state handlers
+            // Because we might not get a chance to render a frame before the mouse up event arrives.
             let active_state = element_state
                 .clicked_state
                 .get_or_insert_with(Default::default)
                 .clone();
-            if active_state.borrow().is_clicked() {
+
+            {
+                let active_state = active_state.clone();
                 window.on_mouse_event(move |_: &MouseUpEvent, phase, window, _cx| {
-                    if phase == DispatchPhase::Capture {
+                    if phase == DispatchPhase::Capture && active_state.borrow().is_clicked() {
                         *active_state.borrow_mut() = ElementClickedState::default();
                         window.refresh();
                     }
                 });
-            } else {
+            }
+
+            {
                 let active_group_hitbox = self
                     .group_active_style
                     .as_ref()

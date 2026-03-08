@@ -269,24 +269,13 @@ fn open_thread(
     cx: &mut Context<Workspace>,
 ) {
     use crate::AgentPanel;
-    use acp_thread::AgentSessionInfo;
 
     let Some(panel) = workspace.panel::<AgentPanel>(cx) else {
         return;
     };
 
     panel.update(cx, |panel, cx| {
-        panel.load_agent_thread(
-            AgentSessionInfo {
-                session_id: id,
-                cwd: None,
-                title: Some(name.into()),
-                updated_at: None,
-                meta: None,
-            },
-            window,
-            cx,
-        )
+        panel.load_agent_thread(id, None, Some(name.into()), window, cx)
     });
 }
 

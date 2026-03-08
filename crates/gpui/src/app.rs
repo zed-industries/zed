@@ -744,9 +744,11 @@ impl App {
         }));
 
         platform.on_quit(Box::new({
-            let cx = app.clone();
+            let cx = Rc::downgrade(&app);
             move || {
-                cx.borrow_mut().shutdown();
+                if let Some(cx) = cx.upgrade() {
+                    cx.borrow_mut().shutdown();
+                }
             }
         }));
 
@@ -2610,13 +2612,6 @@ impl<'a, T> Drop for GpuiBorrow<'a, T> {
         self.app.notify(lease.id);
         self.app.entities.end_lease(lease);
         self.app.finish_update();
-    }
-}
-
-impl Drop for App {
-    fn drop(&mut self) {
-        self.foreground_executor.close();
-        self.background_executor.close();
     }
 }
 

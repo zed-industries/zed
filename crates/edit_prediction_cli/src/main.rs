@@ -738,6 +738,21 @@ async fn load_examples(
             examples.append(&mut requested_examples);
         }
 
+        if !captured_after_timestamps.is_empty() {
+            captured_after_timestamps.sort();
+
+            let mut captured_examples = pull_examples::fetch_captured_examples_after(
+                http_client.clone(),
+                &captured_after_timestamps,
+                max_rows_per_timestamp,
+                remaining_offset,
+                background_executor.clone(),
+                Some(MIN_CAPTURE_VERSION),
+            )
+            .await?;
+            examples.append(&mut captured_examples);
+        }
+
         if !settled_after_timestamps.is_empty() {
             settled_after_timestamps.sort();
 

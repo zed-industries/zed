@@ -6,7 +6,7 @@ use crate::{
 };
 use anyhow::{Context as _, Result};
 use edit_prediction::example_spec::encode_cursor_in_patch;
-use zeta_prompt::{CURSOR_MARKER, ZetaFormat, output_end_marker_for_format, resolve_cursor_region};
+use zeta_prompt::{CURSOR_MARKER, ZetaFormat, parse_zeta2_model_output};
 
 pub fn run_parse_output(example: &mut Example) -> Result<()> {
     example
@@ -60,10 +60,13 @@ fn parse_zeta2_output(
         .as_ref()
         .context("prompt_inputs required")?;
 
-    let (context, editable_range, _, _) = resolve_cursor_region(prompt_inputs, format);
-    let old_text = context[editable_range].to_string();
+    let parsed = parse_zeta2_model_output(actual_output, format, prompt_inputs)?;
+    let range_in_excerpt = parsed.range_in_excerpt;
 
-    let mut new_text = actual_output.to_string();
+    let excerpt = prompt_inputs.cursor_excerpt.as_ref();
+    let old_text = excerpt[range_in_excerpt.clone()].to_string();
+    let mut new_text = parsed.new_editable_region;
+
     let cursor_offset = if let Some(offset) = new_text.find(CURSOR_MARKER) {
         new_text.replace_range(offset..offset + CURSOR_MARKER.len(), "");
         Some(offset)
@@ -71,14 +74,8 @@ fn parse_zeta2_output(
         None
     };
 
-    if let Some(marker) = output_end_marker_for_format(format) {
-        new_text = new_text
-            .strip_suffix(marker)
-            .unwrap_or(&new_text)
-            .to_string();
-    }
-
-    let mut old_text_normalized = old_text.clone();
+    // Normalize trailing newlines for diff generation
+    let mut old_text_normalized = old_text;
     if !new_text.is_empty() && !new_text.ends_with('\n') {
         new_text.push('\n');
     }
@@ -86,22 +83,10 @@ fn parse_zeta2_output(
         old_text_normalized.push('\n');
     }
 
-    let old_text_trimmed = old_text.trim_end_matches('\n');
-    let excerpt = prompt_inputs.cursor_excerpt.as_ref();
-    let (editable_region_offset, _) = excerpt
-        .match_indices(old_text_trimmed)
-        .min_by_key(|(index, _)| index.abs_diff(prompt_inputs.cursor_offset_in_excerpt))
-        .with_context(|| {
-            format!(
-                "could not find editable region in content.\nLooking for:\n{}\n\nIn content:\n{}",
-                old_text_trimmed, excerpt
-            )
-        })?;
-
+    let editable_region_offset = range_in_excerpt.start;
     let editable_region_start_line = excerpt[..editable_region_offset].matches('\n').count();
-
-    // Use full context so cursor offset (relative to editable region start) aligns with diff content
     let editable_region_lines = old_text_normalized.lines().count() as u32;
+
     let diff = language::unified_diff_with_context(
         &old_text_normalized,
         &new_text,

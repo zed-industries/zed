@@ -1846,12 +1846,37 @@ impl Thread {
                 Ok(events) => (events.fuse(), None),
                 Err(err) => (stream::empty().boxed().fuse(), Some(err)),
             };
-            let mut tool_results = FuturesUnordered::new();
+            let mut tool_results: FuturesUnordered<Task<LanguageModelToolResult>> =
+                FuturesUnordered::new();
+            let mut early_tool_results: Vec<LanguageModelToolResult> = Vec::new();
             let mut cancelled = false;
             loop {
-                // Race between getting the first event and cancellation
+                // Race between getting the first event, tool completion, and cancellation.
                 let first_event = futures::select! {
                     event = events.next().fuse() => event,
+                    tool_result = futures::StreamExt::select_next_some(&mut tool_results) => {
+                        let is_error = tool_result.is_error;
+                        let is_still_streaming = this
+                            .read_with(cx, |this, _cx| {
+                                this.running_turn
+                                    .as_ref()
+                                    .and_then(|turn| turn.streaming_tool_inputs.get(&tool_result.tool_use_id))
+                                    .map_or(false, |inputs| !inputs.has_received_final())
+                            })
+                            .unwrap_or(false);
+
+                        early_tool_results.push(tool_result);
+
+                        // Only break if the tool errored and we are still
+                        // streaming the input of the tool. If the tool errored
+                        // but we are no longer streaming its input (i.e. there
+                        // are parallel tool calls) we want to continue
+                        // processing those tool inputs.
+                        if is_error && is_still_streaming {
+                            break;
+                        }
+                        continue;
+                    }
                     _ = cancellation_rx.changed().fuse() => {
                         if *cancellation_rx.borrow() {
                             cancelled = true;
@@ -1931,26 +1956,13 @@ impl Thread {
                 }
             })?;
 
-            let end_turn = tool_results.is_empty();
-            while let Some(tool_result) = tool_results.next().await {
-                log::debug!("Tool finished {:?}", tool_result);
+            let end_turn = tool_results.is_empty() && early_tool_results.is_empty();
 
-                event_stream.update_tool_call_fields(
-                    &tool_result.tool_use_id,
-                    acp::ToolCallUpdateFields::new()
-                        .status(if tool_result.is_error {
-                            acp::ToolCallStatus::Failed
-                        } else {
-                            acp::ToolCallStatus::Completed
-                        })
-                        .raw_output(tool_result.output.clone()),
-                    None,
-                );
-                this.update(cx, |this, _cx| {
-                    this.pending_message()
-                        .tool_results
-                        .insert(tool_result.tool_use_id.clone(), tool_result);
-                })?;
+            for tool_result in early_tool_results {
+                Self::process_tool_result(this, event_stream, cx, tool_result)?;
+            }
+            while let Some(tool_result) = tool_results.next().await {
+                Self::process_tool_result(this, event_stream, cx, tool_result)?;
             }
 
             this.update(cx, |this, cx| {
@@ -2002,6 +2014,33 @@ impl Thread {
                 attempt = 0;
             }
         }
+    }
+
+    fn process_tool_result(
+        this: &WeakEntity<Thread>,
+        event_stream: &ThreadEventStream,
+        cx: &mut AsyncApp,
+        tool_result: LanguageModelToolResult,
+    ) -> Result<(), anyhow::Error> {
+        log::debug!("Tool finished {:?}", tool_result);
+
+        event_stream.update_tool_call_fields(
+            &tool_result.tool_use_id,
+            acp::ToolCallUpdateFields::new()
+                .status(if tool_result.is_error {
+                    acp::ToolCallStatus::Failed
+                } else {
+                    acp::ToolCallStatus::Completed
+                })
+                .raw_output(tool_result.output.clone()),
+            None,
+        );
+        this.update(cx, |this, _cx| {
+            this.pending_message()
+                .tool_results
+                .insert(tool_result.tool_use_id.clone(), tool_result);
+        })?;
+        Ok(())
     }
 
     fn handle_completion_error(
@@ -3070,6 +3109,10 @@ impl ToolInputSender {
             _phantom: PhantomData,
         };
         (sender, input)
+    }
+
+    pub(crate) fn has_received_final(&self) -> bool {
+        self.final_tx.is_none()
     }
 
     pub(crate) fn send_partial(&self, value: serde_json::Value) {

@@ -1062,6 +1062,13 @@ impl PlatformInputHandler {
     pub fn accepts_text_input(&mut self, window: &mut Window, cx: &mut App) -> bool {
         self.handler.accepts_text_input(window, cx)
     }
+
+    #[allow(dead_code)]
+    pub fn query_accepts_text_input(&mut self) -> bool {
+        self.cx
+            .update(|window, cx| self.handler.accepts_text_input(window, cx))
+            .unwrap_or(true)
+    }
 }
 
 /// A struct representing a selection in a text buffer, in UTF16 characters.

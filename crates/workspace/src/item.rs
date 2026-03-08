@@ -366,6 +366,18 @@ pub trait Item: Focusable + EventEmitter<Self::Event> + Render + Sized {
         true
     }
 
+    /// Called when the containing pane receives a drop on the item or the item's tab.
+    /// Returns `true` to consume it and suppress the pane's default drop behavior.
+    fn handle_drop(
+        &self,
+        _active_pane: &Pane,
+        _dropped: &dyn Any,
+        _window: &mut Window,
+        _cx: &mut App,
+    ) -> bool {
+        false
+    }
+
     /// Returns additional actions to add to the tab's context menu.
     /// Each entry is a label and an action to dispatch.
     fn tab_extra_context_menu_actions(
@@ -545,6 +557,13 @@ pub trait ItemHandle: 'static + Send {
     fn preserve_preview(&self, cx: &App) -> bool;
     fn include_in_nav_history(&self) -> bool;
     fn relay_action(&self, action: Box<dyn Action>, window: &mut Window, cx: &mut App);
+    fn handle_drop(
+        &self,
+        active_pane: &Pane,
+        dropped: &dyn Any,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> bool;
     fn tab_extra_context_menu_actions(
         &self,
         window: &mut Window,
@@ -1107,6 +1126,20 @@ impl<T: Item> ItemHandle for Entity<T> {
         self.update(cx, |this, cx| {
             this.focus_handle(cx).focus(window, cx);
             window.dispatch_action(action, cx);
+        })
+    }
+
+    /// Called when the containing pane receives a drop on the item or the item's tab.
+    /// Returns `true` if the item handled it and the pane should skip its default drop behavior.
+    fn handle_drop(
+        &self,
+        active_pane: &Pane,
+        dropped: &dyn Any,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> bool {
+        self.update(cx, |this, cx| {
+            this.handle_drop(active_pane, dropped, window, cx)
         })
     }
 

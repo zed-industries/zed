@@ -1233,6 +1233,7 @@ pub struct Editor {
     autoindent_mode: Option<AutoindentMode>,
     workspace: Option<(WeakEntity<Workspace>, Option<WorkspaceId>)>,
     input_enabled: bool,
+    expects_character_input: bool,
     use_modal_editing: bool,
     read_only: bool,
     leader_id: Option<CollaboratorId>,
@@ -2469,6 +2470,7 @@ impl Editor {
             collapse_matches: false,
             workspace: None,
             input_enabled: !is_minimap,
+            expects_character_input: !is_minimap,
             use_modal_editing: full_mode,
             read_only: is_minimap,
             use_autoclose: true,
@@ -3363,6 +3365,10 @@ impl Editor {
 
     pub fn set_input_enabled(&mut self, input_enabled: bool) {
         self.input_enabled = input_enabled;
+    }
+
+    pub fn set_expects_character_input(&mut self, expects_character_input: bool) {
+        self.expects_character_input = expects_character_input;
     }
 
     pub fn set_edit_predictions_hidden_for_vim_mode(
@@ -28409,7 +28415,7 @@ impl EntityInputHandler for Editor {
     }
 
     fn accepts_text_input(&self, _window: &mut Window, _cx: &mut Context<Self>) -> bool {
-        self.input_enabled
+        self.expects_character_input
     }
 }
 

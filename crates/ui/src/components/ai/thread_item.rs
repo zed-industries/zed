@@ -3,7 +3,7 @@ use crate::{
     prelude::*,
 };
 
-use gpui::{AnyView, ClickEvent, Hsla, SharedString};
+use gpui::{AnyView, ClickEvent, Hsla, SharedString, linear_color_stop, linear_gradient};
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum AgentThreadStatus {
@@ -24,6 +24,7 @@ pub struct ThreadItem {
     notified: bool,
     status: AgentThreadStatus,
     selected: bool,
+    focused: bool,
     hovered: bool,
     added: Option<usize>,
     removed: Option<usize>,
@@ -47,6 +48,7 @@ impl ThreadItem {
             notified: false,
             status: AgentThreadStatus::default(),
             selected: false,
+            focused: false,
             hovered: false,
             added: None,
             removed: None,
@@ -87,6 +89,11 @@ impl ThreadItem {
 
     pub fn selected(mut self, selected: bool) -> Self {
         self.selected = selected;
+        self
+    }
+
+    pub fn focused(mut self, focused: bool) -> Self {
+        self.focused = focused;
         self
     }
 
@@ -146,7 +153,7 @@ impl ThreadItem {
 
 impl RenderOnce for ThreadItem {
     fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
-        let clr = cx.theme().colors();
+        let color = cx.theme().colors();
         // let dot_separator = || {
         //     Label::new("•")
         //         .size(LabelSize::Small)
@@ -154,7 +161,7 @@ impl RenderOnce for ThreadItem {
         //         .alpha(0.5)
         // };
 
-        let icon_container = || h_flex().size_4().justify_center();
+        let icon_container = || h_flex().size_4().flex_none().justify_center();
         let agent_icon = if let Some(custom_svg) = self.custom_icon_from_external_svg {
             Icon::from_external_svg(custom_svg)
                 .color(Color::Muted)
@@ -182,7 +189,7 @@ impl RenderOnce for ThreadItem {
         } else if self.status == AgentThreadStatus::Error {
             Some(decoration(IconDecorationKind::X, cx.theme().status().error))
         } else if self.notified {
-            Some(decoration(IconDecorationKind::Dot, clr.text_accent))
+            Some(decoration(IconDecorationKind::Dot, color.text_accent))
         } else {
             None
         };
@@ -202,15 +209,41 @@ impl RenderOnce for ThreadItem {
         let title = self.title;
         let highlight_positions = self.highlight_positions;
         let title_label = if highlight_positions.is_empty() {
-            Label::new(title).truncate().into_any_element()
+            Label::new(title).into_any_element()
         } else {
-            HighlightedLabel::new(title, highlight_positions)
-                .truncate()
-                .into_any_element()
+            HighlightedLabel::new(title, highlight_positions).into_any_element()
         };
+
+        let base_bg = if self.selected {
+            color.element_active
+        } else {
+            color.panel_background
+        };
+
+        let gradient_overlay = div()
+            .absolute()
+            .top_0()
+            .right(px(-10.0))
+            .w_12()
+            .h_full()
+            .bg(linear_gradient(
+                90.,
+                linear_color_stop(base_bg, 0.6),
+                linear_color_stop(base_bg.opacity(0.0), 0.),
+            ))
+            .group_hover("thread-item", |s| {
+                s.bg(linear_gradient(
+                    90.,
+                    linear_color_stop(color.element_hover, 0.6),
+                    linear_color_stop(color.element_hover.opacity(0.0), 0.),
+                ))
+            });
 
         v_flex()
             .id(self.id.clone())
+            .group("thread-item")
+            .relative()
+            .overflow_hidden()
             .cursor_pointer()
             .w_full()
             .map(|this| {
@@ -220,8 +253,11 @@ impl RenderOnce for ThreadItem {
                     this.px_2().py_1()
                 }
             })
-            .when(self.selected, |s| s.bg(clr.element_active))
-            .hover(|s| s.bg(clr.element_hover))
+            .when(self.selected, |s| s.bg(color.element_active))
+            .border_1()
+            .border_color(gpui::transparent_black())
+            .when(self.focused, |s| s.border_color(color.panel_focused_border))
+            .hover(|s| s.bg(color.element_hover))
             .on_hover(self.on_hover)
             .child(
                 h_flex()
@@ -239,6 +275,7 @@ impl RenderOnce for ThreadItem {
                             .child(title_label)
                             .when_some(self.tooltip, |this, tooltip| this.tooltip(tooltip)),
                     )
+                    .child(gradient_overlay)
                     .when(running_or_action, |this| {
                         this.child(
                             h_flex()
@@ -261,7 +298,6 @@ impl RenderOnce for ThreadItem {
                     Label::new(worktree)
                         .size(LabelSize::Small)
                         .color(Color::Muted)
-                        .truncate_start()
                         .into_any_element()
                 } else {
                     HighlightedLabel::new(worktree, worktree_highlight_positions)
@@ -406,6 +442,29 @@ impl Component for ThreadItem {
                             .icon(IconName::AiGemini)
                             .timestamp("3:00 PM")
                             .selected(true),
+                    )
+                    .into_any_element(),
+            ),
+            single_example(
+                "Focused Item (Keyboard Selection)",
+                container()
+                    .child(
+                        ThreadItem::new("ti-7", "Implement keyboard navigation")
+                            .icon(IconName::AiClaude)
+                            .timestamp("4:00 PM")
+                            .focused(true),
+                    )
+                    .into_any_element(),
+            ),
+            single_example(
+                "Selected + Focused",
+                container()
+                    .child(
+                        ThreadItem::new("ti-8", "Active and keyboard-focused thread")
+                            .icon(IconName::AiGemini)
+                            .timestamp("5:00 PM")
+                            .selected(true)
+                            .focused(true),
                     )
                     .into_any_element(),
             ),

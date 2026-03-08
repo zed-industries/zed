@@ -2,6 +2,7 @@ use crate::{AgentServer, AgentServerDelegate};
 use acp_thread::{AcpThread, AgentThreadEntry, ToolCall, ToolCallStatus};
 use agent_client_protocol as acp;
 use futures::{FutureExt, StreamExt, channel::mpsc, select};
+use gpui::AppContext;
 use gpui::{Entity, TestAppContext};
 use indoc::indoc;
 use project::{FakeFs, Project};
@@ -408,7 +409,8 @@ pub async fn init_test(cx: &mut TestAppContext) -> Arc<FakeFs> {
         let http_client = reqwest_client::ReqwestClient::user_agent("agent tests").unwrap();
         cx.set_http_client(Arc::new(http_client));
         let client = client::Client::production(cx);
-        language_model::init(client, cx);
+        let user_store = cx.new(|cx| client::UserStore::new(client.clone(), cx));
+        language_model::init(user_store, client, cx);
 
         #[cfg(test)]
         project::agent_server_store::AllAgentServersSettings::override_global(

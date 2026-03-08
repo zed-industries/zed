@@ -191,6 +191,7 @@ pub fn run(
     if !store.read(cx).is_enabled() {
         return Ok(());
     }
+    store.update(cx, |store, cx| store.ensure_kernelspecs(cx));
 
     let editor = editor.upgrade().context("editor was dropped")?;
     let selected_range = editor

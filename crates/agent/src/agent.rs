@@ -361,6 +361,7 @@ impl NativeAgent {
             let mut acp_thread = acp_thread::AcpThread::new(
                 parent_session_id,
                 title,
+                None,
                 connection,
                 project.clone(),
                 action_log.clone(),
@@ -1277,13 +1278,14 @@ impl acp_thread::AgentConnection for NativeAgentConnection {
 
     fn load_session(
         self: Rc<Self>,
-        session: AgentSessionInfo,
+        session_id: acp::SessionId,
         _project: Entity<Project>,
         _cwd: &Path,
+        _title: Option<SharedString>,
         cx: &mut App,
     ) -> Task<Result<Entity<acp_thread::AcpThread>>> {
         self.0
-            .update(cx, |agent, cx| agent.open_thread(session.session_id, cx))
+            .update(cx, |agent, cx| agent.open_thread(session_id, cx))
     }
 
     fn supports_close_session(&self) -> bool {

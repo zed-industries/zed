@@ -3,11 +3,14 @@ use std::sync::Arc;
 
 use anyhow::{Context as _, Result};
 use client::Client;
+use client::UserStore;
 use cloud_api_client::ClientApiError;
 use cloud_api_types::OrganizationId;
 use cloud_api_types::websocket_protocol::MessageToClient;
 use cloud_llm_client::{EXPIRED_LLM_TOKEN_HEADER_NAME, OUTDATED_LLM_TOKEN_HEADER_NAME};
-use gpui::{App, AppContext as _, Context, Entity, EventEmitter, Global, ReadGlobal as _};
+use gpui::{
+    App, AppContext as _, Context, Entity, EventEmitter, Global, ReadGlobal as _, Subscription,
+};
 use smol::lock::{RwLock, RwLockUpgradableReadGuard, RwLockWriteGuard};
 use thiserror::Error;
 
@@ -101,13 +104,15 @@ impl Global for GlobalRefreshLlmTokenListener {}
 
 pub struct RefreshLlmTokenEvent;
 
-pub struct RefreshLlmTokenListener;
+pub struct RefreshLlmTokenListener {
+    _subscription: Subscription,
+}
 
 impl EventEmitter<RefreshLlmTokenEvent> for RefreshLlmTokenListener {}
 
 impl RefreshLlmTokenListener {
-    pub fn register(client: Arc<Client>, cx: &mut App) {
-        let listener = cx.new(|cx| RefreshLlmTokenListener::new(client, cx));
+    pub fn register(client: Arc<Client>, user_store: Entity<UserStore>, cx: &mut App) {
+        let listener = cx.new(|cx| RefreshLlmTokenListener::new(client, user_store, cx));
         cx.set_global(GlobalRefreshLlmTokenListener(listener));
     }
 
@@ -115,7 +120,7 @@ impl RefreshLlmTokenListener {
         GlobalRefreshLlmTokenListener::global(cx).0.clone()
     }
 
-    fn new(client: Arc<Client>, cx: &mut Context<Self>) -> Self {
+    fn new(client: Arc<Client>, user_store: Entity<UserStore>, cx: &mut Context<Self>) -> Self {
         client.add_message_to_client_handler({
             let this = cx.entity();
             move |message, cx| {
@@ -123,7 +128,15 @@ impl RefreshLlmTokenListener {
             }
         });
 
-        Self
+        let subscription = cx.subscribe(&user_store, |_this, _user_store, event, cx| {
+            if matches!(event, client::user::Event::OrganizationChanged) {
+                cx.emit(RefreshLlmTokenEvent);
+            }
+        });
+
+        Self {
+            _subscription: subscription,
+        }
     }
 
     fn handle_refresh_llm_token(this: Entity<Self>, message: &MessageToClient, cx: &mut App) {
