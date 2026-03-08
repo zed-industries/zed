@@ -1322,7 +1322,11 @@ impl WorkspaceDb {
     /// that used this workspace previously
     pub(crate) async fn save_workspace(&self, workspace: SerializedWorkspace) {
         let paths = workspace.paths.serialize();
-        log::debug!("Saving workspace at location: {:?}", workspace.location);
+        log::debug!(
+            "Saving workspace at location: {:?}, session_id={:?}",
+            workspace.location,
+            workspace.session_id,
+        );
         self.write(move |conn| {
             conn.with_savepoint("update_worktrees", || {
                 let remote_connection_id = match workspace.location.clone() {
@@ -1335,8 +1339,13 @@ impl WorkspaceDb {
                     }
                 };
 
-                // Clear out panes and pane_groups
+                // Clear out panes and pane_groups.
+                // We must delete center_panes explicitly before deleting panes because
+                // SQLite recycles pane_ids (no AUTOINCREMENT), causing a UNIQUE constraint
+                // failure on center_panes when the same id is reused after deletion.
+                // FK cascade from panes -> center_panes is not reliably triggered.
                 conn.exec_bound(sql!(
+                    DELETE FROM center_panes WHERE pane_id IN (SELECT pane_id FROM panes WHERE workspace_id = ?1);
                     DELETE FROM pane_groups WHERE workspace_id = ?1;
                     DELETE FROM panes WHERE workspace_id = ?1;))?(workspace.id)
                     .context("Clearing old panes")?;
@@ -1838,6 +1847,12 @@ impl WorkspaceDb {
             } else {
                 false
             };
+
+            // Workspaces with no paths are untitled-buffer workspaces kept for session
+            // restoration. They are not shown in the recent list but must not be deleted here.
+            if paths.paths().is_empty() {
+                continue;
+            }
 
             // Delete the workspace if any of the paths are WSL paths.
             // If a local workspace points to WSL, this check will cause us to wait for the
@@ -4467,6 +4482,53 @@ mod tests {
             after.window_bounds.is_some(),
             "flush_serialization should ensure window bounds are persisted to the DB \
              before the process exits."
+        );
+    }
+
+    /// Regression test for https://github.com/zed-industries/zed/issues/48468
+    ///
+    /// `recent_workspaces_on_disk` (called by `history_manager::init` on startup) was
+    /// deleting workspaces with empty paths because `all_paths_exist_with_a_directory([])`
+    /// returns `false`. Untitled-buffer workspaces legitimately have no paths and must be
+    /// preserved for session restoration.
+    #[gpui::test]
+    async fn test_recent_workspaces_on_disk_does_not_delete_empty_paths_workspace(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let fs = fs::FakeFs::new(cx.executor());
+        let db =
+            WorkspaceDb::open_test_db("test_recent_workspaces_on_disk_does_not_delete_empty_paths")
+                .await;
+
+        // Save a workspace with no paths (simulates an untitled-buffer workspace).
+        let workspace_id = db.next_id().await.unwrap();
+        db.save_workspace(SerializedWorkspace {
+            id: workspace_id,
+            paths: PathList::new::<PathBuf>(&[]),
+            location: SerializedWorkspaceLocation::Local,
+            center_group: Default::default(),
+            window_bounds: Default::default(),
+            display: Default::default(),
+            docks: Default::default(),
+            centered_layout: false,
+            session_id: Some("test-session".to_owned()),
+            breakpoints: Default::default(),
+            window_id: None,
+            user_toolchains: Default::default(),
+        })
+        .await;
+
+        // recent_workspaces_on_disk should not include or delete empty-paths workspaces.
+        let recent = db.recent_workspaces_on_disk(fs.as_ref()).await.unwrap();
+        assert!(
+            recent.is_empty(),
+            "Empty-paths workspaces should not appear in the recent list"
+        );
+
+        // The workspace row must still exist so session restoration can find it.
+        assert!(
+            db.workspace_for_id(workspace_id).is_some(),
+            "Empty-paths workspace must not be deleted by recent_workspaces_on_disk"
         );
     }
 }
