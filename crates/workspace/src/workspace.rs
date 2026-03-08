@@ -1250,6 +1250,11 @@ enum WorkspaceLocation {
     None,
 }
 
+enum SerializableItemMessage {
+    Item(Box<dyn SerializableItemHandle>),
+    Barrier(oneshot::Sender<()>),
+}
+
 type PromptForNewPath = Box<
     dyn Fn(
         &mut Workspace,
@@ -1329,7 +1334,7 @@ pub struct Workspace {
     on_prompt_for_open_path: Option<PromptForOpenPath>,
     terminal_provider: Option<Box<dyn TerminalProvider>>,
     debugger_provider: Option<Arc<dyn DebuggerProvider>>,
-    serializable_items_tx: UnboundedSender<Box<dyn SerializableItemHandle>>,
+    serializable_items_tx: UnboundedSender<SerializableItemMessage>,
     _items_serializer: Task<Result<()>>,
     session_id: Option<String>,
     scheduled_tasks: Vec<Task<()>>,
@@ -1635,7 +1640,7 @@ impl Workspace {
         }
 
         let (serializable_items_tx, serializable_items_rx) =
-            mpsc::unbounded::<Box<dyn SerializableItemHandle>>();
+            mpsc::unbounded::<SerializableItemMessage>();
         let _items_serializer = cx.spawn_in(window, async move |this, cx| {
             Self::serialize_items(&this, serializable_items_rx, cx).await
         });
@@ -1814,6 +1819,7 @@ impl Workspace {
             } else {
                 DB.next_id().await.unwrap_or_else(|_| Default::default())
             };
+            DB.ensure_workspace_row(workspace_id).await?;
 
             let toolchains = DB.toolchains(workspace_id).await?;
 
@@ -6097,7 +6103,7 @@ impl Workspace {
         }
     }
 
-    fn serialize_workspace_internal(&self, window: &mut Window, cx: &mut App) -> Task<()> {
+    fn serialize_workspace_internal(&mut self, window: &mut Window, cx: &mut App) -> Task<()> {
         let Some(database_id) = self.database_id() else {
             return Task::ready(());
         };
@@ -6196,8 +6202,16 @@ impl Workspace {
                     window_id: Some(window.window_handle().window_id().as_u64()),
                     user_toolchains,
                 };
+                let item_serialization_barrier = self.item_serialization_barrier();
 
                 window.spawn(cx, async move |_| {
+                    let Some(item_serialization_barrier) = item_serialization_barrier.log_err()
+                    else {
+                        return;
+                    };
+                    if item_serialization_barrier.await.log_err().is_none() {
+                        return;
+                    }
                     persistence::DB.save_workspace(serialized_workspace).await;
                 })
             }
@@ -6268,31 +6282,49 @@ impl Workspace {
 
     async fn serialize_items(
         this: &WeakEntity<Self>,
-        items_rx: UnboundedReceiver<Box<dyn SerializableItemHandle>>,
+        mut items_rx: UnboundedReceiver<SerializableItemMessage>,
         cx: &mut AsyncWindowContext,
     ) -> Result<()> {
         const CHUNK_SIZE: usize = 200;
 
-        let mut serializable_items = items_rx.ready_chunks(CHUNK_SIZE);
+        while let Some(message) = items_rx.next().await {
+            let mut unique_items = HashMap::default();
+            let mut barrier = None;
+            let mut channel_closed = false;
 
-        while let Some(items_received) = serializable_items.next().await {
-            let unique_items =
-                items_received
-                    .into_iter()
-                    .fold(HashMap::default(), |mut acc, item| {
-                        acc.entry(item.item_id()).or_insert(item);
-                        acc
-                    });
+            Self::push_serializable_item_message(message, &mut unique_items, &mut barrier);
 
-            // We use into_iter() here so that the references to the items are moved into
-            // the tasks and not kept alive while we're sleeping.
-            for (_, item) in unique_items.into_iter() {
-                if let Ok(Some(task)) = this.update_in(cx, |workspace, window, cx| {
-                    item.serialize(workspace, false, window, cx)
-                }) {
-                    cx.background_spawn(async move { task.await.log_err() })
-                        .detach();
+            while barrier.is_none() && unique_items.len() < CHUNK_SIZE {
+                match items_rx.try_next() {
+                    Ok(Some(message)) => {
+                        Self::push_serializable_item_message(
+                            message,
+                            &mut unique_items,
+                            &mut barrier,
+                        );
+                    }
+                    Ok(None) => {
+                        channel_closed = true;
+                        break;
+                    }
+                    Err(_) => break,
                 }
+            }
+
+            let batch_succeeded = Self::serialize_item_batch(this, unique_items, cx)
+                .await
+                .log_err()
+                .is_some();
+
+            if let Some(barrier) = barrier {
+                if batch_succeeded {
+                    let _ = barrier.send(());
+                }
+                continue;
+            }
+
+            if channel_closed {
+                break;
             }
 
             cx.background_executor()
@@ -6303,12 +6335,54 @@ impl Workspace {
         Ok(())
     }
 
+    fn push_serializable_item_message(
+        message: SerializableItemMessage,
+        unique_items: &mut HashMap<EntityId, Box<dyn SerializableItemHandle>>,
+        barrier: &mut Option<oneshot::Sender<()>>,
+    ) {
+        match message {
+            SerializableItemMessage::Item(item) => {
+                unique_items.entry(item.item_id()).or_insert(item);
+            }
+            SerializableItemMessage::Barrier(sender) => {
+                *barrier = Some(sender);
+            }
+        }
+    }
+
+    async fn serialize_item_batch(
+        this: &WeakEntity<Self>,
+        unique_items: HashMap<EntityId, Box<dyn SerializableItemHandle>>,
+        cx: &mut AsyncWindowContext,
+    ) -> Result<()> {
+        let serialize_tasks = match this.update_in(cx, move |workspace, window, cx| {
+            unique_items
+                .into_values()
+                .filter_map(|item| item.serialize(workspace, false, window, cx))
+                .collect::<Vec<_>>()
+        }) {
+            Ok(serialize_tasks) => serialize_tasks,
+            Err(_) => return Ok(()),
+        };
+
+        try_join_all(serialize_tasks).await?;
+        Ok(())
+    }
+
+    fn item_serialization_barrier(&self) -> Result<oneshot::Receiver<()>> {
+        let (sender, receiver) = oneshot::channel();
+        self.serializable_items_tx
+            .unbounded_send(SerializableItemMessage::Barrier(sender))
+            .map_err(|err| anyhow!("failed to send item serialization barrier: {err}"))?;
+        Ok(receiver)
+    }
+
     pub(crate) fn enqueue_item_serialization(
         &mut self,
         item: Box<dyn SerializableItemHandle>,
     ) -> Result<()> {
         self.serializable_items_tx
-            .unbounded_send(item)
+            .unbounded_send(SerializableItemMessage::Item(item))
             .map_err(|err| anyhow!("failed to send serializable item over channel: {err}"))
     }
 
@@ -9282,6 +9356,7 @@ fn deserialize_remote_project(
         } else {
             persistence::DB.next_id().await?
         };
+        persistence::DB.ensure_workspace_row(workspace_id).await?;
 
         Ok((workspace_id, serialized_workspace))
     })
