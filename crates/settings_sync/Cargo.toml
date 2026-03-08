@@ -1,0 +1,17 @@
+[package]
+name = "settings_sync"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+path = "src/settings_sync.rs"
+
+[dependencies]
+anyhow = { workspace = true }
+gpui = { workspace = true }
+log = { workspace = true }
+schemars = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+settings = { workspace = true }
+settings_content = { workspace = true }
+zed_actions = { workspace = true }

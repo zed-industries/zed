@@ -181,6 +181,10 @@ pub struct SettingsContent {
 
     /// Configuration for session-related features
     pub session: Option<SessionSettingsContent>,
+
+    /// Configuration for synchronization of settings
+    pub sync: Option<SyncSettingsContent>,
+
     /// Control what info is collected by Zed.
     pub telemetry: Option<TelemetrySettingsContent>,
 
@@ -1245,3 +1249,21 @@ impl std::fmt::Display for DelayMs {
         write!(f, "{}ms", self.0)
     }
 }
+
+#[with_fallible_options]
+#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq)]
+pub struct GitSyncSettingsContent {
+    /// URL of the Git repository to sync settings with.
+    pub repo_url: Option<String>,
+    /// Branch to use for synchronizing settings.
+    ///
+    /// Default: "main"
+    pub branch: Option<String>,
+}
+
+#[with_fallible_options]
+#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq)]
+pub struct SyncSettingsContent {
+    pub git: Option<GitSyncSettingsContent>,
+}
+

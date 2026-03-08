@@ -72,6 +72,10 @@ actions!(
         OpenPerformanceProfiler,
         /// Opens the onboarding view.
         OpenOnboarding,
+        /// Syncs current settings to the configured Git repository.
+        SyncSettingsToGit,
+        /// Pulls and applies settings from the configured Git repository.
+        PullSettingsFromGit,
     ]
 );
 
