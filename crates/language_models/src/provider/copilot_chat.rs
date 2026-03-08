@@ -396,21 +396,28 @@ impl LanguageModel for CopilotChatLanguageModel {
                     },
                 );
 
+                anthropic_request.temperature = None;
+
                 if model.supports_adaptive_thinking() && anthropic_request.thinking.is_some() {
                     anthropic_request.thinking = Some(anthropic::Thinking::Adaptive);
                     anthropic_request.output_config = Some(anthropic::OutputConfig { effort });
                 }
 
-                let anthropic_beta = if !model.supports_adaptive_thinking()
-                    && anthropic_request.thinking.is_some()
-                {
-                    Some("interleaved-thinking-2025-05-14".to_string())
-                } else {
-                    None
-                };
+                let anthropic_beta =
+                    if !model.supports_adaptive_thinking() && model.supports_thinking() {
+                        Some("interleaved-thinking-2025-05-14".to_string())
+                    } else {
+                        None
+                    };
 
-                let body =
-                    serde_json::to_string(&anthropic_request).map_err(|e| anyhow::anyhow!(e))?;
+                let body = {
+                    let mut value =
+                        serde_json::to_value(&anthropic_request).map_err(|e| anyhow::anyhow!(e))?;
+                    if let Some(obj) = value.as_object_mut() {
+                        obj.insert("stream".to_string(), serde_json::Value::Bool(true));
+                    }
+                    serde_json::to_string(&value).map_err(|e| anyhow::anyhow!(e))?
+                };
 
                 let stream = CopilotChat::stream_messages(
                     body,
@@ -1087,7 +1094,7 @@ fn into_copilot_responses(
         tool_choice,
         stop: _,
         temperature,
-        thinking_allowed: _,
+        thinking_allowed,
         thinking_effort: _,
         speed: _,
     } = request;
@@ -1266,7 +1273,14 @@ fn into_copilot_responses(
         temperature,
         tools: converted_tools,
         tool_choice: mapped_tool_choice,
-        reasoning: None, // We would need to add support for setting from user settings.
+        reasoning: if thinking_allowed {
+            Some(copilot_responses::ReasoningConfig {
+                effort: copilot_responses::ReasoningEffort::Medium,
+                summary: Some(copilot_responses::ReasoningSummary::Detailed),
+            })
+        } else {
+            None
+        },
         include: Some(vec![
             copilot_responses::ResponseIncludable::ReasoningEncryptedContent,
         ]),
