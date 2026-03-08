@@ -61,11 +61,18 @@ pub const SURROUND_PAIRS: &[SurroundPair] = &[
 ];
 
 /// Bracket-only pairs for AnyBrackets matching.
-const BRACKET_PAIRS: &[SurroundPair] = &[
+pub const BRACKET_PAIRS: &[SurroundPair] = &[
     SurroundPair::new('(', ')'),
     SurroundPair::new('[', ']'),
     SurroundPair::new('{', '}'),
     SurroundPair::new('<', '>'),
+];
+
+/// Quote-only pairs for AnyQuotes matching.
+pub const QUOTE_PAIRS: &[SurroundPair] = &[
+    SurroundPair::new('"', '"'),
+    SurroundPair::new('\'', '\''),
+    SurroundPair::new('`', '`'),
 ];
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -483,10 +490,19 @@ impl Vim {
             return Some(pair.to_bracket_pair());
         }
 
-        if object != Object::AnyBrackets {
-            return None;
+        match object {
+            Object::AnyBrackets => self.any_pair(BRACKET_PAIRS, cx),
+            Object::AnyQuotes => self.any_pair(QUOTE_PAIRS, cx),
+            Object::MiniQuotes | Object::MiniBrackets => self.mini_pair(object, cx),
+            _ => None,
         }
+    }
 
+    fn any_pair(
+        &self,
+        allowed_pairs: &[SurroundPair],
+        cx: &mut Context<Self>,
+    ) -> Option<BracketPair> {
         // If we're dealing with `AnyBrackets`, which can map to multiple bracket
         // pairs, we'll need to first determine which `BracketPair` to target.
         // As such, we keep track of the smallest range size, so that in cases
@@ -519,7 +535,7 @@ impl Vim {
                 let relative_to = selection.head();
                 let cursor_offset = relative_to.to_offset(&display_map, Bias::Left);
 
-                for pair in BRACKET_PAIRS {
+                for pair in allowed_pairs {
                     if let Some(range) = surrounding_markers(
                         &display_map,
                         relative_to,
@@ -544,6 +560,31 @@ impl Vim {
         });
 
         best_pair.map(|p| p.to_bracket_pair())
+    }
+
+    fn mini_pair(&self, object: Object, cx: &mut Context<Self>) -> Option<BracketPair> {
+        self.editor
+            .update(cx, |editor, cx| {
+                let display_map = editor.display_snapshot(cx);
+                let selections = editor.selections.all_adjusted_display(&display_map);
+                // For now, only primary selection is used to select the bracket/quote pair. It might be weird
+                // if multi-select resulted in different quote kinds being replaced for different selections
+                let Some(selection) = selections.first().cloned() else {
+                    return None;
+                };
+                let Some(range) = object.range(&display_map, selection, true, None) else {
+                    return None;
+                };
+
+                let start_offset = range.start.to_offset(&display_map, Bias::Left);
+                display_map
+                    .buffer_chars_at(start_offset)
+                    .next()
+                    .and_then(|(ch, _)| literal_surround_pair(ch))
+            })
+            .ok()
+            .flatten()
+            .map(|surround| surround.to_bracket_pair())
     }
 }
 
@@ -639,7 +680,12 @@ mod test {
     use gpui::KeyBinding;
     use indoc::indoc;
 
-    use crate::{PushAddSurrounds, object::AnyBrackets, state::Mode, test::VimTestContext};
+    use crate::{
+        PushAddSurrounds,
+        object::{AnyBrackets, AnyQuotes, MiniBrackets, MiniQuotes},
+        state::Mode,
+        test::VimTestContext,
+    };
 
     #[gpui::test]
     async fn test_add_surrounds(cx: &mut gpui::TestAppContext) {
@@ -1336,6 +1382,112 @@ mod test {
         "},
             Mode::Normal,
         );
+    }
+
+    #[gpui::test]
+    async fn test_change_surrounds_mini_brackets(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+
+        // Update keybindings so that using `csb` triggers Vim's `MiniBrackets` action.
+        cx.update(|_, cx| {
+            cx.bind_keys([KeyBinding::new(
+                "b",
+                MiniBrackets,
+                Some("vim_operator == a || vim_operator == i || vim_operator == cs"),
+            )]);
+        });
+
+        cx.set_state(indoc! {"{braˇcketed}"}, Mode::Normal);
+        cx.simulate_keystrokes("c s b [");
+        cx.assert_state(indoc! {"ˇ[ bracketed ]"}, Mode::Normal);
+
+        cx.set_state(indoc! {"[braˇcketed]"}, Mode::Normal);
+        cx.simulate_keystrokes("c s b {");
+        cx.assert_state(indoc! {"ˇ{ bracketed }"}, Mode::Normal);
+
+        cx.set_state(indoc! {"<braˇcketed>"}, Mode::Normal);
+        cx.simulate_keystrokes("c s b [");
+        cx.assert_state(indoc! {"ˇ[ bracketed ]"}, Mode::Normal);
+
+        cx.set_state(indoc! {"(braˇcketed)"}, Mode::Normal);
+        cx.simulate_keystrokes("c s b [");
+        cx.assert_state(indoc! {"ˇ[ bracketed ]"}, Mode::Normal);
+
+        // NOTE: minibrackets in Rust doesn't seem to handle <> as expected; this matches
+        // the current behavior for e.g. `cib` but not `cab`, maybe something to do with
+        // the fact that `close = false` in language config...
+        //
+        // cx.set_state(indoc! {"(< name: ˇ'Zed' >)"}, Mode::Normal);
+        // cx.simulate_keystrokes("c s b }");
+        // cx.assert_state(indoc! {"(ˇ{ name: 'Zed' })"}, Mode::Normal);
+
+        // cx.set_state(
+        //     indoc! {"
+        //         (< name: ˇ'Zed' >)
+        //         (< nˇame: 'DeltaDB' >)
+        //     "},
+        //     Mode::Normal,
+        // );
+        // cx.simulate_keystrokes("c s b {");
+        // cx.assert_state(
+        //     indoc! {"
+        //         (ˇ{ name: 'Zed' })
+        //         (ˇ{ name: 'DeltaDB' })
+        //     "},
+        //     Mode::Normal,
+        // );
+    }
+
+    #[gpui::test]
+    async fn test_change_surrounds_any_quotes(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+
+        // Update keybindings so that using `csq` triggers Vim's `AnyQuotes` action.
+        cx.update(|_, cx| {
+            cx.bind_keys([KeyBinding::new(
+                "q",
+                AnyQuotes,
+                Some("vim_operator == a || vim_operator == i || vim_operator == cs"),
+            )]);
+        });
+
+        cx.set_state(indoc! {"'  ˇstr  '"}, Mode::Normal);
+        cx.simulate_keystrokes("c s q \"");
+        cx.assert_state(indoc! {"ˇ\"  str  \""}, Mode::Normal);
+
+        cx.set_state(indoc! {"`  ˇstr  `"}, Mode::Normal);
+        cx.simulate_keystrokes("c s q '");
+        cx.assert_state(indoc! {"ˇ'  str  '"}, Mode::Normal);
+
+        cx.set_state(indoc! {"\"  ˇstr  \""}, Mode::Normal);
+        cx.simulate_keystrokes("c s q `");
+        cx.assert_state(indoc! {"ˇ`  str  `"}, Mode::Normal);
+    }
+
+    #[gpui::test]
+    async fn test_change_surrounds_mini_quotes(cx: &mut gpui::TestAppContext) {
+        // NOTE: needs TypeScript test cx to recognize single/backquotes
+        let mut cx = VimTestContext::new_typescript(cx).await;
+
+        // Update keybindings so that using `csq` triggers Vim's `MiniQuotes` action.
+        cx.update(|_, cx| {
+            cx.bind_keys([KeyBinding::new(
+                "q",
+                MiniQuotes,
+                Some("vim_operator == a || vim_operator == i || vim_operator == cs"),
+            )]);
+        });
+        cx.set_state(indoc! {"'  ˇstr  '"}, Mode::Normal);
+        cx.simulate_keystrokes("c s q \"");
+        cx.assert_state(indoc! {"ˇ\"  str  \""}, Mode::Normal);
+
+        cx.set_state(indoc! {"`  ˇstr  `"}, Mode::Normal);
+        cx.simulate_keystrokes("c s q '");
+        cx.assert_state(indoc! {"ˇ'  str  '"}, Mode::Normal);
+
+        cx.set_state(indoc! {"\"  ˇstr  \""}, Mode::Normal);
+        cx.simulate_keystrokes("c s q `");
+        cx.assert_state(indoc! {"ˇ`  str  `"}, Mode::Normal);
     }
 
     // The following test cases all follow tpope/vim-surround's behaviour
