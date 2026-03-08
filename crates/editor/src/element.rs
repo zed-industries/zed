@@ -132,6 +132,7 @@ impl SelectionLayout {
         selection: Selection<T>,
         line_mode: bool,
         cursor_offset: bool,
+        cursor_offset_at_max_point: bool,
         cursor_shape: CursorShape,
         map: &DisplaySnapshot,
         is_newest: bool,
@@ -155,7 +156,10 @@ impl SelectionLayout {
         if cursor_offset && !range.is_empty() && !selection.reversed {
             if head.column() > 0 {
                 head = map.clip_point(DisplayPoint::new(head.row(), head.column() - 1), Bias::Left);
-            } else if head.row().0 > 0 && head != map.max_point() {
+            } else if head.row().0 > 0 && (head != map.max_point() || cursor_offset_at_max_point) {
+                // cursor_offset_at_max_point case handles helix line selection
+                // removing head != map.max_point() would be the correct behavior in helix mode
+                // but causes a mismatch in vim mode.
                 head = map.clip_point(
                     DisplayPoint::new(
                         head.row().previous_row(),
@@ -1577,6 +1581,7 @@ impl EditorElement {
                         selection,
                         editor.selections.line_mode(),
                         editor.cursor_offset_on_selection,
+                        editor.cursor_offset_at_max_point,
                         editor.cursor_shape,
                         &snapshot.display_snapshot,
                         is_newest,
@@ -1624,6 +1629,7 @@ impl EditorElement {
                         drop_cursor.clone(),
                         false,
                         editor.cursor_offset_on_selection,
+                        editor.cursor_offset_at_max_point,
                         CursorShape::Bar,
                         &snapshot.display_snapshot,
                         false,
@@ -1688,6 +1694,7 @@ impl EditorElement {
                             selection.selection,
                             selection.line_mode,
                             editor.cursor_offset_on_selection,
+                            false,
                             selection.cursor_shape,
                             &snapshot.display_snapshot,
                             false,
@@ -1708,6 +1715,7 @@ impl EditorElement {
                             selection,
                             line_mode,
                             cursor_offset_on_selection,
+                            false,
                             cursor_shape,
                             &snapshot.display_snapshot,
                             false,
@@ -10099,6 +10107,7 @@ impl Element for EditorElement {
                                 newest,
                                 editor.selections.line_mode(),
                                 editor.cursor_offset_on_selection,
+                                editor.cursor_offset_at_max_point,
                                 editor.cursor_shape,
                                 &snapshot,
                                 true,

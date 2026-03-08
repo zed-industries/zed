@@ -869,6 +869,7 @@ mod test {
     use workspace::{DeploySearch, MultiWorkspace};
 
     use crate::{VimAddon, state::Mode, test::VimTestContext};
+    use workspace::Item;
 
     #[gpui::test]
     async fn test_word_motions(cx: &mut gpui::TestAppContext) {
@@ -1447,6 +1448,23 @@ mod test {
             ˇ»line five"},
             Mode::HelixNormal,
         );
+    }
+
+    #[gpui::test]
+    async fn test_helix_select_line_at_end_of_file(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+        cx.enable_helix();
+
+        // Selecting the last content line before trailing newline.
+        // The cursor should render on "two", not on the empty trailing line.
+        cx.set_state("one\nˇtwo\n", Mode::HelixNormal);
+        let cursor_y_before =
+            cx.update_editor(|editor, _, cx| editor.pixel_position_of_cursor(cx).map(|p| p.y));
+        cx.simulate_keystrokes("x");
+        cx.assert_state("one\n«two\nˇ»", Mode::HelixNormal);
+        let cursor_y_after =
+            cx.update_editor(|editor, _, cx| editor.pixel_position_of_cursor(cx).map(|p| p.y));
+        assert_eq!(cursor_y_before, cursor_y_after);
     }
 
     #[gpui::test]
