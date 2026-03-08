@@ -4485,6 +4485,132 @@ mod tests {
         );
     }
 
+    /// Regression test for https://github.com/zed-industries/zed/issues/48468 (Bug 2).
+    ///
+    /// When `serialize_workspace_internal` takes the `DetachFromSession` path (empty workspace,
+    /// no open items), the old code unconditionally called `set_session_id(None)`. This could
+    /// race against a later `save_workspace(session_id = Some(...))` and leave the DB with
+    /// `session_id = NULL`. The fix: only clear session_id when `self.session_id` is already
+    /// `None` (i.e. `remove_from_session` was explicitly called).
+    #[gpui::test]
+    async fn test_detach_from_session_does_not_clear_session_id(cx: &mut gpui::TestAppContext) {
+        use crate::multi_workspace::MultiWorkspace;
+        use feature_flags::FeatureFlagAppExt;
+        use project::Project;
+
+        crate::tests::init_test(cx);
+
+        cx.update(|cx| {
+            cx.set_staff(true);
+            cx.update_flags(true, vec!["agent-v2".to_string()]);
+        });
+
+        let fs = fs::FakeFs::new(cx.executor());
+        // Empty project (no paths) → workspace_location returns DetachFromSession
+        let project = Project::test(fs.clone(), [], cx).await;
+
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+
+        // Read the session_id the Workspace was constructed with.
+        let session_id = multi_workspace.read_with(cx, |mw, cx| {
+            mw.workspace().read(cx).session_id()
+        });
+        let session_id = session_id.expect("workspace should have a session_id from Session::test");
+
+        let workspace_id = DB.next_id().await.unwrap();
+        multi_workspace.update_in(cx, |mw, _, cx| {
+            mw.workspace().update(cx, |ws, _cx| {
+                ws.set_database_id(workspace_id);
+            });
+        });
+
+        // Persist the workspace row with session_id so there is something to potentially clear.
+        DB.set_session_binding(workspace_id, Some(session_id.clone()), None)
+            .await
+            .unwrap();
+
+        // flush_serialization triggers serialize_workspace_internal. Because the project has no
+        // paths and no items are open, it takes the DetachFromSession branch.
+        let task = multi_workspace.update_in(cx, |mw, window, cx| {
+            mw.workspace()
+                .update(cx, |ws, cx| ws.flush_serialization(window, cx))
+        });
+        task.await;
+
+        // The session_id must still be set. The workspace must still be discoverable for
+        // session restoration on next launch.
+        let locations = DB
+            .last_session_workspace_locations(&session_id, None, fs.as_ref())
+            .await
+            .unwrap();
+        assert!(
+            locations
+                .iter()
+                .any(|sw| sw.workspace_id == workspace_id),
+            "session_id must not be cleared by DetachFromSession when not explicitly detached; \
+             workspace must remain findable for session restoration"
+        );
+    }
+
+    /// Regression test for https://github.com/zed-industries/zed/issues/48468 (Bug 3).
+    ///
+    /// `close_window` (red button) never called `flush_serialization`, so session data was
+    /// not persisted before the window was removed. The fix: await `flush_serialization` for
+    /// all workspaces before `remove_window`.
+    #[gpui::test]
+    async fn test_close_window_flushes_serialization_before_removal(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        use crate::multi_workspace::MultiWorkspace;
+        use crate::CloseWindow;
+        use feature_flags::FeatureFlagAppExt;
+        use project::Project;
+
+        crate::tests::init_test(cx);
+
+        cx.update(|cx| {
+            cx.set_staff(true);
+            cx.update_flags(true, vec!["agent-v2".to_string()]);
+        });
+
+        let fs = fs::FakeFs::new(cx.executor());
+        let dir = tempfile::TempDir::with_prefix("close_window_flush_test").unwrap();
+        fs.insert_tree(dir.path(), json!({})).await;
+
+        let project = Project::test(fs.clone(), [dir.path()], cx).await;
+
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+
+        let workspace_id = DB.next_id().await.unwrap();
+        multi_workspace.update_in(cx, |mw, _, cx| {
+            mw.workspace().update(cx, |ws, _cx| {
+                ws.set_database_id(workspace_id);
+            });
+        });
+
+        // Call close_window without first advancing the 200ms serialization throttle timer.
+        // Before the fix, the pending serialization would be lost when the window was removed.
+        multi_workspace.update_in(cx, |mw, window, cx| {
+            mw.close_window(&CloseWindow, window, cx);
+        });
+
+        cx.run_until_parked();
+
+        // The workspace row must have been written to DB (flush_serialization ran before
+        // remove_window). Window bounds being Some is the signal that save_workspace fired.
+        let serialized = DB.workspace_for_id(workspace_id);
+        assert!(
+            serialized.is_some(),
+            "close_window must flush serialization to DB before removing the window"
+        );
+        assert!(
+            serialized.unwrap().window_bounds.is_some(),
+            "window bounds should be persisted by flush_serialization during close_window"
+        );
+    }
+
     /// Regression test for https://github.com/zed-industries/zed/issues/48468
     ///
     /// `recent_workspaces_on_disk` (called by `history_manager::init` on startup) was
