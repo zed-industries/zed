@@ -3696,6 +3696,7 @@ dependencies = [
 name = "copilot_chat"
 version = "0.1.0"
 dependencies = [
+ "anthropic",
  "anyhow",
  "collections",
  "dirs 4.0.0",
