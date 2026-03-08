@@ -49,7 +49,7 @@
 
 (macro_definition
   .
-  "macro_rules!" @context
+  "macro_rules" @context
   name: (_) @name) @item
 
 (mod_item
@@ -59,10 +59,6 @@
 
 (type_item
   (visibility_modifier)? @context
-  "type" @context
-  name: (_) @name) @item
-
-(associated_type
   "type" @context
   name: (_) @name) @item
 

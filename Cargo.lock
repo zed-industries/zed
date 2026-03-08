@@ -218,7 +218,7 @@ dependencies = [
  "text",
  "theme",
  "thiserror 2.0.17",
- "tree-sitter-rust",
+ "tree-sitter-rust-orchard",
  "ui",
  "unindent",
  "url",
@@ -5284,7 +5284,7 @@ dependencies = [
  "thiserror 2.0.17",
  "time",
  "toml 0.8.23",
- "tree-sitter-rust",
+ "tree-sitter-rust-orchard",
  "ui",
  "util",
  "uuid",
@@ -5514,7 +5514,7 @@ dependencies = [
  "tree-sitter-html",
  "tree-sitter-md",
  "tree-sitter-python",
- "tree-sitter-rust",
+ "tree-sitter-rust-orchard",
  "tree-sitter-typescript",
  "tree-sitter-yaml",
  "ui",
@@ -7549,7 +7549,7 @@ dependencies = [
  "settings",
  "text",
  "theme",
- "tree-sitter-rust",
+ "tree-sitter-rust-orchard",
  "tree-sitter-typescript",
  "ui",
  "util",
@@ -9274,7 +9274,7 @@ dependencies = [
  "tempfile",
  "theme",
  "tree-sitter-json",
- "tree-sitter-rust",
+ "tree-sitter-rust-orchard",
  "ui",
  "ui_input",
  "util",
@@ -9393,7 +9393,7 @@ dependencies = [
  "tree-sitter-md",
  "tree-sitter-python",
  "tree-sitter-ruby",
- "tree-sitter-rust",
+ "tree-sitter-rust-orchard",
  "tree-sitter-typescript",
  "unicase",
  "unindent",
@@ -9648,7 +9648,7 @@ dependencies = [
  "tree-sitter-md",
  "tree-sitter-python",
  "tree-sitter-regex",
- "tree-sitter-rust",
+ "tree-sitter-rust-orchard",
  "tree-sitter-typescript",
  "tree-sitter-yaml",
  "unindent",
@@ -11787,7 +11787,7 @@ dependencies = [
  "settings",
  "smol",
  "theme",
- "tree-sitter-rust",
+ "tree-sitter-rust-orchard",
  "tree-sitter-typescript",
  "ui",
  "util",
@@ -17321,7 +17321,7 @@ dependencies = [
  "serde",
  "serde_json",
  "task",
- "tree-sitter-rust",
+ "tree-sitter-rust-orchard",
  "tree-sitter-typescript",
  "ui",
  "util",
@@ -18491,10 +18491,10 @@ dependencies = [
 ]
 
 [[package]]
-name = "tree-sitter-rust"
-version = "0.24.0"
+name = "tree-sitter-rust-orchard"
+version = "0.16.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4b9b18034c684a2420722be8b2a91c9c44f2546b631c039edf575ccba8c61be1"
+checksum = "6a21c4915730924e2ae96bcaa1c3bad45e666a546b7b5642bf595a3df6705797"
 dependencies = [
  "cc",
  "tree-sitter-language",
@@ -22042,7 +22042,7 @@ dependencies = [
  "toolchain_selector",
  "tracing",
  "tree-sitter-md",
- "tree-sitter-rust",
+ "tree-sitter-rust-orchard",
  "ui",
  "ui_prompt",
  "url",
