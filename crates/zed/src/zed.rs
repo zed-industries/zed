@@ -4982,6 +4982,54 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_bundled_files_reuse_existing_editor(cx: &mut TestAppContext) {
+        let app_state = init_test(cx);
+        cx.update(init);
+
+        let project = Project::test(app_state.fs.clone(), [], cx).await;
+        let _window = cx.add_window(|window, cx| MultiWorkspace::test_new(project, window, cx));
+
+        cx.update(|cx| {
+            cx.dispatch_action(&OpenDefaultSettings);
+        });
+        cx.run_until_parked();
+
+        let multi_workspace = cx.windows()[0].downcast::<MultiWorkspace>().unwrap();
+        let first_item_id = multi_workspace
+            .update(cx, |multi_workspace, _, cx| {
+                multi_workspace.workspace().update(cx, |workspace, cx| {
+                    workspace
+                        .active_item(cx)
+                        .expect("default settings should be open")
+                        .item_id()
+                })
+            })
+            .unwrap();
+
+        cx.update(|cx| {
+            cx.dispatch_action(&OpenDefaultSettings);
+        });
+        cx.run_until_parked();
+
+        let (second_item_id, item_count) = multi_workspace
+            .update(cx, |multi_workspace, _, cx| {
+                multi_workspace.workspace().update(cx, |workspace, cx| {
+                    let pane = workspace.active_pane().read(cx);
+                    (
+                        pane.active_item()
+                            .expect("default settings should still be open")
+                            .item_id(),
+                        pane.items_len(),
+                    )
+                })
+            })
+            .unwrap();
+
+        assert_eq!(first_item_id, second_item_id);
+        assert_eq!(item_count, 1);
+    }
+
+    #[gpui::test]
     async fn test_bundled_languages(cx: &mut TestAppContext) {
         let fs = fs::FakeFs::new(cx.background_executor.clone());
         env_logger::builder().is_test(true).try_init().ok();
