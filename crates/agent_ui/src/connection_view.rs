@@ -766,8 +766,21 @@ impl ConnectionView {
                         } else {
                             None
                         };
+                        let cwd =
+                            this.project
+                                .read(cx)
+                                .visible_worktrees(cx)
+                                .find_map(|worktree| {
+                                    let worktree = worktree.read(cx);
+                                    if worktree.is_single_file() {
+                                        worktree.abs_path().parent().map(|p| p.to_path_buf())
+                                    } else {
+                                        Some(worktree.abs_path().to_path_buf())
+                                    }
+                                });
                         this.history.update(cx, |history, cx| {
                             history.set_session_list(session_list, cx);
+                            history.set_cwd(cwd, cx);
                         });
                         this.set_server_state(
                             ServerState::Connected(ConnectedServerState {
