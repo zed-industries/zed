@@ -301,7 +301,7 @@ impl BranchDiff {
                 else {
                     continue;
                 };
-                if !status.has_changes() {
+                if !status.has_changes() && !status.is_renamed() {
                     continue;
                 }
 

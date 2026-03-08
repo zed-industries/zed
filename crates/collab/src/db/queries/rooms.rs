@@ -796,6 +796,7 @@ impl Database {
                             is_last_update: true,
                             merge_message: db_repository.merge_message,
                             stash_entries: Vec::new(),
+                            renamed_paths: Default::default(),
                             remote_upstream_url: db_repository.remote_upstream_url.clone(),
                             remote_origin_url: db_repository.remote_origin_url.clone(),
                             original_repo_abs_path: Some(db_repository.abs_path),
