@@ -89,6 +89,7 @@ pub(crate) struct SerializedWorkspace {
     pub(crate) breakpoints: BTreeMap<Arc<Path>, Vec<SourceBreakpoint>>,
     pub(crate) user_toolchains: BTreeMap<ToolchainScope, IndexSet<Toolchain>>,
     pub(crate) window_id: Option<u64>,
+    pub(crate) custom_name: Option<String>,
 }
 
 #[derive(Debug, PartialEq, Clone, Default, Serialize, Deserialize)]

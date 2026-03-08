@@ -59,7 +59,8 @@ use workspace::Workspace;
 
 use crate::agent_configuration::{ConfigureContextServerModal, ManageProfilesModal};
 pub use crate::agent_panel::{
-    AgentPanel, AgentPanelEvent, ConcreteAssistantPanelDelegate, WorktreeCreationStatus,
+    AgentPanel, AgentPanelEvent, AgentPanelStatusProvider, ConcreteAssistantPanelDelegate,
+    WorktreeCreationStatus,
 };
 use crate::agent_registry_ui::AgentRegistryPage;
 pub use crate::inline_assistant::InlineAssistant;

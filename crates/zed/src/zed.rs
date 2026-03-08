@@ -6,6 +6,7 @@ mod migrate;
 mod open_listener;
 mod open_url_modal;
 mod quick_action_bar;
+mod rename_workspace_modal;
 pub mod remote_debug;
 pub mod telemetry_log;
 #[cfg(all(target_os = "macos", any(test, feature = "test-support")))]
@@ -766,6 +767,21 @@ fn register_actions(
             workspace.toggle_modal(window, cx, |window, cx| {
                 open_url_modal::OpenUrlModal::new(window, cx)
             });
+        })
+        .register_action(|workspace, _: &workspace::RenameWorkspace, window, cx| {
+            let current_name = workspace.custom_name().unwrap_or_default().to_string();
+            let weak_workspace = workspace.weak_handle();
+            workspace.toggle_modal(window, cx, |window, cx| {
+                rename_workspace_modal::RenameWorkspaceModal::new(
+                    current_name,
+                    weak_workspace,
+                    window,
+                    cx,
+                )
+            });
+        })
+        .register_action(|workspace, _: &workspace::ClearWorkspaceName, window, cx| {
+            workspace.set_custom_name(None, window, cx);
         })
         .register_action(|workspace, action: &OpenBrowser, _window, cx| {
             // Parse and validate the URL to ensure it's properly formatted
