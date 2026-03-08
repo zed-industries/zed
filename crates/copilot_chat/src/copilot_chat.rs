@@ -215,6 +215,8 @@ struct ModelSupportedFeatures {
     max_thinking_budget: Option<u32>,
     #[serde(default)]
     min_thinking_budget: Option<u32>,
+    #[serde(default)]
+    reasoning_effort: Vec<String>,
 }
 
 #[derive(Clone, Copy, Serialize, Deserialize, Debug, Eq, PartialEq)]
@@ -315,6 +317,10 @@ impl Model {
 
     pub fn min_thinking_budget(&self) -> Option<u32> {
         self.capabilities.supports.min_thinking_budget
+    }
+
+    pub fn reasoning_effort_levels(&self) -> &[String] {
+        &self.capabilities.supports.reasoning_effort
     }
 
     pub fn family(&self) -> &str {

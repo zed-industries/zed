@@ -258,31 +258,32 @@ impl LanguageModel for CopilotChatLanguageModel {
     }
 
     fn supports_thinking(&self) -> bool {
-        self.model.supports_thinking() || self.model.supports_adaptive_thinking()
+        self.model.supports_thinking()
+            || self.model.supports_adaptive_thinking()
+            || self.model.max_thinking_budget().is_some()
     }
 
     fn supported_effort_levels(&self) -> Vec<LanguageModelEffortLevel> {
-        if self.model.supports_adaptive_thinking() {
-            vec![
-                LanguageModelEffortLevel {
-                    name: "Low".into(),
-                    value: "low".into(),
-                    is_default: false,
-                },
-                LanguageModelEffortLevel {
-                    name: "Medium".into(),
-                    value: "medium".into(),
-                    is_default: false,
-                },
-                LanguageModelEffortLevel {
-                    name: "High".into(),
-                    value: "high".into(),
-                    is_default: true,
-                },
-            ]
-        } else {
-            vec![]
+        let levels = self.model.reasoning_effort_levels();
+        if levels.is_empty() {
+            return vec![];
         }
+        levels
+            .iter()
+            .map(|level| {
+                let name: SharedString = match level.as_str() {
+                    "low" => "Low".into(),
+                    "medium" => "Medium".into(),
+                    "high" => "High".into(),
+                    _ => SharedString::from(level.clone()),
+                };
+                LanguageModelEffortLevel {
+                    name,
+                    value: SharedString::from(level.clone()),
+                    is_default: level == "high",
+                }
+            })
+            .collect()
     }
 
     fn tool_input_format(&self) -> LanguageModelToolSchemaFormat {
@@ -383,7 +384,7 @@ impl LanguageModel for CopilotChatLanguageModel {
                         AnthropicModelMode::Thinking {
                             budget_tokens: None,
                         }
-                    } else if model.supports_thinking() {
+                    } else if model.supports_thinking() || model.max_thinking_budget().is_some() {
                         AnthropicModelMode::Thinking {
                             budget_tokens: compute_thinking_budget(
                                 model.min_thinking_budget(),
@@ -410,12 +411,13 @@ impl LanguageModel for CopilotChatLanguageModel {
                     }
                 }
 
-                let anthropic_beta =
-                    if !model.supports_adaptive_thinking() && model.supports_thinking() {
-                        Some("interleaved-thinking-2025-05-14".to_string())
-                    } else {
-                        None
-                    };
+                let anthropic_beta = if !model.supports_adaptive_thinking()
+                    && (model.supports_thinking() || model.max_thinking_budget().is_some())
+                {
+                    Some("interleaved-thinking-2025-05-14".to_string())
+                } else {
+                    None
+                };
 
                 let body = serde_json::to_string(&anthropic::StreamingRequest {
                     base: anthropic_request,
