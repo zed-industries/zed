@@ -4617,10 +4617,7 @@ impl BufferSnapshot {
             let mut matches = self.syntax.matches_with_options(
                 chunk_range.clone(),
                 &self.text,
-                TreeSitterOptions {
-                    max_bytes_to_query: Some(MAX_BYTES_TO_QUERY),
-                    max_start_depth: None,
-                },
+                TreeSitterOptions::default(),
                 |grammar| grammar.brackets_config.as_ref().map(|c| &c.query),
             );
             let configs = matches
