@@ -1912,6 +1912,17 @@ impl Project {
     }
 
     fn release(&mut self, cx: &mut App) {
+        self.context_server_store.update(cx, |store, cx| {
+            let server_ids = store
+                .running_servers()
+                .into_iter()
+                .map(|server| server.id())
+                .collect::<Vec<_>>();
+            for server_id in server_ids {
+                store.stop_server(&server_id, cx).log_err();
+            }
+        });
+        
         if let Some(client) = self.remote_client.take() {
             let shutdown = client.update(cx, |client, cx| {
                 client.shutdown_processes(
