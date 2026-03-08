@@ -3114,6 +3114,34 @@ mod tests {
         .await;
     }
 
+    #[gpui::test]
+    async fn test_deploy_replace_focuses_replacement_editor(cx: &mut TestAppContext) {
+        init_globals(cx);
+        let (_, search_bar, cx) = init_test(cx);
+
+        search_bar.update_in(cx, |search_bar, window, cx| {
+            search_bar.deploy(
+                &Deploy {
+                    focus: true,
+                    replace_enabled: true,
+                    selection_search_enabled: false,
+                },
+                window,
+                cx,
+            );
+        });
+        cx.run_until_parked();
+        search_bar.update_in(cx, |search_bar, window, cx| {
+            assert!(
+                search_bar
+                    .replacement_editor
+                    .focus_handle(cx)
+                    .is_focused(window),
+                "replacement editor should be focused when deploying with replace_enabled",
+            );
+        });
+    }
+
     #[perf]
     #[gpui::test]
     async fn test_find_matches_in_selections_singleton_buffer_multiple_selections(
