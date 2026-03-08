@@ -220,11 +220,8 @@ impl Render for BufferSearchBar {
             let query_editor_focus = self.query_editor.focus_handle(cx);
 
             let is_collapsed = self
-                .active_searchable_item
-                .as_ref()
-                .and_then(|item| item.act_as_type(TypeId::of::<Editor>(), cx))
-                .and_then(|item| item.downcast::<Editor>().ok())
-                .map(|editor: Entity<Editor>| editor.read(cx).has_any_buffer_folded(cx))
+                .active_editor(cx)
+                .map(|editor| editor.read(cx).has_any_buffer_folded(cx))
                 .unwrap_or_default();
             let (icon, tooltip_label) = if is_collapsed {
                 (IconName::ChevronUpDown, "Expand All Files")
@@ -725,6 +722,13 @@ impl ToolbarItemView for BufferSearchBar {
 }
 
 impl BufferSearchBar {
+    fn active_editor(&self, cx: &App) -> Option<Entity<Editor>> {
+        self.active_searchable_item
+            .as_ref()
+            .and_then(|item| item.act_as_type(TypeId::of::<Editor>(), cx))
+            .and_then(|item| item.downcast::<Editor>().ok())
+    }
+
     pub fn query_editor_focused(&self) -> bool {
         self.query_editor_focused
     }
@@ -959,7 +963,11 @@ impl BufferSearchBar {
             if let Some(active_item) = self.active_searchable_item.as_mut() {
                 active_item.toggle_filtered_search_ranges(filtered_search_range, window, cx);
             }
-            self.search_suggested(window, cx);
+            if deploy.force_seed_selection {
+                self.search_for_selection(window, cx);
+            } else {
+                self.search_suggested(window, cx);
+            }
             self.smartcase(window, cx);
             self.sync_select_next_case_sensitivity(cx);
             self.replace_enabled |= deploy.replace_enabled;
@@ -1065,19 +1073,61 @@ impl BufferSearchBar {
     }
 
     fn toggle_fold_all_in_item(&self, window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(item) = &self.active_searchable_item {
-            if let Some(item) = item.act_as_type(TypeId::of::<Editor>(), cx) {
-                let editor = item.downcast::<Editor>().expect("Is an editor");
-                editor.update(cx, |editor, cx| {
-                    let is_collapsed = editor.has_any_buffer_folded(cx);
-                    if is_collapsed {
-                        editor.unfold_all(&UnfoldAll, window, cx);
-                    } else {
-                        editor.fold_all(&FoldAll, window, cx);
+        if let Some(editor) = self.active_editor(cx) {
+            editor.update(cx, |editor, cx| {
+                let is_collapsed = editor.has_any_buffer_folded(cx);
+                if is_collapsed {
+                    editor.unfold_all(&UnfoldAll, window, cx);
+                } else {
+                    editor.fold_all(&FoldAll, window, cx);
+                }
+            })
+        }
+    }
+
+    fn activate_after_search(
+        &mut self,
+        search: oneshot::Receiver<()>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        cx.spawn_in(window, async move |this, cx| {
+            if search.await.is_ok() {
+                this.update_in(cx, |this, window, cx| {
+                    if !this.dismissed {
+                        this.activate_current_match(window, cx)
                     }
                 })
+            } else {
+                Ok(())
             }
+        })
+        .detach_and_log_err(cx);
+    }
+
+    fn search_for_selection(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(editor) = self.active_editor(cx) else {
+            return;
+        };
+
+        let Some(query) = editor.update(cx, |editor, cx| {
+            editor.search_query_for_selection(window, cx)
+        }) else {
+            return;
+        };
+
+        let search_unchanged =
+            query == self.query(cx) && self.search_options == self.default_options;
+        let search = self.search(&query, Some(self.default_options), true, window, cx);
+
+        // `search()` only updates the macOS find pasteboard when the query or options change,
+        // but force-seeding from the current selection should still refresh the system find string.
+        #[cfg(target_os = "macos")]
+        if search_unchanged {
+            self.update_find_pasteboard(cx);
         }
+
+        self.activate_after_search(search, window, cx);
     }
 
     pub fn search_suggested(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -1093,18 +1143,7 @@ impl BufferSearchBar {
         });
 
         if let Some(search) = search {
-            cx.spawn_in(window, async move |this, cx| {
-                if search.await.is_ok() {
-                    this.update_in(cx, |this, window, cx| {
-                        if !this.dismissed {
-                            this.activate_current_match(window, cx)
-                        }
-                    })
-                } else {
-                    Ok(())
-                }
-            })
-            .detach_and_log_err(cx);
+            self.activate_after_search(search, window, cx);
         }
     }
 
@@ -1879,7 +1918,7 @@ mod tests {
     };
     use gpui::{Hsla, TestAppContext, UpdateGlobal, VisualTestContext};
     use language::{Buffer, Point};
-    use settings::{SearchSettingsContent, SettingsStore};
+    use settings::{SearchSettingsContent, SeedQuerySetting, SettingsStore};
     use smol::stream::StreamExt as _;
     use unindent::Unindent as _;
     use util_macros::perf;
@@ -2017,12 +2056,6 @@ mod tests {
     #[gpui::test]
     async fn test_search_simple(cx: &mut TestAppContext) {
         let (editor, search_bar, cx) = init_test(cx);
-        let display_points_of = |background_highlights: Vec<(Range<DisplayPoint>, Hsla)>| {
-            background_highlights
-                .into_iter()
-                .map(|(range, _)| range)
-                .collect::<Vec<_>>()
-        };
         // Search for a string that appears with different casing.
         // By default, search is case-insensitive.
         search_bar
@@ -2376,6 +2409,54 @@ mod tests {
                 search_bar.search_options,
                 SearchOptions::CASE_SENSITIVE | SearchOptions::WHOLE_WORD
             )
+        });
+    }
+
+    #[perf]
+    #[gpui::test]
+    async fn test_deploy_force_seed_selection_uses_selected_text_when_normal_seeding_is_disabled(
+        cx: &mut TestAppContext,
+    ) {
+        let (editor, search_bar, cx) = init_test(cx);
+
+        cx.update(|_, cx| {
+            SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings.editor.seed_search_query_from_cursor = Some(SeedQuerySetting::Never);
+                });
+            });
+        });
+
+        editor.update_in(cx, |editor, window, cx| {
+            editor.change_selections(SelectionEffects::no_scroll(), window, cx, |selections| {
+                selections.select_ranges([Point::new(0, 2)..Point::new(0, 9)]);
+            });
+        });
+
+        search_bar.update_in(cx, |search_bar, window, cx| {
+            search_bar.dismiss(&Dismiss, window, cx);
+
+            let deploy = Deploy {
+                focus: false,
+                replace_enabled: false,
+                selection_search_enabled: false,
+                force_seed_selection: true,
+            };
+
+            search_bar.deploy(&deploy, window, cx);
+        });
+
+        cx.run_until_parked();
+
+        search_bar.update(cx, |search_bar, cx| {
+            assert_eq!(search_bar.query(cx), "regular");
+        });
+
+        editor.update_in(cx, |editor, window, cx| {
+            assert_eq!(
+                display_points_of(editor.all_text_background_highlights(window, cx)),
+                &[DisplayPoint::new(DisplayRow(0), 2)..DisplayPoint::new(DisplayRow(0), 9)]
+            );
         });
     }
 
@@ -3156,6 +3237,7 @@ mod tests {
                 focus: true,
                 replace_enabled: false,
                 selection_search_enabled: true,
+                force_seed_selection: false,
             };
             search_bar.deploy(&deploy, window, cx);
         });
@@ -3243,6 +3325,7 @@ mod tests {
                 focus: true,
                 replace_enabled: false,
                 selection_search_enabled: true,
+                force_seed_selection: false,
             };
             search_bar.deploy(&deploy, window, cx);
         });
@@ -3487,6 +3570,7 @@ mod tests {
             focus: true,
             replace_enabled: false,
             selection_search_enabled: true,
+            force_seed_selection: false,
         };
 
         search_bar.update_in(cx, |search_bar, window, cx| {

@@ -381,6 +381,8 @@ pub mod buffer_search {
         pub replace_enabled: bool,
         #[serde(default)]
         pub selection_search_enabled: bool,
+        #[serde(default)]
+        pub force_seed_selection: bool,
     }
 
     impl Deploy {
@@ -389,6 +391,7 @@ pub mod buffer_search {
                 focus: true,
                 replace_enabled: false,
                 selection_search_enabled: false,
+                force_seed_selection: false,
             }
         }
 
@@ -397,6 +400,7 @@ pub mod buffer_search {
                 focus: true,
                 replace_enabled: true,
                 selection_search_enabled: false,
+                force_seed_selection: false,
             }
         }
     }
