@@ -1,5 +1,5 @@
 use db::kvp::KEY_VALUE_STORE;
-use gpui::{SharedString, Window};
+use gpui::{SharedString, WeakEntity, Window};
 use project::{Project, WorktreeId};
 use std::sync::LazyLock;
 use ui::prelude::*;
@@ -48,7 +48,7 @@ pub fn suggest_on_worktree_updated(
 
     let abs_path = worktree.abs_path();
     let project_path = abs_path.to_string_lossy().to_string();
-    let _manifest_path = abs_path.join("manifest.scm");
+    let manifest_path = abs_path.join("manifest.scm");
     let key_for_dismiss = project_guix_key(&project_path);
 
     let already_dismissed = KEY_VALUE_STORE
@@ -62,6 +62,7 @@ pub fn suggest_on_worktree_updated(
     }
 
     cx.on_next_frame(window, move |workspace, _window, cx| {
+        let workspace_weak: WeakEntity<Workspace> = workspace.weak_handle();
         struct GuixContainerSuggestionNotification;
 
         let notification_id = NotificationId::composite::<GuixContainerSuggestionNotification>(
@@ -80,6 +81,33 @@ pub fn suggest_on_worktree_updated(
                 .primary_on_click({
                     move |window, cx| {
                         window.dispatch_action(Box::new(zed_actions::OpenGuixContainer), cx);
+                    }
+                })
+                .more_info_message("Open manifest.scm")
+                .more_info_on_click({
+                    let workspace_weak = workspace_weak.clone();
+                    let manifest_path = manifest_path.clone();
+                    move |window, cx| {
+                        let Some(workspace) = workspace_weak.upgrade() else {
+                            return;
+                        };
+
+                        workspace.update(cx, |_workspace, cx| {
+                            let manifest_path = manifest_path.clone();
+                            cx.spawn_in(window, async move |workspace, cx| {
+                                workspace
+                                    .update_in(cx, |workspace, window, cx| {
+                                        workspace.open_abs_path(
+                                            manifest_path.clone(),
+                                            Default::default(),
+                                            window,
+                                            cx,
+                                        )
+                                    })?
+                                    .await
+                            })
+                            .detach();
+                        });
                     }
                 })
                 .secondary_message("Don't Show Again")
