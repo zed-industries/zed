@@ -4,6 +4,7 @@ use settings::{RegisterSetting, Settings};
 pub struct CallSettings {
     pub mute_on_join: bool,
     pub share_on_join: bool,
+    pub play_incoming_call_ring: bool,
 }
 
 impl Settings for CallSettings {
@@ -12,6 +13,7 @@ impl Settings for CallSettings {
         CallSettings {
             mute_on_join: call.mute_on_join.unwrap(),
             share_on_join: call.share_on_join.unwrap(),
+            play_incoming_call_ring: call.play_incoming_call_ring.unwrap(),
         }
     }
 }

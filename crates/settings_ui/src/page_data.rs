@@ -6759,7 +6759,7 @@ fn version_control_page() -> SettingsPage {
 }
 
 fn collaboration_page() -> SettingsPage {
-    fn calls_section() -> [SettingsPageItem; 3] {
+    fn calls_section() -> [SettingsPageItem; 4] {
         [
             SettingsPageItem::SectionHeader("Calls"),
             SettingsPageItem::SettingItem(SettingItem {
@@ -6785,6 +6785,22 @@ fn collaboration_page() -> SettingsPage {
                     },
                     write: |settings_content, value| {
                         settings_content.calls.get_or_insert_default().share_on_join = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Play Incoming Call Ring",
+                description: "Whether to play a ring tone when an incoming call notification is shown.",
+                field: Box::new(SettingField {
+                    json_path: Some("calls.play_incoming_call_ring"),
+                    pick: |settings_content| {
+                        settings_content.calls.as_ref()?.play_incoming_call_ring.as_ref()
+                    },
+                    write: |settings_content, value| {
+                        settings_content.calls.get_or_insert_default().play_incoming_call_ring =
+                            value;
                     },
                 }),
                 metadata: None,
