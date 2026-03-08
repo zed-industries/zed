@@ -1,0 +1,35 @@
+[package]
+name = "pdf_viewer"
+version = "0.1.0"
+edition.workspace = true
+publish.workspace = true
+license = "Apache-2.0"
+
+[features]
+test-bench = []
+
+[lints]
+workspace = true
+
+[lib]
+path = "src/pdf_viewer.rs"
+doctest = false
+
+[dependencies]
+anyhow.workspace = true
+db.workspace = true
+file_icons.workspace = true
+gpui.workspace = true
+image = { workspace = true }
+log.workspace = true
+project.workspace = true
+serde.workspace = true
+settings.workspace = true
+smallvec.workspace = true
+smol.workspace = true
+theme.workspace = true
+ui.workspace = true
+util.workspace = true
+workspace.workspace = true
+hayro = { version = "0.5", default-features = false, features = ["embed-fonts"] }
+kurbo = "0.13"
