@@ -1,4 +1,5 @@
 mod dev_container_suggest;
+mod guix_suggest;
 pub mod disconnected_overlay;
 mod remote_connections;
 mod remote_servers;
@@ -48,7 +49,7 @@ use workspace::{
     SerializedWorkspaceLocation, WORKSPACE_DB, Workspace, WorkspaceId,
     notifications::DetachAndPromptErr, with_active_or_new_workspace,
 };
-use zed_actions::{OpenDevContainer, OpenRecent, OpenRemote};
+use zed_actions::{OpenDevContainer, OpenGuixContainer, OpenRecent, OpenRemote};
 
 actions!(recent_projects, [ToggleActionsMenu]);
 
@@ -405,6 +406,65 @@ pub fn init(cx: &mut App) {
         });
     });
 
+    cx.on_action(|_: &OpenGuixContainer, cx| {
+        with_active_or_new_workspace(cx, move |workspace, window, cx| {
+            if !workspace.project().read(cx).is_local() {
+                cx.spawn_in(window, async move |_, cx| {
+                    cx.prompt(
+                        gpui::PromptLevel::Critical,
+                        "Cannot open Guix container from remote project",
+                        None,
+                        &["Ok"],
+                    )
+                    .await
+                    .ok();
+                })
+                .detach();
+                return;
+            }
+
+            let app_state = workspace.app_state().clone();
+            let fs = workspace.project().read(cx).fs().clone();
+            let paths = workspace
+                .root_paths(cx)
+                .into_iter()
+                .map(|path| path.as_ref().to_path_buf())
+                .collect::<Vec<_>>();
+            let handle = cx.entity().downgrade();
+
+            cx.spawn_in(window, async move |workspace, cx| {
+                let Some(remote::RemoteConnectionOptions::GuixContainer(connection)) =
+                    workspace::guix_connection_options_for_paths(&paths, &app_state, cx).await
+                else {
+                    let _ = cx
+                        .prompt(
+                            gpui::PromptLevel::Critical,
+                            "No Guix manifest found",
+                            Some("This project no longer contains a detectable manifest.scm."),
+                            &["Ok"],
+                        )
+                        .await;
+                    return;
+                };
+
+                workspace
+                    .update_in(cx, |workspace, window, cx| {
+                        workspace.toggle_modal(window, cx, |window, cx| {
+                            RemoteServerProjects::new_guix(
+                                connection,
+                                fs.clone(),
+                                window,
+                                handle.clone(),
+                                cx,
+                            )
+                        });
+                    })
+                    .log_err();
+            })
+            .detach();
+        });
+    });
+
     // Subscribe to worktree additions to suggest opening the project in a dev container
     cx.observe_new(
         |workspace: &mut Workspace, window: Option<&mut Window>, cx: &mut Context<Workspace>| {
@@ -419,6 +479,13 @@ pub fn init(cx: &mut App) {
                         event
                     {
                         dev_container_suggest::suggest_on_worktree_updated(
+                            *worktree_id,
+                            updated_entries,
+                            project,
+                            window,
+                            cx,
+                        );
+                        guix_suggest::suggest_on_worktree_updated(
                             *worktree_id,
                             updated_entries,
                             project,
@@ -1396,6 +1463,7 @@ fn icon_for_remote_connection(options: Option<&RemoteConnectionOptions>) -> Icon
             RemoteConnectionOptions::Ssh(_) => IconName::Server,
             RemoteConnectionOptions::Wsl(_) => IconName::Linux,
             RemoteConnectionOptions::Docker(_) => IconName::Box,
+            RemoteConnectionOptions::GuixContainer(_) => IconName::Box,
             #[cfg(any(test, feature = "test-support"))]
             RemoteConnectionOptions::Mock(_) => IconName::Server,
         },
@@ -1865,6 +1933,106 @@ mod tests {
                 assert!(
                     modal.is_some(),
                     "Dev container modal should be open after dispatching OpenDevContainer with multiple configs"
+                );
+            })
+            .unwrap();
+    }
+
+    #[gpui::test]
+    async fn test_open_guix_container_action_opens_modal(cx: &mut TestAppContext) {
+        let app_state = init_test(cx);
+
+        app_state
+            .fs
+            .as_fake()
+            .insert_tree(
+                path!("/project"),
+                json!({
+                    "manifest.scm": "specifications->manifest '()",
+                    "src": {
+                        "main.rs": "fn main() {}"
+                    }
+                }),
+            )
+            .await;
+
+        cx.update(|cx| {
+            open_paths(
+                &[PathBuf::from(path!("/project"))],
+                app_state,
+                workspace::OpenOptions::default(),
+                cx,
+            )
+        })
+        .await
+        .unwrap();
+
+        assert_eq!(cx.update(|cx| cx.windows().len()), 1);
+        let multi_workspace = cx.update(|cx| cx.windows()[0].downcast::<MultiWorkspace>().unwrap());
+
+        cx.run_until_parked();
+
+        cx.dispatch_action(*multi_workspace, OpenGuixContainer);
+
+        multi_workspace
+            .update(cx, |multi_workspace, _, cx| {
+                let modal = multi_workspace
+                    .workspace()
+                    .read(cx)
+                    .active_modal::<RemoteServerProjects>(cx);
+                assert!(
+                    modal.is_some(),
+                    "Guix container modal should be open after dispatching OpenGuixContainer"
+                );
+            })
+            .unwrap();
+    }
+
+    #[gpui::test]
+    async fn test_open_guix_container_action_without_manifest_does_not_open_modal(
+        cx: &mut TestAppContext,
+    ) {
+        let app_state = init_test(cx);
+
+        app_state
+            .fs
+            .as_fake()
+            .insert_tree(
+                path!("/project"),
+                json!({
+                    "src": {
+                        "main.rs": "fn main() {}"
+                    }
+                }),
+            )
+            .await;
+
+        cx.update(|cx| {
+            open_paths(
+                &[PathBuf::from(path!("/project"))],
+                app_state,
+                workspace::OpenOptions::default(),
+                cx,
+            )
+        })
+        .await
+        .unwrap();
+
+        let multi_workspace = cx.update(|cx| cx.windows()[0].downcast::<MultiWorkspace>().unwrap());
+
+        cx.run_until_parked();
+        cx.dispatch_action(*multi_workspace, OpenGuixContainer);
+        cx.run_until_parked();
+
+        multi_workspace
+            .update(cx, |multi_workspace, _, cx| {
+                let modal = multi_workspace
+                    .workspace()
+                    .read(cx)
+                    .active_modal::<RemoteServerProjects>(cx);
+                assert!(
+                    modal.is_none(),
+                    "Guix container modal should not open without manifest.scm"
                 );
             })
             .unwrap();

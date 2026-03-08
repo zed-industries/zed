@@ -24,12 +24,13 @@ use paths::{global_ssh_config_file, user_ssh_config_file};
 use picker::{Picker, PickerDelegate};
 use project::{Fs, Project};
 use remote::{
-    RemoteClient, RemoteConnectionOptions, SshConnectionOptions, WslConnectionOptions,
+    GuixContainerConnectionOptions, GuixMount, GuixSettings, GuixShellOptions, RemoteClient,
+    RemoteConnectionOptions, SshConnectionOptions, WslConnectionOptions,
     remote_client::ConnectionIdentifier,
 };
 use settings::{
-    RemoteProject, RemoteSettingsContent, Settings as _, SettingsStore, update_settings_file,
-    watch_config_file,
+    GuixConnection, RemoteProject, RemoteSettingsContent, Settings as _, SettingsStore,
+    update_settings_file, watch_config_file,
 };
 use smol::stream::StreamExt as _;
 use std::{
@@ -43,9 +44,9 @@ use std::{
     },
 };
 use ui::{
-    CommonAnimationExt, IconButtonShape, KeyBinding, List, ListItem, ListSeparator, Modal,
-    ModalFooter, ModalHeader, Navigable, NavigableEntry, Section, Tooltip, WithScrollbar,
-    prelude::*,
+    Checkbox, CommonAnimationExt, IconButtonShape, KeyBinding, List, ListItem, ListSeparator,
+    Modal, ModalFooter, ModalHeader, Navigable, NavigableEntry, Section, ToggleState, Tooltip,
+    WithScrollbar, prelude::*,
 };
 use util::{
     ResultExt,
@@ -178,6 +179,17 @@ struct ProjectPicker {
 struct EditNicknameState {
     index: SshServerIndex,
     editor: Entity<Editor>,
+}
+
+#[derive(Clone)]
+struct EditGuixConnectionState {
+    connection: GuixContainerConnectionOptions,
+    allow_network: bool,
+    nesting: bool,
+    expose_editor: Entity<Editor>,
+    share_editor: Entity<Editor>,
+    extra_args_editor: Entity<Editor>,
+    error: Option<SharedString>,
 }
 
 struct DevContainerPickerDelegate {
@@ -371,6 +383,123 @@ impl EditNicknameState {
     }
 }
 
+impl EditGuixConnectionState {
+    fn new(
+        connection: GuixContainerConnectionOptions,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Self {
+        let shell_options = GuixSettings::get_global(cx)
+            .shell_options_for(
+                PathBuf::from(&connection.manifest_path).as_path(),
+                PathBuf::from(&connection.project_root).as_path(),
+            );
+        let shell_options = if shell_options == GuixShellOptions::default() {
+            connection.shell_options.clone()
+        } else {
+            shell_options
+        };
+
+        let expose_editor = cx.new(|cx| Editor::auto_height(2, 6, window, cx));
+        let share_editor = cx.new(|cx| Editor::auto_height(2, 6, window, cx));
+        let extra_args_editor = cx.new(|cx| Editor::auto_height(2, 6, window, cx));
+        let expose_text = Self::format_mounts(&shell_options.expose);
+        let share_text = Self::format_mounts(&shell_options.share);
+        let extra_args_text = shell_options.extra_args.join("\n");
+
+        expose_editor.update(cx, |editor, cx| {
+            editor.set_placeholder_text("source or source=target, one per line", window, cx);
+            editor.set_text(expose_text, window, cx);
+        });
+        share_editor.update(cx, |editor, cx| {
+            editor.set_placeholder_text("source or source=target, one per line", window, cx);
+            editor.set_text(share_text, window, cx);
+        });
+        extra_args_editor.update(cx, |editor, cx| {
+            editor.set_placeholder_text("one argument per line", window, cx);
+            editor.set_text(extra_args_text, window, cx);
+        });
+        expose_editor.focus_handle(cx).focus(window, cx);
+
+        Self {
+            connection,
+            allow_network: shell_options.allow_network,
+            nesting: shell_options.nesting,
+            expose_editor,
+            share_editor,
+            extra_args_editor,
+            error: None,
+        }
+    }
+
+    fn format_mounts(mounts: &[GuixMount]) -> String {
+        mounts
+            .iter()
+            .map(|mount| match &mount.target {
+                Some(target) => format!("{}={target}", mount.source),
+                None => mount.source.clone(),
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    fn parse_mounts(text: &str) -> anyhow::Result<Vec<GuixMount>> {
+        text.lines()
+            .enumerate()
+            .filter_map(|(ix, line)| {
+                let trimmed = line.trim();
+                if trimmed.is_empty() {
+                    None
+                } else {
+                    Some((ix + 1, trimmed))
+                }
+            })
+            .map(|(line_no, spec)| {
+                let (source, target) = match spec.split_once('=') {
+                    Some((source, target)) => (source.trim(), Some(target.trim())),
+                    None => (spec, None),
+                };
+                if source.is_empty() {
+                    anyhow::bail!("line {line_no}: missing source path")
+                }
+                if let Some(target) = target && target.is_empty() {
+                    anyhow::bail!("line {line_no}: missing target path")
+                }
+                Ok(GuixMount {
+                    source: source.to_string(),
+                    target: target.map(ToOwned::to_owned),
+                })
+            })
+            .collect()
+    }
+
+    fn shell_options(&self, cx: &App) -> anyhow::Result<GuixShellOptions> {
+        Ok(GuixShellOptions {
+            allow_network: self.allow_network,
+            nesting: self.nesting,
+            expose: Self::parse_mounts(&self.expose_editor.read(cx).text(cx))?,
+            share: Self::parse_mounts(&self.share_editor.read(cx).text(cx))?,
+            extra_args: self
+                .extra_args_editor
+                .read(cx)
+                .text(cx)
+                .lines()
+                .map(str::trim)
+                .filter(|line| !line.is_empty())
+                .map(ToOwned::to_owned)
+                .collect(),
+        })
+    }
+}
+
+fn guix_secondary_action_label(is_local_workspace: bool) -> &'static str {
+    if is_local_workspace {
+        "Save & Open in Container"
+    } else {
+        "Save & Reconnect"
+    }
+}
+
 impl Focusable for ProjectPicker {
     fn focus_handle(&self, cx: &App) -> FocusHandle {
         self.picker.focus_handle(cx)
@@ -412,6 +541,10 @@ impl ProjectPicker {
                 // Not implemented as a project picker at this time
                 connection_string: "".into(),
                 nickname: None,
+            },
+            RemoteConnectionOptions::GuixContainer(connection) => ProjectPickerData::Ssh {
+                connection_string: connection.project_root.clone().into(),
+                nickname: Some("Guix container".into()),
             },
             #[cfg(any(test, feature = "test-support"))]
             RemoteConnectionOptions::Mock(options) => ProjectPickerData::Ssh {
@@ -653,6 +786,7 @@ struct DefaultState {
     scroll_handle: ScrollHandle,
     add_new_server: NavigableEntry,
     add_new_devcontainer: NavigableEntry,
+    add_new_guix: NavigableEntry,
     add_new_wsl: NavigableEntry,
     servers: Vec<RemoteEntry>,
 }
@@ -662,6 +796,7 @@ impl DefaultState {
         let handle = ScrollHandle::new();
         let add_new_server = NavigableEntry::new(&handle, cx);
         let add_new_devcontainer = NavigableEntry::new(&handle, cx);
+        let add_new_guix = NavigableEntry::new(&handle, cx);
         let add_new_wsl = NavigableEntry::new(&handle, cx);
 
         let ssh_settings = RemoteSettings::get_global(cx);
@@ -732,6 +867,7 @@ impl DefaultState {
             scroll_handle: handle,
             add_new_server,
             add_new_devcontainer,
+            add_new_guix,
             add_new_wsl,
             servers,
         }
@@ -765,6 +901,7 @@ enum Mode {
     Default(DefaultState),
     ViewServerOptions(ViewServerOptionsState),
     EditNickname(EditNicknameState),
+    EditGuixConnection(EditGuixConnectionState),
     ProjectPicker(Entity<ProjectPicker>),
     CreateRemoteServer(CreateRemoteServer),
     CreateRemoteDevContainer(CreateRemoteDevContainer),
@@ -855,6 +992,23 @@ impl RemoteServerProjects {
         this
     }
 
+    pub fn new_guix(
+        connection: GuixContainerConnectionOptions,
+        fs: Arc<dyn Fs>,
+        window: &mut Window,
+        workspace: WeakEntity<Workspace>,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        Self::new_inner(
+            Mode::EditGuixConnection(EditGuixConnectionState::new(connection, window, cx)),
+            false,
+            fs,
+            window,
+            workspace,
+            cx,
+        )
+    }
+
     pub fn popover(
         fs: Arc<dyn Fs>,
         workspace: WeakEntity<Workspace>,
@@ -863,7 +1017,17 @@ impl RemoteServerProjects {
         cx: &mut App,
     ) -> Entity<Self> {
         cx.new(|cx| {
-            let server = Self::new(create_new_window, fs, window, workspace, cx);
+            let mut server = Self::new(create_new_window, fs, window, workspace.clone(), cx);
+            if let Some(workspace) = workspace.upgrade()
+                && let Some(RemoteConnectionOptions::GuixContainer(connection)) = workspace
+                    .read(cx)
+                    .project()
+                    .read(cx)
+                    .remote_connection_options(cx)
+            {
+                server.mode =
+                    Mode::EditGuixConnection(EditGuixConnectionState::new(connection, window, cx));
+            }
             server.focus_handle(cx).focus(window, cx);
             server
         })
@@ -1275,6 +1439,10 @@ impl RemoteServerProjects {
                 self.mode = Mode::default_mode(&self.ssh_config_servers, cx);
                 self.focus_handle.focus(window, cx);
             }
+            Mode::EditGuixConnection(state) => {
+                let state = state.clone();
+                self.save_guix_connection_options(&state, false, window, cx);
+            }
             #[cfg(target_os = "windows")]
             Mode::AddWslDistro(state) => {
                 let delegate = &state.picker.read(cx).delegate;
@@ -1282,6 +1450,56 @@ impl RemoteServerProjects {
                 self.connect_wsl_distro(state.picker.clone(), distro, window, cx);
             }
         }
+    }
+
+    fn secondary_confirm(
+        &mut self,
+        _: &menu::SecondaryConfirm,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Mode::EditGuixConnection(state) = &self.mode {
+            let state = state.clone();
+            self.save_guix_connection_options(&state, true, window, cx);
+        }
+    }
+
+    fn open_guix_manifest(
+        &mut self,
+        state: &EditGuixConnectionState,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(workspace) = self.workspace.upgrade() else {
+            cx.emit(DismissEvent);
+            cx.notify();
+            return;
+        };
+
+        let manifest_path = {
+            let path = PathBuf::from(&state.connection.manifest_path);
+            if path.is_absolute() {
+                path
+            } else {
+                PathBuf::from(&state.connection.project_root).join(path)
+            }
+        };
+
+        workspace.update(cx, |_workspace, cx| {
+            cx.spawn_in(window, async move |workspace, cx| {
+                workspace
+                    .update_in(cx, |workspace, window, cx| {
+                        workspace.open_abs_path(
+                            manifest_path.clone(),
+                            Default::default(),
+                            window,
+                            cx,
+                        )
+                    })?
+                    .await
+            })
+            .detach();
+        });
     }
 
     fn cancel(&mut self, _: &menu::Cancel, window: &mut Window, cx: &mut Context<Self>) {
@@ -1296,6 +1514,9 @@ impl RemoteServerProjects {
 
                 self.mode = Mode::CreateRemoteServer(new_state);
                 cx.notify();
+            }
+            Mode::EditGuixConnection(_) => {
+                cx.emit(DismissEvent);
             }
             Mode::CreateRemoteDevContainer(CreateRemoteDevContainer {
                 progress: DevContainerCreationProgress::Error(_),
@@ -1747,6 +1968,160 @@ impl RemoteServerProjects {
         });
     }
 
+    fn save_guix_connection_options(
+        &mut self,
+        state: &EditGuixConnectionState,
+        reconnect: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let shell_options = match state.shell_options(cx) {
+            Ok(shell_options) => shell_options,
+            Err(error) => {
+                if let Mode::EditGuixConnection(current_state) = &mut self.mode {
+                    current_state.error = Some(error.to_string().into());
+                }
+                cx.notify();
+                return;
+            }
+        };
+
+        let manifest_path = state.connection.manifest_path.clone();
+        let project_root = state.connection.project_root.clone();
+        let remove_entry = shell_options == GuixShellOptions::default();
+        let stored_options = shell_options.clone();
+
+        self.update_settings_file(cx, move |setting, _| {
+            let connections = setting.guix_connections.get_or_insert_default();
+            if let Some(index) = connections.iter().position(|connection| {
+                connection.manifest_path == manifest_path || connection.project_root == project_root
+            }) {
+                if remove_entry {
+                    connections.remove(index);
+                } else {
+                    connections[index] = GuixConnection {
+                        manifest_path,
+                        project_root,
+                        options: settings::GuixShellOptions {
+                            allow_network: stored_options.allow_network,
+                            nesting: stored_options.nesting,
+                            expose: stored_options
+                                .expose
+                                .iter()
+                                .cloned()
+                                .map(|mount| settings::GuixMount {
+                                    source: mount.source,
+                                    target: mount.target,
+                                })
+                                .collect(),
+                            share: stored_options
+                                .share
+                                .iter()
+                                .cloned()
+                                .map(|mount| settings::GuixMount {
+                                    source: mount.source,
+                                    target: mount.target,
+                                })
+                                .collect(),
+                            extra_args: stored_options.extra_args.clone(),
+                        },
+                    };
+                }
+            } else if !remove_entry {
+                connections.push(GuixConnection {
+                    manifest_path,
+                    project_root,
+                    options: settings::GuixShellOptions {
+                        allow_network: stored_options.allow_network,
+                        nesting: stored_options.nesting,
+                        expose: stored_options
+                            .expose
+                            .iter()
+                            .cloned()
+                            .map(|mount| settings::GuixMount {
+                                source: mount.source,
+                                target: mount.target,
+                            })
+                            .collect(),
+                        share: stored_options
+                            .share
+                            .iter()
+                            .cloned()
+                            .map(|mount| settings::GuixMount {
+                                source: mount.source,
+                                target: mount.target,
+                            })
+                            .collect(),
+                        extra_args: stored_options.extra_args.clone(),
+                    },
+                });
+            }
+        });
+
+        let updated_connection = RemoteConnectionOptions::GuixContainer(
+            GuixContainerConnectionOptions {
+                shell_options,
+                ..state.connection.clone()
+            },
+        );
+
+        if reconnect {
+            self.open_current_project_with_connection_options(updated_connection, window, cx);
+        } else {
+            if let Some(workspace) = self.workspace.upgrade() {
+                workspace.update(cx, |workspace, cx| {
+                    struct GuixOptionsSaved;
+                    workspace.show_toast(
+                        Toast::new(
+                            NotificationId::composite::<GuixOptionsSaved>("guix-options-saved"),
+                            "Saved Guix container options",
+                        ),
+                        cx,
+                    );
+                });
+            }
+            cx.emit(DismissEvent);
+        }
+    }
+
+    fn open_current_project_with_connection_options(
+        &mut self,
+        connection_options: RemoteConnectionOptions,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(workspace) = self.workspace.upgrade() else {
+            return;
+        };
+        let Some(window_handle) = window.window_handle().downcast::<MultiWorkspace>() else {
+            return;
+        };
+
+        let app_state = workspace.read(cx).app_state().clone();
+        let paths = workspace
+            .read(cx)
+            .root_paths(cx)
+            .iter()
+            .map(|path| path.to_path_buf())
+            .collect::<Vec<_>>();
+
+        cx.emit(DismissEvent);
+        cx.spawn_in(window, async move |_, cx| {
+            open_remote_project(
+                connection_options,
+                paths,
+                app_state,
+                OpenOptions {
+                    replace_window: Some(window_handle),
+                    ..Default::default()
+                },
+                cx,
+            )
+            .await
+        })
+        .detach_and_prompt_err("Failed to open remote project", window, cx, |_, _, _| None);
+    }
+
     fn edit_in_dev_container_json(
         &mut self,
         config: Option<DevContainerConfig>,
@@ -1838,6 +2213,47 @@ impl RemoteServerProjects {
         } else {
             log::error!("No active project directory for Dev Container");
         }
+    }
+
+    fn init_guix_mode(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(workspace) = self.workspace.upgrade() else {
+            return;
+        };
+
+        let app_state = workspace.read(cx).app_state().clone();
+        let paths = workspace
+            .read(cx)
+            .root_paths(cx)
+            .iter()
+            .map(|path| path.to_path_buf())
+            .collect::<Vec<_>>();
+        let entity = cx.entity().downgrade();
+
+        cx.spawn_in(window, async move |_, cx| {
+            let Some(remote::RemoteConnectionOptions::GuixContainer(connection)) =
+                workspace::guix_connection_options_for_paths(&paths, &app_state, cx).await
+            else {
+                let _ = cx
+                    .prompt(
+                        gpui::PromptLevel::Critical,
+                        "No Guix manifest found",
+                        Some("This project no longer contains a detectable manifest.scm."),
+                        &["Ok"],
+                    )
+                    .await;
+                return;
+            };
+
+            entity
+                .update_in(cx, |this, window, cx| {
+                    this.mode =
+                        Mode::EditGuixConnection(EditGuixConnectionState::new(connection, window, cx));
+                    this.focus_handle(cx).focus(window, cx);
+                    cx.notify();
+                })
+                .ok();
+        })
+        .detach();
     }
 
     fn open_dev_container(
@@ -2531,6 +2947,168 @@ impl RemoteServerProjects {
             )
     }
 
+    fn render_edit_guix_connection(
+        &self,
+        state: &EditGuixConnectionState,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let is_local_workspace = self
+            .workspace
+            .upgrade()
+            .is_some_and(|workspace| workspace.read(cx).project().read(cx).is_local());
+        let secondary_label = guix_secondary_action_label(is_local_workspace);
+
+        let entity = cx.entity();
+        let allow_network_entity = entity.clone();
+        let nesting_entity = entity.clone();
+        let section = |title: &'static str,
+                       detail: &'static str,
+                       editor: Entity<Editor>,
+                       _window: &mut Window,
+                       cx: &mut Context<Self>| {
+            v_flex()
+                .gap_1()
+                .child(Label::new(title))
+                .child(Label::new(detail).size(LabelSize::Small).color(Color::Muted))
+                .child(
+                    div()
+                        .rounded_md()
+                        .border_1()
+                        .border_color(cx.theme().colors().border_variant)
+                        .bg(cx.theme().colors().editor_background)
+                        .p_2()
+                        .child(editor.clone()),
+                )
+        };
+
+        Modal::new("guix-connection-options", None)
+            .header(ModalHeader::new().headline("Guix Container Options"))
+            .section(
+                Section::new().child(
+                    v_flex()
+                        .gap_3()
+                        .child(
+                            v_flex()
+                                .gap_1()
+                                .child(Label::new("Project Root"))
+                                .child(
+                                    Label::new(state.connection.project_root.clone())
+                                        .size(LabelSize::Small)
+                                        .color(Color::Muted),
+                                )
+                                .child(Label::new("Manifest"))
+                                .child(
+                                    Label::new(state.connection.manifest_path.clone())
+                                        .size(LabelSize::Small)
+                                        .color(Color::Muted),
+                                ),
+                        )
+                        .child(
+                            Checkbox::new(
+                                "guix-allow-network",
+                                ToggleState::from(state.allow_network),
+                            )
+                            .label("Allow network access (-N)")
+                            .on_click(move |_, _, app| {
+                                let _ = allow_network_entity.update(app, |this, cx| {
+                                    if let Mode::EditGuixConnection(state) = &mut this.mode {
+                                        state.allow_network = !state.allow_network;
+                                        state.error = None;
+                                        cx.notify();
+                                    }
+                                });
+                            }),
+                        )
+                        .child(
+                            Checkbox::new("guix-nesting", ToggleState::from(state.nesting))
+                                .label("Allow nested Guix invocations (--nesting)")
+                                .on_click(move |_, _, app| {
+                                    let _ = nesting_entity.update(app, |this, cx| {
+                                        if let Mode::EditGuixConnection(state) = &mut this.mode {
+                                            state.nesting = !state.nesting;
+                                            state.error = None;
+                                            cx.notify();
+                                        }
+                                    });
+                                }),
+                        )
+                        .child(section(
+                            "Extra --expose mounts",
+                            "One entry per line. Format: source or source=target",
+                            state.expose_editor.clone(),
+                            window,
+                            cx,
+                        ))
+                        .child(section(
+                            "Extra --share mounts",
+                            "One entry per line. Format: source or source=target",
+                            state.share_editor.clone(),
+                            window,
+                            cx,
+                        ))
+                        .child(section(
+                            "Extra guix shell arguments",
+                            "One argument per line. These are appended before `--`.",
+                            state.extra_args_editor.clone(),
+                            window,
+                            cx,
+                        ))
+                        .when_some(state.error.clone(), |this, error| {
+                            this.child(Label::new(error).size(LabelSize::Small).color(Color::Error))
+                        }),
+                ),
+            )
+            .footer(
+                ModalFooter::new().end_slot(
+                    h_flex()
+                        .gap_2()
+                        .child(
+                            Button::new("guix-cancel", "Cancel")
+                                .color(Color::Muted)
+                                .on_click(cx.listener(|this, _, _, cx| {
+                                    cx.emit(DismissEvent);
+                                    this.mode = Mode::default_mode(&this.ssh_config_servers, cx);
+                                })),
+                        )
+                        .child(
+                            Button::new("guix-open-manifest", "Open manifest.scm").on_click(
+                                cx.listener(|this, _, window, cx| {
+                                    if let Mode::EditGuixConnection(state) = &this.mode {
+                                        let state = state.clone();
+                                        this.open_guix_manifest(&state, window, cx);
+                                    }
+                                }),
+                            ),
+                        )
+                        .child(
+                            Button::new("guix-save", "Save")
+                                .key_binding(KeyBinding::for_action(&menu::Confirm, cx))
+                                .on_click(cx.listener(|this, _, window, cx| {
+                                    if let Mode::EditGuixConnection(state) = &this.mode {
+                                        let state = state.clone();
+                                        this.save_guix_connection_options(
+                                            &state, false, window, cx,
+                                        );
+                                    }
+                                })),
+                        )
+                        .child(
+                            Button::new("guix-save-reconnect", secondary_label)
+                                .key_binding(KeyBinding::for_action(&menu::SecondaryConfirm, cx))
+                                .on_click(cx.listener(|this, _, window, cx| {
+                                    if let Mode::EditGuixConnection(state) = &this.mode {
+                                        let state = state.clone();
+                                        this.save_guix_connection_options(
+                                            &state, true, window, cx,
+                                        );
+                                    }
+                                })),
+                        ),
+                ),
+            )
+    }
+
     fn render_default(
         &mut self,
         mut state: DefaultState,
@@ -2649,6 +3227,30 @@ impl RemoteServerProjects {
                 this.init_dev_container_mode(window, cx);
             }));
 
+        let connect_guix_container_button = div()
+            .id("connect-new-guix-container")
+            .track_focus(&state.add_new_guix.focus_handle)
+            .anchor_scroll(state.add_new_guix.scroll_anchor.clone())
+            .child(
+                ListItem::new("register-guix-container-button")
+                    .toggle_state(
+                        state
+                            .add_new_guix
+                            .focus_handle
+                            .contains_focused(window, cx),
+                    )
+                    .inset(true)
+                    .spacing(ui::ListItemSpacing::Sparse)
+                    .start_slot(Icon::new(IconName::Plus).color(Color::Muted))
+                    .child(Label::new("Connect Guix Container"))
+                    .on_click(cx.listener(|this, _, window, cx| {
+                        this.init_guix_mode(window, cx);
+                    })),
+            )
+            .on_action(cx.listener(|this, _: &menu::Confirm, window, cx| {
+                this.init_guix_mode(window, cx);
+            }));
+
         #[cfg(target_os = "windows")]
         let wsl_connect_button = div()
             .id("wsl-connect-new-server")
@@ -2705,6 +3307,7 @@ impl RemoteServerProjects {
             .child(connect_button)
             .when(has_open_project && is_local, |this| {
                 this.child(connect_dev_container_button)
+                    .child(connect_guix_container_button)
             });
 
         #[cfg(target_os = "windows")]
@@ -2862,6 +3465,113 @@ impl RemoteServerProjects {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::{Mode, RemoteServerProjects, guix_secondary_action_label};
+    use crate::init;
+    use editor;
+    use serde_json::json;
+    use std::path::PathBuf;
+    use util::path;
+    use workspace::{AppState, MultiWorkspace, open_paths};
+
+    #[test]
+    fn test_guix_secondary_action_label_for_local_workspace() {
+        assert_eq!(
+            guix_secondary_action_label(true),
+            "Save & Open in Container"
+        );
+    }
+
+    #[test]
+    fn test_guix_secondary_action_label_for_remote_workspace() {
+        assert_eq!(guix_secondary_action_label(false), "Save & Reconnect");
+    }
+
+    #[gpui::test]
+    async fn test_init_guix_mode_switches_remote_projects_modal_to_guix_editor(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let app_state = cx.update(|cx| {
+            let state = AppState::test(cx);
+            init(cx);
+            editor::init(cx);
+            state
+        });
+
+        app_state
+            .fs
+            .as_fake()
+            .insert_tree(
+                path!("/project"),
+                json!({
+                    "manifest.scm": "specifications->manifest '()",
+                    "src": {
+                        "main.rs": "fn main() {}"
+                    }
+                }),
+            )
+            .await;
+
+        cx.update(|cx| {
+            open_paths(
+                &[PathBuf::from(path!("/project"))],
+                app_state,
+                workspace::OpenOptions::default(),
+                cx,
+            )
+        })
+        .await
+        .unwrap();
+
+        let multi_workspace = cx.update(|cx| cx.windows()[0].downcast::<MultiWorkspace>().unwrap());
+
+        multi_workspace
+            .update(cx, |multi_workspace, window, cx| {
+                let workspace = multi_workspace.workspace().clone();
+                let weak = workspace.downgrade();
+                let fs = workspace.read(cx).project().read(cx).fs().clone();
+                workspace.update(cx, |workspace, cx| {
+                    workspace.toggle_modal(window, cx, |window, cx| {
+                        RemoteServerProjects::new(false, fs.clone(), window, weak.clone(), cx)
+                    });
+                });
+            })
+            .unwrap();
+
+        cx.run_until_parked();
+
+        multi_workspace
+            .update(cx, |multi_workspace, window, cx| {
+                let modal = multi_workspace
+                    .workspace()
+                    .read(cx)
+                    .active_modal::<RemoteServerProjects>(cx)
+                    .expect("remote projects modal should be open");
+                modal.update(cx, |modal, cx| {
+                    modal.init_guix_mode(window, cx);
+                });
+            })
+            .unwrap();
+
+        cx.run_until_parked();
+
+        multi_workspace
+            .update(cx, |multi_workspace, _, cx| {
+                let modal = multi_workspace
+                    .workspace()
+                    .read(cx)
+                    .active_modal::<RemoteServerProjects>(cx)
+                    .expect("remote projects modal should still be open");
+                assert!(
+                    matches!(&modal.read(cx).mode, Mode::EditGuixConnection(_)),
+                    "top-level Guix entry should switch the modal into Guix edit mode"
+                );
+            })
+            .unwrap();
+    }
+}
+
 fn spawn_ssh_config_watch(fs: Arc<dyn Fs>, cx: &Context<RemoteServerProjects>) -> Task<()> {
     enum ConfigSource {
         User(String),
@@ -2952,6 +3662,7 @@ impl Render for RemoteServerProjects {
             .key_context("RemoteServerModal")
             .on_action(cx.listener(Self::cancel))
             .on_action(cx.listener(Self::confirm))
+            .on_action(cx.listener(Self::secondary_confirm))
             .capture_any_mouse_down(cx.listener(|this, _, window, cx| {
                 this.focus_handle(cx).focus(window, cx);
             }))
@@ -2976,6 +3687,9 @@ impl Render for RemoteServerProjects {
                     .into_any_element(),
                 Mode::EditNickname(state) => self
                     .render_edit_nickname(state, window, cx)
+                    .into_any_element(),
+                Mode::EditGuixConnection(state) => self
+                    .render_edit_guix_connection(state, window, cx)
                     .into_any_element(),
                 #[cfg(target_os = "windows")]
                 Mode::AddWslDistro(state) => self
