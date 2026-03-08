@@ -9,6 +9,8 @@ path = "src/settings_sync.rs"
 [dependencies]
 anyhow = { workspace = true }
 chrono = { workspace = true }
+client = { workspace = true }
+credentials_provider = { workspace = true }
 fs = { workspace = true }
 git2 = { workspace = true }
 gpui = { workspace = true }

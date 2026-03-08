@@ -15765,6 +15765,8 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "chrono",
+ "client",
+ "credentials_provider",
  "fs",
  "git2",
  "gpui",
