@@ -507,7 +507,7 @@ pub fn map_to_language_model_completion_events(
         events: Pin<Box<dyn Send + Stream<Item = Result<ResponseEvent>>>>,
         tool_calls_by_index: HashMap<usize, RawToolCall>,
         reasoning_opaque: Option<String>,
-        reasoning_text: String,
+        reasoning_text: Option<String>,
     }
 
     futures::stream::unfold(
@@ -515,7 +515,7 @@ pub fn map_to_language_model_completion_events(
             events,
             tool_calls_by_index: HashMap::default(),
             reasoning_opaque: None,
-            reasoning_text: String::new(),
+            reasoning_text: None,
         },
         move |mut state| async move {
             if let Some(event) = state.events.next().await {
@@ -546,18 +546,12 @@ pub fn map_to_language_model_completion_events(
                             events.push(Ok(LanguageModelCompletionEvent::Text(content)));
                         }
 
-                        // Capture reasoning data from the delta and emit Thinking events
+                        // Capture reasoning data from the delta (e.g. for Gemini 3)
                         if let Some(opaque) = delta.reasoning_opaque.clone() {
                             state.reasoning_opaque = Some(opaque);
                         }
                         if let Some(text) = delta.reasoning_text.clone() {
-                            if !text.is_empty() {
-                                state.reasoning_text.push_str(&text);
-                                events.push(Ok(LanguageModelCompletionEvent::Thinking {
-                                    text,
-                                    signature: None,
-                                }));
-                            }
+                            state.reasoning_text = Some(text);
                         }
 
                         for (index, tool_call) in delta.tool_calls.iter().enumerate() {
@@ -612,32 +606,6 @@ pub fn map_to_language_model_completion_events(
                             )));
                         }
 
-                        // Emit ReasoningDetails on finish so the agent stores reasoning
-                        // data in the message for subsequent requests.
-                        if choice.finish_reason.is_some()
-                            && (state.reasoning_opaque.is_some()
-                                || !state.reasoning_text.is_empty())
-                        {
-                            let mut details = serde_json::Map::new();
-                            if let Some(opaque) = state.reasoning_opaque.take() {
-                                details.insert(
-                                    "reasoning_opaque".to_string(),
-                                    serde_json::Value::String(opaque),
-                                );
-                            }
-                            if !state.reasoning_text.is_empty() {
-                                details.insert(
-                                    "reasoning_text".to_string(),
-                                    serde_json::Value::String(std::mem::take(
-                                        &mut state.reasoning_text,
-                                    )),
-                                );
-                            }
-                            events.push(Ok(LanguageModelCompletionEvent::ReasoningDetails(
-                                serde_json::Value::Object(details),
-                            )));
-                        }
-
                         match choice.finish_reason.as_deref() {
                             Some("stop") => {
                                 events.push(Ok(LanguageModelCompletionEvent::Stop(
@@ -645,6 +613,32 @@ pub fn map_to_language_model_completion_events(
                                 )));
                             }
                             Some("tool_calls") => {
+                                // Gemini 3 models send reasoning_opaque/reasoning_text that must
+                                // be preserved and sent back in subsequent requests. Emit as
+                                // ReasoningDetails so the agent stores it in the message.
+                                if state.reasoning_opaque.is_some()
+                                    || state.reasoning_text.is_some()
+                                {
+                                    let mut details = serde_json::Map::new();
+                                    if let Some(opaque) = state.reasoning_opaque.take() {
+                                        details.insert(
+                                            "reasoning_opaque".to_string(),
+                                            serde_json::Value::String(opaque),
+                                        );
+                                    }
+                                    if let Some(text) = state.reasoning_text.take() {
+                                        details.insert(
+                                            "reasoning_text".to_string(),
+                                            serde_json::Value::String(text),
+                                        );
+                                    }
+                                    events.push(Ok(
+                                        LanguageModelCompletionEvent::ReasoningDetails(
+                                            serde_json::Value::Object(details),
+                                        ),
+                                    ));
+                                }
+
                                 events.extend(state.tool_calls_by_index.drain().map(
                                     |(_, tool_call)| match parse_tool_arguments(
                                         &tool_call.arguments,
