@@ -20361,6 +20361,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "window_switcher"
+version = "0.1.0"
+dependencies = [
+ "fuzzy",
+ "gpui",
+ "log",
+ "picker",
+ "ui",
+ "workspace",
+]
+
+[[package]]
 name = "windows"
 version = "0.57.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -22054,6 +22066,7 @@ dependencies = [
  "web_search",
  "web_search_providers",
  "which_key",
+ "window_switcher",
  "windows 0.61.3",
  "winresource",
  "workspace",

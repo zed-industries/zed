@@ -1,0 +1,21 @@
+[package]
+name = "window_switcher"
+version = "0.1.0"
+edition.workspace = true
+publish.workspace = true
+license = "GPL-3.0-or-later"
+
+[lints]
+workspace = true
+
+[lib]
+path = "src/window_switcher.rs"
+doctest = false
+
+[dependencies]
+fuzzy.workspace = true
+gpui.workspace = true
+log.workspace = true
+picker.workspace = true
+ui.workspace = true
+workspace.workspace = true

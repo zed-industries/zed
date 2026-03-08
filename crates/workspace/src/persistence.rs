@@ -970,6 +970,9 @@ impl Domain for WorkspaceDb {
         sql!(
             ALTER TABLE remote_connections ADD COLUMN use_podman BOOLEAN;
         ),
+        sql!(
+            ALTER TABLE workspaces ADD COLUMN custom_name TEXT;
+        ),
     ];
 
     // Allow recovering from bad migration that was initially shipped to nightly
@@ -1027,6 +1030,7 @@ impl WorkspaceDb {
             centered_layout,
             docks,
             window_id,
+            custom_name,
         ): (
             WorkspaceId,
             String,
@@ -1036,6 +1040,7 @@ impl WorkspaceDb {
             Option<bool>,
             DockStructure,
             Option<u64>,
+            Option<String>,
         ) = self
             .select_row_bound(sql! {
                 SELECT
@@ -1058,7 +1063,8 @@ impl WorkspaceDb {
                     bottom_dock_visible,
                     bottom_dock_active_panel,
                     bottom_dock_zoom,
-                    window_id
+                    window_id,
+                    custom_name
                 FROM workspaces
                 WHERE
                     paths IS ? AND
@@ -1107,6 +1113,7 @@ impl WorkspaceDb {
             breakpoints: self.breakpoints(workspace_id),
             window_id,
             user_toolchains: self.user_toolchains(workspace_id, remote_connection_id),
+            custom_name,
         })
     }
 
@@ -1124,6 +1131,7 @@ impl WorkspaceDb {
             docks,
             window_id,
             remote_connection_id,
+            custom_name,
         ): (
             String,
             String,
@@ -1133,6 +1141,7 @@ impl WorkspaceDb {
             DockStructure,
             Option<u64>,
             Option<i32>,
+            Option<String>,
         ) = self
             .select_row_bound(sql! {
                 SELECT
@@ -1155,7 +1164,8 @@ impl WorkspaceDb {
                     bottom_dock_active_panel,
                     bottom_dock_zoom,
                     window_id,
-                    remote_connection_id
+                    remote_connection_id,
+                    custom_name
                 FROM workspaces
                 WHERE workspace_id = ?
             })
@@ -1197,6 +1207,7 @@ impl WorkspaceDb {
             breakpoints: self.breakpoints(workspace_id),
             window_id,
             user_toolchains: self.user_toolchains(workspace_id, remote_connection_id),
+            custom_name,
         })
     }
 
@@ -2154,6 +2165,14 @@ impl WorkspaceDb {
     }
 
     query! {
+        pub(crate) async fn set_custom_name(workspace_id: WorkspaceId, custom_name: Option<String>) -> Result<()> {
+            UPDATE workspaces
+            SET custom_name = ?2
+            WHERE workspace_id = ?1
+        }
+    }
+
+    query! {
         pub(crate) async fn set_session_binding(workspace_id: WorkspaceId, session_id: Option<String>, window_id: Option<u64>) -> Result<()> {
             UPDATE workspaces
             SET session_id = ?2, window_id = ?3
@@ -2569,6 +2588,7 @@ mod tests {
             session_id: None,
             window_id: None,
             user_toolchains: Default::default(),
+            custom_name: None,
         };
 
         db.save_workspace(workspace.clone()).await;
@@ -2690,6 +2710,7 @@ mod tests {
             session_id: None,
             window_id: None,
             user_toolchains: Default::default(),
+            custom_name: None,
         };
 
         db.save_workspace(workspace.clone()).await;
@@ -2724,6 +2745,7 @@ mod tests {
             session_id: None,
             window_id: None,
             user_toolchains: Default::default(),
+            custom_name: None,
         };
 
         db.save_workspace(workspace_without_breakpoint.clone())
@@ -2822,6 +2844,7 @@ mod tests {
             session_id: None,
             window_id: None,
             user_toolchains: Default::default(),
+            custom_name: None,
         };
 
         let workspace_2 = SerializedWorkspace {
@@ -2837,6 +2860,7 @@ mod tests {
             session_id: None,
             window_id: None,
             user_toolchains: Default::default(),
+            custom_name: None,
         };
 
         db.save_workspace(workspace_1.clone()).await;
@@ -2944,6 +2968,7 @@ mod tests {
             session_id: None,
             window_id: Some(999),
             user_toolchains: Default::default(),
+            custom_name: None,
         };
 
         db.save_workspace(workspace.clone()).await;
@@ -2978,6 +3003,7 @@ mod tests {
             session_id: None,
             window_id: Some(1),
             user_toolchains: Default::default(),
+            custom_name: None,
         };
 
         let mut workspace_2 = SerializedWorkspace {
@@ -2993,6 +3019,7 @@ mod tests {
             session_id: None,
             window_id: Some(2),
             user_toolchains: Default::default(),
+            custom_name: None,
         };
 
         db.save_workspace(workspace_1.clone()).await;
@@ -3035,6 +3062,7 @@ mod tests {
             session_id: None,
             window_id: Some(3),
             user_toolchains: Default::default(),
+            custom_name: None,
         };
 
         db.save_workspace(workspace_3.clone()).await;
@@ -3073,6 +3101,7 @@ mod tests {
             session_id: Some("session-id-1".to_owned()),
             window_id: Some(10),
             user_toolchains: Default::default(),
+            custom_name: None,
         };
 
         let workspace_2 = SerializedWorkspace {
@@ -3088,6 +3117,7 @@ mod tests {
             session_id: Some("session-id-1".to_owned()),
             window_id: Some(20),
             user_toolchains: Default::default(),
+            custom_name: None,
         };
 
         let workspace_3 = SerializedWorkspace {
@@ -3103,6 +3133,7 @@ mod tests {
             session_id: Some("session-id-2".to_owned()),
             window_id: Some(30),
             user_toolchains: Default::default(),
+            custom_name: None,
         };
 
         let workspace_4 = SerializedWorkspace {
@@ -3118,6 +3149,7 @@ mod tests {
             session_id: None,
             window_id: None,
             user_toolchains: Default::default(),
+            custom_name: None,
         };
 
         let connection_id = db
@@ -3144,6 +3176,7 @@ mod tests {
             session_id: Some("session-id-2".to_owned()),
             window_id: Some(50),
             user_toolchains: Default::default(),
+            custom_name: None,
         };
 
         let workspace_6 = SerializedWorkspace {
@@ -3159,6 +3192,7 @@ mod tests {
             session_id: Some("session-id-3".to_owned()),
             window_id: Some(60),
             user_toolchains: Default::default(),
+            custom_name: None,
         };
 
         db.save_workspace(workspace_1.clone()).await;
@@ -3216,6 +3250,7 @@ mod tests {
             session_id: None,
             window_id: None,
             user_toolchains: Default::default(),
+            custom_name: None,
         }
     }
 
@@ -3257,6 +3292,7 @@ mod tests {
             breakpoints: Default::default(),
             window_id: Some(window_id),
             user_toolchains: Default::default(),
+            custom_name: None,
         })
         .collect::<Vec<_>>();
 
@@ -3369,6 +3405,7 @@ mod tests {
             breakpoints: Default::default(),
             window_id: Some(window_id),
             user_toolchains: Default::default(),
+            custom_name: None,
         })
         .collect::<Vec<_>>();
 
@@ -3730,6 +3767,7 @@ mod tests {
             session_id: None,
             window_id: None,
             user_toolchains: Default::default(),
+            custom_name: None,
         };
 
         // Save the workspace (this creates the record with empty paths)
@@ -3806,6 +3844,7 @@ mod tests {
                 breakpoints: Default::default(),
                 window_id: Some(*window_id),
                 user_toolchains: Default::default(),
+            custom_name: None,
             })
             .await;
         }
@@ -4147,6 +4186,7 @@ mod tests {
             breakpoints: Default::default(),
             window_id: Some(99),
             user_toolchains: Default::default(),
+            custom_name: None,
         })
         .await;
 
@@ -4229,6 +4269,7 @@ mod tests {
             breakpoints: Default::default(),
             window_id: Some(window_id_val),
             user_toolchains: Default::default(),
+            custom_name: None,
         })
         .await;
 
@@ -4245,6 +4286,7 @@ mod tests {
             breakpoints: Default::default(),
             window_id: Some(window_id_val),
             user_toolchains: Default::default(),
+            custom_name: None,
         })
         .await;
 
@@ -4323,6 +4365,7 @@ mod tests {
             breakpoints: Default::default(),
             window_id: Some(88),
             user_toolchains: Default::default(),
+            custom_name: None,
         })
         .await;
         cx.run_until_parked();
