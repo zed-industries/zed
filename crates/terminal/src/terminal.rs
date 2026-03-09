@@ -470,26 +470,6 @@ impl TerminalBuilder {
 
             insert_zed_terminal_env(&mut env, &version);
 
-            // When sandbox is enabled, filter env vars to only the allowed set.
-            // Zed-specific vars (inserted above) are always kept.
-            if let Some(ref sandbox) = sandbox_config {
-                let allowed: collections::HashSet<&str> = sandbox
-                    .allowed_env_vars
-                    .iter()
-                    .map(|s| s.as_str())
-                    .collect();
-                let zed_vars = [
-                    "ZED_TERM",
-                    "TERM_PROGRAM",
-                    "TERM",
-                    "COLORTERM",
-                    "TERM_PROGRAM_VERSION",
-                ];
-                env.retain(|key, _| {
-                    allowed.contains(key.as_str()) || zed_vars.contains(&key.as_str())
-                });
-            }
-
             #[derive(Default)]
             struct ShellParams {
                 program: String,
