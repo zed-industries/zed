@@ -53,10 +53,12 @@ pub struct StreamingEditFileToolInput {
     /// <example>Fix API endpoint URLs</example>
     /// <example>Update copyright year in `page_footer`</example>
     ///
-    /// Make sure to include this field before all the others in the input object so that we can display it immediately.
+    /// Include `display_description`, `path`, and `mode` before all other fields so that the edit can begin while content is still streaming.
     pub display_description: String,
 
     /// The full path of the file to create or modify in the project.
+    ///
+    /// Include this field immediately after `display_description`.
     ///
     /// WARNING: When specifying which file path need changing, you MUST start each path with one of the project's root directories.
     ///
@@ -118,14 +120,30 @@ pub struct Edit {
     pub new_text: String,
 }
 
+/// Loose partial input for UI display (e.g. `initial_title`). All fields
+/// optional so we can show best-effort information while streaming.
 #[derive(Default, Debug, Deserialize)]
-struct StreamingEditFileToolPartialInput {
+struct StreamingEditFileToolTitleInput {
     #[serde(default)]
     display_description: Option<String>,
     #[serde(default)]
     path: Option<String>,
-    #[serde(default)]
-    mode: Option<StreamingEditFileMode>,
+}
+
+/// Partial input for the streaming edit loop. `display_description`, `path`,
+/// and `mode` are required — deserialization only succeeds once the LLM has
+/// streamed complete values for all three.
+///
+/// Because JSON streams left-to-right and these fields precede `content`/`edits`
+/// in the schema, and because `mode` is an enum that only deserializes from
+/// exact matches (`"edit"`, `"write"`), a successful parse guarantees that
+/// `path` has its real closing double-quote (not one synthesised by
+/// `partial_json_fixer`).
+#[derive(Debug, Deserialize)]
+struct StreamingEditFileToolPartialInput {
+    display_description: String,
+    path: String,
+    mode: StreamingEditFileMode,
     #[serde(default)]
     content: Option<String>,
     #[serde(default)]
@@ -276,7 +294,7 @@ impl AgentTool for StreamingEditFileTool {
                 .into(),
             Err(raw_input) => {
                 if let Ok(input) =
-                    serde_json::from_value::<StreamingEditFileToolPartialInput>(raw_input)
+                    serde_json::from_value::<StreamingEditFileToolTitleInput>(raw_input)
                 {
                     let path = input.path.unwrap_or_default();
                     let path = path.trim();
@@ -319,18 +337,11 @@ impl AgentTool for StreamingEditFileTool {
                     partial = input.recv_partial().fuse() => {
                         let Some(partial_value) = partial else { break };
                         if let Ok(parsed) = serde_json::from_value::<StreamingEditFileToolPartialInput>(partial_value) {
-                            if state.is_none()
-                                && let StreamingEditFileToolPartialInput {
-                                    path: Some(path),
-                                    display_description: Some(display_description),
-                                    mode: Some(mode),
-                                    ..
-                                } = &parsed
-                            {
+                            if state.is_none() {
                                 match EditSession::new(
-                                    &PathBuf::from(path),
-                                    display_description,
-                                    *mode,
+                                    &PathBuf::from(&parsed.path),
+                                    &parsed.display_description,
+                                    parsed.mode,
                                     &self,
                                     &event_stream,
                                     cx,
@@ -1461,6 +1472,73 @@ mod tests {
             panic!("expected success");
         };
         assert_eq!(new_text, "new content");
+    }
+
+    /// Regression test: two files exist where one path is a prefix of the other.
+    /// The LLM intends to edit `file_2.txt` but the partial JSON fixer closes
+    /// the unterminated `"root/file` to `"root/file"` mid-stream. Because
+    /// `mode` has not yet appeared, deserialization into
+    /// `StreamingEditFileToolPartialInput` (which requires `mode`) fails,
+    /// preventing a session from starting on the wrong file.
+    #[gpui::test]
+    async fn test_streaming_path_not_started_until_mode_present(cx: &mut TestAppContext) {
+        let (tool, _project, _action_log, _fs, _thread) = setup_test(
+            cx,
+            json!({"file.txt": "hello world", "file_2.txt": "goodbye world"}),
+        )
+        .await;
+        let (sender, input) = ToolInput::<StreamingEditFileToolInput>::test();
+        let (event_stream, _receiver) = ToolCallEventStream::test();
+        let task = cx.update(|cx| tool.clone().run(input, event_stream, cx));
+
+        // Partial 1: path looks like "root/file" — which exists! — but the LLM
+        // is still typing "_2.txt". No mode yet, so deserialization must fail.
+        sender.send_partial(json!({
+            "display_description": "Overwrite file",
+            "path": "root/file"
+        }));
+        cx.run_until_parked();
+
+        // Partial 2: path grows but mode is still a truncated string — the enum
+        // won't match "wri", so deserialization still fails.
+        sender.send_partial(json!({
+            "display_description": "Overwrite file",
+            "path": "root/file_2.txt",
+            "mode": "wri"
+        }));
+        cx.run_until_parked();
+
+        // Partial 3: mode is now a valid enum value — session can start.
+        sender.send_partial(json!({
+            "display_description": "Overwrite file",
+            "path": "root/file_2.txt",
+            "mode": "write"
+        }));
+        cx.run_until_parked();
+
+        // Final
+        sender.send_final(json!({
+            "display_description": "Overwrite file",
+            "path": "root/file_2.txt",
+            "mode": "write",
+            "content": "new content"
+        }));
+
+        let result = task.await;
+        let StreamingEditFileToolOutput::Success {
+            new_text,
+            input_path,
+            ..
+        } = result.unwrap()
+        else {
+            panic!("expected success");
+        };
+        assert_eq!(new_text, "new content");
+        assert!(
+            input_path.ends_with("file_2.txt"),
+            "expected edit to target file_2.txt, got: {}",
+            input_path.display()
+        );
     }
 
     #[gpui::test]
