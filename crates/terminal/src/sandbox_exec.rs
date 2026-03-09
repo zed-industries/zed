@@ -112,7 +112,9 @@ impl SandboxExecConfig {
 
     /// Serialize the config to a JSON string for passing via CLI arg.
     pub fn to_json(&self) -> String {
-        serde_json::to_string(self).expect("failed to serialize sandbox config")
+        // This type is a flat struct of Strings, Vec<String>, and bool — no
+        // cycles or non-serializable types — so serialization cannot fail.
+        serde_json::to_string(self).expect("SandboxExecConfig is non-cyclic")
     }
 
     /// Deserialize a config from a JSON string.
