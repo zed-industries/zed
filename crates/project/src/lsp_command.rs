@@ -533,7 +533,7 @@ impl LspCommand for PerformRename {
             .rename_provider
             .is_some_and(|capability| match capability {
                 OneOf::Left(enabled) => enabled,
-                OneOf::Right(_options) => true,
+                OneOf::Right(_) => true,
             })
     }
 

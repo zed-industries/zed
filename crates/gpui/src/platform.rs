@@ -45,6 +45,7 @@ use image::RgbaImage;
 use image::codecs::gif::GifDecoder;
 use image::{AnimationDecoder as _, Frame};
 use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
+use scheduler::Instant;
 pub use scheduler::RunnableMeta;
 use schemars::JsonSchema;
 use seahash::SeaHasher;
@@ -54,7 +55,7 @@ use std::borrow::Cow;
 use std::hash::{Hash, Hasher};
 use std::io::Cursor;
 use std::ops;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 use std::{
     fmt::{self, Debug},
     ops::Range,
@@ -229,7 +230,7 @@ pub trait Platform: 'static {
 }
 
 /// A handle to a platform's display, e.g. a monitor or laptop screen.
-pub trait PlatformDisplay: Send + Sync + Debug {
+pub trait PlatformDisplay: Debug {
     /// Get the ID for this display
     fn id(&self) -> DisplayId;
 
@@ -611,7 +612,7 @@ pub struct A11yCallbacks {
 pub type RunnableVariant = Runnable<RunnableMeta>;
 
 #[doc(hidden)]
-pub type TimerResolutionGuard = util::Deferred<Box<dyn FnOnce() + Send>>;
+pub type TimerResolutionGuard = gpui_util::Deferred<Box<dyn FnOnce() + Send>>;
 
 /// This type is public so that our test macro can generate and use it, but it should not
 /// be considered part of our public API.
@@ -630,7 +631,7 @@ pub trait PlatformDispatcher: Send + Sync {
     }
 
     fn increase_timer_resolution(&self) -> TimerResolutionGuard {
-        util::defer(Box::new(|| {}))
+        gpui_util::defer(Box::new(|| {}))
     }
 
     #[cfg(any(test, feature = "test-support"))]
@@ -878,7 +879,7 @@ impl From<RenderImageParams> for AtlasKey {
 }
 
 #[expect(missing_docs)]
-pub trait PlatformAtlas: Send + Sync {
+pub trait PlatformAtlas {
     fn get_or_insert_with<'a>(
         &self,
         key: &AtlasKey,
@@ -1112,6 +1113,13 @@ impl PlatformInputHandler {
     pub fn accepts_text_input(&mut self, window: &mut Window, cx: &mut App) -> bool {
         self.handler.accepts_text_input(window, cx)
     }
+
+    #[allow(dead_code)]
+    pub fn query_accepts_text_input(&mut self) -> bool {
+        self.cx
+            .update(|window, cx| self.handler.accepts_text_input(window, cx))
+            .unwrap_or(true)
+    }
 }
 
 /// A struct representing a selection in a text buffer, in UTF16 characters.
@@ -1286,7 +1294,7 @@ pub struct WindowOptions {
     ),
     allow(dead_code)
 )]
-#[expect(missing_docs)]
+#[allow(missing_docs)]
 pub struct WindowParams {
     pub bounds: Bounds<Pixels>,
 

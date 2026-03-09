@@ -31,7 +31,9 @@ use gpui::{
     StatefulInteractiveElement, Styled, Subscription, WeakEntity, Window, actions, div,
 };
 use onboarding_banner::OnboardingBanner;
-use project::{Project, git_store::GitStoreEvent, trusted_worktrees::TrustedWorktrees};
+use project::{
+    DisableAiSettings, Project, git_store::GitStoreEvent, trusted_worktrees::TrustedWorktrees,
+};
 use remote::RemoteConnectionOptions;
 use settings::Settings;
 use settings::WorktreeId;
@@ -686,7 +688,7 @@ impl TitleBar {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<AnyElement> {
-        if !cx.has_flag::<AgentV2FeatureFlag>() {
+        if !cx.has_flag::<AgentV2FeatureFlag>() || DisableAiSettings::get_global(cx).disable_ai {
             return None;
         }
 
@@ -707,7 +709,7 @@ impl TitleBar {
                         .indicator_border_color(Some(cx.theme().colors().title_bar_background))
                 })
                 .tooltip(move |_, cx| {
-                    Tooltip::for_action("Open Workspace Sidebar", &ToggleWorkspaceSidebar, cx)
+                    Tooltip::for_action("Open Threads Sidebar", &ToggleWorkspaceSidebar, cx)
                 })
                 .on_click(|_, window, cx| {
                     window.dispatch_action(ToggleWorkspaceSidebar.boxed_clone(), cx);
@@ -1012,9 +1014,9 @@ impl TitleBar {
                                     let user_store = user_store.clone();
                                     let organization = organization.clone();
                                     move |_window, cx| {
-                                        user_store.update(cx, |user_store, _cx| {
+                                        user_store.update(cx, |user_store, cx| {
                                             user_store
-                                                .set_current_organization(organization.clone());
+                                                .set_current_organization(organization.clone(), cx);
                                         });
                                     }
                                 },

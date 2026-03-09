@@ -2,13 +2,41 @@ mod connection;
 mod diff;
 mod mention;
 mod terminal;
+use action_log::{ActionLog, ActionLogTelemetry};
+use agent_client_protocol::{self as acp};
+use anyhow::{Context as _, Result, anyhow};
+use collections::HashSet;
+pub use connection::*;
+pub use diff::*;
+use futures::{FutureExt, channel::oneshot, future::BoxFuture};
+use gpui::{AppContext, AsyncApp, Context, Entity, EventEmitter, SharedString, Task, WeakEntity};
+use itertools::Itertools;
+use language::language_settings::FormatOnSave;
+use language::{Anchor, Buffer, BufferSnapshot, LanguageRegistry, Point, ToPoint, text_diff};
+use markdown::Markdown;
+pub use mention::*;
+use project::lsp_store::{FormatTrigger, LspFormatTarget};
+use project::{AgentLocation, Project, git_store::GitStoreCheckpoint};
+use serde::{Deserialize, Serialize};
+use serde_json::to_string_pretty;
+use std::collections::HashMap;
+use std::error::Error;
+use std::fmt::{Formatter, Write};
+use std::ops::Range;
+use std::process::ExitStatus;
+use std::rc::Rc;
+use std::time::{Duration, Instant};
+use std::{fmt::Display, mem, path::PathBuf, sync::Arc};
+use task::{Shell, ShellBuilder};
+pub use terminal::*;
+use text::Bias;
+use ui::App;
+use util::{ResultExt, get_default_system_shell_preferring_bash, paths::PathStyle};
+use uuid::Uuid;
 
 /// Key used in ACP ToolCall meta to store the tool's programmatic name.
 /// This is a workaround since ACP's ToolCall doesn't have a dedicated name field.
 pub const TOOL_NAME_META_KEY: &str = "tool_name";
-
-/// Key used in ACP ToolCall meta to store the session id when a subagent is spawned.
-pub const SUBAGENT_SESSION_ID_META_KEY: &str = "subagent_session_id";
 
 /// Helper to extract tool name from ACP meta
 pub fn tool_name_from_meta(meta: &Option<acp::Meta>) -> Option<SharedString> {
@@ -18,51 +46,31 @@ pub fn tool_name_from_meta(meta: &Option<acp::Meta>) -> Option<SharedString> {
         .map(|s| SharedString::from(s.to_owned()))
 }
 
-/// Helper to extract subagent session id from ACP meta
-pub fn subagent_session_id_from_meta(meta: &Option<acp::Meta>) -> Option<acp::SessionId> {
-    meta.as_ref()
-        .and_then(|m| m.get(SUBAGENT_SESSION_ID_META_KEY))
-        .and_then(|v| v.as_str())
-        .map(|s| acp::SessionId::from(s.to_string()))
-}
-
 /// Helper to create meta with tool name
 pub fn meta_with_tool_name(tool_name: &str) -> acp::Meta {
     acp::Meta::from_iter([(TOOL_NAME_META_KEY.into(), tool_name.into())])
 }
-use collections::HashSet;
-pub use connection::*;
-pub use diff::*;
-use language::language_settings::FormatOnSave;
-pub use mention::*;
-use project::lsp_store::{FormatTrigger, LspFormatTarget};
-use serde::{Deserialize, Serialize};
-use serde_json::to_string_pretty;
 
-use task::{Shell, ShellBuilder};
-pub use terminal::*;
+/// Key used in ACP ToolCall meta to store the session id and message indexes
+pub const SUBAGENT_SESSION_INFO_META_KEY: &str = "subagent_session_info";
 
-use action_log::{ActionLog, ActionLogTelemetry};
-use agent_client_protocol::{self as acp};
-use anyhow::{Context as _, Result, anyhow};
-use futures::{FutureExt, channel::oneshot, future::BoxFuture};
-use gpui::{AppContext, AsyncApp, Context, Entity, EventEmitter, SharedString, Task, WeakEntity};
-use itertools::Itertools;
-use language::{Anchor, Buffer, BufferSnapshot, LanguageRegistry, Point, ToPoint, text_diff};
-use markdown::Markdown;
-use project::{AgentLocation, Project, git_store::GitStoreCheckpoint};
-use std::collections::HashMap;
-use std::error::Error;
-use std::fmt::{Formatter, Write};
-use std::ops::Range;
-use std::process::ExitStatus;
-use std::rc::Rc;
-use std::time::{Duration, Instant};
-use std::{fmt::Display, mem, path::PathBuf, sync::Arc};
-use text::Bias;
-use ui::App;
-use util::{ResultExt, get_default_system_shell_preferring_bash, paths::PathStyle};
-use uuid::Uuid;
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct SubagentSessionInfo {
+    /// The session id of the subagent sessiont that was spawned
+    pub session_id: acp::SessionId,
+    /// The index of the message of the start of the "turn" run by this tool call
+    pub message_start_index: usize,
+    /// The index of the output of the message that the subagent has returned
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub message_end_index: Option<usize>,
+}
+
+/// Helper to extract subagent session id from ACP meta
+pub fn subagent_session_info_from_meta(meta: &Option<acp::Meta>) -> Option<SubagentSessionInfo> {
+    meta.as_ref()
+        .and_then(|m| m.get(SUBAGENT_SESSION_INFO_META_KEY))
+        .and_then(|v| serde_json::from_value(v.clone()).ok())
+}
 
 #[derive(Debug)]
 pub struct UserMessage {
@@ -102,6 +110,7 @@ impl UserMessage {
 pub struct AssistantMessage {
     pub chunks: Vec<AssistantMessageChunk>,
     pub indented: bool,
+    pub is_subagent_output: bool,
 }
 
 impl AssistantMessage {
@@ -222,7 +231,7 @@ pub struct ToolCall {
     pub raw_input_markdown: Option<Entity<Markdown>>,
     pub raw_output: Option<serde_json::Value>,
     pub tool_name: Option<SharedString>,
-    pub subagent_session_id: Option<acp::SessionId>,
+    pub subagent_session_info: Option<SubagentSessionInfo>,
 }
 
 impl ToolCall {
@@ -261,7 +270,7 @@ impl ToolCall {
 
         let tool_name = tool_name_from_meta(&tool_call.meta);
 
-        let subagent_session = subagent_session_id_from_meta(&tool_call.meta);
+        let subagent_session_info = subagent_session_info_from_meta(&tool_call.meta);
 
         let result = Self {
             id: tool_call.tool_call_id,
@@ -276,7 +285,7 @@ impl ToolCall {
             raw_input_markdown,
             raw_output: tool_call.raw_output,
             tool_name,
-            subagent_session_id: subagent_session,
+            subagent_session_info,
         };
         Ok(result)
     }
@@ -309,8 +318,8 @@ impl ToolCall {
             self.status = status.into();
         }
 
-        if let Some(subagent_session_id) = subagent_session_id_from_meta(&meta) {
-            self.subagent_session_id = Some(subagent_session_id);
+        if let Some(subagent_session_info) = subagent_session_info_from_meta(&meta) {
+            self.subagent_session_info = Some(subagent_session_info);
         }
 
         if let Some(title) = title {
@@ -401,7 +410,7 @@ impl ToolCall {
 
     pub fn is_subagent(&self) -> bool {
         self.tool_name.as_ref().is_some_and(|s| s == "spawn_agent")
-            || self.subagent_session_id.is_some()
+            || self.subagent_session_info.is_some()
     }
 
     pub fn to_markdown(&self, cx: &App) -> String {
@@ -943,8 +952,11 @@ struct RunningTurn {
 }
 
 pub struct AcpThread {
+    session_id: acp::SessionId,
+    cwd: Option<PathBuf>,
     parent_session_id: Option<acp::SessionId>,
     title: SharedString,
+    provisional_title: Option<SharedString>,
     entries: Vec<AgentThreadEntry>,
     plan: Plan,
     project: Entity<Project>,
@@ -953,7 +965,6 @@ pub struct AcpThread {
     turn_id: u32,
     running_turn: Option<RunningTurn>,
     connection: Rc<dyn AgentConnection>,
-    session_id: acp::SessionId,
     token_usage: Option<TokenUsage>,
     prompt_capabilities: acp::PromptCapabilities,
     _observe_prompt_capabilities: Task<anyhow::Result<()>>,
@@ -961,6 +972,10 @@ pub struct AcpThread {
     pending_terminal_output: HashMap<acp::TerminalId, Vec<Vec<u8>>>,
     pending_terminal_exit: HashMap<acp::TerminalId, acp::TerminalExitStatus>,
     had_error: bool,
+    /// The user's unsent prompt text, persisted so it can be restored when reloading the thread.
+    draft_prompt: Option<Vec<acp::ContentBlock>>,
+    /// The initial scroll position for the thread view, set during session registration.
+    ui_scroll_position: Option<gpui::ListOffset>,
 }
 
 impl From<&AcpThread> for ActionLogTelemetry {
@@ -983,7 +998,7 @@ pub enum AcpThreadEvent {
     ToolAuthorizationReceived(acp::ToolCallId),
     Retry(RetryStatus),
     SubagentSpawned(acp::SessionId),
-    Stopped,
+    Stopped(acp::StopReason),
     Error,
     LoadError(LoadError),
     PromptCapabilitiesUpdated,
@@ -1034,87 +1049,6 @@ pub enum TerminalProviderCommand {
     },
 }
 
-impl AcpThread {
-    pub fn on_terminal_provider_event(
-        &mut self,
-        event: TerminalProviderEvent,
-        cx: &mut Context<Self>,
-    ) {
-        match event {
-            TerminalProviderEvent::Created {
-                terminal_id,
-                label,
-                cwd,
-                output_byte_limit,
-                terminal,
-            } => {
-                let entity = self.register_terminal_created(
-                    terminal_id.clone(),
-                    label,
-                    cwd,
-                    output_byte_limit,
-                    terminal,
-                    cx,
-                );
-
-                if let Some(mut chunks) = self.pending_terminal_output.remove(&terminal_id) {
-                    for data in chunks.drain(..) {
-                        entity.update(cx, |term, cx| {
-                            term.inner().update(cx, |inner, cx| {
-                                inner.write_output(&data, cx);
-                            })
-                        });
-                    }
-                }
-
-                if let Some(_status) = self.pending_terminal_exit.remove(&terminal_id) {
-                    entity.update(cx, |_term, cx| {
-                        cx.notify();
-                    });
-                }
-
-                cx.notify();
-            }
-            TerminalProviderEvent::Output { terminal_id, data } => {
-                if let Some(entity) = self.terminals.get(&terminal_id) {
-                    entity.update(cx, |term, cx| {
-                        term.inner().update(cx, |inner, cx| {
-                            inner.write_output(&data, cx);
-                        })
-                    });
-                } else {
-                    self.pending_terminal_output
-                        .entry(terminal_id)
-                        .or_default()
-                        .push(data);
-                }
-            }
-            TerminalProviderEvent::TitleChanged { terminal_id, title } => {
-                if let Some(entity) = self.terminals.get(&terminal_id) {
-                    entity.update(cx, |term, cx| {
-                        term.inner().update(cx, |inner, cx| {
-                            inner.breadcrumb_text = title;
-                            cx.emit(::terminal::Event::BreadcrumbsChanged);
-                        })
-                    });
-                }
-            }
-            TerminalProviderEvent::Exit {
-                terminal_id,
-                status,
-            } => {
-                if let Some(entity) = self.terminals.get(&terminal_id) {
-                    entity.update(cx, |_term, cx| {
-                        cx.notify();
-                    });
-                } else {
-                    self.pending_terminal_exit.insert(terminal_id, status);
-                }
-            }
-        }
-    }
-}
-
 #[derive(PartialEq, Eq, Debug)]
 pub enum ThreadStatus {
     Idle,
@@ -1161,6 +1095,7 @@ impl AcpThread {
     pub fn new(
         parent_session_id: Option<acp::SessionId>,
         title: impl Into<SharedString>,
+        cwd: Option<PathBuf>,
         connection: Rc<dyn AgentConnection>,
         project: Entity<Project>,
         action_log: Entity<ActionLog>,
@@ -1181,11 +1116,13 @@ impl AcpThread {
 
         Self {
             parent_session_id,
+            cwd,
             action_log,
             shared_buffers: Default::default(),
             entries: Default::default(),
             plan: Default::default(),
             title: title.into(),
+            provisional_title: None,
             project,
             running_turn: None,
             turn_id: 0,
@@ -1198,6 +1135,8 @@ impl AcpThread {
             pending_terminal_output: HashMap::default(),
             pending_terminal_exit: HashMap::default(),
             had_error: false,
+            draft_prompt: None,
+            ui_scroll_position: None,
         }
     }
 
@@ -1207,6 +1146,22 @@ impl AcpThread {
 
     pub fn prompt_capabilities(&self) -> acp::PromptCapabilities {
         self.prompt_capabilities.clone()
+    }
+
+    pub fn draft_prompt(&self) -> Option<&[acp::ContentBlock]> {
+        self.draft_prompt.as_deref()
+    }
+
+    pub fn set_draft_prompt(&mut self, prompt: Option<Vec<acp::ContentBlock>>) {
+        self.draft_prompt = prompt;
+    }
+
+    pub fn ui_scroll_position(&self) -> Option<gpui::ListOffset> {
+        self.ui_scroll_position
+    }
+
+    pub fn set_ui_scroll_position(&mut self, position: Option<gpui::ListOffset>) {
+        self.ui_scroll_position = position;
     }
 
     pub fn connection(&self) -> &Rc<dyn AgentConnection> {
@@ -1222,7 +1177,9 @@ impl AcpThread {
     }
 
     pub fn title(&self) -> SharedString {
-        self.title.clone()
+        self.provisional_title
+            .clone()
+            .unwrap_or_else(|| self.title.clone())
     }
 
     pub fn entries(&self) -> &[AgentThreadEntry] {
@@ -1231,6 +1188,10 @@ impl AcpThread {
 
     pub fn session_id(&self) -> &acp::SessionId {
         &self.session_id
+    }
+
+    pub fn cwd(&self) -> Option<&PathBuf> {
+        self.cwd.as_ref()
     }
 
     pub fn status(&self) -> ThreadStatus {
@@ -1425,6 +1386,7 @@ impl AcpThread {
             && let AgentThreadEntry::AssistantMessage(AssistantMessage {
                 chunks,
                 indented: existing_indented,
+                is_subagent_output: _,
             }) = last_entry
             && *existing_indented == indented
         {
@@ -1456,6 +1418,7 @@ impl AcpThread {
                 AgentThreadEntry::AssistantMessage(AssistantMessage {
                     chunks: vec![chunk],
                     indented,
+                    is_subagent_output: false,
                 }),
                 cx,
             );
@@ -1472,14 +1435,27 @@ impl AcpThread {
     }
 
     pub fn set_title(&mut self, title: SharedString, cx: &mut Context<Self>) -> Task<Result<()>> {
+        let had_provisional = self.provisional_title.take().is_some();
         if title != self.title {
             self.title = title.clone();
             cx.emit(AcpThreadEvent::TitleUpdated);
             if let Some(set_title) = self.connection.set_title(&self.session_id, cx) {
                 return set_title.run(title, cx);
             }
+        } else if had_provisional {
+            cx.emit(AcpThreadEvent::TitleUpdated);
         }
         Task::ready(Ok(()))
+    }
+
+    /// Sets a provisional display title without propagating back to the
+    /// underlying agent connection. This is used for quick preview titles
+    /// (e.g. first 20 chars of the user message) that should be shown
+    /// immediately but replaced once the LLM generates a proper title via
+    /// `set_title`.
+    pub fn set_provisional_title(&mut self, title: SharedString, cx: &mut Context<Self>) {
+        self.provisional_title = Some(title);
+        cx.emit(AcpThreadEvent::TitleUpdated);
     }
 
     pub fn subagent_spawned(&mut self, session_id: acp::SessionId, cx: &mut Context<Self>) {
@@ -1525,7 +1501,7 @@ impl AcpThread {
                     raw_input_markdown: None,
                     raw_output: None,
                     tool_name: None,
-                    subagent_session_id: None,
+                    subagent_session_info: None,
                 };
                 self.push_entry(AgentThreadEntry::ToolCall(failed_tool_call), cx);
                 return Ok(());
@@ -1589,6 +1565,7 @@ impl AcpThread {
 
         let agent_telemetry_id = self.connection().telemetry_id();
         let session = self.session_id();
+        let parent_session_id = self.parent_session_id();
         if let ToolCallStatus::Completed | ToolCallStatus::Failed = status {
             let status = if matches!(status, ToolCallStatus::Completed) {
                 "completed"
@@ -1599,6 +1576,7 @@ impl AcpThread {
                 "Agent Tool Call Completed",
                 agent_telemetry_id,
                 session,
+                parent_session_id,
                 status
             );
         }
@@ -1687,10 +1665,14 @@ impl AcpThread {
 
     pub fn tool_call_for_subagent(&self, session_id: &acp::SessionId) -> Option<&ToolCall> {
         self.entries.iter().find_map(|entry| match entry {
-            AgentThreadEntry::ToolCall(tool_call)
-                if tool_call.subagent_session_id.as_ref() == Some(session_id) =>
-            {
-                Some(tool_call)
+            AgentThreadEntry::ToolCall(tool_call) => {
+                if let Some(subagent_session_info) = &tool_call.subagent_session_info
+                    && &subagent_session_info.session_id == session_id
+                {
+                    Some(tool_call)
+                } else {
+                    None
+                }
             }
             _ => None,
         })
@@ -1698,6 +1680,7 @@ impl AcpThread {
 
     pub fn resolve_locations(&mut self, id: acp::ToolCallId, cx: &mut Context<Self>) {
         let project = self.project.clone();
+        let should_update_agent_location = self.parent_session_id.is_none();
         let Some((_, tool_call)) = self.tool_call_mut(&id) else {
             return;
         };
@@ -1733,7 +1716,7 @@ impl AcpThread {
                         } else {
                             false
                         };
-                        if !should_ignore {
+                        if !should_ignore && should_update_agent_location {
                             project.set_agent_location(Some(location.into()), cx);
                         }
                     });
@@ -1964,8 +1947,10 @@ impl AcpThread {
                 .await?;
 
             this.update(cx, |this, cx| {
-                this.project
-                    .update(cx, |project, cx| project.set_agent_location(None, cx));
+                if this.parent_session_id.is_none() {
+                    this.project
+                        .update(cx, |project, cx| project.set_agent_location(None, cx));
+                }
                 let Ok(response) = response else {
                     // tx dropped, just return
                     return Ok(None);
@@ -2033,7 +2018,7 @@ impl AcpThread {
                             }
                         }
 
-                        cx.emit(AcpThreadEvent::Stopped);
+                        cx.emit(AcpThreadEvent::Stopped(r.stop_reason));
                         Ok(Some(r))
                     }
                     Err(e) => {
@@ -2237,6 +2222,7 @@ impl AcpThread {
         let limit = limit.unwrap_or(u32::MAX);
         let project = self.project.clone();
         let action_log = self.action_log.clone();
+        let should_update_agent_location = self.parent_session_id.is_none();
         cx.spawn(async move |this, cx| {
             let load = project.update(cx, |project, cx| {
                 let path = project
@@ -2287,15 +2273,17 @@ impl AcpThread {
             let start = snapshot.anchor_before(start_position);
             let end = snapshot.anchor_before(Point::new(line.saturating_add(limit), 0));
 
-            project.update(cx, |project, cx| {
-                project.set_agent_location(
-                    Some(AgentLocation {
-                        buffer: buffer.downgrade(),
-                        position: start,
-                    }),
-                    cx,
-                );
-            });
+            if should_update_agent_location {
+                project.update(cx, |project, cx| {
+                    project.set_agent_location(
+                        Some(AgentLocation {
+                            buffer: buffer.downgrade(),
+                            position: start,
+                        }),
+                        cx,
+                    );
+                });
+            }
 
             Ok(snapshot.text_for_range(start..end).collect::<String>())
         })
@@ -2309,6 +2297,7 @@ impl AcpThread {
     ) -> Task<Result<()>> {
         let project = self.project.clone();
         let action_log = self.action_log.clone();
+        let should_update_agent_location = self.parent_session_id.is_none();
         cx.spawn(async move |this, cx| {
             let load = project.update(cx, |project, cx| {
                 let path = project
@@ -2330,24 +2319,26 @@ impl AcpThread {
                     text_diff(old_text.as_str(), &content)
                         .into_iter()
                         .map(|(range, replacement)| {
-                            (snapshot.anchor_range_between(range), replacement)
+                            (snapshot.anchor_range_around(range), replacement)
                         })
                         .collect::<Vec<_>>()
                 })
                 .await;
 
-            project.update(cx, |project, cx| {
-                project.set_agent_location(
-                    Some(AgentLocation {
-                        buffer: buffer.downgrade(),
-                        position: edits
-                            .last()
-                            .map(|(range, _)| range.end)
-                            .unwrap_or(Anchor::min_for_buffer(buffer.read(cx).remote_id())),
-                    }),
-                    cx,
-                );
-            });
+            if should_update_agent_location {
+                project.update(cx, |project, cx| {
+                    project.set_agent_location(
+                        Some(AgentLocation {
+                            buffer: buffer.downgrade(),
+                            position: edits
+                                .last()
+                                .map(|(range, _)| range.end)
+                                .unwrap_or(Anchor::min_for_buffer(buffer.read(cx).remote_id())),
+                        }),
+                        cx,
+                    );
+                });
+            }
 
             let format_on_save = cx.update(|cx| {
                 action_log.update(cx, |action_log, cx| {
@@ -2548,6 +2539,95 @@ impl AcpThread {
         });
         self.terminals.insert(terminal_id.clone(), entity.clone());
         entity
+    }
+
+    pub fn mark_as_subagent_output(&mut self, cx: &mut Context<Self>) {
+        for entry in self.entries.iter_mut().rev() {
+            if let AgentThreadEntry::AssistantMessage(assistant_message) = entry {
+                assistant_message.is_subagent_output = true;
+                cx.notify();
+                return;
+            }
+        }
+    }
+
+    pub fn on_terminal_provider_event(
+        &mut self,
+        event: TerminalProviderEvent,
+        cx: &mut Context<Self>,
+    ) {
+        match event {
+            TerminalProviderEvent::Created {
+                terminal_id,
+                label,
+                cwd,
+                output_byte_limit,
+                terminal,
+            } => {
+                let entity = self.register_terminal_created(
+                    terminal_id.clone(),
+                    label,
+                    cwd,
+                    output_byte_limit,
+                    terminal,
+                    cx,
+                );
+
+                if let Some(mut chunks) = self.pending_terminal_output.remove(&terminal_id) {
+                    for data in chunks.drain(..) {
+                        entity.update(cx, |term, cx| {
+                            term.inner().update(cx, |inner, cx| {
+                                inner.write_output(&data, cx);
+                            })
+                        });
+                    }
+                }
+
+                if let Some(_status) = self.pending_terminal_exit.remove(&terminal_id) {
+                    entity.update(cx, |_term, cx| {
+                        cx.notify();
+                    });
+                }
+
+                cx.notify();
+            }
+            TerminalProviderEvent::Output { terminal_id, data } => {
+                if let Some(entity) = self.terminals.get(&terminal_id) {
+                    entity.update(cx, |term, cx| {
+                        term.inner().update(cx, |inner, cx| {
+                            inner.write_output(&data, cx);
+                        })
+                    });
+                } else {
+                    self.pending_terminal_output
+                        .entry(terminal_id)
+                        .or_default()
+                        .push(data);
+                }
+            }
+            TerminalProviderEvent::TitleChanged { terminal_id, title } => {
+                if let Some(entity) = self.terminals.get(&terminal_id) {
+                    entity.update(cx, |term, cx| {
+                        term.inner().update(cx, |inner, cx| {
+                            inner.breadcrumb_text = title;
+                            cx.emit(::terminal::Event::BreadcrumbsChanged);
+                        })
+                    });
+                }
+            }
+            TerminalProviderEvent::Exit {
+                terminal_id,
+                status,
+            } => {
+                if let Some(entity) = self.terminals.get(&terminal_id) {
+                    entity.update(cx, |_term, cx| {
+                        cx.notify();
+                    });
+                } else {
+                    self.pending_terminal_exit.insert(terminal_id, status);
+                }
+            }
+        }
     }
 }
 
@@ -3858,6 +3938,7 @@ mod tests {
     struct FakeAgentConnection {
         auth_methods: Vec<acp::AuthMethod>,
         sessions: Arc<parking_lot::Mutex<HashMap<acp::SessionId, WeakEntity<AcpThread>>>>,
+        set_title_calls: Rc<RefCell<Vec<SharedString>>>,
         on_user_message: Option<
             Rc<
                 dyn Fn(
@@ -3876,6 +3957,7 @@ mod tests {
                 auth_methods: Vec::new(),
                 on_user_message: None,
                 sessions: Arc::default(),
+                set_title_calls: Default::default(),
             }
         }
 
@@ -3911,7 +3993,7 @@ mod tests {
         fn new_session(
             self: Rc<Self>,
             project: Entity<Project>,
-            _cwd: &Path,
+            cwd: &Path,
             cx: &mut App,
         ) -> Task<gpui::Result<Entity<AcpThread>>> {
             let session_id = acp::SessionId::new(
@@ -3926,6 +4008,7 @@ mod tests {
                 AcpThread::new(
                     None,
                     "Test",
+                    Some(cwd.to_path_buf()),
                     self.clone(),
                     project,
                     action_log,
@@ -3980,8 +4063,29 @@ mod tests {
             }))
         }
 
+        fn set_title(
+            &self,
+            _session_id: &acp::SessionId,
+            _cx: &App,
+        ) -> Option<Rc<dyn AgentSessionSetTitle>> {
+            Some(Rc::new(FakeAgentSessionSetTitle {
+                calls: self.set_title_calls.clone(),
+            }))
+        }
+
         fn into_any(self: Rc<Self>) -> Rc<dyn Any> {
             self
+        }
+    }
+
+    struct FakeAgentSessionSetTitle {
+        calls: Rc<RefCell<Vec<SharedString>>>,
+    }
+
+    impl AgentSessionSetTitle for FakeAgentSessionSetTitle {
+        fn run(&self, title: SharedString, _cx: &mut App) -> Task<Result<()>> {
+            self.calls.borrow_mut().push(title);
+            Task::ready(Ok(()))
         }
     }
 
@@ -4575,5 +4679,55 @@ mod tests {
                 tool_entry.status
             );
         });
+    }
+
+    #[gpui::test]
+    async fn test_provisional_title_replaced_by_real_title(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        let connection = Rc::new(FakeAgentConnection::new());
+        let set_title_calls = connection.set_title_calls.clone();
+
+        let thread = cx
+            .update(|cx| connection.new_session(project, Path::new(path!("/test")), cx))
+            .await
+            .unwrap();
+
+        // Initial title is the default.
+        thread.read_with(cx, |thread, _| {
+            assert_eq!(thread.title().as_ref(), "Test");
+        });
+
+        // Setting a provisional title updates the display title.
+        thread.update(cx, |thread, cx| {
+            thread.set_provisional_title("Hello, can you help…".into(), cx);
+        });
+        thread.read_with(cx, |thread, _| {
+            assert_eq!(thread.title().as_ref(), "Hello, can you help…");
+        });
+
+        // The provisional title should NOT have propagated to the connection.
+        assert_eq!(
+            set_title_calls.borrow().len(),
+            0,
+            "provisional title should not propagate to the connection"
+        );
+
+        // When the real title arrives via set_title, it replaces the
+        // provisional title and propagates to the connection.
+        let task = thread.update(cx, |thread, cx| {
+            thread.set_title("Helping with Rust question".into(), cx)
+        });
+        task.await.expect("set_title should succeed");
+        thread.read_with(cx, |thread, _| {
+            assert_eq!(thread.title().as_ref(), "Helping with Rust question");
+        });
+        assert_eq!(
+            set_title_calls.borrow().as_slice(),
+            &[SharedString::from("Helping with Rust question")],
+            "real title should propagate to the connection"
+        );
     }
 }

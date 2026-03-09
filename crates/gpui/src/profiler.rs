@@ -1,3 +1,4 @@
+use scheduler::Instant;
 use std::{
     cell::LazyCell,
     collections::HashMap,
@@ -5,7 +6,6 @@ use std::{
     hash::{DefaultHasher, Hash},
     sync::Arc,
     thread::ThreadId,
-    time::Instant,
 };
 
 use serde::{Deserialize, Serialize};

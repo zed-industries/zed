@@ -19,6 +19,7 @@ pub(crate) struct TestWindowState {
     pub(crate) title: Option<String>,
     pub(crate) edited: bool,
     platform: Weak<TestPlatform>,
+    // TODO: Replace with `Rc`
     sprite_atlas: Arc<dyn PlatformAtlas>,
     pub(crate) should_close_handler: Option<Box<dyn FnMut() -> bool>>,
     hit_test_window_control_callback: Option<Box<dyn FnMut() -> Option<WindowControlArea>>>,

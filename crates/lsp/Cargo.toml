@@ -13,12 +13,13 @@ path = "src/lsp.rs"
 doctest = false
 
 [features]
-test-support = ["async-pipe"]
+test-support = ["async-pipe", "gpui_util"]
 
 [dependencies]
 anyhow.workspace = true
 async-pipe = { workspace = true, optional = true }
 collections.workspace = true
+gpui_util = { workspace = true, optional = true }
 futures.workspace = true
 gpui.workspace = true
 log.workspace = true
@@ -34,6 +35,7 @@ release_channel.workspace = true
 
 [dev-dependencies]
 async-pipe.workspace = true
+gpui_util.workspace = true
 ctor.workspace = true
 gpui = { workspace = true, features = ["test-support"] }
 semver.workspace = true

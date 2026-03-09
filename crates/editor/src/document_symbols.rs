@@ -77,6 +77,9 @@ impl Editor {
         let excerpt = multi_buffer_snapshot.excerpt_containing(cursor..cursor)?;
         let excerpt_id = excerpt.id();
         let buffer_id = excerpt.buffer_id();
+        if Some(buffer_id) != cursor.text_anchor.buffer_id {
+            return None;
+        }
         let buffer = self.buffer.read(cx).buffer(buffer_id)?;
         let buffer_snapshot = buffer.read(cx).snapshot();
         let cursor_text_anchor = cursor.text_anchor;

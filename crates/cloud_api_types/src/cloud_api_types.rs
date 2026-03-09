@@ -52,6 +52,12 @@ pub struct AcceptTermsOfServiceResponse {
 #[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]
 pub struct LlmToken(pub String);
 
+#[derive(Debug, Default, PartialEq, Clone, Serialize, Deserialize)]
+pub struct CreateLlmTokenBody {
+    #[serde(default)]
+    pub organization_id: Option<OrganizationId>,
+}
+
 #[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]
 pub struct CreateLlmTokenResponse {
     pub token: LlmToken,
@@ -62,6 +68,7 @@ pub struct SubmitAgentThreadFeedbackBody {
     pub organization_id: Option<OrganizationId>,
     pub agent: String,
     pub session_id: String,
+    pub parent_session_id: Option<String>,
     pub rating: String,
     pub thread: serde_json::Value,
 }

@@ -126,9 +126,11 @@ The following licenses are accepted:
 - [Apache 2.0](https://www.apache.org/licenses/LICENSE-2.0)
 - [BSD 2-Clause](https://opensource.org/license/bsd-2-clause)
 - [BSD 3-Clause](https://opensource.org/license/bsd-3-clause)
+- [CC BY 4.0](https://creativecommons.org/licenses/by/4.0)
 - [GNU GPLv3](https://www.gnu.org/licenses/gpl-3.0.en.html)
 - [GNU LGPLv3](https://www.gnu.org/licenses/lgpl-3.0.en.html)
 - [MIT](https://opensource.org/license/mit)
+- [Unlicense](https://unlicense.org)
 - [zlib](https://opensource.org/license/zlib)
 
 This allows us to distribute the resulting binary produced from your extension code to our users.

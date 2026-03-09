@@ -7,8 +7,9 @@ use collections::FxHashMap;
 use gpui::{DefiniteLength, FontWeight, px, relative};
 use html5ever::{ParseOpts, local_name, parse_document, tendril::TendrilSink};
 use language::LanguageRegistry;
+use markdown::parser::PARSE_OPTIONS;
 use markup5ever_rcdom::RcDom;
-use pulldown_cmark::{Alignment, Event, Options, Parser, Tag, TagEnd};
+use pulldown_cmark::{Alignment, Event, Parser, Tag, TagEnd};
 use std::{
     cell::RefCell, collections::HashMap, mem, ops::Range, path::PathBuf, rc::Rc, sync::Arc, vec,
 };
@@ -19,10 +20,7 @@ pub async fn parse_markdown(
     file_location_directory: Option<PathBuf>,
     language_registry: Option<Arc<LanguageRegistry>>,
 ) -> ParsedMarkdown {
-    let mut options = Options::all();
-    options.remove(pulldown_cmark::Options::ENABLE_DEFINITION_LIST);
-
-    let parser = Parser::new_ext(markdown_input, options);
+    let parser = Parser::new_ext(markdown_input, PARSE_OPTIONS);
     let parser = MarkdownParser::new(
         parser.into_offset_iter().collect(),
         file_location_directory,
@@ -3072,6 +3070,26 @@ More text
                     0..20
                 ),
                 p("More text", 21..31)
+            ]
+        );
+    }
+
+    #[gpui::test]
+    async fn test_dollar_signs_are_plain_text() {
+        // Dollar signs should be preserved as plain text, not treated as math delimiters.
+        // Regression test for https://github.com/zed-industries/zed/issues/50170
+        let parsed = parse("$100$ per unit").await;
+        assert_eq!(parsed.children, vec![p("$100$ per unit", 0..14)]);
+    }
+
+    #[gpui::test]
+    async fn test_dollar_signs_in_list_items() {
+        let parsed = parse("- $18,000 budget\n- $20,000 budget\n").await;
+        assert_eq!(
+            parsed.children,
+            vec![
+                list_item(0..16, 1, Unordered, vec![p("$18,000 budget", 2..16)]),
+                list_item(17..33, 1, Unordered, vec![p("$20,000 budget", 19..33)]),
             ]
         );
     }

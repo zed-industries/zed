@@ -2,12 +2,11 @@
 /// The tests in this file assume that server_cx is running on Windows too.
 /// We neead to find a way to test Windows-Non-Windows interactions.
 use crate::headless_project::HeadlessProject;
-use agent::{AgentTool, ReadFileTool, ReadFileToolInput, Templates, Thread, ToolCallEventStream};
+use agent::{AgentTool, ReadFileTool, ReadFileToolInput, ToolCallEventStream, ToolInput};
 use client::{Client, UserStore};
 use clock::FakeSystemClock;
 use collections::{HashMap, HashSet};
-use language_model::{LanguageModelToolResultContent, fake_provider::FakeLanguageModel};
-use prompt_store::ProjectContext;
+use language_model::LanguageModelToolResultContent;
 
 use extension::ExtensionHostProxy;
 use fs::{FakeFs, Fs};
@@ -1939,30 +1938,19 @@ async fn test_remote_agent_fs_tool_calls(cx: &mut TestAppContext, server_cx: &mu
 
     let action_log = cx.new(|_| action_log::ActionLog::new(project.clone()));
 
-    // Create a minimal thread for the ReadFileTool
-    let context_server_registry =
-        cx.new(|cx| agent::ContextServerRegistry::new(project.read(cx).context_server_store(), cx));
-    let model = Arc::new(FakeLanguageModel::default());
-    let thread = cx.new(|cx| {
-        Thread::new(
-            project.clone(),
-            cx.new(|_cx| ProjectContext::default()),
-            context_server_registry,
-            Templates::new(),
-            Some(model),
-            cx,
-        )
-    });
-
     let input = ReadFileToolInput {
         path: "project/b.txt".into(),
         start_line: None,
         end_line: None,
     };
-    let read_tool = Arc::new(ReadFileTool::new(thread.downgrade(), project, action_log));
+    let read_tool = Arc::new(ReadFileTool::new(project, action_log, true));
     let (event_stream, _) = ToolCallEventStream::test();
 
-    let exists_result = cx.update(|cx| read_tool.clone().run(input, event_stream.clone(), cx));
+    let exists_result = cx.update(|cx| {
+        read_tool
+            .clone()
+            .run(ToolInput::resolved(input), event_stream.clone(), cx)
+    });
     let output = exists_result.await.unwrap();
     assert_eq!(output, LanguageModelToolResultContent::Text("B".into()));
 
@@ -1971,7 +1959,8 @@ async fn test_remote_agent_fs_tool_calls(cx: &mut TestAppContext, server_cx: &mu
         start_line: None,
         end_line: None,
     };
-    let does_not_exist_result = cx.update(|cx| read_tool.run(input, event_stream, cx));
+    let does_not_exist_result =
+        cx.update(|cx| read_tool.run(ToolInput::resolved(input), event_stream, cx));
     does_not_exist_result.await.unwrap_err();
 }
 
@@ -1998,7 +1987,7 @@ async fn test_remote_external_agent_server(
             .map(|name| name.to_string())
             .collect::<Vec<_>>()
     });
-    pretty_assertions::assert_eq!(names, ["codex", "gemini", "claude"]);
+    pretty_assertions::assert_eq!(names, Vec::<String>::new());
     server_cx.update_global::<SettingsStore, _>(|settings_store, cx| {
         settings_store
             .set_server_settings(
@@ -2029,15 +2018,14 @@ async fn test_remote_external_agent_server(
             .map(|name| name.to_string())
             .collect::<Vec<_>>()
     });
-    pretty_assertions::assert_eq!(names, ["gemini", "codex", "claude", "foo"]);
-    let (command, root, login) = project
+    pretty_assertions::assert_eq!(names, ["foo"]);
+    let command = project
         .update(cx, |project, cx| {
             project.agent_server_store().update(cx, |store, cx| {
                 store
                     .get_external_agent(&"foo".into())
                     .unwrap()
                     .get_command(
-                        None,
                         HashMap::from_iter([("OTHER_VAR".into(), "other-val".into())]),
                         None,
                         None,
@@ -2053,13 +2041,12 @@ async fn test_remote_external_agent_server(
             path: "mock".into(),
             args: vec!["foo-cli".into(), "--flag".into()],
             env: Some(HashMap::from_iter([
+                ("NO_BROWSER".into(), "1".into()),
                 ("VAR".into(), "val".into()),
                 ("OTHER_VAR".into(), "other-val".into())
             ]))
         }
     );
-    assert_eq!(&PathBuf::from(root), paths::home_dir());
-    assert!(login.is_none());
 }
 
 pub async fn init_test(

@@ -619,6 +619,11 @@ pub struct GitPanelSettingsContent {
     ///
     /// Default: false
     pub tree_view: Option<bool>,
+
+    /// Whether to show the addition/deletion change count next to each file in the Git panel.
+    ///
+    /// Default: false
+    pub diff_stats: Option<bool>,
 }
 
 #[derive(
@@ -711,10 +716,6 @@ pub struct FileFinderSettingsContent {
     ///
     /// Default: true
     pub skip_focus_for_active_in_search: Option<bool>,
-    /// Determines whether to show the git status in the file finder
-    ///
-    /// Default: true
-    pub git_status: Option<bool>,
     /// Whether to use gitignored files when searching.
     /// Only the file Zed had indexed will be used, not necessary all the gitignored files.
     ///
@@ -1147,11 +1148,6 @@ pub struct ReplSettingsContent {
     ///
     /// Default: 0
     pub output_max_height_lines: Option<usize>,
-    /// Maximum number of columns of output to display before scaling images.
-    /// Set to 0 to disable output width limits.
-    ///
-    /// Default: 0
-    pub output_max_width_columns: Option<usize>,
 }
 
 /// Settings for configuring the which-key popup behaviour.

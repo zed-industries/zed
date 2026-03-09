@@ -27,7 +27,7 @@ jobs:
     - name: publish_extension_cli::publish_job::build_extension_cli
       run: cargo build --release --package extension_cli
     - name: publish_extension_cli::publish_job::upload_binary
-      run: script/upload-extension-cli ${{ github.sha }}
+      run: script/upload-extension-cli "$GITHUB_SHA"
       env:
         DIGITALOCEAN_SPACES_ACCESS_KEY: ${{ secrets.DIGITALOCEAN_SPACES_ACCESS_KEY }}
         DIGITALOCEAN_SPACES_SECRET_KEY: ${{ secrets.DIGITALOCEAN_SPACES_SECRET_KEY }}
@@ -55,10 +55,10 @@ jobs:
     - id: short-sha
       name: publish_extension_cli::get_short_sha
       run: |
-        echo "sha_short=$(echo "${{ github.sha }}" | cut -c1-7)" >> "$GITHUB_OUTPUT"
+        echo "sha_short=$(echo "$GITHUB_SHA" | cut -c1-7)" >> "$GITHUB_OUTPUT"
     - name: publish_extension_cli::update_sha_in_zed::replace_sha
       run: |
-        sed -i "s/ZED_EXTENSION_CLI_SHA: &str = \"[a-f0-9]*\"/ZED_EXTENSION_CLI_SHA: \&str = \"${{ github.sha }}\"/" \
+        sed -i "s/ZED_EXTENSION_CLI_SHA: &str = \"[a-f0-9]*\"/ZED_EXTENSION_CLI_SHA: \&str = \"$GITHUB_SHA\"/" \
             tooling/xtask/src/tasks/workflows/extension_tests.rs
     - name: publish_extension_cli::update_sha_in_zed::regenerate_workflows
       run: cargo xtask workflows
@@ -97,7 +97,7 @@ jobs:
     - id: short-sha
       name: publish_extension_cli::get_short_sha
       run: |
-        echo "sha_short=$(echo "${{ github.sha }}" | cut -c1-7)" >> "$GITHUB_OUTPUT"
+        echo "sha_short=$(echo "$GITHUB_SHA" | cut -c1-7)" >> "$GITHUB_OUTPUT"
     - name: publish_extension_cli::update_sha_in_extensions::checkout_extensions_repo
       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
       with:
@@ -105,7 +105,7 @@ jobs:
         token: ${{ steps.generate-token.outputs.token }}
     - name: publish_extension_cli::update_sha_in_extensions::replace_sha
       run: |
-        sed -i "s/ZED_EXTENSION_CLI_SHA: [a-f0-9]*/ZED_EXTENSION_CLI_SHA: ${{ github.sha }}/" \
+        sed -i "s/ZED_EXTENSION_CLI_SHA: [a-f0-9]*/ZED_EXTENSION_CLI_SHA: $GITHUB_SHA/" \
             .github/workflows/ci.yml
     - name: publish_extension_cli::create_pull_request_extensions
       uses: peter-evans/create-pull-request@v7

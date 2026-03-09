@@ -1,4 +1,4 @@
-use crate::{AgentToolOutput, AnyAgentTool, ToolCallEventStream};
+use crate::{AgentToolOutput, AnyAgentTool, ToolCallEventStream, ToolInput};
 use agent_client_protocol::ToolKind;
 use anyhow::Result;
 use collections::{BTreeMap, HashMap};
@@ -329,7 +329,7 @@ impl AnyAgentTool for ContextServerTool {
 
     fn run(
         self: Arc<Self>,
-        input: serde_json::Value,
+        input: ToolInput<serde_json::Value>,
         event_stream: ToolCallEventStream,
         cx: &mut App,
     ) -> Task<Result<AgentToolOutput, AgentToolOutput>> {
@@ -339,14 +339,15 @@ impl AnyAgentTool for ContextServerTool {
         let tool_name = self.tool.name.clone();
         let tool_id = mcp_tool_id(&self.server_id.0, &self.tool.name);
         let display_name = self.tool.name.clone();
-        let authorize = event_stream.authorize_third_party_tool(
-            self.initial_title(input.clone(), cx),
-            tool_id,
-            display_name,
-            cx,
-        );
+        let initial_title = self.initial_title(serde_json::Value::Null, cx);
+        let authorize =
+            event_stream.authorize_third_party_tool(initial_title, tool_id, display_name, cx);
 
         cx.spawn(async move |_cx| {
+            let input = input.recv().await.map_err(|e| {
+                AgentToolOutput::from_error(format!("Failed to receive tool input: {e}"))
+            })?;
+
             authorize.await.map_err(|e| AgentToolOutput::from_error(e.to_string()))?;
 
             let Some(protocol) = server.client() else {

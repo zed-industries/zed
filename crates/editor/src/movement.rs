@@ -911,12 +911,13 @@ pub fn split_display_range_by_lines(
 mod tests {
     use super::*;
     use crate::{
-        Buffer, DisplayMap, DisplayRow, ExcerptRange, FoldPlaceholder, MultiBuffer,
+        Buffer, DisplayMap, DisplayRow, FoldPlaceholder, MultiBuffer,
         inlays::Inlay,
         test::{editor_test_context::EditorTestContext, marked_display_snapshot},
     };
     use gpui::{AppContext as _, font, px};
     use language::Capability;
+    use multi_buffer::PathKey;
     use project::project_settings::DiagnosticSeverity;
     use settings::SettingsStore;
     use util::post_inc;
@@ -1229,15 +1230,17 @@ mod tests {
 
             let font = font("Helvetica");
 
-            let buffer = cx.new(|cx| Buffer::local("abc\ndefg\nhijkl\nmn", cx));
+            let buffer = cx.new(|cx| Buffer::local("abc\ndefg\na\na\na\nhijkl\nmn", cx));
             let multibuffer = cx.new(|cx| {
                 let mut multibuffer = MultiBuffer::new(Capability::ReadWrite);
-                multibuffer.push_excerpts(
+                multibuffer.set_excerpts_for_path(
+                    PathKey::sorted(0),
                     buffer.clone(),
                     [
-                        ExcerptRange::new(Point::new(0, 0)..Point::new(1, 4)),
-                        ExcerptRange::new(Point::new(2, 0)..Point::new(3, 2)),
+                        Point::new(0, 0)..Point::new(1, 4),
+                        Point::new(5, 0)..Point::new(6, 2),
                     ],
+                    0,
                     cx,
                 );
                 multibuffer

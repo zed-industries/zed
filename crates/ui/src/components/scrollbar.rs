@@ -9,8 +9,8 @@ use gpui::{
     Along, App, AppContext as _, Axis as ScrollbarAxis, BorderStyle, Bounds, ContentMask, Context,
     Corner, Corners, CursorStyle, DispatchPhase, Div, Edges, Element, ElementId, Entity, EntityId,
     GlobalElementId, Hitbox, HitboxBehavior, Hsla, InteractiveElement, IntoElement, IsZero,
-    LayoutId, ListState, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Negate,
-    ParentElement, Pixels, Point, Position, Render, ScrollHandle, ScrollWheelEvent, Size, Stateful,
+    LayoutId, ListState, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement,
+    Pixels, Point, Position, Render, ScrollHandle, ScrollWheelEvent, Size, Stateful,
     StatefulInteractiveElement, Style, Styled, Task, UniformListDecoration,
     UniformListScrollHandle, Window, ease_in_out, prelude::FluentBuilder as _, px, quad, relative,
     size,
@@ -258,7 +258,7 @@ impl<T: ScrollableHandle> UniformListDecoration for ScrollbarStateWrapper<T> {
         _cx: &mut App,
     ) -> gpui::AnyElement {
         ScrollbarElement {
-            origin: scroll_offset.negate(),
+            origin: -scroll_offset,
             state: self.0.clone(),
         }
         .into_any()
@@ -911,7 +911,7 @@ impl ThumbState {
 }
 
 impl ScrollableHandle for UniformListScrollHandle {
-    fn max_offset(&self) -> Size<Pixels> {
+    fn max_offset(&self) -> Point<Pixels> {
         self.0.borrow().base_handle.max_offset()
     }
 
@@ -929,7 +929,7 @@ impl ScrollableHandle for UniformListScrollHandle {
 }
 
 impl ScrollableHandle for ListState {
-    fn max_offset(&self) -> Size<Pixels> {
+    fn max_offset(&self) -> Point<Pixels> {
         self.max_offset_for_scrollbar()
     }
 
@@ -955,7 +955,7 @@ impl ScrollableHandle for ListState {
 }
 
 impl ScrollableHandle for ScrollHandle {
-    fn max_offset(&self) -> Size<Pixels> {
+    fn max_offset(&self) -> Point<Pixels> {
         self.max_offset()
     }
 
@@ -973,7 +973,7 @@ impl ScrollableHandle for ScrollHandle {
 }
 
 pub trait ScrollableHandle: 'static + Any + Sized + Clone {
-    fn max_offset(&self) -> Size<Pixels>;
+    fn max_offset(&self) -> Point<Pixels>;
     fn set_offset(&self, point: Point<Pixels>);
     fn offset(&self) -> Point<Pixels>;
     fn viewport(&self) -> Bounds<Pixels>;
@@ -984,7 +984,7 @@ pub trait ScrollableHandle: 'static + Any + Sized + Clone {
         self.max_offset().along(axis) > Pixels::ZERO
     }
     fn content_size(&self) -> Size<Pixels> {
-        self.viewport().size + self.max_offset()
+        self.viewport().size + self.max_offset().into()
     }
 }
 
@@ -1006,7 +1006,7 @@ impl ScrollbarLayout {
     fn compute_click_offset(
         &self,
         event_position: Point<Pixels>,
-        max_offset: Size<Pixels>,
+        max_offset: Point<Pixels>,
         event_type: ScrollbarMouseEvent,
     ) -> Pixels {
         let Self {
