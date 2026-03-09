@@ -447,26 +447,45 @@ impl FromStr for GitStatus {
     fn from_str(s: &str) -> Result<Self> {
         let mut entries = Vec::new();
         let mut renamed_paths = HashMap::default();
-        let mut parts = s.split('\0').filter(|p| !p.is_empty());
+        let mut parts = s.split('\0').peekable();
 
         while let Some(entry) = parts.next() {
-            if entry.len() < 3 || &entry[2..3] != " " {
+            if entry.is_empty() {
                 continue;
             }
 
-            let status_bytes: [u8; 2] = entry.as_bytes()[0..2].try_into().unwrap();
+            if !matches!(entry.get(2..3), Some(" ")) {
+                continue;
+            }
+
+            let Ok(status_bytes) = entry.as_bytes()[0..2].try_into() else {
+                continue;
+            };
+
+            let Some(status) = FileStatus::from_bytes(status_bytes).log_err() else {
+                continue;
+            };
+
             let path_str = &entry[3..];
 
             if path_str.ends_with('/') {
                 continue;
             }
 
-            let is_rename = matches!(status_bytes[0], b'R');
+            let is_rename = matches!(
+                status,
+                FileStatus::Tracked(TrackedStatus {
+                    index_status: StatusCode::Renamed | StatusCode::Copied,
+                    ..
+                }) | FileStatus::Tracked(TrackedStatus {
+                    worktree_status: StatusCode::Renamed | StatusCode::Copied,
+                    ..
+                })
+            );
 
             if is_rename {
                 if let Some(old_path_str) = parts.next() {
-                    if let (Some(status), Some(new_path_rel), Some(old_path_rel)) = (
-                        FileStatus::from_bytes(status_bytes).log_err(),
+                    if let (Some(new_path_rel), Some(old_path_rel)) = (
                         RelPath::unix(path_str).log_err(),
                         RelPath::unix(old_path_str).log_err(),
                     ) {
@@ -476,14 +495,9 @@ impl FromStr for GitStatus {
                         renamed_paths.insert(new_path, old_path);
                     }
                 }
-            } else {
-                if let (Some(status), Some(path_rel)) = (
-                    FileStatus::from_bytes(status_bytes).log_err(),
-                    RelPath::unix(path_str).log_err(),
-                ) {
-                    let path = RepoPath::from_rel_path(path_rel);
-                    entries.push((path, status));
-                }
+            } else if let Some(path_rel) = RelPath::unix(path_str).log_err() {
+                let path = RepoPath::from_rel_path(path_rel);
+                entries.push((path, status));
             }
         }
         entries.sort_unstable_by(|(a, _), (b, _)| a.cmp(b));
