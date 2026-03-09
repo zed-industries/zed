@@ -632,10 +632,13 @@ impl Sidebar {
 
         let had_notifications = self.has_notifications(cx);
 
+        let scroll_position = self.list_state.logical_scroll_top();
+
         self.rebuild_contents(cx);
         self.recompute_active_entry_index(cx);
 
         self.list_state.reset(self.contents.entries.len());
+        self.list_state.scroll_to(scroll_position);
 
         if had_notifications != self.has_notifications(cx) {
             multi_workspace.update(cx, |_, cx| {
