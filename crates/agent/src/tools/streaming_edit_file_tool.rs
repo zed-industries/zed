@@ -363,7 +363,7 @@ impl AgentTool for StreamingEditFileTool {
                         err
                     })?;
 
-            let mut state = if let Some(state) = state {
+            let state = if let Some(state) = state {
                 state
             } else {
                 match EditSession::new(
@@ -476,6 +476,20 @@ impl Pipeline {
 }
 
 impl WritePipeline {
+    fn finalize(mut self, diff: &Entity<Diff>, cx: &mut AsyncApp) {
+        let char_ops = self.streaming_diff.finish();
+        self.line_diff
+            .push_char_operations(&char_ops, self.original_snapshot.as_rope());
+        self.line_diff.finish(self.original_snapshot.as_rope());
+        diff.update(cx, |diff, cx| {
+            diff.update_pending(
+                self.line_diff.line_operations(),
+                self.original_snapshot.clone(),
+                cx,
+            )
+        });
+    }
+
     fn process_event(
         &mut self,
         event: &ToolEditEvent,
@@ -779,7 +793,7 @@ impl EditSession {
     }
 
     async fn finalize(
-        &mut self,
+        mut self,
         input: StreamingEditFileToolInput,
         tool: &StreamingEditFileTool,
         event_stream: &ToolCallEventStream,
@@ -795,6 +809,9 @@ impl EditSession {
 
                 let events = self.parser.finalize_content(&content);
                 self.process_events(&events, tool, event_stream, cx)?;
+                if let Pipeline::Write(pipeline) = self.pipeline {
+                    pipeline.finalize(&self.diff, cx);
+                }
             }
             StreamingEditFileMode::Edit => {
                 let edits = input.edits.ok_or_else(|| {
