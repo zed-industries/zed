@@ -7,6 +7,7 @@ use anyhow::{Context as _, Result, bail};
 use futures::{StreamExt, io};
 use heck::ToSnakeCase;
 use http_client::{self, AsyncBody, HttpClient};
+use language::LanguageConfig;
 use serde::Deserialize;
 use std::{
     env, fs, mem,
@@ -583,7 +584,7 @@ async fn populate_defaults(
 
         while let Some(language_dir) = language_dir_entries.next().await {
             let language_dir = language_dir?;
-            let config_path = language_dir.join("config.toml");
+            let config_path = language_dir.join(LanguageConfig::FILE_NAME);
             if fs.is_file(config_path.as_path()).await {
                 let relative_language_dir =
                     language_dir.strip_prefix(extension_path)?.to_path_buf();

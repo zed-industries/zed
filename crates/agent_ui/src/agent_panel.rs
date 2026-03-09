@@ -31,7 +31,7 @@ use crate::{
     AddContextServer, AgentDiffPane, ConnectionView, CopyThreadToClipboard, Follow,
     InlineAssistant, LoadThreadFromClipboard, NewTextThread, NewThread, OpenActiveThreadAsMarkdown,
     OpenAgentDiff, OpenHistory, ResetTrialEndUpsell, ResetTrialUpsell, StartThreadIn,
-    ToggleNavigationMenu, ToggleNewThreadMenu, ToggleOptionsMenu,
+    ToggleNavigationMenu, ToggleNewThreadMenu, ToggleOptionsMenu, ToggleStartThreadInSelector,
     agent_configuration::{AgentConfiguration, AssistantConfigurationEvent},
     connection_view::{AcpThreadViewEvent, ThreadView},
     slash_command::SlashCommandCompletionProvider,
@@ -255,6 +255,18 @@ pub fn init(cx: &mut App) {
                         });
                     }
                 })
+                .register_action(|workspace, _: &ToggleStartThreadInSelector, window, cx| {
+                    if let Some(panel) = workspace.panel::<AgentPanel>(cx) {
+                        workspace.focus_panel::<AgentPanel>(window, cx);
+                        panel.update(cx, |panel, cx| {
+                            panel.toggle_start_thread_in_selector(
+                                &ToggleStartThreadInSelector,
+                                window,
+                                cx,
+                            );
+                        });
+                    }
+                })
                 .register_action(|workspace, _: &OpenAcpOnboardingModal, window, cx| {
                     AcpOnboardingModal::toggle(workspace, window, cx)
                 })
@@ -388,7 +400,7 @@ enum WhichFontSize {
 }
 
 // TODO unify this with ExternalAgent
-#[derive(Debug, Default, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Default, Clone, PartialEq, Serialize)]
 pub enum AgentType {
     #[default]
     NativeAgent,
@@ -396,6 +408,63 @@ pub enum AgentType {
     Custom {
         name: SharedString,
     },
+}
+
+// Custom impl handles legacy variant names from before the built-in agents were moved to
+// the registry: "ClaudeAgent" -> Custom { name: "claude-acp" }, "Codex" -> Custom { name:
+// "codex-acp" }, "Gemini" -> Custom { name: "gemini" }.
+// Can be removed at some point in the future and go back to #[derive(Deserialize)].
+impl<'de> Deserialize<'de> for AgentType {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let value = serde_json::Value::deserialize(deserializer)?;
+
+        if let Some(s) = value.as_str() {
+            return match s {
+                "NativeAgent" => Ok(Self::NativeAgent),
+                "TextThread" => Ok(Self::TextThread),
+                "ClaudeAgent" | "ClaudeCode" => Ok(Self::Custom {
+                    name: CLAUDE_AGENT_NAME.into(),
+                }),
+                "Codex" => Ok(Self::Custom {
+                    name: CODEX_NAME.into(),
+                }),
+                "Gemini" => Ok(Self::Custom {
+                    name: GEMINI_NAME.into(),
+                }),
+                other => Err(serde::de::Error::unknown_variant(
+                    other,
+                    &[
+                        "NativeAgent",
+                        "TextThread",
+                        "Custom",
+                        "ClaudeAgent",
+                        "ClaudeCode",
+                        "Codex",
+                        "Gemini",
+                    ],
+                )),
+            };
+        }
+
+        if let Some(obj) = value.as_object() {
+            if let Some(inner) = obj.get("Custom") {
+                #[derive(Deserialize)]
+                struct CustomFields {
+                    name: SharedString,
+                }
+                let fields: CustomFields =
+                    serde_json::from_value(inner.clone()).map_err(serde::de::Error::custom)?;
+                return Ok(Self::Custom { name: fields.name });
+            }
+        }
+
+        Err(serde::de::Error::custom(
+            "expected a string variant or {\"Custom\": {\"name\": ...}}",
+        ))
+    }
 }
 
 impl AgentType {
@@ -1345,6 +1414,15 @@ impl AgentPanel {
         cx: &mut Context<Self>,
     ) {
         self.new_thread_menu_handle.toggle(window, cx);
+    }
+
+    pub fn toggle_start_thread_in_selector(
+        &mut self,
+        _: &ToggleStartThreadInSelector,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.start_thread_in_menu_handle.toggle(window, cx);
     }
 
     pub fn increase_font_size(
@@ -3179,6 +3257,7 @@ impl AgentPanel {
     }
 
     fn render_start_thread_in_selector(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let focus_handle = self.focus_handle(cx);
         let has_git_repo = self.project_has_git_repository(cx);
         let is_via_collab = self.project.read(cx).is_via_collab();
 
@@ -3213,7 +3292,16 @@ impl AgentPanel {
         };
 
         PopoverMenu::new("thread-target-selector")
-            .trigger(trigger_button)
+            .trigger_with_tooltip(trigger_button, {
+                move |_window, cx| {
+                    Tooltip::for_action_in(
+                        "Start Thread In…",
+                        &ToggleStartThreadInSelector,
+                        &focus_handle,
+                        cx,
+                    )
+                }
+            })
             .menu(move |window, cx| {
                 let is_local_selected = current_target == StartThreadIn::LocalProject;
                 let is_new_worktree_selected = current_target == StartThreadIn::NewWorktree;
@@ -3694,7 +3782,16 @@ impl AgentPanel {
                 );
 
             let agent_selector_menu = PopoverMenu::new("new_thread_menu")
-                .trigger(agent_selector_button)
+                .trigger_with_tooltip(agent_selector_button, {
+                    move |_window, cx| {
+                        Tooltip::for_action_in(
+                            "New Thread\u{2026}",
+                            &ToggleNewThreadMenu,
+                            &focus_handle,
+                            cx,
+                        )
+                    }
+                })
                 .menu({
                     let builder = new_thread_menu_builder.clone();
                     move |window, cx| builder(window, cx)
@@ -4269,6 +4366,7 @@ impl Render for AgentPanel {
             .on_action(cx.listener(Self::go_back))
             .on_action(cx.listener(Self::toggle_navigation_menu))
             .on_action(cx.listener(Self::toggle_options_menu))
+            .on_action(cx.listener(Self::toggle_start_thread_in_selector))
             .on_action(cx.listener(Self::increase_font_size))
             .on_action(cx.listener(Self::decrease_font_size))
             .on_action(cx.listener(Self::reset_font_size))
@@ -5268,5 +5366,78 @@ mod tests {
                 "panel should transition out of Uninitialized once worktree creation is cleared"
             );
         });
+    }
+
+    #[test]
+    fn test_deserialize_legacy_agent_type_variants() {
+        assert_eq!(
+            serde_json::from_str::<AgentType>(r#""ClaudeAgent""#).unwrap(),
+            AgentType::Custom {
+                name: CLAUDE_AGENT_NAME.into(),
+            },
+        );
+        assert_eq!(
+            serde_json::from_str::<AgentType>(r#""ClaudeCode""#).unwrap(),
+            AgentType::Custom {
+                name: CLAUDE_AGENT_NAME.into(),
+            },
+        );
+        assert_eq!(
+            serde_json::from_str::<AgentType>(r#""Codex""#).unwrap(),
+            AgentType::Custom {
+                name: CODEX_NAME.into(),
+            },
+        );
+        assert_eq!(
+            serde_json::from_str::<AgentType>(r#""Gemini""#).unwrap(),
+            AgentType::Custom {
+                name: GEMINI_NAME.into(),
+            },
+        );
+    }
+
+    #[test]
+    fn test_deserialize_current_agent_type_variants() {
+        assert_eq!(
+            serde_json::from_str::<AgentType>(r#""NativeAgent""#).unwrap(),
+            AgentType::NativeAgent,
+        );
+        assert_eq!(
+            serde_json::from_str::<AgentType>(r#""TextThread""#).unwrap(),
+            AgentType::TextThread,
+        );
+        assert_eq!(
+            serde_json::from_str::<AgentType>(r#"{"Custom":{"name":"my-agent"}}"#).unwrap(),
+            AgentType::Custom {
+                name: "my-agent".into(),
+            },
+        );
+    }
+
+    #[test]
+    fn test_deserialize_legacy_serialized_panel() {
+        let json = serde_json::json!({
+            "width": 300.0,
+            "selected_agent": "ClaudeAgent",
+            "last_active_thread": {
+                "session_id": "test-session",
+                "agent_type": "Codex",
+            },
+        });
+
+        let panel: SerializedAgentPanel = serde_json::from_value(json).unwrap();
+        assert_eq!(
+            panel.selected_agent,
+            Some(AgentType::Custom {
+                name: CLAUDE_AGENT_NAME.into(),
+            }),
+        );
+        let thread = panel.last_active_thread.unwrap();
+        assert_eq!(
+            thread.agent_type,
+            AgentType::Custom {
+                name: CODEX_NAME.into(),
+            },
+        );
     }
 }

@@ -212,7 +212,7 @@ impl SweepAi {
 
             let ep_inputs = zeta_prompt::ZetaPromptInput {
                 events: inputs.events,
-                related_files: inputs.related_files.clone(),
+                related_files: Some(inputs.related_files.clone()),
                 cursor_path: full_path.clone(),
                 cursor_excerpt: request_body.file_contents.clone().into(),
                 cursor_offset_in_excerpt: request_body.cursor_position,
