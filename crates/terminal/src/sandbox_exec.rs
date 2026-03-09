@@ -144,8 +144,10 @@ pub fn sandbox_exec_main(config_json: &str, shell_args: &[String]) -> ! {
     let mut sandbox_config = config.to_sandbox_config();
     sandbox_config.canonicalize_paths();
 
-    // Step 1: Filter environment variables.
-    // Keep only allowed vars + a few Zed-specific ones.
+    // Step 1: Collect allowed environment variables.
+    // Rather than mutating the process environment (which requires unsafe),
+    // we collect the allowed vars now and pass them via env_clear().envs()
+    // on the exec Command.
     let zed_vars = [
         "ZED_TERM",
         "TERM_PROGRAM",
@@ -156,25 +158,9 @@ pub fn sandbox_exec_main(config_json: &str, shell_args: &[String]) -> ! {
     let allowed: std::collections::HashSet<&str> =
         config.allowed_env_vars.iter().map(|s| s.as_str()).collect();
 
-    // Collect vars to remove (can't modify env while iterating)
-    let vars_to_remove: Vec<String> = std::env::vars()
-        .filter_map(|(key, _)| {
-            if allowed.contains(key.as_str()) || zed_vars.contains(&key.as_str()) {
-                None
-            } else {
-                Some(key)
-            }
-        })
+    let filtered_env: Vec<(String, String)> = std::env::vars()
+        .filter(|(key, _)| allowed.contains(key.as_str()) || zed_vars.contains(&key.as_str()))
         .collect();
-
-    for key in &vars_to_remove {
-        // SAFETY: We are in a single-threaded sandbox wrapper process
-        // (the Zed binary invoked with --sandbox-exec), so there are no
-        // other threads that could be reading env vars concurrently.
-        unsafe {
-            std::env::remove_var(key);
-        }
-    }
 
     // Step 2: Apply the OS-level sandbox.
     #[cfg(target_os = "macos")]
@@ -194,9 +180,15 @@ pub fn sandbox_exec_main(config_json: &str, shell_args: &[String]) -> ! {
     }
 
     // Step 3: Exec the real shell. This replaces the current process.
+    // env_clear() starts with an empty environment, then envs() adds only
+    // the allowed variables. This avoids mutating the process environment.
     let program = &shell_args[0];
     let args = &shell_args[1..];
-    let err = Command::new(program).args(args).exec();
+    let err = Command::new(program)
+        .args(args)
+        .env_clear()
+        .envs(filtered_env)
+        .exec();
 
     // exec() only returns on error
     eprintln!("zed --sandbox-exec: failed to exec {program}: {err}");
