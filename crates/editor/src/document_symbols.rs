@@ -7,8 +7,11 @@ use gpui::{App, Context, HighlightStyle, Task};
 use itertools::Itertools as _;
 use language::language_settings::language_settings;
 use language::{Buffer, OutlineItem};
-use multi_buffer::{Anchor, MultiBufferSnapshot};
-use text::{BufferId, OffsetRangeExt as _, ToOffset as _};
+use multi_buffer::{
+    Anchor, AnchorRangeExt as _, MultiBufferOffset, MultiBufferRow, MultiBufferSnapshot,
+    ToOffset as _, ToPoint,
+};
+use text::BufferId;
 use theme::{ActiveTheme as _, SyntaxTheme};
 use unicode_segmentation::UnicodeSegmentation as _;
 
@@ -219,12 +222,10 @@ impl Editor {
                         for (buffer_id, items) in &mut highlighted_results {
                             for item in items {
                                 if let Some(highlights) = highlights_from_buffer(
-                                    editor,
                                     &display_snapshot,
                                     &item,
                                     *buffer_id,
                                     &syntax,
-                                    cx,
                                 ) {
                                     item.highlight_ranges = highlights;
                                 }
@@ -253,59 +254,78 @@ fn lsp_symbols_enabled(buffer: &Buffer, cx: &App) -> bool {
 /// to word-by-word matching for cases like `impl<T> Trait<T> for Type`
 /// where the LSP name doesn't appear verbatim in the buffer.
 fn highlights_from_buffer(
-    editor: &Editor,
     display_snapshot: &DisplaySnapshot,
     item: &OutlineItem<text::Anchor>,
     buffer_id: BufferId,
     syntax_theme: &SyntaxTheme,
-    cx: &App,
 ) -> Option<Vec<(Range<usize>, HighlightStyle)>> {
     let outline_text = &item.text;
     if outline_text.is_empty() {
         return None;
     }
 
-    let (_, buffer_snapshot, _) = editor
-        .buffer()
-        .read(cx)
-        .excerpts_for_buffer(buffer_id, cx)
-        .into_iter()
-        .find(|(_, buffer_snapshot, _)| {
-            item.range.start.is_valid(&buffer_snapshot) && item.range.end.is_valid(&buffer_snapshot)
-        })?;
+    let multi_buffer_snapshot = display_snapshot.buffer();
+    let multi_buffer_source_range_anchors =
+        multi_buffer_snapshot.text_anchors_to_visible_anchors([
+            item.source_range_for_text.start,
+            item.source_range_for_text.end,
+        ]);
+    let Some((Some(source_range_start), Some(source_range_end))) =
+        multi_buffer_source_range_anchors
+            .get(0)
+            .zip(multi_buffer_source_range_anchors.get(1))
+    else {
+        return None;
+    };
 
-    let selection_point_range = item.source_range_for_text.to_point(&buffer_snapshot);
+    let selection_point_range =
+        (*source_range_start..*source_range_end).to_point(multi_buffer_snapshot);
     let mut search_start = selection_point_range.start;
     search_start.column = 0;
-    let search_start_offset = search_start.to_offset(&buffer_snapshot);
+    let search_start_offset = search_start.to_offset(&multi_buffer_snapshot);
     let mut search_end = selection_point_range.end;
-    search_end.column = buffer_snapshot.line_len(search_end.row);
+    search_end.column = multi_buffer_snapshot.line_len(MultiBufferRow(search_end.row));
 
-    let search_text = buffer_snapshot
+    let search_text = multi_buffer_snapshot
         .text_for_range(search_start..search_end)
         .collect::<String>();
 
+    let to_buffer_range = |offset_in_search: usize, len: usize| -> Option<Range<usize>> {
+        let start_offset = search_start_offset + MultiBufferOffset(offset_in_search);
+        let end_offset = start_offset + MultiBufferOffset(len);
+        let (snapshot_start, point_start, _) = multi_buffer_snapshot
+            .point_to_buffer_point(start_offset.to_point(&multi_buffer_snapshot))
+            .filter(|(s, _, _)| s.remote_id() == buffer_id)?;
+        let (snapshot_end, point_end, _) = multi_buffer_snapshot
+            .point_to_buffer_point(end_offset.to_point(multi_buffer_snapshot))
+            .filter(|(s, _, _)| s.remote_id() == buffer_id)?;
+        Some(snapshot_start.point_to_offset(point_start)..snapshot_end.point_to_offset(point_end))
+    };
+
     let mut outline_text_highlights = Vec::new();
-    match search_text.find(outline_text) {
-        Some(outline_name_start) => {
-            let name_buffer_offset = outline_name_start + search_start_offset;
+    match search_text
+        .find(outline_text)
+        .and_then(|outline_text_start| to_buffer_range(outline_text_start, outline_text.len()))
+    {
+        Some(buffer_range) => {
             outline_text_highlights.extend(display_snapshot.combined_highlights(
                 buffer_id,
-                name_buffer_offset..name_buffer_offset + outline_text.len(),
+                buffer_range,
                 syntax_theme,
             ));
         }
         None => {
             for (outline_text_word_start, outline_word) in outline_text.split_word_bound_indices() {
-                if let Some(outline_word_buffer_start) = search_text.find(outline_word) {
-                    let word_buffer_offset = search_start_offset + outline_word_buffer_start;
+                if let Some(buffer_range) =
+                    search_text
+                        .find(outline_word)
+                        .and_then(|outline_word_start| {
+                            to_buffer_range(outline_word_start, outline_word.len())
+                        })
+                {
                     outline_text_highlights.extend(
                         display_snapshot
-                            .combined_highlights(
-                                buffer_id,
-                                word_buffer_offset..word_buffer_offset + outline_word.len(),
-                                syntax_theme,
-                            )
+                            .combined_highlights(buffer_id, buffer_range, syntax_theme)
                             .into_iter()
                             .map(|(range_in_word, style)| {
                                 (
