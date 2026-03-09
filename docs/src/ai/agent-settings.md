@@ -368,6 +368,19 @@ It is set to `true` by default, but if set to false, the card will be fully coll
 }
 ```
 
+### Wrap Long Lines
+
+Use the `wrap_long_lines` setting to control whether long lines in the Agent Panel wrap instead of requiring horizontal scrolling.
+It is set to `true` by default and applies to content like file previews, tool output, and plans.
+
+```json [settings]
+{
+  "agent": {
+    "wrap_long_lines": false
+  }
+}
+```
+
 ### Feedback Controls
 
 Control whether to display the thumbs up/down buttons at the bottom of each agent response, allowing you to give Zed feedback about the agent's performance.

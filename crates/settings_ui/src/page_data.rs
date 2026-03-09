@@ -7105,6 +7105,22 @@ fn ai_page() -> SettingsPage {
                 files: USER,
             }),
             SettingsPageItem::SettingItem(SettingItem {
+                title: "Wrap Long Lines",
+                description: "Whether to wrap long lines in agent markdown content like file previews, tool output, and plans.",
+                field: Box::new(SettingField {
+                    json_path: Some("agent.wrap_long_lines"),
+                    pick: |settings_content| settings_content.agent.as_ref()?.wrap_long_lines.as_ref(),
+                    write: |settings_content, value| {
+                        settings_content
+                            .agent
+                            .get_or_insert_default()
+                            .wrap_long_lines = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
                 title: "Cancel Generation On Terminal Stop",
                 description: "Whether clicking the stop button on a running terminal tool should also cancel the agent's generation. Note that this only applies to the stop button, not to ctrl+c inside the terminal.",
                 field: Box::new(SettingField {

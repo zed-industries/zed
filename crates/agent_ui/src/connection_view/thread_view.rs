@@ -2406,8 +2406,7 @@ impl ThreadView {
                 let element = h_flex()
                     .py_1()
                     .px_2()
-                    .gap_2()
-                    .justify_between()
+                    .w_full()
                     .bg(cx.theme().colors().editor_background)
                     .when(index < plan.entries.len() - 1, |parent| {
                         parent.border_color(cx.theme().colors().border).border_b_1()
@@ -2415,9 +2414,9 @@ impl ThreadView {
                     .child(
                         h_flex()
                             .id(("plan_entry", index))
+                            .w_full()
+                            .items_start()
                             .gap_1p5()
-                            .max_w_full()
-                            .overflow_x_scroll()
                             .text_xs()
                             .text_color(cx.theme().colors().text_muted)
                             .child(match entry.status {
@@ -2441,10 +2440,10 @@ impl ThreadView {
                                         .into_any_element()
                                 }
                             })
-                            .child(MarkdownElement::new(
+                            .child(div().flex_1().w_0().child(MarkdownElement::new(
                                 entry.content.clone(),
                                 plan_label_markdown_style(&entry.status, window, cx),
-                            )),
+                            ))),
                     );
 
                 Some(element)
@@ -3971,7 +3970,7 @@ impl ThreadView {
                 let mut is_blank = true;
                 let is_last = entry_ix + 1 == total_entries;
 
-                let style = MarkdownStyle::themed(MarkdownFont::Agent, window, cx);
+                let style = agent_markdown_style(window, cx);
                 let message_body = v_flex()
                     .w_full()
                     .gap_3()
@@ -4603,10 +4602,7 @@ impl ThreadView {
                 })
                 .text_ui_sm(cx)
                 .overflow_hidden()
-                .child(self.render_markdown(
-                    chunk,
-                    MarkdownStyle::themed(MarkdownFont::Agent, window, cx),
-                ))
+                .child(self.render_markdown(chunk, agent_markdown_style(window, cx)))
         };
 
         v_flex()
@@ -5325,16 +5321,13 @@ impl ThreadView {
                 .buffer_font(cx)
         };
 
-        let tool_output_display = if is_open {
-            match &tool_call.status {
-                ToolCallStatus::WaitingForConfirmation { options, .. } => v_flex()
-                    .w_full()
-                    .children(
-                        tool_call
-                            .content
-                            .iter()
-                            .enumerate()
-                            .map(|(content_ix, content)| {
+        let tool_output_display =
+            if is_open {
+                match &tool_call.status {
+                    ToolCallStatus::WaitingForConfirmation { options, .. } => v_flex()
+                        .w_full()
+                        .children(tool_call.content.iter().enumerate().map(
+                            |(content_ix, content)| {
                                 div()
                                     .child(self.render_tool_call_content(
                                         active_session_id,
@@ -5350,121 +5343,120 @@ impl ThreadView {
                                         cx,
                                     ))
                                     .into_any_element()
-                            }),
-                    )
-                    .when(should_show_raw_input, |this| {
-                        let is_raw_input_expanded =
-                            self.expanded_tool_call_raw_inputs.contains(&tool_call.id);
+                            },
+                        ))
+                        .when(should_show_raw_input, |this| {
+                            let is_raw_input_expanded =
+                                self.expanded_tool_call_raw_inputs.contains(&tool_call.id);
 
-                        let input_header = if is_raw_input_expanded {
-                            "Raw Input:"
-                        } else {
-                            "View Raw Input"
-                        };
+                            let input_header = if is_raw_input_expanded {
+                                "Raw Input:"
+                            } else {
+                                "View Raw Input"
+                            };
 
-                        this.child(
-                            v_flex()
-                                .p_2()
-                                .gap_1()
-                                .border_t_1()
-                                .border_color(self.tool_card_border_color(cx))
-                                .child(
-                                    h_flex()
-                                        .id("disclosure_container")
-                                        .pl_0p5()
-                                        .gap_1()
-                                        .justify_between()
-                                        .rounded_xs()
-                                        .hover(|s| s.bg(cx.theme().colors().element_hover))
-                                        .child(input_output_header(input_header.into()))
-                                        .child(
-                                            Disclosure::new(
-                                                ("raw-input-disclosure", entry_ix),
-                                                is_raw_input_expanded,
+                            this.child(
+                                v_flex()
+                                    .p_2()
+                                    .gap_1()
+                                    .border_t_1()
+                                    .border_color(self.tool_card_border_color(cx))
+                                    .child(
+                                        h_flex()
+                                            .id("disclosure_container")
+                                            .pl_0p5()
+                                            .gap_1()
+                                            .justify_between()
+                                            .rounded_xs()
+                                            .hover(|s| s.bg(cx.theme().colors().element_hover))
+                                            .child(input_output_header(input_header.into()))
+                                            .child(
+                                                Disclosure::new(
+                                                    ("raw-input-disclosure", entry_ix),
+                                                    is_raw_input_expanded,
+                                                )
+                                                .opened_icon(IconName::ChevronUp)
+                                                .closed_icon(IconName::ChevronDown),
                                             )
-                                            .opened_icon(IconName::ChevronUp)
-                                            .closed_icon(IconName::ChevronDown),
-                                        )
-                                        .on_click(cx.listener({
-                                            let id = tool_call.id.clone();
+                                            .on_click(cx.listener({
+                                                let id = tool_call.id.clone();
 
-                                            move |this: &mut Self, _, _, cx| {
-                                                if this.expanded_tool_call_raw_inputs.contains(&id)
-                                                {
-                                                    this.expanded_tool_call_raw_inputs.remove(&id);
-                                                } else {
-                                                    this.expanded_tool_call_raw_inputs
-                                                        .insert(id.clone());
+                                                move |this: &mut Self, _, _, cx| {
+                                                    if this
+                                                        .expanded_tool_call_raw_inputs
+                                                        .contains(&id)
+                                                    {
+                                                        this.expanded_tool_call_raw_inputs
+                                                            .remove(&id);
+                                                    } else {
+                                                        this.expanded_tool_call_raw_inputs
+                                                            .insert(id.clone());
+                                                    }
+                                                    cx.notify();
                                                 }
-                                                cx.notify();
-                                            }
-                                        })),
-                                )
-                                .when(is_raw_input_expanded, |this| {
-                                    this.children(tool_call.raw_input_markdown.clone().map(
-                                        |input| {
+                                            })),
+                                    )
+                                    .when(is_raw_input_expanded, |this| {
+                                        this.children(tool_call.raw_input_markdown.clone().map(
+                                            |input| {
+                                                self.render_markdown(
+                                                    input,
+                                                    MarkdownStyle::themed(
+                                                        MarkdownFont::Agent,
+                                                        window,
+                                                        cx,
+                                                    ),
+                                                )
+                                            },
+                                        ))
+                                    }),
+                            )
+                        })
+                        .child(self.render_permission_buttons(
+                            self.id.clone(),
+                            self.is_first_tool_call(active_session_id, &tool_call.id, cx),
+                            options,
+                            entry_ix,
+                            tool_call.id.clone(),
+                            focus_handle,
+                            cx,
+                        ))
+                        .into_any(),
+                    ToolCallStatus::Pending | ToolCallStatus::InProgress
+                        if is_edit
+                            && tool_call.content.is_empty()
+                            && self.as_native_connection(cx).is_some() =>
+                    {
+                        self.render_diff_loading(cx)
+                    }
+                    ToolCallStatus::Pending
+                    | ToolCallStatus::InProgress
+                    | ToolCallStatus::Completed
+                    | ToolCallStatus::Failed
+                    | ToolCallStatus::Canceled => v_flex()
+                        .when(should_show_raw_input, |this| {
+                            this.mt_1p5().w_full().child(
+                                v_flex()
+                                    .ml(rems(0.4))
+                                    .px_3p5()
+                                    .pb_1()
+                                    .gap_1()
+                                    .border_l_1()
+                                    .border_color(self.tool_card_border_color(cx))
+                                    .child(input_output_header("Raw Input:".into()))
+                                    .children(tool_call.raw_input_markdown.clone().map(|input| {
+                                        div().id(("tool-call-raw-input-markdown", entry_ix)).child(
                                             self.render_markdown(
                                                 input,
-                                                MarkdownStyle::themed(
-                                                    MarkdownFont::Agent,
-                                                    window,
-                                                    cx,
-                                                ),
-                                            )
-                                        },
-                                    ))
-                                }),
-                        )
-                    })
-                    .child(self.render_permission_buttons(
-                        self.id.clone(),
-                        self.is_first_tool_call(active_session_id, &tool_call.id, cx),
-                        options,
-                        entry_ix,
-                        tool_call.id.clone(),
-                        focus_handle,
-                        cx,
-                    ))
-                    .into_any(),
-                ToolCallStatus::Pending | ToolCallStatus::InProgress
-                    if is_edit
-                        && tool_call.content.is_empty()
-                        && self.as_native_connection(cx).is_some() =>
-                {
-                    self.render_diff_loading(cx)
-                }
-                ToolCallStatus::Pending
-                | ToolCallStatus::InProgress
-                | ToolCallStatus::Completed
-                | ToolCallStatus::Failed
-                | ToolCallStatus::Canceled => v_flex()
-                    .when(should_show_raw_input, |this| {
-                        this.mt_1p5().w_full().child(
-                            v_flex()
-                                .ml(rems(0.4))
-                                .px_3p5()
-                                .pb_1()
-                                .gap_1()
-                                .border_l_1()
-                                .border_color(self.tool_card_border_color(cx))
-                                .child(input_output_header("Raw Input:".into()))
-                                .children(tool_call.raw_input_markdown.clone().map(|input| {
-                                    div().id(("tool-call-raw-input-markdown", entry_ix)).child(
-                                        self.render_markdown(
-                                            input,
-                                            MarkdownStyle::themed(MarkdownFont::Agent, window, cx),
-                                        ),
-                                    )
-                                }))
-                                .child(input_output_header("Output:".into())),
-                        )
-                    })
-                    .children(
-                        tool_call
-                            .content
-                            .iter()
-                            .enumerate()
-                            .map(|(content_ix, content)| {
+                                                agent_markdown_style(window, cx),
+                                            ),
+                                        )
+                                    }))
+                                    .child(input_output_header("Output:".into())),
+                            )
+                        })
+                        .children(tool_call.content.iter().enumerate().map(
+                            |(content_ix, content)| {
                                 div().id(("tool-call-output", entry_ix)).child(
                                     self.render_tool_call_content(
                                         active_session_id,
@@ -5480,15 +5472,15 @@ impl ThreadView {
                                         cx,
                                     ),
                                 )
-                            }),
-                    )
-                    .into_any(),
-                ToolCallStatus::Rejected => Empty.into_any(),
-            }
-            .into()
-        } else {
-            None
-        };
+                            },
+                        ))
+                        .into_any(),
+                    ToolCallStatus::Rejected => Empty.into_any(),
+                }
+                .into()
+            } else {
+                None
+            };
 
         v_flex()
             .map(|this| {
@@ -6175,16 +6167,13 @@ impl ThreadView {
                             this.text_color(cx.theme().colors().text_muted)
                         }
                     })
-                    .child(
-                        self.render_markdown(
-                            tool_call.label.clone(),
-                            MarkdownStyle {
-                                prevent_mouse_interaction: true,
-                                ..MarkdownStyle::themed(MarkdownFont::Agent, window, cx)
-                                    .with_muted_text(cx)
-                            },
-                        ),
-                    )
+                    .child(self.render_markdown(
+                        tool_call.label.clone(),
+                        MarkdownStyle {
+                            prevent_mouse_interaction: true,
+                            ..agent_markdown_style(window, cx).with_muted_text(cx)
+                        },
+                    ))
                     .tooltip(Tooltip::text("Go to File"))
                     .on_click(cx.listener(move |this, _, window, cx| {
                         this.open_tool_call_location(entry_ix, 0, window, cx);
@@ -6195,7 +6184,7 @@ impl ThreadView {
                     .w_full()
                     .child(self.render_markdown(
                         tool_call.label.clone(),
-                        MarkdownStyle::themed(MarkdownFont::Agent, window, cx).with_muted_text(cx),
+                        agent_markdown_style(window, cx).with_muted_text(cx),
                     ))
                     .into_any()
             })
@@ -6455,10 +6444,7 @@ impl ThreadView {
             })
             .text_xs()
             .text_color(cx.theme().colors().text_muted)
-            .child(self.render_markdown(
-                markdown,
-                MarkdownStyle::themed(MarkdownFont::Agent, window, cx),
-            ))
+            .child(self.render_markdown(markdown, agent_markdown_style(window, cx)))
             .when(!card_layout, |this| {
                 this.child(
                     IconButton::new(button_id, IconName::ChevronUp)
@@ -7291,8 +7277,7 @@ impl ThreadView {
             markdown
         };
 
-        let markdown_style =
-            MarkdownStyle::themed(MarkdownFont::Agent, window, cx).with_muted_text(cx);
+        let markdown_style = agent_markdown_style(window, cx).with_muted_text(cx);
         let description = self
             .render_markdown(markdown, markdown_style)
             .into_any_element();
