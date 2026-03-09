@@ -2422,7 +2422,7 @@ impl ProjectPanel {
                         )
                     }
                 };
-                let detail = (!trash).then_some("This cannot be undone!");
+                let detail = (!trash).then_some("This cannot be undone.");
                 Some(window.prompt(
                     PromptLevel::Info,
                     &prompt,
