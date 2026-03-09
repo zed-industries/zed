@@ -6,6 +6,7 @@ use serde_json::json;
 use settings::SettingsLocation;
 use std::path::Path;
 use std::sync::Arc;
+use task::WorktreeTaskDefinition;
 use util::rel_path::rel_path;
 
 use project::task_store::{TaskSettingsLocation, TaskStore};
@@ -297,6 +298,95 @@ async fn test_task_list_sorting(cx: &mut TestAppContext) {
             "3_task".to_string(),
             "10_hello".to_string(),
         ],
+    );
+}
+
+#[gpui::test]
+async fn test_loading_worktree_scripts(cx: &mut TestAppContext) {
+    init_test(cx);
+    let inventory = cx.update(|cx| Inventory::new(cx));
+    let worktree_id = WorktreeId::from_usize(1);
+
+    inventory.update(cx, |inventory, _| {
+        inventory
+            .update_file_based_worktree_scripts(
+                TaskSettingsLocation::Worktree(SettingsLocation {
+                    worktree_id,
+                    path: rel_path(".zed"),
+                }),
+                Some(
+                    r#"
+                        {
+                            "setup": [
+                                "bootstrap",
+                                {
+                                    "label": "Install dependencies",
+                                    "command": "pnpm",
+                                    "args": ["install"]
+                                }
+                            ],
+                            "teardown": ["cleanup"]
+                        }
+                    "#,
+                ),
+            )
+            .unwrap();
+    });
+
+    let scripts = inventory.update(cx, |inventory, _| {
+        inventory.list_worktree_scripts(worktree_id)
+    });
+    assert_eq!(scripts.len(), 1);
+
+    let (source_kind, worktree_tasks) = &scripts[0];
+    match source_kind {
+        TaskSourceKind::Worktree {
+            id,
+            directory_in_worktree,
+            ..
+        } => {
+            assert_eq!(*id, worktree_id);
+            assert_eq!(directory_in_worktree.as_ref(), rel_path(".zed"));
+        }
+        _ => panic!("Expected worktree task source"),
+    }
+
+    assert_eq!(worktree_tasks.setup.len(), 2);
+    match &worktree_tasks.setup[0] {
+        WorktreeTaskDefinition::ByName(name) => assert_eq!(name.as_ref(), "bootstrap"),
+        _ => panic!("Expected named setup task"),
+    }
+    match &worktree_tasks.setup[1] {
+        WorktreeTaskDefinition::Template { task_template } => {
+            assert_eq!(task_template.label, "Install dependencies");
+            assert_eq!(task_template.command, "pnpm");
+            assert_eq!(task_template.args, vec!["install"]);
+        }
+        _ => panic!("Expected inline setup task"),
+    }
+    match &worktree_tasks.teardown[0] {
+        WorktreeTaskDefinition::ByName(name) => assert_eq!(name.as_ref(), "cleanup"),
+        _ => panic!("Expected named teardown task"),
+    }
+
+    inventory.update(cx, |inventory, _| {
+        inventory
+            .update_file_based_worktree_scripts(
+                TaskSettingsLocation::Worktree(SettingsLocation {
+                    worktree_id,
+                    path: rel_path(".zed"),
+                }),
+                Some("{}"),
+            )
+            .unwrap();
+    });
+
+    let scripts = inventory.update(cx, |inventory, _| {
+        inventory.list_worktree_scripts(worktree_id)
+    });
+    assert!(
+        scripts.is_empty(),
+        "After clearing, worktree scripts should be empty"
     );
 }
 

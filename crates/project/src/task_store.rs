@@ -298,6 +298,25 @@ impl TaskStore {
             inventory.update_file_based_scenarios(location, raw_tasks_json)
         })
     }
+
+    pub(super) fn update_user_worktree_scripts(
+        &self,
+        location: TaskSettingsLocation<'_>,
+        raw_worktree_scripts_json: Option<&str>,
+        cx: &mut Context<Self>,
+    ) -> Result<(), InvalidSettingsError> {
+        let task_inventory = match self {
+            TaskStore::Functional(state) => &state.task_inventory,
+            TaskStore::Noop => return Ok(()),
+        };
+        let raw_worktree_scripts_json = raw_worktree_scripts_json
+            .map(|json| json.trim())
+            .filter(|json| !json.is_empty());
+
+        task_inventory.update(cx, |inventory, _| {
+            inventory.update_file_based_worktree_scripts(location, raw_worktree_scripts_json)
+        })
+    }
 }
 
 fn local_task_context_for_location(
