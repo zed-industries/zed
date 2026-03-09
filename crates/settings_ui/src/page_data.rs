@@ -6478,7 +6478,7 @@ fn version_control_page() -> SettingsPage {
         ]
     }
 
-    fn git_gutter_section() -> [SettingsPageItem; 3] {
+    fn git_gutter_section() -> [SettingsPageItem; 4] {
         [
             SettingsPageItem::SectionHeader("Git Gutter"),
             SettingsPageItem::SettingItem(SettingItem {
@@ -6489,6 +6489,28 @@ fn version_control_page() -> SettingsPage {
                     pick: |settings_content| settings_content.git.as_ref()?.git_gutter.as_ref(),
                     write: |settings_content, value| {
                         settings_content.git.get_or_insert_default().git_gutter = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Signs Minimum Contrast",
+                description: "Minimum contrast value used for diff hunk signs in the gutter.",
+                field: Box::new(SettingField {
+                    json_path: Some("git.git_gutter_sign_minimum_contrast"),
+                    pick: |settings_content| {
+                        settings_content
+                            .git
+                            .as_ref()?
+                            .git_gutter_sign_minimum_contrast
+                            .as_ref()
+                    },
+                    write: |settings_content, value| {
+                        settings_content
+                            .git
+                            .get_or_insert_default()
+                            .git_gutter_sign_minimum_contrast = value;
                     },
                 }),
                 metadata: None,

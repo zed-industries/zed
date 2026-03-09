@@ -474,6 +474,10 @@ pub struct GitSettings {
     ///
     /// Default: tracked_files
     pub git_gutter: Option<GitGutterSetting>,
+    /// Minimum contrast used when rendering diff hunk signs in the gutter.
+    ///
+    /// Default: 70.0
+    pub git_gutter_sign_minimum_contrast: Option<f32>,
     /// Sets the debounce threshold (in milliseconds) after which changes are reflected in the git gutter.
     ///
     /// Default: 0

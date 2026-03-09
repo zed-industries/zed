@@ -432,6 +432,8 @@ pub struct GitSettings {
     ///
     /// Default: tracked_files
     pub git_gutter: settings::GitGutterSetting,
+    pub git_gutter_sign_minimum_contrast: f32,
+
     /// Sets the debounce threshold (in milliseconds) after which changes are reflected in the git gutter.
     ///
     /// Default: 0
@@ -626,6 +628,9 @@ impl Settings for ProjectSettings {
         let git_settings = GitSettings {
             enabled: git_enabled,
             git_gutter: git.git_gutter.unwrap(),
+            git_gutter_sign_minimum_contrast: git
+                .git_gutter_sign_minimum_contrast
+                .unwrap_or_default(),
             gutter_debounce: git.gutter_debounce.unwrap_or_default(),
             inline_blame: {
                 let inline = git.inline_blame.unwrap();

@@ -1457,6 +1457,8 @@
     // 3. Hide the gutter
     //      "git_gutter": "hide"
     "git_gutter": "tracked_files",
+    // Minimum contrast used when rendering diff hunk signs in the gutter.
+    "git_gutter_sign_minimum_contrast": 70.0,
     /// Sets the debounce threshold (in milliseconds) after which changes are reflected in the git gutter.
     ///
     /// Default: 0
