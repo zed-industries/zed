@@ -2881,7 +2881,13 @@ impl EditorElement {
 
         let is_light = cx.theme().appearance().is_light();
         let gutter_bg_color = cx.theme().colors().editor_gutter_background;
-        let scroll_top = gutter.scroll_position.y * ScrollPixelOffset::from(gutter.line_height);
+        let git_gutter_sign_minimum_contrast = ProjectSettings::get_global(cx)
+            .git
+            .git_gutter_sign_minimum_contrast
+            .clamp(0.0, 100.0);
+        let scroll_line_height = ScrollPixelOffset::from(gutter.line_height);
+        let scroll_top_line_height =
+            gutter.scroll_position.y * scroll_line_height % scroll_line_height;
 
         gutter
             .row_infos
@@ -2899,6 +2905,7 @@ impl EditorElement {
                             is_light,
                             gutter_bg_color,
                             cx.theme().colors().version_control_added,
+                            git_gutter_sign_minimum_contrast,
                         ),
                     ),
                     DiffHunkStatusKind::Modified => (
@@ -2907,6 +2914,7 @@ impl EditorElement {
                             is_light,
                             gutter_bg_color,
                             cx.theme().colors().version_control_modified,
+                            git_gutter_sign_minimum_contrast,
                         ),
                     ),
                     DiffHunkStatusKind::Deleted => (
@@ -2915,6 +2923,7 @@ impl EditorElement {
                             is_light,
                             gutter_bg_color,
                             cx.theme().colors().version_control_deleted,
+                            git_gutter_sign_minimum_contrast,
                         ),
                     ),
                 };
@@ -2928,10 +2937,7 @@ impl EditorElement {
                             - gutter.dimensions.right_padding
                             - gutter.dimensions.diff_hunk_signs_width
                             + (gutter.dimensions.diff_hunk_signs_width - shaped_line.width) / 2.0,
-                        ix as f32 * gutter.line_height
-                            - Pixels::from(
-                                scroll_top % ScrollPixelOffset::from(gutter.line_height),
-                            ),
+                        ix as f32 * gutter.line_height - Pixels::from(scroll_top_line_height),
                     );
 
                 Some(DiffHunkSignLayout {
@@ -10838,11 +10844,12 @@ fn compute_diff_hunk_sign_color(
     is_light: bool,
     gutter_bg_color: Hsla,
     diff_hunk_color: Hsla,
+    min_contrast: f32,
 ) -> Hsla {
     let diff_hunk_status_bg_opacity = if is_light { 0.16 } else { 0.12 };
     let diff_hunk_bg_color = diff_hunk_color.opacity(diff_hunk_status_bg_opacity);
     let diff_hunk_sign_bg_color = gutter_bg_color.blend(diff_hunk_bg_color);
-    ensure_minimum_contrast(diff_hunk_color, diff_hunk_sign_bg_color, 70.0)
+    ensure_minimum_contrast(diff_hunk_color, diff_hunk_sign_bg_color, min_contrast)
 }
 
 #[cfg(test)]
