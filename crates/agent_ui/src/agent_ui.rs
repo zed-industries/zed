@@ -8,6 +8,7 @@ mod branch_names;
 mod buffer_codegen;
 mod completion_provider;
 mod config_options;
+mod context_window_display_selector;
 mod context;
 mod context_server_configuration;
 pub(crate) mod conversation_view;
@@ -72,6 +73,7 @@ pub use crate::inline_assistant::InlineAssistant;
 pub use agent_diff::{AgentDiffPane, AgentDiffToolbar};
 pub(crate) use conversation_view::ConversationView;
 pub use external_source_prompt::ExternalSourcePrompt;
+pub(crate) use context_window_display_selector::ContextWindowDisplaySelector;
 pub(crate) use mode_selector::ModeSelector;
 pub(crate) use model_selector::ModelSelector;
 pub(crate) use model_selector_popover::ModelSelectorPopover;
@@ -591,7 +593,8 @@ mod tests {
     use gpui::{BorrowAppContext, TestAppContext, px};
     use project::DisableAiSettings;
     use settings::{
-        DefaultAgentView, DockPosition, NotifyWhenAgentWaiting, Settings, SettingsStore,
+        ContextWindowDisplay, DefaultAgentView, DockPosition, NotifyWhenAgentWaiting, Settings,
+        SettingsStore,
     };
 
     #[gpui::test]
@@ -636,6 +639,7 @@ mod tests {
             tool_permissions: Default::default(),
             show_turn_stats: false,
             new_thread_location: Default::default(),
+            context_window_display: ContextWindowDisplay::default(),
         };
 
         cx.update(|cx| {

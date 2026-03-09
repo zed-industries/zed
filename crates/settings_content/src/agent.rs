@@ -139,6 +139,13 @@ pub struct AgentSettingsContent {
     ///
     /// Default: false
     pub show_turn_stats: Option<bool>,
+    /// How to display the context window token usage in the agent thread footer.
+    ///
+    /// "compact" shows only the circular progress ring.
+    /// "detailed" shows inline text (percentage, used/max tokens) without the ring.
+    ///
+    /// Default: compact
+    pub context_window_display: Option<ContextWindowDisplay>,
     /// Per-tool permission rules for granular control over which tool actions
     /// require confirmation.
     ///
@@ -176,6 +183,10 @@ impl AgentSettingsContent {
 
     pub fn set_new_thread_location(&mut self, value: NewThreadLocation) {
         self.new_thread_location = Some(value);
+    }
+
+    pub fn set_context_window_display(&mut self, display: ContextWindowDisplay) {
+        self.context_window_display = Some(display);
     }
 
     pub fn add_favorite_model(&mut self, model: LanguageModelSelection) {
@@ -254,6 +265,14 @@ pub enum DefaultAgentView {
     #[default]
     Thread,
     TextThread,
+}
+
+#[derive(Copy, Clone, Default, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema, MergeFrom)]
+#[serde(rename_all = "snake_case")]
+pub enum ContextWindowDisplay {
+    #[default]
+    Compact,
+    Detailed,
 }
 
 #[derive(

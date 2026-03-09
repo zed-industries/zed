@@ -9,7 +9,7 @@ use crate::StartThreadIn;
 use crate::message_editor::SharedSessionCapabilities;
 use gpui::{Corner, List};
 use language_model::{LanguageModelEffortLevel, Speed};
-use settings::update_settings_file;
+use settings::{ContextWindowDisplay, update_settings_file};
 use ui::{ButtonLike, SplitButton, SplitButtonStyle, Tab};
 use workspace::SERIALIZATION_THROTTLE_TIME;
 
@@ -233,6 +233,7 @@ pub struct ThreadView {
     pub mode_selector: Option<Entity<ModeSelector>>,
     pub model_selector: Option<Entity<ModelSelectorPopover>>,
     pub profile_selector: Option<Entity<ProfileSelector>>,
+    pub context_window_display_selector: Option<Entity<crate::ContextWindowDisplaySelector>>,
     pub permission_dropdown_handle: PopoverMenuHandle<ContextMenu>,
     pub thread_retry_status: Option<RetryStatus>,
     pub(super) thread_error: Option<ThreadError>,
@@ -453,6 +454,11 @@ impl ThreadView {
             .map(|h| h.read(cx).get_recent_sessions(3))
             .unwrap_or_default();
 
+        let context_window_display_selector = project
+            .upgrade()
+            .map(|p| p.read(cx).fs().clone())
+            .map(|fs| cx.new(|_cx| crate::ContextWindowDisplaySelector::new(fs)));
+
         let mut this = Self {
             id,
             parent_id,
@@ -474,6 +480,7 @@ impl ThreadView {
             session_capabilities,
             resumed_without_history,
             _subscriptions: subscriptions,
+            context_window_display_selector,
             permission_dropdown_handle: PopoverMenuHandle::default(),
             thread_retry_status: None,
             thread_error: None,
@@ -3003,7 +3010,16 @@ impl ThreadView {
                     .child(
                         h_flex()
                             .gap_1()
-                            .children(self.render_token_usage(cx))
+                            .map(|this| {
+                                let token_usage = self.render_token_usage(cx);
+                                let has_usage = token_usage.is_some();
+                                this.children(token_usage)
+                                    .when(has_usage, |this| {
+                                        this.children(
+                                            self.context_window_display_selector.clone(),
+                                        )
+                                    })
+                            })
                             .children(self.profile_selector.clone())
                             .map(|this| {
                                 // Either config_options_view OR (mode_selector + model_selector)
@@ -3328,39 +3344,45 @@ impl ThreadView {
                 })
                 .unwrap_or((0, 0));
 
+            let display_mode = AgentSettings::get_global(cx).context_window_display;
+
             Some(
                 h_flex()
                     .id("circular_progress_tokens")
                     .mt_px()
                     .mr_1()
                     .gap_1()
-                    .child(
-                        CircularProgress::new(
-                            usage.used_tokens as f32,
-                            usage.max_tokens as f32,
-                            px(16.0),
-                            cx,
+                    .when(display_mode == ContextWindowDisplay::Compact, |this| {
+                        this.child(
+                            CircularProgress::new(
+                                usage.used_tokens as f32,
+                                usage.max_tokens as f32,
+                                px(16.0),
+                                cx,
+                            )
+                            .stroke_width(px(2.))
+                            .progress_color(progress_color),
                         )
-                        .stroke_width(px(2.))
-                        .progress_color(progress_color),
-                    )
-                    .child(
-                        h_flex()
-                            .gap_0p5()
-                            .child(token_label(percentage.clone(), "token_pct"))
-                            .child(
-                                Label::new("·")
-                                    .size(LabelSize::Small)
-                                    .color(separator_color),
-                            )
-                            .child(token_label(used.clone(), "token_used"))
-                            .child(
-                                Label::new("/")
-                                    .size(LabelSize::Small)
-                                    .color(separator_color),
-                            )
-                            .child(token_label(max.clone(), "token_max")),
-                    )
+                    })
+                    .when(display_mode == ContextWindowDisplay::Detailed, |this| {
+                        this.child(
+                            h_flex()
+                                .gap_0p5()
+                                .child(token_label(percentage.clone(), "token_pct"))
+                                .child(
+                                    Label::new("·")
+                                        .size(LabelSize::Small)
+                                        .color(separator_color),
+                                )
+                                .child(token_label(used.clone(), "token_used"))
+                                .child(
+                                    Label::new("/")
+                                        .size(LabelSize::Small)
+                                        .color(separator_color),
+                                )
+                                .child(token_label(max.clone(), "token_max")),
+                        )
+                    })
                     .tooltip(Tooltip::element({
                         move |_, cx| {
                             v_flex()

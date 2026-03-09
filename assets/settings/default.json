@@ -1144,6 +1144,13 @@
     //
     // Default: false
     "show_turn_stats": false,
+    // How to display context window token usage in the agent thread footer.
+    //
+    // "compact" shows only the circular progress ring.
+    // "detailed" shows inline text (percentage, used/max tokens) without the ring.
+    //
+    // Default: compact
+    "context_window_display": "compact",
   },
   // Whether the screen sharing icon is shown in the os status bar.
   "show_call_status_icon": true,
