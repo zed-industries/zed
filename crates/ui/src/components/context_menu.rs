@@ -7,7 +7,10 @@ use gpui::{
     Focusable, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point, Size,
     Subscription, anchored, canvas, prelude::*, px,
 };
-use menu::{SelectChild, SelectFirst, SelectLast, SelectNext, SelectParent, SelectPrevious};
+use menu::{
+    SelectChild, SelectFirst, SelectLast, SelectNext, SelectNextTarget, SelectParent,
+    SelectPrevious, SelectPreviousTarget,
+};
 use settings::Settings;
 use std::{
     cell::{Cell, RefCell},
@@ -234,6 +237,14 @@ pub struct ContextMenu {
     submenu_trigger_bounds: Rc<Cell<Option<Bounds<Pixels>>>>,
     submenu_trigger_mouse_down: bool,
     ignore_blur_until: Option<Instant>,
+    select_child_override:
+        Option<Rc<dyn Fn(&mut ContextMenu, &mut Window, &mut Context<ContextMenu>) -> bool>>,
+    select_parent_override:
+        Option<Rc<dyn Fn(&mut ContextMenu, &mut Window, &mut Context<ContextMenu>) -> bool>>,
+    select_next_target_handler:
+        Option<Rc<dyn Fn(&mut ContextMenu, &mut Window, &mut Context<ContextMenu>) -> bool>>,
+    select_previous_target_handler:
+        Option<Rc<dyn Fn(&mut ContextMenu, &mut Window, &mut Context<ContextMenu>) -> bool>>,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq)]
@@ -321,6 +332,10 @@ impl ContextMenu {
                 submenu_trigger_bounds: Rc::new(Cell::new(None)),
                 submenu_trigger_mouse_down: false,
                 ignore_blur_until: None,
+                select_child_override: None,
+                select_parent_override: None,
+                select_next_target_handler: None,
+                select_previous_target_handler: None,
             },
             window,
             cx,
@@ -398,6 +413,10 @@ impl ContextMenu {
                     submenu_trigger_bounds: Rc::new(Cell::new(None)),
                     submenu_trigger_mouse_down: false,
                     ignore_blur_until: None,
+                    select_child_override: None,
+                    select_parent_override: None,
+                    select_next_target_handler: None,
+                    select_previous_target_handler: None,
                 },
                 window,
                 cx,
@@ -429,7 +448,7 @@ impl ContextMenu {
                 delayed: false,
                 clicked: false,
                 end_slot_action: None,
-                key_context: "menu".into(),
+                key_context: self.key_context.clone(),
                 _on_blur_subscription: cx.on_blur(
                     &focus_handle,
                     window,
@@ -467,6 +486,10 @@ impl ContextMenu {
                 submenu_trigger_bounds: Rc::new(Cell::new(None)),
                 submenu_trigger_mouse_down: false,
                 ignore_blur_until: None,
+                select_child_override: self.select_child_override.clone(),
+                select_parent_override: self.select_parent_override.clone(),
+                select_next_target_handler: self.select_next_target_handler.clone(),
+                select_previous_target_handler: self.select_previous_target_handler.clone(),
             },
             window,
             cx,
@@ -874,6 +897,38 @@ impl ContextMenu {
         self
     }
 
+    pub fn select_child_override(
+        mut self,
+        handler: impl Fn(&mut ContextMenu, &mut Window, &mut Context<ContextMenu>) -> bool + 'static,
+    ) -> Self {
+        self.select_child_override = Some(Rc::new(handler));
+        self
+    }
+
+    pub fn select_parent_override(
+        mut self,
+        handler: impl Fn(&mut ContextMenu, &mut Window, &mut Context<ContextMenu>) -> bool + 'static,
+    ) -> Self {
+        self.select_parent_override = Some(Rc::new(handler));
+        self
+    }
+
+    pub fn select_next_target_handler(
+        mut self,
+        handler: impl Fn(&mut ContextMenu, &mut Window, &mut Context<ContextMenu>) -> bool + 'static,
+    ) -> Self {
+        self.select_next_target_handler = Some(Rc::new(handler));
+        self
+    }
+
+    pub fn select_previous_target_handler(
+        mut self,
+        handler: impl Fn(&mut ContextMenu, &mut Window, &mut Context<ContextMenu>) -> bool + 'static,
+    ) -> Self {
+        self.select_previous_target_handler = Some(Rc::new(handler));
+        self
+    }
+
     pub fn selected_index(&self) -> Option<usize> {
         self.selected_index
     }
@@ -1094,6 +1149,13 @@ impl ContextMenu {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if let Some(handler) = self.select_child_override.clone()
+            && handler(self, window, cx)
+        {
+            cx.notify();
+            return;
+        }
+
         let Some(ix) = self.selected_index else {
             return;
         };
@@ -1127,6 +1189,13 @@ impl ContextMenu {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if let Some(handler) = self.select_parent_override.clone()
+            && handler(self, window, cx)
+        {
+            cx.notify();
+            return;
+        }
+
         if self.main_menu.is_none() {
             return;
         }
@@ -1152,6 +1221,36 @@ impl ContextMenu {
         }
 
         cx.emit(DismissEvent);
+    }
+
+    pub fn select_next_target(
+        &mut self,
+        _: &SelectNextTarget,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(handler) = self.select_next_target_handler.clone()
+            && handler(self, window, cx)
+        {
+            return;
+        }
+
+        self.select_next(&SelectNext, window, cx);
+    }
+
+    pub fn select_previous_target(
+        &mut self,
+        _: &SelectPreviousTarget,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(handler) = self.select_previous_target_handler.clone()
+            && handler(self, window, cx)
+        {
+            return;
+        }
+
+        self.select_previous(&SelectPrevious, window, cx);
     }
 
     fn select_index(
@@ -1242,6 +1341,10 @@ impl ContextMenu {
                 submenu_trigger_bounds: Rc::new(Cell::new(None)),
                 submenu_trigger_mouse_down: false,
                 ignore_blur_until: None,
+                select_child_override: None,
+                select_parent_override: None,
+                select_next_target_handler: None,
+                select_previous_target_handler: None,
             };
 
             menu = (builder)(menu, window, cx);
@@ -2134,6 +2237,8 @@ impl Render for ContextMenu {
                         .on_action(cx.listener(ContextMenu::handle_select_last))
                         .on_action(cx.listener(ContextMenu::select_next))
                         .on_action(cx.listener(ContextMenu::select_previous))
+                        .on_action(cx.listener(ContextMenu::select_next_target))
+                        .on_action(cx.listener(ContextMenu::select_previous_target))
                         .on_action(cx.listener(ContextMenu::select_submenu_child))
                         .on_action(cx.listener(ContextMenu::select_submenu_parent))
                         .on_action(cx.listener(ContextMenu::confirm))

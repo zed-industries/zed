@@ -39,7 +39,7 @@ use multi_buffer::{IndentGuide, MultiBuffer, MultiBufferOffset, MultiBufferOffse
 use parking_lot::Mutex;
 use pretty_assertions::{assert_eq, assert_ne};
 use project::{
-    FakeFs, Project,
+    FakeFs, Project, ProjectPath,
     debugger::breakpoint_store::{BreakpointState, SourceBreakpoint},
     project_settings::LspSettings,
     trusted_worktrees::{PathTrust, TrustedWorktrees},
@@ -60,7 +60,7 @@ use text::ToPoint as _;
 use unindent::Unindent;
 use util::{
     assert_set_eq, path,
-    rel_path::rel_path,
+    rel_path::{RelPath, rel_path},
     test::{TextRangeMarker, marked_text_ranges, marked_text_ranges_by, sample_text},
 };
 use workspace::{
@@ -33555,5 +33555,905 @@ comment */ˇ»;"#},
     });
     editor.update(cx, |editor, cx| {
         assert_text_with_selections(editor, indoc! {r#"let arr = [«1, 2, 3]ˇ»;"#}, cx);
+    });
+}
+
+// --- file_path_nav tests ---
+
+/// Opens a singleton editor for a real project file and verifies that
+/// `breadcrumb_prefix` returns `Some(...)` when `file_path_nav` is enabled.
+#[gpui::test]
+async fn test_file_path_nav_prefix_shown_for_file(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/project"),
+        json!({
+            "src": {
+                "lib.rs": "pub fn hello() {}",
+            }
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs, [path!("/project").as_ref()], cx).await;
+
+    let buffer = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer(path!("/project/src/lib.rs"), cx)
+        })
+        .await
+        .unwrap();
+
+    let (editor, cx) = cx.add_window_view(|window, cx| {
+        let multibuffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
+        build_editor_with_project(project.clone(), multibuffer, window, cx)
+    });
+
+    // file_path_nav defaults to true — prefix should be present.
+    editor.update_in(cx, |editor, window, cx| {
+        let prefix = editor.breadcrumb_prefix(window, cx);
+        assert!(prefix.is_some(), "breadcrumb_prefix should return Some when file_path_nav is enabled");
+    });
+}
+
+/// Verifies that `breadcrumb_prefix` returns `None` when `file_path_nav` is
+/// disabled, preserving the old single-click-opens-outline behavior.
+#[gpui::test]
+async fn test_file_path_nav_prefix_hidden_when_disabled(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/project"),
+        json!({
+            "main.rs": "fn main() {}",
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs, [path!("/project").as_ref()], cx).await;
+
+    let buffer = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer(path!("/project/main.rs"), cx)
+        })
+        .await
+        .unwrap();
+
+    let (editor, cx) = cx.add_window_view(|window, cx| {
+        let multibuffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
+        build_editor_with_project(project.clone(), multibuffer, window, cx)
+    });
+
+    // Disable file_path_nav.
+    update_test_editor_settings(cx, &|settings| {
+        settings.toolbar = Some(settings::ToolbarContent {
+            file_path_nav: Some(false),
+            ..Default::default()
+        });
+    });
+
+    editor.update_in(cx, |editor, window, cx| {
+        let prefix = editor.breadcrumb_prefix(window, cx);
+        assert!(prefix.is_none(), "breadcrumb_prefix should return None when file_path_nav is disabled");
+    });
+}
+
+/// Verifies that `breadcrumb_prefix` returns `None` for an untitled buffer
+/// (one with no associated project file), regardless of the setting.
+#[gpui::test]
+async fn test_file_path_nav_prefix_none_for_untitled(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let (editor, cx) = cx.add_window_view(|window, cx| {
+        let buffer = cx.new(|cx| language::Buffer::local("hello", cx));
+        let multibuffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
+        build_editor(multibuffer, window, cx)
+    });
+
+    editor.update_in(cx, |editor, window, cx| {
+        let prefix = editor.breadcrumb_prefix(window, cx);
+        assert!(
+            prefix.is_none(),
+            "breadcrumb_prefix should return None for a buffer with no associated file"
+        );
+    });
+}
+
+/// Verifies that a single-worktree project does NOT include the worktree root
+/// name as a leading breadcrumb segment.
+#[gpui::test]
+async fn test_file_path_nav_single_worktree_omits_root(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/project"),
+        json!({
+            "src": {
+                "lib.rs": "pub fn hello() {}",
+            }
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs, [path!("/project").as_ref()], cx).await;
+
+    let buffer = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer(path!("/project/src/lib.rs"), cx)
+        })
+        .await
+        .unwrap();
+
+    let (editor, cx) = cx.add_window_view(|window, cx| {
+        let multibuffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
+        build_editor_with_project(project.clone(), multibuffer, window, cx)
+    });
+
+    editor.update_in(cx, |editor, window, cx| {
+        let worktree_count = project.read(cx).visible_worktrees(cx).count();
+        assert_eq!(worktree_count, 1, "test setup should have exactly 1 worktree");
+
+        let prefix = editor.breadcrumb_prefix(window, cx);
+        assert!(prefix.is_some(), "breadcrumb_prefix should return Some for a file");
+
+        let file = editor
+            .buffer
+            .read(cx)
+            .as_singleton()
+            .and_then(|buf| project::File::from_dyn(buf.read(cx).file()))
+            .expect("buffer should have a file");
+        let path = file.path.clone();
+        let worktree_id = file.worktree_id(cx);
+
+        let nav = crate::file_path_nav::FilePathNav::new(
+            worktree_id,
+            path,
+            false,
+            None,
+            project.downgrade(),
+            None,
+        );
+        let names = nav.component_names();
+        assert_eq!(names, vec!["src", "lib.rs"]);
+        assert!(
+            !names.contains(&"project"),
+            "single-worktree breadcrumb should not include the worktree root name"
+        );
+    });
+}
+
+/// Verifies that a multi-worktree project DOES include the worktree root
+/// name as the leading breadcrumb segment.
+#[gpui::test]
+async fn test_file_path_nav_multi_worktree_shows_root(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/project_a"),
+        json!({
+            "src": {
+                "main.rs": "fn main() {}",
+            }
+        }),
+    )
+    .await;
+    fs.insert_tree(
+        path!("/project_b"),
+        json!({
+            "src": {
+                "lib.rs": "pub fn greet() {}",
+            }
+        }),
+    )
+    .await;
+
+    let project = Project::test(
+        fs,
+        [path!("/project_a").as_ref(), path!("/project_b").as_ref()],
+        cx,
+    )
+    .await;
+
+    let buffer = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer(path!("/project_a/src/main.rs"), cx)
+        })
+        .await
+        .unwrap();
+
+    let (editor, cx) = cx.add_window_view(|window, cx| {
+        let multibuffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
+        build_editor_with_project(project.clone(), multibuffer, window, cx)
+    });
+
+    editor.update_in(cx, |editor, window, cx| {
+        let worktree_count = project.read(cx).visible_worktrees(cx).count();
+        assert_eq!(worktree_count, 2, "test setup should have exactly 2 worktrees");
+
+        let prefix = editor.breadcrumb_prefix(window, cx);
+        assert!(prefix.is_some(), "breadcrumb_prefix should return Some for a file");
+
+        let file = editor
+            .buffer
+            .read(cx)
+            .as_singleton()
+            .and_then(|buf| project::File::from_dyn(buf.read(cx).file()))
+            .expect("buffer should have a file");
+        let path = file.path.clone();
+        let worktree_id = file.worktree_id(cx);
+        let root_name = project
+            .read(cx)
+            .worktree_for_id(worktree_id, cx)
+            .map(|wt| SharedString::from(wt.read(cx).root_name_str().to_owned()));
+
+        let nav = crate::file_path_nav::FilePathNav::new(
+            worktree_id,
+            path,
+            true,
+            root_name,
+            project.downgrade(),
+            None,
+        );
+        let names = nav.component_names();
+        assert_eq!(names, vec!["project_a", "src", "main.rs"]);
+    });
+}
+
+/// Verifies that a deeply nested file path produces the correct number
+/// of breadcrumb segments matching each path component.
+#[gpui::test]
+async fn test_file_path_nav_segment_count_for_nested_file(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/project"),
+        json!({
+            "src": {
+                "components": {
+                    "ui": {
+                        "button.rs": "pub struct Button;",
+                    }
+                }
+            }
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs, [path!("/project").as_ref()], cx).await;
+
+    let buffer = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer(path!("/project/src/components/ui/button.rs"), cx)
+        })
+        .await
+        .unwrap();
+
+    let (editor, cx) = cx.add_window_view(|window, cx| {
+        let multibuffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
+        build_editor_with_project(project.clone(), multibuffer, window, cx)
+    });
+
+    editor.update_in(cx, |editor, window, cx| {
+        assert!(editor.breadcrumb_prefix(window, cx).is_some());
+
+        let file = editor
+            .buffer
+            .read(cx)
+            .as_singleton()
+            .and_then(|buf| project::File::from_dyn(buf.read(cx).file()))
+            .expect("buffer should have a file");
+
+        let nav = crate::file_path_nav::FilePathNav::new(
+            file.worktree_id(cx),
+            file.path.clone(),
+            false,
+            None,
+            project.downgrade(),
+            None,
+        );
+        let names = nav.component_names();
+        assert_eq!(names, vec!["src", "components", "ui", "button.rs"]);
+    });
+}
+
+/// Verifies that `collect_visible_rows` sorts directories before files,
+/// and entries within each group are sorted alphabetically.
+#[gpui::test]
+async fn test_file_path_nav_collect_rows_sort_order(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/project"),
+        json!({
+            "zebra.rs": "",
+            "alpha.rs": "",
+            "utils": {},
+            "config": {},
+            "main.rs": "",
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs, [path!("/project").as_ref()], cx).await;
+
+    project.update(cx, |project, cx| {
+        let worktree = project.visible_worktrees(cx).next().expect("should have worktree");
+        let snapshot = worktree.read(cx);
+        let empty_expanded = std::collections::HashSet::new();
+        let mut rows = Vec::new();
+        crate::file_path_nav::collect_visible_rows(
+            snapshot,
+            RelPath::empty(),
+            0,
+            &empty_expanded,
+            &mut rows,
+            cx,
+        );
+
+        let dirs: Vec<&str> = rows.iter().filter(|r| r.is_directory).map(|r| r.name.as_ref()).collect();
+        let files: Vec<&str> = rows.iter().filter(|r| !r.is_directory).map(|r| r.name.as_ref()).collect();
+
+        assert_eq!(dirs, vec!["config", "utils"], "directories should be sorted alphabetically");
+        assert_eq!(files, vec!["alpha.rs", "main.rs", "zebra.rs"], "files should be sorted alphabetically");
+
+        let first_file_idx = rows.iter().position(|r| !r.is_directory).unwrap();
+        let last_dir_idx = rows.iter().rposition(|r| r.is_directory).unwrap();
+        assert!(
+            last_dir_idx < first_file_idx,
+            "all directories should appear before all files"
+        );
+    });
+}
+
+/// Verifies that expanding a directory in the breadcrumb dropdown shows
+/// its children at the correct depth, and that siblings stay collapsed.
+#[gpui::test]
+async fn test_file_path_nav_collect_rows_expand_collapse(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/project"),
+        json!({
+            "src": {
+                "main.rs": "",
+                "utils": {
+                    "helper.rs": "",
+                }
+            },
+            "tests": {
+                "test_main.rs": "",
+            }
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs, [path!("/project").as_ref()], cx).await;
+
+    project.update(cx, |project, cx| {
+        let worktree = project.visible_worktrees(cx).next().expect("should have worktree");
+        let snapshot = worktree.read(cx);
+
+        // Nothing expanded: only top-level entries visible.
+        let empty_expanded = std::collections::HashSet::new();
+        let mut rows = Vec::new();
+        crate::file_path_nav::collect_visible_rows(
+            snapshot,
+            RelPath::empty(),
+            0,
+            &empty_expanded,
+            &mut rows,
+            cx,
+        );
+        let names: Vec<&str> = rows.iter().map(|r| r.name.as_ref()).collect();
+        assert_eq!(names, vec!["src", "tests"], "only top-level dirs with no expansion");
+        assert!(rows.iter().all(|r| r.depth == 0), "all entries should be at depth 0");
+
+        // Expand "src" only — its children should appear, "tests" stays collapsed.
+        let mut expanded = std::collections::HashSet::new();
+        expanded.insert(Arc::from(rel_path("src")));
+        let mut rows = Vec::new();
+        crate::file_path_nav::collect_visible_rows(
+            snapshot,
+            RelPath::empty(),
+            0,
+            &expanded,
+            &mut rows,
+            cx,
+        );
+        let names: Vec<&str> = rows.iter().map(|r| r.name.as_ref()).collect();
+        assert_eq!(names, vec!["src", "utils", "main.rs", "tests"]);
+
+        let src_children: Vec<(&str, usize)> = rows.iter()
+            .filter(|r| r.depth == 1)
+            .map(|r| (r.name.as_ref(), r.depth))
+            .collect();
+        assert_eq!(src_children, vec![("utils", 1), ("main.rs", 1)]);
+
+        // Expand "src/utils" too — nested children should appear at depth 2.
+        expanded.insert(Arc::from(rel_path("src/utils")));
+        let mut rows = Vec::new();
+        crate::file_path_nav::collect_visible_rows(
+            snapshot,
+            RelPath::empty(),
+            0,
+            &expanded,
+            &mut rows,
+            cx,
+        );
+        let names: Vec<&str> = rows.iter().map(|r| r.name.as_ref()).collect();
+        assert_eq!(names, vec!["src", "utils", "helper.rs", "main.rs", "tests"]);
+
+        let helper = rows.iter().find(|r| r.name.as_ref() == "helper.rs").unwrap();
+        assert_eq!(helper.depth, 2, "nested child should be at depth 2");
+        assert!(!helper.is_directory);
+    });
+}
+
+/// Verifies that expanding an empty directory produces no child rows.
+#[gpui::test]
+async fn test_file_path_nav_collect_rows_empty_directory(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/project"),
+        json!({
+            "empty_dir": {},
+            "main.rs": "",
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs, [path!("/project").as_ref()], cx).await;
+
+    project.update(cx, |project, cx| {
+        let worktree = project.visible_worktrees(cx).next().unwrap();
+        let snapshot = worktree.read(cx);
+
+        // Expand the empty directory.
+        let mut expanded = std::collections::HashSet::new();
+        expanded.insert(Arc::from(rel_path("empty_dir")));
+        let mut rows = Vec::new();
+        crate::file_path_nav::collect_visible_rows(
+            snapshot,
+            RelPath::empty(),
+            0,
+            &expanded,
+            &mut rows,
+            cx,
+        );
+
+        let names: Vec<&str> = rows.iter().map(|r| r.name.as_ref()).collect();
+        assert_eq!(names, vec!["empty_dir", "main.rs"]);
+
+        let empty_dir = rows.iter().find(|r| r.name.as_ref() == "empty_dir").unwrap();
+        assert!(empty_dir.is_directory);
+        assert!(empty_dir.is_expanded);
+
+        // No children at depth 1.
+        let children_at_depth_1: Vec<&str> = rows.iter()
+            .filter(|r| r.depth == 1)
+            .map(|r| r.name.as_ref())
+            .collect();
+        assert!(children_at_depth_1.is_empty(), "empty dir should have no children");
+    });
+}
+
+/// Verifies that deeply nested paths (5+ levels) produce the correct segments.
+#[gpui::test]
+async fn test_file_path_nav_deeply_nested_segments(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/project"),
+        json!({
+            "a": { "b": { "c": { "d": { "e": { "f.rs": "" } } } } }
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs, [path!("/project").as_ref()], cx).await;
+
+    let buffer = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer(path!("/project/a/b/c/d/e/f.rs"), cx)
+        })
+        .await
+        .unwrap();
+
+    let (editor, cx) = cx.add_window_view(|window, cx| {
+        let multibuffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
+        build_editor_with_project(project.clone(), multibuffer, window, cx)
+    });
+
+    editor.update_in(cx, |editor, window, cx| {
+        assert!(editor.breadcrumb_prefix(window, cx).is_some());
+
+        let file = editor
+            .buffer
+            .read(cx)
+            .as_singleton()
+            .and_then(|buf| project::File::from_dyn(buf.read(cx).file()))
+            .unwrap();
+
+        let nav = crate::file_path_nav::FilePathNav::new(
+            file.worktree_id(cx),
+            file.path.clone(),
+            false,
+            None,
+            project.downgrade(),
+            None,
+        );
+        let names = nav.component_names();
+        assert_eq!(names, vec!["a", "b", "c", "d", "e", "f.rs"]);
+    });
+}
+
+/// Simulates the select_child_override logic: right arrow on a collapsed
+/// directory adds it to expanded_dirs, making its children visible.
+/// Also verifies select_parent_override: left arrow on an expanded directory
+/// removes it, and left arrow on a file collapses its parent.
+#[gpui::test]
+async fn test_file_path_nav_expand_collapse_keyboard_logic(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/project"),
+        json!({
+            "src": {
+                "utils": {
+                    "helper.rs": "",
+                },
+                "main.rs": "",
+            },
+            "tests": {
+                "test_main.rs": "",
+            },
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs, [path!("/project").as_ref()], cx).await;
+
+    project.update(cx, |project, cx| {
+        let worktree = project.visible_worktrees(cx).next().unwrap();
+        let snapshot = worktree.read(cx);
+
+        let mut expanded = std::collections::HashSet::new();
+
+        let rebuild = |expanded: &std::collections::HashSet<Arc<RelPath>>, cx: &App| {
+            let mut rows = Vec::new();
+            crate::file_path_nav::collect_visible_rows(
+                snapshot,
+                RelPath::empty(),
+                0,
+                expanded,
+                &mut rows,
+                cx,
+            );
+            rows
+        };
+
+        // Initial state: nothing expanded.
+        let rows = rebuild(&expanded, cx);
+        let names: Vec<&str> = rows.iter().map(|r| r.name.as_ref()).collect();
+        assert_eq!(names, vec!["src", "tests"]);
+
+        // #17: Right arrow on collapsed "src" → expands it.
+        // (select_child_override logic: if is_directory && !is_expanded → insert into expanded)
+        let selected = &rows[0]; // "src"
+        assert!(selected.is_directory && !selected.is_expanded);
+        expanded.insert(selected.path.clone());
+
+        let rows = rebuild(&expanded, cx);
+        let names: Vec<&str> = rows.iter().map(|r| r.name.as_ref()).collect();
+        assert_eq!(names, vec!["src", "utils", "main.rs", "tests"]);
+
+        // #18: Left arrow on expanded "src" → collapses it.
+        // (select_parent_override logic: if is_directory && is_expanded → remove from expanded)
+        let selected = &rows[0]; // "src" — now expanded
+        assert!(selected.is_directory && selected.is_expanded);
+        expanded.remove(&selected.path);
+
+        let rows = rebuild(&expanded, cx);
+        let names: Vec<&str> = rows.iter().map(|r| r.name.as_ref()).collect();
+        assert_eq!(names, vec!["src", "tests"], "src should be collapsed again");
+
+        // Re-expand src and its child utils for the next test.
+        expanded.insert(Arc::from(rel_path("src")));
+        expanded.insert(Arc::from(rel_path("src/utils")));
+
+        let rows = rebuild(&expanded, cx);
+        let names: Vec<&str> = rows.iter().map(|r| r.name.as_ref()).collect();
+        assert_eq!(names, vec!["src", "utils", "helper.rs", "main.rs", "tests"]);
+
+        // #19: Left arrow on "helper.rs" (not a directory) → collapses its parent "src/utils".
+        // (select_parent_override logic: path.parent() → remove parent from expanded)
+        let selected = rows.iter().find(|r| r.name.as_ref() == "helper.rs").unwrap();
+        assert!(!selected.is_directory);
+        let parent_dir: Arc<RelPath> = selected.path.parent().map(Arc::from).unwrap();
+        assert_eq!(parent_dir.as_unix_str(), "src/utils");
+        expanded.remove(&parent_dir);
+
+        let rows = rebuild(&expanded, cx);
+        let names: Vec<&str> = rows.iter().map(|r| r.name.as_ref()).collect();
+        assert_eq!(
+            names,
+            vec!["src", "utils", "main.rs", "tests"],
+            "utils should be collapsed, hiding helper.rs"
+        );
+
+        // #20: Up/Down navigation — verify row indices are stable for selection.
+        // With src expanded: rows are [src(0), utils(1), main.rs(2), tests(3)]
+        assert_eq!(rows.len(), 4);
+        assert_eq!(rows[0].name.as_ref(), "src");
+        assert_eq!(rows[1].name.as_ref(), "utils");
+        assert_eq!(rows[2].name.as_ref(), "main.rs");
+        assert_eq!(rows[3].name.as_ref(), "tests");
+        // Up from index 2 → index 1, Down from index 1 → index 2
+        // (ContextMenu select_next/select_previous handle this natively —
+        // we verify the row ordering is correct for index-based navigation.)
+    });
+}
+
+/// Verifies that dotfiles (hidden files) are included in the dropdown listing.
+#[gpui::test]
+async fn test_file_path_nav_collect_rows_includes_dotfiles(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/project"),
+        json!({
+            ".gitignore": "target/",
+            ".env": "SECRET=x",
+            "src": {},
+            "main.rs": "",
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs, [path!("/project").as_ref()], cx).await;
+
+    project.update(cx, |project, cx| {
+        let worktree = project.visible_worktrees(cx).next().unwrap();
+        let snapshot = worktree.read(cx);
+        let empty_expanded = std::collections::HashSet::new();
+        let mut rows = Vec::new();
+        crate::file_path_nav::collect_visible_rows(
+            snapshot,
+            RelPath::empty(),
+            0,
+            &empty_expanded,
+            &mut rows,
+            cx,
+        );
+
+        let names: Vec<&str> = rows.iter().map(|r| r.name.as_ref()).collect();
+        assert!(names.contains(&".gitignore"), "dotfiles should be listed");
+        assert!(names.contains(&".env"), "dotfiles should be listed");
+    });
+}
+
+/// Verifies that `open_breadcrumb_file` does not panic when workspace is `None`.
+#[gpui::test]
+async fn test_file_path_nav_open_file_missing_workspace(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/project"),
+        json!({ "main.rs": "fn main() {}" }),
+    )
+    .await;
+
+    let project = Project::test(fs, [path!("/project").as_ref()], cx).await;
+
+    let worktree_id = project.update(cx, |project, cx| {
+        project.visible_worktrees(cx).next().unwrap().read(cx).id()
+    });
+
+    let (_window, cx) = cx.add_window_view(|window, cx| {
+        let project_path = ProjectPath {
+            worktree_id,
+            path: Arc::from(rel_path("main.rs")),
+        };
+        crate::file_path_nav::open_breadcrumb_file(project_path, &None, window, cx);
+        let buffer = cx.new(|cx| language::Buffer::local("", cx));
+        let multibuffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
+        build_editor(multibuffer, window, cx)
+    });
+    cx.run_until_parked();
+}
+
+/// Verifies that `open_breadcrumb_file` does not panic when the workspace
+/// weak handle has been dropped (stale reference).
+#[gpui::test]
+async fn test_file_path_nav_open_file_stale_workspace(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/project"),
+        json!({ "main.rs": "fn main() {}" }),
+    )
+    .await;
+
+    let project = Project::test(fs, [path!("/project").as_ref()], cx).await;
+
+    let worktree_id = project.update(cx, |project, cx| {
+        project.visible_worktrees(cx).next().unwrap().read(cx).id()
+    });
+
+    // Create a workspace, take a weak handle, then drop the window so the
+    // workspace entity is released.
+    let weak_workspace = {
+        let window =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let weak = window
+            .read_with(cx, |mw, _| mw.workspace().downgrade())
+            .unwrap();
+        let _ = window;
+        cx.run_until_parked();
+        weak
+    };
+
+    let (_window, cx) = cx.add_window_view(|window, cx| {
+        let project_path = ProjectPath {
+            worktree_id,
+            path: Arc::from(rel_path("main.rs")),
+        };
+        crate::file_path_nav::open_breadcrumb_file(
+            project_path,
+            &Some(weak_workspace.clone()),
+            window,
+            cx,
+        );
+        let buffer = cx.new(|cx| language::Buffer::local("", cx));
+        let multibuffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
+        build_editor(multibuffer, window, cx)
+    });
+    cx.run_until_parked();
+}
+
+/// Verifies that `open_breadcrumb_file` actually opens the file in the
+/// workspace when given a valid workspace and project path.
+#[gpui::test]
+async fn test_file_path_nav_open_file_opens_in_workspace(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/project"),
+        json!({
+            "src": {
+                "main.rs": "fn main() {}",
+                "lib.rs": "pub fn greet() {}",
+            }
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs, [path!("/project").as_ref()], cx).await;
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let workspace = window
+        .read_with(cx, |mw, _| mw.workspace().clone())
+        .unwrap();
+    let cx = &mut VisualTestContext::from_window(*window, cx);
+
+    let worktree_id = workspace.update_in(cx, |workspace, _window, cx| {
+        workspace
+            .project()
+            .update(cx, |project, cx| {
+                project.visible_worktrees(cx).next().unwrap().read(cx).id()
+            })
+    });
+
+    // Open main.rs first so there's an active item.
+    workspace
+        .update_in(cx, |workspace, window, cx| {
+            workspace.open_path(
+                (worktree_id, rel_path("src/main.rs")),
+                None,
+                true,
+                window,
+                cx,
+            )
+        })
+        .await
+        .unwrap();
+    cx.run_until_parked();
+
+    // Now use open_breadcrumb_file to open lib.rs.
+    let weak_workspace = workspace.downgrade();
+    cx.update(|window, cx| {
+        let project_path = ProjectPath {
+            worktree_id,
+            path: Arc::from(rel_path("src/lib.rs")),
+        };
+        crate::file_path_nav::open_breadcrumb_file(
+            project_path,
+            &Some(weak_workspace),
+            window,
+            cx,
+        );
+    });
+    cx.run_until_parked();
+
+    // Verify lib.rs is now the active item.
+    workspace.update_in(cx, |workspace, _window, cx| {
+        let active_editor = workspace
+            .active_item(cx)
+            .expect("should have an active item")
+            .downcast::<Editor>()
+            .expect("active item should be an Editor");
+        let file_path = active_editor.read(cx).buffer().read(cx).as_singleton()
+            .and_then(|buf| {
+                project::File::from_dyn(buf.read(cx).file())
+                    .map(|f| f.path.as_std_path().to_string_lossy().to_string())
+            });
+        assert_eq!(
+            file_path.as_deref(),
+            Some("src/lib.rs"),
+            "active item should be lib.rs"
+        );
+    });
+}
+
+/// Exercises the `build_directory_menu` code path with a deeply nested
+/// directory structure to verify recursive menu construction does not panic.
+#[gpui::test]
+async fn test_file_path_nav_nested_directory_structure(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/project"),
+        json!({
+            "Cargo.toml": "[package]\nname = \"project\"",
+            "src": {
+                "main.rs": "fn main() {}",
+                "components": {
+                    "mod.rs": "pub mod ui;",
+                    "ui": {
+                        "button.rs": "pub struct Button;",
+                        "input.rs": "pub struct Input;",
+                    }
+                }
+            }
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs, [path!("/project").as_ref()], cx).await;
+
+    let buffer = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer(path!("/project/src/components/ui/button.rs"), cx)
+        })
+        .await
+        .unwrap();
+
+    let (editor, cx) = cx.add_window_view(|window, cx| {
+        let multibuffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
+        build_editor_with_project(project.clone(), multibuffer, window, cx)
+    });
+
+    editor.update_in(cx, |editor, window, cx| {
+        let prefix = editor.breadcrumb_prefix(window, cx);
+        assert!(
+            prefix.is_some(),
+            "breadcrumb_prefix should return Some for a deeply nested file"
+        );
     });
 }
