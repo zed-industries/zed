@@ -6,6 +6,7 @@ pub mod connection_manager;
 pub mod context_server_store;
 pub mod debounced_delay;
 pub mod debugger;
+pub mod file_nesting;
 pub mod git_store;
 pub mod image_store;
 pub mod lsp_command;

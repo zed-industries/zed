@@ -3,15 +3,15 @@ use gpui::Pixels;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{
-    DockSide, ProjectPanelEntrySpacing, ProjectPanelSortMode, RegisterSetting, Settings,
-    ShowDiagnostics, ShowIndentGuides,
+    DockSide, FileNestingSettings, ProjectPanelEntrySpacing, ProjectPanelSortMode, RegisterSetting,
+    Settings, ShowDiagnostics, ShowIndentGuides,
 };
 use ui::{
     px,
     scrollbars::{ScrollbarVisibility, ShowScrollbar},
 };
 
-#[derive(Deserialize, Debug, Clone, Copy, PartialEq, RegisterSetting)]
+#[derive(Deserialize, Debug, Clone, PartialEq, RegisterSetting)]
 pub struct ProjectPanelSettings {
     pub button: bool,
     pub hide_gitignore: bool,
@@ -36,6 +36,7 @@ pub struct ProjectPanelSettings {
     pub auto_open: AutoOpenSettings,
     pub sort_mode: ProjectPanelSortMode,
     pub diagnostic_badges: bool,
+    pub file_nesting: FileNestingSettings,
 }
 
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
@@ -126,8 +127,11 @@ impl Settings for ProjectPanelSettings {
                     on_drop: auto_open.on_drop.unwrap(),
                 }
             },
-            sort_mode: project_panel.sort_mode.unwrap(),
+            sort_mode: project_panel
+                .sort_mode
+                .unwrap_or(ProjectPanelSortMode::DirectoriesFirst),
             diagnostic_badges: project_panel.diagnostic_badges.unwrap(),
+            file_nesting: project_panel.file_nesting.unwrap(),
         }
     }
 }
