@@ -1446,6 +1446,10 @@ impl PlatformWindow for WaylandWindow {
         
         adapter.update_if_active(|| tree_update);
     }
+    
+    fn a11y_update_window_bounds(&self) {
+        // no-op - wayland does not let us get bounds for our window
+    }
 }
 
 fn update_window(mut state: RefMut<WaylandWindowState>) {
