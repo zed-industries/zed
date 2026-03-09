@@ -2526,8 +2526,7 @@ impl ReferenceMultibuffer {
                     let mut hunk_range = hunk.buffer_range.to_offset(buffer);
 
                     hunk_range.end = hunk_range.end.min(buffer_range.end);
-                    if dbg!(hunk_range.start) > dbg!(buffer_range.end)
-                        || dbg!(hunk_range.start) < dbg!(buffer_range.start)
+                    if hunk_range.start > buffer_range.end || hunk_range.start < buffer_range.start
                     {
                         log::trace!("skipping hunk outside excerpt range");
                         continue;
@@ -2540,7 +2539,6 @@ impl ReferenceMultibuffer {
                         .into_iter()
                         .flatten()
                         .any(|expanded_anchor| {
-                            dbg!(&expanded_anchor);
                             expanded_anchor
                                 .cmp(&hunk.buffer_range.start, buffer)
                                 .is_eq()
@@ -2752,7 +2750,6 @@ impl ReferenceMultibuffer {
             .iter()
             .filter(|excerpt| excerpt.buffer.read(cx).remote_id() == buffer_id)
             .collect::<Vec<_>>();
-        dbg!(&excerpts);
         let Some(buffer) = excerpts.first().map(|excerpt| excerpt.buffer.clone()) else {
             self.expanded_diff_hunks_by_buffer.remove(&buffer_id);
             return;
@@ -2780,13 +2777,9 @@ impl ReferenceMultibuffer {
                     return false;
                 };
                 let hunk_range = hunks[ix].buffer_range.to_point(&buffer_snapshot);
-                dbg!(&excerpts);
                 excerpts.iter().any(|excerpt| {
                     let excerpt_range = excerpt.range.to_point(&buffer_snapshot);
-                    dbg!(
-                        dbg!(hunk_range.end) >= dbg!(excerpt_range.start)
-                            && dbg!(hunk_range.start) <= dbg!(excerpt_range.end)
-                    )
+                    hunk_range.start >= excerpt_range.start && hunk_range.start <= excerpt_range.end
                 })
             });
     }

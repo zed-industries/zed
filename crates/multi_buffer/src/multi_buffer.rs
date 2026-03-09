@@ -2421,7 +2421,6 @@ impl MultiBuffer {
         let mut last_hunk_row = None;
         for (range, excerpt_info) in ranges {
             for diff_hunk in snapshot.diff_hunks_in_range(range) {
-                // FIXME
                 if let Some(excerpt_info) = &excerpt_info
                     && diff_hunk
                         .excerpt_info
@@ -2431,25 +2430,12 @@ impl MultiBuffer {
                 {
                     continue;
                 }
-                // FIXME
                 let hunk_range = diff_hunk.multi_buffer_range();
                 if hunk_range.start.to_point(snapshot)
                     < diff_hunk.excerpt_info.start_anchor().to_point(snapshot)
                 {
-                    dbg!("HERE");
                     continue;
                 }
-                // if let Some(excerpt_info) = &excerpt_info {
-                //     let buffer_snapshot = snapshot.buffer_for_id(excerpt_info.buffer_id).unwrap();
-                //     let hunk_range = diff_hunk.buffer_range.to_point(buffer_snapshot);
-                //     let excerpt_range = excerpt_info.range.to_point(buffer_snapshot);
-                //     dbg!(&hunk_range, &excerpt_range);
-                //     if dbg!(hunk_range.start) < dbg!(excerpt_range.start)
-                //         || dbg!(excerpt_range.end) < dbg!(hunk_range.start)
-                //     {
-                //         continue;
-                //     }
-                // }
                 if last_hunk_row.is_some_and(|row| row >= diff_hunk.row_range.start) {
                     continue;
                 }
