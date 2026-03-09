@@ -383,6 +383,10 @@ impl PendingDiff {
     }
 
     pub fn update(&mut self, cx: &mut Context<Diff>) {
+        if !self.auto_update {
+            return;
+        }
+
         let buffer = self.new_buffer.clone();
         let buffer_diff = self.diff.clone();
         let base_text = self.base_text.clone();
