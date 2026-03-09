@@ -163,6 +163,9 @@ fn infer_prompt_format(model: &str) -> Option<EditPredictionPromptFormat> {
     Some(match model_base {
         "zeta2" => EditPredictionPromptFormat::Zeta(ZetaVersion::Zeta2),
         "zeta2.1" => EditPredictionPromptFormat::Zeta(ZetaVersion::Zeta2_1),
+        model_base if model_base.to_ascii_lowercase().contains("sweep-next-edit") => {
+            EditPredictionPromptFormat::Sweep
+        }
         "codellama" | "code-llama" => EditPredictionPromptFormat::CodeLlama,
         "starcoder" | "starcoder2" | "starcoderbase" => EditPredictionPromptFormat::StarCoder,
         "deepseek-coder" | "deepseek-coder-v2" => EditPredictionPromptFormat::DeepseekCoder,
