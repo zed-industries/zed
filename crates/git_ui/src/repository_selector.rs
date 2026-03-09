@@ -41,10 +41,9 @@ impl RepositorySelector {
             let mut repos: Vec<_> = git_store.repositories().values().cloned().collect();
 
             repos.sort_by(|a, b| {
-                a.read(_cx)
-                    .display_name()
+                repository_label(&a.read(_cx))
                     .to_lowercase()
-                    .cmp(&b.read(_cx).display_name().to_lowercase())
+                    .cmp(&repository_label(&b.read(_cx)).to_lowercase())
             });
 
             repos
@@ -52,10 +51,9 @@ impl RepositorySelector {
         let filtered_repositories = repository_entries.clone();
 
         let widest_item_ix = repository_entries.iter().position_max_by(|a, b| {
-            a.read(cx)
-                .display_name()
+            repository_label(&a.read(cx))
                 .len()
-                .cmp(&b.read(cx).display_name().len())
+                .cmp(&repository_label(&b.read(cx)).len())
         });
 
         let active_repository = git_store.read(cx).active_repository();
@@ -195,7 +193,12 @@ impl PickerDelegate for RepositorySelectorDelegate {
 
         let repo_names: Vec<(Entity<Repository>, String)> = all_repositories
             .iter()
-            .map(|repo| (repo.clone(), repo.read(cx).display_name().to_lowercase()))
+            .map(|repo| {
+                (
+                    repo.clone(),
+                    repository_match_text(&repo.read(cx)).to_lowercase(),
+                )
+            })
             .collect();
 
         cx.spawn_in(window, async move |this, cx| {
@@ -217,10 +220,9 @@ impl PickerDelegate for RepositorySelectorDelegate {
             this.update_in(cx, |this, window, cx| {
                 let mut sorted_repositories = filtered_repositories;
                 sorted_repositories.sort_by(|a, b| {
-                    a.read(cx)
-                        .display_name()
+                    repository_label(&a.read(cx))
                         .to_lowercase()
-                        .cmp(&b.read(cx).display_name().to_lowercase())
+                        .cmp(&repository_label(&b.read(cx)).to_lowercase())
                 });
                 let selected_index = this
                     .delegate
@@ -261,7 +263,8 @@ impl PickerDelegate for RepositorySelectorDelegate {
     ) -> Option<Self::ListItem> {
         let repo_info = self.filtered_repositories.get(ix)?;
         let repo = repo_info.read(cx);
-        let display_name = repo.display_name();
+        let display_name = repository_label(&repo);
+        let sublabel = repo.work_directory_abs_path.to_string_lossy().to_string();
         let summary = repo.status_summary();
         let is_active = self
             .active_repository
@@ -273,16 +276,24 @@ impl PickerDelegate for RepositorySelectorDelegate {
             .spacing(ListItemSpacing::Sparse)
             .toggle_state(selected)
             .child(
-                h_flex()
-                    .gap_1()
-                    .child(Label::new(display_name))
-                    .when(is_active, |this| {
-                        this.child(
-                            Icon::new(IconName::Check)
-                                .size(IconSize::Small)
-                                .color(Color::Accent),
-                        )
-                    }),
+                v_flex()
+                    .gap_0p5()
+                    .child(h_flex().gap_1().child(Label::new(display_name)).when(
+                        is_active,
+                        |this| {
+                            this.child(
+                                Icon::new(IconName::Check)
+                                    .size(IconSize::Small)
+                                    .color(Color::Accent),
+                            )
+                        },
+                    ))
+                    .child(
+                        Label::new(sublabel)
+                            .size(LabelSize::Small)
+                            .color(Color::Muted)
+                            .truncate(),
+                    ),
             );
 
         if summary.count > 0 {
@@ -312,4 +323,27 @@ impl PickerDelegate for RepositorySelectorDelegate {
 
         Some(item)
     }
+}
+
+fn repository_label(repo: &Repository) -> String {
+    let original_name = repo
+        .original_repo_abs_path
+        .file_name()
+        .unwrap_or_default()
+        .to_string_lossy();
+    let worktree_name = repo.display_name();
+
+    if repo.original_repo_abs_path == repo.work_directory_abs_path {
+        worktree_name.to_string()
+    } else if let Some(branch_name) = repo.branch.as_ref().map(|branch| branch.name()) {
+        format!("{original_name} / {branch_name}")
+    } else {
+        format!("{original_name} / {worktree_name}")
+    }
+}
+
+fn repository_match_text(repo: &Repository) -> String {
+    let label = repository_label(repo);
+    let path = repo.work_directory_abs_path.to_string_lossy();
+    format!("{label} {path}")
 }
