@@ -458,8 +458,6 @@ impl Sidebar {
                 let live_infos = Self::all_thread_infos_for_workspace(workspace, cx);
 
                 if !live_infos.is_empty() {
-                    // Build an index from session_id -> position in `threads`
-                    // so we can merge live info in O(1) per thread.
                     let thread_index_by_session: HashMap<acp::SessionId, usize> = threads
                         .iter()
                         .enumerate()
@@ -684,17 +682,7 @@ impl Sidebar {
                 is_selected,
                 cx,
             ),
-            ListEntry::Thread(thread) => self.render_thread(
-                ix,
-                &thread.session_info,
-                thread.icon,
-                thread.icon_from_external_svg.clone(),
-                thread.status,
-                &thread.workspace,
-                &thread.highlight_positions,
-                is_selected,
-                cx,
-            ),
+            ListEntry::Thread(thread) => self.render_thread(ix, thread, is_selected, cx),
             ListEntry::ViewMore {
                 path_list,
                 remaining_count,
@@ -904,7 +892,7 @@ impl Sidebar {
     }
 
     fn has_filter_query(&self, cx: &App) -> bool {
-        self.filter_editor.read(cx).buffer().read(cx).len(cx).0 > 0
+        self.filter_editor.read(cx).buffer().read(cx).is_empty()
     }
 
     fn editor_move_down(&mut self, _: &MoveDown, window: &mut Window, cx: &mut Context<Self>) {
@@ -1080,32 +1068,30 @@ impl Sidebar {
     fn render_thread(
         &self,
         ix: usize,
-        session_info: &acp_thread::AgentSessionInfo,
-        icon: IconName,
-        icon_from_external_svg: Option<SharedString>,
-        status: AgentThreadStatus,
-        workspace: &Entity<Workspace>,
-        highlight_positions: &[usize],
+        thread: &ThreadEntry,
         is_selected: bool,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let has_notification = self.contents.is_thread_notified(&session_info.session_id);
+        let has_notification = self
+            .contents
+            .is_thread_notified(&thread.session_info.session_id);
 
-        let title: SharedString = session_info
+        let title: SharedString = thread
+            .session_info
             .title
             .clone()
             .unwrap_or_else(|| "Untitled".into());
-        let session_info = session_info.clone();
-        let workspace = workspace.clone();
+        let session_info = thread.session_info.clone();
+        let workspace = thread.workspace.clone();
 
         let id = SharedString::from(format!("thread-entry-{}", ix));
         ThreadItem::new(id, title)
-            .icon(icon)
-            .when_some(icon_from_external_svg, |this, svg| {
+            .icon(thread.icon)
+            .when_some(thread.icon_from_external_svg.clone(), |this, svg| {
                 this.custom_icon_from_external_svg(svg)
             })
-            .highlight_positions(highlight_positions.to_vec())
-            .status(status)
+            .highlight_positions(thread.highlight_positions.to_vec())
+            .status(thread.status)
             .notified(has_notification)
             .selected(self.focused_thread.as_ref() == Some(&session_info.session_id))
             .outlined(is_selected)
