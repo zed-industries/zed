@@ -51,14 +51,85 @@ fn generate_sbpl_profile(config: &SandboxConfig) -> String {
     let mut p = String::from("(version 1)\n(deny default)\n");
 
     // Process lifecycle
-    p.push_str("(allow process-exec)\n");
     p.push_str("(allow process-fork)\n");
     p.push_str("(allow signal)\n");
 
-    // System services needed for basic operation
-    p.push_str("(allow mach-lookup)\n");
+    // Mach service allowlist.
+    //
+    // TROUBLESHOOTING: If users report broken terminal behavior (e.g. DNS failures,
+    // keychain errors, or commands hanging), a missing Mach service here is a likely
+    // cause. To diagnose:
+    //   1. Open Console.app and filter for "sandbox" or "deny mach-lookup" to find
+    //      the denied service name.
+    //   2. Or test interactively:
+    //      sandbox-exec -p '(version 1)(deny default)(allow mach-lookup ...)' /bin/sh
+    //   3. Add the missing service to the appropriate group below.
+
+    // Logging: unified logging (os_log) and legacy syslog.
+    p.push_str("(allow mach-lookup (global-name \"com.apple.logd\"))\n");
+    p.push_str("(allow mach-lookup (global-name \"com.apple.logd.events\"))\n");
+    p.push_str("(allow mach-lookup (global-name \"com.apple.system.logger\"))\n");
+
+    // User/group directory lookups (getpwuid, getgrnam, id, etc.).
+    p.push_str("(allow mach-lookup (global-name \"com.apple.system.opendirectoryd.libinfo\"))\n");
+    p.push_str(
+        "(allow mach-lookup (global-name \"com.apple.system.opendirectoryd.membership\"))\n",
+    );
+
+    // Darwin notification center, used internally by many system frameworks.
+    p.push_str("(allow mach-lookup (global-name \"com.apple.system.notification_center\"))\n");
+
+    // CFPreferences: reading user and system preferences.
+    p.push_str("(allow mach-lookup (global-name \"com.apple.cfprefsd.agent\"))\n");
+    p.push_str("(allow mach-lookup (global-name \"com.apple.cfprefsd.daemon\"))\n");
+
+    // Temp directory management (_CS_DARWIN_USER_CACHE_DIR, etc.).
+    p.push_str("(allow mach-lookup (global-name \"com.apple.bsd.dirhelper\"))\n");
+
+    // DNS and network configuration.
+    p.push_str("(allow mach-lookup (global-name \"com.apple.dnssd.service\"))\n");
+    p.push_str(
+        "(allow mach-lookup (global-name \"com.apple.SystemConfiguration.DNSConfiguration\"))\n",
+    );
+    p.push_str("(allow mach-lookup (global-name \"com.apple.SystemConfiguration.configd\"))\n");
+    p.push_str(
+        "(allow mach-lookup (global-name \"com.apple.SystemConfiguration.NetworkInformation\"))\n",
+    );
+    p.push_str("(allow mach-lookup (global-name \"com.apple.SystemConfiguration.SCNetworkReachability\"))\n");
+    p.push_str("(allow mach-lookup (global-name \"com.apple.networkd\"))\n");
+    p.push_str("(allow mach-lookup (global-name \"com.apple.nehelper\"))\n");
+
+    // Security, keychain, and TLS certificate verification.
+    p.push_str("(allow mach-lookup (global-name \"com.apple.SecurityServer\"))\n");
+    p.push_str("(allow mach-lookup (global-name \"com.apple.trustd.agent\"))\n");
+    p.push_str("(allow mach-lookup (global-name \"com.apple.ocspd\"))\n");
+    p.push_str("(allow mach-lookup (global-name \"com.apple.security.authtrampoline\"))\n");
+
+    // Launch Services: needed for the `open` command, file-type associations,
+    // and anything that uses NSWorkspace or LaunchServices.
+    p.push_str("(allow mach-lookup (global-name \"com.apple.coreservices.launchservicesd\"))\n");
+    p.push_str("(allow mach-lookup (global-name \"com.apple.CoreServices.coreservicesd\"))\n");
+    p.push_str("(allow mach-lookup (global-name-regex #\"^com\\.apple\\.lsd\\.\" ))\n");
+
+    // Kerberos: needed in enterprise environments for authentication.
+    p.push_str("(allow mach-lookup (global-name \"com.apple.GSSCred\"))\n");
+    p.push_str("(allow mach-lookup (global-name \"org.h5l.kcm\"))\n");
+
+    // Distributed notifications: some command-line tools using Foundation may need this.
+    p.push_str(
+        "(allow mach-lookup (global-name-regex #\"^com\\.apple\\.distributed_notifications\"))\n",
+    );
+
     p.push_str("(allow sysctl-read)\n");
-    p.push_str("(allow iokit-open)\n");
+
+    // No iokit-open rules: a terminal shell does not need to open IOKit user
+    // clients (kernel driver interfaces). IOKit access is needed for GPU/
+    // graphics (IOAccelerator, AGPMClient), audio (IOAudioEngine), USB,
+    // Bluetooth, and similar hardware — none of which a shell requires. Random
+    // numbers come from /dev/urandom or getentropy(), and timing uses syscalls,
+    // so no IOKit involvement is needed for basic process operation. Chromium's
+    // network process and Firefox's content process both operate without any
+    // iokit-open rules.
 
     // System executable paths (read + execute)
     for path in &config.system_paths.executable {
@@ -76,7 +147,11 @@ fn generate_sbpl_profile(config: &SandboxConfig) -> String {
     }
 
     // Project directory: full access
-    write_subpath_rule(&mut p, &config.project_dir, "file-read* file-write*");
+    write_subpath_rule(
+        &mut p,
+        &config.project_dir,
+        "file-read* file-write* process-exec",
+    );
 
     // User-configured additional paths
     for path in &config.additional_executable_paths {
