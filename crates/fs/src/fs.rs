@@ -658,10 +658,11 @@ impl Fs for RealFs {
                         return Err(error.into());
                     }
                     Err(error)
-                        if matches!(
-                            error.raw_os_error(),
-                            Some(libc::ENOSYS) | Some(libc::ENOTSUP) | Some(libc::EOPNOTSUPP)
-                        ) =>
+                        if error.raw_os_error().is_some_and(|code| {
+                            code == libc::ENOSYS
+                                || code == libc::ENOTSUP
+                                || code == libc::EOPNOTSUPP
+                        }) =>
                     {
                         // For case when filesystem or kernel does not support atomic no-overwrite rename.
                         true
