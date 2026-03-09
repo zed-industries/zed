@@ -1,7 +1,10 @@
 use std::sync::Arc;
 
 use component::{Component, ComponentScope, example_group_with_title, single_example};
-use gpui::{AnyElement, AnyView, ClickEvent, MouseButton, MouseDownEvent, Pixels, px};
+use gpui::{
+    AnyElement, AnyView, ClickEvent, MouseButton, MouseDownEvent, Pixels, linear_color_stop,
+    linear_gradient, px,
+};
 use smallvec::SmallVec;
 
 use crate::{Disclosure, prelude::*};
@@ -209,6 +212,43 @@ impl ParentElement for ListItem {
 
 impl RenderOnce for ListItem {
     fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
+        let color = cx.theme().colors();
+
+        let base_bg = if self.selected {
+            color.element_active
+        } else {
+            color.panel_background
+        };
+
+        let end_hover_gradient_overlay = div()
+            .id("gradient_overlay")
+            .absolute()
+            .top_0()
+            .right_0()
+            .w_24()
+            .h_full()
+            .bg(linear_gradient(
+                90.,
+                linear_color_stop(base_bg, 0.6),
+                linear_color_stop(base_bg.opacity(0.0), 0.),
+            ))
+            .when_some(self.group_name.clone(), |s, group_name| {
+                s.group_hover(group_name.clone(), |s| {
+                    s.bg(linear_gradient(
+                        90.,
+                        linear_color_stop(color.element_hover, 0.6),
+                        linear_color_stop(color.element_hover.opacity(0.0), 0.),
+                    ))
+                })
+                .group_active(group_name, |s| {
+                    s.bg(linear_gradient(
+                        90.,
+                        linear_color_stop(color.element_active, 0.6),
+                        linear_color_stop(color.element_active.opacity(0.0), 0.),
+                    ))
+                })
+            });
+
         h_flex()
             .id(self.id)
             .when_some(self.group_name, |this, group| this.group(group))
@@ -220,25 +260,22 @@ impl RenderOnce for ListItem {
                     .px(DynamicSpacing::Base04.rems(cx))
             })
             .when(!self.inset && !self.disabled, |this| {
-                this
-                    // TODO: Add focus state
-                    // .when(self.state == InteractionState::Focused, |this| {
-                    .when_some(self.focused, |this, focused| {
-                        if focused {
-                            this.border_1()
-                                .border_color(cx.theme().colors().border_focused)
-                        } else {
-                            this.border_1()
-                        }
-                    })
-                    .when(self.selectable, |this| {
-                        this.hover(|style| style.bg(cx.theme().colors().ghost_element_hover))
-                            .active(|style| style.bg(cx.theme().colors().ghost_element_active))
-                            .when(self.outlined, |this| this.rounded_sm())
-                            .when(self.selected, |this| {
-                                this.bg(cx.theme().colors().ghost_element_selected)
-                            })
-                    })
+                this.when_some(self.focused, |this, focused| {
+                    if focused {
+                        this.border_1()
+                            .border_color(cx.theme().colors().border_focused)
+                    } else {
+                        this.border_1()
+                    }
+                })
+                .when(self.selectable, |this| {
+                    this.hover(|style| style.bg(cx.theme().colors().ghost_element_hover))
+                        .active(|style| style.bg(cx.theme().colors().ghost_element_active))
+                        .when(self.outlined, |this| this.rounded_sm())
+                        .when(self.selected, |this| {
+                            this.bg(cx.theme().colors().ghost_element_selected)
+                        })
+                })
             })
             .when(self.rounded, |this| this.rounded_sm())
             .when_some(self.on_hover, |this, on_hover| this.on_hover(on_hover))
@@ -350,6 +387,7 @@ impl RenderOnce for ListItem {
                                 .right(DynamicSpacing::Base06.rems(cx))
                                 .top_0()
                                 .visible_on_hover("list_item")
+                                .child(end_hover_gradient_overlay)
                                 .child(end_hover_slot),
                         )
                     }),
