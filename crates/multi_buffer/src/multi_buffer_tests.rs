@@ -2299,7 +2299,7 @@ impl ReferenceExcerpt {
 }
 
 impl ReferenceMultibuffer {
-    fn expand_excerpts(&mut self, excerpts: &HashSet<ExcerptInfo>, line_count: u32, cx: &App) {
+    fn expand_excerpts(&mut self, excerpts: &HashSet<ExcerptInfo>, line_count: u32, cx: &mut App) {
         if line_count == 0 {
             return;
         }
@@ -2347,6 +2347,7 @@ impl ReferenceMultibuffer {
                 buffer.unwrap(),
                 &buffer_snapshot.unwrap(),
                 new_ranges,
+                cx,
             );
         }
     }
@@ -2358,6 +2359,7 @@ impl ReferenceMultibuffer {
         buffer: Entity<Buffer>,
         buffer_snapshot: &BufferSnapshot,
         ranges: Vec<ExcerptRange<Point>>,
+        cx: &mut App,
     ) {
         self.excerpts.retain(|excerpt| {
             excerpt.path_key != path_key && excerpt.buffer.entity_id() != buffer.entity_id()
@@ -2378,6 +2380,7 @@ impl ReferenceMultibuffer {
                     ..buffer_snapshot.anchor_after(range.context.end),
             }),
         );
+        self.update_expanded_diff_hunks_for_buffer(buffer_snapshot.remote_id(), cx);
     }
 
     fn expand_diff_hunks(&mut self, path_key: PathKey, range: Range<text::Anchor>, cx: &App) {
@@ -2440,6 +2443,7 @@ impl ReferenceMultibuffer {
     }
 
     fn expected_content(&self, cx: &App) -> (String, Vec<RowInfo>, HashSet<MultiBufferRow>) {
+        dbg!(&self.expanded_diff_hunks_by_buffer);
         let mut text = String::new();
         let mut regions = Vec::<ReferenceRegion>::new();
         let mut excerpt_boundary_rows = HashSet::default();
@@ -2538,8 +2542,11 @@ impl ReferenceMultibuffer {
                         .into_iter()
                         .flatten()
                         .any(|expanded_anchor| {
-                            expanded_anchor.to_offset(buffer).max(buffer_range.start)
-                                == hunk_range.start.max(buffer_range.start)
+                            expanded_anchor
+                                .cmp(&hunk.buffer_range.start, buffer)
+                                .is_eq()
+                            // dbg!(expanded_anchor.to_offset(buffer).max(buffer_range.start))
+                            //     == dbg!(hunk_range.start.max(buffer_range.start))
                         })
                     {
                         log::trace!("skipping a hunk that's not marked as expanded");
@@ -2552,6 +2559,7 @@ impl ReferenceMultibuffer {
                         continue;
                     }
 
+                    dbg!("HUNK IS VALID");
                     if hunk_range.start >= offset {
                         // Add the buffer text before the hunk
                         let len = text.len();
@@ -2720,93 +2728,10 @@ impl ReferenceMultibuffer {
         (text, row_infos, excerpt_boundary_rows)
     }
 
-    fn diffs_updated(&mut self, cx: &App) {
-        for (buffer, excerpts) in &self
-            .excerpts
-            .iter()
-            .chunk_by(|excerpt| excerpt.buffer.clone())
-        {
-            let excerpts = excerpts.collect::<Vec<_>>();
-            let buffer_snapshot = buffer.read(cx).snapshot();
-            let buffer_id = buffer_snapshot.remote_id();
-
-            if self.inverted_diffs.contains_key(&buffer_id) {
-                continue;
-            }
-            let diff = self.diffs.get(&buffer_id).unwrap();
-            let diff = diff.read(cx).snapshot(cx);
-            let mut hunks = diff
-                .hunks_in_row_range(0..u32::MAX, &buffer_snapshot)
-                .peekable();
-            self.expanded_diff_hunks_by_buffer
-                .entry(buffer_id)
-                .or_default()
-                .retain(|hunk_anchor| {
-                    if !hunk_anchor.is_valid(&buffer_snapshot) {
-                        dbg!("NO LONGER VALID");
-                        return false;
-                    }
-
-                    while let Some(hunk) = hunks.peek() {
-                        match hunk.buffer_range.start.cmp(hunk_anchor, &buffer_snapshot) {
-                            cmp::Ordering::Less => {
-                                hunks.next();
-                            }
-                            cmp::Ordering::Equal => {
-                                let hunk_range = hunk.buffer_range.to_offset(&buffer_snapshot);
-                                return excerpts.iter().any(|excerpt| {
-                                    let excerpt_range = excerpt.range.to_offset(&buffer_snapshot);
-                                    dbg!(hunk_range.end) >= dbg!(excerpt_range.start)
-                                        && dbg!(hunk_range.start) <= dbg!(excerpt_range.end)
-                                });
-                            }
-                            cmp::Ordering::Greater => break,
-                        }
-                    }
-                    dbg!("OTHER");
-                    false
-                })
-        }
-        for excerpt in &mut self.excerpts {
-            let buffer = excerpt.buffer.read(cx).snapshot();
-            let buffer_id = buffer.remote_id();
-
-            // Skip inverted diff excerpts - hunks are always expanded
-            if self.inverted_diffs.contains_key(&buffer_id) {
-                continue;
-            }
-
-            let excerpt_range = excerpt.range.to_offset(&buffer);
-            let Some(diff) = self.diffs.get(&buffer_id) else {
-                continue;
-            };
-            let diff = diff.read(cx).snapshot(cx);
-            let mut hunks = diff.hunks_in_row_range(0..u32::MAX, &buffer).peekable();
-            self.expanded_diff_hunks_by_buffer
-                .entry(buffer_id)
-                .or_default()
-                .retain(|hunk_anchor| {
-                    dbg!("RETAIN");
-                    if !hunk_anchor.is_valid(&buffer) {
-                        dbg!("NO LONGER VALID");
-                        return false;
-                    }
-                    while let Some(hunk) = hunks.peek() {
-                        match hunk.buffer_range.start.cmp(hunk_anchor, &buffer) {
-                            cmp::Ordering::Less => {
-                                hunks.next();
-                            }
-                            cmp::Ordering::Equal => {
-                                let hunk_range = hunk.buffer_range.to_offset(&buffer);
-                                return dbg!(hunk_range.end) >= dbg!(excerpt_range.start)
-                                    && dbg!(hunk_range.start) <= dbg!(excerpt_range.end);
-                            }
-                            cmp::Ordering::Greater => break,
-                        }
-                    }
-                    dbg!("OTHER");
-                    false
-                });
+    fn diffs_updated(&mut self, cx: &mut App) {
+        let buffer_ids = self.diffs.keys().copied().collect::<Vec<_>>();
+        for buffer_id in buffer_ids {
+            self.update_expanded_diff_hunks_for_buffer(buffer_id, cx);
         }
     }
 
@@ -2824,6 +2749,48 @@ impl ReferenceMultibuffer {
         let base_text_buffer_id = diff.read(cx).base_text(cx).remote_id();
         self.inverted_diffs
             .insert(base_text_buffer_id, (diff, main_buffer));
+    }
+
+    fn update_expanded_diff_hunks_for_buffer(&mut self, buffer_id: BufferId, cx: &mut App) {
+        let excerpts = self
+            .excerpts
+            .iter()
+            .filter(|excerpt| excerpt.buffer.read(cx).remote_id() == buffer_id)
+            .collect::<Vec<_>>();
+        let Some(buffer) = excerpts.first().map(|excerpt| excerpt.buffer.clone()) else {
+            self.expanded_diff_hunks_by_buffer.remove(&buffer_id);
+            return;
+        };
+        let buffer_snapshot = buffer.read(cx).snapshot();
+        let Some(diff) = self.diffs.get(&buffer_id) else {
+            self.expanded_diff_hunks_by_buffer.remove(&buffer_id);
+            return;
+        };
+        let diff = diff.read(cx).snapshot(cx);
+        let hunks = diff
+            .hunks_in_row_range(0..u32::MAX, &buffer_snapshot)
+            .collect::<Vec<_>>();
+        self.expanded_diff_hunks_by_buffer
+            .entry(buffer_id)
+            .or_default()
+            .retain(|hunk_anchor| {
+                if !hunk_anchor.is_valid(&buffer_snapshot) {
+                    dbg!("NO LONGER VALID");
+                    return false;
+                }
+
+                let Ok(ix) = hunks.binary_search_by(|hunk| {
+                    hunk.buffer_range.start.cmp(hunk_anchor, &buffer_snapshot)
+                }) else {
+                    return false;
+                };
+                let hunk_range = hunks[ix].buffer_range.to_point(&buffer_snapshot);
+                excerpts.iter().any(|excerpt| {
+                    let excerpt_range = excerpt.range.to_point(&buffer_snapshot);
+                    dbg!(hunk_range.end) >= dbg!(excerpt_range.start)
+                        && dbg!(hunk_range.start) <= dbg!(excerpt_range.end)
+                })
+            });
     }
 }
 
@@ -3140,13 +3107,16 @@ async fn test_random_multibuffer(cx: &mut TestAppContext, mut rng: StdRng) {
                     )
                 });
 
-                reference.set_excerpts(
-                    path,
-                    path_key_index,
-                    excerpt_buffer.clone(),
-                    &excerpt_buffer_snapshot,
-                    ranges,
-                );
+                cx.update(|cx| {
+                    reference.set_excerpts(
+                        path,
+                        path_key_index,
+                        excerpt_buffer.clone(),
+                        &excerpt_buffer_snapshot,
+                        ranges,
+                        cx,
+                    )
+                });
 
                 let excerpt_buffer_id =
                     excerpt_buffer.read_with(cx, |buffer, _| buffer.remote_id());
