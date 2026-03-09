@@ -20,7 +20,7 @@ pub const CIMD_URL: &str = "https://zed.dev/oauth/client-metadata.json";
 
 /// Parsed from the MCP server's WWW-Authenticate header or well-known endpoint
 /// per RFC 9728 (OAuth 2.0 Protected Resource Metadata).
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProtectedResourceMetadata {
     pub resource: Url,
     pub authorization_servers: Vec<Url>,
@@ -29,7 +29,7 @@ pub struct ProtectedResourceMetadata {
 
 /// Parsed from the authorization server's .well-known endpoint
 /// per RFC 8414 (OAuth 2.0 Authorization Server Metadata).
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AuthServerMetadata {
     pub issuer: Url,
     pub authorization_endpoint: Url,
@@ -56,14 +56,24 @@ pub struct OAuthTokens {
     pub expires_at: Option<SystemTime>,
 }
 
-/// Everything needed to kick off the browser flow, obtained during discovery.
-/// Cached on the AuthRequired state so we don't re-discover on every attempt.
-#[derive(Debug, Clone)]
+/// Everything discovered before the browser flow starts. Client registration is
+/// resolved separately, once the real redirect URI is known.
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OAuthDiscovery {
     pub resource_metadata: ProtectedResourceMetadata,
     pub auth_server_metadata: AuthServerMetadata,
-    pub client_registration: OAuthClientRegistration,
     pub scopes: Vec<String>,
+}
+
+/// The full persisted OAuth session for a context server.
+///
+/// This is what we store in the keychain so startup can restore a
+/// refresh-capable provider without falling back to an access-token-only mode.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OAuthSession {
+    pub discovery: OAuthDiscovery,
+    pub client_registration: OAuthClientRegistration,
+    pub tokens: OAuthTokens,
 }
 
 /// Error codes defined by RFC 6750 Section 3.1 for Bearer token authentication.
@@ -92,8 +102,12 @@ impl BearerError {
 
     /// Returns true if the error indicates the OAuth client registration may
     /// be invalid and should be discarded to force re-registration.
+    ///
+    /// `invalid_token` is not treated as an invalid client signal here. That
+    /// error usually means the access token is expired, revoked, or malformed,
+    /// which is exactly the case where a refresh attempt should still happen.
     pub fn indicates_invalid_client(&self) -> bool {
-        matches!(self, BearerError::InvalidToken | BearerError::Other)
+        matches!(self, BearerError::Other)
     }
 }
 
@@ -320,6 +334,17 @@ pub fn canonical_server_uri(server_url: &Url) -> String {
         uri.push_str(path.trim_end_matches('/'));
     }
     uri
+}
+
+/// Build the key used to cache DCR registrations for an authorization server.
+///
+/// DCR registrations are scoped to the authorization server, not the protected
+/// resource URL, so this key is derived from the auth server issuer.
+pub fn dcr_registration_cache_key(auth_server_issuer: &Url) -> String {
+    format!(
+        "mcp-oauth-dcr-client:{}",
+        canonical_server_uri(auth_server_issuer)
+    )
 }
 
 // -- Scope selection ---------------------------------------------------------
@@ -623,12 +648,12 @@ pub async fn fetch_auth_server_metadata(
 }
 
 /// Run the full discovery flow: fetch resource metadata, then auth server
-/// metadata, then determine the client registration strategy and scopes.
+/// metadata, then select scopes. Client registration is resolved separately,
+/// once the real redirect URI is known.
 pub async fn discover(
     http_client: &Arc<dyn HttpClient>,
     server_url: &Url,
     www_authenticate: &WwwAuthenticate,
-    cached_dcr_registration: Option<OAuthClientRegistration>,
 ) -> Result<OAuthDiscovery> {
     let resource_metadata =
         fetch_protected_resource_metadata(http_client, server_url, www_authenticate).await?;
@@ -647,13 +672,40 @@ pub async fn discover(
         None => bail!("authorization server does not advertise code_challenge_methods_supported"),
     }
 
+    // Verify there is at least one supported registration strategy before we
+    // present the server as ready to authenticate.
+    match determine_registration_strategy(&auth_server_metadata) {
+        ClientRegistrationStrategy::Cimd { .. } | ClientRegistrationStrategy::Dcr { .. } => {}
+        ClientRegistrationStrategy::Unavailable => {
+            bail!("authorization server supports neither CIMD nor DCR")
+        }
+    }
+
     let scopes = select_scopes(www_authenticate, &resource_metadata);
 
-    let client_registration = match determine_registration_strategy(&auth_server_metadata) {
-        ClientRegistrationStrategy::Cimd { client_id } => OAuthClientRegistration {
+    Ok(OAuthDiscovery {
+        resource_metadata,
+        auth_server_metadata,
+        scopes,
+    })
+}
+
+/// Resolve the OAuth client registration for an authorization flow.
+///
+/// CIMD uses the static client metadata document directly. DCR reuses a cached
+/// registration when available, otherwise it registers with the actual
+/// redirect URI that will be used for the browser callback.
+pub async fn resolve_client_registration(
+    http_client: &Arc<dyn HttpClient>,
+    discovery: &OAuthDiscovery,
+    redirect_uri: &str,
+    cached_dcr_registration: Option<OAuthClientRegistration>,
+) -> Result<OAuthClientRegistration> {
+    match determine_registration_strategy(&discovery.auth_server_metadata) {
+        ClientRegistrationStrategy::Cimd { client_id } => Ok(OAuthClientRegistration {
             client_id,
             client_secret: None,
-        },
+        }),
         ClientRegistrationStrategy::Dcr {
             registration_endpoint,
         } => {
@@ -662,31 +714,15 @@ pub async fn discover(
                     "using cached DCR registration (client_id={})",
                     cached.client_id
                 );
-                cached
+                Ok(cached)
             } else {
-                // Use a placeholder redirect URI during discovery since we
-                // don't have a callback server port yet. The real DCR with
-                // the correct redirect URI happens at authentication time
-                // in run_oauth_flow.
-                perform_dcr(
-                    http_client,
-                    &registration_endpoint,
-                    "http://127.0.0.1/callback",
-                )
-                .await?
+                perform_dcr(http_client, &registration_endpoint, redirect_uri).await
             }
         }
         ClientRegistrationStrategy::Unavailable => {
             bail!("authorization server supports neither CIMD nor DCR")
         }
-    };
-
-    Ok(OAuthDiscovery {
-        resource_metadata,
-        auth_server_metadata,
-        client_registration,
-        scopes,
-    })
+    }
 }
 
 // -- Dynamic Client Registration (RFC 7591) ----------------------------------
@@ -1010,63 +1046,88 @@ pub trait OAuthTokenProvider: Send + Sync {
     async fn try_refresh(&self) -> Result<bool>;
 }
 
-/// Concrete `OAuthTokenProvider` backed by in-memory tokens and an HTTP client
-/// for token refresh. Created by the store after successful authentication or
-/// when loading cached tokens from the keychain.
+/// Concrete `OAuthTokenProvider` backed by a full persisted OAuth session and
+/// an HTTP client for token refresh. The same provider type is used both after
+/// an interactive authentication flow and when restoring a saved session from
+/// the keychain on startup.
 pub struct McpOAuthTokenProvider {
-    tokens: SyncMutex<Option<OAuthTokens>>,
-    discovery: Arc<OAuthDiscovery>,
+    session: SyncMutex<OAuthSession>,
     http_client: Arc<dyn HttpClient>,
-    token_refresh_tx: Option<mpsc::UnboundedSender<OAuthTokens>>,
+    token_refresh_tx: Option<mpsc::UnboundedSender<OAuthSession>>,
 }
 
 impl McpOAuthTokenProvider {
     pub fn new(
-        tokens: OAuthTokens,
-        discovery: Arc<OAuthDiscovery>,
+        session: OAuthSession,
         http_client: Arc<dyn HttpClient>,
-        token_refresh_tx: Option<mpsc::UnboundedSender<OAuthTokens>>,
+        token_refresh_tx: Option<mpsc::UnboundedSender<OAuthSession>>,
     ) -> Self {
         Self {
-            tokens: SyncMutex::new(Some(tokens)),
-            discovery,
+            session: SyncMutex::new(session),
             http_client,
             token_refresh_tx,
         }
+    }
+
+    fn access_token_is_expired(tokens: &OAuthTokens) -> bool {
+        tokens.expires_at.is_some_and(|expires_at| {
+            SystemTime::now()
+                .checked_add(Duration::from_secs(30))
+                .is_some_and(|now_with_buffer| expires_at <= now_with_buffer)
+        })
     }
 }
 
 #[async_trait]
 impl OAuthTokenProvider for McpOAuthTokenProvider {
     fn access_token(&self) -> Option<String> {
-        self.tokens.lock().as_ref().map(|t| t.access_token.clone())
+        let session = self.session.lock();
+        if Self::access_token_is_expired(&session.tokens) {
+            return None;
+        }
+        Some(session.tokens.access_token.clone())
     }
 
     async fn try_refresh(&self) -> Result<bool> {
-        let refresh_token = {
-            let guard = self.tokens.lock();
-            match guard.as_ref().and_then(|t| t.refresh_token.clone()) {
-                Some(rt) => rt,
+        let (refresh_token, discovery, client_registration) = {
+            let session = self.session.lock();
+            match session.tokens.refresh_token.clone() {
+                Some(refresh_token) => (
+                    refresh_token,
+                    session.discovery.clone(),
+                    session.client_registration.clone(),
+                ),
                 None => return Ok(false),
             }
         };
 
-        let resource = canonical_server_uri(&self.discovery.resource_metadata.resource);
+        let resource = canonical_server_uri(&discovery.resource_metadata.resource);
 
         match refresh_tokens(
             &self.http_client,
-            &self.discovery.auth_server_metadata,
+            &discovery.auth_server_metadata,
             &refresh_token,
-            &self.discovery.client_registration.client_id,
+            &client_registration.client_id,
             &resource,
         )
         .await
         {
-            Ok(new_tokens) => {
-                if let Some(ref tx) = self.token_refresh_tx {
-                    tx.unbounded_send(new_tokens.clone()).ok();
+            Ok(mut new_tokens) => {
+                if new_tokens.refresh_token.is_none() {
+                    new_tokens.refresh_token = Some(refresh_token);
                 }
-                *self.tokens.lock() = Some(new_tokens);
+
+                let new_session = OAuthSession {
+                    discovery,
+                    client_registration,
+                    tokens: new_tokens,
+                };
+
+                if let Some(ref tx) = self.token_refresh_tx {
+                    tx.unbounded_send(new_session.clone()).ok();
+                }
+
+                *self.session.lock() = new_session;
                 Ok(true)
             }
             Err(err) => {
@@ -1074,32 +1135,6 @@ impl OAuthTokenProvider for McpOAuthTokenProvider {
                 Ok(false)
             }
         }
-    }
-}
-
-/// A simple token provider that holds a static access token and never
-/// refreshes. Used on startup when we have cached tokens from the keychain
-/// but no discovery info yet. If the token is expired, the transport will
-/// get a 401 and transition to `AuthRequired`, triggering a full discovery
-/// and re-authentication flow.
-pub struct StaticTokenProvider {
-    access_token: String,
-}
-
-impl StaticTokenProvider {
-    pub fn new(access_token: String) -> Self {
-        Self { access_token }
-    }
-}
-
-#[async_trait]
-impl OAuthTokenProvider for StaticTokenProvider {
-    fn access_token(&self) -> Option<String> {
-        Some(self.access_token.clone())
-    }
-
-    async fn try_refresh(&self) -> Result<bool> {
-        Ok(false)
     }
 }
 
@@ -1166,7 +1201,7 @@ mod tests {
             r#"Bearer error="invalid_token", error_description="The access token expired""#;
         let result = parse_www_authenticate(header).unwrap();
         assert_eq!(result.error, Some(BearerError::InvalidToken));
-        assert!(result.error.unwrap().indicates_invalid_client());
+        assert!(!result.error.unwrap().indicates_invalid_client());
     }
 
     #[test]
@@ -1188,7 +1223,7 @@ mod tests {
     #[test]
     fn test_bearer_error_indicates_invalid_client() {
         assert!(!BearerError::InvalidRequest.indicates_invalid_client());
-        assert!(BearerError::InvalidToken.indicates_invalid_client());
+        assert!(!BearerError::InvalidToken.indicates_invalid_client());
         assert!(!BearerError::InsufficientScope.indicates_invalid_client());
         assert!(BearerError::Other.indicates_invalid_client());
     }
@@ -1312,6 +1347,15 @@ mod tests {
         assert_eq!(
             canonical_server_uri(&url),
             "https://mcp.example.com/Server/MCP"
+        );
+    }
+
+    #[test]
+    fn test_dcr_registration_cache_key_uses_auth_server_issuer() {
+        let issuer = Url::parse("https://Auth.Example.COM/tenant/").unwrap();
+        assert_eq!(
+            dcr_registration_cache_key(&issuer),
+            "mcp-oauth-dcr-client:https://auth.example.com/tenant"
         );
     }
 
@@ -1834,12 +1878,18 @@ mod tests {
                 error_description: None,
             };
 
-            let discovery = discover(&client, &server_url, &www_auth, None)
-                .await
-                .unwrap();
+            let discovery = discover(&client, &server_url, &www_auth).await.unwrap();
+            let registration = resolve_client_registration(
+                &client,
+                &discovery,
+                "http://127.0.0.1:12345/callback",
+                None,
+            )
+            .await
+            .unwrap();
 
-            assert_eq!(discovery.client_registration.client_id, CIMD_URL);
-            assert_eq!(discovery.client_registration.client_secret, None);
+            assert_eq!(registration.client_id, CIMD_URL);
+            assert_eq!(registration.client_secret, None);
             assert_eq!(discovery.scopes, vec!["mcp:read"]);
         });
     }
@@ -1892,13 +1942,19 @@ mod tests {
                 error_description: None,
             };
 
-            let discovery = discover(&client, &server_url, &www_auth, None)
-                .await
-                .unwrap();
+            let discovery = discover(&client, &server_url, &www_auth).await.unwrap();
+            let registration = resolve_client_registration(
+                &client,
+                &discovery,
+                "http://127.0.0.1:9999/callback",
+                None,
+            )
+            .await
+            .unwrap();
 
-            assert_eq!(discovery.client_registration.client_id, "dcr-minted-id-123");
+            assert_eq!(registration.client_id, "dcr-minted-id-123");
             assert_eq!(
-                discovery.client_registration.client_secret.as_deref(),
+                registration.client_secret.as_deref(),
                 Some("dcr-secret-456")
             );
             assert_eq!(discovery.scopes, vec!["files:read"]);
@@ -1906,7 +1962,7 @@ mod tests {
     }
 
     #[test]
-    fn test_discover_uses_cached_dcr_registration() {
+    fn test_resolve_client_registration_uses_cached_dcr_registration() {
         smol::block_on(async {
             // The registration endpoint should never be called when a cached
             // registration is provided.
@@ -1956,20 +2012,23 @@ mod tests {
                 client_secret: Some("cached-secret".into()),
             };
 
-            let discovery = discover(&client, &server_url, &www_auth, Some(cached))
-                .await
-                .unwrap();
+            let discovery = discover(&client, &server_url, &www_auth).await.unwrap();
+            let registration = resolve_client_registration(
+                &client,
+                &discovery,
+                "http://127.0.0.1:9999/callback",
+                Some(cached),
+            )
+            .await
+            .unwrap();
 
-            assert_eq!(discovery.client_registration.client_id, "cached-client-id");
-            assert_eq!(
-                discovery.client_registration.client_secret.as_deref(),
-                Some("cached-secret")
-            );
+            assert_eq!(registration.client_id, "cached-client-id");
+            assert_eq!(registration.client_secret.as_deref(), Some("cached-secret"));
         });
     }
 
     #[test]
-    fn test_discover_ignores_cached_dcr_when_cimd_available() {
+    fn test_resolve_client_registration_ignores_cached_dcr_when_cimd_available() {
         smol::block_on(async {
             // When the auth server supports CIMD, the cached DCR registration
             // should be ignored in favor of CIMD.
@@ -2016,13 +2075,19 @@ mod tests {
                 client_secret: Some("stale-secret".into()),
             };
 
-            let discovery = discover(&client, &server_url, &www_auth, Some(cached))
-                .await
-                .unwrap();
+            let discovery = discover(&client, &server_url, &www_auth).await.unwrap();
+            let registration = resolve_client_registration(
+                &client,
+                &discovery,
+                "http://127.0.0.1:9999/callback",
+                Some(cached),
+            )
+            .await
+            .unwrap();
 
             // CIMD takes priority — the cached DCR registration is not used.
-            assert_eq!(discovery.client_registration.client_id, CIMD_URL);
-            assert_eq!(discovery.client_registration.client_secret, None);
+            assert_eq!(registration.client_id, CIMD_URL);
+            assert_eq!(registration.client_secret, None);
         });
     }
 
@@ -2063,7 +2128,7 @@ mod tests {
                 error_description: None,
             };
 
-            let result = discover(&client, &server_url, &www_auth, None).await;
+            let result = discover(&client, &server_url, &www_auth).await;
             assert!(result.is_err());
             let err_msg = result.unwrap_err().to_string();
             assert!(

@@ -646,7 +646,7 @@ impl AgentConfiguration {
         } else {
             None
         };
-        let auth_required = matches!(server_status, ContextServerStatus::AuthRequired(_));
+        let auth_required = matches!(server_status, ContextServerStatus::AuthRequired);
         let authenticating = matches!(server_status, ContextServerStatus::Authenticating);
         let context_server_store = self.context_server_store.clone();
 
@@ -692,7 +692,7 @@ impl AgentConfiguration {
                 Indicator::dot().color(Color::Muted).into_any_element(),
                 "Server is stopped.",
             ),
-            ContextServerStatus::AuthRequired(_) => (
+            ContextServerStatus::AuthRequired => (
                 Indicator::dot().color(Color::Warning).into_any_element(),
                 "Authentication required.",
             ),

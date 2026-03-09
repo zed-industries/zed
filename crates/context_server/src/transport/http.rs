@@ -123,6 +123,15 @@ impl HttpTransport {
         let is_notification =
             !message.contains("\"id\":") || message.contains("notifications/initialized");
 
+        // If we currently have no access token, try refreshing before sending
+        // the request so restored but expired sessions do not need an initial
+        // 401 round-trip before they can recover.
+        if let Some(ref provider) = self.token_provider {
+            if provider.access_token().is_none() {
+                provider.try_refresh().await.unwrap_or(false);
+            }
+        }
+
         let request = self.build_request(message.as_bytes())?;
         let mut response = self.http_client.send(request).await?;
 
@@ -142,25 +151,14 @@ impl HttpTransport {
                     error_description: None,
                 });
 
-            // When the error indicates the client registration itself is
-            // invalid (e.g. `invalid_token`), refreshing is futile — the
-            // store should discard the DCR cache and re-discover.
-            let should_skip_refresh = www_authenticate
-                .error
-                .is_some_and(|e| e.indicates_invalid_client());
+            if let Some(ref provider) = self.token_provider {
+                if provider.try_refresh().await.unwrap_or(false) {
+                    // Retry with the refreshed token.
+                    let retry_request = self.build_request(message.as_bytes())?;
+                    response = self.http_client.send(retry_request).await?;
 
-            if !should_skip_refresh {
-                if let Some(ref provider) = self.token_provider {
-                    if provider.try_refresh().await.unwrap_or(false) {
-                        // Retry with the refreshed token.
-                        let retry_request = self.build_request(message.as_bytes())?;
-                        response = self.http_client.send(retry_request).await?;
-
-                        // If still 401 after refresh, give up.
-                        if response.status().as_u16() == 401 {
-                            return Err(TransportError::AuthRequired { www_authenticate }.into());
-                        }
-                    } else {
+                    // If still 401 after refresh, give up.
+                    if response.status().as_u16() == 401 {
                         return Err(TransportError::AuthRequired { www_authenticate }.into());
                     }
                 } else {
@@ -370,14 +368,24 @@ mod tests {
     /// refresh attempts.
     struct FakeTokenProvider {
         token: SyncMutex<Option<String>>,
+        refreshed_token: SyncMutex<Option<String>>,
         refresh_succeeds: AtomicBool,
         refresh_count: AtomicUsize,
     }
 
     impl FakeTokenProvider {
         fn new(token: Option<&str>, refresh_succeeds: bool) -> Arc<Self> {
+            Self::with_refreshed_token(token, None, refresh_succeeds)
+        }
+
+        fn with_refreshed_token(
+            token: Option<&str>,
+            refreshed_token: Option<&str>,
+            refresh_succeeds: bool,
+        ) -> Arc<Self> {
             Arc::new(Self {
                 token: SyncMutex::new(token.map(String::from)),
+                refreshed_token: SyncMutex::new(refreshed_token.map(String::from)),
                 refresh_succeeds: AtomicBool::new(refresh_succeeds),
                 refresh_count: AtomicUsize::new(0),
             })
@@ -400,7 +408,15 @@ mod tests {
 
         async fn try_refresh(&self) -> Result<bool> {
             self.refresh_count.fetch_add(1, Ordering::SeqCst);
-            Ok(self.refresh_succeeds.load(Ordering::SeqCst))
+
+            let refresh_succeeds = self.refresh_succeeds.load(Ordering::SeqCst);
+            if refresh_succeeds {
+                if let Some(token) = self.refreshed_token.lock().clone() {
+                    *self.token.lock() = Some(token);
+                }
+            }
+
+            Ok(refresh_succeeds)
         }
     }
 
@@ -486,6 +502,86 @@ mod tests {
             .expect("send should succeed");
 
         assert!(captured_auth.lock().is_none());
+    }
+
+    #[gpui::test]
+    async fn test_missing_token_triggers_refresh_before_first_request(cx: &mut TestAppContext) {
+        let captured_auth = Arc::new(SyncMutex::new(None::<String>));
+        let captured_auth_clone = captured_auth.clone();
+
+        let client = make_fake_http_client(move |req| {
+            let auth = req
+                .headers()
+                .get("Authorization")
+                .map(|v| v.to_str().unwrap().to_string());
+            *captured_auth_clone.lock() = auth;
+            Box::pin(async { json_response(200, r#"{"jsonrpc":"2.0","id":1,"result":{}}"#) })
+        });
+
+        let provider = FakeTokenProvider::with_refreshed_token(None, Some("refreshed-token"), true);
+        let transport = HttpTransport::new_with_token_provider(
+            client,
+            "http://mcp.example.com/mcp".to_string(),
+            HashMap::default(),
+            cx.background_executor.clone(),
+            Some(provider.clone()),
+        );
+
+        transport
+            .send(r#"{"jsonrpc":"2.0","id":1,"method":"ping"}"#.to_string())
+            .await
+            .expect("send should succeed after proactive refresh");
+
+        assert_eq!(provider.refresh_count(), 1);
+        assert_eq!(
+            captured_auth.lock().as_deref(),
+            Some("Bearer refreshed-token"),
+        );
+    }
+
+    #[gpui::test]
+    async fn test_invalid_token_still_triggers_refresh_and_retry(cx: &mut TestAppContext) {
+        let request_count = Arc::new(AtomicUsize::new(0));
+        let request_count_clone = request_count.clone();
+
+        let client = make_fake_http_client(move |_req| {
+            let count = request_count_clone.fetch_add(1, Ordering::SeqCst);
+            Box::pin(async move {
+                if count == 0 {
+                    Ok(Response::builder()
+                        .status(401)
+                        .header(
+                            "WWW-Authenticate",
+                            r#"Bearer error="invalid_token", resource_metadata="https://mcp.example.com/.well-known/oauth-protected-resource""#,
+                        )
+                        .body(AsyncBody::from(b"Unauthorized".to_vec()))
+                        .unwrap())
+                } else {
+                    json_response(200, r#"{"jsonrpc":"2.0","id":1,"result":{}}"#)
+                }
+            })
+        });
+
+        let provider = FakeTokenProvider::with_refreshed_token(
+            Some("old-token"),
+            Some("refreshed-token"),
+            true,
+        );
+        let transport = HttpTransport::new_with_token_provider(
+            client,
+            "http://mcp.example.com/mcp".to_string(),
+            HashMap::default(),
+            cx.background_executor.clone(),
+            Some(provider.clone()),
+        );
+
+        transport
+            .send(r#"{"jsonrpc":"2.0","id":1,"method":"ping"}"#.to_string())
+            .await
+            .expect("send should succeed after refresh");
+
+        assert_eq!(provider.refresh_count(), 1);
+        assert_eq!(request_count.load(Ordering::SeqCst), 2);
     }
 
     #[gpui::test]
