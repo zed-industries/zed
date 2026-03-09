@@ -3715,6 +3715,85 @@ async fn test_enclosing_indent(cx: &mut TestAppContext) {
             }
         ))
     );
+
+    // Cursor on a closing bracket line should highlight the inner block, not the parent.
+    // This corresponds to GitHub issue #51068.
+    assert_eq!(
+        enclosing_indent(
+            indoc!(
+                "
+                fn b() {
+                    if c {
+                        let d = 2;
+                    }
+                }
+                "
+            ),
+            3,
+            cx,
+        )
+        .await,
+        Some((
+            1..2,
+            LineIndent {
+                tabs: 0,
+                spaces: 4,
+                line_blank: false,
+            }
+        ))
+    );
+
+    // Cursor on a closing bracket with trailing content (e.g. `},`)
+    assert_eq!(
+        enclosing_indent(
+            indoc!(
+                "
+                const foo = {
+                  a: {
+                    b: 1,
+                  },
+                };
+                "
+            ),
+            3,
+            cx,
+        )
+        .await,
+        Some((
+            1..2,
+            LineIndent {
+                tabs: 0,
+                spaces: 2,
+                line_blank: false,
+            }
+        ))
+    );
+
+    // Cursor on the outermost closing bracket should highlight the outer block.
+    assert_eq!(
+        enclosing_indent(
+            indoc!(
+                "
+                const foo = {
+                  a: {
+                    b: 1,
+                  },
+                };
+                "
+            ),
+            4,
+            cx,
+        )
+        .await,
+        Some((
+            0..3,
+            LineIndent {
+                tabs: 0,
+                spaces: 0,
+                line_blank: false,
+            }
+        ))
+    );
 }
 
 #[gpui::test]
