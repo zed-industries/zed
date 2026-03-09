@@ -19,8 +19,9 @@ pub fn open(
     cx: &mut Context<Workspace>,
 ) {
     let project = workspace.project().clone();
+    let workspace_handle = workspace.weak_handle();
     workspace.toggle_modal(window, cx, |window, cx| {
-        RepositorySelector::new(project, rems(34.), window, cx)
+        RepositorySelector::new(project, workspace_handle, rems(34.), window, cx)
     })
 }
 
@@ -32,6 +33,7 @@ pub struct RepositorySelector {
 impl RepositorySelector {
     pub fn new(
         project_handle: Entity<Project>,
+        workspace: WeakEntity<Workspace>,
         width: Rems,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -63,6 +65,7 @@ impl RepositorySelector {
             .unwrap_or(0);
         let delegate = RepositorySelectorDelegate {
             repository_selector: cx.entity().downgrade(),
+            workspace,
             repository_entries,
             filtered_repositories,
             active_repository,
@@ -132,6 +135,7 @@ impl ModalView for RepositorySelector {}
 
 pub struct RepositorySelectorDelegate {
     repository_selector: WeakEntity<RepositorySelector>,
+    workspace: WeakEntity<Workspace>,
     repository_entries: Vec<Entity<Repository>>,
     filtered_repositories: Vec<Entity<Repository>>,
     active_repository: Option<Entity<Repository>>,
@@ -242,9 +246,26 @@ impl PickerDelegate for RepositorySelectorDelegate {
         let Some(selected_repo) = self.filtered_repositories.get(self.selected_index) else {
             return;
         };
+        let selected_repo_path = selected_repo.read(cx).work_directory_abs_path.clone();
         selected_repo.update(cx, |selected_repo, cx| {
             selected_repo.set_as_active_repository(cx)
         });
+        self.workspace
+            .update(cx, |workspace, cx| {
+                let project = workspace.project();
+                let active_worktree_id = project
+                    .read(cx)
+                    .visible_worktrees(cx)
+                    .find(|worktree| {
+                        let worktree_path = worktree.read(cx).abs_path();
+                        worktree_path.as_ref() == selected_repo_path.as_ref()
+                            || worktree_path.starts_with(selected_repo_path.as_ref())
+                    })
+                    .map(|worktree| worktree.read(cx).id());
+
+                workspace.set_active_worktree_override(active_worktree_id, cx);
+            })
+            .ok();
         self.dismissed(window, cx);
     }
 

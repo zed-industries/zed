@@ -5984,9 +5984,13 @@ impl RenderOnce for PanelRepoFooter {
         let repo_selector = PopoverMenu::new("repository-switcher")
             .menu({
                 let project = project;
+                let workspace = workspace.clone();
                 move |window, cx| {
                     let project = project.clone()?;
-                    Some(cx.new(|cx| RepositorySelector::new(project, rems(20.), window, cx)))
+                    let workspace = workspace.clone()?;
+                    Some(cx.new(|cx| {
+                        RepositorySelector::new(project, workspace, rems(20.), window, cx)
+                    }))
                 }
             })
             .trigger_with_tooltip(
