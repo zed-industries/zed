@@ -162,6 +162,7 @@ mod tests {
                 cursor_excerpt: "".into(),
                 excerpt_start_row: None,
                 excerpt_ranges: Default::default(),
+                syntax_ranges: None,
                 experiment: None,
                 in_open_source_repo: false,
                 can_collect_data: false,

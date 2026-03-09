@@ -7,12 +7,12 @@ use crate::{
 use anyhow::{Context as _, Result};
 use edit_prediction::{
     EditPredictionStore,
-    cursor_excerpt::compute_excerpt_ranges,
+    cursor_excerpt::{compute_cursor_excerpt, compute_syntax_ranges},
     udiff::{OpenedBuffers, refresh_worktree_entries, strip_diff_path_prefix},
 };
 use futures::AsyncWriteExt as _;
 use gpui::{AsyncApp, Entity};
-use language::{Anchor, Buffer, LanguageNotFound, ToOffset, ToPoint};
+use language::{Anchor, Buffer, LanguageNotFound, ToOffset};
 use project::{Project, ProjectPath, buffer_store::BufferStoreEvent};
 use std::{fs, path::PathBuf, sync::Arc};
 use zeta_prompt::ZetaPromptInput;
@@ -75,32 +75,36 @@ pub async fn run_load_project(
 
     let (prompt_inputs, language_name) = buffer.read_with(&cx, |buffer, _cx| {
         let snapshot = buffer.snapshot();
-        let cursor_point = cursor_position.to_point(&snapshot);
         let cursor_offset = cursor_position.to_offset(&snapshot);
         let language_name = buffer
             .language()
             .map(|l| l.name().to_string())
             .unwrap_or_else(|| "Unknown".to_string());
 
-        let (full_context_point_range, full_context_offset_range, excerpt_ranges) =
-            compute_excerpt_ranges(cursor_point, &snapshot);
+        let (excerpt_point_range, excerpt_offset_range, cursor_offset_in_excerpt) =
+            compute_cursor_excerpt(&snapshot, cursor_offset);
 
         let cursor_excerpt: Arc<str> = buffer
-            .text_for_range(full_context_offset_range.clone())
+            .text_for_range(excerpt_offset_range.clone())
             .collect::<String>()
             .into();
-        let cursor_offset_in_excerpt = cursor_offset - full_context_offset_range.start;
-        let excerpt_start_row = Some(full_context_point_range.start.row);
+        let syntax_ranges = compute_syntax_ranges(&snapshot, cursor_offset, &excerpt_offset_range);
+        let excerpt_ranges = zeta_prompt::compute_legacy_excerpt_ranges(
+            &cursor_excerpt,
+            cursor_offset_in_excerpt,
+            &syntax_ranges,
+        );
 
         (
             ZetaPromptInput {
                 cursor_path: example.spec.cursor_path.clone(),
                 cursor_excerpt,
                 cursor_offset_in_excerpt,
-                excerpt_start_row,
+                excerpt_start_row: Some(excerpt_point_range.start.row),
                 events,
                 related_files: existing_related_files,
                 excerpt_ranges,
+                syntax_ranges: Some(syntax_ranges),
                 in_open_source_repo: false,
                 can_collect_data: false,
                 experiment: None,

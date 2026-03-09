@@ -3202,6 +3202,7 @@ dependencies = [
  "serde",
  "serde_json",
  "text",
+ "zeta_prompt",
 ]
 
 [[package]]

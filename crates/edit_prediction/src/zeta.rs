@@ -1,7 +1,8 @@
 use crate::{
     CurrentEditPrediction, DebugEvent, EditPredictionFinishedDebugEvent, EditPredictionId,
     EditPredictionModelInput, EditPredictionStartedDebugEvent, EditPredictionStore, StoredEvent,
-    ZedUpdateRequiredError, cursor_excerpt::compute_excerpt_ranges,
+    ZedUpdateRequiredError,
+    cursor_excerpt::{compute_cursor_excerpt, compute_syntax_ranges},
     prediction::EditPredictionResult,
 };
 use anyhow::Result;
@@ -11,8 +12,7 @@ use cloud_llm_client::{
 use edit_prediction_types::PredictedCursorPosition;
 use gpui::{App, AppContext as _, Entity, Task, WeakEntity, prelude::*};
 use language::{
-    Buffer, BufferSnapshot, ToOffset as _, ToPoint, language_settings::all_language_settings,
-    text_diff,
+    Buffer, BufferSnapshot, ToOffset as _, language_settings::all_language_settings, text_diff,
 };
 use release_channel::AppVersion;
 use settings::EditPredictionPromptFormat;
@@ -490,33 +490,35 @@ pub fn zeta2_prompt_input(
     can_collect_data: bool,
     repo_url: Option<String>,
 ) -> (Range<usize>, zeta_prompt::ZetaPromptInput) {
-    let cursor_point = cursor_offset.to_point(snapshot);
+    let (excerpt_point_range, excerpt_offset_range, cursor_offset_in_excerpt) =
+        compute_cursor_excerpt(snapshot, cursor_offset);
 
-    let (full_context, full_context_offset_range, excerpt_ranges) =
-        compute_excerpt_ranges(cursor_point, snapshot);
-
-    let full_context_start_offset = full_context_offset_range.start;
-    let full_context_start_row = full_context.start.row;
-
-    let cursor_offset_in_excerpt = cursor_offset - full_context_start_offset;
+    let cursor_excerpt: Arc<str> = snapshot
+        .text_for_range(excerpt_point_range.clone())
+        .collect::<String>()
+        .into();
+    let syntax_ranges = compute_syntax_ranges(snapshot, cursor_offset, &excerpt_offset_range);
+    let excerpt_ranges = zeta_prompt::compute_legacy_excerpt_ranges(
+        &cursor_excerpt,
+        cursor_offset_in_excerpt,
+        &syntax_ranges,
+    );
 
     let prompt_input = zeta_prompt::ZetaPromptInput {
         cursor_path: excerpt_path,
-        cursor_excerpt: snapshot
-            .text_for_range(full_context)
-            .collect::<String>()
-            .into(),
+        cursor_excerpt,
         cursor_offset_in_excerpt,
-        excerpt_start_row: Some(full_context_start_row),
+        excerpt_start_row: Some(excerpt_point_range.start.row),
         events,
         related_files: Some(related_files),
         excerpt_ranges,
+        syntax_ranges: Some(syntax_ranges),
         experiment: preferred_experiment,
         in_open_source_repo: is_open_source,
         can_collect_data,
         repo_url,
     };
-    (full_context_offset_range, prompt_input)
+    (excerpt_offset_range, prompt_input)
 }
 
 pub(crate) fn edit_prediction_accepted(
