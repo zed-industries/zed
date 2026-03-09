@@ -7,8 +7,8 @@ use editor::{Editor, EditorElement, EditorStyle};
 use feature_flags::{AgentV2FeatureFlag, FeatureFlagViewExt as _};
 use gpui::{
     AnyElement, App, Context, Entity, EventEmitter, FocusHandle, Focusable, FontStyle, ListState,
-    Pixels, Render, SharedString, TextStyle, WeakEntity, Window, actions, list, prelude::*, px,
-    relative, rems,
+    Pixels, Render, SharedString, TextStyle, WeakEntity, Window, actions, linear_color_stop,
+    linear_gradient, list, prelude::*, px, relative, rems,
 };
 use menu::{Cancel, Confirm, SelectFirst, SelectLast, SelectNext, SelectPrevious};
 use project::Event as ProjectEvent;
@@ -753,6 +753,7 @@ impl Sidebar {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let id = SharedString::from(format!("project-header-{}", ix));
+        let group_name = SharedString::from(format!("header-group-{}", ix));
         let ib_id = SharedString::from(format!("project-header-new-thread-{}", ix));
 
         let is_collapsed = self.collapsed_groups.contains(path_list);
@@ -786,11 +787,44 @@ impl Sidebar {
                 .into_any_element()
         };
 
+        let color = cx.theme().colors();
+        let base_bg = color.panel_background;
+        let gradient_overlay = div()
+            .id("gradient_overlay")
+            .absolute()
+            .top_0()
+            .right_0()
+            .w_12()
+            .h_full()
+            .bg(linear_gradient(
+                90.,
+                linear_color_stop(base_bg, 0.6),
+                linear_color_stop(base_bg.opacity(0.0), 0.),
+            ))
+            .group_hover(group_name.clone(), |s| {
+                s.bg(linear_gradient(
+                    90.,
+                    linear_color_stop(color.element_hover, 0.6),
+                    linear_color_stop(color.element_hover.opacity(0.0), 0.),
+                ))
+            })
+            .group_active(group_name.clone(), |s| {
+                s.bg(linear_gradient(
+                    90.,
+                    linear_color_stop(color.element_active, 0.6),
+                    linear_color_stop(color.element_active.opacity(0.0), 0.),
+                ))
+            });
+
         ListItem::new(id)
+            .group_name(group_name)
             .toggle_state(is_active_workspace)
             .focused(is_selected)
             .child(
                 h_flex()
+                    .relative()
+                    .min_w_0()
+                    .w_full()
                     .p_1()
                     .gap_1p5()
                     .child(
@@ -798,11 +832,11 @@ impl Sidebar {
                             .size(IconSize::Small)
                             .color(Color::Custom(cx.theme().colors().icon_muted.opacity(0.6))),
                     )
-                    .child(label),
+                    .child(label)
+                    .child(gradient_overlay),
             )
             .end_hover_slot(
                 h_flex()
-                    .gap_0p5()
                     .when(workspace_count > 1, |this| {
                         this.child(
                             IconButton::new(

@@ -224,17 +224,17 @@ impl RenderOnce for ThreadItem {
             .absolute()
             .top_0()
             .right(px(-10.0))
-            .w_12()
+            .w_8()
             .h_full()
             .bg(linear_gradient(
                 90.,
-                linear_color_stop(base_bg, 0.6),
+                linear_color_stop(base_bg, 0.8),
                 linear_color_stop(base_bg.opacity(0.0), 0.),
             ))
             .group_hover("thread-item", |s| {
                 s.bg(linear_gradient(
                     90.,
-                    linear_color_stop(color.element_hover, 0.6),
+                    linear_color_stop(color.element_hover, 0.8),
                     linear_color_stop(color.element_hover.opacity(0.0), 0.),
                 ))
             });
