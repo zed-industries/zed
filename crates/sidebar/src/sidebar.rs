@@ -776,9 +776,11 @@ impl Sidebar {
         let workspace_for_new_thread = workspace.clone();
         let workspace_for_remove = workspace.clone();
         // let workspace_for_activate = workspace.clone();
+
         let path_list_for_toggle = path_list.clone();
         let path_list_for_collapse = path_list.clone();
-        let is_expanded = self.expanded_groups.contains_key(path_list);
+        let view_more_expanded = self.expanded_groups.contains_key(path_list);
+
         let multi_workspace = self.multi_workspace.upgrade();
         let workspace_count = multi_workspace
             .as_ref()
@@ -866,7 +868,7 @@ impl Sidebar {
                             )),
                         )
                     })
-                    .when(is_expanded, |this| {
+                    .when(view_more_expanded && !is_collapsed, |this| {
                         this.child(
                             IconButton::new(
                                 SharedString::from(format!("project-header-collapse-{}", ix)),
