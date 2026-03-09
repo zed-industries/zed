@@ -997,22 +997,28 @@ pub fn render_table_row(
             .map(|((column_index, cell), width)| {
                 if table_context.disable_base_cell_style {
                     div()
+                        .id(ElementId::NamedInteger(
+                            "table_cell".into(),
+                            column_index as u64,
+                        ))
+                        .role(Role::Cell)
+                        .aria_column_index(column_index)
                         .when_some(width, |this, width| this.w(width))
                         .when(width.is_none(), |this| this.flex_1())
                         .overflow_hidden()
                         .child(cell)
                 } else {
-                        base_cell_style_text(width, table_context.use_ui_font, cx)
-                            .id(ElementId::NamedInteger(
-                                "table_cell".into(),
-                                column_index as u64,
-                            ))
-                            .role(Role::Cell)
-                            .aria_column_index(column_index)
-                            .px_1()
-                            .py_0p5()
-                            .child(cell)
-                    }
+                    base_cell_style_text(width, table_context.use_ui_font, cx)
+                        .id(ElementId::NamedInteger(
+                            "table_cell".into(),
+                            column_index as u64,
+                        ))
+                        .role(Role::Cell)
+                        .aria_column_index(column_index)
+                        .px_1()
+                        .py_0p5()
+                        .child(cell)
+                }
             }),
     );
 
@@ -1055,10 +1061,7 @@ pub fn render_table_header(
         .items_center()
         .justify_between()
         .w_full()
-        .id(ElementId::NamedInteger(
-            shared_element_id.clone(),
-            u64::MAX,
-        ))
+        .id(ElementId::NamedInteger(shared_element_id.clone(), u64::MAX))
         .role(Role::Row)
         .p_2()
         .border_b_1()
