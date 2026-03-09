@@ -18,6 +18,7 @@ const WINDOW_LINES_ABOVE: u32 = 10;
 const WINDOW_LINES_BELOW: u32 = 10;
 const MAX_RECENT_CHANGE_BLOCKS: usize = 3;
 const MAX_RECENT_CHANGE_LINES: usize = 40;
+const RESERVED_SWEEP_TOKENS: [&str; 2] = ["<|file_sep|>", "</s>"];
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SweepPromptInput {
@@ -94,6 +95,9 @@ pub fn request_prediction(
         &stored_events,
         filtered_related_files.clone(),
     );
+    if let Err(error) = validate_prompt_input(&prompt_input) {
+        return Task::ready(Err(error));
+    }
     let prompt = build_prompt(&prompt_input);
 
     if let Some(debug_tx) = &debug_tx {
@@ -109,7 +113,9 @@ pub fn request_prediction(
     }
 
     let window_start_offset = window_range.start.to_offset(&snapshot);
-    let cursor_offset_in_window = position.to_offset(&snapshot).saturating_sub(window_start_offset);
+    let cursor_offset_in_window = position
+        .to_offset(&snapshot)
+        .saturating_sub(window_start_offset);
     let zeta_input = ZetaPromptInput {
         events,
         related_files: filtered_related_files,
@@ -135,7 +141,11 @@ pub fn request_prediction(
         )
         .await?;
         let response_received_at = Instant::now();
-        Ok((request_id, clean_response_text(&response_text), response_received_at))
+        Ok((
+            request_id,
+            clean_response_text(&response_text),
+            response_received_at,
+        ))
     });
 
     cx.spawn(async move |cx| {
@@ -189,7 +199,11 @@ pub fn build_prompt(input: &SweepPromptInput) -> String {
     let mut prompt = String::new();
 
     for related_file in &input.related_files {
-        write_file_block(&mut prompt, related_file.file_path.as_ref(), &related_file.content);
+        write_file_block(
+            &mut prompt,
+            related_file.file_path.as_ref(),
+            &related_file.content,
+        );
     }
 
     for recent_change in &input.recent_changes {
@@ -206,7 +220,11 @@ pub fn build_prompt(input: &SweepPromptInput) -> String {
     }
 
     let original_path = format!("original/{}", input.file_path.display());
-    write_file_block(&mut prompt, Path::new(&original_path), &input.original_window);
+    write_file_block(
+        &mut prompt,
+        Path::new(&original_path),
+        &input.original_window,
+    );
 
     let current_path = format!("current/{}", input.file_path.display());
     write_file_block(&mut prompt, Path::new(&current_path), &input.current_window);
@@ -215,6 +233,42 @@ pub fn build_prompt(input: &SweepPromptInput) -> String {
     writeln!(&mut prompt, "<|file_sep|>{updated_path}").ok();
 
     prompt
+}
+
+fn validate_prompt_input(input: &SweepPromptInput) -> Result<()> {
+    validate_prompt_field("file path", &input.file_path.display().to_string())?;
+    validate_prompt_field("original window", &input.original_window)?;
+    validate_prompt_field("current window", &input.current_window)?;
+
+    for recent_change in &input.recent_changes {
+        validate_prompt_field(
+            "recent change path",
+            &recent_change.file_path.display().to_string(),
+        )?;
+        validate_prompt_field("recent change original", &recent_change.original)?;
+        validate_prompt_field("recent change updated", &recent_change.updated)?;
+    }
+
+    for related_file in &input.related_files {
+        validate_prompt_field(
+            "related file path",
+            &related_file.file_path.display().to_string(),
+        )?;
+        validate_prompt_field("related file content", &related_file.content)?;
+    }
+
+    Ok(())
+}
+
+fn validate_prompt_field(field_name: &str, value: &str) -> Result<()> {
+    if RESERVED_SWEEP_TOKENS
+        .iter()
+        .any(|reserved_token| value.contains(reserved_token))
+    {
+        anyhow::bail!("sweep prompt {field_name} contains reserved tokens");
+    }
+
+    Ok(())
 }
 
 pub(crate) fn original_window_for_current_window(
@@ -264,14 +318,15 @@ fn build_prompt_input(
     stored_events: &[StoredEvent],
     related_files: Vec<RelatedFile>,
 ) -> SweepPromptInput {
-    let current_window = snapshot.text_for_range(window_range.clone()).collect::<String>();
-    let original_window =
-        original_window_for_current_window(
-            window_range,
-            latest_active_buffer_event(stored_events, snapshot),
-            snapshot,
-        )
-        .unwrap_or_else(|| current_window.clone());
+    let current_window = snapshot
+        .text_for_range(window_range.clone())
+        .collect::<String>();
+    let original_window = original_window_for_current_window(
+        window_range,
+        latest_active_buffer_event(stored_events, snapshot),
+        snapshot,
+    )
+    .unwrap_or_else(|| current_window.clone());
 
     SweepPromptInput {
         file_path: file_path.clone(),
@@ -479,9 +534,7 @@ mod tests {
     }
 
     #[gpui::test]
-    fn test_original_window_for_current_window_returns_none_without_matching_history(
-        cx: &mut App,
-    ) {
+    fn test_original_window_for_current_window_returns_none_without_matching_history(cx: &mut App) {
         cx.new(|cx| {
             let buffer = Buffer::local("hello\nworld\n", cx);
             let current_snapshot = buffer.snapshot();
@@ -497,9 +550,7 @@ mod tests {
     }
 
     #[gpui::test]
-    fn test_recent_change_block_from_event_formats_original_and_updated_sections(
-        cx: &mut App,
-    ) {
+    fn test_recent_change_block_from_event_formats_original_and_updated_sections(cx: &mut App) {
         cx.new(|cx| {
             let buffer = Buffer::local("fn main() {\n    println!(\"old\");\n}\n", cx);
             let stored_event = StoredEvent {

@@ -2287,7 +2287,6 @@ async fn make_sweep_prompt_test_ep_store(
                                 model: Some("sweep-next-edit-1.5b".to_string()),
                                 prompt_format: Some(settings::EditPredictionPromptFormat::Sweep),
                                 max_output_tokens: Some(64),
-                                ..Default::default()
                             },
                         ),
                         ..Default::default()
@@ -2313,7 +2312,9 @@ async fn make_sweep_prompt_test_ep_store(
                 match (method, uri.as_str()) {
                     (Method::POST, "/v1/completions") => {
                         let mut body_bytes = Vec::new();
-                        body.read_to_end(&mut body_bytes).await.ok();
+                        body.read_to_end(&mut body_bytes)
+                            .await
+                            .expect("fake completion server should read request body");
                         let request: RawCompletionRequest =
                             serde_json::from_slice(&body_bytes).unwrap();
                         requests.lock().push(request);

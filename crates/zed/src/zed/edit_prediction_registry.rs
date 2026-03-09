@@ -159,6 +159,12 @@ fn infer_prompt_format(model: &str) -> Option<EditPredictionPromptFormat> {
     let model_base = model.split(':').next().unwrap_or(model);
 
     Some(match model_base {
+        model_base if model_base
+            .to_ascii_lowercase()
+            .contains("sweep-next-edit") =>
+        {
+            EditPredictionPromptFormat::Sweep
+        }
         "codellama" | "code-llama" => EditPredictionPromptFormat::CodeLlama,
         "starcoder" | "starcoder2" | "starcoderbase" => EditPredictionPromptFormat::StarCoder,
         "deepseek-coder" | "deepseek-coder-v2" => EditPredictionPromptFormat::DeepseekCoder,
