@@ -90,7 +90,7 @@ pub fn request_prediction(
         let prefix = inputs.cursor_excerpt[..inputs.cursor_offset_in_excerpt].to_string();
         let suffix = inputs.cursor_excerpt[inputs.cursor_offset_in_excerpt..].to_string();
         let prompt = format_fim_prompt(prompt_format, &prefix, &suffix);
-        let stop_tokens = get_fim_stop_tokens();
+        let stop_tokens = get_fim_stop_tokens(prompt_format);
 
         let max_tokens = settings.max_output_tokens;
 
@@ -182,23 +182,48 @@ fn format_fim_prompt(
     }
 }
 
-fn get_fim_stop_tokens() -> Vec<String> {
-    vec![
-        "<|endoftext|>".to_string(),
-        "<|file_separator|>".to_string(),
-        "<|fim_pad|>".to_string(),
-        "<|fim_prefix|>".to_string(),
-        "<|fim_middle|>".to_string(),
-        "<|fim_suffix|>".to_string(),
-        "<fim_prefix>".to_string(),
-        "<fim_middle>".to_string(),
-        "<fim_suffix>".to_string(),
-        "<PRE>".to_string(),
-        "<SUF>".to_string(),
-        "<MID>".to_string(),
-        "[PREFIX]".to_string(),
-        "[SUFFIX]".to_string(),
-    ]
+fn get_fim_stop_tokens(prompt_format: EditPredictionPromptFormat) -> Vec<String> {
+    match prompt_format {
+        EditPredictionPromptFormat::CodeLlama => {
+            vec!["<PRE>", "<SUF>", "<MID>", "<|endoftext|>"]
+        }
+        EditPredictionPromptFormat::StarCoder => vec![
+            "<fim_prefix>",
+            "<fim_middle>",
+            "<fim_suffix>",
+            "<|endoftext|>",
+        ],
+        EditPredictionPromptFormat::DeepseekCoder => vec![
+            "<｜fim▁begin｜>",
+            "<｜fim▁hole｜>",
+            "<｜fim▁end｜>",
+            "<|endoftext|>",
+        ],
+        EditPredictionPromptFormat::Qwen | EditPredictionPromptFormat::CodeGemma => vec![
+            "<|fim_prefix|>",
+            "<|fim_middle|>",
+            "<|fim_suffix|>",
+            "<|endoftext|>",
+        ],
+        EditPredictionPromptFormat::Codestral => {
+            vec!["[PREFIX]", "[SUFFIX]", "<|endoftext|>", "<|file_separator|>"]
+        }
+        EditPredictionPromptFormat::Glm => vec![
+            "<|code_prefix|>",
+            "<|code_suffix|>",
+            "<|code_middle|>",
+            "<|endoftext|>",
+        ],
+        EditPredictionPromptFormat::Infer | EditPredictionPromptFormat::Zeta | EditPredictionPromptFormat::Zeta2 => vec![
+            "<fim_prefix>",
+            "<fim_middle>",
+            "<fim_suffix>",
+            "<|endoftext|>",
+        ],
+    }
+    .into_iter()
+    .map(str::to_string)
+    .collect()
 }
 
 fn clean_fim_completion(response: &str) -> String {
@@ -214,11 +239,17 @@ fn clean_fim_completion(response: &str) -> String {
         "<fim_prefix>",
         "<fim_middle>",
         "<fim_suffix>",
+        "<｜fim▁begin｜>",
+        "<｜fim▁hole｜>",
+        "<｜fim▁end｜>",
         "<PRE>",
         "<SUF>",
         "<MID>",
         "[PREFIX]",
         "[SUFFIX]",
+        "<|code_prefix|>",
+        "<|code_suffix|>",
+        "<|code_middle|>",
     ];
 
     for token in &end_tokens {
@@ -228,4 +259,38 @@ fn clean_fim_completion(response: &str) -> String {
     }
 
     result
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{clean_fim_completion, get_fim_stop_tokens};
+    use settings::EditPredictionPromptFormat;
+
+    #[test]
+    fn star_coder_stop_tokens_fit_openai_limit() {
+        let stop_tokens = get_fim_stop_tokens(EditPredictionPromptFormat::StarCoder);
+
+        assert_eq!(
+            stop_tokens,
+            vec![
+                "<fim_prefix>".to_string(),
+                "<fim_middle>".to_string(),
+                "<fim_suffix>".to_string(),
+                "<|endoftext|>".to_string(),
+            ]
+        );
+        assert!(stop_tokens.len() <= 4);
+    }
+
+    #[test]
+    fn clean_fim_completion_still_truncates_known_markers() {
+        assert_eq!(
+            clean_fim_completion("import x\n<|fim_suffix|>ignored"),
+            "import x\n"
+        );
+        assert_eq!(
+            clean_fim_completion("hello<｜fim▁end｜>world"),
+            "hello"
+        );
+    }
 }

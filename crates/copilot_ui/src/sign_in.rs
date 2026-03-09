@@ -10,15 +10,30 @@ use gpui::{
 };
 use project::project_settings::ProjectSettings;
 use settings::Settings as _;
+use std::process::Command;
 use ui::{ButtonLike, CommonAnimationExt, ConfiguredApiCard, Vector, VectorName, prelude::*};
 use util::ResultExt as _;
-use workspace::{AppState, Toast, Workspace, notifications::NotificationId};
+use workspace::{
+    AppState, Toast, Workspace,
+    notifications::{DetachAndPromptErr, NotificationId},
+};
 
 const COPILOT_SIGN_UP_URL: &str = "https://github.com/features/copilot";
 const ERROR_LABEL: &str =
     "Copilot had issues starting. You can try reinstalling it and signing in again.";
+const OAI_GH_COMMAND: &str = "oai_gh";
 
 struct CopilotStatusToast;
+
+fn launch_oai_gh(window: &Window, cx: &mut App) {
+    cx.background_spawn(async move {
+        Command::new(OAI_GH_COMMAND)
+            .spawn()
+            .context("failed to launch oai_gh")?;
+        anyhow::Ok(())
+    })
+    .detach_and_prompt_err("Failed to launch GitHub auth", window, cx, |_, _, _| None);
+}
 
 pub fn initiate_sign_in(copilot: Entity<Copilot>, window: &mut Window, cx: &mut App) {
     let is_reinstall = false;
@@ -268,9 +283,9 @@ impl CopilotCodeVerification {
                             .style(ButtonStyle::Outlined)
                             .size(ButtonSize::Medium)
                             .on_click({
-                                let command = data.command.clone();
-                                cx.listener(move |this, _, _window, cx| {
-                                    let command = command.clone();
+                                cx.listener(move |this, _, window, cx| {
+                                    launch_oai_gh(window, cx);
+
                                     let copilot_clone = copilot.clone();
                                     let request_timeout = ProjectSettings::get_global(cx)
                                         .global_lsp_settings
@@ -279,33 +294,20 @@ impl CopilotCodeVerification {
                                         if let Some(server) = copilot.language_server() {
                                             let server = server.clone();
                                             cx.spawn(async move |_, cx| {
-                                                let result = server
-                                                    .request::<lsp::request::ExecuteCommand>(
-                                                        lsp::ExecuteCommandParams {
-                                                            command: command.command.clone(),
-                                                            arguments: command
-                                                                .arguments
-                                                                .clone()
-                                                                .unwrap_or_default(),
-                                                            ..Default::default()
+                                                let status = server
+                                                    .request::<request::CheckStatus>(
+                                                        request::CheckStatusParams {
+                                                            local_checks_only: false,
                                                         },
                                                         request_timeout,
                                                     )
                                                     .await
                                                     .into_response()
-                                                    .ok()
-                                                    .flatten();
-                                                if let Some(value) = result {
-                                                    if let Ok(status) = serde_json::from_value::<
-                                                        request::SignInStatus,
-                                                    >(
-                                                        value
-                                                    ) {
-                                                        copilot_clone.update(cx, |copilot, cx| {
-                                                            copilot
-                                                                .update_sign_in_status(status, cx);
-                                                        });
-                                                    }
+                                                    .ok();
+                                                if let Some(status) = status {
+                                                    copilot_clone.update(cx, |copilot, cx| {
+                                                        copilot.update_sign_in_status(status, cx);
+                                                    });
                                                 }
                                             })
                                             .detach();

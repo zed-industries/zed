@@ -162,6 +162,9 @@ fn infer_prompt_format(model: &str) -> Option<EditPredictionPromptFormat> {
         "codegemma" => EditPredictionPromptFormat::CodeGemma,
         "codestral" | "mistral" => EditPredictionPromptFormat::Codestral,
         "glm" | "glm-4" | "glm-4.5" => EditPredictionPromptFormat::Glm,
+        model if model.starts_with("gpt-") || model == "gpt" || model.contains("codex") => {
+            EditPredictionPromptFormat::StarCoder
+        }
         _ => {
             return None;
         }

@@ -1001,28 +1001,12 @@ impl SettingsPageItem {
                             .on_click({
                                 let sub_page_link = sub_page_link.clone();
                                 cx.listener(move |this, _, window, cx| {
-                                    let header_text = this
-                                        .sub_page_stack
-                                        .last()
-                                        .map(|sub_page| sub_page.link.title.clone())
-                                        .or_else(|| {
-                                            this.current_page()
-                                                .items
-                                                .iter()
-                                                .take(item_index)
-                                                .rev()
-                                                .find_map(|item| {
-                                                    item.header_text().map(SharedString::new_static)
-                                                })
-                                        });
-
-                                    let Some(header) = header_text else {
-                                        unreachable!(
-                                            "All items always have a section header above them"
-                                        )
-                                    };
-
-                                    this.push_sub_page(sub_page_link.clone(), header, window, cx)
+                                    this.open_sub_page_link(
+                                        sub_page_link.clone(),
+                                        item_index,
+                                        window,
+                                        cx,
+                                    );
                                 })
                             }),
                         )
@@ -3478,6 +3462,39 @@ impl SettingsWindow {
         cx.notify();
     }
 
+    fn open_sub_page_link(
+        &mut self,
+        sub_page_link: SubPageLink,
+        item_index: usize,
+        window: &mut Window,
+        cx: &mut Context<SettingsWindow>,
+    ) {
+        if let Some(json_path) = sub_page_link.json_path
+            && self.navigate_to_sub_page(json_path, window, cx)
+        {
+            return;
+        }
+
+        let header_text = self
+            .sub_page_stack
+            .last()
+            .map(|sub_page| sub_page.link.title.clone())
+            .or_else(|| {
+                self.current_page()
+                    .items
+                    .iter()
+                    .take(item_index)
+                    .rev()
+                    .find_map(|item| item.header_text().map(SharedString::new_static))
+            });
+
+        let Some(header) = header_text else {
+            unreachable!("All items always have a section header above them")
+        };
+
+        self.push_sub_page(sub_page_link, header, window, cx);
+    }
+
     /// Push a dynamically-created sub-page with a custom render function.
     /// This is useful for nested sub-pages that aren't defined in the main pages list.
     pub fn push_dynamic_sub_page(
@@ -5414,5 +5431,59 @@ mod project_settings_update_tests {
             "Buffer should not contain the external modification value: {}",
             text
         );
+    }
+
+    #[gpui::test]
+    fn sub_page_link_with_json_path_uses_registered_navigation(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            let store = settings::SettingsStore::test(cx);
+            cx.set_global(store);
+            theme::init(theme::LoadThemes::JustBase, cx);
+            editor::init(cx);
+            menu::init();
+        });
+
+        let (settings_window, _) = cx.add_window_view(|window, cx| {
+            fn render_test_sub_page(
+                _: &SettingsWindow,
+                _: &ScrollHandle,
+                _: &mut Window,
+                _: &mut Context<SettingsWindow>,
+            ) -> AnyElement {
+                div().into_any_element()
+            }
+
+            let link = SubPageLink {
+                title: "Configure Providers".into(),
+                r#type: Default::default(),
+                description: Some("Test sub page".into()),
+                json_path: Some("edit_predictions.providers"),
+                in_json: false,
+                files: USER,
+                render: render_test_sub_page,
+            };
+
+            let mut settings_window = SettingsWindow::test(window, cx);
+            settings_window.pages = vec![SettingsPage {
+                title: "AI",
+                items: vec![
+                    SettingsPageItem::SectionHeader("Edit Predictions"),
+                    SettingsPageItem::SubPageLink(link.clone()),
+                ]
+                .into_boxed_slice(),
+            }];
+            settings_window.build_filter_table();
+            settings_window.build_navbar(cx);
+            settings_window.open_sub_page_link(link, 1, window, cx);
+            settings_window
+        });
+
+        settings_window.read_with(cx, |settings_window, _| {
+            assert_eq!(settings_window.sub_page_stack.len(), 1);
+            assert_eq!(
+                settings_window.sub_page_stack[0].link.title,
+                SharedString::from("Configure Providers")
+            );
+        });
     }
 }

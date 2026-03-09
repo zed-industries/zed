@@ -1392,49 +1392,11 @@ pub fn set_completion_provider(fs: Arc<dyn Fs>, cx: &mut App, provider: EditPred
     });
 }
 
-pub fn get_available_providers(cx: &mut App) -> Vec<EditPredictionProvider> {
-    let mut providers = Vec::new();
-
-    providers.push(EditPredictionProvider::Zed);
-
-    if let Some(app_state) = workspace::AppState::global(cx).upgrade()
-        && copilot::GlobalCopilotAuth::try_get_or_init(app_state, cx)
-            .is_some_and(|copilot| copilot.0.read(cx).is_authenticated())
-    {
-        providers.push(EditPredictionProvider::Copilot);
-    };
-
-    if codestral::codestral_api_key(cx).is_some() {
-        providers.push(EditPredictionProvider::Codestral);
-    }
-
-    if edit_prediction::ollama::is_available(cx) {
-        providers.push(EditPredictionProvider::Ollama);
-    }
-
-    if all_language_settings(None, cx)
-        .edit_predictions
-        .open_ai_compatible_api
-        .is_some()
-    {
-        providers.push(EditPredictionProvider::OpenAiCompatibleApi);
-    }
-
-    if edit_prediction::sweep_ai::sweep_api_token(cx)
-        .read(cx)
-        .has_key()
-    {
-        providers.push(EditPredictionProvider::Sweep);
-    }
-
-    if edit_prediction::mercury::mercury_api_token(cx)
-        .read(cx)
-        .has_key()
-    {
-        providers.push(EditPredictionProvider::Mercury);
-    }
-
-    providers
+pub fn get_available_providers(_cx: &mut App) -> Vec<EditPredictionProvider> {
+    vec![
+        EditPredictionProvider::Copilot,
+        EditPredictionProvider::OpenAiCompatibleApi,
+    ]
 }
 
 fn toggle_show_edit_predictions_for_language(
@@ -1680,5 +1642,24 @@ mod tests {
         });
 
         assert_eq!(url, "https://github.com/settings/copilot");
+    }
+
+    #[gpui::test]
+    async fn test_available_providers_are_copilot_and_openai_compatible_only(
+        cx: &mut TestAppContext,
+    ) {
+        cx.update(|cx| {
+            let settings_store = SettingsStore::test(cx);
+            cx.set_global(settings_store);
+        });
+
+        let providers = cx.update(get_available_providers);
+        assert_eq!(
+            providers,
+            vec![
+                EditPredictionProvider::Copilot,
+                EditPredictionProvider::OpenAiCompatibleApi,
+            ]
+        );
     }
 }

@@ -744,6 +744,7 @@ impl settings::Settings for AllLanguageSettings {
                 api_url: api_url.into(),
                 prompt_format: openai_compatible_settings.prompt_format.unwrap(),
             });
+        let has_openai_compatible_edit_prediction_settings = openai_compatible_settings.is_some();
 
         let enabled_in_text_threads = edit_predictions.enabled_in_text_threads.unwrap();
 
@@ -764,10 +765,15 @@ impl settings::Settings for AllLanguageSettings {
 
         Self {
             edit_predictions: EditPredictionSettings {
-                provider: if let Some(provider) = edit_prediction_provider {
-                    provider
-                } else {
-                    EditPredictionProvider::None
+                provider: match edit_prediction_provider {
+                    Some(EditPredictionProvider::Copilot) => EditPredictionProvider::Copilot,
+                    Some(EditPredictionProvider::OpenAiCompatibleApi) => {
+                        EditPredictionProvider::OpenAiCompatibleApi
+                    }
+                    _ if has_openai_compatible_edit_prediction_settings => {
+                        EditPredictionProvider::OpenAiCompatibleApi
+                    }
+                    _ => EditPredictionProvider::None,
                 },
                 disabled_globs: disabled_globs
                     .iter()
