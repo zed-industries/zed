@@ -8,8 +8,8 @@
 # the zed repo at .github/workflows/assign-reviewers.yml. See INSTALL.md.
 #
 # AUTH NOTE: Uses a GitHub App (COORDINATOR_APP_ID + COORDINATOR_APP_PRIVATE_KEY)
-# to generate an ephemeral token scoped to read-only on the coordinator repo.
-# PR operations (team review requests, assignee) use the default GITHUB_TOKEN.
+# for all API operations: cloning the private coordinator repo, requesting team
+# reviewers, and setting PR assignees. GITHUB_TOKEN is not used.
 
 name: Assign Reviewers
 
@@ -17,24 +17,27 @@ on:
   pull_request:
     types: [opened, ready_for_review]
 
-permissions:
-  pull-requests: write
-  issues: write
+# GITHUB_TOKEN is not used — all operations use the GitHub App token.
+# Declare minimal permissions so the default token has no write access.
+permissions: {}
 
 # Only run for PRs from within the org (not forks) — fork PRs don't have
-# write access to request team reviewers with GITHUB_TOKEN.
+# write access to request team reviewers.
 jobs:
   assign-reviewers:
-    if: github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.draft == false
+    if: >-
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.draft == false &&
+      contains(fromJSON('["MEMBER", "OWNER"]'), github.event.pull_request.author_association)
     runs-on: ubuntu-latest
     steps:
-      - name: Generate coordinator repo token
+      - name: Generate app token
         id: app-token
         uses: actions/create-github-app-token@29824e69f54612133e76f7eaac726eef6c875baf  # v2.2.1
         with:
           app-id: ${{ vars.COORDINATOR_APP_ID }}
           private-key: ${{ secrets.COORDINATOR_APP_PRIVATE_KEY }}
-          repositories: codeowner-coordinator
+          repositories: codeowner-coordinator,zed
 
       - name: Checkout coordinator repo
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4.3.1
@@ -55,7 +58,7 @@ jobs:
 
       - name: Assign reviewers
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
           PR_URL: ${{ github.event.pull_request.html_url }}
           TARGET_REPO: ${{ github.repository }}
         run: |
