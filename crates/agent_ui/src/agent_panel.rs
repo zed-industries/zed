@@ -31,7 +31,7 @@ use crate::{
     AddContextServer, AgentDiffPane, ConnectionView, CopyThreadToClipboard, Follow,
     InlineAssistant, LoadThreadFromClipboard, NewTextThread, NewThread, OpenActiveThreadAsMarkdown,
     OpenAgentDiff, OpenHistory, ResetTrialEndUpsell, ResetTrialUpsell, StartThreadIn,
-    ToggleNavigationMenu, ToggleNewThreadMenu, ToggleOptionsMenu,
+    ToggleNavigationMenu, ToggleNewThreadMenu, ToggleOptionsMenu, ToggleStartThreadInSelector,
     agent_configuration::{AgentConfiguration, AssistantConfigurationEvent},
     connection_view::{AcpThreadViewEvent, ThreadView},
     slash_command::SlashCommandCompletionProvider,
@@ -252,6 +252,18 @@ pub fn init(cx: &mut App) {
                         workspace.focus_panel::<AgentPanel>(window, cx);
                         panel.update(cx, |panel, cx| {
                             panel.toggle_new_thread_menu(&ToggleNewThreadMenu, window, cx);
+                        });
+                    }
+                })
+                .register_action(|workspace, _: &ToggleStartThreadInSelector, window, cx| {
+                    if let Some(panel) = workspace.panel::<AgentPanel>(cx) {
+                        workspace.focus_panel::<AgentPanel>(window, cx);
+                        panel.update(cx, |panel, cx| {
+                            panel.toggle_start_thread_in_selector(
+                                &ToggleStartThreadInSelector,
+                                window,
+                                cx,
+                            );
                         });
                     }
                 })
@@ -1345,6 +1357,15 @@ impl AgentPanel {
         cx: &mut Context<Self>,
     ) {
         self.new_thread_menu_handle.toggle(window, cx);
+    }
+
+    pub fn toggle_start_thread_in_selector(
+        &mut self,
+        _: &ToggleStartThreadInSelector,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.start_thread_in_menu_handle.toggle(window, cx);
     }
 
     pub fn increase_font_size(
@@ -3179,6 +3200,7 @@ impl AgentPanel {
     }
 
     fn render_start_thread_in_selector(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let focus_handle = self.focus_handle(cx);
         let has_git_repo = self.project_has_git_repository(cx);
         let is_via_collab = self.project.read(cx).is_via_collab();
 
@@ -3213,7 +3235,16 @@ impl AgentPanel {
         };
 
         PopoverMenu::new("thread-target-selector")
-            .trigger(trigger_button)
+            .trigger_with_tooltip(trigger_button, {
+                move |_window, cx| {
+                    Tooltip::for_action_in(
+                        "Start Thread In…",
+                        &ToggleStartThreadInSelector,
+                        &focus_handle,
+                        cx,
+                    )
+                }
+            })
             .menu(move |window, cx| {
                 let is_local_selected = current_target == StartThreadIn::LocalProject;
                 let is_new_worktree_selected = current_target == StartThreadIn::NewWorktree;
@@ -3694,7 +3725,16 @@ impl AgentPanel {
                 );
 
             let agent_selector_menu = PopoverMenu::new("new_thread_menu")
-                .trigger(agent_selector_button)
+                .trigger_with_tooltip(agent_selector_button, {
+                    move |_window, cx| {
+                        Tooltip::for_action_in(
+                            "New Thread\u{2026}",
+                            &ToggleNewThreadMenu,
+                            &focus_handle,
+                            cx,
+                        )
+                    }
+                })
                 .menu({
                     let builder = new_thread_menu_builder.clone();
                     move |window, cx| builder(window, cx)
@@ -4269,6 +4309,7 @@ impl Render for AgentPanel {
             .on_action(cx.listener(Self::go_back))
             .on_action(cx.listener(Self::toggle_navigation_menu))
             .on_action(cx.listener(Self::toggle_options_menu))
+            .on_action(cx.listener(Self::toggle_start_thread_in_selector))
             .on_action(cx.listener(Self::increase_font_size))
             .on_action(cx.listener(Self::decrease_font_size))
             .on_action(cx.listener(Self::reset_font_size))
