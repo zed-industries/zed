@@ -400,7 +400,7 @@ enum WhichFontSize {
 }
 
 // TODO unify this with ExternalAgent
-#[derive(Debug, Default, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Default, Clone, PartialEq, Serialize)]
 pub enum AgentType {
     #[default]
     NativeAgent,
@@ -408,6 +408,63 @@ pub enum AgentType {
     Custom {
         name: SharedString,
     },
+}
+
+// Custom impl handles legacy variant names from before the built-in agents were moved to
+// the registry: "ClaudeAgent" -> Custom { name: "claude-acp" }, "Codex" -> Custom { name:
+// "codex-acp" }, "Gemini" -> Custom { name: "gemini" }.
+// Can be removed at some point in the future and go back to #[derive(Deserialize)].
+impl<'de> Deserialize<'de> for AgentType {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let value = serde_json::Value::deserialize(deserializer)?;
+
+        if let Some(s) = value.as_str() {
+            return match s {
+                "NativeAgent" => Ok(Self::NativeAgent),
+                "TextThread" => Ok(Self::TextThread),
+                "ClaudeAgent" | "ClaudeCode" => Ok(Self::Custom {
+                    name: CLAUDE_AGENT_NAME.into(),
+                }),
+                "Codex" => Ok(Self::Custom {
+                    name: CODEX_NAME.into(),
+                }),
+                "Gemini" => Ok(Self::Custom {
+                    name: GEMINI_NAME.into(),
+                }),
+                other => Err(serde::de::Error::unknown_variant(
+                    other,
+                    &[
+                        "NativeAgent",
+                        "TextThread",
+                        "Custom",
+                        "ClaudeAgent",
+                        "ClaudeCode",
+                        "Codex",
+                        "Gemini",
+                    ],
+                )),
+            };
+        }
+
+        if let Some(obj) = value.as_object() {
+            if let Some(inner) = obj.get("Custom") {
+                #[derive(Deserialize)]
+                struct CustomFields {
+                    name: SharedString,
+                }
+                let fields: CustomFields =
+                    serde_json::from_value(inner.clone()).map_err(serde::de::Error::custom)?;
+                return Ok(Self::Custom { name: fields.name });
+            }
+        }
+
+        Err(serde::de::Error::custom(
+            "expected a string variant or {\"Custom\": {\"name\": ...}}",
+        ))
+    }
 }
 
 impl AgentType {
@@ -5309,5 +5366,78 @@ mod tests {
                 "panel should transition out of Uninitialized once worktree creation is cleared"
             );
         });
+    }
+
+    #[test]
+    fn test_deserialize_legacy_agent_type_variants() {
+        assert_eq!(
+            serde_json::from_str::<AgentType>(r#""ClaudeAgent""#).unwrap(),
+            AgentType::Custom {
+                name: CLAUDE_AGENT_NAME.into(),
+            },
+        );
+        assert_eq!(
+            serde_json::from_str::<AgentType>(r#""ClaudeCode""#).unwrap(),
+            AgentType::Custom {
+                name: CLAUDE_AGENT_NAME.into(),
+            },
+        );
+        assert_eq!(
+            serde_json::from_str::<AgentType>(r#""Codex""#).unwrap(),
+            AgentType::Custom {
+                name: CODEX_NAME.into(),
+            },
+        );
+        assert_eq!(
+            serde_json::from_str::<AgentType>(r#""Gemini""#).unwrap(),
+            AgentType::Custom {
+                name: GEMINI_NAME.into(),
+            },
+        );
+    }
+
+    #[test]
+    fn test_deserialize_current_agent_type_variants() {
+        assert_eq!(
+            serde_json::from_str::<AgentType>(r#""NativeAgent""#).unwrap(),
+            AgentType::NativeAgent,
+        );
+        assert_eq!(
+            serde_json::from_str::<AgentType>(r#""TextThread""#).unwrap(),
+            AgentType::TextThread,
+        );
+        assert_eq!(
+            serde_json::from_str::<AgentType>(r#"{"Custom":{"name":"my-agent"}}"#).unwrap(),
+            AgentType::Custom {
+                name: "my-agent".into(),
+            },
+        );
+    }
+
+    #[test]
+    fn test_deserialize_legacy_serialized_panel() {
+        let json = serde_json::json!({
+            "width": 300.0,
+            "selected_agent": "ClaudeAgent",
+            "last_active_thread": {
+                "session_id": "test-session",
+                "agent_type": "Codex",
+            },
+        });
+
+        let panel: SerializedAgentPanel = serde_json::from_value(json).unwrap();
+        assert_eq!(
+            panel.selected_agent,
+            Some(AgentType::Custom {
+                name: CLAUDE_AGENT_NAME.into(),
+            }),
+        );
+        let thread = panel.last_active_thread.unwrap();
+        assert_eq!(
+            thread.agent_type,
+            AgentType::Custom {
+                name: CODEX_NAME.into(),
+            },
+        );
     }
 }
