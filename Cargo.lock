@@ -6242,6 +6242,8 @@ name = "file_finder"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "channel",
+ "client",
  "collections",
  "ctor",
  "editor",
@@ -6255,6 +6257,7 @@ dependencies = [
  "pretty_assertions",
  "project",
  "project_panel",
+ "remote_connection",
  "serde",
  "serde_json",
  "settings",
