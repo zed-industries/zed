@@ -9,6 +9,7 @@
   "returns"
   "message"
   "enum"
+  "extend"
   "oneof"
   "repeated"
   "reserved"
@@ -51,11 +52,11 @@
   "}"
   "<"
   ">"
-]  @punctuation.bracket
+] @punctuation.bracket
 
 [
- ";"
- ","
+  ";"
+  ","
 ] @punctuation.delimiter
 
 "=" @operator

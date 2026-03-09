@@ -6,9 +6,7 @@
   flex-direction: column;
   gap: 4px;
   padding: 28px 0 120px 0;
-  max-width: 230px;
-  min-width: 180px;
-  width: 100%;
+  width: 200px;
   max-height: calc(100svh - 50px);
   overflow-x: hidden;
 }

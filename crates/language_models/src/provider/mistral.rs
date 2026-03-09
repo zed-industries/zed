@@ -1,40 +1,34 @@
 use anyhow::{Result, anyhow};
 use collections::BTreeMap;
-use fs::Fs;
-use futures::{FutureExt, Stream, StreamExt, future, future::BoxFuture, stream::BoxStream};
+
+use futures::{FutureExt, Stream, StreamExt, future::BoxFuture, stream::BoxStream};
 use gpui::{AnyView, App, AsyncApp, Context, Entity, Global, SharedString, Task, Window};
 use http_client::HttpClient;
 use language_model::{
-    AuthenticateError, LanguageModel, LanguageModelCompletionError, LanguageModelCompletionEvent,
-    LanguageModelId, LanguageModelName, LanguageModelProvider, LanguageModelProviderId,
-    LanguageModelProviderName, LanguageModelProviderState, LanguageModelRequest,
-    LanguageModelToolChoice, LanguageModelToolResultContent, LanguageModelToolUse, MessageContent,
-    RateLimiter, Role, StopReason, TokenUsage,
+    ApiKeyState, AuthenticateError, EnvVar, IconOrSvg, LanguageModel, LanguageModelCompletionError,
+    LanguageModelCompletionEvent, LanguageModelId, LanguageModelName, LanguageModelProvider,
+    LanguageModelProviderId, LanguageModelProviderName, LanguageModelProviderState,
+    LanguageModelRequest, LanguageModelToolChoice, LanguageModelToolResultContent,
+    LanguageModelToolUse, MessageContent, RateLimiter, Role, StopReason, TokenUsage, env_var,
 };
-use mistral::{CODESTRAL_API_URL, MISTRAL_API_URL, StreamResponse};
+pub use mistral::{MISTRAL_API_URL, StreamResponse};
 pub use settings::MistralAvailableModel as AvailableModel;
-use settings::{EditPredictionProvider, Settings, SettingsStore, update_settings_file};
+use settings::{Settings, SettingsStore};
 use std::collections::HashMap;
 use std::pin::Pin;
-use std::str::FromStr;
 use std::sync::{Arc, LazyLock};
 use strum::IntoEnumIterator;
-use ui::{List, prelude::*};
+use ui::{ButtonLink, ConfiguredApiCard, List, ListBulletItem, prelude::*};
 use ui_input::InputField;
 use util::ResultExt;
-use zed_env_vars::{EnvVar, env_var};
 
-use crate::ui::ConfiguredApiCard;
-use crate::{api_key::ApiKeyState, ui::InstructionListItem};
+use crate::provider::util::parse_tool_arguments;
 
 const PROVIDER_ID: LanguageModelProviderId = LanguageModelProviderId::new("mistral");
 const PROVIDER_NAME: LanguageModelProviderName = LanguageModelProviderName::new("Mistral");
 
 const API_KEY_ENV_VAR_NAME: &str = "MISTRAL_API_KEY";
 static API_KEY_ENV_VAR: LazyLock<EnvVar> = env_var!(API_KEY_ENV_VAR_NAME);
-
-const CODESTRAL_API_KEY_ENV_VAR_NAME: &str = "CODESTRAL_API_KEY";
-static CODESTRAL_API_KEY_ENV_VAR: LazyLock<EnvVar> = env_var!(CODESTRAL_API_KEY_ENV_VAR_NAME);
 
 #[derive(Default, Clone, Debug, PartialEq)]
 pub struct MistralSettings {
@@ -44,12 +38,11 @@ pub struct MistralSettings {
 
 pub struct MistralLanguageModelProvider {
     http_client: Arc<dyn HttpClient>,
-    state: Entity<State>,
+    pub state: Entity<State>,
 }
 
 pub struct State {
     api_key_state: ApiKeyState,
-    codestral_api_key_state: ApiKeyState,
 }
 
 impl State {
@@ -63,39 +56,10 @@ impl State {
             .store(api_url, api_key, |this| &mut this.api_key_state, cx)
     }
 
-    fn set_codestral_api_key(
-        &mut self,
-        api_key: Option<String>,
-        cx: &mut Context<Self>,
-    ) -> Task<Result<()>> {
-        self.codestral_api_key_state.store(
-            CODESTRAL_API_URL.into(),
-            api_key,
-            |this| &mut this.codestral_api_key_state,
-            cx,
-        )
-    }
-
     fn authenticate(&mut self, cx: &mut Context<Self>) -> Task<Result<(), AuthenticateError>> {
         let api_url = MistralLanguageModelProvider::api_url(cx);
-        self.api_key_state.load_if_needed(
-            api_url,
-            &API_KEY_ENV_VAR,
-            |this| &mut this.api_key_state,
-            cx,
-        )
-    }
-
-    fn authenticate_codestral(
-        &mut self,
-        cx: &mut Context<Self>,
-    ) -> Task<Result<(), AuthenticateError>> {
-        self.codestral_api_key_state.load_if_needed(
-            CODESTRAL_API_URL.into(),
-            &CODESTRAL_API_KEY_ENV_VAR,
-            |this| &mut this.codestral_api_key_state,
-            cx,
-        )
+        self.api_key_state
+            .load_if_needed(api_url, |this| &mut this.api_key_state, cx)
     }
 }
 
@@ -116,33 +80,19 @@ impl MistralLanguageModelProvider {
         let state = cx.new(|cx| {
             cx.observe_global::<SettingsStore>(|this: &mut State, cx| {
                 let api_url = Self::api_url(cx);
-                this.api_key_state.handle_url_change(
-                    api_url,
-                    &API_KEY_ENV_VAR,
-                    |this| &mut this.api_key_state,
-                    cx,
-                );
+                this.api_key_state
+                    .handle_url_change(api_url, |this| &mut this.api_key_state, cx);
                 cx.notify();
             })
             .detach();
             State {
-                api_key_state: ApiKeyState::new(Self::api_url(cx)),
-                codestral_api_key_state: ApiKeyState::new(CODESTRAL_API_URL.into()),
+                api_key_state: ApiKeyState::new(Self::api_url(cx), (*API_KEY_ENV_VAR).clone()),
             }
         });
 
         let this = Arc::new(Self { http_client, state });
         cx.set_global(GlobalMistralLanguageModelProvider(this));
         cx.global::<GlobalMistralLanguageModelProvider>().0.clone()
-    }
-
-    pub fn load_codestral_api_key(&self, cx: &mut App) -> Task<Result<(), AuthenticateError>> {
-        self.state
-            .update(cx, |state, cx| state.authenticate_codestral(cx))
-    }
-
-    pub fn codestral_api_key(&self, url: &str, cx: &App) -> Option<Arc<str>> {
-        self.state.read(cx).codestral_api_key_state.key(url)
     }
 
     fn create_language_model(&self, model: mistral::Model) -> Arc<dyn LanguageModel> {
@@ -159,7 +109,7 @@ impl MistralLanguageModelProvider {
         &crate::AllLanguageModelSettings::get_global(cx).mistral
     }
 
-    fn api_url(cx: &App) -> SharedString {
+    pub fn api_url(cx: &App) -> SharedString {
         let api_url = &Self::settings(cx).api_url;
         if api_url.is_empty() {
             mistral::MISTRAL_API_URL.into()
@@ -186,8 +136,8 @@ impl LanguageModelProvider for MistralLanguageModelProvider {
         PROVIDER_NAME
     }
 
-    fn icon(&self) -> IconName {
-        IconName::AiMistral
+    fn icon(&self) -> IconOrSvg {
+        IconOrSvg::Icon(IconName::AiMistral)
     }
 
     fn default_model(&self, _cx: &App) -> Option<Arc<dyn LanguageModel>> {
@@ -275,6 +225,7 @@ impl MistralLanguageModel {
     fn stream_completion(
         &self,
         request: mistral::Request,
+        affinity: Option<String>,
         cx: &AsyncApp,
     ) -> BoxFuture<
         'static,
@@ -282,12 +233,10 @@ impl MistralLanguageModel {
     > {
         let http_client = self.http_client.clone();
 
-        let Ok((api_key, api_url)) = self.state.read_with(cx, |state, cx| {
+        let (api_key, api_url) = self.state.read_with(cx, |state, cx| {
             let api_url = MistralLanguageModelProvider::api_url(cx);
             (state.api_key_state.key(&api_url), api_url)
-        }) else {
-            return future::ready(Err(anyhow!("App state dropped"))).boxed();
-        };
+        });
 
         let future = self.request_limiter.stream(async move {
             let Some(api_key) = api_key else {
@@ -295,8 +244,13 @@ impl MistralLanguageModel {
                     provider: PROVIDER_NAME,
                 });
             };
-            let request =
-                mistral::stream_completion(http_client.as_ref(), &api_url, &api_key, request);
+            let request = mistral::stream_completion(
+                http_client.as_ref(),
+                &api_url,
+                &api_key,
+                request,
+                affinity,
+            );
             let response = request.await?;
             Ok(response)
         });
@@ -324,6 +278,10 @@ impl LanguageModel for MistralLanguageModel {
 
     fn supports_tools(&self) -> bool {
         self.model.supports_tools()
+    }
+
+    fn supports_streaming_tools(&self) -> bool {
+        true
     }
 
     fn supports_tool_choice(&self, _choice: LanguageModelToolChoice) -> bool {
@@ -383,8 +341,9 @@ impl LanguageModel for MistralLanguageModel {
             LanguageModelCompletionError,
         >,
     > {
-        let request = into_mistral(request, self.model.clone(), self.max_output_tokens());
-        let stream = self.stream_completion(request, cx);
+        let (request, affinity) =
+            into_mistral(request, self.model.clone(), self.max_output_tokens());
+        let stream = self.stream_completion(request, affinity, cx);
 
         async move {
             let stream = stream.await?;
@@ -399,7 +358,7 @@ pub fn into_mistral(
     request: LanguageModelRequest,
     model: mistral::Model,
     max_output_tokens: Option<u64>,
-) -> mistral::Request {
+) -> (mistral::Request, Option<String>) {
     let stream = true;
 
     let mut messages = Vec::new();
@@ -457,6 +416,9 @@ pub fn into_mistral(
             Role::Assistant => {
                 for content in &message.content {
                     match content {
+                        MessageContent::Text(text) if text.is_empty() => {
+                            // Mistral API returns a 400 if there's neither content nor tool_calls
+                        }
                         MessageContent::Text(text) => {
                             messages.push(mistral::RequestMessage::Assistant {
                                 content: Some(mistral::MessageContent::Plain {
@@ -545,41 +507,51 @@ pub fn into_mistral(
         }
     }
 
-    mistral::Request {
-        model: model.id().to_string(),
-        messages,
-        stream,
-        max_tokens: max_output_tokens,
-        temperature: request.temperature,
-        response_format: None,
-        tool_choice: match request.tool_choice {
-            Some(LanguageModelToolChoice::Auto) if !request.tools.is_empty() => {
-                Some(mistral::ToolChoice::Auto)
-            }
-            Some(LanguageModelToolChoice::Any) if !request.tools.is_empty() => {
-                Some(mistral::ToolChoice::Any)
-            }
-            Some(LanguageModelToolChoice::None) => Some(mistral::ToolChoice::None),
-            _ if !request.tools.is_empty() => Some(mistral::ToolChoice::Auto),
-            _ => None,
+    (
+        mistral::Request {
+            model: model.id().to_string(),
+            messages,
+            stream,
+            stream_options: if stream {
+                Some(mistral::StreamOptions {
+                    stream_tool_calls: Some(true),
+                })
+            } else {
+                None
+            },
+            max_tokens: max_output_tokens,
+            temperature: request.temperature,
+            response_format: None,
+            tool_choice: match request.tool_choice {
+                Some(LanguageModelToolChoice::Auto) if !request.tools.is_empty() => {
+                    Some(mistral::ToolChoice::Auto)
+                }
+                Some(LanguageModelToolChoice::Any) if !request.tools.is_empty() => {
+                    Some(mistral::ToolChoice::Any)
+                }
+                Some(LanguageModelToolChoice::None) => Some(mistral::ToolChoice::None),
+                _ if !request.tools.is_empty() => Some(mistral::ToolChoice::Auto),
+                _ => None,
+            },
+            parallel_tool_calls: if !request.tools.is_empty() {
+                Some(false)
+            } else {
+                None
+            },
+            tools: request
+                .tools
+                .into_iter()
+                .map(|tool| mistral::ToolDefinition::Function {
+                    function: mistral::FunctionDefinition {
+                        name: tool.name,
+                        description: Some(tool.description),
+                        parameters: Some(tool.input_schema),
+                    },
+                })
+                .collect(),
         },
-        parallel_tool_calls: if !request.tools.is_empty() {
-            Some(false)
-        } else {
-            None
-        },
-        tools: request
-            .tools
-            .into_iter()
-            .map(|tool| mistral::ToolDefinition::Function {
-                function: mistral::FunctionDefinition {
-                    name: tool.name,
-                    description: Some(tool.description),
-                    parameters: Some(tool.input_schema),
-                },
-            })
-            .collect(),
-    }
+        request.thread_id,
+    )
 }
 
 pub struct MistralEventMapper {
@@ -655,17 +627,38 @@ impl MistralEventMapper {
             for tool_call in tool_calls {
                 let entry = self.tool_calls_by_index.entry(tool_call.index).or_default();
 
-                if let Some(tool_id) = tool_call.id.clone() {
+                if let Some(tool_id) = tool_call.id.clone()
+                    && !tool_id.is_empty()
+                {
                     entry.id = tool_id;
                 }
 
                 if let Some(function) = tool_call.function.as_ref() {
-                    if let Some(name) = function.name.clone() {
+                    if let Some(name) = function.name.clone()
+                        && !name.is_empty()
+                    {
                         entry.name = name;
                     }
 
                     if let Some(arguments) = function.arguments.clone() {
                         entry.arguments.push_str(&arguments);
+                    }
+                }
+
+                if !entry.id.is_empty() && !entry.name.is_empty() {
+                    if let Ok(input) = serde_json::from_str::<serde_json::Value>(
+                        &partial_json_fixer::fix_json(&entry.arguments),
+                    ) {
+                        events.push(Ok(LanguageModelCompletionEvent::ToolUse(
+                            LanguageModelToolUse {
+                                id: entry.id.clone().into(),
+                                name: entry.name.as_str().into(),
+                                is_input_complete: false,
+                                input,
+                                raw_input: entry.arguments.clone(),
+                                thought_signature: None,
+                            },
+                        )));
                     }
                 }
             }
@@ -712,7 +705,7 @@ impl MistralEventMapper {
                 continue;
             }
 
-            match serde_json::Value::from_str(&tool_call.arguments) {
+            match parse_tool_arguments(&tool_call.arguments) {
                 Ok(input) => results.push(Ok(LanguageModelCompletionEvent::ToolUse(
                     LanguageModelToolUse {
                         id: tool_call.id.into(),
@@ -747,7 +740,6 @@ struct RawToolCall {
 
 struct ConfigurationView {
     api_key_editor: Entity<InputField>,
-    codestral_api_key_editor: Entity<InputField>,
     state: Entity<State>,
     load_credentials_task: Option<Task<()>>,
 }
@@ -755,8 +747,6 @@ struct ConfigurationView {
 impl ConfigurationView {
     fn new(state: Entity<State>, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let api_key_editor =
-            cx.new(|cx| InputField::new(window, cx, "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"));
-        let codestral_api_key_editor =
             cx.new(|cx| InputField::new(window, cx, "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"));
 
         cx.observe(&state, |_, _, cx| {
@@ -767,17 +757,8 @@ impl ConfigurationView {
         let load_credentials_task = Some(cx.spawn_in(window, {
             let state = state.clone();
             async move |this, cx| {
-                if let Some(task) = state
-                    .update(cx, |state, cx| state.authenticate(cx))
-                    .log_err()
-                {
+                if let Some(task) = Some(state.update(cx, |state, cx| state.authenticate(cx))) {
                     // We don't log an error, because "not signed in" is also an error.
-                    let _ = task.await;
-                }
-                if let Some(task) = state
-                    .update(cx, |state, cx| state.authenticate_codestral(cx))
-                    .log_err()
-                {
                     let _ = task.await;
                 }
 
@@ -791,7 +772,6 @@ impl ConfigurationView {
 
         Self {
             api_key_editor,
-            codestral_api_key_editor,
             state,
             load_credentials_task,
         }
@@ -810,7 +790,7 @@ impl ConfigurationView {
         let state = self.state.clone();
         cx.spawn_in(window, async move |_, cx| {
             state
-                .update(cx, |state, cx| state.set_api_key(Some(api_key), cx))?
+                .update(cx, |state, cx| state.set_api_key(Some(api_key), cx))
                 .await
         })
         .detach_and_log_err(cx);
@@ -823,115 +803,14 @@ impl ConfigurationView {
         let state = self.state.clone();
         cx.spawn_in(window, async move |_, cx| {
             state
-                .update(cx, |state, cx| state.set_api_key(None, cx))?
+                .update(cx, |state, cx| state.set_api_key(None, cx))
                 .await
-        })
-        .detach_and_log_err(cx);
-    }
-
-    fn save_codestral_api_key(
-        &mut self,
-        _: &menu::Confirm,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let api_key = self
-            .codestral_api_key_editor
-            .read(cx)
-            .text(cx)
-            .trim()
-            .to_string();
-        if api_key.is_empty() {
-            return;
-        }
-
-        // url changes can cause the editor to be displayed again
-        self.codestral_api_key_editor
-            .update(cx, |editor, cx| editor.set_text("", window, cx));
-
-        let state = self.state.clone();
-        cx.spawn_in(window, async move |_, cx| {
-            state
-                .update(cx, |state, cx| {
-                    state.set_codestral_api_key(Some(api_key), cx)
-                })?
-                .await?;
-            cx.update(|_window, cx| {
-                set_edit_prediction_provider(EditPredictionProvider::Codestral, cx)
-            })
-        })
-        .detach_and_log_err(cx);
-    }
-
-    fn reset_codestral_api_key(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.codestral_api_key_editor
-            .update(cx, |editor, cx| editor.set_text("", window, cx));
-
-        let state = self.state.clone();
-        cx.spawn_in(window, async move |_, cx| {
-            state
-                .update(cx, |state, cx| state.set_codestral_api_key(None, cx))?
-                .await?;
-            cx.update(|_window, cx| set_edit_prediction_provider(EditPredictionProvider::Zed, cx))
         })
         .detach_and_log_err(cx);
     }
 
     fn should_render_api_key_editor(&self, cx: &mut Context<Self>) -> bool {
         !self.state.read(cx).is_authenticated()
-    }
-
-    fn render_codestral_api_key_editor(&mut self, cx: &mut Context<Self>) -> AnyElement {
-        let key_state = &self.state.read(cx).codestral_api_key_state;
-        let should_show_editor = !key_state.has_key();
-        let env_var_set = key_state.is_from_env_var();
-        let configured_card_label = if env_var_set {
-            format!("API key set in {CODESTRAL_API_KEY_ENV_VAR_NAME} environment variable")
-        } else {
-            "Codestral API key configured".to_string()
-        };
-
-        if should_show_editor {
-            v_flex()
-                .id("codestral")
-                .size_full()
-                .mt_2()
-                .on_action(cx.listener(Self::save_codestral_api_key))
-                .child(Label::new(
-                    "To use Codestral as an edit prediction provider, \
-                    you need to add a Codestral-specific API key. Follow these steps:",
-                ))
-                .child(
-                    List::new()
-                        .child(InstructionListItem::new(
-                            "Create one by visiting",
-                            Some("the Codestral section of Mistral's console"),
-                            Some("https://console.mistral.ai/codestral"),
-                        ))
-                        .child(InstructionListItem::text_only("Paste your API key below and hit enter")),
-                )
-                .child(self.codestral_api_key_editor.clone())
-                .child(
-                    Label::new(
-                        format!("You can also assign the {CODESTRAL_API_KEY_ENV_VAR_NAME} environment variable and restart Zed."),
-                    )
-                    .size(LabelSize::Small).color(Color::Muted),
-                ).into_any()
-        } else {
-            ConfiguredApiCard::new(configured_card_label)
-                .disabled(env_var_set)
-                .on_click(cx.listener(|this, _, window, cx| this.reset_api_key(window, cx)))
-                .when(env_var_set, |this| {
-                    this.tooltip_label(format!(
-                        "To reset your API key, \
-                            unset the {CODESTRAL_API_KEY_ENV_VAR_NAME} environment variable."
-                    ))
-                })
-                .on_click(
-                    cx.listener(|this, _, window, cx| this.reset_codestral_api_key(window, cx)),
-                )
-                .into_any_element()
-        }
     }
 }
 
@@ -958,26 +837,25 @@ impl Render for ConfigurationView {
                 .child(Label::new("To use Zed's agent with Mistral, you need to add an API key. Follow these steps:"))
                 .child(
                     List::new()
-                        .child(InstructionListItem::new(
-                            "Create one by visiting",
-                            Some("Mistral's console"),
-                            Some("https://console.mistral.ai/api-keys"),
-                        ))
-                        .child(InstructionListItem::text_only(
-                            "Ensure your Mistral account has credits",
-                        ))
-                        .child(InstructionListItem::text_only(
-                            "Paste your API key below and hit enter to start using the assistant",
-                        )),
+                        .child(
+                            ListBulletItem::new("")
+                                .child(Label::new("Create one by visiting"))
+                                .child(ButtonLink::new("Mistral's console", "https://console.mistral.ai/api-keys"))
+                        )
+                        .child(
+                            ListBulletItem::new("Ensure your Mistral account has credits")
+                        )
+                        .child(
+                            ListBulletItem::new("Paste your API key below and hit enter to start using the assistant")
+                        ),
                 )
                 .child(self.api_key_editor.clone())
                 .child(
                     Label::new(
-                        format!("You can also assign the {API_KEY_ENV_VAR_NAME} environment variable and restart Zed."),
+                        format!("You can also set the {API_KEY_ENV_VAR_NAME} environment variable and restart Zed."),
                     )
                     .size(LabelSize::Small).color(Color::Muted),
                 )
-                .child(self.render_codestral_api_key_editor(cx))
                 .into_any()
         } else {
             v_flex()
@@ -994,22 +872,9 @@ impl Render for ConfigurationView {
                             ))
                         }),
                 )
-                .child(self.render_codestral_api_key_editor(cx))
                 .into_any()
         }
     }
-}
-
-fn set_edit_prediction_provider(provider: EditPredictionProvider, cx: &mut App) {
-    let fs = <dyn Fs>::global(cx);
-    update_settings_file(fs, cx, move |settings, _| {
-        settings
-            .project
-            .all_languages
-            .features
-            .get_or_insert_default()
-            .edit_prediction_provider = Some(provider);
-    });
 }
 
 #[cfg(test)]
@@ -1033,24 +898,34 @@ mod tests {
                     cache: false,
                     reasoning_details: None,
                 },
+                // should skip empty assistant messages
+                LanguageModelRequestMessage {
+                    role: Role::Assistant,
+                    content: vec![MessageContent::Text("".into())],
+                    cache: false,
+                    reasoning_details: None,
+                },
             ],
             temperature: Some(0.5),
             tools: vec![],
             tool_choice: None,
-            thread_id: None,
+            thread_id: Some("abcdef".into()),
             prompt_id: None,
             intent: None,
-            mode: None,
             stop: vec![],
             thinking_allowed: true,
+            thinking_effort: None,
+            speed: Default::default(),
         };
 
-        let mistral_request = into_mistral(request, mistral::Model::MistralSmallLatest, None);
+        let (mistral_request, affinity) =
+            into_mistral(request, mistral::Model::MistralSmallLatest, None);
 
         assert_eq!(mistral_request.model, "mistral-small-latest");
         assert_eq!(mistral_request.temperature, Some(0.5));
         assert_eq!(mistral_request.messages.len(), 2);
         assert!(mistral_request.stream);
+        assert_eq!(affinity, Some("abcdef".into()));
     }
 
     #[test]
@@ -1062,7 +937,7 @@ mod tests {
                     MessageContent::Text("What's in this image?".into()),
                     MessageContent::Image(LanguageModelImage {
                         source: "base64data".into(),
-                        size: Default::default(),
+                        size: None,
                     }),
                 ],
                 cache: false,
@@ -1074,12 +949,13 @@ mod tests {
             thread_id: None,
             prompt_id: None,
             intent: None,
-            mode: None,
             stop: vec![],
             thinking_allowed: true,
+            thinking_effort: None,
+            speed: None,
         };
 
-        let mistral_request = into_mistral(request, mistral::Model::Pixtral12BLatest, None);
+        let (mistral_request, _) = into_mistral(request, mistral::Model::Pixtral12BLatest, None);
 
         assert_eq!(mistral_request.messages.len(), 1);
         assert!(matches!(

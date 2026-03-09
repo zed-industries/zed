@@ -33,6 +33,7 @@ serde.workspace = true
 util.workspace = true
 tempfile.workspace = true
 rayon.workspace = true
+walkdir = "2.5"
 
 [dev-dependencies]
 serde_json.workspace = true

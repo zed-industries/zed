@@ -64,6 +64,8 @@ impl ShapedLine {
         &self,
         origin: Point<Pixels>,
         line_height: Pixels,
+        align: TextAlign,
+        align_width: Option<Pixels>,
         window: &mut Window,
         cx: &mut App,
     ) -> Result<()> {
@@ -71,8 +73,8 @@ impl ShapedLine {
             origin,
             &self.layout,
             line_height,
-            TextAlign::default(),
-            None,
+            align,
+            align_width,
             &self.decoration_runs,
             &[],
             window,
@@ -87,6 +89,8 @@ impl ShapedLine {
         &self,
         origin: Point<Pixels>,
         line_height: Pixels,
+        align: TextAlign,
+        align_width: Option<Pixels>,
         window: &mut Window,
         cx: &mut App,
     ) -> Result<()> {
@@ -94,8 +98,8 @@ impl ShapedLine {
             origin,
             &self.layout,
             line_height,
-            TextAlign::default(),
-            None,
+            align,
+            align_width,
             &self.decoration_runs,
             &[],
             window,
@@ -107,14 +111,14 @@ impl ShapedLine {
 }
 
 /// A line of text that has been shaped, decorated, and wrapped by the text layout system.
-#[derive(Clone, Default, Debug, Deref, DerefMut)]
+#[derive(Default, Debug, Deref, DerefMut)]
 pub struct WrappedLine {
     #[deref]
     #[deref_mut]
     pub(crate) layout: Arc<WrappedLineLayout>,
     /// The text that was shaped for this line.
     pub text: SharedString,
-    pub(crate) decoration_runs: SmallVec<[DecorationRun; 32]>,
+    pub(crate) decoration_runs: Vec<DecorationRun>,
 }
 
 impl WrappedLine {
@@ -369,16 +373,17 @@ fn paint_line(
 
                 let content_mask = window.content_mask();
                 if max_glyph_bounds.intersects(&content_mask.bounds) {
+                    let vertical_offset = point(px(0.0), glyph.position.y);
                     if glyph.is_emoji {
                         window.paint_emoji(
-                            glyph_origin + baseline_offset,
+                            glyph_origin + baseline_offset + vertical_offset,
                             run.font_id,
                             glyph.id,
                             layout.font_size,
                         )?;
                     } else {
                         window.paint_glyph(
-                            glyph_origin + baseline_offset,
+                            glyph_origin + baseline_offset + vertical_offset,
                             run.font_id,
                             glyph.id,
                             layout.font_size,

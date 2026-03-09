@@ -1,9 +1,6 @@
-use std::time::Duration;
-
 use db::kvp::KEY_VALUE_STORE;
 use gpui::{App, AppContext as _, Context, Subscription, Task, WindowId};
 use util::ResultExt;
-use uuid::Uuid;
 
 pub struct Session {
     session_id: String,
@@ -15,10 +12,8 @@ const SESSION_ID_KEY: &str = "session_id";
 const SESSION_WINDOW_STACK_KEY: &str = "session_window_stack";
 
 impl Session {
-    pub async fn new() -> Self {
+    pub async fn new(session_id: String) -> Self {
         let old_session_id = KEY_VALUE_STORE.read_kvp(SESSION_ID_KEY).ok().flatten();
-
-        let session_id = Uuid::new_v4().to_string();
 
         KEY_VALUE_STORE
             .write_kvp(SESSION_ID_KEY.to_string(), session_id.clone())
@@ -43,11 +38,20 @@ impl Session {
         }
     }
 
-    // #[cfg(any(test, feature = "test-support"))]
+    #[cfg(any(test, feature = "test-support"))]
     pub fn test() -> Self {
         Self {
-            session_id: Uuid::new_v4().to_string(),
+            session_id: uuid::Uuid::new_v4().to_string(),
             old_session_id: None,
+            old_window_ids: None,
+        }
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn test_with_old_session(old_session_id: String) -> Self {
+        Self {
+            session_id: uuid::Uuid::new_v4().to_string(),
+            old_session_id: Some(old_session_id),
             old_window_ids: None,
         }
     }
@@ -67,21 +71,29 @@ impl AppSession {
     pub fn new(session: Session, cx: &Context<Self>) -> Self {
         let _subscriptions = vec![cx.on_app_quit(Self::app_will_quit)];
 
+        #[cfg(not(any(test, feature = "test-support")))]
         let _serialization_task = cx.spawn(async move |_, cx| {
-            let mut current_window_stack = Vec::new();
-            loop {
-                if let Some(windows) = cx.update(|cx| window_stack(cx)).ok().flatten()
-                    && windows != current_window_stack
-                {
-                    store_window_stack(&windows).await;
-                    current_window_stack = windows;
-                }
+            // Disabled in tests: the infinite loop bypasses "parking forbidden" checks,
+            // causing tests to hang instead of panicking.
+            {
+                let mut current_window_stack = Vec::new();
+                loop {
+                    if let Some(windows) = cx.update(|cx| window_stack(cx))
+                        && windows != current_window_stack
+                    {
+                        store_window_stack(&windows).await;
+                        current_window_stack = windows;
+                    }
 
-                cx.background_executor()
-                    .timer(Duration::from_millis(500))
-                    .await;
+                    cx.background_executor()
+                        .timer(std::time::Duration::from_millis(500))
+                        .await;
+                }
             }
         });
+
+        #[cfg(any(test, feature = "test-support"))]
+        let _serialization_task = Task::ready(());
 
         Self {
             session,
@@ -104,6 +116,11 @@ impl AppSession {
 
     pub fn last_session_id(&self) -> Option<&str> {
         self.session.old_session_id.as_deref()
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn replace_session_for_test(&mut self, session: Session) {
+        self.session = session;
     }
 
     pub fn last_session_window_stack(&self) -> Option<Vec<WindowId>> {

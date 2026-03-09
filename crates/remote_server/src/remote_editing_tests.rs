@@ -2,12 +2,11 @@
 /// The tests in this file assume that server_cx is running on Windows too.
 /// We neead to find a way to test Windows-Non-Windows interactions.
 use crate::headless_project::HeadlessProject;
-use agent::{AgentTool, ReadFileTool, ReadFileToolInput, Templates, Thread, ToolCallEventStream};
+use agent::{AgentTool, ReadFileTool, ReadFileToolInput, ToolCallEventStream, ToolInput};
 use client::{Client, UserStore};
 use clock::FakeSystemClock;
 use collections::{HashMap, HashSet};
-use language_model::{LanguageModelToolResultContent, fake_provider::FakeLanguageModel};
-use prompt_store::ProjectContext;
+use language_model::LanguageModelToolResultContent;
 
 use extension::ExtensionHostProxy;
 use fs::{FakeFs, Fs};
@@ -17,7 +16,10 @@ use language::{
     Buffer, FakeLspAdapter, LanguageConfig, LanguageMatcher, LanguageRegistry, LineEnding,
     language_settings::{AllLanguageSettings, language_settings},
 };
-use lsp::{CompletionContext, CompletionResponse, CompletionTriggerKind, LanguageServerName};
+use lsp::{
+    CompletionContext, CompletionResponse, CompletionTriggerKind, DEFAULT_LSP_REQUEST_TIMEOUT,
+    LanguageServerName,
+};
 use node_runtime::NodeRuntime;
 use project::{
     ProgressToken, Project,
@@ -33,7 +35,7 @@ use std::{
     sync::Arc,
 };
 use unindent::Unindent as _;
-use util::{path, rel_path::rel_path};
+use util::{path, paths::PathMatcher, rel_path::rel_path};
 
 #[gpui::test]
 async fn test_basic_remote_editing(cx: &mut TestAppContext, server_cx: &mut TestAppContext) {
@@ -96,8 +98,11 @@ async fn test_basic_remote_editing(cx: &mut TestAppContext, server_cx: &mut Test
         .await
         .unwrap();
 
-    diff.update(cx, |diff, _| {
-        assert_eq!(diff.base_text_string().unwrap(), "fn one() -> usize { 0 }");
+    diff.update(cx, |diff, cx| {
+        assert_eq!(
+            diff.base_text_string(cx).unwrap(),
+            "fn one() -> usize { 0 }"
+        );
     });
 
     buffer.update(cx, |buffer, cx| {
@@ -157,12 +162,57 @@ async fn test_basic_remote_editing(cx: &mut TestAppContext, server_cx: &mut Test
         &[("src/lib2.rs", "fn one() -> usize { 100 }".into())],
     );
     cx.executor().run_until_parked();
-    diff.update(cx, |diff, _| {
+    diff.update(cx, |diff, cx| {
         assert_eq!(
-            diff.base_text_string().unwrap(),
+            diff.base_text_string(cx).unwrap(),
             "fn one() -> usize { 100 }"
         );
     });
+}
+
+async fn do_search_and_assert(
+    project: &Entity<Project>,
+    query: &str,
+    files_to_include: PathMatcher,
+    match_full_paths: bool,
+    expected_paths: &[&str],
+    mut cx: TestAppContext,
+) -> Vec<Entity<Buffer>> {
+    let query = query.to_string();
+    let receiver = project.update(&mut cx, |project, cx| {
+        project.search(
+            SearchQuery::text(
+                query,
+                false,
+                true,
+                false,
+                files_to_include,
+                Default::default(),
+                match_full_paths,
+                None,
+            )
+            .unwrap(),
+            cx,
+        )
+    });
+
+    let mut buffers = Vec::new();
+    for expected_path in expected_paths {
+        let response = receiver.rx.recv().await.unwrap();
+        let SearchResult::Buffer { buffer, .. } = response else {
+            panic!("incorrect result");
+        };
+        buffer.update(&mut cx, |buffer, cx| {
+            assert_eq!(
+                buffer.file().unwrap().full_path(cx).to_string_lossy(),
+                *expected_path
+            )
+        });
+        buffers.push(buffer);
+    }
+
+    assert!(receiver.rx.recv().await.is_err());
+    buffers
 }
 
 #[gpui::test]
@@ -193,57 +243,162 @@ async fn test_remote_project_search(cx: &mut TestAppContext, server_cx: &mut Tes
 
     cx.run_until_parked();
 
-    async fn do_search(project: &Entity<Project>, mut cx: TestAppContext) -> Entity<Buffer> {
-        let receiver = project.update(&mut cx, |project, cx| {
-            project.search(
-                SearchQuery::text(
-                    "project",
-                    false,
-                    true,
-                    false,
-                    Default::default(),
-                    Default::default(),
-                    false,
-                    None,
-                )
-                .unwrap(),
-                cx,
-            )
-        });
-
-        let first_response = receiver.recv().await.unwrap();
-        let SearchResult::Buffer { buffer, .. } = first_response else {
-            panic!("incorrect result");
-        };
-        buffer.update(&mut cx, |buffer, cx| {
-            assert_eq!(
-                buffer.file().unwrap().full_path(cx).to_string_lossy(),
-                path!("project1/README.md")
-            )
-        });
-
-        assert!(receiver.recv().await.is_err());
-        buffer
-    }
-
-    let buffer = do_search(&project, cx.clone()).await;
+    let buffers = do_search_and_assert(
+        &project,
+        "project",
+        Default::default(),
+        false,
+        &[path!("project1/README.md")],
+        cx.clone(),
+    )
+    .await;
+    let buffer = buffers.into_iter().next().unwrap();
 
     // test that the headless server is tracking which buffers we have open correctly.
     cx.run_until_parked();
     headless.update(server_cx, |headless, cx| {
         assert!(headless.buffer_store.read(cx).has_shared_buffers())
     });
-    do_search(&project, cx.clone()).await;
-
+    do_search_and_assert(
+        &project,
+        "project",
+        Default::default(),
+        false,
+        &[path!("project1/README.md")],
+        cx.clone(),
+    )
+    .await;
+    server_cx.run_until_parked();
     cx.update(|_| {
         drop(buffer);
     });
     cx.run_until_parked();
+    server_cx.run_until_parked();
     headless.update(server_cx, |headless, cx| {
         assert!(!headless.buffer_store.read(cx).has_shared_buffers())
     });
 
-    do_search(&project, cx.clone()).await;
+    do_search_and_assert(
+        &project,
+        "project",
+        Default::default(),
+        false,
+        &[path!("project1/README.md")],
+        cx.clone(),
+    )
+    .await;
+}
+
+#[gpui::test]
+async fn test_remote_project_search_single_cpu(
+    cx: &mut TestAppContext,
+    server_cx: &mut TestAppContext,
+) {
+    let fs = FakeFs::new(server_cx.executor());
+    fs.insert_tree(
+        path!("/code"),
+        json!({
+            "project1": {
+                ".git": {},
+                "README.md": "# project 1",
+                "src": {
+                    "lib.rs": "fn one() -> usize { 1 }"
+                }
+            },
+        }),
+    )
+    .await;
+
+    // Simulate a single-CPU environment (e.g. a devcontainer with 1 visible CPU).
+    // This causes the worker pool in project search to spawn num_cpus - 1 = 0 workers,
+    // which silently drops all search channels and produces zero results.
+    server_cx.executor().set_num_cpus(1);
+
+    let (project, _) = init_test(&fs, cx, server_cx).await;
+
+    project
+        .update(cx, |project, cx| {
+            project.find_or_create_worktree(path!("/code/project1"), true, cx)
+        })
+        .await
+        .unwrap();
+
+    cx.run_until_parked();
+
+    do_search_and_assert(
+        &project,
+        "project",
+        Default::default(),
+        false,
+        &[path!("project1/README.md")],
+        cx.clone(),
+    )
+    .await;
+}
+
+#[gpui::test]
+async fn test_remote_project_search_inclusion(
+    cx: &mut TestAppContext,
+    server_cx: &mut TestAppContext,
+) {
+    let fs = FakeFs::new(server_cx.executor());
+    fs.insert_tree(
+        path!("/code"),
+        json!({
+            "project1": {
+                "README.md": "# project 1",
+            },
+            "project2": {
+                "README.md": "# project 2",
+            },
+        }),
+    )
+    .await;
+
+    let (project, _) = init_test(&fs, cx, server_cx).await;
+
+    project
+        .update(cx, |project, cx| {
+            project.find_or_create_worktree(path!("/code/project1"), true, cx)
+        })
+        .await
+        .unwrap();
+
+    project
+        .update(cx, |project, cx| {
+            project.find_or_create_worktree(path!("/code/project2"), true, cx)
+        })
+        .await
+        .unwrap();
+
+    cx.run_until_parked();
+
+    // Case 1: Test search with path matcher limiting to only one worktree
+    let path_matcher = PathMatcher::new(
+        &["project1/*.md".to_owned()],
+        util::paths::PathStyle::local(),
+    )
+    .unwrap();
+    do_search_and_assert(
+        &project,
+        "project",
+        path_matcher,
+        true, // should be true in case of multiple worktrees
+        &[path!("project1/README.md")],
+        cx.clone(),
+    )
+    .await;
+
+    // Case 2: Test search without path matcher, matching both worktrees
+    do_search_and_assert(
+        &project,
+        "project",
+        Default::default(),
+        true, // should be true in case of multiple worktrees
+        &[path!("project1/README.md"), path!("project2/README.md")],
+        cx.clone(),
+    )
+    .await;
 }
 
 #[gpui::test]
@@ -452,7 +607,7 @@ async fn test_remote_lsp(cx: &mut TestAppContext, server_cx: &mut TestAppContext
     });
 
     let mut fake_lsp = server_cx.update(|cx| {
-        headless.read(cx).languages.register_fake_language_server(
+        headless.read(cx).languages.register_fake_lsp_server(
             LanguageServerName("rust-analyzer".into()),
             lsp::ServerCapabilities {
                 completion_provider: Some(lsp::CompletionOptions::default()),
@@ -476,7 +631,7 @@ async fn test_remote_lsp(cx: &mut TestAppContext, server_cx: &mut TestAppContext
                 ..FakeLspAdapter::default()
             },
         );
-        headless.read(cx).languages.register_fake_language_server(
+        headless.read(cx).languages.register_fake_lsp_server(
             LanguageServerName("fake-analyzer".into()),
             lsp::ServerCapabilities {
                 completion_provider: Some(lsp::CompletionOptions::default()),
@@ -522,7 +677,7 @@ async fn test_remote_lsp(cx: &mut TestAppContext, server_cx: &mut TestAppContext
 
     let buffer_id = cx.read(|cx| {
         let buffer = buffer.read(cx);
-        assert_eq!(buffer.language().unwrap().name(), "Rust".into());
+        assert_eq!(buffer.language().unwrap().name(), "Rust");
         buffer.remote_id()
     });
 
@@ -534,7 +689,7 @@ async fn test_remote_lsp(cx: &mut TestAppContext, server_cx: &mut TestAppContext
             .get(buffer_id)
             .unwrap();
 
-        assert_eq!(buffer.read(cx).language().unwrap().name(), "Rust".into());
+        assert_eq!(buffer.read(cx).language().unwrap().name(), "Rust");
     });
 
     server_cx.read(|cx| {
@@ -669,7 +824,7 @@ async fn test_remote_cancel_language_server_work(
     });
 
     let mut fake_lsp = server_cx.update(|cx| {
-        headless.read(cx).languages.register_fake_language_server(
+        headless.read(cx).languages.register_fake_lsp_server(
             LanguageServerName("rust-analyzer".into()),
             Default::default(),
             None,
@@ -710,6 +865,7 @@ async fn test_remote_cancel_language_server_work(
                     cancellable: Some(false),
                     ..Default::default()
                 },
+                DEFAULT_LSP_REQUEST_TIMEOUT,
             )
             .await;
 
@@ -721,6 +877,7 @@ async fn test_remote_cancel_language_server_work(
                     cancellable: Some(true),
                     ..Default::default()
                 },
+                DEFAULT_LSP_REQUEST_TIMEOUT,
             )
             .await;
 
@@ -754,6 +911,7 @@ async fn test_remote_cancel_language_server_work(
                     cancellable: Some(true),
                     ..Default::default()
                 },
+                DEFAULT_LSP_REQUEST_TIMEOUT,
             )
             .await;
 
@@ -1443,12 +1601,12 @@ async fn test_remote_git_diffs(cx: &mut TestAppContext, server_cx: &mut TestAppC
         .unwrap();
 
     diff.read_with(cx, |diff, cx| {
-        assert_eq!(diff.base_text_string().unwrap(), text_1);
+        assert_eq!(diff.base_text_string(cx).unwrap(), text_1);
         assert_eq!(
             diff.secondary_diff()
                 .unwrap()
                 .read(cx)
-                .base_text_string()
+                .base_text_string(cx)
                 .unwrap(),
             text_1
         );
@@ -1462,12 +1620,12 @@ async fn test_remote_git_diffs(cx: &mut TestAppContext, server_cx: &mut TestAppC
 
     cx.executor().run_until_parked();
     diff.read_with(cx, |diff, cx| {
-        assert_eq!(diff.base_text_string().unwrap(), text_1);
+        assert_eq!(diff.base_text_string(cx).unwrap(), text_1);
         assert_eq!(
             diff.secondary_diff()
                 .unwrap()
                 .read(cx)
-                .base_text_string()
+                .base_text_string(cx)
                 .unwrap(),
             text_2
         );
@@ -1482,12 +1640,12 @@ async fn test_remote_git_diffs(cx: &mut TestAppContext, server_cx: &mut TestAppC
 
     cx.executor().run_until_parked();
     diff.read_with(cx, |diff, cx| {
-        assert_eq!(diff.base_text_string().unwrap(), text_2);
+        assert_eq!(diff.base_text_string(cx).unwrap(), text_2);
         assert_eq!(
             diff.secondary_diff()
                 .unwrap()
                 .read(cx)
-                .base_text_string()
+                .base_text_string(cx)
                 .unwrap(),
             text_2
         );
@@ -1588,12 +1746,12 @@ async fn test_remote_git_diffs_when_recv_update_repository_delay(
         .unwrap();
 
     diff.read_with(cx, |diff, cx| {
-        assert_eq!(diff.base_text_string().unwrap(), text_1);
+        assert_eq!(diff.base_text_string(cx).unwrap(), text_1);
         assert_eq!(
             diff.secondary_diff()
                 .unwrap()
                 .read(cx)
-                .base_text_string()
+                .base_text_string(cx)
                 .unwrap(),
             text_1
         );
@@ -1607,12 +1765,12 @@ async fn test_remote_git_diffs_when_recv_update_repository_delay(
 
     cx.executor().run_until_parked();
     diff.read_with(cx, |diff, cx| {
-        assert_eq!(diff.base_text_string().unwrap(), text_1);
+        assert_eq!(diff.base_text_string(cx).unwrap(), text_1);
         assert_eq!(
             diff.secondary_diff()
                 .unwrap()
                 .read(cx)
-                .base_text_string()
+                .base_text_string(cx)
                 .unwrap(),
             text_2
         );
@@ -1627,12 +1785,12 @@ async fn test_remote_git_diffs_when_recv_update_repository_delay(
 
     cx.executor().run_until_parked();
     diff.read_with(cx, |diff, cx| {
-        assert_eq!(diff.base_text_string().unwrap(), text_2);
+        assert_eq!(diff.base_text_string(cx).unwrap(), text_2);
         assert_eq!(
             diff.secondary_diff()
                 .unwrap()
                 .read(cx)
-                .base_text_string()
+                .base_text_string(cx)
                 .unwrap(),
             text_2
         );
@@ -1780,30 +1938,19 @@ async fn test_remote_agent_fs_tool_calls(cx: &mut TestAppContext, server_cx: &mu
 
     let action_log = cx.new(|_| action_log::ActionLog::new(project.clone()));
 
-    // Create a minimal thread for the ReadFileTool
-    let context_server_registry =
-        cx.new(|cx| agent::ContextServerRegistry::new(project.read(cx).context_server_store(), cx));
-    let model = Arc::new(FakeLanguageModel::default());
-    let thread = cx.new(|cx| {
-        Thread::new(
-            project.clone(),
-            cx.new(|_cx| ProjectContext::default()),
-            context_server_registry,
-            Templates::new(),
-            Some(model),
-            cx,
-        )
-    });
-
     let input = ReadFileToolInput {
         path: "project/b.txt".into(),
         start_line: None,
         end_line: None,
     };
-    let read_tool = Arc::new(ReadFileTool::new(thread.downgrade(), project, action_log));
+    let read_tool = Arc::new(ReadFileTool::new(project, action_log, true));
     let (event_stream, _) = ToolCallEventStream::test();
 
-    let exists_result = cx.update(|cx| read_tool.clone().run(input, event_stream.clone(), cx));
+    let exists_result = cx.update(|cx| {
+        read_tool
+            .clone()
+            .run(ToolInput::resolved(input), event_stream.clone(), cx)
+    });
     let output = exists_result.await.unwrap();
     assert_eq!(output, LanguageModelToolResultContent::Text("B".into()));
 
@@ -1812,7 +1959,8 @@ async fn test_remote_agent_fs_tool_calls(cx: &mut TestAppContext, server_cx: &mu
         start_line: None,
         end_line: None,
     };
-    let does_not_exist_result = cx.update(|cx| read_tool.run(input, event_stream, cx));
+    let does_not_exist_result =
+        cx.update(|cx| read_tool.run(ToolInput::resolved(input), event_stream, cx));
     does_not_exist_result.await.unwrap_err();
 }
 
@@ -1839,7 +1987,7 @@ async fn test_remote_external_agent_server(
             .map(|name| name.to_string())
             .collect::<Vec<_>>()
     });
-    pretty_assertions::assert_eq!(names, ["codex", "gemini", "claude"]);
+    pretty_assertions::assert_eq!(names, Vec::<String>::new());
     server_cx.update_global::<SettingsStore, _>(|settings_store, cx| {
         settings_store
             .set_server_settings(
@@ -1870,15 +2018,14 @@ async fn test_remote_external_agent_server(
             .map(|name| name.to_string())
             .collect::<Vec<_>>()
     });
-    pretty_assertions::assert_eq!(names, ["gemini", "codex", "claude", "foo"]);
-    let (command, root, login) = project
+    pretty_assertions::assert_eq!(names, ["foo"]);
+    let command = project
         .update(cx, |project, cx| {
             project.agent_server_store().update(cx, |store, cx| {
                 store
                     .get_external_agent(&"foo".into())
                     .unwrap()
                     .get_command(
-                        None,
                         HashMap::from_iter([("OTHER_VAR".into(), "other-val".into())]),
                         None,
                         None,
@@ -1891,16 +2038,15 @@ async fn test_remote_external_agent_server(
     assert_eq!(
         command,
         AgentServerCommand {
-            path: "ssh".into(),
+            path: "mock".into(),
             args: vec!["foo-cli".into(), "--flag".into()],
             env: Some(HashMap::from_iter([
+                ("NO_BROWSER".into(), "1".into()),
                 ("VAR".into(), "val".into()),
                 ("OTHER_VAR".into(), "other-val".into())
             ]))
         }
     );
-    assert_eq!(&PathBuf::from(root), paths::home_dir());
-    assert!(login.is_none());
 }
 
 pub async fn init_test(
@@ -1917,7 +2063,7 @@ pub async fn init_test(
     });
     init_logger();
 
-    let (opts, ssh_server_client) = RemoteClient::fake_server(cx, server_cx);
+    let (opts, ssh_server_client, _) = RemoteClient::fake_server(cx, server_cx);
     let http_client = Arc::new(BlockedHttpClient);
     let node_runtime = NodeRuntime::unavailable();
     let languages = Arc::new(LanguageRegistry::new(cx.executor()));
@@ -1932,12 +2078,14 @@ pub async fn init_test(
                 node_runtime,
                 languages,
                 extension_host_proxy: proxy,
+                startup_time: std::time::Instant::now(),
             },
+            false,
             cx,
         )
     });
 
-    let ssh = RemoteClient::fake_client(opts, cx).await;
+    let ssh = RemoteClient::connect_mock(opts, cx).await;
     let project = build_project(ssh, cx);
     project
         .update(cx, {
@@ -1977,5 +2125,5 @@ fn build_project(ssh: Entity<RemoteClient>, cx: &mut TestAppContext) -> Entity<P
         Project::init(&client, cx);
     });
 
-    cx.update(|cx| Project::remote(ssh, client, node, user_store, languages, fs, cx))
+    cx.update(|cx| Project::remote(ssh, client, node, user_store, languages, fs, false, cx))
 }

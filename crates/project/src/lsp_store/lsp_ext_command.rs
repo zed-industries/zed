@@ -122,7 +122,7 @@ impl LspCommand for ExpandMacro {
             .and_then(deserialize_anchor)
             .context("invalid position")?;
         Ok(Self {
-            position: buffer.read_with(&cx, |buffer, _| position.to_point_utf16(buffer))?,
+            position: buffer.read_with(&cx, |buffer, _| position.to_point_utf16(buffer)),
         })
     }
 
@@ -211,10 +211,10 @@ impl LspCommand for OpenDocs {
         _: &Arc<LanguageServer>,
         _: &App,
     ) -> Result<OpenDocsParams> {
+        let uri = lsp::Uri::from_file_path(path)
+            .map_err(|()| anyhow::anyhow!("{path:?} is not a valid URI"))?;
         Ok(OpenDocsParams {
-            text_document: lsp::TextDocumentIdentifier {
-                uri: lsp::Uri::from_file_path(path).unwrap(),
-            },
+            text_document: lsp::TextDocumentIdentifier { uri },
             position: point_to_lsp(self.position),
         })
     }
@@ -256,7 +256,7 @@ impl LspCommand for OpenDocs {
             .and_then(deserialize_anchor)
             .context("invalid position")?;
         Ok(Self {
-            position: buffer.read_with(&cx, |buffer, _| position.to_point_utf16(buffer))?,
+            position: buffer.read_with(&cx, |buffer, _| position.to_point_utf16(buffer)),
         })
     }
 
@@ -469,7 +469,7 @@ impl LspCommand for GoToParentModule {
             .and_then(deserialize_anchor)
             .context("bad request with bad position")?;
         Ok(Self {
-            position: buffer.read_with(&cx, |buffer, _| position.to_point_utf16(buffer))?,
+            position: buffer.read_with(&cx, |buffer, _| position.to_point_utf16(buffer)),
         })
     }
 

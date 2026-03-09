@@ -1,0 +1,39 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+if [[ -z "${VERCEL_TOKEN:-}" ]]; then
+    echo "Error: VERCEL_TOKEN environment variable is not set."
+    echo "Get a token from https://vercel.com/account/tokens"
+    exit 1
+fi
+
+MAX_ATTEMPTS="60"
+SLEEP_SECONDS="10"
+VERCEL_SCOPE="zed-industries"
+VERCEL_URL="https://zed.dev"
+
+echo "Checking for in-progress deployments..."
+
+for ((i=1; i<=MAX_ATTEMPTS; i++)); do
+    RESPONSE=$(curl -s -H "Authorization: Bearer $VERCEL_TOKEN" \
+        "https://api.vercel.com/v6/deployments?slug=${VERCEL_SCOPE}&state=BUILDING,INITIALIZING,QUEUED&target=production&limit=1")
+
+    COUNT=$(echo "$RESPONSE" | jq '.deployments | length')
+
+    if [ "$COUNT" = "0" ]; then
+        echo "No in-progress deployments found. Proceeding with redeploy."
+        break
+    fi
+
+    if [ "$i" = "$MAX_ATTEMPTS" ]; then
+        echo "Timed out waiting for deployments to complete after $((MAX_ATTEMPTS * SLEEP_SECONDS)) seconds."
+        exit 1
+    fi
+
+    echo "Attempt $i/$MAX_ATTEMPTS: Found $COUNT in-progress deployment(s). Waiting ${SLEEP_SECONDS}s..."
+    sleep "$SLEEP_SECONDS"
+done
+
+echo "Triggering redeploy of ${VERCEL_URL}..."
+npm exec --yes -- vercel@37 --token="$VERCEL_TOKEN" --scope "$VERCEL_SCOPE" redeploy "$VERCEL_URL"

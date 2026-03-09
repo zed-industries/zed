@@ -75,7 +75,7 @@ impl RenderOnce for Navigable {
                         })
                         .unwrap_or(0);
                     if let Some(entry) = children.get(target) {
-                        entry.focus_handle.focus(window);
+                        entry.focus_handle.focus(window, cx);
                         if let Some(anchor) = &entry.scroll_anchor {
                             anchor.scroll_to(window, cx);
                         }
@@ -89,7 +89,7 @@ impl RenderOnce for Navigable {
                         .and_then(|index| index.checked_sub(1))
                         .or(children.len().checked_sub(1));
                     if let Some(entry) = target.and_then(|target| children.get(target)) {
-                        entry.focus_handle.focus(window);
+                        entry.focus_handle.focus(window, cx);
                         if let Some(anchor) = &entry.scroll_anchor {
                             anchor.scroll_to(window, cx);
                         }

@@ -11,7 +11,6 @@ use feature_flags::FeatureFlag;
 use futures::channel::mpsc;
 use gpui::{Task, WeakEntity};
 use language::{BufferSnapshot, LspAdapterDelegate};
-use smol::Timer;
 use smol::stream::StreamExt;
 use ui::prelude::*;
 use workspace::Workspace;
@@ -63,6 +62,7 @@ impl SlashCommand for StreamingExampleSlashCommand {
         cx: &mut App,
     ) -> Task<SlashCommandResult> {
         let (events_tx, events_rx) = mpsc::unbounded();
+        let executor = cx.background_executor().clone();
         cx.background_spawn(async move {
             events_tx.unbounded_send(Ok(SlashCommandEvent::StartSection {
                 icon: IconName::FileRust,
@@ -77,7 +77,7 @@ impl SlashCommand for StreamingExampleSlashCommand {
             )))?;
             events_tx.unbounded_send(Ok(SlashCommandEvent::EndSection))?;
 
-            Timer::after(Duration::from_secs(1)).await;
+            executor.timer(Duration::from_secs(1)).await;
 
             events_tx.unbounded_send(Ok(SlashCommandEvent::StartSection {
                 icon: IconName::FileRust,
@@ -93,7 +93,7 @@ impl SlashCommand for StreamingExampleSlashCommand {
             events_tx.unbounded_send(Ok(SlashCommandEvent::EndSection))?;
 
             for n in 1..=10 {
-                Timer::after(Duration::from_secs(1)).await;
+                executor.timer(Duration::from_secs(1)).await;
 
                 events_tx.unbounded_send(Ok(SlashCommandEvent::StartSection {
                     icon: IconName::StarFilled,

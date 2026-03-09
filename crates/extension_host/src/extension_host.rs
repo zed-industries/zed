@@ -9,8 +9,8 @@ mod extension_store_test;
 use anyhow::{Context as _, Result, anyhow, bail};
 use async_compression::futures::bufread::GzipDecoder;
 use async_tar::Archive;
-use client::ExtensionProvides;
-use client::{Client, ExtensionMetadata, GetExtensionsResponse, proto, telemetry::Telemetry};
+use client::{Client, proto, telemetry::Telemetry};
+use cloud_api_types::{ExtensionMetadata, ExtensionProvides, GetExtensionsResponse};
 use collections::{BTreeMap, BTreeSet, HashSet, btree_map};
 pub use extension::ExtensionManifest;
 use extension::extension_builder::{CompileExtensionOptions, ExtensionBuilder};
@@ -32,8 +32,8 @@ use futures::{
     select_biased,
 };
 use gpui::{
-    App, AppContext as _, AsyncApp, Context, Entity, EventEmitter, Global, Task, WeakEntity,
-    actions,
+    App, AppContext as _, AsyncApp, Context, Entity, EventEmitter, Global, Task, UpdateGlobal as _,
+    WeakEntity, actions,
 };
 use http_client::{AsyncBody, HttpClient, HttpClientWithUrl};
 use language::{
@@ -46,7 +46,7 @@ use release_channel::ReleaseChannel;
 use remote::RemoteClient;
 use semver::Version;
 use serde::{Deserialize, Serialize};
-use settings::Settings;
+use settings::{SemanticTokenRules, Settings, SettingsStore};
 use std::ops::RangeInclusive;
 use std::str::FromStr;
 use std::{
@@ -282,7 +282,7 @@ impl ExtensionStore {
         // list of the installed extensions and the resources that they provide.
         // This index is loaded synchronously on startup.
         let (index_content, index_metadata, extensions_metadata) =
-            cx.background_executor().block(async {
+            cx.foreground_executor().block_on(async {
                 futures::join!(
                     this.fs.load(&this.index_path),
                     this.fs.metadata(&this.index_path),
@@ -336,6 +336,7 @@ impl ExtensionStore {
 
                 let mut index_changed = false;
                 let mut debounce_timer = cx.background_spawn(futures::future::pending()).fuse();
+
                 loop {
                     select_biased! {
                         _ = debounce_timer => {
@@ -351,21 +352,15 @@ impl ExtensionStore {
                             Self::update_remote_clients(&this, cx).await?;
                         }
                         _ = connection_registered_rx.next() => {
-                            debounce_timer = cx
-                                .background_executor()
-                                .timer(RELOAD_DEBOUNCE_DURATION)
-                                .fuse();
+                            debounce_timer = cx.background_executor().timer(RELOAD_DEBOUNCE_DURATION).fuse()
                         }
                         extension_id = reload_rx.next() => {
                             let Some(extension_id) = extension_id else { break; };
-                            this.update(cx, |this, _| {
+                            this.update(cx, |this, _cx| {
                                 this.modified_extensions.extend(extension_id);
                             })?;
                             index_changed = true;
-                            debounce_timer = cx
-                                .background_executor()
-                                .timer(RELOAD_DEBOUNCE_DURATION)
-                                .fuse();
+                            debounce_timer = cx.background_executor().timer(RELOAD_DEBOUNCE_DURATION).fuse()
                         }
                     }
                 }
@@ -980,12 +975,14 @@ impl ExtensionStore {
 
             cx.background_spawn({
                 let extension_source_path = extension_source_path.clone();
+                let fs = fs.clone();
                 async move {
                     builder
                         .compile_extension(
                             &extension_source_path,
                             &mut extension_manifest,
-                            CompileExtensionOptions { release: false },
+                            CompileExtensionOptions::dev(),
+                            fs,
                         )
                         .await
                 }
@@ -1042,13 +1039,9 @@ impl ExtensionStore {
 
         cx.notify();
         let compile = cx.background_spawn(async move {
-            let mut manifest = ExtensionManifest::load(fs, &path).await?;
+            let mut manifest = ExtensionManifest::load(fs.clone(), &path).await?;
             builder
-                .compile_extension(
-                    &path,
-                    &mut manifest,
-                    CompileExtensionOptions { release: true },
-                )
+                .compile_extension(&path, &mut manifest, CompileExtensionOptions::dev(), fs)
                 .await
         });
 
@@ -1076,6 +1069,7 @@ impl ExtensionStore {
     /// no longer in the manifest, or whose files have changed on disk.
     /// Then it loads any themes, languages, or grammars that are newly
     /// added to the manifest, or whose files have changed on disk.
+    #[ztracing::instrument(skip_all)]
     fn extensions_updated(
         &mut self,
         mut new_index: ExtensionIndex,
@@ -1226,6 +1220,15 @@ impl ExtensionStore {
         self.proxy
             .remove_languages(&languages_to_remove, &grammars_to_remove);
 
+        // Remove semantic token rules for languages being unloaded.
+        if !languages_to_remove.is_empty() {
+            SettingsStore::update_global(cx, |store, cx| {
+                for language in &languages_to_remove {
+                    store.remove_language_semantic_token_rules(language.as_ref(), cx);
+                }
+            });
+        }
+
         let mut grammars_to_add = Vec::new();
         let mut themes_to_add = Vec::new();
         let mut icon_themes_to_add = Vec::new();
@@ -1258,10 +1261,12 @@ impl ExtensionStore {
                     (path, icons_root_path)
                 },
             ));
-            snippets_to_add.extend(extension.manifest.snippets.iter().map(|snippets_path| {
-                let mut path = self.installed_dir.clone();
-                path.extend([Path::new(extension_id.as_ref()), snippets_path.as_path()]);
-                path
+            snippets_to_add.extend(extension.manifest.snippets.iter().flat_map(|snippets| {
+                snippets.paths().map(|snippets_path| {
+                    let mut path = self.installed_dir.clone();
+                    path.extend([Path::new(extension_id.as_ref()), snippets_path.as_path()]);
+                    path
+                })
             }));
         }
 
@@ -1271,12 +1276,30 @@ impl ExtensionStore {
             .iter()
             .filter(|(_, entry)| extensions_to_load.contains(&entry.extension))
             .collect::<Vec<_>>();
+        let mut semantic_token_rules_to_add: Vec<(LanguageName, SemanticTokenRules)> = Vec::new();
         for (language_name, language) in languages_to_add {
             let mut language_path = self.installed_dir.clone();
             language_path.extend([
                 Path::new(language.extension.as_ref()),
                 language.path.as_path(),
             ]);
+
+            // Load semantic token rules if present in the language directory.
+            let rules_path = language_path.join("semantic_token_rules.json");
+            if let Ok(rules_json) = std::fs::read_to_string(&rules_path) {
+                match serde_json_lenient::from_str::<SemanticTokenRules>(&rules_json) {
+                    Ok(rules) => {
+                        semantic_token_rules_to_add.push((language_name.clone(), rules));
+                    }
+                    Err(err) => {
+                        log::error!(
+                            "Failed to parse semantic token rules from {}: {err:#}",
+                            rules_path.display()
+                        );
+                    }
+                }
+            }
+
             self.proxy.register_language(
                 language_name.clone(),
                 language.grammar.clone(),
@@ -1304,6 +1327,15 @@ impl ExtensionStore {
                     })
                 }),
             );
+        }
+
+        // Register semantic token rules for newly loaded extension languages.
+        if !semantic_token_rules_to_add.is_empty() {
+            SettingsStore::update_global(cx, |store, cx| {
+                for (language_name, rules) in semantic_token_rules_to_add {
+                    store.set_language_semantic_token_rules(language_name.0.clone(), rules, cx);
+                }
+            });
         }
 
         let fs = self.fs.clone();
@@ -1376,7 +1408,11 @@ impl ExtensionStore {
                         wasm_extensions.push((extension.manifest.clone(), wasm_extension))
                     }
                     Err(e) => {
-                        log::error!("Failed to load extension: {e:#}");
+                        log::error!(
+                            "Failed to load extension: {}, {:#}",
+                            extension.manifest.id,
+                            e
+                        );
                         this.update(cx, |_, cx| {
                             cx.emit(Event::ExtensionFailedToLoad(extension.manifest.id.clone()))
                         })
@@ -1527,12 +1563,14 @@ impl ExtensionStore {
         let is_dev = fs
             .metadata(&extension_dir)
             .await?
-            .context("directory does not exist")?
+            .with_context(|| format!("missing extension directory {extension_dir:?}"))?
             .is_symlink;
 
-        if let Ok(mut language_paths) = fs.read_dir(&extension_dir.join("languages")).await {
+        let language_dir = extension_dir.join("languages");
+        if let Ok(mut language_paths) = fs.read_dir(&language_dir).await {
             while let Some(language_path) = language_paths.next().await {
-                let language_path = language_path?;
+                let language_path = language_path
+                    .with_context(|| format!("reading entries in language dir {language_dir:?}"))?;
                 let Ok(relative_path) = language_path.strip_prefix(&extension_dir) else {
                     continue;
                 };
@@ -1542,7 +1580,10 @@ impl ExtensionStore {
                 if !fs_metadata.is_dir {
                     continue;
                 }
-                let config = fs.load(&language_path.join("config.toml")).await?;
+                let language_config_path = language_path.join("config.toml");
+                let config = fs.load(&language_config_path).await.with_context(|| {
+                    format!("loading language config from {language_config_path:?}")
+                })?;
                 let config = ::toml::from_str::<LanguageConfig>(&config)?;
 
                 let relative_path = relative_path.to_path_buf();

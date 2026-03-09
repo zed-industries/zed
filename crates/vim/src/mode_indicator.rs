@@ -100,7 +100,16 @@ impl Render for ModeIndicator {
         let theme = cx.theme();
         let colors = theme.colors();
         let system_transparent = gpui::hsla(0.0, 0.0, 0.0, 0.0);
-        let vim_mode_text = colors.vim_mode_text;
+        let vim_mode_text = match mode {
+            crate::state::Mode::Normal => colors.vim_normal_foreground,
+            crate::state::Mode::Insert => colors.vim_insert_foreground,
+            crate::state::Mode::Replace => colors.vim_replace_foreground,
+            crate::state::Mode::Visual => colors.vim_visual_foreground,
+            crate::state::Mode::VisualLine => colors.vim_visual_line_foreground,
+            crate::state::Mode::VisualBlock => colors.vim_visual_block_foreground,
+            crate::state::Mode::HelixNormal => colors.vim_helix_normal_foreground,
+            crate::state::Mode::HelixSelect => colors.vim_helix_select_foreground,
+        };
         let bg_color = match mode {
             crate::state::Mode::Normal => colors.vim_normal_background,
             crate::state::Mode::Insert => colors.vim_insert_background,

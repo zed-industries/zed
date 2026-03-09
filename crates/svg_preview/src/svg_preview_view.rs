@@ -141,7 +141,7 @@ impl SvgPreviewView {
         buffer: &Entity<MultiBuffer>,
         cx: &App,
     ) -> Option<usize> {
-        let buffer_id = buffer.entity_id();
+        let buffer_id = buffer.read(cx).as_singleton()?.entity_id();
         pane.items_of_type::<SvgPreviewView>()
             .find(|view| {
                 view.read(cx)
@@ -196,7 +196,7 @@ impl SvgPreviewView {
             .as_singleton()
             .and_then(|buffer| buffer.read(cx).file())
             .is_some_and(|file| {
-                file.path()
+                std::path::Path::new(file.file_name(cx))
                     .extension()
                     .is_some_and(|ext| ext.eq_ignore_ascii_case("svg"))
             })
@@ -337,5 +337,5 @@ impl Item for SvgPreviewView {
         Some("svg preview: open")
     }
 
-    fn to_item_events(_event: &Self::Event, _f: impl FnMut(workspace::item::ItemEvent)) {}
+    fn to_item_events(_event: &Self::Event, _f: &mut dyn FnMut(workspace::item::ItemEvent)) {}
 }

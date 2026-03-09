@@ -45,7 +45,7 @@ pub fn handle_single_instance(opener: OpenListener, args: &Args) -> bool {
         std::thread::Builder::new()
             .name("EnsureSingleton".to_owned())
             .spawn(move || {
-                with_pipe(|url| {
+                with_pipe(&|url| {
                     opener.open(RawOpenRequest {
                         urls: vec![url],
                         ..Default::default()
@@ -61,7 +61,7 @@ pub fn handle_single_instance(opener: OpenListener, args: &Args) -> bool {
     is_first_instance
 }
 
-fn with_pipe(f: impl Fn(String)) {
+fn with_pipe(f: &dyn Fn(String)) {
     let pipe = unsafe {
         CreateNamedPipeW(
             &HSTRING::from(format!("\\\\.\\pipe\\{}-Named-Pipe", app_identifier())),
@@ -155,6 +155,7 @@ fn send_args_to_instance(args: &Args) -> anyhow::Result<()> {
             paths,
             urls,
             diff_paths,
+            diff_all: false,
             wait: false,
             wsl: args.wsl.clone(),
             open_new_workspace: None,

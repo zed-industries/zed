@@ -4,6 +4,7 @@ use std::time::Duration;
 
 use anyhow::{Context as _, Result, anyhow};
 use dap::StackFrameId;
+use dap::adapters::DebugAdapterName;
 use db::kvp::KEY_VALUE_STORE;
 use gpui::{
     Action, AnyElement, Entity, EventEmitter, FocusHandle, Focusable, FontWeight, ListState,
@@ -14,13 +15,13 @@ use util::{
     paths::{PathStyle, is_absolute},
 };
 
-use crate::{StackTraceView, ToggleUserFrames};
+use crate::ToggleUserFrames;
 use language::PointUtf16;
 use project::debugger::breakpoint_store::ActiveStackFrame;
 use project::debugger::session::{Session, SessionEvent, StackFrame, ThreadStatus};
 use project::{ProjectItem, ProjectPath};
 use ui::{Tooltip, WithScrollbar, prelude::*};
-use workspace::{ItemHandle, Workspace};
+use workspace::{Workspace, WorkspaceId};
 
 use super::RunningState;
 
@@ -56,6 +57,14 @@ impl From<StackFrameFilter> for String {
             StackFrameFilter::OnlyUserFrames => "user".to_string(),
         }
     }
+}
+
+pub(crate) fn stack_frame_filter_key(
+    adapter_name: &DebugAdapterName,
+    workspace_id: WorkspaceId,
+) -> String {
+    let database_id: i64 = workspace_id.into();
+    format!("stack-frame-list-filter-{}-{}", adapter_name.0, database_id)
 }
 
 pub struct StackFrameList {
@@ -97,7 +106,9 @@ impl StackFrameList {
                 SessionEvent::Threads => {
                     this.schedule_refresh(false, window, cx);
                 }
-                SessionEvent::Stopped(..) | SessionEvent::StackTrace => {
+                SessionEvent::Stopped(..)
+                | SessionEvent::StackTrace
+                | SessionEvent::HistoricSnapshotSelected => {
                     this.schedule_refresh(true, window, cx);
                 }
                 _ => {}
@@ -105,14 +116,18 @@ impl StackFrameList {
 
         let list_state = ListState::new(0, gpui::ListAlignment::Top, px(1000.));
 
-        let list_filter = KEY_VALUE_STORE
-            .read_kvp(&format!(
-                "stack-frame-list-filter-{}",
-                session.read(cx).adapter().0
-            ))
+        let list_filter = workspace
+            .read_with(cx, |workspace, _| workspace.database_id())
             .ok()
             .flatten()
-            .map(StackFrameFilter::from_str_or_default)
+            .and_then(|database_id| {
+                let key = stack_frame_filter_key(&session.read(cx).adapter(), database_id);
+                KEY_VALUE_STORE
+                    .read_kvp(&key)
+                    .ok()
+                    .flatten()
+                    .map(StackFrameFilter::from_str_or_default)
+            })
             .unwrap_or(StackFrameFilter::All);
 
         let mut this = Self {
@@ -139,6 +154,7 @@ impl StackFrameList {
         &self.entries
     }
 
+    #[cfg(test)]
     pub(crate) fn flatten_entries(
         &self,
         show_collapsed: bool,
@@ -225,7 +241,6 @@ impl StackFrameList {
             }
             this.update_in(cx, |this, window, cx| {
                 this.build_entries(select_first, window, cx);
-                cx.notify();
             })
             .ok();
         })
@@ -414,35 +429,52 @@ impl StackFrameList {
                 .await?;
             let position = buffer.read_with(cx, |this, _| {
                 this.snapshot().anchor_after(PointUtf16::new(row, 0))
-            })?;
-            this.update_in(cx, |this, window, cx| {
-                this.workspace.update(cx, |workspace, cx| {
-                    let project_path = buffer
-                        .read(cx)
-                        .project_path(cx)
-                        .context("Could not select a stack frame for unnamed buffer")?;
+            });
+            let opened_item = this
+                .update_in(cx, |this, window, cx| {
+                    this.workspace.update(cx, |workspace, cx| {
+                        let project_path = buffer
+                            .read(cx)
+                            .project_path(cx)
+                            .context("Could not select a stack frame for unnamed buffer")?;
 
-                    let open_preview = !workspace
-                        .item_of_type::<StackTraceView>(cx)
-                        .map(|viewer| {
-                            workspace
-                                .active_item(cx)
-                                .is_some_and(|item| item.item_id() == viewer.item_id())
-                        })
-                        .unwrap_or_default();
+                        let open_preview = true;
 
-                    anyhow::Ok(workspace.open_path_preview(
-                        project_path,
-                        None,
-                        true,
-                        true,
-                        open_preview,
-                        window,
-                        cx,
-                    ))
-                })
-            })???
-            .await?;
+                        let active_debug_line_pane = workspace
+                            .project()
+                            .read(cx)
+                            .breakpoint_store()
+                            .read(cx)
+                            .active_debug_line_pane_id()
+                            .and_then(|id| workspace.pane_for_entity_id(id));
+
+                        let debug_pane = if let Some(pane) = active_debug_line_pane {
+                            Some(pane.downgrade())
+                        } else {
+                            // No debug pane set yet. Find a pane where the target file
+                            // is already the active tab so we don't disrupt other panes.
+                            let pane_with_active_file = workspace.panes().iter().find(|pane| {
+                                pane.read(cx)
+                                    .active_item()
+                                    .and_then(|item| item.project_path(cx))
+                                    .is_some_and(|path| path == project_path)
+                            });
+
+                            pane_with_active_file.map(|pane| pane.downgrade())
+                        };
+
+                        anyhow::Ok(workspace.open_path_preview(
+                            project_path,
+                            debug_pane,
+                            true,
+                            true,
+                            open_preview,
+                            window,
+                            cx,
+                        ))
+                    })
+                })???
+                .await?;
 
             this.update(cx, |this, cx| {
                 let thread_id = this.state.read_with(cx, |state, _| {
@@ -450,6 +482,19 @@ impl StackFrameList {
                 })??;
 
                 this.workspace.update(cx, |workspace, cx| {
+                    if let Some(pane_id) = workspace
+                        .pane_for(&*opened_item)
+                        .map(|pane| pane.entity_id())
+                    {
+                        workspace
+                            .project()
+                            .read(cx)
+                            .breakpoint_store()
+                            .update(cx, |store, _cx| {
+                                store.set_active_debug_pane_id(pane_id);
+                            });
+                    }
+
                     let breakpoint_store = workspace.project().read(cx).breakpoint_store();
 
                     breakpoint_store.update(cx, |store, cx| {
@@ -806,15 +851,8 @@ impl StackFrameList {
             .ok()
             .flatten()
         {
-            let database_id: i64 = database_id.into();
-            let save_task = KEY_VALUE_STORE.write_kvp(
-                format!(
-                    "stack-frame-list-filter-{}-{}",
-                    self.session.read(cx).adapter().0,
-                    database_id,
-                ),
-                self.list_filter.into(),
-            );
+            let key = stack_frame_filter_key(&self.session.read(cx).adapter(), database_id);
+            let save_task = KEY_VALUE_STORE.write_kvp(key, self.list_filter.into());
             cx.background_spawn(save_task).detach();
         }
 

@@ -7,7 +7,7 @@ use rpc::{
 use sea_orm::{ActiveValue, DbBackend, TryGetableMany};
 
 impl Database {
-    #[cfg(test)]
+    #[cfg(feature = "test-support")]
     pub async fn all_channels(&self) -> Result<Vec<(ChannelId, String)>> {
         self.transaction(move |tx| async move {
             let mut channels = Vec::new();
@@ -21,12 +21,12 @@ impl Database {
         .await
     }
 
-    #[cfg(test)]
+    #[cfg(feature = "test-support")]
     pub async fn create_root_channel(&self, name: &str, creator_id: UserId) -> Result<ChannelId> {
         Ok(self.create_channel(name, None, creator_id).await?.0.id)
     }
 
-    #[cfg(test)]
+    #[cfg(feature = "test-support")]
     pub async fn create_sub_channel(
         &self,
         name: &str,
@@ -226,7 +226,7 @@ impl Database {
         .await
     }
 
-    #[cfg(test)]
+    #[cfg(feature = "test-support")]
     pub async fn set_channel_requires_zed_cla(
         &self,
         channel_id: ChannelId,
@@ -885,7 +885,7 @@ impl Database {
         .await
     }
 
-    pub(crate) async fn get_channel_internal(
+    pub async fn get_channel_internal(
         &self,
         channel_id: ChannelId,
         tx: &DatabaseTransaction,

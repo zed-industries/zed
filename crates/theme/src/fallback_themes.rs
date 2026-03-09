@@ -71,10 +71,16 @@ pub(crate) fn zed_default_dark() -> Theme {
     let yellow = hsla(39. / 360., 67. / 100., 69. / 100., 1.0);
 
     const ADDED_COLOR: Hsla = Hsla {
-        h: 142. / 360.,
-        s: 0.68,
-        l: 0.45,
+        h: 134. / 360.,
+        s: 0.55,
+        l: 0.40,
         a: 1.0,
+    };
+    const WORD_ADDED_COLOR: Hsla = Hsla {
+        h: 134. / 360.,
+        s: 0.55,
+        l: 0.40,
+        a: 0.35,
     };
     const MODIFIED_COLOR: Hsla = Hsla {
         h: 48. / 360.,
@@ -83,10 +89,16 @@ pub(crate) fn zed_default_dark() -> Theme {
         a: 1.0,
     };
     const REMOVED_COLOR: Hsla = Hsla {
-        h: 355. / 360.,
-        s: 0.65,
-        l: 0.65,
+        h: 350. / 360.,
+        s: 0.88,
+        l: 0.25,
         a: 1.0,
+    };
+    const WORD_DELETED_COLOR: Hsla = Hsla {
+        h: 350. / 360.,
+        s: 0.88,
+        l: 0.25,
+        a: 0.80,
     };
 
     let player = PlayerColors::dark();
@@ -97,7 +109,9 @@ pub(crate) fn zed_default_dark() -> Theme {
         styles: ThemeStyles {
             window_background_appearance: WindowBackgroundAppearance::Opaque,
             system: SystemColors::default(),
-            accents: AccentColors(vec![blue, orange, purple, teal, red, green, yellow]),
+            accents: AccentColors(Arc::from(vec![
+                blue, orange, purple, teal, red, green, yellow,
+            ])),
             colors: ThemeColors {
                 border: hsla(225. / 360., 13. / 100., 12. / 100., 1.),
                 border_variant: hsla(228. / 360., 8. / 100., 25. / 100., 1.),
@@ -140,6 +154,7 @@ pub(crate) fn zed_default_dark() -> Theme {
                 tab_inactive_background: bg,
                 tab_active_background: editor,
                 search_match_background: bg,
+                search_active_match_background: bg,
 
                 editor_background: editor,
                 editor_gutter_background: editor,
@@ -231,6 +246,8 @@ pub(crate) fn zed_default_dark() -> Theme {
                 version_control_renamed: MODIFIED_COLOR,
                 version_control_conflict: crate::orange().light().step_12(),
                 version_control_ignored: crate::gray().light().step_12(),
+                version_control_word_added: WORD_ADDED_COLOR,
+                version_control_word_deleted: WORD_DELETED_COLOR,
                 version_control_conflict_marker_ours: crate::green().light().step_12().alpha(0.5),
                 version_control_conflict_marker_theirs: crate::blue().light().step_12().alpha(0.5),
 
@@ -240,9 +257,17 @@ pub(crate) fn zed_default_dark() -> Theme {
                 vim_visual_background: SystemColors::default().transparent,
                 vim_visual_line_background: SystemColors::default().transparent,
                 vim_visual_block_background: SystemColors::default().transparent,
+                vim_yank_background: hsla(207.8 / 360., 81. / 100., 66. / 100., 0.2),
                 vim_helix_normal_background: SystemColors::default().transparent,
                 vim_helix_select_background: SystemColors::default().transparent,
-                vim_mode_text: SystemColors::default().transparent,
+                vim_normal_foreground: SystemColors::default().transparent,
+                vim_insert_foreground: SystemColors::default().transparent,
+                vim_replace_foreground: SystemColors::default().transparent,
+                vim_visual_foreground: SystemColors::default().transparent,
+                vim_visual_line_foreground: SystemColors::default().transparent,
+                vim_visual_block_foreground: SystemColors::default().transparent,
+                vim_helix_normal_foreground: SystemColors::default().transparent,
+                vim_helix_select_foreground: SystemColors::default().transparent,
             },
             status: StatusColors {
                 conflict: yellow,
@@ -312,7 +337,7 @@ pub(crate) fn zed_default_dark() -> Theme {
                             ..HighlightStyle::default()
                         },
                     ),
-                    ("enum".into(), HighlightStyle::default()),
+                    ("enum".into(), teal.into()),
                     ("function".into(), blue.into()),
                     ("function.method".into(), blue.into()),
                     ("function.definition".into(), blue.into()),

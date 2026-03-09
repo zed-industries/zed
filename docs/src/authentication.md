@@ -1,3 +1,8 @@
+---
+title: Authenticate with Zed
+description: "Sign in to Zed to access collaboration features and AI services."
+---
+
 # Authenticate with Zed
 
 Signing in to Zed is not required. You can use most features you'd expect in a code editor without ever doing so. We'll outline the few features that do require signing in, and how to do so, here.

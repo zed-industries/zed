@@ -1,5 +1,5 @@
 use std::ops::Range;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use anyhow::{Context as _, Result};
@@ -174,7 +174,32 @@ impl DynLspInstaller for ExtensionLspAdapter {
                     )
                     .await?;
 
-                let path = self.extension.path_from_extension(command.command.as_ref());
+                // on windows, extensions might produce weird paths
+                // that start with a leading slash due to WASI
+                // requiring that for PWD and friends so account for
+                // that here and try to transform those paths back
+                // to windows paths
+                //
+                // if we don't do this, std will interpret the path as relative,
+                // which changes join behavior
+                let command_path: &Path = if cfg!(windows)
+                    && let Some(command) = command.command.to_str()
+                {
+                    let mut chars = command.chars();
+                    if chars.next().is_some_and(|c| c == '/')
+                        && chars.next().is_some_and(|c| c.is_ascii_alphabetic())
+                        && chars.next().is_some_and(|c| c == ':')
+                        && chars.next().is_some_and(|c| c == '\\' || c == '/')
+                    {
+                        // looks like a windows path with a leading slash, so strip it
+                        command.strip_prefix('/').unwrap().as_ref()
+                    } else {
+                        command.as_ref()
+                    }
+                } else {
+                    command.command.as_ref()
+                };
+                let path = self.extension.path_from_extension(command_path);
 
                 // TODO: This should now be done via the `zed::make_file_executable` function in
                 // Zed extension API, but we're leaving these existing usages in place temporarily
@@ -193,7 +218,32 @@ impl DynLspInstaller for ExtensionLspAdapter {
 
                 Ok(LanguageServerBinary {
                     path,
-                    arguments: command.args.into_iter().map(|arg| arg.into()).collect(),
+                    arguments: command
+                        .args
+                        .into_iter()
+                        .map(|arg| {
+                            // on windows, extensions might produce weird paths
+                            // that start with a leading slash due to WASI
+                            // requiring that for PWD and friends so account for
+                            // that here and try to transform those paths back
+                            // to windows paths
+                            if cfg!(windows) {
+                                let mut chars = arg.chars();
+                                if chars.next().is_some_and(|c| c == '/')
+                                    && chars.next().is_some_and(|c| c.is_ascii_alphabetic())
+                                    && chars.next().is_some_and(|c| c == ':')
+                                    && chars.next().is_some_and(|c| c == '\\' || c == '/')
+                                {
+                                    // looks like a windows path with a leading slash, so strip it
+                                    arg.strip_prefix('/').unwrap().into()
+                                } else {
+                                    arg.into()
+                                }
+                            } else {
+                                arg.into()
+                            }
+                        })
+                        .collect(),
                     env: Some(command.env.into_iter().collect()),
                 })
             })
@@ -245,7 +295,7 @@ impl LspAdapter for ExtensionLspAdapter {
         // We can remove once the following extension versions no longer see any use:
         // - php@0.0.1
         if self.extension.manifest().id.as_ref() == "php" {
-            return HashMap::from_iter([(LanguageName::new("PHP"), "php".into())]);
+            return HashMap::from_iter([(LanguageName::new_static("PHP"), "php".into())]);
         }
 
         self.extension
@@ -259,6 +309,7 @@ impl LspAdapter for ExtensionLspAdapter {
     async fn initialization_options(
         self: Arc<Self>,
         delegate: &Arc<dyn LspAdapterDelegate>,
+        _: &mut AsyncApp,
     ) -> Result<Option<serde_json::Value>> {
         let delegate = Arc::new(WorktreeDelegateAdapter(delegate.clone())) as _;
         let json_options = self
@@ -297,6 +348,44 @@ impl LspAdapter for ExtensionLspAdapter {
         } else {
             serde_json::json!({})
         })
+    }
+
+    async fn initialization_options_schema(
+        self: Arc<Self>,
+        delegate: &Arc<dyn LspAdapterDelegate>,
+        _cached_binary: OwnedMutexGuard<Option<(bool, LanguageServerBinary)>>,
+        _cx: &mut AsyncApp,
+    ) -> Option<serde_json::Value> {
+        let delegate = Arc::new(WorktreeDelegateAdapter(delegate.clone())) as _;
+        let json_schema: Option<String> = self
+            .extension
+            .language_server_initialization_options_schema(
+                self.language_server_id.clone(),
+                delegate,
+            )
+            .await
+            .ok()
+            .flatten();
+        json_schema.and_then(|s| serde_json::from_str(&s).ok())
+    }
+
+    async fn settings_schema(
+        self: Arc<Self>,
+        delegate: &Arc<dyn LspAdapterDelegate>,
+        _cached_binary: OwnedMutexGuard<Option<(bool, LanguageServerBinary)>>,
+        _cx: &mut AsyncApp,
+    ) -> Option<serde_json::Value> {
+        let delegate = Arc::new(WorktreeDelegateAdapter(delegate.clone())) as _;
+        let json_schema: Option<String> = self
+            .extension
+            .language_server_workspace_configuration_schema(
+                self.language_server_id.clone(),
+                delegate,
+            )
+            .await
+            .ok()
+            .flatten();
+        json_schema.and_then(|s| serde_json::from_str(&s).ok())
     }
 
     async fn additional_initialization_options(
@@ -371,16 +460,23 @@ impl LspAdapter for ExtensionLspAdapter {
 
     async fn labels_for_symbols(
         self: Arc<Self>,
-        symbols: &[(String, lsp::SymbolKind)],
+        symbols: &[language::Symbol],
         language: &Arc<Language>,
     ) -> Result<Vec<Option<CodeLabel>>> {
         let symbols = symbols
             .iter()
             .cloned()
-            .map(|(name, kind)| extension::Symbol {
-                name,
-                kind: lsp_symbol_kind_to_extension(kind),
-            })
+            .map(
+                |language::Symbol {
+                     name,
+                     kind,
+                     container_name,
+                 }| extension::Symbol {
+                    name,
+                    kind: lsp_symbol_kind_to_extension(kind),
+                    container_name,
+                },
+            )
             .collect::<Vec<_>>();
 
         let labels = self

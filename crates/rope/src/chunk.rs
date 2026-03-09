@@ -47,22 +47,64 @@ impl Chunk {
 
     #[inline(always)]
     pub fn new(text: &str) -> Self {
-        let mut this = Chunk::default();
-        this.push_str(text);
-        this
+        let text = ArrayString::from(text).unwrap();
+
+        const CHUNK_SIZE: usize = 8;
+
+        let mut chars_bytes = [0; MAX_BASE / CHUNK_SIZE];
+        let mut newlines_bytes = [0; MAX_BASE / CHUNK_SIZE];
+        let mut tabs_bytes = [0; MAX_BASE / CHUNK_SIZE];
+        let mut chars_utf16_bytes = [0; MAX_BASE / CHUNK_SIZE];
+
+        let mut chunk_ix = 0;
+
+        let mut bytes = text.as_bytes();
+        while !bytes.is_empty() {
+            let (chunk, rest) = bytes.split_at(bytes.len().min(CHUNK_SIZE));
+            bytes = rest;
+
+            let mut chars = 0;
+            let mut newlines = 0;
+            let mut tabs = 0;
+            let mut chars_utf16 = 0;
+
+            for (ix, &b) in chunk.iter().enumerate() {
+                chars |= (util::is_utf8_char_boundary(b) as u8) << ix;
+                newlines |= ((b == b'\n') as u8) << ix;
+                tabs |= ((b == b'\t') as u8) << ix;
+                // b >= 240 when we are at the first byte of the 4 byte encoded
+                // utf-8 code point (U+010000 or greater) it means that it would
+                // be encoded as two 16-bit code units in utf-16
+                chars_utf16 |= ((b >= 240) as u8) << ix;
+            }
+
+            chars_bytes[chunk_ix] = chars;
+            newlines_bytes[chunk_ix] = newlines;
+            tabs_bytes[chunk_ix] = tabs;
+            chars_utf16_bytes[chunk_ix] = chars_utf16;
+
+            chunk_ix += 1;
+        }
+
+        let chars = Bitmap::from_le_bytes(chars_bytes);
+
+        Chunk {
+            text,
+            chars,
+            chars_utf16: (Bitmap::from_le_bytes(chars_utf16_bytes) << 1) | chars,
+            newlines: Bitmap::from_le_bytes(newlines_bytes),
+            tabs: Bitmap::from_le_bytes(tabs_bytes),
+        }
     }
 
     #[inline(always)]
     pub fn push_str(&mut self, text: &str) {
-        for (char_ix, c) in text.char_indices() {
-            let ix = self.text.len() + char_ix;
-            self.chars |= 1 << ix;
-            self.chars_utf16 |= 1 << ix;
-            self.chars_utf16 |= (c.len_utf16() as Bitmap) << ix;
-            self.newlines |= ((c == '\n') as Bitmap) << ix;
-            self.tabs |= ((c == '\t') as Bitmap) << ix;
-        }
-        self.text.push_str(text);
+        self.append(Chunk::new(text).as_slice());
+    }
+
+    #[inline(always)]
+    pub fn prepend_str(&mut self, text: &str) {
+        self.prepend(Chunk::new(text).as_slice());
     }
 
     #[inline(always)]
@@ -77,6 +119,28 @@ impl Chunk {
         self.newlines |= slice.newlines << base_ix;
         self.tabs |= slice.tabs << base_ix;
         self.text.push_str(slice.text);
+    }
+
+    #[inline(always)]
+    pub fn prepend(&mut self, slice: ChunkSlice) {
+        if slice.is_empty() {
+            return;
+        }
+        if self.text.is_empty() {
+            *self = Chunk::new(slice.text);
+            return;
+        }
+
+        let shift = slice.text.len();
+        self.chars = slice.chars | (self.chars << shift);
+        self.chars_utf16 = slice.chars_utf16 | (self.chars_utf16 << shift);
+        self.newlines = slice.newlines | (self.newlines << shift);
+        self.tabs = slice.tabs | (self.tabs << shift);
+
+        let mut new_text = ArrayString::<MAX_BASE>::new();
+        new_text.push_str(slice.text);
+        new_text.push_str(&self.text);
+        self.text = new_text;
     }
 
     #[inline(always)]
@@ -100,8 +164,14 @@ impl Chunk {
         self.chars
     }
 
+    #[inline(always)]
     pub fn tabs(&self) -> Bitmap {
         self.tabs
+    }
+
+    #[inline(always)]
+    pub fn newlines(&self) -> Bitmap {
+        self.newlines
     }
 
     #[inline(always)]
@@ -131,7 +201,7 @@ impl Chunk {
         if self.is_char_boundary(offset) {
             return true;
         }
-        if PANIC {
+        if PANIC || cfg!(debug_assertions) {
             panic_char_boundary(&self.text, offset);
         } else {
             log_err_char_boundary(&self.text, offset);
@@ -220,7 +290,11 @@ impl<'a> ChunkSlice<'a> {
                 range.start = self.text.ceil_char_boundary(range.start);
             }
             if !self.assert_char_boundary::<false>(range.end) {
-                range.end = self.text.floor_char_boundary(range.end);
+                range.end = if range.end < range.start {
+                    range.start
+                } else {
+                    self.text.floor_char_boundary(range.end)
+                };
             }
             let mask = (1 as Bitmap)
                 .unbounded_shl(range.end as u32)
@@ -460,7 +534,7 @@ impl<'a> ChunkSlice<'a> {
                     self.text
                 );
             }
-            return line.len();
+            return row_offset_range.end;
         }
 
         let mut offset = row_offset_range.start;
@@ -680,13 +754,14 @@ fn panic_char_boundary(text: &str, offset: usize) -> ! {
 #[inline(never)]
 #[track_caller]
 fn log_err_char_boundary(text: &str, offset: usize) {
-    if offset > text.len() {
+    if offset >= text.len() {
         log::error!(
             "byte index {} is out of bounds of `{:?}` (length: {})",
             offset,
             text,
             text.len()
         );
+        return;
     }
     // find the character
     let char_start = text.floor_char_boundary(offset);
@@ -840,6 +915,24 @@ mod tests {
         let end_offset = char_offsets[rng.random_range(start_index..char_offsets.len())];
         chunk1.append(chunk2.slice(start_offset..end_offset));
         verify_chunk(chunk1.as_slice(), &(str1 + &str2[start_offset..end_offset]));
+    }
+
+    #[gpui::test(iterations = 1000)]
+    fn test_prepend_random_strings(mut rng: StdRng) {
+        let len1 = rng.random_range(0..=MAX_BASE);
+        let len2 = rng.random_range(0..=MAX_BASE).saturating_sub(len1);
+        let str1 = random_string_with_utf8_len(&mut rng, len1);
+        let str2 = random_string_with_utf8_len(&mut rng, len2);
+        let mut chunk1 = Chunk::new(&str1);
+        let chunk2 = Chunk::new(&str2);
+        let char_offsets = char_offsets_with_end(&str2);
+        let start_index = rng.random_range(0..char_offsets.len());
+        let start_offset = char_offsets[start_index];
+        let end_offset = char_offsets[rng.random_range(start_index..char_offsets.len())];
+        let slice = chunk2.slice(start_offset..end_offset);
+        let prefix_text = &str2[start_offset..end_offset];
+        chunk1.prepend(slice);
+        verify_chunk(chunk1.as_slice(), &(prefix_text.to_owned() + &str1));
     }
 
     /// Return the byte offsets for each character in a string.
@@ -1133,5 +1226,20 @@ mod tests {
 
         assert_eq!((max_row, max_chars as u32), (longest_row, longest_chars));
         assert_eq!(chunk.tabs().collect::<Vec<_>>(), expected_tab_positions);
+    }
+
+    #[gpui::test]
+    fn test_point_utf16_to_offset_clips_to_correct_absolute_offset() {
+        let text = "abc\nde";
+        let chunk = Chunk::new(text);
+        let slice = chunk.as_slice();
+
+        // Clipping on row 0 (row_offset_range.start == 0, so relative == absolute)
+        assert_eq!(slice.point_utf16_to_offset(PointUtf16::new(0, 99), true), 3,);
+
+        // Clipping on row 1 — this is the case that was buggy.
+        // Row 1 starts at byte offset 4 ("de" is bytes 4..6), so the
+        // clipped result must be 6, not 2.
+        assert_eq!(slice.point_utf16_to_offset(PointUtf16::new(1, 99), true), 6,);
     }
 }

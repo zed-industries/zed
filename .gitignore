@@ -8,6 +8,7 @@
 .DS_Store
 .blob_store
 .build
+.claude/settings.local.json
 .envrc
 .flatpak-builder
 .idea
@@ -35,7 +36,20 @@
 DerivedData/
 Packages
 xcuserdata/
+crates/docs_preprocessor/actions.json
 
 # Don't commit any secrets to the repo.
 .env
 .env.secret.toml
+
+# `nix build` output
+/result
+
+# Visual test baseline images (these will be stored outside
+# the repo in the future, but we don't haven't decided exactly
+# where yet, so for now they get generated into a gitignored dir.)
+/crates/zed/test_fixtures/visual_tests/
+
+# Local documentation audit files
+/december-2025-releases.md
+/docs/december-2025-documentation-gaps.md

@@ -13,7 +13,7 @@ pub use derive_refineable::Refineable;
 /// wrapped appropriately:
 ///
 /// - **Refineable fields** (marked with `#[refineable]`): Become the corresponding refinement type
-///   (e.g., `Bar` becomes `BarRefinement`)
+///   (e.g., `Bar` becomes `BarRefinement`, or `BarRefinement` remains `BarRefinement`)
 /// - **Optional fields** (`Option<T>`): Remain as `Option<T>`
 /// - **Regular fields**: Become `Option<T>`
 ///

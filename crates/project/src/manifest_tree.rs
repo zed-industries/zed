@@ -4,7 +4,7 @@
 //! This then is used to provide those locations to language servers & determine locations eligible for toolchain selection.
 
 mod manifest_store;
-mod path_trie;
+pub mod path_trie;
 mod server_tree;
 
 use std::{borrow::Borrow, collections::hash_map::Entry, ops::ControlFlow, sync::Arc};

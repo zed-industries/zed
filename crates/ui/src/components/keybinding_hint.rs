@@ -234,9 +234,7 @@ impl RenderOnce for KeybindingHint {
 
         let mut base = h_flex();
 
-        base.text_style()
-            .get_or_insert_with(Default::default)
-            .font_style = Some(FontStyle::Italic);
+        base.text_style().font_style = Some(FontStyle::Italic);
 
         base.gap_1()
             .font_buffer(cx)

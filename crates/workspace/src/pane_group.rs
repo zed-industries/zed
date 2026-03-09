@@ -1,10 +1,10 @@
 use crate::{
-    AppState, CollaboratorId, FollowerState, Pane, Workspace, WorkspaceSettings,
+    AnyActiveCall, AppState, CollaboratorId, FollowerState, Pane, ParticipantLocation, Workspace,
+    WorkspaceSettings,
     pane_group::element::pane_axis,
     workspace_settings::{PaneSplitDirectionHorizontal, PaneSplitDirectionVertical},
 };
 use anyhow::Result;
-use call::{ActiveCall, ParticipantLocation};
 use collections::HashMap;
 use gpui::{
     Along, AnyView, AnyWeakView, Axis, Bounds, Entity, Hsla, IntoElement, MouseButton, Pixels,
@@ -28,6 +28,7 @@ const VERTICAL_MIN_SIZE: f32 = 100.;
 #[derive(Clone)]
 pub struct PaneGroup {
     pub root: Member,
+    pub is_center: bool,
 }
 
 pub struct PaneRenderResult {
@@ -37,13 +38,21 @@ pub struct PaneRenderResult {
 
 impl PaneGroup {
     pub fn with_root(root: Member) -> Self {
-        Self { root }
+        Self {
+            root,
+            is_center: false,
+        }
     }
 
     pub fn new(pane: Entity<Pane>) -> Self {
         Self {
             root: Member::Pane(pane),
+            is_center: false,
         }
+    }
+
+    pub fn set_is_center(&mut self, is_center: bool) {
+        self.is_center = is_center;
     }
 
     pub fn split(
@@ -51,18 +60,34 @@ impl PaneGroup {
         old_pane: &Entity<Pane>,
         new_pane: &Entity<Pane>,
         direction: SplitDirection,
-    ) -> Result<()> {
-        match &mut self.root {
+        cx: &mut App,
+    ) {
+        let found = match &mut self.root {
             Member::Pane(pane) => {
                 if pane == old_pane {
                     self.root = Member::new_axis(old_pane.clone(), new_pane.clone(), direction);
-                    Ok(())
+                    true
                 } else {
-                    anyhow::bail!("Pane not found");
+                    false
                 }
             }
             Member::Axis(axis) => axis.split(old_pane, new_pane, direction),
+        };
+
+        // If the pane wasn't found, fall back to splitting the first pane in the tree.
+        if !found {
+            let first_pane = self.root.first_pane();
+            match &mut self.root {
+                Member::Pane(_) => {
+                    self.root = Member::new_axis(first_pane, new_pane.clone(), direction);
+                }
+                Member::Axis(axis) => {
+                    let _ = axis.split(&first_pane, new_pane, direction);
+                }
+            }
         }
+
+        self.mark_positions(cx);
     }
 
     pub fn bounding_box_for_pane(&self, pane: &Entity<Pane>) -> Option<Bounds<Pixels>> {
@@ -90,6 +115,7 @@ impl PaneGroup {
         &mut self,
         active_pane: &Entity<Pane>,
         direction: SplitDirection,
+        cx: &mut App,
     ) -> Result<bool> {
         if let Some(pane) = self.find_pane_at_border(direction)
             && pane == active_pane
@@ -97,7 +123,7 @@ impl PaneGroup {
             return Ok(false);
         }
 
-        if !self.remove(active_pane)? {
+        if !self.remove_internal(active_pane)? {
             return Ok(false);
         }
 
@@ -110,6 +136,7 @@ impl PaneGroup {
                 0
             };
             root.insert_pane(idx, active_pane);
+            self.mark_positions(cx);
             return Ok(true);
         }
 
@@ -119,6 +146,7 @@ impl PaneGroup {
             vec![Member::Pane(active_pane.clone()), self.root.clone()]
         };
         self.root = Member::Axis(PaneAxis::new(direction.axis(), members));
+        self.mark_positions(cx);
         Ok(true)
     }
 
@@ -133,7 +161,15 @@ impl PaneGroup {
     /// - Ok(true) if it found and removed a pane
     /// - Ok(false) if it found but did not remove the pane
     /// - Err(_) if it did not find the pane
-    pub fn remove(&mut self, pane: &Entity<Pane>) -> Result<bool> {
+    pub fn remove(&mut self, pane: &Entity<Pane>, cx: &mut App) -> Result<bool> {
+        let result = self.remove_internal(pane);
+        if let Ok(true) = result {
+            self.mark_positions(cx);
+        }
+        result
+    }
+
+    fn remove_internal(&mut self, pane: &Entity<Pane>) -> Result<bool> {
         match &mut self.root {
             Member::Pane(_) => Ok(false),
             Member::Axis(axis) => {
@@ -151,6 +187,7 @@ impl PaneGroup {
         direction: Axis,
         amount: Pixels,
         bounds: &Bounds<Pixels>,
+        cx: &mut App,
     ) {
         match &mut self.root {
             Member::Pane(_) => {}
@@ -158,22 +195,29 @@ impl PaneGroup {
                 let _ = axis.resize(pane, direction, amount, bounds);
             }
         };
+        self.mark_positions(cx);
     }
 
-    pub fn reset_pane_sizes(&mut self) {
+    pub fn reset_pane_sizes(&mut self, cx: &mut App) {
         match &mut self.root {
             Member::Pane(_) => {}
             Member::Axis(axis) => {
                 let _ = axis.reset_pane_sizes();
             }
         };
+        self.mark_positions(cx);
     }
 
-    pub fn swap(&mut self, from: &Entity<Pane>, to: &Entity<Pane>) {
+    pub fn swap(&mut self, from: &Entity<Pane>, to: &Entity<Pane>, cx: &mut App) {
         match &mut self.root {
             Member::Pane(_) => {}
             Member::Axis(axis) => axis.swap(from, to),
         };
+        self.mark_positions(cx);
+    }
+
+    pub fn mark_positions(&mut self, cx: &mut App) {
+        self.root.mark_positions(self.is_center, cx);
     }
 
     pub fn render(
@@ -232,8 +276,9 @@ impl PaneGroup {
         self.pane_at_pixel_position(target)
     }
 
-    pub fn invert_axies(&mut self) {
+    pub fn invert_axies(&mut self, cx: &mut App) {
         self.root.invert_pane_axies();
+        self.mark_positions(cx);
     }
 }
 
@@ -243,11 +288,26 @@ pub enum Member {
     Pane(Entity<Pane>),
 }
 
+impl Member {
+    pub fn mark_positions(&mut self, in_center_group: bool, cx: &mut App) {
+        match self {
+            Member::Axis(pane_axis) => {
+                for member in pane_axis.members.iter_mut() {
+                    member.mark_positions(in_center_group, cx);
+                }
+            }
+            Member::Pane(entity) => entity.update(cx, |pane, _| {
+                pane.in_center_group = in_center_group;
+            }),
+        }
+    }
+}
+
 #[derive(Clone, Copy)]
 pub struct PaneRenderContext<'a> {
     pub project: &'a Entity<Project>,
     pub follower_states: &'a HashMap<CollaboratorId, FollowerState>,
-    pub active_call: Option<&'a Entity<ActiveCall>>,
+    pub active_call: Option<&'a dyn AnyActiveCall>,
     pub active_pane: &'a Entity<Pane>,
     pub app_state: &'a Arc<AppState>,
     pub workspace: &'a WeakEntity<Workspace>,
@@ -309,10 +369,11 @@ impl PaneLeaderDecorator for PaneRenderContext<'_> {
         let status_box;
         match leader_id {
             CollaboratorId::PeerId(peer_id) => {
-                let Some(leader) = self.active_call.as_ref().and_then(|call| {
-                    let room = call.read(cx).room()?.read(cx);
-                    room.remote_participant_for_peer_id(peer_id)
-                }) else {
+                let Some(leader) = self
+                    .active_call
+                    .as_ref()
+                    .and_then(|call| call.remote_participant_for_peer_id(peer_id, cx))
+                else {
                     return LeaderDecoration::default();
                 };
 
@@ -562,12 +623,12 @@ impl PaneAxis {
         old_pane: &Entity<Pane>,
         new_pane: &Entity<Pane>,
         direction: SplitDirection,
-    ) -> Result<()> {
+    ) -> bool {
         for (mut idx, member) in self.members.iter_mut().enumerate() {
             match member {
                 Member::Axis(axis) => {
-                    if axis.split(old_pane, new_pane, direction).is_ok() {
-                        return Ok(());
+                    if axis.split(old_pane, new_pane, direction) {
+                        return true;
                     }
                 }
                 Member::Pane(pane) => {
@@ -581,12 +642,12 @@ impl PaneAxis {
                             *member =
                                 Member::new_axis(old_pane.clone(), new_pane.clone(), direction);
                         }
-                        return Ok(());
+                        return true;
                     }
                 }
             }
         }
-        anyhow::bail!("Pane not found");
+        false
     }
 
     fn insert_pane(&mut self, idx: usize, new_pane: &Entity<Pane>) {
@@ -961,6 +1022,15 @@ impl SplitDirection {
         match self {
             Self::Left | Self::Up => false,
             Self::Down | Self::Right => true,
+        }
+    }
+
+    pub fn opposite(&self) -> SplitDirection {
+        match self {
+            Self::Down => Self::Up,
+            Self::Up => Self::Down,
+            Self::Left => Self::Right,
+            Self::Right => Self::Left,
         }
     }
 }

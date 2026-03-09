@@ -1,4 +1,5 @@
-use gh_workflow::{Event, Expression, Job, Run, Schedule, Step, Use, Workflow, WorkflowDispatch};
+use gh_workflow::{Event, Expression, Job, Run, Step, Strategy, Use, Workflow, WorkflowDispatch};
+use serde_json::json;
 
 use crate::tasks::workflows::{
     runners::{self, Platform},
@@ -73,8 +74,10 @@ fn agent_evals() -> NamedJob {
             .add_step(steps::cache_rust_dependencies_namespace())
             .map(steps::install_linux_dependencies)
             .add_step(setup_cargo_config(Platform::Linux))
+            .add_step(steps::setup_sccache(Platform::Linux))
             .add_step(steps::script("cargo build --package=eval"))
             .add_step(add_api_keys(run_eval()))
+            .add_step(steps::show_sccache_stats(Platform::Linux))
             .add_step(steps::cleanup_cargo_config(Platform::Linux)),
     )
 }
@@ -85,10 +88,10 @@ pub(crate) fn run_cron_unit_evals() -> Workflow {
     named::workflow()
         .name("run_cron_unit_evals")
         .on(Event::default()
-            .schedule([
-                // GitHub might drop jobs at busy times, so we choose a random time in the middle of the night.
-                Schedule::default().cron("47 1 * * 2"),
-            ])
+            // .schedule([
+            //     // GitHub might drop jobs at busy times, so we choose a random time in the middle of the night.
+            //     Schedule::default().cron("47 1 * * 2"),
+            // ])
             .workflow_dispatch(WorkflowDispatch::default()))
         .concurrency(vars::one_workflow_per_non_main_branch())
         .add_env(("CARGO_TERM_COLOR", "always"))
@@ -114,7 +117,35 @@ fn cron_unit_evals() -> NamedJob {
         "#}))
     }
 
-    named::job(unit_evals(None).add_step(send_failure_to_slack()))
+    named::job(cron_unit_evals_job().add_step(send_failure_to_slack()))
+}
+
+const UNIT_EVAL_MODELS: &[&str] = &[
+    "anthropic/claude-sonnet-4-5-latest",
+    "anthropic/claude-opus-4-5-latest",
+    "google/gemini-3.1-pro",
+    "openai/gpt-5",
+];
+
+fn cron_unit_evals_job() -> Job {
+    let script_step = add_api_keys(steps::script("./script/run-unit-evals"))
+        .add_env(("ZED_AGENT_MODEL", "${{ matrix.model }}"));
+
+    Job::default()
+        .runs_on(runners::LINUX_DEFAULT)
+        .strategy(Strategy::default().fail_fast(false).matrix(json!({
+            "model": UNIT_EVAL_MODELS
+        })))
+        .add_step(steps::checkout_repo())
+        .add_step(steps::setup_cargo_config(Platform::Linux))
+        .add_step(steps::cache_rust_dependencies_namespace())
+        .map(steps::install_linux_dependencies)
+        .add_step(steps::cargo_install_nextest())
+        .add_step(steps::clear_target_dir_if_large(Platform::Linux))
+        .add_step(steps::setup_sccache(Platform::Linux))
+        .add_step(script_step)
+        .add_step(steps::show_sccache_stats(Platform::Linux))
+        .add_step(steps::cleanup_cargo_config(Platform::Linux))
 }
 
 fn unit_evals(commit: Option<&WorkflowInput>) -> Job {
@@ -128,9 +159,11 @@ fn unit_evals(commit: Option<&WorkflowInput>) -> Job {
         .map(steps::install_linux_dependencies)
         .add_step(steps::cargo_install_nextest())
         .add_step(steps::clear_target_dir_if_large(Platform::Linux))
+        .add_step(steps::setup_sccache(Platform::Linux))
         .add_step(match commit {
             Some(commit) => script_step.add_env(("UNIT_EVAL_COMMIT", commit)),
             None => script_step,
         })
+        .add_step(steps::show_sccache_stats(Platform::Linux))
         .add_step(steps::cleanup_cargo_config(Platform::Linux))
 }

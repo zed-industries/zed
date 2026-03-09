@@ -219,9 +219,9 @@ impl FeatureFlagAppExt for App {
     fn wait_for_flag_or_timeout<T: FeatureFlag>(&mut self, timeout: Duration) -> Task<bool> {
         let wait_for_flag = self.wait_for_flag::<T>();
 
-        self.spawn(async move |_cx| {
+        self.spawn(async move |cx| {
             let mut wait_for_flag = wait_for_flag.fuse();
-            let mut timeout = FutureExt::fuse(smol::Timer::after(timeout));
+            let mut timeout = FutureExt::fuse(cx.background_executor().timer(timeout));
 
             select_biased! {
                 is_enabled = wait_for_flag => is_enabled,

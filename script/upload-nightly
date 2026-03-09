@@ -4,7 +4,7 @@ bash -euo pipefail
 source script/lib/blob-store.sh
 
 bucket_name="zed-nightly-host"
-version=$(./script/get-crate-version zed)-"${GITHUB_RUN_NUMBER}+${GITHUB_SHA}"
+version=$(./script/get-crate-version zed)+nightly."${GITHUB_RUN_NUMBER}.${GITHUB_SHA}"
 
 for file_to_upload in ./release-artifacts/*; do
     [ -f "$file_to_upload" ] || continue

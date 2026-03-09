@@ -7,6 +7,7 @@ use std::{
 use bytes::Bytes;
 use futures::AsyncRead;
 use http_body::{Body, Frame};
+use serde::Serialize;
 
 /// Based on the implementation of AsyncBody in
 /// <https://github.com/sagebind/isahc/blob/5c533f1ef4d6bdf1fd291b5103c22110f41d0bf0/src/body/mod.rs>.
@@ -88,14 +89,16 @@ impl From<&'static str> for AsyncBody {
     }
 }
 
-impl TryFrom<reqwest::Body> for AsyncBody {
-    type Error = anyhow::Error;
+/// Newtype wrapper that serializes a value as JSON into an `AsyncBody`.
+pub struct Json<T: Serialize>(pub T);
 
-    fn try_from(value: reqwest::Body) -> Result<Self, Self::Error> {
-        value
-            .as_bytes()
-            .ok_or_else(|| anyhow::anyhow!("Underlying data is a stream"))
-            .map(|bytes| Self::from_bytes(Bytes::copy_from_slice(bytes)))
+impl<T: Serialize> From<Json<T>> for AsyncBody {
+    fn from(json: Json<T>) -> Self {
+        Self::from_bytes(
+            serde_json::to_vec(&json.0)
+                .expect("failed to serialize JSON")
+                .into(),
+        )
     }
 }
 

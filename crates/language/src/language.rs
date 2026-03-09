@@ -23,7 +23,7 @@ mod toolchain;
 pub mod buffer_tests;
 
 use crate::language_settings::SoftWrap;
-pub use crate::language_settings::{EditPredictionsMode, IndentGuideSettings};
+pub use crate::language_settings::{AutoIndentMode, EditPredictionsMode, IndentGuideSettings};
 use anyhow::{Context as _, Result};
 use async_trait::async_trait;
 use collections::{HashMap, HashSet, IndexSet};
@@ -43,6 +43,7 @@ pub use manifest::{ManifestDelegate, ManifestName, ManifestProvider, ManifestQue
 use parking_lot::Mutex;
 use regex::Regex;
 use schemars::{JsonSchema, SchemaGenerator, json_schema};
+use semver::Version;
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
 use serde_json::Value;
 use settings::WorktreeId;
@@ -65,7 +66,9 @@ use syntax_map::{QueryCursorHandle, SyntaxSnapshot};
 use task::RunnableTag;
 pub use task_context::{ContextLocation, ContextProvider, RunnableRange};
 pub use text_diff::{
-    DiffOptions, apply_diff_patch, line_diff, text_diff, text_diff_with_options, unified_diff,
+    DiffOptions, apply_diff_patch, apply_reversed_diff_patch, char_diff, line_diff, text_diff,
+    text_diff_with_options, unified_diff, unified_diff_with_context, unified_diff_with_offsets,
+    word_diff_ranges,
 };
 use theme::SyntaxTheme;
 pub use toolchain::{
@@ -94,6 +97,7 @@ pub use tree_sitter::{Node, Parser, Tree, TreeCursor};
 static QUERY_CURSORS: Mutex<Vec<QueryCursor>> = Mutex::new(vec![]);
 static PARSERS: Mutex<Vec<Parser>> = Mutex::new(vec![]);
 
+#[ztracing::instrument(skip_all)]
 pub fn with_parser<F, R>(func: F) -> R
 where
     F: FnOnce(&mut Parser) -> R,
@@ -135,6 +139,46 @@ pub static PLAIN_TEXT: LazyLock<Arc<Language>> = LazyLock::new(|| {
                 path_suffixes: vec!["txt".to_owned()],
                 first_line_pattern: None,
             },
+            brackets: BracketPairConfig {
+                pairs: vec![
+                    BracketPair {
+                        start: "(".to_string(),
+                        end: ")".to_string(),
+                        close: true,
+                        surround: true,
+                        newline: false,
+                    },
+                    BracketPair {
+                        start: "[".to_string(),
+                        end: "]".to_string(),
+                        close: true,
+                        surround: true,
+                        newline: false,
+                    },
+                    BracketPair {
+                        start: "{".to_string(),
+                        end: "}".to_string(),
+                        close: true,
+                        surround: true,
+                        newline: false,
+                    },
+                    BracketPair {
+                        start: "\"".to_string(),
+                        end: "\"".to_string(),
+                        close: true,
+                        surround: true,
+                        newline: false,
+                    },
+                    BracketPair {
+                        start: "'".to_string(),
+                        end: "'".to_string(),
+                        close: true,
+                        surround: true,
+                        newline: false,
+                    },
+                ],
+                disabled_scopes_by_bracket_ix: Default::default(),
+            },
             ..Default::default()
         },
         None,
@@ -152,6 +196,13 @@ pub trait ToLspPosition {
 pub struct Location {
     pub buffer: Entity<Buffer>,
     pub range: Range<Anchor>,
+}
+
+#[derive(Debug, Clone)]
+pub struct Symbol {
+    pub name: String,
+    pub kind: lsp::SymbolKind,
+    pub container_name: Option<String>,
 }
 
 type ServerBinaryCache = futures::lock::Mutex<Option<(bool, LanguageServerBinary)>>;
@@ -273,7 +324,7 @@ impl CachedLspAdapter {
 
     pub async fn labels_for_symbols(
         &self,
-        symbols: &[(String, lsp::SymbolKind)],
+        symbols: &[Symbol],
         language: &Arc<Language>,
     ) -> Result<Vec<Option<CodeLabel>>> {
         self.adapter
@@ -288,6 +339,36 @@ impl CachedLspAdapter {
             .cloned()
             .unwrap_or_else(|| language_name.lsp_id())
     }
+
+    pub async fn initialization_options_schema(
+        &self,
+        delegate: &Arc<dyn LspAdapterDelegate>,
+        cx: &mut AsyncApp,
+    ) -> Option<serde_json::Value> {
+        self.adapter
+            .clone()
+            .initialization_options_schema(
+                delegate,
+                self.cached_binary.clone().lock_owned().await,
+                cx,
+            )
+            .await
+    }
+
+    pub async fn settings_schema(
+        &self,
+        delegate: &Arc<dyn LspAdapterDelegate>,
+        cx: &mut AsyncApp,
+    ) -> Option<serde_json::Value> {
+        self.adapter
+            .clone()
+            .settings_schema(delegate, self.cached_binary.clone().lock_owned().await, cx)
+            .await
+    }
+
+    pub fn process_prompt_response(&self, context: &PromptResponseContext, cx: &mut AsyncApp) {
+        self.adapter.process_prompt_response(context, cx)
+    }
 }
 
 /// [`LspAdapterDelegate`] allows [`LspAdapter]` implementations to interface with the application
@@ -298,7 +379,7 @@ pub trait LspAdapterDelegate: Send + Sync {
     fn http_client(&self) -> Arc<dyn HttpClient>;
     fn worktree_id(&self) -> WorktreeId;
     fn worktree_root_path(&self) -> &Path;
-    fn resolve_executable_path(&self, path: PathBuf) -> PathBuf;
+    fn resolve_relative_path(&self, path: PathBuf) -> PathBuf;
     fn update_status(&self, language: LanguageServerName, status: BinaryStatus);
     fn registered_lsp_adapters(&self) -> Vec<Arc<dyn LspAdapter>>;
     async fn language_server_download_dir(&self, name: &LanguageServerName) -> Option<Arc<Path>>;
@@ -306,11 +387,22 @@ pub trait LspAdapterDelegate: Send + Sync {
     async fn npm_package_installed_version(
         &self,
         package_name: &str,
-    ) -> Result<Option<(PathBuf, String)>>;
+    ) -> Result<Option<(PathBuf, Version)>>;
     async fn which(&self, command: &OsStr) -> Option<PathBuf>;
     async fn shell_env(&self) -> HashMap<String, String>;
     async fn read_text_file(&self, path: &RelPath) -> Result<String>;
     async fn try_exec(&self, binary: LanguageServerBinary) -> Result<()>;
+}
+
+/// Context provided to LSP adapters when a user responds to a ShowMessageRequest prompt.
+/// This allows adapters to intercept preference selections (like "Always" or "Never")
+/// and potentially persist them to Zed's settings.
+#[derive(Debug, Clone)]
+pub struct PromptResponseContext {
+    /// The original message shown to the user
+    pub message: String,
+    /// The action (button) the user selected
+    pub selected_action: lsp::MessageActionItem,
 }
 
 #[async_trait(?Send)]
@@ -373,12 +465,12 @@ pub trait LspAdapter: 'static + Send + Sync + DynLspInstaller {
 
     async fn labels_for_symbols(
         self: Arc<Self>,
-        symbols: &[(String, lsp::SymbolKind)],
+        symbols: &[Symbol],
         language: &Arc<Language>,
     ) -> Result<Vec<Option<CodeLabel>>> {
         let mut labels = Vec::new();
-        for (ix, (name, kind)) in symbols.iter().enumerate() {
-            let label = self.label_for_symbol(name, *kind, language).await;
+        for (ix, symbol) in symbols.iter().enumerate() {
+            let label = self.label_for_symbol(symbol, language).await;
             if let Some(label) = label {
                 labels.resize(ix + 1, None);
                 *labels.last_mut().unwrap() = Some(label);
@@ -389,9 +481,8 @@ pub trait LspAdapter: 'static + Send + Sync + DynLspInstaller {
 
     async fn label_for_symbol(
         &self,
-        _: &str,
-        _: lsp::SymbolKind,
-        _: &Arc<Language>,
+        _symbol: &Symbol,
+        _language: &Arc<Language>,
     ) -> Option<CodeLabel> {
         None
     }
@@ -400,8 +491,31 @@ pub trait LspAdapter: 'static + Send + Sync + DynLspInstaller {
     async fn initialization_options(
         self: Arc<Self>,
         _: &Arc<dyn LspAdapterDelegate>,
+        _cx: &mut AsyncApp,
     ) -> Result<Option<Value>> {
         Ok(None)
+    }
+
+    /// Returns the JSON schema of the initialization_options for the language server.
+    async fn initialization_options_schema(
+        self: Arc<Self>,
+        _delegate: &Arc<dyn LspAdapterDelegate>,
+        _cached_binary: OwnedMutexGuard<Option<(bool, LanguageServerBinary)>>,
+        _cx: &mut AsyncApp,
+    ) -> Option<serde_json::Value> {
+        None
+    }
+
+    /// Returns the JSON schema of the settings for the language server.
+    /// This corresponds to the `settings` field in `LspSettings`, which is used
+    /// to respond to `workspace/configuration` requests from the language server.
+    async fn settings_schema(
+        self: Arc<Self>,
+        _delegate: &Arc<dyn LspAdapterDelegate>,
+        _cached_binary: OwnedMutexGuard<Option<(bool, LanguageServerBinary)>>,
+        _cx: &mut AsyncApp,
+    ) -> Option<serde_json::Value> {
+        None
     }
 
     async fn workspace_configuration(
@@ -469,6 +583,11 @@ pub trait LspAdapter: 'static + Send + Sync + DynLspInstaller {
     fn is_extension(&self) -> bool {
         false
     }
+
+    /// Called when a user responds to a ShowMessageRequest from this language server.
+    /// This allows adapters to intercept preference selections (like "Always" or "Never")
+    /// for settings that should be persisted to Zed's settings file.
+    fn process_prompt_response(&self, _context: &PromptResponseContext, _cx: &mut AsyncApp) {}
 }
 
 pub trait LspInstaller {
@@ -494,7 +613,7 @@ pub trait LspInstaller {
         _version: &Self::BinaryVersion,
         _container_dir: &PathBuf,
         _delegate: &dyn LspAdapterDelegate,
-    ) -> impl Future<Output = Option<LanguageServerBinary>> {
+    ) -> impl Send + Future<Output = Option<LanguageServerBinary>> {
         async { None }
     }
 
@@ -503,7 +622,7 @@ pub trait LspInstaller {
         latest_version: Self::BinaryVersion,
         container_dir: PathBuf,
         delegate: &dyn LspAdapterDelegate,
-    ) -> impl Future<Output = Result<LanguageServerBinary>>;
+    ) -> impl Send + Future<Output = Result<LanguageServerBinary>>;
 
     fn cached_server_binary(
         &self,
@@ -521,6 +640,7 @@ pub trait DynLspInstaller {
         pre_release: bool,
         cx: &mut AsyncApp,
     ) -> Result<LanguageServerBinary>;
+
     fn get_language_server_command(
         self: Arc<Self>,
         delegate: Arc<dyn LspAdapterDelegate>,
@@ -534,6 +654,7 @@ pub trait DynLspInstaller {
 #[async_trait(?Send)]
 impl<LI, BinaryVersion> DynLspInstaller for LI
 where
+    BinaryVersion: Send + Sync,
     LI: LspInstaller<BinaryVersion = BinaryVersion> + LspAdapter,
 {
     async fn try_fetch_server_binary(
@@ -552,8 +673,13 @@ where
             .fetch_latest_server_version(delegate.as_ref(), pre_release, cx)
             .await?;
 
-        if let Some(binary) = self
-            .check_if_version_installed(&latest_version, &container_dir, delegate.as_ref())
+        if let Some(binary) = cx
+            .background_executor()
+            .await_on_background(self.check_if_version_installed(
+                &latest_version,
+                &container_dir,
+                delegate.as_ref(),
+            ))
             .await
         {
             log::debug!("language server {:?} is already installed", name.0);
@@ -562,8 +688,13 @@ where
         } else {
             log::debug!("downloading language server {:?}", name.0);
             delegate.update_status(name.clone(), BinaryStatus::Downloading);
-            let binary = self
-                .fetch_server_binary(latest_version, container_dir, delegate.as_ref())
+            let binary = cx
+                .background_executor()
+                .await_on_background(self.fetch_server_binary(
+                    latest_version,
+                    container_dir,
+                    delegate.as_ref(),
+                ))
                 .await;
 
             delegate.update_status(name.clone(), BinaryStatus::None);
@@ -605,17 +736,17 @@ where
                 return (Ok(binary), None);
             }
 
+            if let Some((pre_release, cached_binary)) = cached_binary_deref
+                && *pre_release == binary_options.pre_release
+            {
+                return (Ok(cached_binary.clone()), None);
+            }
+
             if !binary_options.allow_binary_download {
                 return (
                     Err(anyhow::anyhow!("downloading language servers disabled")),
                     None,
                 );
-            }
-
-            if let Some((pre_release, cached_binary)) = cached_binary_deref
-                && *pre_release == binary_options.pre_release
-            {
-                return (Ok(cached_binary.clone()), None);
             }
 
             let Some(container_dir) = delegate.language_server_download_dir(&self.name()).await
@@ -704,6 +835,11 @@ pub struct LanguageConfig {
     pub name: LanguageName,
     /// The name of this language for a Markdown code fence block
     pub code_fence_block_name: Option<Arc<str>>,
+    /// Alternative language names that Jupyter kernels may report for this language.
+    /// Used when a kernel's `language` field differs from Zed's language name.
+    /// For example, the Nu extension would set this to `["nushell"]`.
+    #[serde(default)]
+    pub kernel_language_names: Vec<Arc<str>>,
     // The name of the grammar in a WASM bundle (experimental).
     pub grammar: Option<Arc<str>>,
     /// The criteria for matching this language to a given file.
@@ -754,6 +890,15 @@ pub struct LanguageConfig {
     /// Delimiters and configuration for recognizing and formatting documentation comments.
     #[serde(default, alias = "documentation")]
     pub documentation_comment: Option<BlockCommentConfig>,
+    /// List markers that are inserted unchanged on newline (e.g., `- `, `* `, `+ `).
+    #[serde(default)]
+    pub unordered_list: Vec<Arc<str>>,
+    /// Configuration for ordered lists with auto-incrementing numbers on newline (e.g., `1. ` becomes `2. `).
+    #[serde(default)]
+    pub ordered_list: Vec<OrderedListConfig>,
+    /// Configuration for task lists where multiple markers map to a single continuation prefix (e.g., `- [x] ` continues as `- [ ] `).
+    #[serde(default)]
+    pub task_list: Option<TaskListConfig>,
     /// A list of additional regex patterns that should be treated as prefixes
     /// for creating boundaries during rewrapping, ensuring content from one
     /// prefixed section doesn't merge with another (e.g., markdown list items).
@@ -823,6 +968,24 @@ pub struct DecreaseIndentConfig {
     pub pattern: Option<Regex>,
     #[serde(default)]
     pub valid_after: Vec<String>,
+}
+
+/// Configuration for continuing ordered lists with auto-incrementing numbers.
+#[derive(Clone, Debug, Deserialize, JsonSchema)]
+pub struct OrderedListConfig {
+    /// A regex pattern with a capture group for the number portion (e.g., `(\\d+)\\. `).
+    pub pattern: String,
+    /// A format string where `{1}` is replaced with the incremented number (e.g., `{1}. `).
+    pub format: String,
+}
+
+/// Configuration for continuing task lists on newline.
+#[derive(Clone, Debug, Deserialize, JsonSchema)]
+pub struct TaskListConfig {
+    /// The list markers to match (e.g., `- [ ] `, `- [x] `).
+    pub prefixes: Vec<Arc<str>>,
+    /// The marker to insert when continuing the list on a new line (e.g., `- [ ] `).
+    pub continuation: Arc<str>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, Default, JsonSchema)]
@@ -981,8 +1144,9 @@ impl<T> Override<T> {
 impl Default for LanguageConfig {
     fn default() -> Self {
         Self {
-            name: LanguageName::new(""),
+            name: LanguageName::new_static(""),
             code_fence_block_name: None,
+            kernel_language_names: Default::default(),
             grammar: None,
             matcher: LanguageMatcher::default(),
             brackets: Default::default(),
@@ -995,6 +1159,9 @@ impl Default for LanguageConfig {
             line_comments: Default::default(),
             block_comment: Default::default(),
             documentation_comment: Default::default(),
+            unordered_list: Default::default(),
+            ordered_list: Default::default(),
+            task_list: Default::default(),
             rewrap_prefixes: Default::default(),
             scope_opt_in_language_servers: Default::default(),
             overrides: Default::default(),
@@ -1197,7 +1364,6 @@ pub struct Grammar {
     pub(crate) indents_config: Option<IndentConfig>,
     pub outline_config: Option<OutlineConfig>,
     pub text_object_config: Option<TextObjectConfig>,
-    pub embedding_config: Option<EmbeddingConfig>,
     pub(crate) injection_config: Option<InjectionConfig>,
     pub(crate) override_config: Option<OverrideConfig>,
     pub(crate) debug_variables_config: Option<DebugVariablesConfig>,
@@ -1282,16 +1448,6 @@ impl TextObject {
 pub struct TextObjectConfig {
     pub query: Query,
     pub text_objects_by_capture_ix: Vec<(u32, TextObject)>,
-}
-
-#[derive(Debug)]
-pub struct EmbeddingConfig {
-    pub query: Query,
-    pub item_capture_ix: u32,
-    pub name_capture_ix: Option<u32>,
-    pub context_capture_ix: Option<u32>,
-    pub collapse_capture_ix: Option<u32>,
-    pub keep_capture_ix: Option<u32>,
 }
 
 struct InjectionConfig {
@@ -1390,7 +1546,6 @@ impl Language {
                     brackets_config: None,
                     outline_config: None,
                     text_object_config: None,
-                    embedding_config: None,
                     indents_config: None,
                     injection_config: None,
                     override_config: None,
@@ -1444,11 +1599,6 @@ impl Language {
             self = self
                 .with_outline_query(query.as_ref())
                 .context("Error loading outline query")?;
-        }
-        if let Some(query) = queries.embedding {
-            self = self
-                .with_embedding_query(query.as_ref())
-                .context("Error loading embedding query")?;
         }
         if let Some(query) = queries.injections {
             self = self
@@ -1595,38 +1745,6 @@ impl Language {
             query,
             text_objects_by_capture_ix,
         });
-        Ok(self)
-    }
-
-    pub fn with_embedding_query(mut self, source: &str) -> Result<Self> {
-        let query = Query::new(&self.expect_grammar()?.ts_language, source)?;
-        let mut item_capture_ix = 0;
-        let mut name_capture_ix = None;
-        let mut context_capture_ix = None;
-        let mut collapse_capture_ix = None;
-        let mut keep_capture_ix = None;
-        if populate_capture_indices(
-            &query,
-            &self.config.name,
-            "embedding",
-            &[],
-            &mut [
-                Capture::Required("item", &mut item_capture_ix),
-                Capture::Optional("name", &mut name_capture_ix),
-                Capture::Optional("context", &mut context_capture_ix),
-                Capture::Optional("keep", &mut keep_capture_ix),
-                Capture::Optional("collapse", &mut collapse_capture_ix),
-            ],
-        ) {
-            self.grammar_mut()?.embedding_config = Some(EmbeddingConfig {
-                query,
-                item_capture_ix,
-                name_capture_ix,
-                context_capture_ix,
-                collapse_capture_ix,
-                keep_capture_ix,
-            });
-        }
         Ok(self)
     }
 
@@ -1963,6 +2081,23 @@ impl Language {
             .unwrap_or_else(|| self.config.name.as_ref().to_lowercase().into())
     }
 
+    pub fn matches_kernel_language(&self, kernel_language: &str) -> bool {
+        let kernel_language_lower = kernel_language.to_lowercase();
+
+        if self.code_fence_block_name().to_lowercase() == kernel_language_lower {
+            return true;
+        }
+
+        if self.config.name.as_ref().to_lowercase() == kernel_language_lower {
+            return true;
+        }
+
+        self.config
+            .kernel_language_names
+            .iter()
+            .any(|name| name.to_lowercase() == kernel_language_lower)
+    }
+
     pub fn context_provider(&self) -> Option<Arc<dyn ContextProvider>> {
         self.context_provider.clone()
     }
@@ -2078,6 +2213,21 @@ impl LanguageScope {
     /// Config for documentation-style block comments for this language.
     pub fn documentation_comment(&self) -> Option<&BlockCommentConfig> {
         self.language.config.documentation_comment.as_ref()
+    }
+
+    /// Returns list markers that are inserted unchanged on newline (e.g., `- `, `* `, `+ `).
+    pub fn unordered_list(&self) -> &[Arc<str>] {
+        &self.language.config.unordered_list
+    }
+
+    /// Returns configuration for ordered lists with auto-incrementing numbers (e.g., `1. ` becomes `2. `).
+    pub fn ordered_list(&self) -> &[OrderedListConfig] {
+        &self.language.config.ordered_list
+    }
+
+    /// Returns configuration for task list continuation, if any (e.g., `- [x] ` continues as `- [ ] `).
+    pub fn task_list(&self) -> Option<&TaskListConfig> {
+        self.language.config.task_list.as_ref()
     }
 
     /// Returns additional regex patterns that act as prefix markers for creating
@@ -2373,7 +2523,10 @@ impl CodeLabel {
             "invalid filter range"
         );
         runs.iter().for_each(|(range, _)| {
-            assert!(text.get(range.clone()).is_some(), "invalid run range");
+            assert!(
+                text.get(range.clone()).is_some(),
+                "invalid run range with inputs. Requested range {range:?} in text '{text}'",
+            );
         });
         Self {
             runs,
@@ -2509,6 +2662,7 @@ impl LspAdapter for FakeLspAdapter {
     async fn initialization_options(
         self: Arc<Self>,
         _: &Arc<dyn LspAdapterDelegate>,
+        _cx: &mut AsyncApp,
     ) -> Result<Option<Value>> {
         Ok(self.initialization_options.clone())
     }
@@ -2655,7 +2809,25 @@ pub fn rust_lang() -> Arc<Language> {
         text_objects: Some(Cow::from(include_str!(
             "../../languages/src/rust/textobjects.scm"
         ))),
-        ..LanguageQueries::default()
+        highlights: Some(Cow::from(include_str!(
+            "../../languages/src/rust/highlights.scm"
+        ))),
+        injections: Some(Cow::from(include_str!(
+            "../../languages/src/rust/injections.scm"
+        ))),
+        overrides: Some(Cow::from(include_str!(
+            "../../languages/src/rust/overrides.scm"
+        ))),
+        redactions: None,
+        runnables: Some(Cow::from(include_str!(
+            "../../languages/src/rust/runnables.scm"
+        ))),
+        debugger: Some(Cow::from(include_str!(
+            "../../languages/src/rust/debugger.scm"
+        ))),
+        imports: Some(Cow::from(include_str!(
+            "../../languages/src/rust/imports.scm"
+        ))),
     })
     .expect("Could not parse queries");
     Arc::new(language)
@@ -2683,6 +2855,15 @@ pub fn markdown_lang() -> Arc<Language> {
         ))),
         injections: Some(Cow::from(include_str!(
             "../../languages/src/markdown/injections.scm"
+        ))),
+        highlights: Some(Cow::from(include_str!(
+            "../../languages/src/markdown/highlights.scm"
+        ))),
+        indents: Some(Cow::from(include_str!(
+            "../../languages/src/markdown/indents.scm"
+        ))),
+        outline: Some(Cow::from(include_str!(
+            "../../languages/src/markdown/outline.scm"
         ))),
         ..LanguageQueries::default()
     })
@@ -2725,9 +2906,9 @@ mod tests {
         assert_eq!(
             languages.language_names(),
             &[
-                LanguageName::new("JSON"),
-                LanguageName::new("Plain Text"),
-                LanguageName::new("Rust"),
+                LanguageName::new_static("JSON"),
+                LanguageName::new_static("Plain Text"),
+                LanguageName::new_static("Rust"),
             ]
         );
 
@@ -2738,9 +2919,9 @@ mod tests {
         assert_eq!(
             languages.language_names(),
             &[
-                LanguageName::new("JSON"),
-                LanguageName::new("Plain Text"),
-                LanguageName::new("Rust"),
+                LanguageName::new_static("JSON"),
+                LanguageName::new_static("Plain Text"),
+                LanguageName::new_static("Rust"),
             ]
         );
 
@@ -2751,9 +2932,9 @@ mod tests {
         assert_eq!(
             languages.language_names(),
             &[
-                LanguageName::new("JSON"),
-                LanguageName::new("Plain Text"),
-                LanguageName::new("Rust"),
+                LanguageName::new_static("JSON"),
+                LanguageName::new_static("Plain Text"),
+                LanguageName::new_static("Rust"),
             ]
         );
 

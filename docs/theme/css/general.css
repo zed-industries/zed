@@ -68,6 +68,7 @@ h3,
 h4,
 h5,
 h6 {
+  position: relative;
   font-family: var(--title-font);
   font-weight: 480;
   color: var(--title-color);
@@ -132,6 +133,10 @@ h5 {
   margin-block-end: 0;
 }
 
+strong {
+  color: var(--full-contrast);
+}
+
 code:focus-visible,
 pre:focus-visible,
 li:focus-visible,
@@ -152,10 +157,9 @@ h3:target::before,
 h4:target::before,
 h5:target::before,
 h6:target::before {
-  display: inline-block;
   content: "»";
-  margin-inline-start: -30px;
-  width: 30px;
+  position: absolute;
+  left: -1.5ch;
 }
 
 hr {

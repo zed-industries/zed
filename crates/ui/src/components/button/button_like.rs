@@ -208,7 +208,6 @@ impl ButtonStyle {
     pub(crate) fn enabled(
         self,
         elevation: Option<ElevationIndex>,
-
         cx: &mut App,
     ) -> ButtonLikeStyles {
         match self {
@@ -249,7 +248,6 @@ impl ButtonStyle {
     pub(crate) fn hovered(
         self,
         elevation: Option<ElevationIndex>,
-
         cx: &mut App,
     ) -> ButtonLikeStyles {
         match self {

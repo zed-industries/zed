@@ -1,0 +1,371 @@
+use std::{ops::Range, sync::Arc};
+
+use client::EditPredictionUsage;
+use gpui::{App, Context, Entity, SharedString};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EditPredictionDiscardReason {
+    Rejected,
+    Ignored,
+}
+use icons::IconName;
+use language::{Anchor, Buffer, OffsetRangeExt};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct EditPredictionIconSet {
+    pub base: IconName,
+    pub disabled: IconName,
+    pub up: IconName,
+    pub down: IconName,
+    pub error: IconName,
+}
+
+impl EditPredictionIconSet {
+    pub fn new(base: IconName) -> Self {
+        Self {
+            base,
+            disabled: IconName::ZedPredictDisabled,
+            up: IconName::ZedPredictUp,
+            down: IconName::ZedPredictDown,
+            error: IconName::ZedPredictError,
+        }
+    }
+
+    pub fn with_disabled(mut self, disabled: IconName) -> Self {
+        self.disabled = disabled;
+        self
+    }
+
+    pub fn with_up(mut self, up: IconName) -> Self {
+        self.up = up;
+        self
+    }
+
+    pub fn with_down(mut self, down: IconName) -> Self {
+        self.down = down;
+        self
+    }
+
+    pub fn with_error(mut self, error: IconName) -> Self {
+        self.error = error;
+        self
+    }
+}
+
+/// Represents a predicted cursor position after an edit is applied.
+///
+/// Since the cursor may be positioned inside newly inserted text that doesn't
+/// exist in the original buffer, we store an anchor (which points to a position
+/// in the original buffer, typically the start of an edit) plus an offset into
+/// the inserted text.
+#[derive(Copy, Clone, Debug)]
+pub struct PredictedCursorPosition {
+    /// An anchor in the original buffer. If the cursor is inside an edit,
+    /// this points to the start of that edit's range.
+    pub anchor: language::Anchor,
+    /// Offset from the anchor into the new text. If the cursor is inside
+    /// inserted text, this is the offset within that insertion. If the cursor
+    /// is outside any edit, this is 0.
+    pub offset: usize,
+}
+
+impl PredictedCursorPosition {
+    pub fn new(anchor: language::Anchor, offset: usize) -> Self {
+        Self { anchor, offset }
+    }
+
+    /// Creates a predicted cursor position at an exact anchor location (offset = 0).
+    pub fn at_anchor(anchor: language::Anchor) -> Self {
+        Self { anchor, offset: 0 }
+    }
+}
+
+/// The display mode used when showing an edit prediction to the user.
+/// Used for metrics tracking.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SuggestionDisplayType {
+    GhostText,
+    DiffPopover,
+    Jump,
+}
+
+// TODO: Find a better home for `Direction`.
+//
+// This should live in an ancestor crate of `editor` and `edit_prediction`,
+// but at time of writing there isn't an obvious spot.
+#[derive(Copy, Clone, PartialEq, Eq)]
+pub enum Direction {
+    Prev,
+    Next,
+}
+
+#[derive(Clone)]
+pub enum EditPrediction {
+    /// Edits within the buffer that requested the prediction
+    Local {
+        id: Option<SharedString>,
+        edits: Vec<(Range<language::Anchor>, Arc<str>)>,
+        cursor_position: Option<PredictedCursorPosition>,
+        edit_preview: Option<language::EditPreview>,
+    },
+    /// Jump to a different file from the one that requested the prediction
+    Jump {
+        id: Option<SharedString>,
+        snapshot: language::BufferSnapshot,
+        target: language::Anchor,
+    },
+}
+
+pub enum DataCollectionState {
+    /// The provider doesn't support data collection.
+    Unsupported,
+    /// Data collection is enabled.
+    Enabled { is_project_open_source: bool },
+    /// Data collection is disabled or unanswered.
+    Disabled { is_project_open_source: bool },
+}
+
+impl DataCollectionState {
+    pub fn is_supported(&self) -> bool {
+        !matches!(self, DataCollectionState::Unsupported)
+    }
+
+    pub fn is_enabled(&self) -> bool {
+        matches!(self, DataCollectionState::Enabled { .. })
+    }
+
+    pub fn is_project_open_source(&self) -> bool {
+        match self {
+            Self::Enabled {
+                is_project_open_source,
+            }
+            | Self::Disabled {
+                is_project_open_source,
+            } => *is_project_open_source,
+            _ => false,
+        }
+    }
+}
+
+pub trait EditPredictionDelegate: 'static + Sized {
+    fn name() -> &'static str;
+    fn display_name() -> &'static str;
+    fn show_predictions_in_menu() -> bool;
+    fn show_tab_accept_marker() -> bool {
+        false
+    }
+    fn supports_jump_to_edit() -> bool {
+        true
+    }
+
+    fn icons(&self, cx: &App) -> EditPredictionIconSet;
+
+    fn data_collection_state(&self, _cx: &App) -> DataCollectionState {
+        DataCollectionState::Unsupported
+    }
+
+    fn usage(&self, _cx: &App) -> Option<EditPredictionUsage> {
+        None
+    }
+
+    fn toggle_data_collection(&mut self, _cx: &mut App) {}
+    fn is_enabled(
+        &self,
+        buffer: &Entity<Buffer>,
+        cursor_position: language::Anchor,
+        cx: &App,
+    ) -> bool;
+    fn is_refreshing(&self, cx: &App) -> bool;
+    fn refresh(
+        &mut self,
+        buffer: Entity<Buffer>,
+        cursor_position: language::Anchor,
+        debounce: bool,
+        cx: &mut Context<Self>,
+    );
+    fn accept(&mut self, cx: &mut Context<Self>);
+    fn discard(&mut self, reason: EditPredictionDiscardReason, cx: &mut Context<Self>);
+    fn did_show(&mut self, _display_type: SuggestionDisplayType, _cx: &mut Context<Self>) {}
+    fn suggest(
+        &mut self,
+        buffer: &Entity<Buffer>,
+        cursor_position: language::Anchor,
+        cx: &mut Context<Self>,
+    ) -> Option<EditPrediction>;
+}
+
+pub trait EditPredictionDelegateHandle {
+    fn name(&self) -> &'static str;
+    fn display_name(&self) -> &'static str;
+    fn is_enabled(
+        &self,
+        buffer: &Entity<Buffer>,
+        cursor_position: language::Anchor,
+        cx: &App,
+    ) -> bool;
+    fn show_predictions_in_menu(&self) -> bool;
+    fn show_tab_accept_marker(&self) -> bool;
+    fn supports_jump_to_edit(&self) -> bool;
+    fn icons(&self, cx: &App) -> EditPredictionIconSet;
+    fn data_collection_state(&self, cx: &App) -> DataCollectionState;
+    fn usage(&self, cx: &App) -> Option<EditPredictionUsage>;
+    fn toggle_data_collection(&self, cx: &mut App);
+    fn is_refreshing(&self, cx: &App) -> bool;
+    fn refresh(
+        &self,
+        buffer: Entity<Buffer>,
+        cursor_position: language::Anchor,
+        debounce: bool,
+        cx: &mut App,
+    );
+    fn did_show(&self, display_type: SuggestionDisplayType, cx: &mut App);
+    fn accept(&self, cx: &mut App);
+    fn discard(&self, reason: EditPredictionDiscardReason, cx: &mut App);
+    fn suggest(
+        &self,
+        buffer: &Entity<Buffer>,
+        cursor_position: language::Anchor,
+        cx: &mut App,
+    ) -> Option<EditPrediction>;
+}
+
+impl<T> EditPredictionDelegateHandle for Entity<T>
+where
+    T: EditPredictionDelegate,
+{
+    fn name(&self) -> &'static str {
+        T::name()
+    }
+
+    fn display_name(&self) -> &'static str {
+        T::display_name()
+    }
+
+    fn show_predictions_in_menu(&self) -> bool {
+        T::show_predictions_in_menu()
+    }
+
+    fn show_tab_accept_marker(&self) -> bool {
+        T::show_tab_accept_marker()
+    }
+
+    fn supports_jump_to_edit(&self) -> bool {
+        T::supports_jump_to_edit()
+    }
+
+    fn icons(&self, cx: &App) -> EditPredictionIconSet {
+        self.read(cx).icons(cx)
+    }
+
+    fn data_collection_state(&self, cx: &App) -> DataCollectionState {
+        self.read(cx).data_collection_state(cx)
+    }
+
+    fn usage(&self, cx: &App) -> Option<EditPredictionUsage> {
+        self.read(cx).usage(cx)
+    }
+
+    fn toggle_data_collection(&self, cx: &mut App) {
+        self.update(cx, |this, cx| this.toggle_data_collection(cx))
+    }
+
+    fn is_enabled(
+        &self,
+        buffer: &Entity<Buffer>,
+        cursor_position: language::Anchor,
+        cx: &App,
+    ) -> bool {
+        self.read(cx).is_enabled(buffer, cursor_position, cx)
+    }
+
+    fn is_refreshing(&self, cx: &App) -> bool {
+        self.read(cx).is_refreshing(cx)
+    }
+
+    fn refresh(
+        &self,
+        buffer: Entity<Buffer>,
+        cursor_position: language::Anchor,
+        debounce: bool,
+        cx: &mut App,
+    ) {
+        self.update(cx, |this, cx| {
+            this.refresh(buffer, cursor_position, debounce, cx)
+        })
+    }
+
+    fn accept(&self, cx: &mut App) {
+        self.update(cx, |this, cx| this.accept(cx))
+    }
+
+    fn discard(&self, reason: EditPredictionDiscardReason, cx: &mut App) {
+        self.update(cx, |this, cx| this.discard(reason, cx))
+    }
+
+    fn did_show(&self, display_type: SuggestionDisplayType, cx: &mut App) {
+        self.update(cx, |this, cx| this.did_show(display_type, cx))
+    }
+
+    fn suggest(
+        &self,
+        buffer: &Entity<Buffer>,
+        cursor_position: language::Anchor,
+        cx: &mut App,
+    ) -> Option<EditPrediction> {
+        self.update(cx, |this, cx| this.suggest(buffer, cursor_position, cx))
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum EditPredictionGranularity {
+    Word,
+    Line,
+    Full,
+}
+/// Returns edits updated based on user edits since the old snapshot. None is returned if any user
+/// edit is not a prefix of a predicted insertion.
+pub fn interpolate_edits(
+    old_snapshot: &text::BufferSnapshot,
+    new_snapshot: &text::BufferSnapshot,
+    current_edits: &[(Range<Anchor>, Arc<str>)],
+) -> Option<Vec<(Range<Anchor>, Arc<str>)>> {
+    let mut edits = Vec::new();
+
+    let mut model_edits = current_edits.iter().peekable();
+    for user_edit in new_snapshot.edits_since::<usize>(&old_snapshot.version) {
+        while let Some((model_old_range, _)) = model_edits.peek() {
+            let model_old_range = model_old_range.to_offset(old_snapshot);
+            if model_old_range.end < user_edit.old.start {
+                let (model_old_range, model_new_text) = model_edits.next().unwrap();
+                edits.push((model_old_range.clone(), model_new_text.clone()));
+            } else {
+                break;
+            }
+        }
+
+        if let Some((model_old_range, model_new_text)) = model_edits.peek() {
+            let model_old_offset_range = model_old_range.to_offset(old_snapshot);
+            if user_edit.old == model_old_offset_range {
+                let user_new_text = new_snapshot
+                    .text_for_range(user_edit.new.clone())
+                    .collect::<String>();
+
+                if let Some(model_suffix) = model_new_text.strip_prefix(&user_new_text) {
+                    if !model_suffix.is_empty() {
+                        let anchor = old_snapshot.anchor_after(user_edit.old.end);
+                        edits.push((anchor..anchor, model_suffix.into()));
+                    }
+
+                    model_edits.next();
+                    continue;
+                }
+            }
+        }
+
+        return None;
+    }
+
+    edits.extend(model_edits.cloned());
+
+    if edits.is_empty() { None } else { Some(edits) }
+}

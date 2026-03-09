@@ -1,4 +1,4 @@
-use crate::{FakeFs, FakeFsEntry, Fs};
+use crate::{FakeFs, FakeFsEntry, Fs, RemoveOptions, RenameOptions};
 use anyhow::{Context as _, Result, bail};
 use collections::{HashMap, HashSet};
 use futures::future::{self, BoxFuture, join_all};
@@ -6,27 +6,23 @@ use git::{
     Oid, RunHook,
     blame::Blame,
     repository::{
-        AskPassDelegate, Branch, CommitDetails, CommitOptions, FetchOptions, GitRepository,
-        GitRepositoryCheckpoint, PushOptions, Remote, RepoPath, ResetMode, Worktree,
+        AskPassDelegate, Branch, CommitDataReader, CommitDetails, CommitOptions, FetchOptions,
+        GRAPH_CHUNK_SIZE, GitRepository, GitRepositoryCheckpoint, InitialGraphCommitData, LogOrder,
+        LogSource, PushOptions, Remote, RepoPath, ResetMode, Worktree,
     },
     status::{
         DiffTreeType, FileStatus, GitStatus, StatusCode, TrackedStatus, TreeDiff, TreeDiffStatus,
         UnmergedStatus,
     },
 };
-use gpui::{AsyncApp, BackgroundExecutor, SharedString, Task, TaskLabel};
+use gpui::{AsyncApp, BackgroundExecutor, SharedString, Task};
 use ignore::gitignore::GitignoreBuilder;
 use parking_lot::Mutex;
 use rope::Rope;
-use smol::future::FutureExt as _;
-use std::{
-    path::PathBuf,
-    sync::{Arc, LazyLock},
-};
+use smol::{channel::Sender, future::FutureExt as _};
+use std::{path::PathBuf, sync::Arc, sync::atomic::AtomicBool};
+use text::LineEnding;
 use util::{paths::PathStyle, rel_path::RelPath};
-
-pub static LOAD_INDEX_TEXT_TASK: LazyLock<TaskLabel> = LazyLock::new(TaskLabel::new);
-pub static LOAD_HEAD_TEXT_TASK: LazyLock<TaskLabel> = LazyLock::new(TaskLabel::new);
 
 #[derive(Clone)]
 pub struct FakeGitRepository {
@@ -36,6 +32,7 @@ pub struct FakeGitRepository {
     pub(crate) dot_git_path: PathBuf,
     pub(crate) repository_dir_path: PathBuf,
     pub(crate) common_dir_path: PathBuf,
+    pub(crate) is_trusted: Arc<AtomicBool>,
 }
 
 #[derive(Debug, Clone)]
@@ -50,8 +47,13 @@ pub struct FakeGitRepositoryState {
     pub blames: HashMap<RepoPath, Blame>,
     pub current_branch_name: Option<String>,
     pub branches: HashSet<String>,
+    /// List of remotes, keys are names and values are URLs
+    pub remotes: HashMap<String, String>,
     pub simulated_index_write_error_message: Option<String>,
+    pub simulated_create_worktree_error: Option<String>,
     pub refs: HashMap<String, String>,
+    pub graph_commits: Vec<Arc<InitialGraphCommitData>>,
+    pub worktrees: Vec<Worktree>,
 }
 
 impl FakeGitRepositoryState {
@@ -65,9 +67,13 @@ impl FakeGitRepositoryState {
             current_branch_name: Default::default(),
             branches: Default::default(),
             simulated_index_write_error_message: Default::default(),
+            simulated_create_worktree_error: Default::default(),
             refs: HashMap::from_iter([("HEAD".into(), "abc".into())]),
             merge_base_contents: Default::default(),
             oids: Default::default(),
+            remotes: HashMap::default(),
+            graph_commits: Vec::new(),
+            worktrees: Vec::new(),
         }
     }
 }
@@ -100,9 +106,7 @@ impl GitRepository for FakeGitRepository {
                 .context("not present in index")
                 .cloned()
         });
-        self.executor
-            .spawn_labeled(*LOAD_INDEX_TEXT_TASK, async move { fut.await.ok() })
-            .boxed()
+        self.executor.spawn(async move { fut.await.ok() }).boxed()
     }
 
     fn load_committed_text(&self, path: RepoPath) -> BoxFuture<'_, Option<String>> {
@@ -113,9 +117,7 @@ impl GitRepository for FakeGitRepository {
                 .context("not present in HEAD")
                 .cloned()
         });
-        self.executor
-            .spawn_labeled(*LOAD_HEAD_TEXT_TASK, async move { fut.await.ok() })
-            .boxed()
+        self.executor.spawn(async move { fut.await.ok() }).boxed()
     }
 
     fn load_blob_content(&self, oid: git::Oid) -> BoxFuture<'_, Result<String>> {
@@ -152,8 +154,16 @@ impl GitRepository for FakeGitRepository {
         })
     }
 
-    fn remote_url(&self, _name: &str) -> Option<String> {
-        None
+    fn remote_url(&self, name: &str) -> BoxFuture<'_, Option<String>> {
+        let name = name.to_string();
+        let fut = self.with_state_async(false, move |state| {
+            state
+                .remotes
+                .get(&name)
+                .context("remote not found")
+                .cloned()
+        });
+        async move { fut.await.ok() }.boxed()
     }
 
     fn diff_tree(&self, _request: DiffTreeType) -> BoxFuture<'_, Result<TreeDiff>> {
@@ -197,6 +207,7 @@ impl GitRepository for FakeGitRepository {
         async {
             Ok(CommitDetails {
                 sha: commit.into(),
+                message: "initial commit".into(),
                 ..Default::default()
             })
         }
@@ -378,27 +389,171 @@ impl GitRepository for FakeGitRepository {
             Ok(state
                 .branches
                 .iter()
-                .map(|branch_name| Branch {
-                    is_head: Some(branch_name) == current_branch.as_ref(),
-                    ref_name: branch_name.into(),
-                    most_recent_commit: None,
-                    upstream: None,
+                .map(|branch_name| {
+                    let ref_name = if branch_name.starts_with("refs/") {
+                        branch_name.into()
+                    } else {
+                        format!("refs/heads/{branch_name}").into()
+                    };
+                    Branch {
+                        is_head: Some(branch_name) == current_branch.as_ref(),
+                        ref_name,
+                        most_recent_commit: None,
+                        upstream: None,
+                    }
                 })
                 .collect())
         })
     }
 
     fn worktrees(&self) -> BoxFuture<'_, Result<Vec<Worktree>>> {
-        unimplemented!()
+        let dot_git_path = self.dot_git_path.clone();
+        self.with_state_async(false, move |state| {
+            let work_dir = dot_git_path
+                .parent()
+                .map(PathBuf::from)
+                .unwrap_or(dot_git_path);
+            let head_sha = state
+                .refs
+                .get("HEAD")
+                .cloned()
+                .unwrap_or_else(|| "0000000".to_string());
+            let branch_ref = state
+                .current_branch_name
+                .as_ref()
+                .map(|name| format!("refs/heads/{name}"))
+                .unwrap_or_else(|| "refs/heads/main".to_string());
+            let main_worktree = Worktree {
+                path: work_dir,
+                ref_name: branch_ref.into(),
+                sha: head_sha.into(),
+            };
+            let mut all = vec![main_worktree];
+            all.extend(state.worktrees.iter().cloned());
+            Ok(all)
+        })
     }
 
     fn create_worktree(
         &self,
-        _: String,
-        _: PathBuf,
-        _: Option<String>,
+        name: String,
+        directory: PathBuf,
+        from_commit: Option<String>,
     ) -> BoxFuture<'_, Result<()>> {
-        unimplemented!()
+        let fs = self.fs.clone();
+        let executor = self.executor.clone();
+        let dot_git_path = self.dot_git_path.clone();
+        async move {
+            let path = directory.join(&name);
+            executor.simulate_random_delay().await;
+            // Check for simulated error before any side effects
+            fs.with_git_state(&dot_git_path, false, |state| {
+                if let Some(message) = &state.simulated_create_worktree_error {
+                    anyhow::bail!("{message}");
+                }
+                Ok(())
+            })??;
+            // Create directory before updating state so state is never
+            // inconsistent with the filesystem
+            fs.create_dir(&path).await?;
+            fs.with_git_state(&dot_git_path, true, {
+                let path = path.clone();
+                move |state| {
+                    if state.branches.contains(&name) {
+                        bail!("a branch named '{}' already exists", name);
+                    }
+                    let ref_name = format!("refs/heads/{name}");
+                    let sha = from_commit.unwrap_or_else(|| "fake-sha".to_string());
+                    state.refs.insert(ref_name.clone(), sha.clone());
+                    state.worktrees.push(Worktree {
+                        path,
+                        ref_name: ref_name.into(),
+                        sha: sha.into(),
+                    });
+                    state.branches.insert(name);
+                    Ok::<(), anyhow::Error>(())
+                }
+            })??;
+            Ok(())
+        }
+        .boxed()
+    }
+
+    fn remove_worktree(&self, path: PathBuf, _force: bool) -> BoxFuture<'_, Result<()>> {
+        let fs = self.fs.clone();
+        let executor = self.executor.clone();
+        let dot_git_path = self.dot_git_path.clone();
+        async move {
+            executor.simulate_random_delay().await;
+            // Validate the worktree exists in state before touching the filesystem
+            fs.with_git_state(&dot_git_path, false, {
+                let path = path.clone();
+                move |state| {
+                    if !state.worktrees.iter().any(|w| w.path == path) {
+                        bail!("no worktree found at path: {}", path.display());
+                    }
+                    Ok(())
+                }
+            })??;
+            // Now remove the directory
+            fs.remove_dir(
+                &path,
+                RemoveOptions {
+                    recursive: true,
+                    ignore_if_not_exists: false,
+                },
+            )
+            .await?;
+            // Update state
+            fs.with_git_state(&dot_git_path, true, move |state| {
+                state.worktrees.retain(|worktree| worktree.path != path);
+                Ok::<(), anyhow::Error>(())
+            })??;
+            Ok(())
+        }
+        .boxed()
+    }
+
+    fn rename_worktree(&self, old_path: PathBuf, new_path: PathBuf) -> BoxFuture<'_, Result<()>> {
+        let fs = self.fs.clone();
+        let executor = self.executor.clone();
+        let dot_git_path = self.dot_git_path.clone();
+        async move {
+            executor.simulate_random_delay().await;
+            // Validate the worktree exists in state before touching the filesystem
+            fs.with_git_state(&dot_git_path, false, {
+                let old_path = old_path.clone();
+                move |state| {
+                    if !state.worktrees.iter().any(|w| w.path == old_path) {
+                        bail!("no worktree found at path: {}", old_path.display());
+                    }
+                    Ok(())
+                }
+            })??;
+            // Now move the directory
+            fs.rename(
+                &old_path,
+                &new_path,
+                RenameOptions {
+                    overwrite: false,
+                    ignore_if_exists: false,
+                    create_parents: true,
+                },
+            )
+            .await?;
+            // Update state
+            fs.with_git_state(&dot_git_path, true, move |state| {
+                let worktree = state
+                    .worktrees
+                    .iter_mut()
+                    .find(|worktree| worktree.path == old_path)
+                    .expect("worktree was validated above");
+                worktree.path = new_path;
+                Ok::<(), anyhow::Error>(())
+            })??;
+            Ok(())
+        }
+        .boxed()
     }
 
     fn change_branch(&self, name: String) -> BoxFuture<'_, Result<()>> {
@@ -432,11 +587,21 @@ impl GitRepository for FakeGitRepository {
         })
     }
 
-    fn delete_branch(&self, _name: String) -> BoxFuture<'_, Result<()>> {
-        unimplemented!()
+    fn delete_branch(&self, name: String) -> BoxFuture<'_, Result<()>> {
+        self.with_state_async(true, move |state| {
+            if !state.branches.remove(&name) {
+                bail!("no such branch: {name}");
+            }
+            Ok(())
+        })
     }
 
-    fn blame(&self, path: RepoPath, _content: Rope) -> BoxFuture<'_, Result<git::blame::Blame>> {
+    fn blame(
+        &self,
+        path: RepoPath,
+        _content: Rope,
+        _line_ending: LineEnding,
+    ) -> BoxFuture<'_, Result<git::blame::Blame>> {
         self.with_state_async(false, move |state| {
             state
                 .blames
@@ -444,6 +609,25 @@ impl GitRepository for FakeGitRepository {
                 .with_context(|| format!("failed to get blame for {:?}", path))
                 .cloned()
         })
+    }
+
+    fn file_history(&self, path: RepoPath) -> BoxFuture<'_, Result<git::repository::FileHistory>> {
+        self.file_history_paginated(path, 0, None)
+    }
+
+    fn file_history_paginated(
+        &self,
+        path: RepoPath,
+        _skip: usize,
+        _limit: Option<usize>,
+    ) -> BoxFuture<'_, Result<git::repository::FileHistory>> {
+        async move {
+            Ok(git::repository::FileHistory {
+                entries: Vec::new(),
+                path,
+            })
+        }
+        .boxed()
     }
 
     fn stage_paths(
@@ -534,7 +718,7 @@ impl GitRepository for FakeGitRepository {
         _askpass: AskPassDelegate,
         _env: Arc<HashMap<String, String>>,
     ) -> BoxFuture<'_, Result<()>> {
-        unimplemented!()
+        async { Ok(()) }.boxed()
     }
 
     fn run_hook(
@@ -542,12 +726,13 @@ impl GitRepository for FakeGitRepository {
         _hook: RunHook,
         _env: Arc<HashMap<String, String>>,
     ) -> BoxFuture<'_, Result<()>> {
-        unimplemented!()
+        async { Ok(()) }.boxed()
     }
 
     fn push(
         &self,
         _branch: String,
+        _remote_branch: String,
         _remote: String,
         _options: Option<PushOptions>,
         _askpass: AskPassDelegate,
@@ -579,15 +764,24 @@ impl GitRepository for FakeGitRepository {
         unimplemented!()
     }
 
+    fn get_all_remotes(&self) -> BoxFuture<'_, Result<Vec<Remote>>> {
+        self.with_state_async(false, move |state| {
+            let remotes = state
+                .remotes
+                .keys()
+                .map(|r| Remote {
+                    name: r.clone().into(),
+                })
+                .collect::<Vec<_>>();
+            Ok(remotes)
+        })
+    }
+
     fn get_push_remote(&self, _branch: String) -> BoxFuture<'_, Result<Option<Remote>>> {
         unimplemented!()
     }
 
     fn get_branch_remote(&self, _branch: String) -> BoxFuture<'_, Result<Option<Remote>>> {
-        unimplemented!()
-    }
-
-    fn get_all_remotes(&self) -> BoxFuture<'_, Result<Vec<Remote>>> {
         unimplemented!()
     }
 
@@ -599,6 +793,109 @@ impl GitRepository for FakeGitRepository {
         unimplemented!()
     }
 
+    fn diff_stat(
+        &self,
+        path_prefixes: &[RepoPath],
+    ) -> BoxFuture<'_, Result<git::status::GitDiffStat>> {
+        fn count_lines(s: &str) -> u32 {
+            if s.is_empty() {
+                0
+            } else {
+                s.lines().count() as u32
+            }
+        }
+
+        fn matches_prefixes(path: &RepoPath, prefixes: &[RepoPath]) -> bool {
+            if prefixes.is_empty() {
+                return true;
+            }
+            prefixes.iter().any(|prefix| {
+                let prefix_str = prefix.as_unix_str();
+                if prefix_str == "." {
+                    return true;
+                }
+                path == prefix || path.starts_with(&prefix)
+            })
+        }
+
+        let path_prefixes = path_prefixes.to_vec();
+
+        let workdir_path = self.dot_git_path.parent().unwrap().to_path_buf();
+        let worktree_files: HashMap<RepoPath, String> = self
+            .fs
+            .files()
+            .iter()
+            .filter_map(|path| {
+                let repo_path = path.strip_prefix(&workdir_path).ok()?;
+                if repo_path.starts_with(".git") {
+                    return None;
+                }
+                let content = self
+                    .fs
+                    .read_file_sync(path)
+                    .ok()
+                    .and_then(|bytes| String::from_utf8(bytes).ok())?;
+                let repo_path = RelPath::new(repo_path, PathStyle::local()).ok()?;
+                Some((RepoPath::from_rel_path(&repo_path), content))
+            })
+            .collect();
+
+        self.with_state_async(false, move |state| {
+            let mut entries = Vec::new();
+            let all_paths: HashSet<&RepoPath> = state
+                .head_contents
+                .keys()
+                .chain(
+                    worktree_files
+                        .keys()
+                        .filter(|p| state.index_contents.contains_key(*p)),
+                )
+                .collect();
+            for path in all_paths {
+                if !matches_prefixes(path, &path_prefixes) {
+                    continue;
+                }
+                let head = state.head_contents.get(path);
+                let worktree = worktree_files.get(path);
+                match (head, worktree) {
+                    (Some(old), Some(new)) if old != new => {
+                        entries.push((
+                            path.clone(),
+                            git::status::DiffStat {
+                                added: count_lines(new),
+                                deleted: count_lines(old),
+                            },
+                        ));
+                    }
+                    (Some(old), None) => {
+                        entries.push((
+                            path.clone(),
+                            git::status::DiffStat {
+                                added: 0,
+                                deleted: count_lines(old),
+                            },
+                        ));
+                    }
+                    (None, Some(new)) => {
+                        entries.push((
+                            path.clone(),
+                            git::status::DiffStat {
+                                added: count_lines(new),
+                                deleted: 0,
+                            },
+                        ));
+                    }
+                    _ => {}
+                }
+            }
+            entries.sort_by(|(a, _), (b, _)| a.cmp(b));
+            Ok(git::status::GitDiffStat {
+                entries: entries.into(),
+            })
+        })
+        .boxed()
+    }
+
     fn checkpoint(&self) -> BoxFuture<'static, Result<GitRepositoryCheckpoint>> {
         let executor = self.executor.clone();
         let fs = self.fs.clone();
@@ -606,7 +903,7 @@ impl GitRepository for FakeGitRepository {
         let repository_dir_path = self.repository_dir_path.parent().unwrap().to_path_buf();
         async move {
             executor.simulate_random_delay().await;
-            let oid = git::Oid::random(&mut executor.rng());
+            let oid = git::Oid::random(&mut *executor.rng().lock());
             let entry = fs.entry(&repository_dir_path)?;
             checkpoints.lock().insert(oid, entry);
             Ok(GitRepositoryCheckpoint { commit_sha: oid })
@@ -661,69 +958,64 @@ impl GitRepository for FakeGitRepository {
         unimplemented!()
     }
 
-    fn default_branch(&self) -> BoxFuture<'_, Result<Option<SharedString>>> {
-        async { Ok(Some("main".into())) }.boxed()
+    fn default_branch(
+        &self,
+        include_remote_name: bool,
+    ) -> BoxFuture<'_, Result<Option<SharedString>>> {
+        async move {
+            Ok(Some(if include_remote_name {
+                "origin/main".into()
+            } else {
+                "main".into()
+            }))
+        }
+        .boxed()
     }
-}
 
-#[cfg(test)]
-mod tests {
-    use crate::{FakeFs, Fs};
-    use gpui::BackgroundExecutor;
-    use serde_json::json;
-    use std::path::Path;
-    use util::path;
+    fn create_remote(&self, name: String, url: String) -> BoxFuture<'_, Result<()>> {
+        self.with_state_async(true, move |state| {
+            state.remotes.insert(name, url);
+            Ok(())
+        })
+    }
 
-    #[gpui::test]
-    async fn test_checkpoints(executor: BackgroundExecutor) {
-        let fs = FakeFs::new(executor);
-        fs.insert_tree(
-            path!("/"),
-            json!({
-                "bar": {
-                    "baz": "qux"
-                },
-                "foo": {
-                    ".git": {},
-                    "a": "lorem",
-                    "b": "ipsum",
-                },
-            }),
-        )
-        .await;
-        fs.with_git_state(Path::new("/foo/.git"), true, |_git| {})
-            .unwrap();
-        let repository = fs
-            .open_repo(Path::new("/foo/.git"), Some("git".as_ref()))
-            .unwrap();
+    fn remove_remote(&self, name: String) -> BoxFuture<'_, Result<()>> {
+        self.with_state_async(true, move |state| {
+            state.remotes.remove(&name);
+            Ok(())
+        })
+    }
 
-        let checkpoint_1 = repository.checkpoint().await.unwrap();
-        fs.write(Path::new("/foo/b"), b"IPSUM").await.unwrap();
-        fs.write(Path::new("/foo/c"), b"dolor").await.unwrap();
-        let checkpoint_2 = repository.checkpoint().await.unwrap();
-        let checkpoint_3 = repository.checkpoint().await.unwrap();
+    fn initial_graph_data(
+        &self,
+        _log_source: LogSource,
+        _log_order: LogOrder,
+        request_tx: Sender<Vec<Arc<InitialGraphCommitData>>>,
+    ) -> BoxFuture<'_, Result<()>> {
+        let fs = self.fs.clone();
+        let dot_git_path = self.dot_git_path.clone();
+        async move {
+            let graph_commits =
+                fs.with_git_state(&dot_git_path, false, |state| state.graph_commits.clone())?;
 
-        assert!(
-            repository
-                .compare_checkpoints(checkpoint_2.clone(), checkpoint_3.clone())
-                .await
-                .unwrap()
-        );
-        assert!(
-            !repository
-                .compare_checkpoints(checkpoint_1.clone(), checkpoint_2.clone())
-                .await
-                .unwrap()
-        );
+            for chunk in graph_commits.chunks(GRAPH_CHUNK_SIZE) {
+                request_tx.send(chunk.to_vec()).await.ok();
+            }
+            Ok(())
+        }
+        .boxed()
+    }
 
-        repository.restore_checkpoint(checkpoint_1).await.unwrap();
-        assert_eq!(
-            fs.files_with_contents(Path::new("")),
-            [
-                (Path::new(path!("/bar/baz")).into(), b"qux".into()),
-                (Path::new(path!("/foo/a")).into(), b"lorem".into()),
-                (Path::new(path!("/foo/b")).into(), b"ipsum".into())
-            ]
-        );
+    fn commit_data_reader(&self) -> Result<CommitDataReader> {
+        anyhow::bail!("commit_data_reader not supported for FakeGitRepository")
+    }
+
+    fn set_trusted(&self, trusted: bool) {
+        self.is_trusted
+            .store(trusted, std::sync::atomic::Ordering::Release);
+    }
+
+    fn is_trusted(&self) -> bool {
+        self.is_trusted.load(std::sync::atomic::Ordering::Acquire)
     }
 }

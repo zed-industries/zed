@@ -9,7 +9,10 @@ use gpui::{
 use picker::{Picker, PickerDelegate};
 use settings::{Settings, SettingsStore, update_settings_file};
 use std::sync::Arc;
-use theme::{Appearance, Theme, ThemeMeta, ThemeRegistry, ThemeSettings};
+use theme::{
+    Appearance, SystemAppearance, Theme, ThemeAppearanceMode, ThemeMeta, ThemeName, ThemeRegistry,
+    ThemeSelection, ThemeSettings,
+};
 use ui::{ListItem, ListItemSpacing, prelude::*, v_flex};
 use util::ResultExt;
 use workspace::{ModalView, Workspace, ui::HighlightedLabel, with_active_or_new_workspace};
@@ -114,7 +117,14 @@ struct ThemeSelectorDelegate {
     fs: Arc<dyn Fs>,
     themes: Vec<ThemeMeta>,
     matches: Vec<StringMatch>,
-    original_theme: Arc<Theme>,
+    /// The theme that was selected before the `ThemeSelector` menu was opened.
+    ///
+    /// We use this to return back to theme that was set if the user dismisses the menu.
+    original_theme_settings: ThemeSettings,
+    /// The current system appearance.
+    original_system_appearance: Appearance,
+    /// The currently selected new theme.
+    new_theme: Arc<Theme>,
     selection_completed: bool,
     selected_theme: Option<Arc<Theme>>,
     selected_index: usize,
@@ -129,6 +139,8 @@ impl ThemeSelectorDelegate {
         cx: &mut Context<ThemeSelector>,
     ) -> Self {
         let original_theme = cx.theme().clone();
+        let original_theme_settings = ThemeSettings::get_global(cx).clone();
+        let original_system_appearance = SystemAppearance::global(cx).0;
 
         let registry = ThemeRegistry::global(cx);
         let mut themes = registry
@@ -143,13 +155,15 @@ impl ThemeSelectorDelegate {
             })
             .collect::<Vec<_>>();
 
+        // Sort by dark vs light, then by name.
         themes.sort_unstable_by(|a, b| {
             a.appearance
                 .is_light()
                 .cmp(&b.appearance.is_light())
                 .then(a.name.cmp(&b.name))
         });
-        let matches = themes
+
+        let matches: Vec<StringMatch> = themes
             .iter()
             .map(|meta| StringMatch {
                 candidate_id: 0,
@@ -158,19 +172,25 @@ impl ThemeSelectorDelegate {
                 string: meta.name.to_string(),
             })
             .collect();
-        let mut this = Self {
+
+        // The current theme is likely in this list, so default to first showing that.
+        let selected_index = matches
+            .iter()
+            .position(|mat| mat.string == original_theme.name)
+            .unwrap_or(0);
+
+        Self {
             fs,
             themes,
             matches,
-            original_theme: original_theme.clone(),
-            selected_index: 0,
+            original_theme_settings,
+            original_system_appearance,
+            new_theme: original_theme, // Start with the original theme.
+            selected_index,
             selection_completed: false,
             selected_theme: None,
             selector,
-        };
-
-        this.select_if_matching(&original_theme.name);
-        this
+        }
     }
 
     fn show_selected_theme(
@@ -179,9 +199,10 @@ impl ThemeSelectorDelegate {
     ) -> Option<Arc<Theme>> {
         if let Some(mat) = self.matches.get(self.selected_index) {
             let registry = ThemeRegistry::global(cx);
+
             match registry.get(&mat.string) {
                 Ok(theme) => {
-                    Self::set_theme(theme.clone(), cx);
+                    self.set_theme(theme.clone(), cx);
                     Some(theme)
                 }
                 Err(error) => {
@@ -194,21 +215,122 @@ impl ThemeSelectorDelegate {
         }
     }
 
-    fn select_if_matching(&mut self, theme_name: &str) {
-        self.selected_index = self
-            .matches
-            .iter()
-            .position(|mat| mat.string == theme_name)
-            .unwrap_or(self.selected_index);
-    }
-
-    fn set_theme(theme: Arc<Theme>, cx: &mut App) {
+    fn set_theme(&mut self, new_theme: Arc<Theme>, cx: &mut App) {
+        // Update the global (in-memory) theme settings.
         SettingsStore::update_global(cx, |store, _| {
-            let mut theme_settings = store.get::<ThemeSettings>(None).clone();
-            let name = theme.as_ref().name.clone().into();
-            theme_settings.theme = theme::ThemeSelection::Static(theme::ThemeName(name));
-            store.override_global(theme_settings);
+            override_global_theme(
+                store,
+                &new_theme,
+                &self.original_theme_settings.theme,
+                self.original_system_appearance,
+            )
         });
+
+        self.new_theme = new_theme;
+    }
+}
+
+/// Overrides the global (in-memory) theme settings.
+///
+/// Note that this does **not** update the user's `settings.json` file (see the
+/// [`ThemeSelectorDelegate::confirm`] method and [`theme::set_theme`] function).
+fn override_global_theme(
+    store: &mut SettingsStore,
+    new_theme: &Theme,
+    original_theme: &ThemeSelection,
+    system_appearance: Appearance,
+) {
+    let theme_name = ThemeName(new_theme.name.clone().into());
+    let new_appearance = new_theme.appearance();
+    let new_theme_is_light = new_appearance.is_light();
+
+    let mut curr_theme_settings = store.get::<ThemeSettings>(None).clone();
+
+    match (original_theme, &curr_theme_settings.theme) {
+        // Override the currently selected static theme.
+        (ThemeSelection::Static(_), ThemeSelection::Static(_)) => {
+            curr_theme_settings.theme = ThemeSelection::Static(theme_name);
+        }
+
+        // If the current theme selection is dynamic, then only override the global setting for the
+        // specific mode (light or dark).
+        (
+            ThemeSelection::Dynamic {
+                mode: original_mode,
+                light: original_light,
+                dark: original_dark,
+            },
+            ThemeSelection::Dynamic { .. },
+        ) => {
+            let new_mode = update_mode_if_new_appearance_is_different_from_system(
+                original_mode,
+                system_appearance,
+                new_appearance,
+            );
+
+            let updated_theme = retain_original_opposing_theme(
+                new_theme_is_light,
+                new_mode,
+                theme_name,
+                original_light,
+                original_dark,
+            );
+
+            curr_theme_settings.theme = updated_theme;
+        }
+
+        // The theme selection mode changed while selecting new themes (someone edited the settings
+        // file on disk while we had the dialogue open), so don't do anything.
+        _ => return,
+    };
+
+    store.override_global(curr_theme_settings);
+}
+
+/// Helper function for determining the new [`ThemeAppearanceMode`] for the new theme.
+///
+/// If the the original theme mode was [`System`] and the new theme's appearance matches the system
+/// appearance, we don't need to change the mode setting.
+///
+/// Otherwise, we need to change the mode in order to see the new theme.
+///
+/// [`System`]: ThemeAppearanceMode::System
+fn update_mode_if_new_appearance_is_different_from_system(
+    original_mode: &ThemeAppearanceMode,
+    system_appearance: Appearance,
+    new_appearance: Appearance,
+) -> ThemeAppearanceMode {
+    if original_mode == &ThemeAppearanceMode::System && system_appearance == new_appearance {
+        ThemeAppearanceMode::System
+    } else {
+        ThemeAppearanceMode::from(new_appearance)
+    }
+}
+
+/// Helper function for updating / displaying the [`ThemeSelection`] while using the theme selector.
+///
+/// We want to retain the alternate theme selection of the original settings (before the menu was
+/// opened), not the currently selected theme (which likely has changed multiple times while the
+/// menu has been open).
+fn retain_original_opposing_theme(
+    new_theme_is_light: bool,
+    new_mode: ThemeAppearanceMode,
+    theme_name: ThemeName,
+    original_light: &ThemeName,
+    original_dark: &ThemeName,
+) -> ThemeSelection {
+    if new_theme_is_light {
+        ThemeSelection::Dynamic {
+            mode: new_mode,
+            light: theme_name,
+            dark: original_dark.clone(),
+        }
+    } else {
+        ThemeSelection::Dynamic {
+            mode: new_mode,
+            light: original_light.clone(),
+            dark: theme_name,
+        }
     }
 }
 
@@ -225,19 +347,20 @@ impl PickerDelegate for ThemeSelectorDelegate {
 
     fn confirm(
         &mut self,
-        _: bool,
-        window: &mut Window,
+        _secondary: bool,
+        _window: &mut Window,
         cx: &mut Context<Picker<ThemeSelectorDelegate>>,
     ) {
         self.selection_completed = true;
 
-        let appearance = Appearance::from(window.appearance());
-        let theme_name = ThemeSettings::get_global(cx).theme.name(appearance).0;
+        let theme_name: Arc<str> = self.new_theme.name.as_str().into();
+        let theme_appearance = self.new_theme.appearance;
+        let system_appearance = SystemAppearance::global(cx).0;
 
         telemetry::event!("Settings Changed", setting = "theme", value = theme_name);
 
         update_settings_file(self.fs.clone(), cx, move |settings, _| {
-            theme::set_theme(settings, theme_name.to_string(), appearance);
+            theme::set_theme(settings, theme_name, theme_appearance, system_appearance);
         });
 
         self.selector
@@ -249,7 +372,9 @@ impl PickerDelegate for ThemeSelectorDelegate {
 
     fn dismissed(&mut self, _: &mut Window, cx: &mut Context<Picker<ThemeSelectorDelegate>>) {
         if !self.selection_completed {
-            Self::set_theme(self.original_theme.clone(), cx);
+            SettingsStore::update_global(cx, |store, _| {
+                store.override_global(self.original_theme_settings.clone());
+            });
             self.selection_completed = true;
         }
 

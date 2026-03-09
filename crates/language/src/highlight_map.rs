@@ -51,6 +51,9 @@ impl HighlightMap {
 }
 
 impl HighlightId {
+    pub const TABSTOP_INSERT_ID: HighlightId = HighlightId(u32::MAX - 1);
+    pub const TABSTOP_REPLACE_ID: HighlightId = HighlightId(u32::MAX - 2);
+
     pub(crate) fn is_default(&self) -> bool {
         *self == DEFAULT_SYNTAX_HIGHLIGHT_ID
     }

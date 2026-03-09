@@ -1,5 +1,5 @@
-use gpui::{Action, Context, Div, Entity, InteractiveElement, Window, div};
-use workspace::Workspace;
+use gpui::{Action, App, Context, Div, Entity, InteractiveElement, Window, div};
+use workspace::{Pane, Workspace};
 
 use crate::BufferSearchBar;
 
@@ -56,6 +56,57 @@ impl<T: 'static> SearchActionsRegistrar for DivRegistrar<'_, '_, T> {
             }))
         });
     }
+}
+
+pub struct PaneDivRegistrar {
+    div: Option<Div>,
+    pane: Entity<Pane>,
+}
+
+impl PaneDivRegistrar {
+    pub fn new(div: Div, pane: Entity<Pane>) -> Self {
+        Self {
+            div: Some(div),
+            pane,
+        }
+    }
+
+    pub fn into_div(self) -> Div {
+        self.div.unwrap()
+    }
+}
+
+impl SearchActionsRegistrar for PaneDivRegistrar {
+    fn register_handler<A: Action>(&mut self, callback: impl ActionExecutor<A>) {
+        let pane = self.pane.clone();
+        self.div = self.div.take().map(|div| {
+            div.on_action(move |action: &A, window: &mut Window, cx: &mut App| {
+                let search_bar = pane
+                    .read(cx)
+                    .toolbar()
+                    .read(cx)
+                    .item_of_type::<BufferSearchBar>();
+                let should_notify = search_bar
+                    .map(|search_bar| {
+                        search_bar.update(cx, |search_bar, cx| {
+                            callback.execute(search_bar, action, window, cx)
+                        })
+                    })
+                    .unwrap_or(false);
+                if should_notify {
+                    pane.update(cx, |_, cx| cx.notify());
+                } else {
+                    cx.propagate();
+                }
+            })
+        });
+    }
+}
+
+pub fn register_pane_search_actions(div: Div, pane: Entity<Pane>) -> Div {
+    let mut registrar = PaneDivRegistrar::new(div, pane);
+    BufferSearchBar::register(&mut registrar);
+    registrar.into_div()
 }
 
 /// Register actions for an active pane.
@@ -149,16 +200,16 @@ impl<A: Action> ActionExecutor<A> for ForDeployed<A> {
     }
 }
 
-/// Run an action when the search bar has any matches, regardless of whether it
-/// is visible or not.
-pub struct WithResults<A>(pub(super) SearchBarActionCallback<A>);
-impl<A> Clone for WithResults<A> {
+/// Run an action when the search bar has any matches or a pending external query,
+/// regardless of whether it is visible or not.
+pub struct WithResultsOrExternalQuery<A>(pub(super) SearchBarActionCallback<A>);
+impl<A> Clone for WithResultsOrExternalQuery<A> {
     fn clone(&self) -> Self {
         Self(self.0)
     }
 }
 
-impl<A: Action> ActionExecutor<A> for WithResults<A> {
+impl<A: Action> ActionExecutor<A> for WithResultsOrExternalQuery<A> {
     fn execute(
         &self,
         search_bar: &mut BufferSearchBar,
@@ -166,7 +217,13 @@ impl<A: Action> ActionExecutor<A> for WithResults<A> {
         window: &mut Window,
         cx: &mut Context<BufferSearchBar>,
     ) -> DidHandleAction {
-        if search_bar.active_match_index.is_some() {
+        #[cfg(not(target_os = "macos"))]
+        let has_external_query = false;
+
+        #[cfg(target_os = "macos")]
+        let has_external_query = search_bar.pending_external_query.is_some();
+
+        if has_external_query || search_bar.active_match_index.is_some() {
             self.0(search_bar, action, window, cx);
             true
         } else {

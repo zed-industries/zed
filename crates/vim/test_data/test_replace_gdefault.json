@@ -1,0 +1,64 @@
+{"Key":":"}
+{"Key":"s"}
+{"Key":"e"}
+{"Key":"t"}
+{"Key":"space"}
+{"Key":"g"}
+{"Key":"d"}
+{"Key":"e"}
+{"Key":"f"}
+{"Key":"a"}
+{"Key":"u"}
+{"Key":"l"}
+{"Key":"t"}
+{"Key":"enter"}
+{"Put":{"state":"ˇaa aa aa aa\naa\naa"}}
+{"Key":":"}
+{"Key":"s"}
+{"Key":"/"}
+{"Key":"a"}
+{"Key":"a"}
+{"Key":"/"}
+{"Key":"b"}
+{"Key":"b"}
+{"Key":"enter"}
+{"Get":{"state":"ˇbb bb bb bb\naa\naa","mode":"Normal"}}
+{"Key":":"}
+{"Key":"s"}
+{"Key":"/"}
+{"Key":"b"}
+{"Key":"b"}
+{"Key":"/"}
+{"Key":"c"}
+{"Key":"c"}
+{"Key":"/"}
+{"Key":"g"}
+{"Key":"enter"}
+{"Get":{"state":"ˇcc bb bb bb\naa\naa","mode":"Normal"}}
+{"Key":":"}
+{"Key":"s"}
+{"Key":"/"}
+{"Key":"b"}
+{"Key":"b"}
+{"Key":"/"}
+{"Key":"d"}
+{"Key":"d"}
+{"Key":"/"}
+{"Key":"g"}
+{"Key":"g"}
+{"Key":"enter"}
+{"Get":{"state":"ˇcc dd dd dd\naa\naa","mode":"Normal"}}
+{"Key":":"}
+{"Key":"s"}
+{"Key":"/"}
+{"Key":"c"}
+{"Key":"c"}
+{"Key":"/"}
+{"Key":"e"}
+{"Key":"e"}
+{"Key":"/"}
+{"Key":"g"}
+{"Key":"g"}
+{"Key":"g"}
+{"Key":"enter"}
+{"Get":{"state":"ˇee dd dd dd\naa\naa","mode":"Normal"}}

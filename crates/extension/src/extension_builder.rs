@@ -2,18 +2,19 @@ use crate::{
     ExtensionLibraryKind, ExtensionManifest, GrammarManifestEntry, build_debug_adapter_schema_path,
     parse_wasm_extension_version,
 };
+use ::fs::Fs;
 use anyhow::{Context as _, Result, bail};
-use futures::AsyncReadExt;
+use futures::{StreamExt, io};
 use heck::ToSnakeCase;
 use http_client::{self, AsyncBody, HttpClient};
 use serde::Deserialize;
 use std::{
     env, fs, mem,
     path::{Path, PathBuf},
-    process::Stdio,
     str::FromStr,
     sync::Arc,
 };
+use util::command::Stdio;
 use wasm_encoder::{ComponentSectionId, Encode as _, RawSection, Section as _};
 use wasmparser::Parser;
 
@@ -54,6 +55,12 @@ pub struct CompileExtensionOptions {
     pub release: bool,
 }
 
+impl CompileExtensionOptions {
+    pub const fn dev() -> Self {
+        Self { release: false }
+    }
+}
+
 #[derive(Deserialize)]
 struct CargoToml {
     package: CargoTomlPackage,
@@ -77,8 +84,9 @@ impl ExtensionBuilder {
         extension_dir: &Path,
         extension_manifest: &mut ExtensionManifest,
         options: CompileExtensionOptions,
+        fs: Arc<dyn Fs>,
     ) -> Result<()> {
-        populate_defaults(extension_manifest, extension_dir)?;
+        populate_defaults(extension_manifest, extension_dir, fs).await?;
 
         if extension_dir.is_relative() {
             bail!(
@@ -149,7 +157,7 @@ impl ExtensionBuilder {
             "compiling Rust crate for extension {}",
             extension_dir.display()
         );
-        let output = util::command::new_smol_command("cargo")
+        let output = util::command::new_command("cargo")
             .args(["build", "--target", RUST_TARGET])
             .args(options.release.then_some("--release"))
             .arg("--target-dir")
@@ -247,26 +255,34 @@ impl ExtensionBuilder {
         let parser_path = src_path.join("parser.c");
         let scanner_path = src_path.join("scanner.c");
 
-        log::info!("compiling {grammar_name} parser");
-        let clang_output = util::command::new_smol_command(&clang_path)
-            .args(["-fPIC", "-shared", "-Os"])
-            .arg(format!("-Wl,--export=tree_sitter_{grammar_name}"))
-            .arg("-o")
-            .arg(&grammar_wasm_path)
-            .arg("-I")
-            .arg(&src_path)
-            .arg(&parser_path)
-            .args(scanner_path.exists().then_some(scanner_path))
-            .output()
-            .await
-            .context("failed to run clang")?;
-
-        if !clang_output.status.success() {
-            bail!(
-                "failed to compile {} parser with clang: {}",
-                grammar_name,
-                String::from_utf8_lossy(&clang_output.stderr),
+        // Skip recompiling if the WASM object is already newer than the source files
+        if file_newer_than_deps(&grammar_wasm_path, &[&parser_path, &scanner_path]).unwrap_or(false)
+        {
+            log::info!(
+                "skipping compilation of {grammar_name} parser because the existing compiled grammar is up to date"
             );
+        } else {
+            log::info!("compiling {grammar_name} parser");
+            let clang_output = util::command::new_command(&clang_path)
+                .args(["-fPIC", "-shared", "-Os"])
+                .arg(format!("-Wl,--export=tree_sitter_{grammar_name}"))
+                .arg("-o")
+                .arg(&grammar_wasm_path)
+                .arg("-I")
+                .arg(&src_path)
+                .arg(&parser_path)
+                .args(scanner_path.exists().then_some(scanner_path))
+                .output()
+                .await
+                .context("failed to run clang")?;
+
+            if !clang_output.status.success() {
+                bail!(
+                    "failed to compile {} parser with clang: {}",
+                    grammar_name,
+                    String::from_utf8_lossy(&clang_output.stderr),
+                );
+            }
         }
 
         Ok(())
@@ -276,7 +292,7 @@ impl ExtensionBuilder {
         let git_dir = directory.join(".git");
 
         if directory.exists() {
-            let remotes_output = util::command::new_smol_command("git")
+            let remotes_output = util::command::new_command("git")
                 .arg("--git-dir")
                 .arg(&git_dir)
                 .args(["remote", "-v"])
@@ -300,7 +316,7 @@ impl ExtensionBuilder {
             fs::create_dir_all(directory).with_context(|| {
                 format!("failed to create grammar directory {}", directory.display(),)
             })?;
-            let init_output = util::command::new_smol_command("git")
+            let init_output = util::command::new_command("git")
                 .arg("init")
                 .current_dir(directory)
                 .output()
@@ -312,7 +328,7 @@ impl ExtensionBuilder {
                 );
             }
 
-            let remote_add_output = util::command::new_smol_command("git")
+            let remote_add_output = util::command::new_command("git")
                 .arg("--git-dir")
                 .arg(&git_dir)
                 .args(["remote", "add", "origin", url])
@@ -327,7 +343,7 @@ impl ExtensionBuilder {
             }
         }
 
-        let fetch_output = util::command::new_smol_command("git")
+        let fetch_output = util::command::new_command("git")
             .arg("--git-dir")
             .arg(&git_dir)
             .args(["fetch", "--depth", "1", "origin", rev])
@@ -335,7 +351,7 @@ impl ExtensionBuilder {
             .await
             .context("failed to execute `git fetch`")?;
 
-        let checkout_output = util::command::new_smol_command("git")
+        let checkout_output = util::command::new_command("git")
             .arg("--git-dir")
             .arg(&git_dir)
             .args(["checkout", rev])
@@ -363,7 +379,7 @@ impl ExtensionBuilder {
     }
 
     async fn install_rust_wasm_target_if_needed(&self) -> Result<()> {
-        let rustc_output = util::command::new_smol_command("rustc")
+        let rustc_output = util::command::new_command("rustc")
             .arg("--print")
             .arg("sysroot")
             .output()
@@ -381,7 +397,7 @@ impl ExtensionBuilder {
             return Ok(());
         }
 
-        let output = util::command::new_smol_command("rustup")
+        let output = util::command::new_command("rustup")
             .args(["target", "add", RUST_TARGET])
             .stderr(Stdio::piped())
             .stdout(Stdio::inherit())
@@ -425,18 +441,20 @@ impl ExtensionBuilder {
 
         // Write the response to a temporary file
         let tar_gz_path = self.cache_dir.join("wasi-sdk.tar.gz");
-        let mut tar_gz_file =
+        let tar_gz_file =
             fs::File::create(&tar_gz_path).context("failed to create temporary tar.gz file")?;
         let response_body = response.body_mut();
-        let mut body_bytes = Vec::new();
-        response_body.read_to_end(&mut body_bytes).await?;
-        std::io::Write::write_all(&mut tar_gz_file, &body_bytes)?;
-        drop(tar_gz_file);
+
+        let mut async_file = io::AllowStdIo::new(tar_gz_file);
+        io::copy(response_body, &mut async_file)
+            .await
+            .context("failed to stream response to file")?;
+        drop(async_file);
 
         log::info!("un-tarring wasi-sdk to {}", tar_out_dir.display());
 
         // Shell out to tar to extract the archive
-        let tar_output = util::command::new_smol_command("tar")
+        let tar_output = util::command::new_command("tar")
             .arg("-xzf")
             .arg(&tar_gz_path)
             .arg("-C")
@@ -538,7 +556,11 @@ impl ExtensionBuilder {
     }
 }
 
-fn populate_defaults(manifest: &mut ExtensionManifest, extension_path: &Path) -> Result<()> {
+async fn populate_defaults(
+    manifest: &mut ExtensionManifest,
+    extension_path: &Path,
+    fs: Arc<dyn Fs>,
+) -> Result<()> {
     // For legacy extensions on the v0 schema (aka, using `extension.json`), clear out any existing
     // contents of the computed fields, since we don't care what the existing values are.
     if manifest.schema_version.is_v0() {
@@ -553,12 +575,16 @@ fn populate_defaults(manifest: &mut ExtensionManifest, extension_path: &Path) ->
     }
 
     let languages_dir = extension_path.join("languages");
-    if languages_dir.exists() {
-        for entry in fs::read_dir(&languages_dir).context("failed to list languages dir")? {
-            let entry = entry?;
-            let language_dir = entry.path();
+    if fs.is_dir(&languages_dir).await {
+        let mut language_dir_entries = fs
+            .read_dir(&languages_dir)
+            .await
+            .context("failed to list languages dir")?;
+
+        while let Some(language_dir) = language_dir_entries.next().await {
+            let language_dir = language_dir?;
             let config_path = language_dir.join("config.toml");
-            if config_path.exists() {
+            if fs.is_file(config_path.as_path()).await {
                 let relative_language_dir =
                     language_dir.strip_prefix(extension_path)?.to_path_buf();
                 if !manifest.languages.contains(&relative_language_dir) {
@@ -569,10 +595,14 @@ fn populate_defaults(manifest: &mut ExtensionManifest, extension_path: &Path) ->
     }
 
     let themes_dir = extension_path.join("themes");
-    if themes_dir.exists() {
-        for entry in fs::read_dir(&themes_dir).context("failed to list themes dir")? {
-            let entry = entry?;
-            let theme_path = entry.path();
+    if fs.is_dir(&themes_dir).await {
+        let mut theme_dir_entries = fs
+            .read_dir(&themes_dir)
+            .await
+            .context("failed to list themes dir")?;
+
+        while let Some(theme_path) = theme_dir_entries.next().await {
+            let theme_path = theme_path?;
             if theme_path.extension() == Some("json".as_ref()) {
                 let relative_theme_path = theme_path.strip_prefix(extension_path)?.to_path_buf();
                 if !manifest.themes.contains(&relative_theme_path) {
@@ -583,10 +613,14 @@ fn populate_defaults(manifest: &mut ExtensionManifest, extension_path: &Path) ->
     }
 
     let icon_themes_dir = extension_path.join("icon_themes");
-    if icon_themes_dir.exists() {
-        for entry in fs::read_dir(&icon_themes_dir).context("failed to list icon themes dir")? {
-            let entry = entry?;
-            let icon_theme_path = entry.path();
+    if fs.is_dir(&icon_themes_dir).await {
+        let mut icon_theme_dir_entries = fs
+            .read_dir(&icon_themes_dir)
+            .await
+            .context("failed to list icon themes dir")?;
+
+        while let Some(icon_theme_path) = icon_theme_dir_entries.next().await {
+            let icon_theme_path = icon_theme_path?;
             if icon_theme_path.extension() == Some("json".as_ref()) {
                 let relative_icon_theme_path =
                     icon_theme_path.strip_prefix(extension_path)?.to_path_buf();
@@ -595,21 +629,26 @@ fn populate_defaults(manifest: &mut ExtensionManifest, extension_path: &Path) ->
                 }
             }
         }
-    }
-
-    let snippets_json_path = extension_path.join("snippets.json");
-    if snippets_json_path.exists() {
-        manifest.snippets = Some(snippets_json_path);
+    };
+    if manifest.snippets.is_none()
+        && let snippets_json_path = extension_path.join("snippets.json")
+        && fs.is_file(&snippets_json_path).await
+    {
+        manifest.snippets = Some("snippets.json".into());
     }
 
     // For legacy extensions on the v0 schema (aka, using `extension.json`), we want to populate the grammars in
     // the manifest using the contents of the `grammars` directory.
     if manifest.schema_version.is_v0() {
         let grammars_dir = extension_path.join("grammars");
-        if grammars_dir.exists() {
-            for entry in fs::read_dir(&grammars_dir).context("failed to list grammars dir")? {
-                let entry = entry?;
-                let grammar_path = entry.path();
+        if fs.is_dir(&grammars_dir).await {
+            let mut grammar_dir_entries = fs
+                .read_dir(&grammars_dir)
+                .await
+                .context("failed to list grammars dir")?;
+
+            while let Some(grammar_path) = grammar_dir_entries.next().await {
+                let grammar_path = grammar_path?;
                 if grammar_path.extension() == Some("toml".as_ref()) {
                     #[derive(Deserialize)]
                     struct GrammarConfigToml {
@@ -619,7 +658,7 @@ fn populate_defaults(manifest: &mut ExtensionManifest, extension_path: &Path) ->
                         pub path: Option<String>,
                     }
 
-                    let grammar_config = fs::read_to_string(&grammar_path)?;
+                    let grammar_config = fs.load(&grammar_path).await?;
                     let grammar_config: GrammarConfigToml = toml::from_str(&grammar_config)?;
 
                     let grammar_name = grammar_path
@@ -642,4 +681,158 @@ fn populate_defaults(manifest: &mut ExtensionManifest, extension_path: &Path) ->
     }
 
     Ok(())
+}
+
+/// Returns `true` if the target exists and its last modified time is greater than that
+/// of each dependency which exists (i.e., dependency paths which do not exist are ignored).
+///
+/// # Errors
+///
+/// Returns `Err` if any of the underlying file I/O operations fail.
+fn file_newer_than_deps(target: &Path, dependencies: &[&Path]) -> Result<bool, std::io::Error> {
+    if !target.try_exists()? {
+        return Ok(false);
+    }
+    let target_modified = target.metadata()?.modified()?;
+    for dependency in dependencies {
+        if !dependency.try_exists()? {
+            continue;
+        }
+        let dep_modified = dependency.metadata()?.modified()?;
+        if target_modified < dep_modified {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{
+        path::{Path, PathBuf},
+        str::FromStr,
+        thread::sleep,
+        time::Duration,
+    };
+
+    use gpui::TestAppContext;
+    use indoc::indoc;
+
+    use crate::{
+        ExtensionManifest, ExtensionSnippets,
+        extension_builder::{file_newer_than_deps, populate_defaults},
+    };
+
+    #[test]
+    fn test_file_newer_than_deps() {
+        // Don't use TempTree because we need to guarantee the order
+        let tmpdir = tempfile::tempdir().unwrap();
+        let target = tmpdir.path().join("target.wasm");
+        let dep1 = tmpdir.path().join("parser.c");
+        let dep2 = tmpdir.path().join("scanner.c");
+
+        assert!(
+            !file_newer_than_deps(&target, &[&dep1, &dep2]).unwrap(),
+            "target doesn't exist"
+        );
+        std::fs::write(&target, "foo").unwrap(); // Create target
+        assert!(
+            file_newer_than_deps(&target, &[&dep1, &dep2]).unwrap(),
+            "dependencies don't exist; target is newer"
+        );
+        sleep(Duration::from_secs(1));
+        std::fs::write(&dep1, "foo").unwrap(); // Create dep1 (newer than target)
+        // Dependency is newer
+        assert!(
+            !file_newer_than_deps(&target, &[&dep1, &dep2]).unwrap(),
+            "a dependency is newer (target {:?}, dep1 {:?})",
+            target.metadata().unwrap().modified().unwrap(),
+            dep1.metadata().unwrap().modified().unwrap(),
+        );
+        sleep(Duration::from_secs(1));
+        std::fs::write(&dep2, "foo").unwrap(); // Create dep2
+        sleep(Duration::from_secs(1));
+        std::fs::write(&target, "foobar").unwrap(); // Update target
+        assert!(
+            file_newer_than_deps(&target, &[&dep1, &dep2]).unwrap(),
+            "target is newer than dependencies (target {:?}, dep2 {:?})",
+            target.metadata().unwrap().modified().unwrap(),
+            dep2.metadata().unwrap().modified().unwrap(),
+        );
+    }
+
+    #[gpui::test]
+    async fn test_snippet_location_is_kept(cx: &mut TestAppContext) {
+        let fs = fs::FakeFs::new(cx.executor());
+        let extension_path = Path::new("/extension");
+
+        fs.insert_tree(
+            extension_path,
+            serde_json::json!({
+                "extension.toml": indoc! {r#"
+                    id = "test-manifest"
+                    name = "Test Manifest"
+                    version = "0.0.1"
+                    schema_version = 1
+
+                    snippets = "./snippets/snippets.json"
+                    "#
+                },
+                "snippets.json": "",
+            }),
+        )
+        .await;
+
+        let mut manifest = ExtensionManifest::load(fs.clone(), extension_path)
+            .await
+            .unwrap();
+
+        populate_defaults(&mut manifest, extension_path, fs.clone())
+            .await
+            .unwrap();
+
+        assert_eq!(
+            manifest.snippets,
+            Some(ExtensionSnippets::Single(
+                PathBuf::from_str("./snippets/snippets.json").unwrap()
+            ))
+        )
+    }
+
+    #[gpui::test]
+    async fn test_automatic_snippet_location_is_relative(cx: &mut TestAppContext) {
+        let fs = fs::FakeFs::new(cx.executor());
+        let extension_path = Path::new("/extension");
+
+        fs.insert_tree(
+            extension_path,
+            serde_json::json!({
+                "extension.toml": indoc! {r#"
+                    id = "test-manifest"
+                    name = "Test Manifest"
+                    version = "0.0.1"
+                    schema_version = 1
+
+                    "#
+                },
+                "snippets.json": "",
+            }),
+        )
+        .await;
+
+        let mut manifest = ExtensionManifest::load(fs.clone(), extension_path)
+            .await
+            .unwrap();
+
+        populate_defaults(&mut manifest, extension_path, fs.clone())
+            .await
+            .unwrap();
+
+        assert_eq!(
+            manifest.snippets,
+            Some(ExtensionSnippets::Single(
+                PathBuf::from_str("snippets.json").unwrap()
+            ))
+        )
+    }
 }

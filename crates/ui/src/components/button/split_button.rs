@@ -1,10 +1,10 @@
 use gpui::{
     AnyElement, App, BoxShadow, IntoElement, ParentElement, RenderOnce, Styled, Window, div, hsla,
-    point, prelude::FluentBuilder, px,
+    point, prelude::FluentBuilder, px, relative,
 };
 use theme::ActiveTheme;
 
-use crate::{ElevationIndex, h_flex};
+use crate::{ElevationIndex, prelude::*};
 
 use super::ButtonLike;
 
@@ -15,6 +15,23 @@ pub enum SplitButtonStyle {
     Transparent,
 }
 
+pub enum SplitButtonKind {
+    ButtonLike(ButtonLike),
+    IconButton(IconButton),
+}
+
+impl From<IconButton> for SplitButtonKind {
+    fn from(icon_button: IconButton) -> Self {
+        Self::IconButton(icon_button)
+    }
+}
+
+impl From<ButtonLike> for SplitButtonKind {
+    fn from(button_like: ButtonLike) -> Self {
+        Self::ButtonLike(button_like)
+    }
+}
+
 /// /// A button with two parts: a primary action on the left and a secondary action on the right.
 ///
 /// The left side is a [`ButtonLike`] with the main action, while the right side can contain
@@ -23,15 +40,15 @@ pub enum SplitButtonStyle {
 /// The two sections are visually separated by a divider, but presented as a unified control.
 #[derive(IntoElement)]
 pub struct SplitButton {
-    pub left: ButtonLike,
-    pub right: AnyElement,
+    left: SplitButtonKind,
+    right: AnyElement,
     style: SplitButtonStyle,
 }
 
 impl SplitButton {
-    pub fn new(left: ButtonLike, right: AnyElement) -> Self {
+    pub fn new(left: impl Into<SplitButtonKind>, right: AnyElement) -> Self {
         Self {
-            left,
+            left: left.into(),
             right,
             style: SplitButtonStyle::Filled,
         }
@@ -51,15 +68,21 @@ impl RenderOnce for SplitButton {
         );
 
         h_flex()
-            .rounded_sm()
             .when(is_filled_or_outlined, |this| {
-                this.border_1()
+                this.rounded_sm()
+                    .border_1()
                     .border_color(cx.theme().colors().border.opacity(0.8))
             })
-            .child(div().flex_grow().child(self.left))
+            .when(self.style == SplitButtonStyle::Transparent, |this| {
+                this.gap_px()
+            })
+            .child(div().flex_grow().child(match self.left {
+                SplitButtonKind::ButtonLike(button) => button.into_any_element(),
+                SplitButtonKind::IconButton(icon) => icon.into_any_element(),
+            }))
             .child(
                 div()
-                    .h_full()
+                    .h(relative(0.8))
                     .w_px()
                     .bg(cx.theme().colors().border.opacity(0.5)),
             )

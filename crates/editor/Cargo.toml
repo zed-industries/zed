@@ -26,6 +26,7 @@ test-support = [
     "tree-sitter-rust",
     "tree-sitter-typescript",
     "tree-sitter-html",
+    "proptest",
     "unindent",
 ]
 
@@ -33,6 +34,7 @@ test-support = [
 aho-corasick.workspace = true
 anyhow.workspace = true
 assets.workspace = true
+breadcrumbs.workspace = true
 client.workspace = true
 clock.workspace = true
 collections.workspace = true
@@ -41,6 +43,7 @@ dap.workspace = true
 db.workspace = true
 buffer_diff.workspace = true
 emojis.workspace = true
+feature_flags.workspace = true
 file_icons.workspace = true
 futures.workspace = true
 fuzzy.workspace = true
@@ -48,7 +51,7 @@ fs.workspace = true
 git.workspace = true
 gpui.workspace = true
 indoc.workspace = true
-edit_prediction.workspace = true
+edit_prediction_types.workspace = true
 itertools.workspace = true
 language.workspace = true
 linkify.workspace = true
@@ -61,6 +64,8 @@ ordered-float.workspace = true
 parking_lot.workspace = true
 pretty_assertions.workspace = true
 project.workspace = true
+proptest = { workspace = true, optional = true }
+proptest-derive = { workspace = true, optional = true }
 rand.workspace = true
 regex.workspace = true
 rpc.workspace = true
@@ -83,16 +88,20 @@ tree-sitter-html = { workspace = true, optional = true }
 tree-sitter-rust = { workspace = true, optional = true }
 tree-sitter-typescript = { workspace = true, optional = true }
 tree-sitter-python = { workspace = true, optional = true }
+ztracing.workspace = true
+tracing.workspace = true
 unicode-segmentation.workspace = true
 unicode-script.workspace = true
 unindent = { workspace = true, optional = true }
 ui.workspace = true
+ui_input.workspace = true
 url.workspace = true
 util.workspace = true
 uuid.workspace = true
 vim_mode_setting.workspace = true
 workspace.workspace = true
 zed_actions.workspace = true
+zlog.workspace = true
 
 [dev-dependencies]
 criterion.workspace = true
@@ -104,6 +113,8 @@ lsp = { workspace = true, features = ["test-support"] }
 markdown = { workspace = true, features = ["test-support"] }
 multi_buffer = { workspace = true, features = ["test-support"] }
 project = { workspace = true, features = ["test-support"] }
+proptest.workspace = true
+proptest-derive.workspace = true
 release_channel.workspace = true
 rand.workspace = true
 semver.workspace = true
@@ -117,6 +128,8 @@ tree-sitter-rust.workspace = true
 tree-sitter-typescript.workspace = true
 tree-sitter-yaml.workspace = true
 tree-sitter-bash.workspace = true
+tree-sitter-md.workspace = true
+unicode-width.workspace = true
 unindent.workspace = true
 util = { workspace = true, features = ["test-support"] }
 workspace = { workspace = true, features = ["test-support"] }
