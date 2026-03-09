@@ -82,6 +82,8 @@ actions!(
         NewTextThread,
         /// Toggles the menu to create new agent threads.
         ToggleNewThreadMenu,
+        /// Toggles the selector for choosing where new threads start (current project or new worktree).
+        ToggleStartThreadInSelector,
         /// Toggles the navigation menu for switching between threads and views.
         ToggleNavigationMenu,
         /// Toggles the options menu for agent settings and preferences.
@@ -210,11 +212,68 @@ pub struct NewNativeAgentThreadFromSummary {
 }
 
 // TODO unify this with AgentType
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Serialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ExternalAgent {
     NativeAgent,
     Custom { name: SharedString },
+}
+
+// Custom impl handles legacy variant names from before the built-in agents were moved to
+// the registry: "claude_code" -> Custom { name: "claude-acp" }, "codex" -> Custom { name:
+// "codex-acp" }, "gemini" -> Custom { name: "gemini" }.
+// Can be removed at some point in the future and go back to #[derive(Deserialize)].
+impl<'de> serde::Deserialize<'de> for ExternalAgent {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        use project::agent_server_store::{CLAUDE_AGENT_NAME, CODEX_NAME, GEMINI_NAME};
+
+        let value = serde_json::Value::deserialize(deserializer)?;
+
+        if let Some(s) = value.as_str() {
+            return match s {
+                "native_agent" => Ok(Self::NativeAgent),
+                "claude_code" | "claude_agent" => Ok(Self::Custom {
+                    name: CLAUDE_AGENT_NAME.into(),
+                }),
+                "codex" => Ok(Self::Custom {
+                    name: CODEX_NAME.into(),
+                }),
+                "gemini" => Ok(Self::Custom {
+                    name: GEMINI_NAME.into(),
+                }),
+                other => Err(serde::de::Error::unknown_variant(
+                    other,
+                    &[
+                        "native_agent",
+                        "custom",
+                        "claude_agent",
+                        "claude_code",
+                        "codex",
+                        "gemini",
+                    ],
+                )),
+            };
+        }
+
+        if let Some(obj) = value.as_object() {
+            if let Some(inner) = obj.get("custom") {
+                #[derive(serde::Deserialize)]
+                struct CustomFields {
+                    name: SharedString,
+                }
+                let fields: CustomFields =
+                    serde_json::from_value(inner.clone()).map_err(serde::de::Error::custom)?;
+                return Ok(Self::Custom { name: fields.name });
+            }
+        }
+
+        Err(serde::de::Error::custom(
+            "expected a string variant or {\"custom\": {\"name\": ...}}",
+        ))
+    }
 }
 
 impl ExternalAgent {
@@ -682,5 +741,43 @@ mod tests {
                 "EditPrediction should be hidden when provider is None"
             );
         });
+    }
+
+    #[test]
+    fn test_deserialize_legacy_external_agent_variants() {
+        use project::agent_server_store::{CLAUDE_AGENT_NAME, CODEX_NAME, GEMINI_NAME};
+
+        assert_eq!(
+            serde_json::from_str::<ExternalAgent>(r#""claude_code""#).unwrap(),
+            ExternalAgent::Custom {
+                name: CLAUDE_AGENT_NAME.into(),
+            },
+        );
+        assert_eq!(
+            serde_json::from_str::<ExternalAgent>(r#""codex""#).unwrap(),
+            ExternalAgent::Custom {
+                name: CODEX_NAME.into(),
+            },
+        );
+        assert_eq!(
+            serde_json::from_str::<ExternalAgent>(r#""gemini""#).unwrap(),
+            ExternalAgent::Custom {
+                name: GEMINI_NAME.into(),
+            },
+        );
+    }
+
+    #[test]
+    fn test_deserialize_current_external_agent_variants() {
+        assert_eq!(
+            serde_json::from_str::<ExternalAgent>(r#""native_agent""#).unwrap(),
+            ExternalAgent::NativeAgent,
+        );
+        assert_eq!(
+            serde_json::from_str::<ExternalAgent>(r#"{"custom":{"name":"my-agent"}}"#).unwrap(),
+            ExternalAgent::Custom {
+                name: "my-agent".into(),
+            },
+        );
     }
 }

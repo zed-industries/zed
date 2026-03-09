@@ -32,7 +32,8 @@ pub struct ZetaPromptInput {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub excerpt_start_row: Option<u32>,
     pub events: Vec<Arc<Event>>,
-    pub related_files: Vec<RelatedFile>,
+    #[serde(default)]
+    pub related_files: Option<Vec<RelatedFile>>,
     /// These ranges let the server select model-appropriate subsets.
     pub excerpt_ranges: ExcerptRanges,
     /// Byte offset ranges within `cursor_excerpt` for all syntax nodes that
@@ -224,6 +225,21 @@ pub fn token_limits_for_format(format: ZetaFormat) -> (usize, usize) {
     }
 }
 
+pub fn stop_tokens_for_format(format: ZetaFormat) -> &'static [&'static str] {
+    match format {
+        ZetaFormat::v0226Hashline => &[hashline::NO_EDITS_COMMAND_MARKER],
+        ZetaFormat::V0112MiddleAtEnd
+        | ZetaFormat::V0113Ordered
+        | ZetaFormat::V0114180EditableRegion
+        | ZetaFormat::V0120GitMergeMarkers
+        | ZetaFormat::V0131GitMergeMarkersPrefix
+        | ZetaFormat::V0211Prefill
+        | ZetaFormat::V0211SeedCoder
+        | ZetaFormat::V0304VariableEdit
+        | ZetaFormat::V0304SeedNoEdits => &[],
+    }
+}
+
 pub fn excerpt_ranges_for_format(
     format: ZetaFormat,
     ranges: &ExcerptRanges,
@@ -338,17 +354,19 @@ pub fn format_prompt_with_budget_for_format(
         resolve_cursor_region(input, format);
     let path = &*input.cursor_path;
 
+    let empty_files = Vec::new();
+    let input_related_files = input.related_files.as_deref().unwrap_or(&empty_files);
     let related_files = if let Some(cursor_excerpt_start_row) = input.excerpt_start_row {
         let relative_row_range = offset_range_to_row_range(&input.cursor_excerpt, context_range);
         let row_range = relative_row_range.start + cursor_excerpt_start_row
             ..relative_row_range.end + cursor_excerpt_start_row;
         &filter_redundant_excerpts(
-            input.related_files.clone(),
+            input_related_files.to_vec(),
             input.cursor_path.as_ref(),
             row_range,
         )
     } else {
-        &input.related_files
+        input_related_files
     };
 
     match format {
@@ -1024,12 +1042,14 @@ pub mod hashline {
 
     const SET_COMMAND_MARKER: &str = "<|set|>";
     const INSERT_COMMAND_MARKER: &str = "<|insert|>";
+    pub const NO_EDITS_COMMAND_MARKER: &str = "<|no_edits|>";
 
     pub fn special_tokens() -> &'static [&'static str] {
         return &[
             SET_COMMAND_MARKER,
             "<|set_range|>",
             INSERT_COMMAND_MARKER,
+            NO_EDITS_COMMAND_MARKER,
             CURSOR_MARKER,
             "<|file_sep|>",
             "<|fim_prefix|>",
@@ -1123,6 +1143,7 @@ pub mod hashline {
         }
 
         prompt.push_str(END_MARKER);
+        prompt.push('\n');
     }
 
     /// A single edit command parsed from the model output.
@@ -1248,7 +1269,9 @@ pub mod hashline {
     }
 
     pub fn output_has_edit_commands(model_output: &str) -> bool {
-        model_output.contains(SET_COMMAND_MARKER) || model_output.contains(INSERT_COMMAND_MARKER)
+        model_output.contains(SET_COMMAND_MARKER)
+            || model_output.contains(INSERT_COMMAND_MARKER)
+            || model_output.contains(NO_EDITS_COMMAND_MARKER)
     }
 
     /// Apply `<|set|>` and `<|insert|>` edit commands from the model output to the
@@ -1259,6 +1282,13 @@ pub mod hashline {
     ///
     /// Returns the full replacement text for the editable region.
     pub fn apply_edit_commands(editable_region: &str, model_output: &str) -> String {
+        if model_output
+            .trim_start()
+            .starts_with(NO_EDITS_COMMAND_MARKER)
+        {
+            return editable_region.to_string();
+        }
+
         let original_lines: Vec<&str> = editable_region.lines().collect();
         let old_hashes: Vec<u8> = original_lines
             .iter()
@@ -1563,6 +1593,10 @@ pub mod hashline {
             result.pop();
         }
 
+        if result.is_empty() {
+            return Ok(NO_EDITS_COMMAND_MARKER.to_string());
+        }
+
         Ok(result)
     }
 
@@ -1593,7 +1627,8 @@ pub mod hashline {
                     <|fim_middle|>current
                     0:5c|hello<|user_cursor|> world
                     <|fim_suffix|>
-                    <|fim_middle|>updated"},
+                    <|fim_middle|>updated
+                    "},
                 },
                 Case {
                     name: "multiline_cursor_on_second_line",
@@ -1608,7 +1643,8 @@ pub mod hashline {
                     1:26|b<|user_cursor|>bb
                     2:29|ccc
                     <|fim_suffix|>
-                    <|fim_middle|>updated"},
+                    <|fim_middle|>updated
+                    "},
                 },
                 Case {
                     name: "no_trailing_newline_in_context",
@@ -1622,7 +1658,8 @@ pub mod hashline {
                     0:d9|lin<|user_cursor|>e1
                     1:da|line2
                     <|fim_suffix|>
-                    <|fim_middle|>updated"},
+                    <|fim_middle|>updated
+                    "},
                 },
                 Case {
                     name: "leading_newline_in_editable_region",
@@ -1636,7 +1673,8 @@ pub mod hashline {
                     0:00|
                     1:26|a<|user_cursor|>bc
                     <|fim_suffix|>
-                    <|fim_middle|>updated"},
+                    <|fim_middle|>updated
+                    "},
                 },
                 Case {
                     name: "with_suffix",
@@ -1650,7 +1688,8 @@ pub mod hashline {
                     0:26|ab<|user_cursor|>c
                     <|fim_suffix|>
                     def
-                    <|fim_middle|>updated"},
+                    <|fim_middle|>updated
+                    "},
                 },
                 Case {
                     name: "unicode_two_byte_chars",
@@ -1663,7 +1702,8 @@ pub mod hashline {
                     <|fim_middle|>current
                     0:1b|hé<|user_cursor|>llo
                     <|fim_suffix|>
-                    <|fim_middle|>updated"},
+                    <|fim_middle|>updated
+                    "},
                 },
                 Case {
                     name: "unicode_three_byte_chars",
@@ -1676,7 +1716,8 @@ pub mod hashline {
                     <|fim_middle|>current
                     0:80|日本<|user_cursor|>語
                     <|fim_suffix|>
-                    <|fim_middle|>updated"},
+                    <|fim_middle|>updated
+                    "},
                 },
                 Case {
                     name: "unicode_four_byte_chars",
@@ -1689,7 +1730,8 @@ pub mod hashline {
                     <|fim_middle|>current
                     0:6b|a🌍<|user_cursor|>b
                     <|fim_suffix|>
-                    <|fim_middle|>updated"},
+                    <|fim_middle|>updated
+                    "},
                 },
                 Case {
                     name: "cursor_at_start_of_region_not_placed",
@@ -1702,7 +1744,8 @@ pub mod hashline {
                     <|fim_middle|>current
                     0:26|abc
                     <|fim_suffix|>
-                    <|fim_middle|>updated"},
+                    <|fim_middle|>updated
+                    "},
                 },
                 Case {
                     name: "cursor_at_end_of_line_not_placed",
@@ -1716,7 +1759,8 @@ pub mod hashline {
                     0:26|abc
                     1:2f|def
                     <|fim_suffix|>
-                    <|fim_middle|>updated"},
+                    <|fim_middle|>updated
+                    "},
                 },
                 Case {
                     name: "cursor_offset_relative_to_context_not_editable_region",
@@ -1735,7 +1779,8 @@ pub mod hashline {
                     1:26|b<|user_cursor|>bb
                     <|fim_suffix|>
                     suf
-                    <|fim_middle|>updated"},
+                    <|fim_middle|>updated
+                    "},
                 },
             ];
 
@@ -1903,6 +1948,18 @@ pub mod hashline {
                     world
                 "},
                     model_output: "some random text with no commands",
+                    expected: indoc! {"
+                    hello
+                    world
+                "},
+                },
+                Case {
+                    name: "no_edits_command_returns_original",
+                    original: indoc! {"
+                    hello
+                    world
+                "},
+                    model_output: "<|no_edits|>",
                     expected: indoc! {"
                     hello
                     world
@@ -2127,6 +2184,7 @@ pub mod hashline {
             )));
             assert!(!hashline::output_has_edit_commands("just plain text"));
             assert!(!hashline::output_has_edit_commands("NO_EDITS"));
+            assert!(hashline::output_has_edit_commands("<|no_edits|>"));
         }
 
         // ---- hashline::patch_to_edit_commands round-trip tests ----
@@ -2364,35 +2422,47 @@ pub mod hashline {
                     }
                 "#},
                     patch: indoc! {r#"
-                    @@ -1,3 +1,3 @@
-                     fn main() {
-                    -    println!();
-                    +    eprintln!("");
-                     }
-                "#},
+                        @@ -1,3 +1,3 @@
+                        fn main() {
+                        -    println!();
+                        +    eprintln!("");
+                        }
+                    "#},
                     expected_new: indoc! {r#"
-                    fn main() {
-                        eprintln!("<|user_cursor|>");
-                    }
-                "#},
+                        fn main() {
+                            eprintln!("<|user_cursor|>");
+                        }
+                    "#},
                 },
                 Case {
                     name: "non_local_hunk_header_pure_insertion_repro",
                     old: indoc! {"
-                    aaa
-                    bbb
-                "},
+                        aaa
+                        bbb
+                    "},
                     patch: indoc! {"
-                    @@ -20,2 +20,3 @@
-                     aaa
-                    +xxx
-                     bbb
-                "},
+                        @@ -20,2 +20,3 @@
+                        aaa
+                        +xxx
+                        bbb
+                    "},
                     expected_new: indoc! {"
-                    aaa
-                    xxx
-                    bbb
-                "},
+                        aaa
+                        xxx
+                        bbb
+                    "},
+                },
+                Case {
+                    name: "empty_patch_produces_no_edits_marker",
+                    old: indoc! {"
+                        aaa
+                        bbb
+                    "},
+                    patch: "@@ -20,2 +20,3 @@\n",
+                    expected_new: indoc! {"
+                        aaa
+                        bbb
+                    "},
                 },
             ];
 
@@ -3810,7 +3880,7 @@ mod tests {
             cursor_offset_in_excerpt: cursor_offset,
             excerpt_start_row: None,
             events: events.into_iter().map(Arc::new).collect(),
-            related_files,
+            related_files: Some(related_files),
             excerpt_ranges: ExcerptRanges {
                 editable_150: editable_range.clone(),
                 editable_180: editable_range.clone(),
@@ -3840,7 +3910,7 @@ mod tests {
             cursor_offset_in_excerpt: cursor_offset,
             excerpt_start_row: None,
             events: vec![],
-            related_files: vec![],
+            related_files: Some(vec![]),
             excerpt_ranges: ExcerptRanges {
                 editable_150: editable_range.clone(),
                 editable_180: editable_range.clone(),
@@ -4424,7 +4494,7 @@ mod tests {
             cursor_offset_in_excerpt: 30,
             excerpt_start_row: Some(0),
             events: vec![Arc::new(make_event("other.rs", "-old\n+new\n"))],
-            related_files: vec![],
+            related_files: Some(vec![]),
             excerpt_ranges: ExcerptRanges {
                 editable_150: 15..41,
                 editable_180: 15..41,
@@ -4488,7 +4558,7 @@ mod tests {
             cursor_offset_in_excerpt: 15,
             excerpt_start_row: Some(10),
             events: vec![],
-            related_files: vec![],
+            related_files: Some(vec![]),
             excerpt_ranges: ExcerptRanges {
                 editable_150: 0..28,
                 editable_180: 0..28,
@@ -4547,7 +4617,7 @@ mod tests {
             cursor_offset_in_excerpt: 25,
             excerpt_start_row: Some(0),
             events: vec![],
-            related_files: vec![],
+            related_files: Some(vec![]),
             excerpt_ranges: ExcerptRanges {
                 editable_150: editable_range.clone(),
                 editable_180: editable_range.clone(),

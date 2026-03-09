@@ -119,7 +119,7 @@ release_channel.workspace = true
 rand.workspace = true
 semver.workspace = true
 settings = { workspace = true, features = ["test-support"] }
-tempfile.workspace = true
+
 text = { workspace = true, features = ["test-support"] }
 theme = { workspace = true, features = ["test-support"] }
 tree-sitter-c.workspace = true
@@ -133,7 +133,7 @@ unicode-width.workspace = true
 unindent.workspace = true
 util = { workspace = true, features = ["test-support"] }
 workspace = { workspace = true, features = ["test-support"] }
-http_client = { workspace = true, features = ["test-support"] }
+
 zlog.workspace = true
 
 

@@ -448,7 +448,9 @@ where
     TT: Fn(&mut Window, &mut App) -> AnyView + 'static,
 {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
-        let store = ReplStore::global(cx).read(cx);
+        let store = ReplStore::global(cx);
+        store.update(cx, |store, cx| store.ensure_kernelspecs(cx));
+        let store = store.read(cx);
 
         let all_entries = build_grouped_entries(store, self.worktree_id);
         let selected_kernelspec = store.active_kernelspec(self.worktree_id, None, cx);

@@ -92,8 +92,9 @@ impl Mercury {
 
             let inputs = zeta_prompt::ZetaPromptInput {
                 events,
-                related_files,
-                cursor_offset_in_excerpt,
+                related_files: Some(related_files),
+                cursor_offset_in_excerpt: cursor_point.to_offset(&snapshot)
+                    - context_offset_range.start,
                 cursor_path: full_path.clone(),
                 cursor_excerpt,
                 experiment: None,
@@ -250,7 +251,7 @@ fn build_prompt(inputs: &ZetaPromptInput) -> String {
         &mut prompt,
         RECENTLY_VIEWED_SNIPPETS_START..RECENTLY_VIEWED_SNIPPETS_END,
         |prompt| {
-            for related_file in inputs.related_files.iter() {
+            for related_file in inputs.related_files.as_deref().unwrap_or_default().iter() {
                 for related_excerpt in &related_file.excerpts {
                     push_delimited(
                         prompt,

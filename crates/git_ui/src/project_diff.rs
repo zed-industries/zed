@@ -517,7 +517,11 @@ impl ProjectDiff {
     fn move_to_beginning(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.editor.update(cx, |editor, cx| {
             editor.rhs_editor().update(cx, |editor, cx| {
-                editor.move_to_beginning(&Default::default(), window, cx);
+                editor.change_selections(Default::default(), window, cx, |s| {
+                    s.select_ranges(vec![
+                        multi_buffer::Anchor::min()..multi_buffer::Anchor::min(),
+                    ]);
+                });
             });
         });
     }

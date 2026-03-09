@@ -259,7 +259,10 @@ impl TeacherPrompt {
     }
 
     pub fn format_context(example: &Example) -> String {
-        let related_files = example.prompt_inputs.as_ref().map(|pi| &pi.related_files);
+        let related_files = example
+            .prompt_inputs
+            .as_ref()
+            .and_then(|pi| pi.related_files.as_deref());
         let Some(related_files) = related_files else {
             return "(No context)".to_string();
         };
