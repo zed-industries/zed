@@ -19675,6 +19675,107 @@ async fn test_language_server_restart_due_to_settings_change(cx: &mut TestAppCon
 }
 
 #[gpui::test]
+async fn test_toggle_theme_mode_persists_and_updates_active_theme(cx: &mut TestAppContext) {
+    use theme::{Appearance, GlobalTheme, SystemAppearance, ThemeSettings};
+    use zed_actions::theme::ToggleMode;
+
+    fn set_static_light_theme(settings: &mut SettingsContent) {
+        settings.theme.theme = Some(settings::ThemeSelection::Static(settings::ThemeName(
+            "One Light".into(),
+        )));
+    }
+
+    init_test(cx, |_| {});
+    cx.update(|cx| {
+        theme::init(theme::LoadThemes::All(Box::new(assets::Assets)), cx);
+    });
+
+    let fs = FakeFs::new(cx.executor());
+    let settings_fs: Arc<dyn fs::Fs> = fs.clone();
+    fs.insert_tree(path!("/root"), json!({ "file.rs": "fn main() {}\n" }))
+        .await;
+    let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let workspace = window
+        .read_with(cx, |multi_workspace, _| multi_workspace.workspace().clone())
+        .expect("workspace should exist");
+    let cx = &mut VisualTestContext::from_window(*window, cx);
+
+    workspace
+        .update_in(cx, |workspace, window, cx| {
+            workspace.open_abs_path(
+                PathBuf::from(path!("/root/file.rs")),
+                OpenOptions::default(),
+                window,
+                cx,
+            )
+        })
+        .await
+        .expect("failed to open editor");
+
+    workspace.update_in(cx, |_workspace, _window, cx| {
+        *SystemAppearance::global_mut(cx) = SystemAppearance(Appearance::Light);
+        settings::update_settings_file(settings_fs.clone(), cx, |settings, _cx| {
+            set_static_light_theme(settings);
+        });
+    });
+    cx.executor().advance_clock(Duration::from_millis(200));
+    cx.run_until_parked();
+    let settings_text = SettingsStore::load_settings(&settings_fs)
+        .await
+        .expect("failed to load initial theme settings");
+    workspace.update_in(cx, |_workspace, _window, cx| {
+        SettingsStore::update_global(cx, |store, cx| {
+            store
+                .set_user_settings(&settings_text, cx)
+                .expect("failed to load initial theme settings into the store");
+        });
+        GlobalTheme::reload_theme(cx);
+    });
+    cx.run_until_parked();
+
+    assert_eq!(
+        workspace.update_in(cx, |_workspace, _window, cx| cx.theme().name.to_string()),
+        "One Light",
+    );
+    assert_eq!(
+        workspace.update_in(cx, |_workspace, _window, cx| ThemeSettings::get_global(cx)
+            .theme
+            .mode()),
+        None,
+    );
+
+    workspace.update_in(cx, |_workspace, window, cx| {
+        window.dispatch_action(ToggleMode.boxed_clone(), cx);
+    });
+    cx.executor().advance_clock(Duration::from_millis(200));
+    cx.run_until_parked();
+    let settings_text = SettingsStore::load_settings(&settings_fs)
+        .await
+        .expect("failed to load persisted theme settings");
+    workspace.update_in(cx, |_workspace, _window, cx| {
+        SettingsStore::update_global(cx, |store, cx| {
+            store
+                .set_user_settings(&settings_text, cx)
+                .expect("failed to reload persisted theme settings");
+        });
+        GlobalTheme::reload_theme(cx);
+    });
+    cx.run_until_parked();
+
+    assert_eq!(
+        workspace.update_in(cx, |_workspace, _window, cx| cx.theme().name.to_string()),
+        "One Dark",
+    );
+    assert_eq!(
+        workspace.update_in(cx, |_workspace, _window, cx| ThemeSettings::get_global(cx)
+            .theme
+            .mode()),
+        Some(theme::ThemeAppearanceMode::Dark),
+    );
+}
+
+#[gpui::test]
 async fn test_completions_with_additional_edits(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 

@@ -325,10 +325,10 @@ pub mod feedback {
     );
 }
 
-pub mod theme_mode {
+pub mod theme {
     use gpui::actions;
 
-    actions!(theme_mode, [Toggle]);
+    actions!(theme, [ToggleMode]);
 }
 
 pub mod theme_selector {

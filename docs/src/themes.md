@@ -46,7 +46,7 @@ You can set the mode to `"dark"` or `"light"` to ignore the current system mode.
 
 ### Toggle Theme Mode from the Keyboard
 
-Use {#kb theme_mode::Toggle} to switch the current theme mode between light and dark.
+Use {#kb theme::ToggleMode} to switch the current theme mode between light and dark.
 
 If your settings currently use a static theme value, like:
 
