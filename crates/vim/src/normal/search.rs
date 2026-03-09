@@ -285,6 +285,7 @@ impl Vim {
             direction,
             count,
             vim_mode_search: true,
+            show_match_highlights: false,
             prior_selections,
             prior_operator: self.operator_stack.last().cloned(),
             prior_mode,
@@ -299,6 +300,7 @@ impl Vim {
         let current_mode = self.mode;
         self.search = Default::default();
         self.search.prior_mode = current_mode;
+        self.search.show_match_highlights = true;
         cx.propagate();
     }
 
@@ -956,6 +958,45 @@ mod test {
         cx.assert_editor_state("one «oneˇ» one one");
         cx.simulate_keystrokes("shift-enter");
         cx.assert_editor_state("«oneˇ» one one one");
+    }
+
+    #[gpui::test]
+    async fn test_non_vim_search_in_vim_mode(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+        cx.cx.set_state("ˇone one one one");
+        cx.run_until_parked();
+        cx.simulate_keystrokes("cmd-f");
+        cx.run_until_parked();
+
+        cx.assert_state("«oneˇ» one one one", Mode::Visual);
+        cx.simulate_keystrokes("enter");
+        cx.run_until_parked();
+        cx.assert_state("one «oneˇ» one one", Mode::Visual);
+        cx.simulate_keystrokes("shift-enter");
+        cx.run_until_parked();
+        cx.assert_state("«oneˇ» one one one", Mode::Visual);
+
+        cx.simulate_keystrokes("escape");
+        cx.run_until_parked();
+        cx.assert_state("«oneˇ» one one one", Mode::Visual);
+    }
+
+    #[gpui::test]
+    async fn test_non_vim_search_in_vim_insert_mode(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+        cx.set_state("ˇone one one one", Mode::Insert);
+        cx.run_until_parked();
+        cx.simulate_keystrokes("cmd-f");
+        cx.run_until_parked();
+
+        cx.assert_state("«oneˇ» one one one", Mode::Insert);
+        cx.simulate_keystrokes("enter");
+        cx.run_until_parked();
+        cx.assert_state("one «oneˇ» one one", Mode::Insert);
+
+        cx.simulate_keystrokes("escape");
+        cx.run_until_parked();
+        cx.assert_state("one «oneˇ» one one", Mode::Insert);
     }
 
     #[gpui::test]
