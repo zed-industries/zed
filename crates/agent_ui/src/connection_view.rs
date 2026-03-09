@@ -8,7 +8,9 @@ use acp_thread::{AgentConnection, Plan};
 use action_log::{ActionLog, ActionLogTelemetry};
 use agent::{NativeAgentServer, NativeAgentSessionList, SharedThread, ThreadStore};
 use agent_client_protocol::{self as acp, PromptCapabilities};
-use agent_servers::{AgentServer, AgentServerDelegate};
+use agent_servers::AgentServer;
+#[cfg(test)]
+use agent_servers::AgentServerDelegate;
 use agent_settings::{AgentProfileId, AgentSettings};
 use anyhow::{Result, anyhow};
 use arrayvec::ArrayVec;
@@ -65,6 +67,7 @@ use super::entry_view_state::EntryViewState;
 use super::thread_history::ThreadHistory;
 use crate::ModeSelector;
 use crate::ModelSelectorPopover;
+use crate::agent_connection_store::AgentConnectionStore;
 use crate::agent_diff::AgentDiff;
 use crate::entry_view_state::{EntryViewEvent, ViewEvent};
 use crate::message_editor::{MessageEditor, MessageEditorEvent};
@@ -73,10 +76,10 @@ use crate::ui::{AgentNotification, AgentNotificationEvent};
 use crate::{
     AgentDiffPane, AgentInitialContent, AgentPanel, AllowAlways, AllowOnce, AuthorizeToolCall,
     ClearMessageQueue, CycleFavoriteModels, CycleModeSelector, CycleThinkingEffort,
-    EditFirstQueuedMessage, ExpandMessageEditor, Follow, KeepAll, NewThread, OpenAddContextMenu,
-    OpenAgentDiff, OpenHistory, RejectAll, RejectOnce, RemoveFirstQueuedMessage, SendImmediately,
-    SendNextQueuedMessage, ToggleFastMode, ToggleProfileSelector, ToggleThinkingEffortMenu,
-    ToggleThinkingMode, UndoLastReject,
+    EditFirstQueuedMessage, ExpandMessageEditor, ExternalAgent, Follow, KeepAll, NewThread,
+    OpenAddContextMenu, OpenAgentDiff, OpenHistory, RejectAll, RejectOnce,
+    RemoveFirstQueuedMessage, SendImmediately, SendNextQueuedMessage, ToggleFastMode,
+    ToggleProfileSelector, ToggleThinkingEffortMenu, ToggleThinkingMode, UndoLastReject,
 };
 
 const STOPWATCH_THRESHOLD: Duration = Duration::from_secs(30);
@@ -303,6 +306,8 @@ impl EventEmitter<AcpServerViewEvent> for ConnectionView {}
 
 pub struct ConnectionView {
     agent: Rc<dyn AgentServer>,
+    connection_store: Entity<AgentConnectionStore>,
+    connection_key: ExternalAgent,
     agent_server_store: Entity<AgentServerStore>,
     workspace: WeakEntity<Workspace>,
     project: Entity<Project>,
@@ -470,6 +475,8 @@ impl ConnectedServerState {
 impl ConnectionView {
     pub fn new(
         agent: Rc<dyn AgentServer>,
+        connection_store: Entity<AgentConnectionStore>,
+        connection_key: ExternalAgent,
         resume_session_id: Option<acp::SessionId>,
         cwd: Option<PathBuf>,
         title: Option<SharedString>,
@@ -509,6 +516,8 @@ impl ConnectionView {
 
         Self {
             agent: agent.clone(),
+            connection_store: connection_store.clone(),
+            connection_key: connection_key.clone(),
             agent_server_store,
             workspace,
             project: project.clone(),
@@ -516,6 +525,8 @@ impl ConnectionView {
             prompt_store,
             server_state: Self::initial_state(
                 agent.clone(),
+                connection_store,
+                connection_key,
                 resume_session_id,
                 cwd,
                 title,
@@ -556,8 +567,15 @@ impl ConnectionView {
             })
             .unwrap_or((None, None, None));
 
+        self.connection_store.update(cx, |store, _cx| {
+            // todo!() do we need to invalidate on every reset?
+            store.invalidate(&self.connection_key);
+        });
+
         let state = Self::initial_state(
             self.agent.clone(),
+            self.connection_store.clone(),
+            self.connection_key.clone(),
             resume_session_id,
             cwd,
             title,
@@ -584,6 +602,8 @@ impl ConnectionView {
 
     fn initial_state(
         agent: Rc<dyn AgentServer>,
+        connection_store: Entity<AgentConnectionStore>,
+        connection_key: ExternalAgent,
         resume_session_id: Option<acp::SessionId>,
         cwd: Option<PathBuf>,
         title: Option<SharedString>,
@@ -640,19 +660,17 @@ impl ConnectionView {
             .or_else(|| worktree_roots.first().cloned())
             .unwrap_or_else(|| paths::home_dir().as_path().into());
 
-        let (status_tx, mut status_rx) = watch::channel("Loading…".into());
-        let (new_version_available_tx, mut new_version_available_rx) = watch::channel(None);
-        let delegate = AgentServerDelegate::new(
-            project.read(cx).agent_server_store().clone(),
-            project.clone(),
-            Some(status_tx),
-            Some(new_version_available_tx),
-        );
+        let handle = connection_store.update(cx, |store, cx| {
+            store.request_connection(connection_key, agent.clone(), cx)
+        });
 
-        let connect_task = agent.connect(delegate, cx);
+        let mut status_rx = handle.status_rx;
+        let mut new_version_available_rx = handle.new_version_rx;
+        let connect_result = handle.result;
+
         let load_session_id = resume_session_id.clone();
         let load_task = cx.spawn_in(window, async move |this, cx| {
-            let connection = match connect_task.await {
+            let connection = match connect_result.await {
                 Ok(connection) => connection,
                 Err(err) => {
                     this.update_in(cx, |this, window, cx| {
@@ -2910,11 +2928,17 @@ pub(crate) mod tests {
         let thread_store = cx.update(|_window, cx| cx.new(|cx| ThreadStore::new(cx)));
         // Create history without an initial session list - it will be set after connection
         let history = cx.update(|window, cx| cx.new(|cx| ThreadHistory::new(None, window, cx)));
+        let connection_store =
+            cx.update(|_window, cx| cx.new(|cx| AgentConnectionStore::new(project.clone(), cx)));
 
         let thread_view = cx.update(|window, cx| {
             cx.new(|cx| {
                 ConnectionView::new(
                     Rc::new(StubAgentServer::default_response()),
+                    connection_store,
+                    ExternalAgent::Custom {
+                        name: "Test".into(),
+                    },
                     None,
                     None,
                     None,
@@ -3010,11 +3034,17 @@ pub(crate) mod tests {
 
         let thread_store = cx.update(|_window, cx| cx.new(|cx| ThreadStore::new(cx)));
         let history = cx.update(|window, cx| cx.new(|cx| ThreadHistory::new(None, window, cx)));
+        let connection_store =
+            cx.update(|_window, cx| cx.new(|cx| AgentConnectionStore::new(project.clone(), cx)));
 
         let thread_view = cx.update(|window, cx| {
             cx.new(|cx| {
                 ConnectionView::new(
                     Rc::new(StubAgentServer::new(ResumeOnlyAgentConnection)),
+                    connection_store,
+                    ExternalAgent::Custom {
+                        name: "Test".into(),
+                    },
                     Some(SessionId::new("resume-session")),
                     None,
                     None,
@@ -3063,11 +3093,17 @@ pub(crate) mod tests {
 
         let thread_store = cx.update(|_window, cx| cx.new(|cx| ThreadStore::new(cx)));
         let history = cx.update(|window, cx| cx.new(|cx| ThreadHistory::new(None, window, cx)));
+        let connection_store =
+            cx.update(|_window, cx| cx.new(|cx| AgentConnectionStore::new(project.clone(), cx)));
 
         let _thread_view = cx.update(|window, cx| {
             cx.new(|cx| {
                 ConnectionView::new(
                     Rc::new(StubAgentServer::new(connection)),
+                    connection_store,
+                    ExternalAgent::Custom {
+                        name: "Test".into(),
+                    },
                     Some(SessionId::new("session-1")),
                     Some(PathBuf::from("/project/subdir")),
                     None,
@@ -3114,11 +3150,17 @@ pub(crate) mod tests {
 
         let thread_store = cx.update(|_window, cx| cx.new(|cx| ThreadStore::new(cx)));
         let history = cx.update(|window, cx| cx.new(|cx| ThreadHistory::new(None, window, cx)));
+        let connection_store =
+            cx.update(|_window, cx| cx.new(|cx| AgentConnectionStore::new(project.clone(), cx)));
 
         let _thread_view = cx.update(|window, cx| {
             cx.new(|cx| {
                 ConnectionView::new(
                     Rc::new(StubAgentServer::new(connection)),
+                    connection_store,
+                    ExternalAgent::Custom {
+                        name: "Test".into(),
+                    },
                     Some(SessionId::new("session-1")),
                     Some(PathBuf::from("/some/other/path")),
                     None,
@@ -3165,11 +3207,17 @@ pub(crate) mod tests {
 
         let thread_store = cx.update(|_window, cx| cx.new(|cx| ThreadStore::new(cx)));
         let history = cx.update(|window, cx| cx.new(|cx| ThreadHistory::new(None, window, cx)));
+        let connection_store =
+            cx.update(|_window, cx| cx.new(|cx| AgentConnectionStore::new(project.clone(), cx)));
 
         let _thread_view = cx.update(|window, cx| {
             cx.new(|cx| {
                 ConnectionView::new(
                     Rc::new(StubAgentServer::new(connection)),
+                    connection_store,
+                    ExternalAgent::Custom {
+                        name: "Test".into(),
+                    },
                     Some(SessionId::new("session-1")),
                     Some(PathBuf::from("/project/../outside")),
                     None,
@@ -3477,12 +3525,18 @@ pub(crate) mod tests {
         // Set up thread view in workspace 1
         let thread_store = cx.update(|_window, cx| cx.new(|cx| ThreadStore::new(cx)));
         let history = cx.update(|window, cx| cx.new(|cx| ThreadHistory::new(None, window, cx)));
+        let connection_store =
+            cx.update(|_window, cx| cx.new(|cx| AgentConnectionStore::new(project1.clone(), cx)));
 
         let agent = StubAgentServer::default_response();
         let thread_view = cx.update(|window, cx| {
             cx.new(|cx| {
                 ConnectionView::new(
                     Rc::new(agent),
+                    connection_store,
+                    ExternalAgent::Custom {
+                        name: "Test".into(),
+                    },
                     None,
                     None,
                     None,
@@ -3691,11 +3745,17 @@ pub(crate) mod tests {
 
         let thread_store = cx.update(|_window, cx| cx.new(|cx| ThreadStore::new(cx)));
         let history = cx.update(|window, cx| cx.new(|cx| ThreadHistory::new(None, window, cx)));
+        let connection_store =
+            cx.update(|_window, cx| cx.new(|cx| AgentConnectionStore::new(project.clone(), cx)));
 
         let thread_view = cx.update(|window, cx| {
             cx.new(|cx| {
                 ConnectionView::new(
                     Rc::new(agent),
+                    connection_store,
+                    ExternalAgent::Custom {
+                        name: "Test".into(),
+                    },
                     None,
                     None,
                     None,
@@ -4410,12 +4470,18 @@ pub(crate) mod tests {
 
         let thread_store = cx.update(|_window, cx| cx.new(|cx| ThreadStore::new(cx)));
         let history = cx.update(|window, cx| cx.new(|cx| ThreadHistory::new(None, window, cx)));
+        let connection_store =
+            cx.update(|_window, cx| cx.new(|cx| AgentConnectionStore::new(project.clone(), cx)));
 
         let connection = Rc::new(StubAgentConnection::new());
         let thread_view = cx.update(|window, cx| {
             cx.new(|cx| {
                 ConnectionView::new(
                     Rc::new(StubAgentServer::new(connection.as_ref().clone())),
+                    connection_store,
+                    ExternalAgent::Custom {
+                        name: "Test".into(),
+                    },
                     None,
                     None,
                     None,
