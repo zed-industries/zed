@@ -285,7 +285,34 @@ pub fn init(cx: &mut App) {
         with_active_or_new_workspace(cx, |workspace, window, cx| {
             about(workspace, window, cx);
         });
+    })
+    .on_action(|_: &zed_actions::agent::ToggleAgentMode, cx| {
+        let Some(window) = cx.active_window() else {
+            return;
+        };
+        let Some(handle) = window.downcast::<MultiWorkspace>() else {
+            return;
+        };
+        handle
+            .update(cx, |multi_workspace, window, cx| {
+                toggle_agent_mode(multi_workspace, window, cx);
+            })
+            .log_err();
     });
+}
+
+fn toggle_agent_mode(
+    multi_workspace: &mut MultiWorkspace,
+    window: &mut Window,
+    cx: &mut Context<'_, MultiWorkspace>,
+) {
+    let is_singleton = multi_workspace.is_singleton();
+    if is_singleton {
+        multi_workspace.set_singleton(false, window, cx);
+        multi_workspace.open_sidebar(cx);
+    } else {
+        multi_workspace.set_singleton(true, window, cx);
+    }
 }
 
 fn bind_on_window_closed(cx: &mut App) -> Option<gpui::Subscription> {

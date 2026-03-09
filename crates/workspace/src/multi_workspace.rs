@@ -800,16 +800,6 @@ impl Render for MultiWorkspace {
                         this.activate_previous_workspace(window, cx);
                     },
                 ))
-                .on_action(cx.listener(
-                    |this: &mut Self, _: &zed_actions::agent::ToggleAgentMode, window, cx| {
-                        if this.is_singleton {
-                            this.set_singleton(false, window, cx);
-                            this.open_sidebar(cx);
-                        } else {
-                            this.set_singleton(true, window, cx);
-                        }
-                    },
-                ))
                 .when(self.multi_workspace_enabled(cx), |this| {
                     this.on_action(cx.listener(
                         |this: &mut Self, _: &ToggleWorkspaceSidebar, window, cx| {
