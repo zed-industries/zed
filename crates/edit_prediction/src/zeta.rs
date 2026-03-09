@@ -509,7 +509,7 @@ pub fn zeta2_prompt_input(
         cursor_offset_in_excerpt,
         excerpt_start_row: Some(full_context_start_row),
         events,
-        related_files,
+        related_files: Some(related_files),
         excerpt_ranges,
         experiment: preferred_experiment,
         in_open_source_repo: is_open_source,

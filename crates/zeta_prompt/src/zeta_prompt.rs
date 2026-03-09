@@ -51,7 +51,8 @@ pub struct ZetaPromptInput {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub excerpt_start_row: Option<u32>,
     pub events: Vec<Arc<Event>>,
-    pub related_files: Vec<RelatedFile>,
+    #[serde(default)]
+    pub related_files: Option<Vec<RelatedFile>>,
     /// These ranges let the server select model-appropriate subsets.
     pub excerpt_ranges: ExcerptRanges,
     /// The name of the edit prediction model experiment to use.
@@ -350,17 +351,19 @@ pub fn format_prompt_with_budget_for_format(
         resolve_cursor_region(input, format);
     let path = &*input.cursor_path;
 
+    let empty_files = Vec::new();
+    let input_related_files = input.related_files.as_deref().unwrap_or(&empty_files);
     let related_files = if let Some(cursor_excerpt_start_row) = input.excerpt_start_row {
         let relative_row_range = offset_range_to_row_range(&input.cursor_excerpt, context_range);
         let row_range = relative_row_range.start + cursor_excerpt_start_row
             ..relative_row_range.end + cursor_excerpt_start_row;
         &filter_redundant_excerpts(
-            input.related_files.clone(),
+            input_related_files.to_vec(),
             input.cursor_path.as_ref(),
             row_range,
         )
     } else {
-        &input.related_files
+        input_related_files
     };
 
     match format {
@@ -3863,7 +3866,7 @@ mod tests {
             cursor_offset_in_excerpt: cursor_offset,
             excerpt_start_row: None,
             events: events.into_iter().map(Arc::new).collect(),
-            related_files,
+            related_files: Some(related_files),
             excerpt_ranges: ExcerptRanges {
                 editable_150: editable_range.clone(),
                 editable_180: editable_range.clone(),
@@ -3892,7 +3895,7 @@ mod tests {
             cursor_offset_in_excerpt: cursor_offset,
             excerpt_start_row: None,
             events: vec![],
-            related_files: vec![],
+            related_files: Some(vec![]),
             excerpt_ranges: ExcerptRanges {
                 editable_150: editable_range.clone(),
                 editable_180: editable_range.clone(),
@@ -4475,7 +4478,7 @@ mod tests {
             cursor_offset_in_excerpt: 30,
             excerpt_start_row: Some(0),
             events: vec![Arc::new(make_event("other.rs", "-old\n+new\n"))],
-            related_files: vec![],
+            related_files: Some(vec![]),
             excerpt_ranges: ExcerptRanges {
                 editable_150: 15..41,
                 editable_180: 15..41,
@@ -4538,7 +4541,7 @@ mod tests {
             cursor_offset_in_excerpt: 15,
             excerpt_start_row: Some(10),
             events: vec![],
-            related_files: vec![],
+            related_files: Some(vec![]),
             excerpt_ranges: ExcerptRanges {
                 editable_150: 0..28,
                 editable_180: 0..28,
@@ -4596,7 +4599,7 @@ mod tests {
             cursor_offset_in_excerpt: 25,
             excerpt_start_row: Some(0),
             events: vec![],
-            related_files: vec![],
+            related_files: Some(vec![]),
             excerpt_ranges: ExcerptRanges {
                 editable_150: editable_range.clone(),
                 editable_180: editable_range.clone(),
