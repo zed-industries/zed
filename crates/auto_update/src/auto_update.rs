@@ -212,18 +212,10 @@ pub fn init(client: Arc<Client>, cx: &mut App) {
 }
 
 pub fn check(_: &Check, window: &mut Window, cx: &mut App) {
-    if let Some(message) = option_env!("ZED_UPDATE_EXPLANATION") {
-        drop(window.prompt(
-            gpui::PromptLevel::Info,
-            "Zed was installed via a package manager.",
-            Some(message),
-            &["Ok"],
-            cx,
-        ));
-        return;
-    }
-
-    if let Ok(message) = env::var("ZED_UPDATE_EXPLANATION") {
+    if let Some(message) = option_env!("ZED_UPDATE_EXPLANATION")
+        .map(ToOwned::to_owned)
+        .or_else(|| env::var("ZED_UPDATE_EXPLANATION").ok())
+    {
         drop(window.prompt(
             gpui::PromptLevel::Info,
             "Zed was installed via a package manager.",
