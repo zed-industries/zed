@@ -23,7 +23,6 @@ pub use acp::AcpConnection;
 pub struct AgentServerDelegate {
     store: Entity<AgentServerStore>,
     project: Entity<Project>,
-    status_tx: Option<watch::Sender<SharedString>>,
     new_version_available: Option<watch::Sender<Option<String>>>,
 }
 
@@ -31,13 +30,11 @@ impl AgentServerDelegate {
     pub fn new(
         store: Entity<AgentServerStore>,
         project: Entity<Project>,
-        status_tx: Option<watch::Sender<SharedString>>,
         new_version_tx: Option<watch::Sender<Option<String>>>,
     ) -> Self {
         Self {
             store,
             project,
-            status_tx,
             new_version_available: new_version_tx,
         }
     }

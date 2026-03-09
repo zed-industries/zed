@@ -552,7 +552,6 @@ impl MentionSet {
             project.read(cx).agent_server_store().clone(),
             project.clone(),
             None,
-            None,
         );
         let connection = server.connect(delegate, cx);
         cx.spawn(async move |_, cx| {

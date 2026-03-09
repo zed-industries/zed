@@ -222,7 +222,6 @@ message ExternalExtensionAgentsUpdated {
 message ExternalAgentLoadingStatusUpdated {
   uint64 project_id = 1;
   string name = 2;
-  string status = 3;
 }
 
 message NewExternalAgentVersionAvailable {

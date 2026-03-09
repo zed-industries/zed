@@ -439,9 +439,7 @@ impl AuthState {
 
 struct LoadingView {
     session_id: Option<acp::SessionId>,
-    title: SharedString,
     _load_task: Task<()>,
-    _update_title_task: Task<anyhow::Result<()>>,
 }
 
 impl ConnectedServerState {
@@ -664,7 +662,6 @@ impl ConnectionView {
             store.request_connection(connection_key, agent.clone(), cx)
         });
 
-        let mut status_rx = handle.status_rx;
         let mut new_version_available_rx = handle.new_version_rx;
         let connect_result = handle.result;
 
@@ -823,23 +820,9 @@ impl ConnectionView {
         })
         .detach();
 
-        let loading_view = cx.new(|cx| {
-            let update_title_task = cx.spawn(async move |this, cx| {
-                loop {
-                    let status = status_rx.recv().await?;
-                    this.update(cx, |this: &mut LoadingView, cx| {
-                        this.title = status;
-                        cx.notify();
-                    })?;
-                }
-            });
-
-            LoadingView {
-                session_id: resume_session_id,
-                title: "Loading…".into(),
-                _load_task: load_task,
-                _update_title_task: update_title_task,
-            }
+        let loading_view = cx.new(|_cx| LoadingView {
+            session_id: resume_session_id,
+            _load_task: load_task,
         });
 
         ServerState::Loading(loading_view)
@@ -1190,10 +1173,10 @@ impl ConnectionView {
         &self.workspace
     }
 
-    pub fn title(&self, cx: &App) -> SharedString {
+    pub fn title(&self, _cx: &App) -> SharedString {
         match &self.server_state {
             ServerState::Connected(_) => "New Thread".into(),
-            ServerState::Loading(loading_view) => loading_view.read(cx).title.clone(),
+            ServerState::Loading(_) => "Loading…".into(),
             ServerState::LoadError { error, .. } => match error {
                 LoadError::Unsupported { .. } => format!("Upgrade {}", self.agent.name()).into(),
                 LoadError::FailedToInstall(_) => {

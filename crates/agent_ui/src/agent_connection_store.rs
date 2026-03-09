@@ -16,19 +16,16 @@ enum ConnectionEntry {
         /// Shared future for the in-flight connection attempt.
         /// Multiple requesters await clones of this receiver.
         result_rx: watch::Receiver<Option<Result<Rc<dyn AgentConnection>, SharedString>>>,
-        status_rx: watch::Receiver<SharedString>,
         new_version_rx: watch::Receiver<Option<String>>,
     },
     Ready {
         connection: Rc<dyn AgentConnection>,
-        status_rx: watch::Receiver<SharedString>,
         new_version_rx: watch::Receiver<Option<String>>,
     },
 }
 
 pub struct ConnectionRequestHandle {
     pub result: Task<Result<Rc<dyn AgentConnection>>>,
-    pub status_rx: watch::Receiver<SharedString>,
     pub new_version_rx: watch::Receiver<Option<String>>,
 }
 
@@ -59,18 +56,15 @@ impl AgentConnectionStore {
             match entry {
                 ConnectionEntry::Ready {
                     connection,
-                    status_rx,
                     new_version_rx,
                 } => {
                     return ConnectionRequestHandle {
                         result: Task::ready(Ok(connection.clone())),
-                        status_rx: status_rx.clone(),
                         new_version_rx: new_version_rx.clone(),
                     };
                 }
                 ConnectionEntry::Connecting {
                     result_rx,
-                    status_rx,
                     new_version_rx,
                 } => {
                     let mut result_rx = result_rx.clone();
@@ -79,7 +73,6 @@ impl AgentConnectionStore {
                     });
                     return ConnectionRequestHandle {
                         result,
-                        status_rx: status_rx.clone(),
                         new_version_rx: new_version_rx.clone(),
                     };
                 }
@@ -115,7 +108,6 @@ impl AgentConnectionStore {
         server: Rc<dyn AgentServer>,
         cx: &mut Context<Self>,
     ) -> ConnectionRequestHandle {
-        let (status_tx, status_rx) = watch::channel::<SharedString>("Loading…".into());
         let (new_version_tx, new_version_rx) = watch::channel::<Option<String>>(None);
         let (mut result_tx, result_rx) =
             watch::channel::<Option<Result<Rc<dyn AgentConnection>, SharedString>>>(None);
@@ -124,7 +116,6 @@ impl AgentConnectionStore {
         let delegate = AgentServerDelegate::new(
             agent_server_store,
             self.project.clone(),
-            Some(status_tx),
             Some(new_version_tx),
         );
 
@@ -134,17 +125,13 @@ impl AgentConnectionStore {
             Ok(connection) => {
                 result_tx.send(Some(Ok(connection.clone()))).ok();
                 this.update(cx, |this, cx| {
-                    if let Some(ConnectionEntry::Connecting {
-                        status_rx,
-                        new_version_rx,
-                        ..
-                    }) = this.entries.remove(&entry_key)
+                    if let Some(ConnectionEntry::Connecting { new_version_rx, .. }) =
+                        this.entries.remove(&entry_key)
                     {
                         this.entries.insert(
                             entry_key,
                             ConnectionEntry::Ready {
                                 connection,
-                                status_rx,
                                 new_version_rx,
                             },
                         );
@@ -169,21 +156,18 @@ impl AgentConnectionStore {
             Self::await_connection_result(&mut first_result_rx).await
         });
 
-        let handle_status_rx = status_rx.clone();
         let handle_new_version_rx = new_version_rx.clone();
 
         self.entries.insert(
             key,
             ConnectionEntry::Connecting {
                 result_rx,
-                status_rx,
                 new_version_rx,
             },
         );
 
         ConnectionRequestHandle {
             result,
-            status_rx: handle_status_rx,
             new_version_rx: handle_new_version_rx,
         }
     }
