@@ -233,7 +233,7 @@ pub struct ThreadView {
     pub mode_selector: Option<Entity<ModeSelector>>,
     pub model_selector: Option<Entity<ModelSelectorPopover>>,
     pub profile_selector: Option<Entity<ProfileSelector>>,
-    pub context_window_display_selector: Option<Entity<crate::ContextWindowDisplaySelector>>,
+    pub context_window_display_menu_handle: PopoverMenuHandle<ContextMenu>,
     pub permission_dropdown_handle: PopoverMenuHandle<ContextMenu>,
     pub thread_retry_status: Option<RetryStatus>,
     pub(super) thread_error: Option<ThreadError>,
@@ -454,11 +454,6 @@ impl ThreadView {
             .map(|h| h.read(cx).get_recent_sessions(3))
             .unwrap_or_default();
 
-        let context_window_display_selector = project
-            .upgrade()
-            .map(|p| p.read(cx).fs().clone())
-            .map(|fs| cx.new(|_cx| crate::ContextWindowDisplaySelector::new(fs)));
-
         let mut this = Self {
             id,
             parent_id,
@@ -480,7 +475,7 @@ impl ThreadView {
             session_capabilities,
             resumed_without_history,
             _subscriptions: subscriptions,
-            context_window_display_selector,
+            context_window_display_menu_handle: PopoverMenuHandle::default(),
             permission_dropdown_handle: PopoverMenuHandle::default(),
             thread_retry_status: None,
             thread_error: None,
@@ -3010,19 +3005,9 @@ impl ThreadView {
                     .child(
                         h_flex()
                             .gap_1()
-                            .map(|this| {
-                                let token_usage = self.render_token_usage(cx);
-                                let has_usage = token_usage.is_some();
-                                this.children(token_usage)
-                                    .when(has_usage, |this| {
-                                        this.children(
-                                            self.context_window_display_selector.clone(),
-                                        )
-                                    })
-                            })
+                            .children(self.render_token_usage(cx))
                             .children(self.profile_selector.clone())
                             .map(|this| {
-                                // Either config_options_view OR (mode_selector + model_selector)
                                 match self.config_options_view.clone() {
                                     Some(config_view) => this.child(config_view),
                                     None => this
@@ -3346,90 +3331,135 @@ impl ThreadView {
 
             let display_mode = AgentSettings::get_global(cx).context_window_display;
 
-            Some(
-                h_flex()
-                    .id("circular_progress_tokens")
-                    .mt_px()
-                    .mr_1()
-                    .gap_1()
-                    .when(display_mode == ContextWindowDisplay::Compact, |this| {
-                        this.child(
-                            CircularProgress::new(
-                                usage.used_tokens as f32,
-                                usage.max_tokens as f32,
-                                px(16.0),
-                                cx,
+            let token_usage_trigger = ButtonLike::new("circular_progress_tokens")
+                .style(ui::ButtonStyle::Subtle)
+                .when(display_mode == ContextWindowDisplay::Compact, |this| {
+                    this.child(
+                        CircularProgress::new(
+                            usage.used_tokens as f32,
+                            usage.max_tokens as f32,
+                            px(16.0),
+                            cx,
+                        )
+                        .stroke_width(px(2.))
+                        .progress_color(progress_color),
+                    )
+                })
+                .when(display_mode == ContextWindowDisplay::Detailed, |this| {
+                    this.child(
+                        h_flex()
+                            .gap_0p5()
+                            .child(token_label(percentage.clone(), "token_pct"))
+                            .child(
+                                Label::new("·")
+                                    .size(LabelSize::Small)
+                                    .color(separator_color),
                             )
-                            .stroke_width(px(2.))
-                            .progress_color(progress_color),
-                        )
+                            .child(token_label(used.clone(), "token_used"))
+                            .child(
+                                Label::new("/")
+                                    .size(LabelSize::Small)
+                                    .color(separator_color),
+                            )
+                            .child(token_label(max.clone(), "token_max")),
+                    )
+                })
+                .tooltip(Tooltip::element({
+                    move |_, cx| {
+                        v_flex()
+                            .min_w_40()
+                            .child(
+                                Label::new("Context")
+                                    .color(Color::Muted)
+                                    .size(LabelSize::Small),
+                            )
+                            .child(
+                                h_flex()
+                                    .gap_0p5()
+                                    .child(Label::new(percentage.clone()))
+                                    .child(Label::new("•").color(separator_color).mx_1())
+                                    .child(Label::new(used.clone()))
+                                    .child(Label::new("/").color(separator_color))
+                                    .child(Label::new(max.clone()).color(Color::Muted)),
+                            )
+                            .when(user_rules_count > 0 || project_rules_count > 0, |this| {
+                                this.child(
+                                    v_flex()
+                                        .mt_1p5()
+                                        .pt_1p5()
+                                        .border_t_1()
+                                        .border_color(cx.theme().colors().border_variant)
+                                        .child(
+                                            Label::new("Rules")
+                                                .color(Color::Muted)
+                                                .size(LabelSize::Small),
+                                        )
+                                        .when(user_rules_count > 0, |this| {
+                                            this.child(Label::new(format!(
+                                                "{} user rules",
+                                                user_rules_count
+                                            )))
+                                        })
+                                        .when(project_rules_count > 0, |this| {
+                                            this.child(Label::new(format!(
+                                                "{} project rules",
+                                                project_rules_count
+                                            )))
+                                        }),
+                                )
+                            })
+                            .into_any_element()
+                    }
+                }));
+
+            let fs = self.project.upgrade().map(|p| p.read(cx).fs().clone());
+
+            Some(
+                PopoverMenu::new("context-window-display-menu")
+                    .trigger(token_usage_trigger)
+                    .anchor(gpui::Corner::BottomRight)
+                    .with_handle(self.context_window_display_menu_handle.clone())
+                    .offset(gpui::Point {
+                        x: px(0.0),
+                        y: px(-2.0),
                     })
-                    .when(display_mode == ContextWindowDisplay::Detailed, |this| {
-                        this.child(
-                            h_flex()
-                                .gap_0p5()
-                                .child(token_label(percentage.clone(), "token_pct"))
-                                .child(
-                                    Label::new("·")
-                                        .size(LabelSize::Small)
-                                        .color(separator_color),
-                                )
-                                .child(token_label(used.clone(), "token_used"))
-                                .child(
-                                    Label::new("/")
-                                        .size(LabelSize::Small)
-                                        .color(separator_color),
-                                )
-                                .child(token_label(max.clone(), "token_max")),
-                        )
+                    .menu(move |window, cx| {
+                        let fs = fs.clone()?;
+                        let current = AgentSettings::get_global(cx).context_window_display;
+                        Some(ContextMenu::build(window, cx, move |mut menu, _window, _cx| {
+                            menu.push_item(
+                                ContextMenuEntry::new("Compact")
+                                    .toggleable(IconPosition::End, current == ContextWindowDisplay::Compact)
+                                    .handler({
+                                        let fs = fs.clone();
+                                        move |_window, cx| {
+                                            update_settings_file(fs.clone(), cx, move |settings, _| {
+                                                settings
+                                                    .agent
+                                                    .get_or_insert_default()
+                                                    .set_context_window_display(ContextWindowDisplay::Compact);
+                                            });
+                                        }
+                                    }),
+                            );
+                            menu.push_item(
+                                ContextMenuEntry::new("Detailed")
+                                    .toggleable(IconPosition::End, current == ContextWindowDisplay::Detailed)
+                                    .handler({
+                                        let fs = fs.clone();
+                                        move |_window, cx| {
+                                            update_settings_file(fs.clone(), cx, move |settings, _| {
+                                                settings
+                                                    .agent
+                                                    .get_or_insert_default()
+                                                    .set_context_window_display(ContextWindowDisplay::Detailed);
+                                            });
+                                        }
+                                    }),
+                            );
+                            menu
+                        }))
                     })
-                    .tooltip(Tooltip::element({
-                        move |_, cx| {
-                            v_flex()
-                                .min_w_40()
-                                .child(
-                                    Label::new("Context")
-                                        .color(Color::Muted)
-                                        .size(LabelSize::Small),
-                                )
-                                .child(
-                                    h_flex()
-                                        .gap_0p5()
-                                        .child(Label::new(percentage.clone()))
-                                        .child(Label::new("•").color(separator_color).mx_1())
-                                        .child(Label::new(used.clone()))
-                                        .child(Label::new("/").color(separator_color))
-                                        .child(Label::new(max.clone()).color(Color::Muted)),
-                                )
-                                .when(user_rules_count > 0 || project_rules_count > 0, |this| {
-                                    this.child(
-                                        v_flex()
-                                            .mt_1p5()
-                                            .pt_1p5()
-                                            .border_t_1()
-                                            .border_color(cx.theme().colors().border_variant)
-                                            .child(
-                                                Label::new("Rules")
-                                                    .color(Color::Muted)
-                                                    .size(LabelSize::Small),
-                                            )
-                                            .when(user_rules_count > 0, |this| {
-                                                this.child(Label::new(format!(
-                                                    "{} user rules",
-                                                    user_rules_count
-                                                )))
-                                            })
-                                            .when(project_rules_count > 0, |this| {
-                                                this.child(Label::new(format!(
-                                                    "{} project rules",
-                                                    project_rules_count
-                                                )))
-                                            }),
-                                    )
-                                })
-                                .into_any_element()
-                        }
-                    }))
                     .into_any_element(),
             )
         }
