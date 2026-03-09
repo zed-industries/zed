@@ -34,7 +34,7 @@ impl SyncEngine {
         command.env("SSH_ASKPASS", "echo");
         #[cfg(target_os = "linux")]
         command.env("DISPLAY", "");
-        command.args(["ls-remote", "--heads", repo_url]);
+        command.args(["-c", "credential.helper=", "ls-remote", "--heads", repo_url]);
 
         let output = command.output().context("Failed to execute git command")?;
         if output.status.success() {
