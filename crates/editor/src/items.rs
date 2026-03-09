@@ -43,8 +43,6 @@ use ui::{IconDecorationKind, prelude::*};
 use util::{ResultExt, TryFutureExt, paths::PathExt};
 use workspace::{
     CollaboratorId, ItemId, ItemNavHistory, ToolbarItemLocation, ViewId, Workspace, WorkspaceId,
-    collapsible::CollapsibleItem,
-    collapsible::CollapsibleItemHandle,
     invalid_item_view::InvalidItemView,
     item::{FollowableItem, Item, ItemBufferKind, ItemEvent, ProjectItem, SaveOptions},
     searchable::{
@@ -967,14 +965,6 @@ impl Item for Editor {
         handle: &Entity<Self>,
         _: &App,
     ) -> Option<Box<dyn SearchableItemHandle>> {
-        Some(Box::new(handle.clone()))
-    }
-
-    fn as_collapsible(
-        &self,
-        handle: &Entity<Self>,
-        _: &App,
-    ) -> Option<Box<dyn CollapsibleItemHandle>> {
         Some(Box::new(handle.clone()))
     }
 
@@ -1916,20 +1906,6 @@ impl SearchableItem for Editor {
         _cx: &mut Context<Self>,
     ) {
         self.select_next_is_case_sensitive = case_sensitive;
-    }
-}
-
-impl CollapsibleItem for Editor {
-    fn has_any_collapsed(&self, cx: &App) -> bool {
-        self.has_any_buffer_folded(cx)
-    }
-
-    fn collapse_all(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.fold_all(&Default::default(), window, cx);
-    }
-
-    fn expand_all(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.unfold_all(&Default::default(), window, cx);
     }
 }
 

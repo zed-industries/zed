@@ -1,7 +1,6 @@
 use crate::{
     CollaboratorId, DelayedDebouncedEditAction, FollowableViewRegistry, ItemNavHistory,
     SerializableItemRegistry, ToolbarItemLocation, ViewId, Workspace, WorkspaceId,
-    collapsible::CollapsibleItemHandle,
     invalid_item_view::InvalidItemView,
     pane::{self, Pane},
     persistence::model::ItemId,
@@ -326,10 +325,6 @@ pub trait Item: Focusable + EventEmitter<Self::Event> + Render + Sized {
         None
     }
 
-    fn as_collapsible(&self, _: &Entity<Self>, _: &App) -> Option<Box<dyn CollapsibleItemHandle>> {
-        None
-    }
-
     fn breadcrumb_location(&self, _: &App) -> ToolbarItemLocation {
         ToolbarItemLocation::Hidden
     }
@@ -552,7 +547,6 @@ pub trait ItemHandle: 'static + Send {
         callback: Box<dyn FnOnce(&mut App) + Send>,
     ) -> gpui::Subscription;
     fn to_searchable_item_handle(&self, cx: &App) -> Option<Box<dyn SearchableItemHandle>>;
-    fn to_collapsible_item_handle(&self, cx: &App) -> Option<Box<dyn CollapsibleItemHandle>>;
     fn breadcrumb_location(&self, cx: &App) -> ToolbarItemLocation;
     fn breadcrumbs(&self, cx: &App) -> Option<Vec<BreadcrumbText>>;
     fn breadcrumb_prefix(&self, window: &mut Window, cx: &mut App) -> Option<gpui::AnyElement>;
@@ -1090,10 +1084,6 @@ impl<T: Item> ItemHandle for Entity<T> {
 
     fn to_searchable_item_handle(&self, cx: &App) -> Option<Box<dyn SearchableItemHandle>> {
         self.read(cx).as_searchable(self, cx)
-    }
-
-    fn to_collapsible_item_handle(&self, cx: &App) -> Option<Box<dyn CollapsibleItemHandle>> {
-        self.read(cx).as_collapsible(self, cx)
     }
 
     fn breadcrumb_location(&self, cx: &App) -> ToolbarItemLocation {

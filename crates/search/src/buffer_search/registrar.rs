@@ -191,7 +191,7 @@ impl<A: Action> ActionExecutor<A> for ForDeployed<A> {
         window: &mut Window,
         cx: &mut Context<BufferSearchBar>,
     ) -> DidHandleAction {
-        if search_bar.is_dismissed() || search_bar.active_item.is_none() {
+        if search_bar.is_dismissed() || search_bar.active_searchable_item.is_none() {
             false
         } else {
             self.0(search_bar, action, window, cx);

@@ -34,7 +34,6 @@ use workspace::item::TabTooltipContent;
 use workspace::{
     Item, ItemHandle, ItemNavHistory, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView,
     Workspace,
-    collapsible::CollapsibleItemHandle,
     item::{ItemEvent, TabContentParams},
     notifications::NotifyTaskExt,
     pane::SaveIntent,
@@ -899,10 +898,6 @@ impl Item for CommitView {
     }
 
     fn as_searchable(&self, _: &Entity<Self>, _: &App) -> Option<Box<dyn SearchableItemHandle>> {
-        Some(Box::new(self.editor.clone()))
-    }
-
-    fn as_collapsible(&self, _: &Entity<Self>, _: &App) -> Option<Box<dyn CollapsibleItemHandle>> {
         Some(Box::new(self.editor.clone()))
     }
 

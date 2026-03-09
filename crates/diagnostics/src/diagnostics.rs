@@ -46,7 +46,6 @@ use ui::{Icon, IconName, Label, h_flex, prelude::*};
 use util::ResultExt;
 use workspace::{
     ItemNavHistory, Workspace,
-    collapsible::CollapsibleItemHandle,
     item::{Item, ItemEvent, ItemHandle, SaveOptions, TabContentParams},
     searchable::SearchableItemHandle,
 };
@@ -890,10 +889,6 @@ impl Item for ProjectDiagnosticsEditor {
     }
 
     fn as_searchable(&self, _: &Entity<Self>, _: &App) -> Option<Box<dyn SearchableItemHandle>> {
-        Some(Box::new(self.editor.clone()))
-    }
-
-    fn as_collapsible(&self, _: &Entity<Self>, _: &App) -> Option<Box<dyn CollapsibleItemHandle>> {
         Some(Box::new(self.editor.clone()))
     }
 
