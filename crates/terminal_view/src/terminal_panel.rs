@@ -66,7 +66,7 @@ pub fn init(cx: &mut App) {
                 if is_enabled_in_workspace(workspace, cx) {
                     if workspace
                         .panel::<TerminalPanel>(cx)
-                        .is_some_and(|panel| panel.read(cx).is_active())
+                        .is_some_and(|panel| panel.read(cx).active)
                     {
                         workspace.close_panel::<TerminalPanel>(window, cx);
                     } else {
@@ -1089,10 +1089,6 @@ impl TerminalPanel {
 
     pub fn assistant_enabled(&self) -> bool {
         self.assistant_enabled
-    }
-
-    pub fn is_active(&self) -> bool {
-        self.active
     }
 
     /// Returns all panes in the terminal panel.
