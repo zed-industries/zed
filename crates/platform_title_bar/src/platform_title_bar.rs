@@ -33,6 +33,7 @@ pub struct PlatformTitleBar {
     system_window_tabs: Entity<SystemWindowTabs>,
     workspace_sidebar_open: bool,
     sidebar_has_notifications: bool,
+    is_singleton: bool,
 }
 
 impl PlatformTitleBar {
@@ -48,6 +49,7 @@ impl PlatformTitleBar {
             system_window_tabs,
             workspace_sidebar_open: false,
             sidebar_has_notifications: false,
+            is_singleton: false,
         }
     }
 
@@ -93,6 +95,15 @@ impl PlatformTitleBar {
         cx: &mut Context<Self>,
     ) {
         self.sidebar_has_notifications = has_notifications;
+        cx.notify();
+    }
+
+    pub fn is_singleton(&self) -> bool {
+        self.is_singleton
+    }
+
+    pub fn set_singleton(&mut self, is_singleton: bool, cx: &mut Context<Self>) {
+        self.is_singleton = is_singleton;
         cx.notify();
     }
 

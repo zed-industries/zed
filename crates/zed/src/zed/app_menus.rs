@@ -47,6 +47,8 @@ pub fn app_menus(cx: &mut App) -> Vec<Menu> {
         MenuItem::separator(),
         MenuItem::action("Diagnostics", diagnostics::Deploy),
         MenuItem::separator(),
+        MenuItem::action("Toggle Agent Mode", zed_actions::agent::ToggleAgentMode),
+        MenuItem::separator(),
     ];
 
     if ReleaseChannel::try_global(cx) == Some(ReleaseChannel::Dev) {

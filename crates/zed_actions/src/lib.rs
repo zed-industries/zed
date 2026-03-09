@@ -456,6 +456,8 @@ pub mod agent {
             ResetAgentZoom,
             /// Pastes clipboard content without any formatting.
             PasteRaw,
+            /// Toggles the agent singleton mode for the current window.
+            ToggleAgentMode,
         ]
     );
 

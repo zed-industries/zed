@@ -371,18 +371,22 @@ impl TitleBar {
 
                     let is_open = multi_workspace.read(cx).is_sidebar_open();
                     let has_notifications = multi_workspace.read(cx).sidebar_has_notifications(cx);
+                    let is_singleton = multi_workspace.read(cx).is_singleton();
                     platform_titlebar.update(cx, |titlebar, cx| {
                         titlebar.set_workspace_sidebar_open(is_open, cx);
                         titlebar.set_sidebar_has_notifications(has_notifications, cx);
+                        titlebar.set_singleton(is_singleton, cx);
                     });
 
                     let platform_titlebar = platform_titlebar.clone();
                     let subscription = cx.observe(&multi_workspace, move |mw, cx| {
                         let is_open = mw.read(cx).is_sidebar_open();
                         let has_notifications = mw.read(cx).sidebar_has_notifications(cx);
+                        let is_singleton = mw.read(cx).is_singleton();
                         platform_titlebar.update(cx, |titlebar, cx| {
                             titlebar.set_workspace_sidebar_open(is_open, cx);
                             titlebar.set_sidebar_has_notifications(has_notifications, cx);
+                            titlebar.set_singleton(is_singleton, cx);
                         });
                     });
 
@@ -689,6 +693,10 @@ impl TitleBar {
         cx: &mut Context<Self>,
     ) -> Option<AnyElement> {
         if !cx.has_flag::<AgentV2FeatureFlag>() || DisableAiSettings::get_global(cx).disable_ai {
+            return None;
+        }
+
+        if self.platform_titlebar.read(cx).is_singleton() {
             return None;
         }
 

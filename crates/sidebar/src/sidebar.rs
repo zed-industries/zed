@@ -218,6 +218,9 @@ impl Sidebar {
                 MultiWorkspaceEvent::WorkspaceRemoved(_) => {
                     this.update_entries(cx);
                 }
+                MultiWorkspaceEvent::SingletonModeChanged => {
+                    cx.notify();
+                }
             },
         )
         .detach();

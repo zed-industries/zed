@@ -39,6 +39,7 @@ pub enum MultiWorkspaceEvent {
     ActiveWorkspaceChanged,
     WorkspaceAdded(Entity<Workspace>),
     WorkspaceRemoved(EntityId),
+    SingletonModeChanged,
 }
 
 pub enum SidebarEvent {
@@ -108,6 +109,7 @@ pub struct MultiWorkspace {
     active_workspace_index: usize,
     sidebar: Option<Box<dyn SidebarHandle>>,
     sidebar_open: bool,
+    is_singleton: bool,
     _sidebar_subscription: Option<Subscription>,
     pending_removal_tasks: Vec<Task<()>>,
     _serialize_task: Option<Task<()>>,
@@ -144,6 +146,7 @@ impl MultiWorkspace {
             active_workspace_index: 0,
             sidebar: None,
             sidebar_open: false,
+            is_singleton: false,
             _sidebar_subscription: None,
             pending_removal_tasks: Vec::new(),
             _serialize_task: None,
@@ -191,8 +194,29 @@ impl MultiWorkspace {
         cx.has_flag::<AgentV2FeatureFlag>() && !DisableAiSettings::get_global(cx).disable_ai
     }
 
+    pub fn is_singleton(&self) -> bool {
+        self.is_singleton
+    }
+
+    pub fn set_singleton(
+        &mut self,
+        is_singleton: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.is_singleton == is_singleton {
+            return;
+        }
+        self.is_singleton = is_singleton;
+        if is_singleton && self.sidebar_open {
+            self.close_sidebar(window, cx);
+        }
+        cx.emit(MultiWorkspaceEvent::SingletonModeChanged);
+        cx.notify();
+    }
+
     pub fn toggle_sidebar(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if !self.multi_workspace_enabled(cx) {
+        if !self.multi_workspace_enabled(cx) || self.is_singleton {
             return;
         }
 
@@ -207,7 +231,7 @@ impl MultiWorkspace {
     }
 
     pub fn focus_sidebar(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if !self.multi_workspace_enabled(cx) {
+        if !self.multi_workspace_enabled(cx) || self.is_singleton {
             return;
         }
 
@@ -233,6 +257,9 @@ impl MultiWorkspace {
     }
 
     pub fn open_sidebar(&mut self, cx: &mut Context<Self>) {
+        if self.is_singleton {
+            return;
+        }
         self.sidebar_open = true;
         for workspace in &self.workspaces {
             workspace.update(cx, |workspace, cx| {
@@ -771,6 +798,16 @@ impl Render for MultiWorkspace {
                 .on_action(cx.listener(
                     |this: &mut Self, _: &PreviousWorkspaceInWindow, window, cx| {
                         this.activate_previous_workspace(window, cx);
+                    },
+                ))
+                .on_action(cx.listener(
+                    |this: &mut Self, _: &zed_actions::agent::ToggleAgentMode, window, cx| {
+                        if this.is_singleton {
+                            this.set_singleton(false, window, cx);
+                            this.open_sidebar(cx);
+                        } else {
+                            this.set_singleton(true, window, cx);
+                        }
                     },
                 ))
                 .when(self.multi_workspace_enabled(cx), |this| {
