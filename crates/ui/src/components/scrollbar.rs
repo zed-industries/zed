@@ -1194,9 +1194,13 @@ impl<T: ScrollableHandle> Element for ScrollbarElement<T> {
                             let scroll_track_bounds = Bounds::from_corner_and_size(
                                 track_anchor,
                                 self.origin + bounds.corner(track_anchor),
-                                bounds
-                                    .size
-                                    .apply_along(axis.invert(), |_| width + 2 * SCROLLBAR_PADDING),
+                                bounds.size.apply_along(axis.invert(), |_| {
+                                    width
+                                        + match state.style {
+                                            ScrollbarStyle::Rounded => 2 * SCROLLBAR_PADDING,
+                                            ScrollbarStyle::Editor => SCROLLBAR_PADDING,
+                                        }
+                                }),
                             );
 
                             // Rounded style needs a bit of padding, whereas for editor scrolbars,
