@@ -197,7 +197,7 @@ pub fn init(cx: &mut App) {
                     return;
                 }
 
-                let result = cx
+                let result: anyhow::Result<()> = cx
                     .background_executor()
                     .spawn(async move {
                         let engine = sync_engine::SyncEngine::new();
@@ -222,16 +222,23 @@ pub fn init(cx: &mut App) {
                             );
                         }
                         Err(e) => {
-                            workspace.show_toast(
-                                Toast::new(
-                                    NotificationId::Named("settings_sync_error".into()),
-                                    e.to_string(),
-                                )
-                                .on_click("Configure Token", |window, cx| {
-                                    window.dispatch_action(SetSettingsSyncToken.boxed_clone(), cx);
-                                }),
-                                cx,
+                            let error_str = e.to_string();
+                            let is_auth_error = error_str.contains("Authentication failed")
+                                || error_str.contains("Access denied")
+                                || error_str.contains("Write access denied")
+                                || error_str.contains("token");
+                            let toast = Toast::new(
+                                NotificationId::Named("settings_sync_error".into()),
+                                error_str,
                             );
+                            let toast = if is_auth_error {
+                                toast.on_click("Configure Token", |window, cx| {
+                                    window.dispatch_action(SetSettingsSyncToken.boxed_clone(), cx);
+                                })
+                            } else {
+                                toast
+                            };
+                            workspace.show_toast(toast, cx);
                         }
                     }
                 })
@@ -297,7 +304,7 @@ pub fn init(cx: &mut App) {
                     return;
                 }
 
-                let result = cx
+                let result: anyhow::Result<()> = cx
                     .background_executor()
                     .spawn(async move {
                         let engine = sync_engine::SyncEngine::new();
@@ -322,16 +329,23 @@ pub fn init(cx: &mut App) {
                             );
                         }
                         Err(e) => {
-                            workspace.show_toast(
-                                Toast::new(
-                                    NotificationId::Named("settings_pull_error".into()),
-                                    e.to_string(),
-                                )
-                                .on_click("Configure Token", |window, cx| {
-                                    window.dispatch_action(SetSettingsSyncToken.boxed_clone(), cx);
-                                }),
-                                cx,
+                            let error_str = e.to_string();
+                            let is_auth_error = error_str.contains("Authentication failed")
+                                || error_str.contains("Access denied")
+                                || error_str.contains("Write access denied")
+                                || error_str.contains("token");
+                            let toast = Toast::new(
+                                NotificationId::Named("settings_pull_error".into()),
+                                error_str,
                             );
+                            let toast = if is_auth_error {
+                                toast.on_click("Configure Token", |window, cx| {
+                                    window.dispatch_action(SetSettingsSyncToken.boxed_clone(), cx);
+                                })
+                            } else {
+                                toast
+                            };
+                            workspace.show_toast(toast, cx);
                         }
                     }
                 })

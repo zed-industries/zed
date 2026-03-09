@@ -24,6 +24,38 @@ impl SyncEngine {
         }
     }
 
+    fn check_repo_is_private(repo_url: &str) -> Result<()> {
+        let mut command = Command::new("git");
+        command.env("GIT_TERMINAL_PROMPT", "0");
+        command.env("GIT_ASKPASS", "echo");
+        command.env("SSH_ASKPASS", "echo");
+        #[cfg(target_os = "linux")]
+        command.env("DISPLAY", "");
+        command.args(["ls-remote", "--heads", repo_url]);
+
+        let output = command.output().context("Failed to execute git command")?;
+        if output.status.success() {
+            return Err(anyhow::anyhow!(
+                "This repository is public. For security, only private repositories are allowed. \
+                Please use a private repository to store your settings."
+            ));
+        }
+        // If git failed with an auth error, the repo is private (requires credentials)
+        let stderr = String::from_utf8_lossy(&output.stderr).to_lowercase();
+        let is_auth_error = stderr.contains("could not read username")
+            || stderr.contains("authentication failed")
+            || stderr.contains("terminal prompts disabled")
+            || stderr.contains("403")
+            || stderr.contains("401")
+            || stderr.contains("access denied")
+            || stderr.contains("not found");
+        if is_auth_error {
+            Ok(())
+        } else {
+            Err(anyhow::anyhow!("{}", String::from_utf8_lossy(&output.stderr).trim()))
+        }
+    }
+
     fn run_git_command(&self, args: &[&str], current_dir: Option<&PathBuf>) -> Result<()> {
         let mut command = Command::new("git");
         
@@ -114,6 +146,7 @@ impl SyncEngine {
     }
 
     pub fn push(&self, repo_url: &str, branch: &str, token: Option<&str>) -> Result<()> {
+        Self::check_repo_is_private(repo_url)?;
         let repo = self.init_repo(repo_url, token)?;
 
         let config_dir = paths::config_dir();
@@ -170,6 +203,7 @@ impl SyncEngine {
     }
 
     pub fn pull(&self, repo_url: &str, branch: &str, token: Option<&str>) -> Result<()> {
+        Self::check_repo_is_private(repo_url)?;
         let _repo = self.init_repo(repo_url, token)?;
 
         // Use git binary for pull to leverage auth url with token
