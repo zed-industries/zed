@@ -34,8 +34,6 @@ pub struct MinCaptureVersion {
     pub patch: u32,
 }
 
-const DEFAULT_STATEMENT_TIMEOUT_SECONDS: u64 = 240;
-const SETTLED_STATEMENT_TIMEOUT_SECONDS: u64 = 240;
 pub(crate) const POLL_INTERVAL: Duration = Duration::from_secs(2);
 
 /// Parse an input token of the form `captured-after:{timestamp}`.
@@ -155,7 +153,6 @@ async fn fetch_examples_with_query(
     background_executor: BackgroundExecutor,
     statement: &str,
     bindings: JsonValue,
-    _timeout_seconds: u64, // todo! remove if not needed
     required_columns: &[&str],
     parse_response: for<'a> fn(
         &'a SnowflakeStatementResponse,
@@ -455,7 +452,6 @@ pub async fn fetch_rejected_examples_after(
             background_executor.clone(),
             statement,
             bindings,
-            DEFAULT_STATEMENT_TIMEOUT_SECONDS,
             &[
                 "request_id",
                 "device_id",
@@ -548,7 +544,6 @@ pub async fn fetch_requested_examples_after(
             background_executor.clone(),
             statement,
             bindings,
-            DEFAULT_STATEMENT_TIMEOUT_SECONDS,
             &["request_id", "device_id", "time", "input", "zed_version"],
             requested_examples_from_response,
         )
@@ -635,7 +630,6 @@ pub async fn fetch_captured_examples_after(
             background_executor.clone(),
             statement,
             bindings,
-            DEFAULT_STATEMENT_TIMEOUT_SECONDS,
             &[
                 "request_id",
                 "device_id",
@@ -727,7 +721,6 @@ pub async fn fetch_settled_examples_after(
             background_executor.clone(),
             statement,
             bindings,
-            SETTLED_STATEMENT_TIMEOUT_SECONDS,
             &[
                 "request_id",
                 "device_id",
@@ -828,7 +821,6 @@ pub async fn fetch_rated_examples_after(
             background_executor.clone(),
             statement,
             bindings,
-            DEFAULT_STATEMENT_TIMEOUT_SECONDS,
             &[
                 "request_id",
                 "inputs",
