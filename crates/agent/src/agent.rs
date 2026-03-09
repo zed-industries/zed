@@ -444,10 +444,30 @@ impl NativeAgent {
         cx: &mut App,
     ) -> Task<ProjectContext> {
         let worktrees = project.read(cx).visible_worktrees(cx).collect::<Vec<_>>();
+        let active_worktree_id = project
+            .read(cx)
+            .agent_location()
+            .and_then(|location| {
+                location
+                    .buffer
+                    .read_with(cx, |buffer, cx| {
+                        buffer.file().map(|file| file.worktree_id(cx))
+                    })
+                    .ok()
+                    .flatten()
+            })
+            .or_else(|| {
+                if worktrees.len() == 1 {
+                    Some(worktrees[0].read(cx).id())
+                } else {
+                    None
+                }
+            });
         let worktree_tasks = worktrees
             .into_iter()
             .map(|worktree| {
-                Self::load_worktree_info_for_system_prompt(worktree, project.clone(), cx)
+                let is_active = active_worktree_id == Some(worktree.read(cx).id());
+                Self::load_worktree_info_for_system_prompt(worktree, project.clone(), is_active, cx)
             })
             .collect::<Vec<_>>();
         let default_user_rules_task = if let Some(prompt_store) = prompt_store.as_ref() {
@@ -506,6 +526,7 @@ impl NativeAgent {
     fn load_worktree_info_for_system_prompt(
         worktree: Entity<Worktree>,
         project: Entity<Project>,
+        is_active: bool,
         cx: &mut App,
     ) -> Task<(WorktreeContext, Option<RulesLoadingError>)> {
         let tree = worktree.read(cx);
@@ -515,6 +536,7 @@ impl NativeAgent {
         let mut context = WorktreeContext {
             root_name,
             abs_path,
+            is_active,
             rules_file: None,
         };
 
@@ -626,6 +648,9 @@ impl NativeAgent {
     ) {
         match event {
             project::Event::WorktreeAdded(_) | project::Event::WorktreeRemoved(_) => {
+                self.project_context_needs_refresh.send(()).ok();
+            }
+            project::Event::AgentLocationChanged => {
                 self.project_context_needs_refresh.send(()).ok();
             }
             project::Event::WorktreeUpdatedEntries(_, items) => {
@@ -1980,6 +2005,7 @@ mod internal_tests {
                 vec![WorktreeContext {
                     root_name: "a".into(),
                     abs_path: Path::new("/a").into(),
+                    is_active: true,
                     rules_file: None
                 }]
             )
@@ -1998,6 +2024,7 @@ mod internal_tests {
                 vec![WorktreeContext {
                     root_name: "a".into(),
                     abs_path: Path::new("/a").into(),
+                    is_active: true,
                     rules_file: Some(RulesFileContext {
                         path_in_worktree: rel_path(".rules").into(),
                         text: "".into(),
@@ -2006,6 +2033,109 @@ mod internal_tests {
                 }]
             )
         });
+    }
+
+    #[gpui::test]
+    async fn test_agent_location_updates_active_worktree_context(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            "/",
+            json!({
+                "a": {
+                    "a.txt": "alpha"
+                },
+                "b": {
+                    "b.txt": "beta"
+                }
+            }),
+        )
+        .await;
+        let project = Project::test(fs.clone(), [], cx).await;
+        let thread_store = cx.new(|cx| ThreadStore::new(cx));
+        let agent = NativeAgent::new(
+            project.clone(),
+            thread_store,
+            Templates::new(),
+            None,
+            fs.clone(),
+            &mut cx.to_async(),
+        )
+        .await
+        .unwrap();
+
+        let worktree_a = project
+            .update(cx, |project, cx| project.create_worktree("/a", true, cx))
+            .await
+            .unwrap();
+        let worktree_b = project
+            .update(cx, |project, cx| project.create_worktree("/b", true, cx))
+            .await
+            .unwrap();
+        cx.run_until_parked();
+
+        agent.read_with(cx, |agent, cx| {
+            assert!(!agent.project_context.read(cx).has_active_worktree);
+            assert_eq!(
+                agent.project_context.read(cx).active_worktree_root_name,
+                None
+            );
+        });
+
+        let buffer = project
+            .update(cx, |project, cx| {
+                project.open_buffer(
+                    ProjectPath {
+                        worktree_id: worktree_b.read(cx).id(),
+                        path: rel_path("b.txt").into(),
+                    },
+                    cx,
+                )
+            })
+            .await
+            .unwrap();
+
+        project.update(cx, |project, cx| {
+            project.set_agent_location(
+                Some(project::AgentLocation {
+                    buffer: buffer.downgrade(),
+                    position: buffer.read_with(cx, |buffer, _| {
+                        buffer.anchor_before(language::Point::new(0, 0))
+                    }),
+                }),
+                cx,
+            );
+        });
+        cx.run_until_parked();
+
+        agent.read_with(cx, |agent, cx| {
+            let project_context = agent.project_context.read(cx);
+            assert!(project_context.has_active_worktree);
+            assert_eq!(
+                project_context.active_worktree_root_name.as_deref(),
+                Some("b")
+            );
+            assert_eq!(
+                project_context.worktrees,
+                vec![
+                    WorktreeContext {
+                        root_name: "a".into(),
+                        abs_path: Path::new("/a").into(),
+                        is_active: false,
+                        rules_file: None,
+                    },
+                    WorktreeContext {
+                        root_name: "b".into(),
+                        abs_path: Path::new("/b").into(),
+                        is_active: true,
+                        rules_file: None,
+                    }
+                ]
+            );
+        });
+
+        // Ensure the unused worktree entity remains part of the project for the duration of the test.
+        assert_eq!(worktree_a.read(cx).root_name_str(), "a");
     }
 
     #[gpui::test]

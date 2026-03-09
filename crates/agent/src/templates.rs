@@ -76,7 +76,15 @@ mod tests {
 
     #[test]
     fn test_system_prompt_template() {
-        let project = prompt_store::ProjectContext::default();
+        let project = prompt_store::ProjectContext::new(
+            vec![prompt_store::WorktreeContext {
+                root_name: "root".to_string(),
+                abs_path: "/tmp/root".as_ref().into(),
+                is_active: true,
+                rules_file: None,
+            }],
+            Vec::default(),
+        );
         let template = SystemPromptTemplate {
             project: &project,
             available_tools: vec!["echo".into()],
@@ -86,5 +94,6 @@ mod tests {
         let rendered = template.render(&templates).unwrap();
         assert!(rendered.contains("## Fixing Diagnostics"));
         assert!(rendered.contains("test-model"));
+        assert!(rendered.contains("active worktree"));
     }
 }
