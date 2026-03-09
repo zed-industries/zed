@@ -2177,14 +2177,39 @@ mod tests {
                 output_index: 0,
                 summary_index: 0,
             },
+            ResponsesStreamEvent::ReasoningSummaryPartAdded {
+                item_id: "rs_123".into(),
+                output_index: 0,
+                summary_index: 1,
+            },
+            ResponsesStreamEvent::ReasoningSummaryTextDelta {
+                item_id: "rs_123".into(),
+                output_index: 0,
+                delta: "Second part".into(),
+            },
+            ResponsesStreamEvent::ReasoningSummaryTextDone {
+                item_id: "rs_123".into(),
+                output_index: 0,
+                text: "Second part".into(),
+            },
+            ResponsesStreamEvent::ReasoningSummaryPartDone {
+                item_id: "rs_123".into(),
+                output_index: 0,
+                summary_index: 1,
+            },
             ResponsesStreamEvent::OutputItemDone {
                 output_index: 0,
                 sequence_number: None,
                 item: ResponseOutputItem::Reasoning(ResponseReasoningItem {
                     id: Some("rs_123".into()),
-                    summary: vec![ReasoningSummaryPart::SummaryText {
-                        text: "Thinking about the answer".into(),
-                    }],
+                    summary: vec![
+                        ReasoningSummaryPart::SummaryText {
+                            text: "Thinking about the answer".into(),
+                        },
+                        ReasoningSummaryPart::SummaryText {
+                            text: "Second part".into(),
+                        },
+                    ],
                 }),
             },
             ResponsesStreamEvent::OutputItemAdded {
@@ -2211,8 +2236,8 @@ mod tests {
             .collect();
         assert_eq!(
             thinking_events.len(),
-            2,
-            "expected 2 delta thinking events, got {:?}",
+            4,
+            "expected 4 thinking events (2 deltas + separator + second delta), got {:?}",
             thinking_events,
         );
 
@@ -2223,6 +2248,17 @@ mod tests {
         assert!(matches!(
             &thinking_events[1],
             LanguageModelCompletionEvent::Thinking { text, .. } if text == " the answer"
+        ));
+        assert!(
+            matches!(
+                &thinking_events[2],
+                LanguageModelCompletionEvent::Thinking { text, .. } if text == "\n\n"
+            ),
+            "expected separator between summary parts"
+        );
+        assert!(matches!(
+            &thinking_events[3],
+            LanguageModelCompletionEvent::Thinking { text, .. } if text == "Second part"
         ));
 
         assert!(mapped.iter().any(|e| matches!(
