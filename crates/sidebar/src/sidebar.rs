@@ -1879,6 +1879,78 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_view_more_batched_expansion(cx: &mut TestAppContext) {
+        let project = init_test_project("/my-project", cx).await;
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
+        let sidebar = setup_sidebar(&multi_workspace, cx);
+
+        let path_list = PathList::new(&[std::path::PathBuf::from("/my-project")]);
+        // Create 17 threads: initially shows 5, then 10, then 15, then all 17 with Collapse
+        save_n_test_threads(17, &path_list, cx).await;
+
+        multi_workspace.update_in(cx, |_, _window, cx| cx.notify());
+        cx.run_until_parked();
+
+        // Initially shows 5 threads + View More (12 remaining)
+        let entries = visible_entries_as_strings(&sidebar, cx);
+        assert_eq!(entries.len(), 7); // header + 5 threads + View More
+        assert!(entries.iter().any(|e| e.contains("View More (12)")));
+
+        // Focus and navigate to View More, then confirm to expand by one batch
+        open_and_focus_sidebar(&sidebar, &multi_workspace, cx);
+        for _ in 0..7 {
+            cx.dispatch_action(SelectNext);
+        }
+        cx.dispatch_action(Confirm);
+        cx.run_until_parked();
+
+        // Now shows 10 threads + View More (7 remaining)
+        let entries = visible_entries_as_strings(&sidebar, cx);
+        assert_eq!(entries.len(), 12); // header + 10 threads + View More
+        assert!(entries.iter().any(|e| e.contains("View More (7)")));
+
+        // Expand again by one batch
+        sidebar.update_in(cx, |s, _window, cx| {
+            let current = s.expanded_groups.get(&path_list).copied().unwrap_or(0);
+            s.expanded_groups.insert(path_list.clone(), current + 1);
+            s.update_entries(cx);
+        });
+        cx.run_until_parked();
+
+        // Now shows 15 threads + View More (2 remaining)
+        let entries = visible_entries_as_strings(&sidebar, cx);
+        assert_eq!(entries.len(), 17); // header + 15 threads + View More
+        assert!(entries.iter().any(|e| e.contains("View More (2)")));
+
+        // Expand one more time - should show all 17 threads with Collapse button
+        sidebar.update_in(cx, |s, _window, cx| {
+            let current = s.expanded_groups.get(&path_list).copied().unwrap_or(0);
+            s.expanded_groups.insert(path_list.clone(), current + 1);
+            s.update_entries(cx);
+        });
+        cx.run_until_parked();
+
+        // All 17 threads shown with Collapse button
+        let entries = visible_entries_as_strings(&sidebar, cx);
+        assert_eq!(entries.len(), 19); // header + 17 threads + Collapse
+        assert!(!entries.iter().any(|e| e.contains("View More")));
+        assert!(entries.iter().any(|e| e.contains("Collapse")));
+
+        // Click collapse - should go back to showing 5 threads
+        sidebar.update_in(cx, |s, _window, cx| {
+            s.expanded_groups.remove(&path_list);
+            s.update_entries(cx);
+        });
+        cx.run_until_parked();
+
+        // Back to initial state: 5 threads + View More (12 remaining)
+        let entries = visible_entries_as_strings(&sidebar, cx);
+        assert_eq!(entries.len(), 7); // header + 5 threads + View More
+        assert!(entries.iter().any(|e| e.contains("View More (12)")));
+    }
+
+    #[gpui::test]
     async fn test_collapse_and_expand_group(cx: &mut TestAppContext) {
         let project = init_test_project("/my-project", cx).await;
         let (multi_workspace, cx) =
