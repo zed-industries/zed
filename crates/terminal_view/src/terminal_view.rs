@@ -1574,14 +1574,9 @@ impl Item for TerminalView {
     fn tab_extra_context_menu_actions(
         &self,
         _window: &mut Window,
-        cx: &mut Context<Self>,
+        _cx: &mut Context<Self>,
     ) -> Vec<(SharedString, Box<dyn gpui::Action>)> {
-        let terminal = self.terminal.read(cx);
-        if terminal.task().is_none() {
-            vec![("Rename".into(), Box::new(RenameTerminal))]
-        } else {
-            Vec::new()
-        }
+        vec![("Rename".into(), Box::new(RenameTerminal))]
     }
 
     fn buffer_kind(&self, _: &App) -> workspace::item::ItemBufferKind {
