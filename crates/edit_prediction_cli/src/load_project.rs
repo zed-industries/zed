@@ -71,8 +71,7 @@ pub async fn run_load_project(
     let existing_related_files = example
         .prompt_inputs
         .take()
-        .map(|inputs| inputs.related_files)
-        .unwrap_or_default();
+        .and_then(|inputs| inputs.related_files);
 
     let (prompt_inputs, language_name) = buffer.read_with(&cx, |buffer, _cx| {
         let snapshot = buffer.snapshot();

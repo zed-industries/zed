@@ -73,7 +73,7 @@ pub fn request_prediction(
 
         let inputs = ZetaPromptInput {
             events,
-            related_files: Vec::new(),
+            related_files: Some(Vec::new()),
             cursor_offset_in_excerpt: cursor_offset - excerpt_offset_range.start,
             cursor_path: full_path.clone(),
             excerpt_start_row: Some(excerpt_range.start.row),
