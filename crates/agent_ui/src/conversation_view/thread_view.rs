@@ -3333,6 +3333,7 @@ impl ThreadView {
                     .id("circular_progress_tokens")
                     .mt_px()
                     .mr_1()
+                    .gap_1()
                     .child(
                         CircularProgress::new(
                             usage.used_tokens as f32,
@@ -3342,6 +3343,23 @@ impl ThreadView {
                         )
                         .stroke_width(px(2.))
                         .progress_color(progress_color),
+                    )
+                    .child(
+                        h_flex()
+                            .gap_0p5()
+                            .child(token_label(percentage.clone(), "token_pct"))
+                            .child(
+                                Label::new("·")
+                                    .size(LabelSize::Small)
+                                    .color(separator_color),
+                            )
+                            .child(token_label(used.clone(), "token_used"))
+                            .child(
+                                Label::new("/")
+                                    .size(LabelSize::Small)
+                                    .color(separator_color),
+                            )
+                            .child(token_label(max.clone(), "token_max")),
                     )
                     .tooltip(Tooltip::element({
                         move |_, cx| {
