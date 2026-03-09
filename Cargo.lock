@@ -14478,20 +14478,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "rich_text"
-version = "0.1.0"
-dependencies = [
- "futures 0.3.31",
- "gpui",
- "language",
- "linkify",
- "pulldown-cmark 0.13.0",
- "theme",
- "ui",
- "util",
-]
-
-[[package]]
 name = "ring"
 version = "0.17.14"
 source = "registry+https://github.com/rust-lang/crates.io-index"
