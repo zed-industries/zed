@@ -1276,7 +1276,7 @@ impl MessageEditor {
         self.editor.update(cx, |editor, cx| {
             let removed = editor.remove_creases(vec![chip.crease_id], cx);
             if let Some((_, range)) = removed.first() {
-                editor.unfold_ranges(&[range.clone()], true, false, cx);
+                editor.unfold_ranges(std::slice::from_ref(range), true, false, cx);
                 editor.edit([(range.clone(), "")], cx);
             }
         });

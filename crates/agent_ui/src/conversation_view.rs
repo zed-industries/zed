@@ -44,10 +44,11 @@ use prompt_store::{PromptId, PromptStore};
 use crate::message_editor::SessionCapabilities;
 use rope::Point;
 use settings::{NotifyWhenAgentWaiting, Settings as _, SettingsStore};
-use std::path::Path;
+use std::cell::RefCell;
+use std::ops::Range;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Instant;
-use std::ops::Range;
 use std::{collections::BTreeMap, rc::Rc, time::Duration};
 use terminal_view::terminal_panel::TerminalPanel;
 use text::Anchor;
@@ -678,6 +679,7 @@ impl ConversationView {
 
     fn update_transient_selection(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let selections = self.gather_editor_selections(cx);
+        let has_selections = !selections.is_empty();
         let Some(thread_view) = self.active_thread() else {
             return;
         };
@@ -685,6 +687,10 @@ impl ConversationView {
         message_editor.update(cx, |editor, cx| {
             editor.set_transient_selection(selections, window, cx);
         });
+
+        if has_selections && !message_editor.focus_handle(cx).is_focused(window) {
+            message_editor.focus_handle(cx).focus(window, cx);
+        }
     }
 
     fn clear_transient_selection(&self, window: &mut Window, cx: &mut Context<Self>) {
