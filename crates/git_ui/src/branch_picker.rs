@@ -25,7 +25,10 @@ use util::ResultExt;
 use workspace::notifications::DetachAndPromptErr;
 use workspace::{ModalView, Workspace};
 
-use crate::{branch_picker, git_panel::show_error_toast, resolve_active_repository};
+use crate::{
+    branch_picker, git_panel::show_error_toast, resolve_active_repository,
+    worktree_picker::open_worktree_path,
+};
 
 actions!(
     branch_picker,
@@ -809,10 +812,21 @@ impl PickerDelegate for BranchListDelegate {
                     return;
                 };
 
+                let workspace = self.workspace.clone();
                 let branch = branch.clone();
-                cx.spawn(async move |_, cx| {
-                    repo.update(cx, |repo, _| repo.change_branch(branch.name().to_string()))
-                        .await??;
+                cx.spawn_in(window, async move |_, cx| {
+                    let existing_worktree = repo
+                        .update(cx, |repo, _| repo.worktrees())
+                        .await??
+                        .into_iter()
+                        .find(|worktree| worktree.ref_name == branch.ref_name);
+
+                    if let Some(worktree) = existing_worktree {
+                        open_worktree_path(workspace, worktree.path, true, cx).await?;
+                    } else {
+                        repo.update(cx, |repo, _| repo.change_branch(branch.name().to_string()))
+                            .await??;
+                    }
 
                     anyhow::Ok(())
                 })
@@ -1285,7 +1299,10 @@ impl PickerDelegate for BranchListDelegate {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::HashSet;
+    use std::{
+        collections::HashSet,
+        path::{Path, PathBuf},
+    };
 
     use super::*;
     use git::repository::{CommitSummary, Remote};
@@ -1416,6 +1433,45 @@ mod tests {
         let repository = cx.read(|cx| project.read(cx).active_repository(cx));
 
         (project, repository.unwrap())
+    }
+
+    fn build_branch_list_for_workspace(
+        window_handle: gpui::WindowHandle<MultiWorkspace>,
+        workspace: Entity<Workspace>,
+        repository: Option<Entity<Repository>>,
+        branches: Vec<Branch>,
+        cx: &mut TestAppContext,
+    ) -> Entity<BranchList> {
+        window_handle
+            .update(cx, |_multi_workspace, window, cx| {
+                cx.new(|cx| {
+                    let mut delegate = BranchListDelegate::new(
+                        workspace.downgrade(),
+                        repository,
+                        BranchListStyle::Modal,
+                        cx,
+                    );
+                    delegate.all_branches = Some(branches);
+                    let picker = cx.new(|cx| Picker::uniform_list(delegate, window, cx));
+                    let picker_focus_handle = picker.focus_handle(cx);
+                    picker.update(cx, |picker, _| {
+                        picker.delegate.focus_handle = picker_focus_handle.clone();
+                    });
+
+                    let _subscription = cx.subscribe(&picker, |_, _, _, cx| {
+                        cx.emit(DismissEvent);
+                    });
+
+                    BranchList {
+                        picker,
+                        picker_focus_handle,
+                        width: rems(34.),
+                        _subscription: Some(_subscription),
+                        embedded: false,
+                    }
+                })
+            })
+            .unwrap()
     }
 
     #[gpui::test]
@@ -1781,6 +1837,65 @@ mod tests {
             new_branch.ref_name.as_ref(),
             &format!("refs/heads/{NEW_BRANCH}"),
             "branch ref_name should not have duplicate refs/heads/ prefix"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_confirm_branch_switches_to_existing_worktree(cx: &mut TestAppContext) {
+        init_test(cx);
+        let (project, repository) = init_fake_repository(cx).await;
+
+        cx.update(|cx| {
+            repository.update(cx, |repository, _| {
+                repository.create_worktree(
+                    "feature-auth".to_string(),
+                    PathBuf::from(path!("/dir")),
+                    None,
+                )
+            })
+        })
+        .await
+        .unwrap()
+        .unwrap();
+        cx.run_until_parked();
+
+        let branches = vec![
+            create_test_branch("main", true, None, Some(1000)),
+            create_test_branch("feature-auth", false, None, Some(900)),
+        ];
+
+        let window_handle =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = window_handle
+            .read_with(cx, |multi_workspace, _| multi_workspace.workspace().clone())
+            .unwrap();
+
+        let branch_list = build_branch_list_for_workspace(
+            window_handle.clone(),
+            workspace,
+            Some(repository),
+            branches,
+            cx,
+        );
+        let mut cx = VisualTestContext::from_window(window_handle.into(), cx);
+
+        update_branch_list_matches_with_empty_query(&branch_list, &mut cx).await;
+        branch_list.update_in(&mut cx, |branch_list, window, cx| {
+            branch_list.picker.update(cx, |picker, cx| {
+                picker.delegate.set_selected_index(1, window, cx);
+                picker.delegate.confirm(false, window, cx);
+            })
+        });
+        cx.run_until_parked();
+
+        let root_paths = window_handle
+            .read_with(&mut cx, |multi_workspace, cx| {
+                multi_workspace.workspace().read(cx).root_paths(cx)
+            })
+            .unwrap();
+        assert_eq!(
+            root_paths,
+            vec![Path::new(path!("/dir/feature-auth")).into()]
         );
     }
 

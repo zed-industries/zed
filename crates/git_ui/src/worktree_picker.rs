@@ -390,52 +390,12 @@ impl WorktreeListDelegate {
         let workspace = self.workspace.clone();
         let path = worktree_path.clone();
 
-        let Some((connection_options, app_state, is_local)) = workspace
-            .update(cx, |workspace, cx| {
-                let project = workspace.project().clone();
-                let connection_options = project.read(cx).remote_connection_options(cx);
-                let app_state = workspace.app_state().clone();
-                let is_local = project.read(cx).is_local();
-                (connection_options, app_state, is_local)
-            })
-            .log_err()
-        else {
-            return;
-        };
-
-        if is_local {
-            let open_task = workspace.update(cx, |workspace, cx| {
-                workspace.open_workspace_for_paths(replace_current_window, vec![path], window, cx)
-            });
-            cx.spawn(async move |_, _| {
-                open_task?.await?;
-                anyhow::Ok(())
-            })
-            .detach_and_prompt_err(
-                "Failed to open worktree",
-                window,
-                cx,
-                |e, _, _| Some(e.to_string()),
-            );
-        } else if let Some(connection_options) = connection_options {
-            cx.spawn_in(window, async move |_, cx| {
-                open_remote_worktree(
-                    connection_options,
-                    vec![path],
-                    app_state,
-                    workspace,
-                    replace_current_window,
-                    cx,
-                )
-                .await
-            })
-            .detach_and_prompt_err(
-                "Failed to open worktree",
-                window,
-                cx,
-                |e, _, _| Some(e.to_string()),
-            );
-        }
+        cx.spawn_in(window, async move |_, cx| {
+            open_worktree_path(workspace, path, replace_current_window, cx).await
+        })
+        .detach_and_prompt_err("Failed to open worktree", window, cx, |e, _, _| {
+            Some(e.to_string())
+        });
 
         cx.emit(DismissEvent);
     }
@@ -594,6 +554,46 @@ async fn open_remote_worktree(
         cx,
     )
     .await?;
+
+    Ok(())
+}
+
+pub(crate) async fn open_worktree_path(
+    workspace: WeakEntity<Workspace>,
+    path: PathBuf,
+    replace_current_window: bool,
+    cx: &mut AsyncWindowContext,
+) -> anyhow::Result<()> {
+    let Some((connection_options, app_state, is_local)) = workspace
+        .update(cx, |workspace, cx| {
+            let project = workspace.project().clone();
+            let connection_options = project.read(cx).remote_connection_options(cx);
+            let app_state = workspace.app_state().clone();
+            let is_local = project.read(cx).is_local();
+            (connection_options, app_state, is_local)
+        })
+        .log_err()
+    else {
+        return Ok(());
+    };
+
+    if is_local {
+        workspace
+            .update_in(cx, |workspace, window, cx| {
+                workspace.open_workspace_for_paths(replace_current_window, vec![path], window, cx)
+            })?
+            .await?;
+    } else if let Some(connection_options) = connection_options {
+        open_remote_worktree(
+            connection_options,
+            vec![path],
+            app_state,
+            workspace,
+            replace_current_window,
+            cx,
+        )
+        .await?;
+    }
 
     Ok(())
 }
