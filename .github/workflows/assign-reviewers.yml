@@ -26,7 +26,7 @@ permissions:
 # write access to request team reviewers with GITHUB_TOKEN.
 jobs:
   assign-reviewers:
-    if: github.event.pull_request.head.repo.full_name == github.repository
+    if: github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.draft == false
     runs-on: ubuntu-latest
     steps:
       - name: Checkout coordinator repo
@@ -58,6 +58,7 @@ jobs:
             --rules-file team-membership-rules.yml \
             --repo "$TARGET_REPO" \
             --org zed-industries \
+            --min-association member \
             2>&1 | tee /tmp/assign-reviewers-output.txt
 
       - name: Upload output
