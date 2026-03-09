@@ -1597,7 +1597,12 @@ fn stdout_is_a_pty() -> bool {
 }
 
 #[derive(Parser, Debug)]
-#[command(name = "zed", disable_version_flag = true, max_term_width = 100)]
+#[command(
+    name = "zed",
+    disable_version_flag = true,
+    max_term_width = 100,
+    trailing_var_arg = true
+)]
 struct Args {
     /// A sequence of space-separated paths or urls that you want to open.
     ///
@@ -1679,7 +1684,7 @@ struct Args {
     dump_all_actions: bool,
 
     /// Run as a sandbox wrapper: apply OS-level sandbox, filter env, then exec
-    /// the real shell. The value is a base64-encoded JSON sandbox config.
+    /// the real shell. The value is a JSON sandbox config.
     /// Remaining arguments after `--` are the real shell command.
     #[cfg(unix)]
     #[arg(long, hide = true)]
