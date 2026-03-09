@@ -1093,6 +1093,9 @@ impl BlockMap {
                 let rows_before_block;
                 match block_placement {
                     BlockPlacement::Above(position) => {
+                        if position < new_transforms.summary().input_rows {
+                            continue;
+                        }
                         rows_before_block = position - new_transforms.summary().input_rows;
                         just_processed_folded_buffer = false;
                     }
@@ -1107,6 +1110,9 @@ impl BlockMap {
                             (position + RowDelta(1)) - new_transforms.summary().input_rows;
                     }
                     BlockPlacement::Replace(ref range) => {
+                        if *range.start() < new_transforms.summary().input_rows {
+                            continue;
+                        }
                         rows_before_block = *range.start() - new_transforms.summary().input_rows;
                         summary.input_rows = WrapRow(1) + (*range.end() - *range.start());
                         just_processed_folded_buffer = matches!(block, Block::FoldedBuffer { .. });
