@@ -101,6 +101,7 @@ impl Mercury {
                 excerpt_start_row: Some(excerpt_point_range.start.row),
                 excerpt_ranges,
                 syntax_ranges: Some(syntax_ranges),
+                active_buffer_diagnostics: vec![],
                 in_open_source_repo: false,
                 can_collect_data: false,
                 repo_url: None,

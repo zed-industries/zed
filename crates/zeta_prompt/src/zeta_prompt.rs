@@ -34,6 +34,8 @@ pub struct ZetaPromptInput {
     pub events: Vec<Arc<Event>>,
     #[serde(default)]
     pub related_files: Option<Vec<RelatedFile>>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub active_buffer_diagnostics: Vec<ActiveBufferDiagnostic>,
     /// These ranges let the server select model-appropriate subsets.
     pub excerpt_ranges: ExcerptRanges,
     /// Byte offset ranges within `cursor_excerpt` for all syntax nodes that
@@ -166,6 +168,15 @@ pub fn write_event(prompt: &mut String, event: &Event) {
             prompt.push_str(diff);
         }
     }
+}
+
+#[derive(Clone, Debug, PartialEq, Hash, Serialize, Deserialize)]
+pub struct ActiveBufferDiagnostic {
+    pub severity: Option<i32>,
+    pub message: String,
+    pub snippet: String,
+    pub snippet_buffer_row_range: Range<u32>,
+    pub diagnostic_range_in_snippet: Range<usize>,
 }
 
 #[derive(Clone, Debug, PartialEq, Hash, Serialize, Deserialize)]
@@ -3881,6 +3892,7 @@ mod tests {
             excerpt_start_row: None,
             events: events.into_iter().map(Arc::new).collect(),
             related_files: Some(related_files),
+            active_buffer_diagnostics: vec![],
             excerpt_ranges: ExcerptRanges {
                 editable_150: editable_range.clone(),
                 editable_180: editable_range.clone(),
@@ -3911,6 +3923,7 @@ mod tests {
             excerpt_start_row: None,
             events: vec![],
             related_files: Some(vec![]),
+            active_buffer_diagnostics: vec![],
             excerpt_ranges: ExcerptRanges {
                 editable_150: editable_range.clone(),
                 editable_180: editable_range.clone(),
@@ -4495,6 +4508,7 @@ mod tests {
             excerpt_start_row: Some(0),
             events: vec![Arc::new(make_event("other.rs", "-old\n+new\n"))],
             related_files: Some(vec![]),
+            active_buffer_diagnostics: vec![],
             excerpt_ranges: ExcerptRanges {
                 editable_150: 15..41,
                 editable_180: 15..41,
@@ -4559,6 +4573,7 @@ mod tests {
             excerpt_start_row: Some(10),
             events: vec![],
             related_files: Some(vec![]),
+            active_buffer_diagnostics: vec![],
             excerpt_ranges: ExcerptRanges {
                 editable_150: 0..28,
                 editable_180: 0..28,
@@ -4618,6 +4633,7 @@ mod tests {
             excerpt_start_row: Some(0),
             events: vec![],
             related_files: Some(vec![]),
+            active_buffer_diagnostics: vec![],
             excerpt_ranges: ExcerptRanges {
                 editable_150: editable_range.clone(),
                 editable_180: editable_range.clone(),

@@ -103,6 +103,7 @@ pub async fn run_load_project(
                 excerpt_start_row: Some(excerpt_point_range.start.row),
                 events,
                 related_files: existing_related_files,
+                active_buffer_diagnostics: vec![],
                 excerpt_ranges,
                 syntax_ranges: Some(syntax_ranges),
                 in_open_source_repo: false,

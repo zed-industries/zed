@@ -669,6 +669,7 @@ mod tests {
             excerpt_start_row,
             events,
             related_files: Some(Vec::new()),
+            active_buffer_diagnostics: Vec::new(),
             excerpt_ranges: ExcerptRanges {
                 editable_150: 0..content.len(),
                 editable_180: 0..content.len(),

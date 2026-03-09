@@ -2,7 +2,7 @@ use crate::{
     CurrentEditPrediction, DebugEvent, EditPredictionFinishedDebugEvent, EditPredictionId,
     EditPredictionModelInput, EditPredictionStartedDebugEvent, EditPredictionStore, StoredEvent,
     ZedUpdateRequiredError,
-    cursor_excerpt::{compute_cursor_excerpt, compute_syntax_ranges},
+    cursor_excerpt::{self, compute_cursor_excerpt, compute_syntax_ranges},
     prediction::EditPredictionResult,
 };
 use anyhow::Result;
@@ -12,11 +12,12 @@ use cloud_llm_client::{
 use edit_prediction_types::PredictedCursorPosition;
 use gpui::{App, AppContext as _, Entity, Task, WeakEntity, prelude::*};
 use language::{
-    Buffer, BufferSnapshot, ToOffset as _, language_settings::all_language_settings, text_diff,
+    Buffer, BufferSnapshot, DiagnosticSeverity, OffsetRangeExt as _, ToOffset as _,
+    language_settings::all_language_settings, text_diff,
 };
 use release_channel::AppVersion;
 use settings::EditPredictionPromptFormat;
-use text::{Anchor, Bias};
+use text::{Anchor, Bias, Point};
 use ui::SharedString;
 use workspace::notifications::{ErrorMessagePrompt, NotificationId, show_app_notification};
 use zeta_prompt::{ParsedOutput, ZetaPromptInput};
@@ -43,6 +44,7 @@ pub fn request_prediction_with_zeta(
         debug_tx,
         trigger,
         project,
+        diagnostic_search_range,
         can_collect_data,
         is_open_source,
         ..
@@ -115,6 +117,7 @@ pub fn request_prediction_with_zeta(
                 &snapshot,
                 related_files,
                 events,
+                diagnostic_search_range,
                 excerpt_path,
                 cursor_offset,
                 preferred_experiment,
@@ -483,6 +486,7 @@ pub fn zeta2_prompt_input(
     snapshot: &language::BufferSnapshot,
     related_files: Vec<zeta_prompt::RelatedFile>,
     events: Vec<Arc<zeta_prompt::Event>>,
+    diagnostic_search_range: Range<Point>,
     excerpt_path: Arc<Path>,
     cursor_offset: usize,
     preferred_experiment: Option<String>,
@@ -504,6 +508,39 @@ pub fn zeta2_prompt_input(
         &syntax_ranges,
     );
 
+    let active_buffer_diagnostics = snapshot
+        .diagnostics_in_range::<Point, Point>(diagnostic_search_range, false)
+        .filter_map(|entry| {
+            let severity = match entry.diagnostic.severity {
+                DiagnosticSeverity::ERROR => Some(1),
+                DiagnosticSeverity::WARNING => Some(2),
+                DiagnosticSeverity::INFORMATION => Some(3),
+                DiagnosticSeverity::HINT => Some(4),
+                _ => None,
+            };
+            let diagnostic_point_range = entry.range.clone();
+            let snippet_point_range = cursor_excerpt::expand_context_syntactically_then_linewise(
+                snapshot,
+                diagnostic_point_range.clone(),
+                100,
+            );
+            let snippet = snapshot
+                .text_for_range(snippet_point_range.clone())
+                .collect::<String>();
+            let snippet_start_offset = snippet_point_range.start.to_offset(snapshot);
+            let diagnostic_offset_range = diagnostic_point_range.to_offset(snapshot);
+            Some(zeta_prompt::ActiveBufferDiagnostic {
+                severity,
+                message: entry.diagnostic.message.clone(),
+                snippet,
+                snippet_buffer_row_range: diagnostic_point_range.start.row
+                    ..diagnostic_point_range.end.row,
+                diagnostic_range_in_snippet: diagnostic_offset_range.start - snippet_start_offset
+                    ..diagnostic_offset_range.end - snippet_start_offset,
+            })
+        })
+        .collect();
+
     let prompt_input = zeta_prompt::ZetaPromptInput {
         cursor_path: excerpt_path,
         cursor_excerpt,
@@ -511,6 +548,7 @@ pub fn zeta2_prompt_input(
         excerpt_start_row: Some(excerpt_point_range.start.row),
         events,
         related_files: Some(related_files),
+        active_buffer_diagnostics,
         excerpt_ranges,
         syntax_ranges: Some(syntax_ranges),
         experiment: preferred_experiment,
