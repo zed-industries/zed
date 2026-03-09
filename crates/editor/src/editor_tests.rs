@@ -33299,7 +33299,7 @@ async fn test_restore_and_next(cx: &mut TestAppContext) {
     cx.set_head_text(&diff_base);
 
     cx.update_editor(|editor, window, cx| {
-        editor.expand_all_diff_hunks(&Default::default(), window, cx);
+        editor.set_expand_all_diff_hunks(cx);
         editor.restore_and_next(&Default::default(), window, cx);
     });
     cx.run_until_parked();
@@ -33324,12 +33324,12 @@ async fn test_restore_and_next(cx: &mut TestAppContext) {
 
     cx.assert_state_with_diff(
         r#"
-        - ˇone
+        - one
         + ONE
           two
           three
           four
-          five
+          ˇfive
         "#
         .unindent(),
     );

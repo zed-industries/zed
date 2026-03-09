@@ -1377,6 +1377,7 @@ impl GitPanel {
                                 &snapshot,
                                 language::Point::new(0, 0),
                                 Direction::Next,
+                                true,
                                 window,
                                 cx,
                             );
