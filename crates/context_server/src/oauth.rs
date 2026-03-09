@@ -7,10 +7,13 @@ use http_client::{AsyncBody, HttpClient, Request};
 use parking_lot::Mutex as SyncMutex;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use smol::io::AsyncWriteExt as _;
+use smol::net::TcpListener;
 
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 use url::Url;
+use util::ResultExt as _;
 
 /// The CIMD URL where Zed's OAuth client metadata document is hosted.
 pub const CIMD_URL: &str = "https://zed.dev/oauth/client-metadata.json";
@@ -490,10 +493,15 @@ pub fn token_refresh_params(
 // -- DCR request body (RFC 7591) ---------------------------------------------
 
 /// Build the JSON body for a Dynamic Client Registration request.
-pub fn dcr_registration_body() -> serde_json::Value {
+///
+/// The `redirect_uri` should be the actual loopback URI with the ephemeral
+/// port (e.g. `http://127.0.0.1:12345/callback`). Some auth servers do strict
+/// redirect URI matching even for loopback addresses, so we register the
+/// exact URI we intend to use.
+pub fn dcr_registration_body(redirect_uri: &str) -> serde_json::Value {
     serde_json::json!({
         "client_name": "Zed",
-        "redirect_uris": ["http://127.0.0.1/callback"],
+        "redirect_uris": [redirect_uri],
         "grant_types": ["authorization_code"],
         "response_types": ["code"],
         "token_endpoint_auth_method": "none"
@@ -656,7 +664,16 @@ pub async fn discover(
                 );
                 cached
             } else {
-                perform_dcr(http_client, &registration_endpoint).await?
+                // Use a placeholder redirect URI during discovery since we
+                // don't have a callback server port yet. The real DCR with
+                // the correct redirect URI happens at authentication time
+                // in run_oauth_flow.
+                perform_dcr(
+                    http_client,
+                    &registration_endpoint,
+                    "http://127.0.0.1/callback",
+                )
+                .await?
             }
         }
         ClientRegistrationStrategy::Unavailable => {
@@ -678,8 +695,9 @@ pub async fn discover(
 pub async fn perform_dcr(
     http_client: &Arc<dyn HttpClient>,
     registration_endpoint: &Url,
+    redirect_uri: &str,
 ) -> Result<OAuthClientRegistration> {
-    let body = dcr_registration_body();
+    let body = dcr_registration_body(redirect_uri);
     let body_bytes = serde_json::to_vec(&body)?;
 
     let request = Request::builder()
@@ -785,15 +803,9 @@ async fn post_token_request(
     Ok(token_response.into_tokens())
 }
 
-// -- OAuth callback via zed:// URL scheme ------------------------------------
+// -- Loopback HTTP callback server -------------------------------------------
 
-/// The redirect URI used in authorization requests. The authorization server
-/// redirects the browser here after the user grants (or denies) access. Zed
-/// registers a handler for the `zed://` URL scheme, which routes the callback
-/// to `ContextServerStore::handle_oauth_callback`.
-pub const CALLBACK_URI: &str = "zed://mcp/oauth/callback";
-
-/// An OAuth authorization callback received via the `zed://` URL scheme.
+/// An OAuth authorization callback received via the loopback HTTP server.
 #[derive(Debug)]
 pub struct OAuthCallback {
     pub code: String,
@@ -801,7 +813,8 @@ pub struct OAuthCallback {
 }
 
 impl OAuthCallback {
-    /// Parse the query string from a `zed://mcp/oauth/callback?code=...&state=...` URL.
+    /// Parse the query string from a callback URL like
+    /// `http://127.0.0.1:<port>/callback?code=...&state=...`.
     pub fn parse_query(query: &str) -> Result<Self> {
         let mut code: Option<String> = None;
         let mut state: Option<String> = None;
@@ -830,6 +843,97 @@ impl OAuthCallback {
 
         Ok(Self { code, state })
     }
+}
+
+/// Start a loopback HTTP server on an ephemeral port to receive the OAuth
+/// authorization callback.
+///
+/// Returns `(redirect_uri, callback_future)`. The caller should use the
+/// redirect URI in the authorization request, open the browser, then await
+/// the future to receive the callback.
+///
+/// The server accepts exactly one request on `/callback`, validates that it
+/// contains `code` and `state` query parameters, responds with a minimal
+/// HTML page telling the user they can close the tab, and shuts down.
+pub async fn start_callback_server() -> Result<(
+    String,
+    futures::channel::oneshot::Receiver<Result<OAuthCallback>>,
+)> {
+    let listener = TcpListener::bind("127.0.0.1:0")
+        .await
+        .context("Failed to bind loopback listener for OAuth callback")?;
+    let port = listener.local_addr()?.port();
+    let redirect_uri = format!("http://127.0.0.1:{}/callback", port);
+
+    let (tx, rx) = futures::channel::oneshot::channel();
+
+    smol::spawn(async move {
+        let result = handle_single_callback(listener).await;
+        // If the receiver was dropped (e.g. flow cancelled), that's fine.
+        let _ = tx.send(result);
+    })
+    .detach();
+
+    Ok((redirect_uri, rx))
+}
+
+async fn handle_single_callback(listener: TcpListener) -> Result<OAuthCallback> {
+    let (mut stream, _addr) = listener
+        .accept()
+        .await
+        .context("Failed to accept connection on OAuth callback server")?;
+
+    let mut buf = vec![0u8; 4096];
+    let n = smol::io::AsyncReadExt::read(&mut stream, &mut buf)
+        .await
+        .context("Failed to read from OAuth callback connection")?;
+    let request = String::from_utf8_lossy(&buf[..n]);
+
+    // Parse the HTTP request line to extract the path and query string.
+    let request_line = request
+        .lines()
+        .next()
+        .ok_or_else(|| anyhow!("empty HTTP request on callback server"))?;
+
+    // Expected: "GET /callback?code=...&state=... HTTP/1.1"
+    let path = request_line
+        .split_whitespace()
+        .nth(1)
+        .ok_or_else(|| anyhow!("malformed HTTP request line"))?;
+
+    let result = if let Some(query) = path.strip_prefix("/callback?") {
+        OAuthCallback::parse_query(query)
+    } else if let Some(query) = path.strip_prefix("/callback%3F") {
+        // Some user agents may percent-encode the query separator.
+        OAuthCallback::parse_query(query)
+    } else {
+        Err(anyhow!("unexpected path in OAuth callback: {}", path))
+    };
+
+    let (status, body) = match &result {
+        Ok(_) => (
+            "200 OK",
+            "<html><body><h1>Authorization successful</h1><p>You can close this tab and return to Zed.</p></body></html>",
+        ),
+        Err(err) => {
+            log::error!("OAuth callback error: {}", err);
+            (
+                "400 Bad Request",
+                "<html><body><h1>Authorization failed</h1><p>Something went wrong. Please try again from Zed.</p></body></html>",
+            )
+        }
+    };
+
+    let response = format!(
+        "HTTP/1.1 {}\r\nContent-Type: text/html\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+        status,
+        body.len(),
+        body,
+    );
+    stream.write_all(response.as_bytes()).await.log_err();
+    stream.flush().await.log_err();
+
+    result
 }
 
 // -- JSON fetch helper -------------------------------------------------------
@@ -1494,9 +1598,9 @@ mod tests {
 
     #[test]
     fn test_dcr_registration_body_shape() {
-        let body = dcr_registration_body();
+        let body = dcr_registration_body("http://127.0.0.1:12345/callback");
         assert_eq!(body["client_name"], "Zed");
-        assert_eq!(body["redirect_uris"][0], "http://127.0.0.1/callback");
+        assert_eq!(body["redirect_uris"][0], "http://127.0.0.1:12345/callback");
         assert_eq!(body["grant_types"][0], "authorization_code");
         assert_eq!(body["response_types"][0], "code");
         assert_eq!(body["token_endpoint_auth_method"], "none");
@@ -2120,7 +2224,9 @@ mod tests {
             });
 
             let endpoint = Url::parse("https://auth.example.com/register").unwrap();
-            let registration = perform_dcr(&client, &endpoint).await.unwrap();
+            let registration = perform_dcr(&client, &endpoint, "http://127.0.0.1:9999/callback")
+                .await
+                .unwrap();
 
             assert_eq!(registration.client_id, "dynamic-client-001");
             assert_eq!(
@@ -2140,7 +2246,7 @@ mod tests {
             });
 
             let endpoint = Url::parse("https://auth.example.com/register").unwrap();
-            let result = perform_dcr(&client, &endpoint).await;
+            let result = perform_dcr(&client, &endpoint, "http://127.0.0.1:9999/callback").await;
 
             assert!(result.is_err());
             assert!(result.unwrap_err().to_string().contains("403"));

@@ -5,9 +5,7 @@ use anyhow::{Context as _, Result, anyhow};
 use cli::{CliRequest, CliResponse, ipc::IpcSender};
 use cli::{IpcHandshake, ipc};
 use client::{ZedLink, parse_zed_link};
-use context_server::oauth::{
-    CALLBACK_URI as MCP_OAUTH_CALLBACK_URI, OAuthCallback as McpOAuthCallback,
-};
+
 use db::kvp::KeyValueStore;
 use editor::Editor;
 use fs::Fs;
@@ -73,9 +71,6 @@ pub enum OpenRequestKind {
     GitCommit {
         sha: String,
     },
-    McpOAuthCallback {
-        callback: McpOAuthCallback,
-    },
 }
 
 impl OpenRequest {
@@ -137,12 +132,6 @@ impl OpenRequest {
                 this.kind = Some(OpenRequestKind::Setting {
                     setting_path: Some(setting_path.to_string()),
                 });
-            } else if let Some(callback_rest) = url.strip_prefix(MCP_OAUTH_CALLBACK_URI) {
-                let query = callback_rest
-                    .strip_prefix('?')
-                    .context("invalid MCP OAuth callback URL: missing query")?;
-                let callback = McpOAuthCallback::parse_query(query)?;
-                this.kind = Some(OpenRequestKind::McpOAuthCallback { callback });
             } else if let Some(clone_path) = url.strip_prefix("zed://git/clone") {
                 this.parse_git_clone_url(clone_path)?
             } else if let Some(commit_path) = url.strip_prefix("zed://git/commit/") {
