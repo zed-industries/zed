@@ -9,6 +9,7 @@ use schemars::JsonSchema;
 use serde::Deserialize;
 use settings::Settings;
 use ui::prelude::*;
+use util::ResultExt;
 use workspace::{notifications::NotificationId, with_active_or_new_workspace, ModalView, Toast, Workspace};
 use zed_actions::{PullSettingsFromGit, SetSettingsSyncToken, SyncSettingsToGit};
 
@@ -70,12 +71,14 @@ impl TokenPrompt {
         if !token.is_empty() {
             let credentials_provider = <dyn CredentialsProvider>::global(cx);
             cx.spawn(async move |this: WeakEntity<TokenPrompt>, cx: &mut AsyncApp| {
-                let _ = credentials_provider
+                credentials_provider
                     .write_credentials(CREDENTIALS_URL, "PAT", token.as_bytes(), &cx)
-                    .await;
-                let _ = this.update(cx, |_: &mut TokenPrompt, cx: &mut Context<TokenPrompt>| {
+                    .await
+                    .log_err();
+                this.update(cx, |_: &mut TokenPrompt, cx: &mut Context<TokenPrompt>| {
                     cx.emit(DismissEvent);
-                });
+                })
+                .log_err();
             })
             .detach();
         }
@@ -193,7 +196,7 @@ pub fn init(cx: &mut App) {
                             cx,
                         );
                     })
-                    .ok();
+                    .log_err();
                     return;
                 }
 
@@ -221,8 +224,8 @@ pub fn init(cx: &mut App) {
                                 cx,
                             );
                         }
-                        Err(e) => {
-                            let error_str = e.to_string();
+                        Err(error) => {
+                            let error_str = error.to_string();
                             let is_auth_error = error_str.contains("Authentication failed")
                                 || error_str.contains("Access denied")
                                 || error_str.contains("Write access denied")
@@ -242,7 +245,7 @@ pub fn init(cx: &mut App) {
                         }
                     }
                 })
-                .ok();
+                .log_err();
             })
             .detach();
         });
@@ -300,7 +303,7 @@ pub fn init(cx: &mut App) {
                             cx,
                         );
                     })
-                    .ok();
+                    .log_err();
                     return;
                 }
 
@@ -328,8 +331,8 @@ pub fn init(cx: &mut App) {
                                 cx,
                             );
                         }
-                        Err(e) => {
-                            let error_str = e.to_string();
+                        Err(error) => {
+                            let error_str = error.to_string();
                             let is_auth_error = error_str.contains("Authentication failed")
                                 || error_str.contains("Access denied")
                                 || error_str.contains("Write access denied")
@@ -349,7 +352,7 @@ pub fn init(cx: &mut App) {
                         }
                     }
                 })
-                .ok();
+                .log_err();
             })
             .detach();
         });

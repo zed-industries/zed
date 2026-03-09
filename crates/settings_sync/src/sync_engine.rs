@@ -123,7 +123,7 @@ impl SyncEngine {
     fn init_repo(&self, repo_url: &str, token: Option<&str>) -> Result<Repository> {
         if self.mirror_dir.exists() {
             if self.mirror_dir.join(".git").exists() {
-                Repository::open(&self.mirror_dir).map_err(|e| anyhow::anyhow!("Failed to open mirror repository: {}", e))
+                Repository::open(&self.mirror_dir).map_err(|error| anyhow::anyhow!("Failed to open mirror repository: {}", error))
             } else {
                 // If directory exists but is not a git repo, remove and re-clone
                 fs::remove_dir_all(&self.mirror_dir).context("Failed to remove invalid mirror directory")?;
@@ -141,11 +141,11 @@ impl SyncEngine {
         } else {
             repo_url.to_string()
         };
-        self.run_git_command(
-            &["clone", &url, self.mirror_dir.to_str().unwrap()],
-            None,
-        )?;
-        Repository::open(&self.mirror_dir).map_err(|e| anyhow::anyhow!("Failed to open cloned repository: {}", e))
+        let mirror_dir_str = self.mirror_dir
+            .to_str()
+            .context("Mirror directory path contains invalid UTF-8")?;
+        self.run_git_command(&["clone", &url, mirror_dir_str], None)?;
+        Repository::open(&self.mirror_dir).map_err(|error| anyhow::anyhow!("Failed to open cloned repository: {}", error))
     }
 
     pub fn push(&self, repo_url: &str, branch: &str, token: Option<&str>) -> Result<()> {
@@ -158,10 +158,10 @@ impl SyncEngine {
 
         let config_dir = paths::config_dir();
         for file_name in &["settings.json", "keymap.json", "tasks.json"] {
-            let src = config_dir.join(file_name);
-            let dest = self.mirror_dir.join(file_name);
-            if src.exists() {
-                fs::copy(&src, &dest).context(format!("Failed to copy {}", file_name))?;
+            let source_path = config_dir.join(file_name);
+            let destination_path = self.mirror_dir.join(file_name);
+            if source_path.exists() {
+                fs::copy(&source_path, &destination_path).context(format!("Failed to copy {}", file_name))?;
             }
         }
 
@@ -169,10 +169,10 @@ impl SyncEngine {
         index.add_all(["*"].iter(), git2::IndexAddOption::DEFAULT, None)?;
         index.write()?;
 
-        let oid = index.write_tree()?;
-        let tree = repo.find_tree(oid)?;
+        let object_id = index.write_tree()?;
+        let tree = repo.find_tree(object_id)?;
 
-        let sig = Signature::now("Zed", "sync@zed.dev")?;
+        let signature = Signature::now("Zed", "sync@zed.dev")?;
         let parent_commit = if repo.is_empty()? {
             None
         } else {
@@ -186,13 +186,13 @@ impl SyncEngine {
         }
 
         let timestamp = Local::now().format("%Y-%m-%d %H:%M:%S");
-        let msg = format!("Sync from Zed [{}]", timestamp);
+        let commit_message = format!("Sync from Zed [{}]", timestamp);
 
         repo.commit(
             Some("HEAD"),
-            &sig,
-            &sig,
-            &msg,
+            &signature,
+            &signature,
+            &commit_message,
             &tree,
             &parents,
         )?;
@@ -205,9 +205,9 @@ impl SyncEngine {
         };
 
         let push_result = self.run_git_command(&["push", &push_url, branch], Some(&self.mirror_dir));
-        if let Err(ref e) = push_result {
-            let msg = e.to_string().to_lowercase();
-            if msg.contains("non-fast-forward") || msg.contains("fetch first") || msg.contains("rejected") {
+        if let Err(ref push_error) = push_result {
+            let error_message = push_error.to_string().to_lowercase();
+            if error_message.contains("non-fast-forward") || error_message.contains("fetch first") || error_message.contains("rejected") {
                 log::info!("Push rejected (non-fast-forward), pulling and retrying");
                 self.run_git_command(&["pull", &push_url, branch, "--rebase"], Some(&self.mirror_dir))?;
                 self.run_git_command(&["push", &push_url, branch], Some(&self.mirror_dir))?;
@@ -240,10 +240,10 @@ impl SyncEngine {
 
         let config_dir = paths::config_dir();
         for file_name in &["settings.json", "keymap.json", "tasks.json"] {
-            let src = self.mirror_dir.join(file_name);
-            let dest = config_dir.join(file_name);
-            if src.exists() {
-                fs::copy(&src, &dest).context(format!("Failed to copy {}", file_name))?;
+            let source_path = self.mirror_dir.join(file_name);
+            let destination_path = config_dir.join(file_name);
+            if source_path.exists() {
+                fs::copy(&source_path, &destination_path).context(format!("Failed to copy {}", file_name))?;
             }
         }
 

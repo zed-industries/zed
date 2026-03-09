@@ -15779,6 +15779,7 @@ dependencies = [
  "settings",
  "settings_content",
  "ui",
+ "util",
  "workspace",
  "zed_actions",
 ]
