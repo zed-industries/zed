@@ -1,7 +1,7 @@
 use crate::{
     AnyElement, AnyEntity, AnyWeakEntity, App, Bounds, ContentMask, Context, Element, ElementId,
     Entity, EntityId, GlobalElementId, InspectorElementId, IntoElement, LayoutId, PaintIndex,
-    Pixels, PrepaintStateIndex, Render, Style, StyleRefinement, TextStyle, WeakEntity,
+    Pixels, PrepaintStateIndex, Render, Style, StyleRefinement, TextStyle, WeakEntity, relative,
 };
 use crate::{Empty, Window};
 use anyhow::Result;
@@ -372,6 +372,17 @@ pub trait View: 'static + Sized + Hash {
     /// Render this view into an element tree. Takes ownership of self,
     /// consuming the component props. The entity state persists across frames.
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement;
+
+    /// Returns the style to use for caching this view.
+    /// When `Some`, the view element will be cached using the given style for its outer layout.
+    /// The default returns a full-size style refinement (`width: 100%, height: 100%`).
+    /// Return `None` to disable caching.
+    fn style(&self) -> Option<StyleRefinement> {
+        let mut style = StyleRefinement::default();
+        style.size.width = Some(relative(1.).into());
+        style.size.height = Some(relative(1.).into());
+        Some(style)
+    }
 }
 
 /// An element that wraps a [`View`], creating a reactive boundary in the element tree.

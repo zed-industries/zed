@@ -5,15 +5,15 @@
 //! components with different props and layouts.
 
 use gpui::{
-    App, BoxShadow, CursorStyle, Entity, Hsla, StyleRefinement, ViewElement, Window, div, hsla,
+    App, BoxShadow, CursorStyle, Entity, Hsla, IntoViewElement, StyleRefinement, Window, div, hsla,
     point, prelude::*, px, white,
 };
 
 use crate::editor::Editor;
-use crate::editor_text::EditorText;
+use crate::editor::EditorView;
 use crate::{Backspace, Delete, End, Enter, Home, Left, Right};
 
-#[derive(Hash)]
+#[derive(Hash, IntoViewElement)]
 pub struct TextArea {
     editor: Entity<Editor>,
     rows: usize,
@@ -40,6 +40,15 @@ impl gpui::View for TextArea {
 
     fn entity(&self) -> &Entity<Editor> {
         &self.editor
+    }
+
+    fn style(&self) -> Option<StyleRefinement> {
+        let row_height = px(20.);
+        let box_height = row_height * self.rows as f32 + px(16.);
+        let mut style = StyleRefinement::default();
+        style.size.width = Some(px(400.).into());
+        style.size.height = Some(box_height.into());
+        Some(style)
     }
 
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
@@ -120,19 +129,6 @@ impl gpui::View for TextArea {
             .line_height(row_height)
             .text_size(px(14.))
             .text_color(text_color)
-            .child(EditorText::new(editor, text_color))
-    }
-}
-
-impl IntoElement for TextArea {
-    type Element = ViewElement<Self>;
-
-    fn into_element(self) -> Self::Element {
-        let row_height = px(20.);
-        let box_height = row_height * self.rows as f32 + px(16.);
-        let mut style = StyleRefinement::default();
-        style.size.width = Some(px(400.).into());
-        style.size.height = Some(box_height.into());
-        ViewElement::new(self).cached(style)
+            .child(EditorView::new(editor).text_color(text_color))
     }
 }

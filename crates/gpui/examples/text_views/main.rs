@@ -28,7 +28,6 @@
 //! ```
 
 mod editor;
-mod editor_text;
 mod input;
 mod text_area;
 

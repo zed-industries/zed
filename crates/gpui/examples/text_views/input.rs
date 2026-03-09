@@ -8,20 +8,20 @@
 use std::time::Duration;
 
 use gpui::{
-    Animation, AnimationExt as _, App, BoxShadow, CursorStyle, Entity, Hsla, Pixels, SharedString,
-    StyleRefinement, ViewElement, Window, bounce, div, ease_in_out, hsla, point, prelude::*, px,
-    white,
+    Animation, AnimationExt as _, App, BoxShadow, CursorStyle, Entity, Hsla, IntoViewElement,
+    Pixels, SharedString, StyleRefinement, Window, bounce, div, ease_in_out, hsla, point,
+    prelude::*, px, white,
 };
 
 use crate::editor::Editor;
-use crate::editor_text::EditorText;
+use crate::editor::EditorView;
 use crate::{Backspace, Delete, End, Enter, Home, Left, Right};
 
 struct FlashState {
     count: usize,
 }
 
-#[derive(Hash)]
+#[derive(Hash, IntoViewElement)]
 pub struct Input {
     editor: Entity<Editor>,
     width: Option<Pixels>,
@@ -53,6 +53,15 @@ impl gpui::View for Input {
 
     fn entity(&self) -> &Entity<Editor> {
         &self.editor
+    }
+
+    fn style(&self) -> Option<StyleRefinement> {
+        let mut style = StyleRefinement::default();
+        if let Some(w) = self.width {
+            style.size.width = Some(w.into());
+        }
+        style.size.height = Some(px(36.).into());
+        Some(style)
     }
 
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
@@ -145,7 +154,7 @@ impl gpui::View for Input {
             .line_height(px(20.))
             .text_size(px(14.))
             .text_color(text_color)
-            .child(EditorText::new(editor, text_color));
+            .child(EditorView::new(editor).text_color(text_color));
 
         if count > 0 {
             base.with_animation(
@@ -162,18 +171,5 @@ impl gpui::View for Input {
         } else {
             base.into_any_element()
         }
-    }
-}
-
-impl IntoElement for Input {
-    type Element = ViewElement<Self>;
-
-    fn into_element(self) -> Self::Element {
-        let mut style = StyleRefinement::default();
-        if let Some(w) = self.width {
-            style.size.width = Some(w.into());
-        }
-        style.size.height = Some(px(36.).into());
-        ViewElement::new(self).cached(style)
     }
 }
