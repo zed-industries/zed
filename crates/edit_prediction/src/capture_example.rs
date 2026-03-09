@@ -533,8 +533,8 @@ mod tests {
             zlog::init_test();
             let http_client = FakeHttpClient::with_404_response();
             let client = Client::new(Arc::new(FakeSystemClock::new()), http_client, cx);
-            language_model::init(client.clone(), cx);
             let user_store = cx.new(|cx| UserStore::new(client.clone(), cx));
+            language_model::init(user_store.clone(), client.clone(), cx);
             EditPredictionStore::global(&client, &user_store, cx);
         })
     }

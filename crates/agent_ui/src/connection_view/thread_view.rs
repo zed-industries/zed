@@ -2715,6 +2715,31 @@ impl ThreadView {
             (IconName::Maximize, "Expand Message Editor")
         };
 
+        if v2_empty_state {
+            self.message_editor.update(cx, |editor, cx| {
+                editor.set_mode(
+                    EditorMode::Full {
+                        scale_ui_elements_with_buffer_font_size: false,
+                        show_active_line_background: false,
+                        sizing_behavior: SizingBehavior::Default,
+                    },
+                    cx,
+                );
+            });
+        } else {
+            self.message_editor.update(cx, |editor, cx| {
+                editor.set_mode(
+                    EditorMode::AutoHeight {
+                        min_lines: AgentSettings::get_global(cx).message_editor_min_lines,
+                        max_lines: Some(
+                            AgentSettings::get_global(cx).set_message_editor_max_lines(),
+                        ),
+                    },
+                    cx,
+                );
+            });
+        }
+
         v_flex()
             .on_action(cx.listener(Self::expand_message_editor))
             .p_2()
@@ -2731,6 +2756,7 @@ impl ThreadView {
                 v_flex()
                     .relative()
                     .size_full()
+                    .when(v2_empty_state, |this| this.flex_1())
                     .pt_1()
                     .pr_2p5()
                     .child(self.message_editor.clone())

@@ -2008,13 +2008,29 @@ fn open_local_file(
 }
 
 fn open_bundled_file(
-    workspace: &Workspace,
+    workspace: &mut Workspace,
     text: Cow<'static, str>,
     title: &'static str,
     language: &'static str,
     window: &mut Window,
     cx: &mut Context<Workspace>,
 ) {
+    let existing = workspace.items_of_type::<Editor>(cx).find(|editor| {
+        editor.read_with(cx, |editor, cx| {
+            editor.read_only(cx)
+                && editor.title(cx).as_ref() == title
+                && editor
+                    .buffer()
+                    .read(cx)
+                    .as_singleton()
+                    .is_some_and(|buffer| buffer.read(cx).file().is_none())
+        })
+    });
+    if let Some(existing) = existing {
+        workspace.activate_item(&existing, true, true, window, cx);
+        return;
+    }
+
     let language = workspace.app_state().languages.language_for_name(language);
     cx.spawn_in(window, async move |workspace, cx| {
         let language = language.await.log_err();
@@ -4966,6 +4982,54 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_bundled_files_reuse_existing_editor(cx: &mut TestAppContext) {
+        let app_state = init_test(cx);
+        cx.update(init);
+
+        let project = Project::test(app_state.fs.clone(), [], cx).await;
+        let _window = cx.add_window(|window, cx| MultiWorkspace::test_new(project, window, cx));
+
+        cx.update(|cx| {
+            cx.dispatch_action(&OpenDefaultSettings);
+        });
+        cx.run_until_parked();
+
+        let multi_workspace = cx.windows()[0].downcast::<MultiWorkspace>().unwrap();
+        let first_item_id = multi_workspace
+            .update(cx, |multi_workspace, _, cx| {
+                multi_workspace.workspace().update(cx, |workspace, cx| {
+                    workspace
+                        .active_item(cx)
+                        .expect("default settings should be open")
+                        .item_id()
+                })
+            })
+            .unwrap();
+
+        cx.update(|cx| {
+            cx.dispatch_action(&OpenDefaultSettings);
+        });
+        cx.run_until_parked();
+
+        let (second_item_id, item_count) = multi_workspace
+            .update(cx, |multi_workspace, _, cx| {
+                multi_workspace.workspace().update(cx, |workspace, cx| {
+                    let pane = workspace.active_pane().read(cx);
+                    (
+                        pane.active_item()
+                            .expect("default settings should still be open")
+                            .item_id(),
+                        pane.items_len(),
+                    )
+                })
+            })
+            .unwrap();
+
+        assert_eq!(first_item_id, second_item_id);
+        assert_eq!(item_count, 1);
+    }
+
+    #[gpui::test]
     async fn test_bundled_languages(cx: &mut TestAppContext) {
         let fs = fs::FakeFs::new(cx.background_executor.clone());
         env_logger::builder().is_test(true).try_init().ok();
@@ -5024,7 +5088,7 @@ mod tests {
                 cx,
             );
             image_viewer::init(cx);
-            language_model::init(app_state.client.clone(), cx);
+            language_model::init(app_state.user_store.clone(), app_state.client.clone(), cx);
             language_models::init(app_state.user_store.clone(), app_state.client.clone(), cx);
             web_search::init(cx);
             git_graph::init(cx);

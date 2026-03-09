@@ -783,7 +783,7 @@ wax = "0.7"
 which = "6.0.0"
 wasm-bindgen = "0.2.113"
 web-time = "1.1.0"
-wgpu = { git = "https://github.com/zed-industries/wgpu", rev = "0343151f535c8386df3c1db014cd42f44470e4c0" }
+wgpu = { git = "https://github.com/zed-industries/wgpu", rev = "465557eccfe77c840a9b4936f1408da9503372c4" }
 windows-core = "0.61"
 yawc = "0.2.5"
 zeroize = "1.8"
