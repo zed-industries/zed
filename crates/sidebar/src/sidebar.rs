@@ -530,6 +530,11 @@ impl Sidebar {
 
             if !query.is_empty() {
                 let has_threads = !threads.is_empty();
+
+                let workspace_highlight_positions =
+                    fuzzy_match_positions(&query, &label).unwrap_or_default();
+                let workspace_matched = !workspace_highlight_positions.is_empty();
+
                 let mut matched_threads = Vec::new();
                 for mut thread in threads {
                     if let ListEntry::Thread {
@@ -545,15 +550,14 @@ impl Sidebar {
                             .unwrap_or("");
                         if let Some(positions) = fuzzy_match_positions(&query, title) {
                             *highlight_positions = positions;
+                        }
+                        if workspace_matched || !highlight_positions.is_empty() {
                             matched_threads.push(thread);
                         }
                     }
                 }
 
-                let workspace_highlight_positions =
-                    fuzzy_match_positions(&query, &label).unwrap_or_default();
-
-                if matched_threads.is_empty() && workspace_highlight_positions.is_empty() {
+                if matched_threads.is_empty() && !workspace_matched {
                     continue;
                 }
 
@@ -743,6 +747,7 @@ impl Sidebar {
         if is_group_header_after_first {
             v_flex()
                 .w_full()
+                .pt_2()
                 .border_t_1()
                 .border_color(cx.theme().colors().border_variant)
                 .child(rendered)
@@ -2906,12 +2911,16 @@ mod tests {
             vec!["v [Empty Workspace]", "  Fix typo in README  <== selected",]
         );
 
-        // "project-a" matches the first workspace name — the header appears alone
-        // without any child threads (none of them match "project-a").
+        // "project-a" matches the first workspace name — the header appears
+        // with all child threads included.
         type_in_search(&sidebar, "project-a", cx);
         assert_eq!(
             visible_entries_as_strings(&sidebar, cx),
-            vec!["v [project-a]  <== selected"]
+            vec![
+                "v [project-a]",
+                "  Fix bug in sidebar  <== selected",
+                "  Add tests for editor",
+            ]
         );
     }
 
@@ -2971,11 +2980,15 @@ mod tests {
         cx.run_until_parked();
 
         // "alpha" matches the workspace name "alpha-project" but no thread titles.
-        // The workspace header should appear with no child threads.
+        // The workspace header should appear with all child threads included.
         type_in_search(&sidebar, "alpha", cx);
         assert_eq!(
             visible_entries_as_strings(&sidebar, cx),
-            vec!["v [alpha-project]  <== selected"]
+            vec![
+                "v [alpha-project]",
+                "  Fix bug in sidebar  <== selected",
+                "  Add tests for editor",
+            ]
         );
 
         // "sidebar" matches thread titles in both workspaces but not workspace names.
@@ -3007,11 +3020,15 @@ mod tests {
         );
 
         // A query that matches a workspace name AND a thread in that same workspace.
-        // Both the header (highlighted) and the matching thread should appear.
+        // Both the header (highlighted) and all child threads should appear.
         type_in_search(&sidebar, "alpha", cx);
         assert_eq!(
             visible_entries_as_strings(&sidebar, cx),
-            vec!["v [alpha-project]  <== selected"]
+            vec![
+                "v [alpha-project]",
+                "  Fix bug in sidebar  <== selected",
+                "  Add tests for editor",
+            ]
         );
 
         // Now search for something that matches only a workspace name when there
@@ -3020,7 +3037,11 @@ mod tests {
         type_in_search(&sidebar, "alp", cx);
         assert_eq!(
             visible_entries_as_strings(&sidebar, cx),
-            vec!["v [alpha-project]  <== selected"]
+            vec![
+                "v [alpha-project]",
+                "  Fix bug in sidebar  <== selected",
+                "  Add tests for editor",
+            ]
         );
     }
 
