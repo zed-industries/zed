@@ -50,6 +50,55 @@ pub struct BufferDiffUpdate {
     base_text_changed: bool,
 }
 
+impl BufferDiffUpdate {
+    // FIXME thread through diff options to control word diff
+    pub fn from_hunks(
+        base_text: Arc<str>,
+        buffer_snapshot: text::BufferSnapshot,
+        edits: Patch<usize>,
+        diff_options: Option<DiffOptions>,
+    ) -> Self {
+        let hunks = edits.into_iter().map(|edit| {
+            let old_text = &base_text[edit.old.clone()];
+            let new_text = buffer_snapshot
+                .text_for_range(edit.new.clone())
+                .collect::<String>();
+
+            let (base_word_diffs, buffer_word_diffs) = if let Some(options) = &diff_options {
+                word_diff_ranges(old_text, &new_text, options.clone())
+            } else {
+                (Vec::new(), Vec::new())
+            };
+            InternalDiffHunk {
+                buffer_range: buffer_snapshot.anchor_before(edit.new.start)
+                    ..buffer_snapshot.anchor_before(edit.new.end),
+                diff_base_byte_range: edit.old,
+                base_word_diffs,
+                buffer_word_diffs: buffer_word_diffs
+                    .into_iter()
+                    .map(|range| {
+                        buffer_snapshot.anchor_after(range.start)
+                            ..buffer_snapshot.anchor_after(range.end)
+                    })
+                    .collect::<Vec<_>>(),
+            }
+        });
+
+        Self {
+            inner: BufferDiffInner {
+                hunks: SumTree::from_iter(hunks, &buffer_snapshot),
+                pending_hunks: SumTree::new(&buffer_snapshot),
+                base_text,
+                base_text_exists: true,
+                buffer_snapshot: buffer_snapshot.clone(),
+            },
+            buffer_snapshot,
+            base_text_edits: None,
+            base_text_changed: false,
+        }
+    }
+}
+
 #[derive(Clone)]
 struct BufferDiffInner<BaseText> {
     hunks: SumTree<InternalDiffHunk>,
@@ -112,11 +161,11 @@ pub struct DiffHunk {
 
 /// We store [`InternalDiffHunk`]s internally so we don't need to store the additional row range.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct InternalDiffHunk {
-    pub buffer_range: Range<Anchor>,
-    pub diff_base_byte_range: Range<usize>,
-    pub base_word_diffs: Vec<Range<usize>>,
-    pub buffer_word_diffs: Vec<Range<Anchor>>,
+struct InternalDiffHunk {
+    buffer_range: Range<Anchor>,
+    diff_base_byte_range: Range<usize>,
+    base_word_diffs: Vec<Range<usize>>,
+    buffer_word_diffs: Vec<Range<Anchor>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1425,14 +1474,8 @@ fn process_patch_hunk(
 
         let buffer_text: String = buffer.text_for_range(buffer_range.clone()).collect();
 
-        let (base_word_diffs, buffer_word_diffs_relative) = word_diff_ranges(
-            &base_text,
-            &buffer_text,
-            DiffOptions {
-                language_scope: diff_options.language_scope.clone(),
-                ..*diff_options
-            },
-        );
+        let (base_word_diffs, buffer_word_diffs_relative) =
+            word_diff_ranges(&base_text, &buffer_text, diff_options.clone());
 
         let buffer_start_offset = buffer_range.start.to_offset(buffer);
         let buffer_word_diffs = buffer_word_diffs_relative
@@ -1640,31 +1683,6 @@ impl BufferDiff {
         base_text: Option<Arc<str>>,
         base_text_change: Option<bool>,
         language: Option<Arc<Language>>,
-        cx: &App,
-    ) -> Task<BufferDiffUpdate> {
-        self.update_diff_impl(
-            buffer,
-            base_text,
-            base_text_change,
-            language,
-            compute_hunks,
-            cx,
-        )
-    }
-
-    pub fn update_diff_impl(
-        &self,
-        buffer: text::BufferSnapshot,
-        base_text: Option<Arc<str>>,
-        base_text_change: Option<bool>,
-        language: Option<Arc<Language>>,
-        compute_hunks: impl FnOnce(
-            Option<(Arc<str>, Rope)>,
-            &text::BufferSnapshot,
-            Option<DiffOptions>,
-        ) -> SumTree<InternalDiffHunk>
-        + Send
-        + 'static,
         cx: &App,
     ) -> Task<BufferDiffUpdate> {
         let prev_base_text = self.base_text(cx).as_rope().clone();
