@@ -266,7 +266,7 @@ pub async fn create_terminal_entity(
             }
             let project_dir = cwd
                 .clone()
-                .unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
+                .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| ".".into()));
             Some(terminal::terminal_settings::SandboxConfig::from_settings(
                 sandbox,
                 project_dir,

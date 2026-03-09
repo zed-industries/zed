@@ -426,7 +426,9 @@ impl Project {
                         let project_dir = local_path
                             .as_ref()
                             .map(|p| p.to_path_buf())
-                            .unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
+                            .unwrap_or_else(|| {
+                                std::env::current_dir().unwrap_or_else(|_| ".".into())
+                            });
                         Some(terminal::terminal_settings::SandboxConfig::from_settings(
                             sandbox,
                             project_dir,
