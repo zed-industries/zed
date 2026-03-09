@@ -1033,6 +1033,7 @@
       "cmd-shift-enter": "git::Amend",
       "cmd-ctrl-y": "git::StageAll",
       "cmd-ctrl-shift-y": "git::UnstageAll",
+      "cmd-alt-z": "git::RestoreAndNext",
     },
   },
   {
