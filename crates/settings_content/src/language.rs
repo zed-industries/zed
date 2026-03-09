@@ -192,6 +192,9 @@ pub struct EditPredictionSettingsContent {
     pub enabled_in_text_threads: Option<bool>,
     /// The directory where manually captured edit prediction examples are stored.
     pub examples_dir: Option<Arc<Path>>,
+    /// Whether to allow Zed to collect training data when using Zed's Edit Predictions.
+    /// Data is only ever captured for files in projects that are detected as open source.
+    pub allow_data_collection: Option<bool>,
 }
 
 #[with_fallible_options]

@@ -6,9 +6,11 @@ use edit_prediction_types::{
     DataCollectionState, EditPredictionDelegate, EditPredictionDiscardReason,
     EditPredictionIconSet, SuggestionDisplayType,
 };
+use fs::Fs;
 use gpui::{App, Entity, prelude::*};
 use language::{Buffer, ToPoint as _};
 use project::Project;
+use settings::update_settings_file;
 
 use crate::{BufferEditPrediction, EditPredictionModel, EditPredictionStore};
 
@@ -73,7 +75,7 @@ impl EditPredictionDelegate for ZedEditPredictionDelegate {
                 self.store
                     .read(cx)
                     .is_file_open_source(&self.project, file, cx);
-            if self.store.read(cx).data_collection_choice.is_enabled(cx) {
+            if self.store.read(cx).is_data_collection_enabled(cx) {
                 DataCollectionState::Enabled {
                     is_project_open_source,
                 }
@@ -83,15 +85,23 @@ impl EditPredictionDelegate for ZedEditPredictionDelegate {
                 }
             }
         } else {
-            return DataCollectionState::Disabled {
+            DataCollectionState::Disabled {
                 is_project_open_source: false,
-            };
+            }
         }
     }
 
     fn toggle_data_collection(&mut self, cx: &mut App) {
-        self.store.update(cx, |store, cx| {
-            store.toggle_data_collection_choice(cx);
+        let fs = <dyn Fs>::global(cx);
+        update_settings_file(fs, cx, move |settings, _| {
+            let edit_predictions = settings
+                .project
+                .all_languages
+                .edit_predictions
+                .get_or_insert_default();
+
+            let current = edit_predictions.allow_data_collection.unwrap_or(false);
+            edit_predictions.allow_data_collection = Some(!current);
         });
     }
 

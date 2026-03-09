@@ -1595,6 +1595,10 @@
     // Whether edit predictions are enabled when editing text threads in the agent panel.
     // This setting has no effect if globally disabled.
     "enabled_in_text_threads": true,
+    // Whether to allow Zed to collect training data when using Zed's Edit Predictions.
+    // Data is only captured when the project is detected as open source.
+    //
+    // "allow_data_collection": false
   },
   // Settings specific to journaling
   "journal": {
