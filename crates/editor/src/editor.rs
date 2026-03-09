@@ -25260,7 +25260,9 @@ impl Editor {
         window: &mut Window,
         cx: &mut App,
     ) -> Option<gpui::Point<Pixels>> {
-        let line_height = self.style(cx).text.line_height_in_pixels(window.rem_size());
+        let line_height = window.round_to_nearest_device_pixel(
+            self.style(cx).text.line_height_in_pixels(window.rem_size()),
+        );
         let text_layout_details = self.text_layout_details(window, cx);
         let scroll_top = text_layout_details
             .scroll_anchor
@@ -25313,7 +25315,8 @@ impl Editor {
         let style = &text_layout_details.editor_style;
         let font_id = window.text_system().resolve_font(&style.text.font());
         let font_size = style.text.font_size.to_pixels(window.rem_size());
-        let line_height = style.text.line_height_in_pixels(window.rem_size());
+        let line_height = window
+            .round_to_nearest_device_pixel(style.text.line_height_in_pixels(window.rem_size()));
         let em_width = window.text_system().em_width(font_id, font_size).unwrap();
         let em_advance = window.text_system().em_advance(font_id, font_size).unwrap();
 

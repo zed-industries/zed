@@ -11,13 +11,13 @@ use crate::{
     MouseMoveEvent, MouseUpEvent, Path, Pixels, PlatformAtlas, PlatformDisplay, PlatformInput,
     PlatformInputHandler, PlatformWindow, Point, PolychromeSprite, Priority, PromptButton,
     PromptLevel, Quad, Render, RenderGlyphParams, RenderImage, RenderImageParams, RenderSvgParams,
-    Replay, ResizeEdge, SMOOTH_SVG_SCALE_FACTOR, SUBPIXEL_VARIANTS_X, SUBPIXEL_VARIANTS_Y,
-    ScaledPixels, Scene, Shadow, SharedString, Size, StrikethroughStyle, Style, SubpixelSprite,
-    SubscriberSet, Subscription, SystemWindowTab, SystemWindowTabController, TabStopMap,
-    TaffyLayoutEngine, Task, TextRenderingMode, TextStyle, TextStyleRefinement, ThermalState,
-    TransformationMatrix, Underline, UnderlineStyle, WindowAppearance, WindowBackgroundAppearance,
-    WindowBounds, WindowControls, WindowDecorations, WindowOptions, WindowParams, WindowTextSystem,
-    point, prelude::*, px, rems, size, transparent_black,
+    Replay, ResizeEdge, SMOOTH_SVG_SCALE_FACTOR, SUBPIXEL_VARIANTS_X, ScaledPixels, Scene, Shadow,
+    SharedString, Size, StrikethroughStyle, Style, SubpixelSprite, SubscriberSet, Subscription,
+    SystemWindowTab, SystemWindowTabController, TabStopMap, TaffyLayoutEngine, Task,
+    TextRenderingMode, TextStyle, TextStyleRefinement, ThermalState, TransformationMatrix,
+    Underline, UnderlineStyle, WindowAppearance, WindowBackgroundAppearance, WindowBounds,
+    WindowControls, WindowDecorations, WindowOptions, WindowParams, WindowTextSystem, point,
+    prelude::*, px, rems, size, transparent_black,
 };
 use anyhow::{Context as _, Result, anyhow};
 use collections::{FxHashMap, FxHashSet};
@@ -2108,7 +2108,94 @@ impl Window {
 
     /// The line height associated with the current text style.
     pub fn line_height(&self) -> Pixels {
-        self.text_style().line_height_in_pixels(self.rem_size())
+        self.round_to_nearest_device_pixel(self.text_style().line_height_in_pixels(self.rem_size()))
+    }
+
+    /// Rounds a logical size or coordinate to the nearest device pixel for this window.
+    #[inline]
+    pub fn round_to_nearest_device_pixel(&self, value: Pixels) -> Pixels {
+        let scale_factor = self.scale_factor();
+        px((value.0 * scale_factor).round() / scale_factor)
+    }
+
+    #[inline]
+    fn round_point_to_device_pixels(&self, position: Point<Pixels>) -> Point<Pixels> {
+        point(
+            self.round_to_nearest_device_pixel(position.x),
+            self.round_to_nearest_device_pixel(position.y),
+        )
+    }
+
+    #[inline]
+    fn bounds_from_device_edges(
+        &self,
+        left: f32,
+        top: f32,
+        right: f32,
+        bottom: f32,
+    ) -> Bounds<ScaledPixels> {
+        let right = right.max(left);
+        let bottom = bottom.max(top);
+        Bounds::from_corners(
+            point(ScaledPixels(left), ScaledPixels(top)),
+            point(ScaledPixels(right), ScaledPixels(bottom)),
+        )
+    }
+
+    #[inline]
+    fn round_bounds_to_device_pixels(&self, bounds: Bounds<Pixels>) -> Bounds<ScaledPixels> {
+        let scale_factor = self.scale_factor();
+        let left = (bounds.left().0 * scale_factor).round();
+        let top = (bounds.top().0 * scale_factor).round();
+        let right = (bounds.right().0 * scale_factor).round();
+        let bottom = (bounds.bottom().0 * scale_factor).round();
+        self.bounds_from_device_edges(left, top, right, bottom)
+    }
+
+    #[inline]
+    fn outset_bounds_to_device_pixels(&self, bounds: Bounds<Pixels>) -> Bounds<ScaledPixels> {
+        let scale_factor = self.scale_factor();
+        let left = (bounds.left().0 * scale_factor).floor();
+        let top = (bounds.top().0 * scale_factor).floor();
+        let right = (bounds.right().0 * scale_factor).ceil();
+        let bottom = (bounds.bottom().0 * scale_factor).ceil();
+        self.bounds_from_device_edges(left, top, right, bottom)
+    }
+
+    #[inline]
+    fn outset_content_mask_to_device_pixels(
+        &self,
+        content_mask: ContentMask<Pixels>,
+    ) -> ContentMask<ScaledPixels> {
+        ContentMask {
+            bounds: self.outset_bounds_to_device_pixels(content_mask.bounds),
+        }
+    }
+
+    #[inline]
+    fn round_edges_to_device_pixels(&self, edges: Edges<Pixels>) -> Edges<ScaledPixels> {
+        let scale_factor = self.scale_factor();
+        Edges {
+            top: ScaledPixels((edges.top.0 * scale_factor).round()),
+            right: ScaledPixels((edges.right.0 * scale_factor).round()),
+            bottom: ScaledPixels((edges.bottom.0 * scale_factor).round()),
+            left: ScaledPixels((edges.left.0 * scale_factor).round()),
+        }
+    }
+
+    #[inline]
+    fn round_length_to_device_pixels(&self, value: Pixels) -> ScaledPixels {
+        ScaledPixels((value.0 * self.scale_factor()).round())
+    }
+
+    #[inline]
+    fn round_nonzero_length_to_device_pixels(&self, value: Pixels) -> ScaledPixels {
+        let rounded = self.round_length_to_device_pixels(value).0;
+        if value.is_zero() {
+            ScaledPixels(0.0)
+        } else {
+            ScaledPixels(rounded.max(1.0))
+        }
     }
 
     /// Call to prevent the default action of an event. Currently only used to prevent
@@ -2693,7 +2780,7 @@ impl Window {
             return f(self);
         };
 
-        let abs_offset = self.element_offset() + offset;
+        let abs_offset = self.round_point_to_device_pixels(self.element_offset() + offset);
         self.with_absolute_element_offset(abs_offset, f)
     }
 
@@ -2706,7 +2793,8 @@ impl Window {
         f: impl FnOnce(&mut Self) -> R,
     ) -> R {
         self.invalidator.debug_assert_prepaint();
-        self.element_offset_stack.push(offset);
+        self.element_offset_stack
+            .push(self.round_point_to_device_pixels(offset));
         let result = f(self);
         self.element_offset_stack.pop();
         result
@@ -3063,13 +3151,12 @@ impl Window {
     pub fn paint_layer<R>(&mut self, bounds: Bounds<Pixels>, f: impl FnOnce(&mut Self) -> R) -> R {
         self.invalidator.debug_assert_paint();
 
-        let scale_factor = self.scale_factor();
         let content_mask = self.content_mask();
         let clipped_bounds = bounds.intersect(&content_mask.bounds);
         if !clipped_bounds.is_empty() {
             self.next_frame
                 .scene
-                .push_layer(clipped_bounds.scale(scale_factor));
+                .push_layer(self.outset_bounds_to_device_pixels(clipped_bounds));
         }
 
         let result = f(self);
@@ -3092,16 +3179,16 @@ impl Window {
     ) {
         self.invalidator.debug_assert_paint();
 
-        let scale_factor = self.scale_factor();
         let content_mask = self.content_mask();
+        let scale_factor = self.scale_factor();
         let opacity = self.element_opacity();
         for shadow in shadows {
             let shadow_bounds = (bounds + shadow.offset).dilate(shadow.spread_radius);
             self.next_frame.scene.insert_primitive(Shadow {
                 order: 0,
                 blur_radius: shadow.blur_radius.scale(scale_factor),
-                bounds: shadow_bounds.scale(scale_factor),
-                content_mask: content_mask.scale(scale_factor),
+                bounds: self.outset_bounds_to_device_pixels(shadow_bounds),
+                content_mask: self.outset_content_mask_to_device_pixels(content_mask.clone()),
                 corner_radii: corner_radii.scale(scale_factor),
                 color: shadow.color.opacity(opacity),
             });
@@ -3120,17 +3207,16 @@ impl Window {
     pub fn paint_quad(&mut self, quad: PaintQuad) {
         self.invalidator.debug_assert_paint();
 
-        let scale_factor = self.scale_factor();
         let content_mask = self.content_mask();
         let opacity = self.element_opacity();
         self.next_frame.scene.insert_primitive(Quad {
             order: 0,
-            bounds: quad.bounds.scale(scale_factor),
-            content_mask: content_mask.scale(scale_factor),
+            bounds: self.round_bounds_to_device_pixels(quad.bounds),
+            content_mask: self.outset_content_mask_to_device_pixels(content_mask),
             background: quad.background.opacity(opacity),
             border_color: quad.border_color.opacity(opacity),
-            corner_radii: quad.corner_radii.scale(scale_factor),
-            border_widths: quad.border_widths.scale(scale_factor),
+            corner_radii: quad.corner_radii.scale(self.scale_factor()),
+            border_widths: self.round_edges_to_device_pixels(quad.border_widths),
             border_style: quad.border_style,
         });
     }
@@ -3170,8 +3256,14 @@ impl Window {
             style.thickness
         };
         let bounds = Bounds {
-            origin,
-            size: size(width, height),
+            origin: point(
+                ScaledPixels((origin.x.0 * scale_factor).round()),
+                ScaledPixels((origin.y.0 * scale_factor).round()),
+            ),
+            size: size(
+                self.round_nonzero_length_to_device_pixels(width),
+                self.round_nonzero_length_to_device_pixels(height),
+            ),
         };
         let content_mask = self.content_mask();
         let element_opacity = self.element_opacity();
@@ -3179,10 +3271,10 @@ impl Window {
         self.next_frame.scene.insert_primitive(Underline {
             order: 0,
             pad: 0,
-            bounds: bounds.scale(scale_factor),
-            content_mask: content_mask.scale(scale_factor),
+            bounds,
+            content_mask: self.outset_content_mask_to_device_pixels(content_mask),
             color: style.color.unwrap_or_default().opacity(element_opacity),
-            thickness: style.thickness.scale(scale_factor),
+            thickness: self.round_nonzero_length_to_device_pixels(style.thickness),
             wavy: if style.wavy { 1 } else { 0 },
         });
     }
@@ -3201,8 +3293,14 @@ impl Window {
         let scale_factor = self.scale_factor();
         let height = style.thickness;
         let bounds = Bounds {
-            origin,
-            size: size(width, height),
+            origin: point(
+                ScaledPixels((origin.x.0 * scale_factor).round()),
+                ScaledPixels((origin.y.0 * scale_factor).round()),
+            ),
+            size: size(
+                self.round_nonzero_length_to_device_pixels(width),
+                self.round_nonzero_length_to_device_pixels(height),
+            ),
         };
         let content_mask = self.content_mask();
         let opacity = self.element_opacity();
@@ -3210,9 +3308,9 @@ impl Window {
         self.next_frame.scene.insert_primitive(Underline {
             order: 0,
             pad: 0,
-            bounds: bounds.scale(scale_factor),
-            content_mask: content_mask.scale(scale_factor),
-            thickness: style.thickness.scale(scale_factor),
+            bounds,
+            content_mask: self.outset_content_mask_to_device_pixels(content_mask),
+            thickness: self.round_nonzero_length_to_device_pixels(style.thickness),
             color: style.color.unwrap_or_default().opacity(opacity),
             wavy: 0,
         });
@@ -3242,7 +3340,10 @@ impl Window {
 
         let subpixel_variant = Point {
             x: (glyph_origin.x.0.fract() * SUBPIXEL_VARIANTS_X as f32).floor() as u8,
-            y: (glyph_origin.y.0.fract() * SUBPIXEL_VARIANTS_Y as f32).floor() as u8,
+            // Keep vertical glyph rasterization stable while scrolling. Y-position is
+            // snapped at quad placement time, so varying Y subpixel glyph variants only
+            // introduces frame-to-frame wobble.
+            y: 0,
         };
         let subpixel_rendering = self.should_use_subpixel_rendering(font_id, font_size);
         let params = RenderGlyphParams {
@@ -3265,10 +3366,11 @@ impl Window {
                 })?
                 .expect("Callback above only errors or returns Some");
             let bounds = Bounds {
-                origin: glyph_origin.map(|px| px.floor()) + raster_bounds.origin.map(Into::into),
+                origin: point(glyph_origin.x.floor(), glyph_origin.y.round())
+                    + raster_bounds.origin.map(Into::into),
                 size: tile.bounds.size.map(Into::into),
             };
-            let content_mask = self.content_mask().scale(scale_factor);
+            let content_mask = self.outset_content_mask_to_device_pixels(self.content_mask());
 
             if subpixel_rendering {
                 self.next_frame.scene.insert_primitive(SubpixelSprite {
@@ -3355,10 +3457,11 @@ impl Window {
                 .expect("Callback above only errors or returns Some");
 
             let bounds = Bounds {
-                origin: glyph_origin.map(|px| px.floor()) + raster_bounds.origin.map(Into::into),
+                origin: point(glyph_origin.x.floor(), glyph_origin.y.round())
+                    + raster_bounds.origin.map(Into::into),
                 size: tile.bounds.size.map(Into::into),
             };
-            let content_mask = self.content_mask().scale(scale_factor);
+            let content_mask = self.outset_content_mask_to_device_pixels(self.content_mask());
             let opacity = self.element_opacity();
 
             self.next_frame.scene.insert_primitive(PolychromeSprite {
@@ -3390,9 +3493,8 @@ impl Window {
         self.invalidator.debug_assert_paint();
 
         let element_opacity = self.element_opacity();
-        let scale_factor = self.scale_factor();
 
-        let bounds = bounds.scale(scale_factor);
+        let bounds = self.round_bounds_to_device_pixels(bounds);
         let params = RenderSvgParams {
             path,
             size: bounds.size.map(|pixels| {
@@ -3412,7 +3514,7 @@ impl Window {
         else {
             return Ok(());
         };
-        let content_mask = self.content_mask().scale(scale_factor);
+        let content_mask = self.outset_content_mask_to_device_pixels(self.content_mask());
         let svg_bounds = Bounds {
             origin: bounds.center()
                 - Point::new(
@@ -3454,8 +3556,7 @@ impl Window {
     ) -> Result<()> {
         self.invalidator.debug_assert_paint();
 
-        let scale_factor = self.scale_factor();
-        let bounds = bounds.scale(scale_factor);
+        let bounds = self.outset_bounds_to_device_pixels(bounds);
         let params = RenderImageParams {
             image_id: data.id,
             frame_index,
@@ -3473,17 +3574,15 @@ impl Window {
                 )))
             })?
             .expect("Callback above only returns Some");
-        let content_mask = self.content_mask().scale(scale_factor);
-        let corner_radii = corner_radii.scale(scale_factor);
+        let content_mask = self.outset_content_mask_to_device_pixels(self.content_mask());
+        let corner_radii = corner_radii.scale(self.scale_factor());
         let opacity = self.element_opacity();
 
         self.next_frame.scene.insert_primitive(PolychromeSprite {
             order: 0,
             pad: 0,
             grayscale,
-            bounds: bounds
-                .map_origin(|origin| origin.floor())
-                .map_size(|size| size.ceil()),
+            bounds,
             content_mask,
             corner_radii,
             tile,
@@ -3501,9 +3600,8 @@ impl Window {
 
         self.invalidator.debug_assert_paint();
 
-        let scale_factor = self.scale_factor();
-        let bounds = bounds.scale(scale_factor);
-        let content_mask = self.content_mask().scale(scale_factor);
+        let bounds = self.round_bounds_to_device_pixels(bounds);
+        let content_mask = self.outset_content_mask_to_device_pixels(self.content_mask());
         self.next_frame.scene.insert_primitive(PaintSurface {
             order: 0,
             bounds,

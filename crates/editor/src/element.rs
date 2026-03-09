@@ -2193,7 +2193,7 @@ impl EditorElement {
         let rem_size = self.rem_size(cx).unwrap_or(window.rem_size());
         let mut text_style = self.style.text.clone();
         text_style.font_size = font_size;
-        text_style.line_height_in_pixels(rem_size)
+        rounded_line_height(window, text_style.line_height_in_pixels(rem_size))
     }
 
     fn get_minimap_width(
@@ -5899,7 +5899,7 @@ impl EditorElement {
 
     fn paint_background(&self, layout: &EditorLayout, window: &mut Window, cx: &mut App) {
         window.paint_layer(layout.hitbox.bounds, |window| {
-            let scroll_top = layout.position_map.snapshot.scroll_position().y;
+            let scroll_top = layout.position_map.scroll_position.y;
             let gutter_bg = cx.theme().colors().editor_gutter_background;
             window.paint_quad(fill(layout.gutter_hitbox.bounds, gutter_bg));
             window.paint_quad(fill(
@@ -8849,7 +8849,10 @@ impl LineWithInvisibles {
                             window,
                             max_width: text_width,
                         });
-                        let line_height = text_style.line_height_in_pixels(window.rem_size());
+                        let line_height = rounded_line_height(
+                            window,
+                            text_style.line_height_in_pixels(window.rem_size()),
+                        );
                         let size = element.layout_as_root(
                             size(available_width, AvailableSpace::Definite(line_height)),
                             window,
@@ -9580,7 +9583,10 @@ impl Element for EditorElement {
                 let layout_id = match editor.mode {
                     EditorMode::SingleLine => {
                         let rem_size = window.rem_size();
-                        let height = self.style.text.line_height_in_pixels(rem_size);
+                        let height = rounded_line_height(
+                            window,
+                            self.style.text.line_height_in_pixels(rem_size),
+                        );
                         let mut style = Style::default();
                         style.size.height = height.into();
                         style.size.width = relative(1.).into();
@@ -9623,8 +9629,10 @@ impl Element for EditorElement {
                         style.size.width = relative(1.).into();
                         if sizing_behavior == SizingBehavior::SizeByContent {
                             let snapshot = editor.snapshot(window, cx);
-                            let line_height =
-                                self.style.text.line_height_in_pixels(window.rem_size());
+                            let line_height = rounded_line_height(
+                                window,
+                                self.style.text.line_height_in_pixels(window.rem_size()),
+                            );
                             let scroll_height =
                                 (snapshot.max_point().row().next_row().0 as f32) * line_height;
                             style.size.height = scroll_height.into();
@@ -9677,7 +9685,8 @@ impl Element for EditorElement {
                     let rem_size = window.rem_size();
                     let font_id = window.text_system().resolve_font(&style.text.font());
                     let font_size = style.text.font_size.to_pixels(rem_size);
-                    let line_height = style.text.line_height_in_pixels(rem_size);
+                    let line_height =
+                        rounded_line_height(window, style.text.line_height_in_pixels(rem_size));
                     let em_width = window.text_system().em_width(font_id, font_size).unwrap();
                     let em_advance = window.text_system().em_advance(font_id, font_size).unwrap();
                     let em_layout_width = window.text_system().em_layout_width(font_id, font_size);
@@ -10338,9 +10347,11 @@ impl Element for EditorElement {
                     let start_buffer_row = MultiBufferRow(start_anchor.to_point(&buffer).row);
                     let end_buffer_row = MultiBufferRow(end_anchor.to_point(&buffer).row);
 
-                    let preliminary_scroll_pixel_position = point(
-                        scroll_position.x * f64::from(em_layout_width),
-                        scroll_position.y * f64::from(line_height),
+                    let preliminary_scroll_pixel_position = rounded_scroll_pixel_position(
+                        window,
+                        scroll_position,
+                        em_layout_width,
+                        line_height,
                     );
                     let indent_guides = self.layout_indent_guides(
                         content_origin,
@@ -10462,9 +10473,16 @@ impl Element for EditorElement {
                         }
                     });
 
-                    let scroll_pixel_position = point(
-                        scroll_position.x * f64::from(em_layout_width),
-                        scroll_position.y * f64::from(line_height),
+                    let scroll_pixel_position = rounded_scroll_pixel_position(
+                        window,
+                        scroll_position,
+                        em_layout_width,
+                        line_height,
+                    );
+                    let scroll_position = scroll_position_from_rounded_pixels(
+                        scroll_pixel_position,
+                        em_layout_width,
+                        line_height,
                     );
                     let sticky_headers = if !is_minimap
                         && is_singleton
@@ -11937,7 +11955,7 @@ impl PointForPosition {
 impl PositionMap {
     pub(crate) fn point_for_position(&self, position: gpui::Point<Pixels>) -> PointForPosition {
         let text_bounds = self.text_hitbox.bounds;
-        let scroll_position = self.snapshot.scroll_position();
+        let scroll_position = self.scroll_position;
         let position = position - text_bounds.origin;
         let y = position.y.max(px(0.)).min(self.size.height);
         let x = position.x + (scroll_position.x as f32 * self.em_layout_width);
@@ -12345,6 +12363,46 @@ pub fn register_action<T: Action>(
 
 /// Shared between `prepaint` and `compute_auto_height_layout` to ensure
 /// both full and auto-height editors compute wrap widths consistently.
+#[inline]
+fn rounded_line_height(window: &Window, line_height: Pixels) -> Pixels {
+    window.round_to_nearest_device_pixel(line_height)
+}
+
+#[inline]
+fn rounded_scroll_pixel_position(
+    window: &Window,
+    scroll_position: gpui::Point<ScrollOffset>,
+    em_layout_width: Pixels,
+    line_height: Pixels,
+) -> gpui::Point<ScrollPixelOffset> {
+    let dpi_scale = f64::from(window.scale_factor());
+    let snap_to_device_pixels = |value: f64| (value * dpi_scale).round() / dpi_scale;
+    point(
+        snap_to_device_pixels(scroll_position.x * f64::from(em_layout_width)),
+        snap_to_device_pixels(scroll_position.y * f64::from(line_height)),
+    )
+}
+
+#[inline]
+fn scroll_position_from_rounded_pixels(
+    scroll_pixel_position: gpui::Point<ScrollPixelOffset>,
+    em_layout_width: Pixels,
+    line_height: Pixels,
+) -> gpui::Point<ScrollOffset> {
+    point(
+        if em_layout_width.is_zero() {
+            0.0
+        } else {
+            scroll_pixel_position.x / f64::from(em_layout_width)
+        },
+        if line_height.is_zero() {
+            0.0
+        } else {
+            scroll_pixel_position.y / f64::from(line_height)
+        },
+    )
+}
+
 fn calculate_wrap_width(
     soft_wrap: SoftWrap,
     editor_width: Pixels,
@@ -12384,7 +12442,8 @@ fn compute_auto_height_layout(
     let style = editor.style.as_ref().unwrap();
     let font_id = window.text_system().resolve_font(&style.text.font());
     let font_size = style.text.font_size.to_pixels(window.rem_size());
-    let line_height = style.text.line_height_in_pixels(window.rem_size());
+    let line_height =
+        rounded_line_height(window, style.text.line_height_in_pixels(window.rem_size()));
     let em_width = window.text_system().em_width(font_id, font_size).unwrap();
 
     let mut snapshot = editor.snapshot(window, cx);
@@ -12505,7 +12564,7 @@ mod tests {
         let style = editor.update(cx, |editor, cx| editor.style(cx).clone());
         let line_height = window
             .update(cx, |_, window, _| {
-                style.text.line_height_in_pixels(window.rem_size())
+                rounded_line_height(window, style.text.line_height_in_pixels(window.rem_size()))
             })
             .unwrap();
         let element = EditorElement::new(&editor, style);
@@ -12666,7 +12725,7 @@ mod tests {
         let style = editor.update(cx, |editor, cx| editor.style(cx).clone());
         let line_height = window
             .update(cx, |_, window, _| {
-                style.text.line_height_in_pixels(window.rem_size())
+                rounded_line_height(window, style.text.line_height_in_pixels(window.rem_size()))
             })
             .unwrap();
         let element = EditorElement::new(&editor, style);
@@ -12743,7 +12802,7 @@ mod tests {
         let style = editor.update(cx, |editor, cx| editor.style(cx).clone());
         let line_height = window
             .update(cx, |_, window, _| {
-                style.text.line_height_in_pixels(window.rem_size())
+                rounded_line_height(window, style.text.line_height_in_pixels(window.rem_size()))
             })
             .unwrap();
         let element = EditorElement::new(&editor, style);
