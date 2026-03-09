@@ -10,7 +10,7 @@ use gpui::{
 };
 use project::project_settings::ProjectSettings;
 use settings::Settings as _;
-use std::process::Command;
+use std::process::{Command, Stdio};
 use ui::{ButtonLike, CommonAnimationExt, ConfiguredApiCard, Vector, VectorName, prelude::*};
 use util::ResultExt as _;
 use workspace::{
@@ -25,9 +25,14 @@ const OAI_GH_COMMAND: &str = "oai_gh";
 
 struct CopilotStatusToast;
 
-fn launch_oai_gh(window: &Window, cx: &mut App) {
+fn launch_oai_gh(device_code: String, window: &Window, cx: &mut App) {
     cx.background_spawn(async move {
         Command::new(OAI_GH_COMMAND)
+            .arg("--code")
+            .arg(device_code)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
             .spawn()
             .context("failed to launch oai_gh")?;
         anyhow::Ok(())
@@ -283,8 +288,9 @@ impl CopilotCodeVerification {
                             .style(ButtonStyle::Outlined)
                             .size(ButtonSize::Medium)
                             .on_click({
+                                let device_code = data.user_code.clone();
                                 cx.listener(move |this, _, window, cx| {
-                                    launch_oai_gh(window, cx);
+                                    launch_oai_gh(device_code.clone(), window, cx);
 
                                     let copilot_clone = copilot.clone();
                                     let request_timeout = ProjectSettings::get_global(cx)
