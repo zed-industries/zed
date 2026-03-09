@@ -4480,11 +4480,11 @@ async fn test_dragging_same_named_files_preserves_one_source_on_conflict(
     cx.executor().run_until_parked();
 
     let files = fs.files();
-    assert!(files.contains(&PathBuf::from("/root/shared.txt")));
+    assert!(files.contains(&PathBuf::from(path!("/root/shared.txt"))));
 
     let remaining_sources = [
-        PathBuf::from("/root/dir_a/shared.txt"),
-        PathBuf::from("/root/dir_b/shared.txt"),
+        PathBuf::from(path!("/root/dir_a/shared.txt")),
+        PathBuf::from(path!("/root/dir_b/shared.txt")),
     ]
     .into_iter()
     .filter(|path| files.contains(path))
