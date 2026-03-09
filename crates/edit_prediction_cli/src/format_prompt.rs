@@ -49,6 +49,24 @@ pub async fn run_format_prompt(
                 provider: args.provider,
             });
         }
+        PredictionProvider::TeacherMultiRegion(_)
+        | PredictionProvider::TeacherMultiRegionNonBatching(_) => {
+            step_progress.set_substatus("formatting teacher multi-region prompt");
+
+            let zeta_format = ZetaFormat::default();
+            let (editable_range, context_range) =
+                excerpt_range_for_format(zeta_format, &prompt_inputs.excerpt_ranges);
+
+            let prompt =
+                TeacherMultiRegionPrompt::format_prompt(example, editable_range, context_range);
+            example.prompt = Some(ExamplePrompt {
+                input: prompt,
+                expected_output: String::new(),
+                rejected_output: None,
+                prefill: None,
+                provider: args.provider,
+            });
+        }
         PredictionProvider::Zeta2(zeta_format) => {
             step_progress.set_substatus("formatting zeta2 prompt");
 
@@ -195,6 +213,179 @@ impl TeacherPrompt {
             return Ok(no_edits);
         }
 
+        // Extract updated (new) editable region from the model response.
+        let new_editable_region = Self::extract_editable_region(&response)?;
+        let cursor_offset = new_editable_region.find(Self::USER_CURSOR_MARKER);
+        let mut new_editable_region = new_editable_region.replace(Self::USER_CURSOR_MARKER, "");
+        let old_editable_region = Self::extract_editable_region(
+            &example
+                .prompt
+                .as_ref()
+                .context("example prompt missing")?
+                .input,
+        )?
+        .replace(Self::USER_CURSOR_MARKER, "");
+
+        let prompt_inputs = example
+            .prompt_inputs
+            .as_ref()
+            .context("example is missing prompt inputs")?;
+
+        // Normalize leading newlines: if old starts with newline but new doesn't,
+        // prepend newline to new to preserve whitespace structure.
+        // This handles the case where the model drops the leading blank line.
+        if old_editable_region.starts_with('\n') && !new_editable_region.starts_with('\n') {
+            new_editable_region.insert(0, '\n');
+        }
+
+        let excerpt = prompt_inputs.cursor_excerpt.as_ref();
+        let (editable_region_offset, _) = excerpt
+            .match_indices(&old_editable_region)
+            .min_by_key(|(index, _)| index.abs_diff(prompt_inputs.cursor_offset_in_excerpt))
+            .context("editable region not found in prompt content")?;
+        let editable_region_start_line = excerpt[..editable_region_offset].matches('\n').count();
+
+        let editable_region_lines = old_editable_region.lines().count() as u32;
+        let diff = language::unified_diff_with_context(
+            &old_editable_region,
+            &new_editable_region,
+            editable_region_start_line as u32,
+            editable_region_start_line as u32,
+            editable_region_lines,
+        );
+
+        let diff = indoc::formatdoc! {"
+            --- a/{path}
+            +++ b/{path}
+            {diff}",
+            path = example.spec.cursor_path.to_string_lossy(),
+            diff = diff,
+        };
+
+        let actual_cursor = cursor_offset.map(|editable_region_cursor_offset| {
+            ActualCursor::from_editable_region(
+                &example.spec.cursor_path,
+                editable_region_cursor_offset,
+                &new_editable_region,
+                excerpt,
+                editable_region_offset,
+                editable_region_start_line,
+            )
+        });
+
+        Ok((diff, actual_cursor))
+    }
+
+    fn format_edit_history(edit_history: &str) -> String {
+        let lines: Vec<&str> = edit_history.lines().collect();
+
+        if lines.is_empty() {
+            return "(No edit history)".to_string();
+        }
+
+        if lines.len() > Self::MAX_HISTORY_LINES {
+            let truncated = lines[lines.len() - Self::MAX_HISTORY_LINES..].join("\n");
+            format!("{truncated}\n[...truncated...]")
+        } else {
+            lines.join("\n")
+        }
+    }
+
+    pub fn format_context(example: &Example) -> String {
+        let related_files = example.prompt_inputs.as_ref().map(|pi| &pi.related_files);
+        let Some(related_files) = related_files else {
+            return "(No context)".to_string();
+        };
+
+        if related_files.is_empty() {
+            return "(No context)".to_string();
+        }
+
+        let prefix = "`````";
+        let suffix = "`````\n\n";
+        let max_tokens = 1024;
+        zeta_prompt::format_related_files_within_budget(related_files, &prefix, &suffix, max_tokens)
+    }
+
+    fn format_cursor_excerpt(
+        example: &Example,
+        editable_range: Range<usize>,
+        context_range: Range<usize>,
+    ) -> String {
+        let mut result = String::new();
+
+        let prompt_inputs = example.prompt_inputs.as_ref().unwrap();
+        let excerpt = prompt_inputs.cursor_excerpt.as_ref();
+        let cursor_offset = prompt_inputs.cursor_offset_in_excerpt;
+
+        let path_str = example.spec.cursor_path.to_string_lossy();
+        result.push_str(&format!("`````{path_str}\n"));
+        result.push_str(&excerpt[context_range.start..editable_range.start]);
+        result.push_str(Self::EDITABLE_REGION_START);
+        result.push_str(&excerpt[editable_range.start..cursor_offset]);
+        result.push_str(Self::USER_CURSOR_MARKER);
+        result.push_str(&excerpt[cursor_offset..editable_range.end]);
+        result.push_str(Self::EDITABLE_REGION_END);
+        result.push_str(&excerpt[editable_range.end..context_range.end]);
+        result.push_str("\n`````");
+
+        result
+    }
+
+    pub fn extract_editable_region(text: &str) -> Result<String> {
+        let start = text
+            .rfind(Self::EDITABLE_REGION_START)
+            .map_or(0, |pos| pos + Self::EDITABLE_REGION_START.len());
+        let end = text.rfind(Self::EDITABLE_REGION_END).unwrap_or(text.len());
+
+        if start >= end {
+            return Err(anyhow!("Invalid editable region markers"));
+        }
+
+        let region = &text[start..end];
+        Ok(region.strip_suffix('\n').unwrap_or(region).to_string())
+    }
+}
+
+pub struct TeacherMultiRegionPrompt;
+
+impl TeacherMultiRegionPrompt {
+    pub(crate) const USER_CURSOR_MARKER: &str = "<|user_cursor|>";
+    pub(crate) const NO_EDITS: &str = "NO_EDITS";
+
+    /// Truncate edit history to this number of last lines
+    const MAX_HISTORY_LINES: usize = 128;
+
+    pub fn format_prompt(
+        example: &Example,
+        editable_range: Range<usize>,
+        context_range: Range<usize>,
+    ) -> String {
+        let edit_history = Self::format_edit_history(&example.spec.edit_history);
+        let context = Self::format_context(example);
+        let cursor_excerpt = Self::format_cursor_excerpt(example, editable_range, context_range);
+
+        let prompt_template = crate::prompt_assets::get_prompt("teacher_multi_region.md");
+        let prompt = prompt_template
+            .replace("{{context}}", &context)
+            .replace("{{edit_history}}", &edit_history)
+            .replace("{{cursor_excerpt}}", &cursor_excerpt);
+
+        prompt
+    }
+
+    pub fn parse(example: &Example, response: &str) -> Result<(String, Option<ActualCursor>)> {
+        let no_edits = (String::new(), None);
+        if let Some(last_codeblock) = extract_last_codeblock(&response) {
+            if last_codeblock.trim() == Self::NO_EDITS {
+                return Ok(no_edits);
+            }
+        }
+
+        if response.trim().ends_with(Self::NO_EDITS) {
+            return Ok(no_edits);
+        }
+
         let prompt_inputs = example
             .prompt_inputs
             .as_ref()
@@ -207,7 +398,6 @@ impl TeacherPrompt {
         let old_editable_region = &excerpt[editable_range.clone()];
         let marker_offsets = multi_region::compute_marker_offsets(old_editable_region);
 
-        // Extract the model's response from the last codeblock
         let codeblock =
             extract_last_codeblock(&response).context("no codeblock found in model response")?;
         let (start_num, end_num, raw_new_span) = multi_region::extract_marker_span(&codeblock)?;
@@ -229,13 +419,9 @@ impl TeacherPrompt {
             return Err(anyhow!("start marker must come before end marker"));
         }
 
-        // Handle cursor marker in the new span
         let cursor_in_span = raw_new_span.find(Self::USER_CURSOR_MARKER);
         let new_span = raw_new_span.replace(Self::USER_CURSOR_MARKER, "");
 
-        // Match trailing-newline convention: the old span for non-last blocks ends
-        // with '\n' (line boundary). The model might drop or add a trailing newline
-        // due to the formatting around the end marker. Normalize to match the old span.
         let old_span = &old_editable_region[start_byte..end_byte];
         let mut new_span = new_span;
         if old_span.ends_with('\n') && !new_span.ends_with('\n') && !new_span.is_empty() {
@@ -245,17 +431,13 @@ impl TeacherPrompt {
             new_span.pop();
         }
 
-        // Build the full new editable region
         let mut new_editable_region = String::new();
         new_editable_region.push_str(&old_editable_region[..start_byte]);
         new_editable_region.push_str(&new_span);
         new_editable_region.push_str(&old_editable_region[end_byte..]);
 
-        // Compute cursor offset relative to the full new editable region
         let cursor_offset = cursor_in_span.map(|pos| start_byte + pos);
 
-        // Normalize leading newlines: if old starts with newline but new doesn't,
-        // prepend newline to new to preserve whitespace structure.
         if old_editable_region.starts_with('\n') && !new_editable_region.starts_with('\n') {
             new_editable_region.insert(0, '\n');
         }
@@ -345,7 +527,6 @@ impl TeacherPrompt {
         let path_str = example.spec.cursor_path.to_string_lossy();
         result.push_str(&format!("`````{path_str}\n"));
 
-        // Read-only prefix context
         result.push_str(&excerpt[context_range.start..editable_range.start]);
 
         multi_region::write_editable_with_markers(
@@ -355,32 +536,10 @@ impl TeacherPrompt {
             Self::USER_CURSOR_MARKER,
         );
 
-        // Read-only suffix context
         result.push_str(&excerpt[editable_range.end..context_range.end]);
         result.push_str("\n`````");
 
         result
-    }
-
-    pub fn extract_editable_region(text: &str) -> Result<String> {
-        // Try marker format first: extract all content between first and last markers,
-        // stripping intermediate marker tags.
-        if let Some(region) = multi_region::extract_editable_region_from_markers(text) {
-            return Ok(region);
-        }
-
-        // Fall back to old editable region format
-        let start = text
-            .rfind(Self::EDITABLE_REGION_START)
-            .map_or(0, |pos| pos + Self::EDITABLE_REGION_START.len());
-        let end = text.rfind(Self::EDITABLE_REGION_END).unwrap_or(text.len());
-
-        if start >= end {
-            return Err(anyhow!("Invalid editable region markers"));
-        }
-
-        let region = &text[start..end];
-        Ok(region.strip_suffix('\n').unwrap_or(region).to_string())
     }
 }
 
@@ -417,18 +576,14 @@ pub fn extract_cursor_excerpt_from_example(example: &Example) -> Option<String> 
     let excerpt = prompt_inputs.cursor_excerpt.as_ref();
     let cursor_offset = prompt_inputs.cursor_offset_in_excerpt;
 
-    // Simple fallback: wrap entire excerpt in two markers with cursor
+    // Simple fallback: just show content around cursor with markers
     let path_str = example.spec.cursor_path.to_string_lossy();
     let mut result = format!("`````{path_str}\n");
-    result.push_str(&multi_region::marker_tag(1));
-    result.push('\n');
+    result.push_str(TeacherPrompt::EDITABLE_REGION_START);
     result.push_str(&excerpt[..cursor_offset]);
     result.push_str(TeacherPrompt::USER_CURSOR_MARKER);
     result.push_str(&excerpt[cursor_offset..]);
-    if !result.ends_with('\n') {
-        result.push('\n');
-    }
-    result.push_str(&multi_region::marker_tag(2));
+    result.push_str(TeacherPrompt::EDITABLE_REGION_END);
     result.push_str("\n`````");
 
     Some(result)
@@ -564,7 +719,7 @@ mod tests {
             <|marker_2|>
             more context
             "};
-        let parsed = TeacherPrompt::extract_editable_region(text).unwrap();
+        let parsed = multi_region::extract_editable_region_from_markers(text).unwrap();
         assert_eq!(parsed, "one\ntwo three");
     }
 
@@ -581,7 +736,7 @@ mod tests {
             <|marker_3|>
             suffix
             "};
-        let parsed = TeacherPrompt::extract_editable_region(text).unwrap();
+        let parsed = multi_region::extract_editable_region_from_markers(text).unwrap();
         // Intermediate marker and its trailing \n are stripped
         assert_eq!(parsed, "aaa\nbbb\nccc\nddd");
     }
