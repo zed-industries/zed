@@ -139,7 +139,8 @@ pub fn sandbox_exec_main(config_json: &str, shell_args: &[String]) -> ! {
         std::process::exit(1);
     }
 
-    let sandbox_config = config.to_sandbox_config();
+    let mut sandbox_config = config.to_sandbox_config();
+    sandbox_config.canonicalize_paths();
 
     // Step 1: Filter environment variables.
     // Keep only allowed vars + a few Zed-specific ones.

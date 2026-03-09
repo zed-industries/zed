@@ -403,4 +403,33 @@ impl SandboxConfig {
                 .unwrap_or_else(Self::default_allowed_env_vars),
         }
     }
+
+    pub fn canonicalize_paths(&mut self) {
+        match std::fs::canonicalize(&self.project_dir) {
+            Ok(canonical) => self.project_dir = canonical,
+            Err(err) => log::warn!(
+                "Failed to canonicalize project dir {:?}: {}",
+                self.project_dir,
+                err
+            ),
+        }
+        canonicalize_path_list(&mut self.system_paths.executable);
+        canonicalize_path_list(&mut self.system_paths.read_only);
+        canonicalize_path_list(&mut self.system_paths.read_write);
+        canonicalize_path_list(&mut self.additional_executable_paths);
+        canonicalize_path_list(&mut self.additional_read_only_paths);
+        canonicalize_path_list(&mut self.additional_read_write_paths);
+    }
+}
+
+fn try_canonicalize(path: &mut PathBuf) {
+    if let Ok(canonical) = std::fs::canonicalize(&*path) {
+        *path = canonical;
+    }
+}
+
+fn canonicalize_path_list(paths: &mut Vec<PathBuf>) {
+    for path in paths.iter_mut() {
+        try_canonicalize(path);
+    }
 }
