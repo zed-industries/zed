@@ -4,8 +4,8 @@
 //! Must be called after fork(), before exec().
 
 use landlock::{
-    ABI, Access, AccessFs, PathBeneath, PathFd, Ruleset, RulesetAttr, RulesetCreatedAttr,
-    RulesetStatus,
+    ABI, Access, AccessFs, AccessNet, PathBeneath, PathFd, Ruleset, RulesetAttr,
+    RulesetCreatedAttr, RulesetStatus,
 };
 use std::io::{Error, Result};
 use std::path::Path;
@@ -54,9 +54,23 @@ pub fn apply_sandbox(config: &SandboxConfig) -> Result<()> {
         return Err(Error::last_os_error());
     }
 
-    let mut ruleset = Ruleset::default()
+    let ruleset_base = Ruleset::default()
         .handle_access(AccessFs::from_all(TARGET_ABI))
-        .map_err(|e| Error::other(format!("landlock ruleset create: {e}")))?
+        .map_err(|e| Error::other(format!("landlock ruleset create: {e}")))?;
+
+    let ruleset_with_net = if !config.allow_network {
+        ruleset_base
+            .handle_access(AccessNet::from_all(TARGET_ABI))
+            .map_err(|e| {
+                Error::other(format!(
+                    "landlock network restriction not supported (requires kernel 6.4+): {e}"
+                ))
+            })?
+    } else {
+        ruleset_base
+    };
+
+    let mut ruleset = ruleset_with_net
         .create()
         .map_err(|e| Error::other(format!("landlock ruleset init: {e}")))?;
 
@@ -141,9 +155,21 @@ pub fn apply_sandbox(config: &SandboxConfig) -> Result<()> {
             log::info!("Landlock sandbox fully enforced");
         }
         RulesetStatus::PartiallyEnforced => {
-            log::warn!("Landlock sandbox partially enforced (older kernel ABI)");
+            if !config.allow_network {
+                log::warn!(
+                    "Landlock sandbox partially enforced; \
+                     network restriction may not be enforced on this kernel"
+                );
+            } else {
+                log::warn!("Landlock sandbox partially enforced (older kernel ABI)");
+            }
         }
         RulesetStatus::NotEnforced => {
+            if !config.allow_network {
+                return Err(Error::other(
+                    "Landlock not supported on this kernel but network restriction was requested",
+                ));
+            }
             log::warn!("Landlock not supported on this kernel; running unsandboxed");
         }
     }
