@@ -47,6 +47,7 @@ use settings::{NotifyWhenAgentWaiting, Settings as _, SettingsStore};
 use std::path::Path;
 use std::sync::Arc;
 use std::time::Instant;
+use std::ops::Range;
 use std::{collections::BTreeMap, rc::Rc, time::Duration};
 use terminal_view::terminal_panel::TerminalPanel;
 use text::Anchor;
@@ -303,6 +304,8 @@ pub struct ConversationView {
     notifications: Vec<WindowHandle<AgentNotification>>,
     notification_subscriptions: HashMap<WindowHandle<AgentNotification>, Vec<Subscription>>,
     auth_task: Option<Task<()>>,
+    _active_editor_subscription: Option<Subscription>,
+    _selection_debounce_task: Option<Task<()>>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -481,7 +484,17 @@ impl ConversationView {
         cx: &mut Context<Self>,
     ) -> Self {
         let agent_server_store = project.read(cx).agent_server_store().clone();
-        let subscriptions = vec![
+        let workspace_subscription = if let Some(ws) = workspace.upgrade() {
+            Some(cx.subscribe_in(&ws, window, |this, _workspace, event, window, cx| {
+                if let workspace::Event::ActiveItemChanged = event {
+                    this.resubscribe_to_active_editor(window, cx);
+                }
+            }))
+        } else {
+            None
+        };
+
+        let mut subscriptions = vec![
             cx.observe_global_in::<SettingsStore>(window, Self::agent_ui_font_size_changed),
             cx.observe_global_in::<AgentFontSize>(window, Self::agent_ui_font_size_changed),
             cx.subscribe_in(
@@ -490,6 +503,7 @@ impl ConversationView {
                 Self::handle_agent_servers_updated,
             ),
         ];
+        subscriptions.extend(workspace_subscription);
 
         cx.on_release(|this, cx| {
             if let Some(connected) = this.as_connected() {
@@ -529,6 +543,8 @@ impl ConversationView {
             notifications: Vec::new(),
             notification_subscriptions: HashMap::default(),
             auth_task: None,
+            _active_editor_subscription: None,
+            _selection_debounce_task: None,
             _subscriptions: subscriptions,
             focus_handle: cx.focus_handle(),
         }
@@ -579,6 +595,106 @@ impl ConversationView {
             });
         }
         cx.notify();
+    }
+
+    fn resubscribe_to_active_editor(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(workspace) = self.workspace.upgrade() else {
+            self._active_editor_subscription = None;
+            self.clear_transient_selection(window, cx);
+            return;
+        };
+
+        let active_editor = workspace
+            .read(cx)
+            .active_item(cx)
+            .and_then(|item| item.act_as::<Editor>(cx));
+
+        let Some(editor) = active_editor else {
+            self._active_editor_subscription = None;
+            self.clear_transient_selection(window, cx);
+            return;
+        };
+
+        self._active_editor_subscription =
+            Some(cx.subscribe_in(&editor, window, |this, _editor, event, window, cx| {
+                if let EditorEvent::SelectionsChanged { local: true } = event {
+                    this.schedule_transient_selection_update(window, cx);
+                }
+            }));
+    }
+
+    fn schedule_transient_selection_update(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self._selection_debounce_task = Some(cx.spawn_in(window, async move |this, cx| {
+            cx.background_executor().timer(Duration::from_millis(150)).await;
+            this.update_in(cx, |this, window, cx| {
+                this.update_transient_selection(window, cx);
+            })
+            .ok();
+        }));
+    }
+
+    fn gather_editor_selections(
+        &self,
+        cx: &mut App,
+    ) -> Vec<(Entity<Buffer>, Range<text::Anchor>)> {
+        let Some(workspace) = self.workspace.upgrade() else {
+            return Vec::new();
+        };
+        let Some(editor) = workspace
+            .read(cx)
+            .active_item(cx)
+            .and_then(|item| item.act_as::<Editor>(cx))
+        else {
+            return Vec::new();
+        };
+
+        editor.update(cx, |editor, cx| {
+            let selections = editor.selections.all_adjusted(&editor.display_snapshot(cx));
+            let buffer = editor.buffer().clone().read(cx);
+            let snapshot = buffer.snapshot(cx);
+
+            selections
+                .into_iter()
+                .filter(|s| !s.is_empty())
+                .flat_map(|s| {
+                    let start = snapshot.anchor_after(s.start);
+                    let end = snapshot.anchor_before(s.end);
+                    let (start_buffer, start_anchor) =
+                        buffer.text_anchor_for_position(start, cx)?;
+                    let (end_buffer, end_anchor) =
+                        buffer.text_anchor_for_position(end, cx)?;
+                    if start_buffer != end_buffer {
+                        return None;
+                    }
+                    Some((start_buffer, start_anchor..end_anchor))
+                })
+                .collect::<Vec<_>>()
+        })
+    }
+
+    fn update_transient_selection(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let selections = self.gather_editor_selections(cx);
+        let Some(thread_view) = self.active_thread() else {
+            return;
+        };
+        let message_editor = thread_view.read(cx).message_editor.clone();
+        message_editor.update(cx, |editor, cx| {
+            editor.set_transient_selection(selections, window, cx);
+        });
+    }
+
+    fn clear_transient_selection(&self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(thread_view) = self.active_thread() else {
+            return;
+        };
+        let message_editor = thread_view.read(cx).message_editor.clone();
+        message_editor.update(cx, |editor, cx| {
+            editor.clear_transient_selection(window, cx);
+        });
     }
 
     fn initial_state(

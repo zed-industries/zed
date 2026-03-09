@@ -18,7 +18,8 @@ use collections::HashSet;
 use editor::{
     Addon, AnchorRangeExt, ContextMenuOptions, Editor, EditorElement, EditorEvent, EditorMode,
     EditorStyle, Inlay, MultiBuffer, MultiBufferOffset, MultiBufferSnapshot, ToOffset,
-    actions::Paste, code_context_menus::CodeContextMenu, scroll::Autoscroll,
+    actions::Paste, code_context_menus::CodeContextMenu, display_map::CreaseId,
+    scroll::Autoscroll,
 };
 use futures::{FutureExt as _, future::join_all};
 use gpui::{
@@ -28,11 +29,12 @@ use gpui::{
 use language::{Buffer, Language, language_settings::InlayHintKind};
 use parking_lot::RwLock;
 use project::AgentId;
-use project::{CompletionIntent, InlayHint, InlayHintLabel, InlayId, Project, Worktree};
+use project::{CompletionIntent, InlayHint, InlayHintLabel, InlayId, Project, ProjectItem, Worktree};
 use prompt_store::PromptStore;
 use rope::Point;
 use settings::Settings;
 use std::{fmt::Write, ops::Range, rc::Rc, sync::Arc};
+use text::OffsetRangeExt as _;
 use theme::ThemeSettings;
 use ui::{ContextMenu, Disclosure, ElevationIndex, prelude::*};
 use util::paths::PathStyle;
@@ -133,6 +135,10 @@ impl PromptCompletionProviderDelegate for MessageEditorCompletionDelegate {
     }
 }
 
+struct TransientChip {
+    crease_id: CreaseId,
+}
+
 pub struct MessageEditor {
     mention_set: Entity<MentionSet>,
     editor: Entity<Editor>,
@@ -140,6 +146,7 @@ pub struct MessageEditor {
     session_capabilities: SharedSessionCapabilities,
     agent_id: AgentId,
     thread_store: Option<Entity<ThreadStore>>,
+    transient_selection_chip: Option<TransientChip>,
     _subscriptions: Vec<Subscription>,
     _parse_slash_command_task: Task<()>,
 }
@@ -294,6 +301,7 @@ impl MessageEditor {
             session_capabilities,
             agent_id,
             thread_store,
+            transient_selection_chip: None,
             _subscriptions: subscriptions,
             _parse_slash_command_task: Task::ready(()),
         }
@@ -588,6 +596,7 @@ impl MessageEditor {
     }
 
     pub fn clear(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.transient_selection_chip = None;
         self.editor.update(cx, |editor, cx| {
             editor.clear(window, cx);
             editor.remove_creases(
@@ -1258,7 +1267,107 @@ impl MessageEditor {
         });
     }
 
+    fn remove_transient_chip(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
+        let Some(chip) = self.transient_selection_chip.take() else {
+            return;
+        };
+        self.mention_set
+            .update(cx, |mention_set, _cx| mention_set.remove_mention(&chip.crease_id));
+        self.editor.update(cx, |editor, cx| {
+            let removed = editor.remove_creases(vec![chip.crease_id], cx);
+            if let Some((_, range)) = removed.first() {
+                editor.unfold_ranges(&[range.clone()], true, false, cx);
+                editor.edit([(range.clone(), "")], cx);
+            }
+        });
+    }
+
+    pub fn set_transient_selection(
+        &mut self,
+        selections: Vec<(Entity<Buffer>, Range<text::Anchor>)>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.remove_transient_chip(window, cx);
+
+        if selections.is_empty() {
+            return;
+        }
+
+        let Some(workspace) = self.workspace.upgrade() else {
+            return;
+        };
+        let project = workspace.read(cx).project().clone();
+
+        let (buffer, selection_range) = &selections[0];
+        let abs_path = buffer
+            .read(cx)
+            .project_path(cx)
+            .and_then(|project_path| project.read(cx).absolute_path(&project_path, cx));
+        let buf_snapshot = buffer.read(cx).snapshot();
+
+        let text = buf_snapshot
+            .text_for_range(selection_range.clone())
+            .collect::<String>();
+        let point_range = selection_range.to_point(&buf_snapshot);
+        let line_range = point_range.start.row..=point_range.end.row;
+
+        let uri = MentionUri::Selection {
+            abs_path: abs_path.clone(),
+            line_range: line_range.clone(),
+        };
+        let crease_text = acp_thread::selection_name(abs_path.as_deref(), &line_range);
+        let mention_text = uri.as_link().to_string();
+
+        let (excerpt_id, text_anchor, content_len) = self.editor.update(cx, |editor, cx| {
+            let buffer = editor.buffer().read(cx);
+            let snapshot = buffer.snapshot(cx);
+            let (excerpt_id, _, buffer_snapshot) = snapshot.as_singleton().unwrap();
+            let cursor = editor.selections.newest_anchor().head();
+            let text_anchor = cursor.text_anchor.bias_left(&buffer_snapshot);
+
+            editor.insert(&mention_text, window, cx);
+
+            (excerpt_id, text_anchor, mention_text.len())
+        });
+
+        let Some((crease_id, tx)) = insert_crease_for_mention(
+            excerpt_id,
+            text_anchor,
+            content_len,
+            crease_text.into(),
+            uri.icon_path(cx),
+            uri.tooltip_text(),
+            Some(uri.clone()),
+            Some(self.workspace.clone()),
+            None,
+            self.editor.clone(),
+            window,
+            cx,
+        ) else {
+            return;
+        };
+        drop(tx);
+
+        let mention_task = Task::ready(Ok(Mention::Text {
+            content: text,
+            tracked_buffers: vec![buffer.clone()],
+        }))
+        .shared();
+
+        self.mention_set.update(cx, |mention_set, _cx| {
+            mention_set.insert_mention(crease_id, uri, mention_task);
+        });
+
+        self.transient_selection_chip = Some(TransientChip { crease_id });
+    }
+
+    pub fn clear_transient_selection(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.remove_transient_chip(window, cx);
+    }
+
     pub fn insert_selections(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.remove_transient_chip(window, cx);
         let editor = self.editor.read(cx);
         let editor_buffer = editor.buffer().read(cx);
         let Some(buffer) = editor_buffer.as_singleton() else {
