@@ -7,10 +7,9 @@
 # NOTE: This file is stored in the codeowner-coordinator repo but must be deployed to
 # the zed repo at .github/workflows/assign-reviewers.yml. See INSTALL.md.
 #
-# TOKEN NOTE: Uses GITHUB_TOKEN with pull-requests:write for team reviewer
-# requests. If this returns 422 errors, the org may require a PAT with
-# read:org scope — switch to secrets.ORG_ADMIN_TOKEN per other workflows.
-# Test with a non-critical PR before relying on this in production.
+# AUTH NOTE: Uses a GitHub App (COORDINATOR_APP_ID + COORDINATOR_APP_PRIVATE_KEY)
+# to generate an ephemeral token scoped to read-only on the coordinator repo.
+# PR operations (team review requests, assignee) use the default GITHUB_TOKEN.
 
 name: Assign Reviewers
 
@@ -29,12 +28,21 @@ jobs:
     if: github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.draft == false
     runs-on: ubuntu-latest
     steps:
+      - name: Generate coordinator repo token
+        id: app-token
+        uses: actions/create-github-app-token@29824e69f54612133e76f7eaac726eef6c875baf  # v2.2.1
+        with:
+          app-id: ${{ vars.COORDINATOR_APP_ID }}
+          private-key: ${{ secrets.COORDINATOR_APP_PRIVATE_KEY }}
+          repositories: codeowner-coordinator
+
       - name: Checkout coordinator repo
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4.3.1
         with:
           repository: zed-industries/codeowner-coordinator
           ref: main
           path: codeowner-coordinator
+          token: ${{ steps.app-token.outputs.token }}
           persist-credentials: false
 
       - name: Setup Python
