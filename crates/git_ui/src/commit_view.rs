@@ -486,37 +486,6 @@ impl CommitView {
             time_format::TimestampFormat::MediumAbsolute,
         );
 
-        let remote_info = self
-            .remote
-            .as_ref()
-            .filter(|_| self.stash.is_none())
-            .filter(|_| self.is_commit_pushed == Some(true))
-            .map(|remote| {
-                let provider = remote.host.name();
-                let parsed_remote = ParsedGitRemote {
-                    owner: remote.owner.as_ref().into(),
-                    repo: remote.repo.as_ref().into(),
-                };
-                let params = BuildCommitPermalinkParams { sha: &commit.sha };
-                let url = remote
-                    .host
-                    .build_commit_permalink(&parsed_remote, params)
-                    .to_string();
-                (provider, url)
-            });
-
-        let (additions, deletions) = self.calculate_changed_lines(cx);
-
-        let commit_diff_stat = if additions > 0 || deletions > 0 {
-            Some(DiffStat::new(
-                "commit-diff-stat",
-                additions as usize,
-                deletions as usize,
-            ))
-        } else {
-            None
-        };
-
         let gutter_width = self.editor.update(cx, |editor, cx| {
             let snapshot = editor.snapshot(window, cx);
             let style = editor.style(cx);
@@ -1079,19 +1048,23 @@ impl Render for CommitViewToolbar {
 
         let commit_sha = commit_view_ref.commit.sha.clone();
 
-        let remote_info = commit_view_ref.remote.as_ref().map(|remote| {
-            let provider = remote.host.name();
-            let parsed_remote = ParsedGitRemote {
-                owner: remote.owner.as_ref().into(),
-                repo: remote.repo.as_ref().into(),
-            };
-            let params = BuildCommitPermalinkParams { sha: &commit_sha };
-            let url = remote
-                .host
-                .build_commit_permalink(&parsed_remote, params)
-                .to_string();
-            (provider, url)
-        });
+        let remote_info = commit_view_ref
+            .remote
+            .as_ref()
+            .filter(|_| commit_view_ref.stash.is_none())
+            .map(|remote| {
+                let provider = remote.host.name();
+                let parsed_remote = ParsedGitRemote {
+                    owner: remote.owner.as_ref().into(),
+                    repo: remote.repo.as_ref().into(),
+                };
+                let params = BuildCommitPermalinkParams { sha: &commit_sha };
+                let url = remote
+                    .host
+                    .build_commit_permalink(&parsed_remote, params)
+                    .to_string();
+                (provider, url)
+            });
 
         let sha_for_graph = commit_sha.to_string();
 
@@ -1142,17 +1115,19 @@ impl Render for CommitViewToolbar {
                             }),
                     )
                 })
-                .children(remote_info.map(|(provider_name, url)| {
-                    let icon = match provider_name.as_str() {
-                        "GitHub" => IconName::Github,
-                        _ => IconName::Link,
-                    };
+                .when(commit_view_ref.is_commit_pushed == Some(true), |this| {
+                    this.children(remote_info.map(|(provider_name, url)| {
+                        let icon = match provider_name.as_str() {
+                            "GitHub" => IconName::Github,
+                            _ => IconName::Link,
+                        };
 
-                    IconButton::new("view_on_provider", icon)
-                        .icon_size(IconSize::Small)
-                        .tooltip(Tooltip::text(format!("View on {}", provider_name)))
-                        .on_click(move |_, _, cx| cx.open_url(&url))
-                }))
+                        IconButton::new("view_on_provider", icon)
+                            .icon_size(IconSize::Small)
+                            .tooltip(Tooltip::text(format!("View on {}", provider_name)))
+                            .on_click(move |_, _, cx| cx.open_url(&url))
+                    }))
+                })
             })
     }
 }
