@@ -7,7 +7,7 @@
 # Or use the helper script:
 #   crates/eval_cli/script/build-linux
 
-FROM rust:1.93.1-bookworm AS builder
+FROM rust:1.94.1-bookworm AS builder
 
 WORKDIR /app
 
@@ -42,7 +42,7 @@ RUN mkdir -p /app/target && \
     mv /app/target/wasi-sdk-25.0-${WASI_ARCH}-linux /app/target/wasi-sdk
 
 # Pre-install the toolchain specified in rust-toolchain.toml so it is cached.
-RUN rustup toolchain install 1.93 --profile minimal \
+RUN rustup toolchain install 1.94 --profile minimal \
     --component rustfmt --component clippy --component rust-analyzer --component rust-src \
     --target wasm32-wasip2 --target wasm32-unknown-unknown --target x86_64-unknown-linux-musl
 
