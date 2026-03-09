@@ -1,13 +1,10 @@
 use std::sync::Arc;
 
 use component::{Component, ComponentScope, example_group_with_title, single_example};
-use gpui::{
-    AnyElement, AnyView, ClickEvent, MouseButton, MouseDownEvent, Pixels, linear_color_stop,
-    linear_gradient, px,
-};
+use gpui::{AnyElement, AnyView, ClickEvent, MouseButton, MouseDownEvent, Pixels, px};
 use smallvec::SmallVec;
 
-use crate::{Disclosure, prelude::*};
+use crate::{Disclosure, GradientFade, prelude::*};
 
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy, Default)]
 pub enum ListItemSpacing {
@@ -220,34 +217,12 @@ impl RenderOnce for ListItem {
             color.panel_background
         };
 
-        let end_hover_gradient_overlay = div()
-            .id("gradient_overlay")
-            .absolute()
-            .top_0()
-            .right_0()
-            .w_24()
-            .h_full()
-            .bg(linear_gradient(
-                90.,
-                linear_color_stop(base_bg, 0.6),
-                linear_color_stop(base_bg.opacity(0.0), 0.),
-            ))
-            .when_some(self.group_name.clone(), |s, group_name| {
-                s.group_hover(group_name.clone(), |s| {
-                    s.bg(linear_gradient(
-                        90.,
-                        linear_color_stop(color.element_hover, 0.6),
-                        linear_color_stop(color.element_hover.opacity(0.0), 0.),
-                    ))
-                })
-                .group_active(group_name, |s| {
-                    s.bg(linear_gradient(
-                        90.,
-                        linear_color_stop(color.element_active, 0.6),
-                        linear_color_stop(color.element_active.opacity(0.0), 0.),
-                    ))
-                })
-            });
+        let end_hover_gradient_overlay =
+            GradientFade::new(base_bg, color.element_hover, color.element_active)
+                .width(px(96.0))
+                .when_some(self.group_name.clone(), |fade, group| {
+                    fade.group_name(group)
+                });
 
         h_flex()
             .id(self.id)

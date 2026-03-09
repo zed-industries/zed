@@ -7,8 +7,8 @@ use editor::{Editor, EditorElement, EditorStyle};
 use feature_flags::{AgentV2FeatureFlag, FeatureFlagViewExt as _};
 use gpui::{
     AnyElement, App, Context, Entity, EventEmitter, FocusHandle, Focusable, FontStyle, ListState,
-    Pixels, Render, SharedString, TextStyle, WeakEntity, Window, actions, linear_color_stop,
-    linear_gradient, list, prelude::*, px, relative, rems,
+    Pixels, Render, SharedString, TextStyle, WeakEntity, Window, actions, list, prelude::*, px,
+    relative, rems,
 };
 use menu::{Cancel, Confirm, SelectFirst, SelectLast, SelectNext, SelectPrevious};
 use project::Event as ProjectEvent;
@@ -18,8 +18,8 @@ use std::mem;
 use theme::{ActiveTheme, ThemeSettings};
 use ui::utils::TRAFFIC_LIGHT_PADDING;
 use ui::{
-    AgentThreadStatus, HighlightedLabel, IconButtonShape, KeyBinding, ListItem, Tab, ThreadItem,
-    Tooltip, WithScrollbar, prelude::*,
+    AgentThreadStatus, GradientFade, HighlightedLabel, IconButtonShape, KeyBinding, ListItem, Tab,
+    ThreadItem, Tooltip, WithScrollbar, prelude::*,
 };
 use util::path_list::PathList;
 use workspace::{
@@ -803,33 +803,13 @@ impl Sidebar {
         };
 
         let color = cx.theme().colors();
-        let base_bg = color.panel_background;
-        let gradient_overlay = div()
-            .id("gradient_overlay")
-            .absolute()
-            .top_0()
-            .right_0()
-            .w_12()
-            .h_full()
-            .bg(linear_gradient(
-                90.,
-                linear_color_stop(base_bg, 0.6),
-                linear_color_stop(base_bg.opacity(0.0), 0.),
-            ))
-            .group_hover(group_name.clone(), |s| {
-                s.bg(linear_gradient(
-                    90.,
-                    linear_color_stop(color.element_hover, 0.6),
-                    linear_color_stop(color.element_hover.opacity(0.0), 0.),
-                ))
-            })
-            .group_active(group_name.clone(), |s| {
-                s.bg(linear_gradient(
-                    90.,
-                    linear_color_stop(color.element_active, 0.6),
-                    linear_color_stop(color.element_active.opacity(0.0), 0.),
-                ))
-            });
+        let gradient_overlay = GradientFade::new(
+            color.panel_background,
+            color.element_hover,
+            color.element_active,
+        )
+        .width(px(48.0))
+        .group_name(group_name.clone());
 
         ListItem::new(id)
             .group_name(group_name)
