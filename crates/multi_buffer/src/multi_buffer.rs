@@ -105,6 +105,10 @@ impl ExcerptInfo {
     pub fn end_anchor(&self) -> Anchor {
         Anchor::in_buffer(self.path_key_index, self.range.end)
     }
+
+    pub fn start_anchor(&self) -> Anchor {
+        Anchor::in_buffer(self.path_key_index, self.range.start)
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -2402,8 +2406,8 @@ impl MultiBuffer {
 
     pub fn expand_or_collapse_diff_hunks_inner(
         &mut self,
-        // second element is the end of the last excerpt that should be considered for this range
-        // (or Anchor::Max to opt out)
+        // second element is the last excerpt that should be considered for this range
+        // (or None to opt out)
         ranges: impl IntoIterator<Item = (Range<Point>, Option<ExcerptInfo>)>,
         expand: bool,
         cx: &mut Context<Self>,
@@ -2417,29 +2421,44 @@ impl MultiBuffer {
         let mut last_hunk_row = None;
         for (range, excerpt_info) in ranges {
             for diff_hunk in snapshot.diff_hunks_in_range(range) {
-                dbg!(
-                    diff_hunk.buffer_range.to_point(
-                        &snapshot
-                            .buffers
-                            .get(&diff_hunk.buffer_id)
-                            .unwrap()
-                            .buffer_snapshot
-                    )
-                );
-                dbg!(diff_hunk.multi_buffer_range().to_point(&snapshot));
+                // FIXME
                 if let Some(excerpt_info) = &excerpt_info
-                    && dbg!(&diff_hunk.excerpt_info) != dbg!(excerpt_info)
+                    && diff_hunk
+                        .excerpt_info
+                        .end_anchor()
+                        .cmp(&excerpt_info.end_anchor(), snapshot)
+                        .is_gt()
                 {
-                    dbg!("not expanding");
-                    dbg!(diff_hunk.multi_buffer_range().end.to_point(&snapshot),);
                     continue;
                 }
+                // FIXME
+                let hunk_range = diff_hunk.multi_buffer_range();
+                if hunk_range.start.to_point(snapshot)
+                    < diff_hunk.excerpt_info.start_anchor().to_point(snapshot)
+                {
+                    dbg!("HERE");
+                    continue;
+                }
+                // if let Some(excerpt_info) = &excerpt_info {
+                //     let buffer_snapshot = snapshot.buffer_for_id(excerpt_info.buffer_id).unwrap();
+                //     let hunk_range = diff_hunk.buffer_range.to_point(buffer_snapshot);
+                //     let excerpt_range = excerpt_info.range.to_point(buffer_snapshot);
+                //     dbg!(&hunk_range, &excerpt_range);
+                //     if dbg!(hunk_range.start) < dbg!(excerpt_range.start)
+                //         || dbg!(excerpt_range.end) < dbg!(hunk_range.start)
+                //     {
+                //         continue;
+                //     }
+                // }
                 if last_hunk_row.is_some_and(|row| row >= diff_hunk.row_range.start) {
                     continue;
                 }
-                let range = diff_hunk.multi_buffer_range();
-                let start = snapshot.excerpt_offset_for_anchor(&range.start);
-                let end = snapshot.excerpt_offset_for_anchor(&range.end);
+                let start = snapshot.excerpt_offset_for_anchor(&hunk_range.start);
+                let end = snapshot.excerpt_offset_for_anchor(&hunk_range.end);
+                let excerpt_end =
+                    snapshot.excerpt_offset_for_anchor(&diff_hunk.excerpt_info.end_anchor());
+                let start = start.min(excerpt_end);
+                let end = end.min(excerpt_end);
                 last_hunk_row = Some(diff_hunk.row_range.start);
                 excerpt_edits.push(text::Edit {
                     old: start..end,
@@ -2467,8 +2486,7 @@ impl MultiBuffer {
                 .excerpt_containing(range.end..range.end)
                 .map(|excerpt| excerpt.excerpt.info());
             let range = range.to_point(&snapshot);
-            dbg!(range.start);
-            let mut peek_end = dbg!(range.end);
+            let mut peek_end = range.end;
             if range.end.row < snapshot.max_row().0 {
                 peek_end = Point::new(range.end.row + 1, 0);
             };
@@ -2961,7 +2979,7 @@ impl MultiBuffer {
                             }
                             DiffChangeKind::ExpandOrCollapseHunks { expand } => {
                                 let intersects = hunk_buffer_range.is_empty()
-                                    || hunk_buffer_range.end > edit_buffer_start;
+                                    || (hunk_buffer_range.end > edit_buffer_start);
                                 if *expand {
                                     intersects || was_previously_expanded || all_diff_hunks_expanded
                                 } else {
@@ -3476,14 +3494,6 @@ impl MultiBufferSnapshot {
         })
         .filter_map(move |(range, (hunk, is_inverted), excerpt)| {
             let buffer_snapshot = excerpt.buffer_snapshot(self);
-            if !excerpt
-                .range
-                .context
-                .contains_anchor(hunk.buffer_range.start, excerpt.buffer_snapshot(self))
-            {
-                dbg!("HERE");
-                return None;
-            }
             if range.start != range.end && range.end == query_range.start && !hunk.range.is_empty()
             {
                 return None;
@@ -3539,8 +3549,6 @@ impl MultiBufferSnapshot {
             } else {
                 DiffHunkStatusKind::Modified
             };
-            dbg!(excerpt.range.context.to_point(buffer_snapshot));
-            dbg!(Anchor::from(excerpt.start_anchor()).to_point(self));
             Some(MultiBufferDiffHunk {
                 row_range: MultiBufferRow(range.start.row)..MultiBufferRow(end_row),
                 buffer_id: buffer_snapshot.remote_id(),
@@ -3836,7 +3844,6 @@ impl MultiBufferSnapshot {
             && region.is_main_buffer
             && region.diff_hunk_status.is_some()
         {
-            dbg!("HERE");
             cursor.prev();
             if cursor.region().is_none_or(|region| region.is_main_buffer) {
                 cursor.next();

@@ -194,6 +194,9 @@ impl MultiBuffer {
             .into_iter()
             .filter_map(|anchor| anchor.excerpt_anchor())
             .collect::<Vec<_>>();
+        if sorted_anchors.is_empty() {
+            return;
+        }
         sorted_anchors.sort_by(|a, b| a.cmp(b, &snapshot));
         let buffers = sorted_anchors.into_iter().chunk_by(|anchor| anchor.path);
         let mut cursor = snapshot.excerpts.cursor::<ExcerptSummary>(());
@@ -266,13 +269,7 @@ impl MultiBuffer {
 
             ranges.sort_by(|l, r| l.context.start.cmp(&r.context.start));
 
-            self.set_excerpt_ranges_for_path(
-                path.clone(),
-                buffer,
-                buffer_snapshot,
-                dbg!(ranges),
-                cx,
-            );
+            self.set_excerpt_ranges_for_path(path.clone(), buffer, buffer_snapshot, ranges, cx);
         }
     }
 

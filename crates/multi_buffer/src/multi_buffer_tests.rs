@@ -2300,7 +2300,7 @@ impl ReferenceExcerpt {
 
 impl ReferenceMultibuffer {
     fn expand_excerpts(&mut self, excerpts: &HashSet<ExcerptInfo>, line_count: u32, cx: &mut App) {
-        if line_count == 0 {
+        if line_count == 0 || excerpts.is_empty() {
             return;
         }
 
@@ -2421,19 +2421,17 @@ impl ReferenceMultibuffer {
             .hunks_intersecting_range(range, &buffer)
         {
             let hunk_range = hunk.buffer_range.to_point(&buffer);
-            if dbg!(hunk_range.start) < dbg!(excerpt_range.start)
-                || dbg!(hunk_range.start) > dbg!(excerpt_range.end)
-            {
-                dbg!("NOT IN RANGE");
+            if hunk_range.start < excerpt_range.start || hunk_range.start > excerpt_range.end {
                 continue;
             }
             if let Err(ix) = expanded_diff_hunks
                 .binary_search_by(|anchor| anchor.cmp(&hunk.buffer_range.start, &buffer))
             {
                 log::info!(
-                    "expanding diff hunk {:?}. excerpt range:{:?}",
+                    "expanding diff hunk {:?}. excerpt range: {:?}, buffer {:?}",
                     hunk_range,
-                    excerpt_range
+                    excerpt_range,
+                    buffer.remote_id()
                 );
                 expanded_diff_hunks.insert(ix, hunk.buffer_range.start);
             } else {
@@ -2443,7 +2441,6 @@ impl ReferenceMultibuffer {
     }
 
     fn expected_content(&self, cx: &App) -> (String, Vec<RowInfo>, HashSet<MultiBufferRow>) {
-        dbg!(&self.expanded_diff_hunks_by_buffer);
         let mut text = String::new();
         let mut regions = Vec::<ReferenceRegion>::new();
         let mut excerpt_boundary_rows = HashSet::default();
@@ -2529,7 +2526,8 @@ impl ReferenceMultibuffer {
                     let mut hunk_range = hunk.buffer_range.to_offset(buffer);
 
                     hunk_range.end = hunk_range.end.min(buffer_range.end);
-                    if hunk_range.start > buffer_range.end || hunk_range.start < buffer_range.start
+                    if dbg!(hunk_range.start) > dbg!(buffer_range.end)
+                        || dbg!(hunk_range.start) < dbg!(buffer_range.start)
                     {
                         log::trace!("skipping hunk outside excerpt range");
                         continue;
@@ -2542,15 +2540,13 @@ impl ReferenceMultibuffer {
                         .into_iter()
                         .flatten()
                         .any(|expanded_anchor| {
+                            dbg!(&expanded_anchor);
                             expanded_anchor
                                 .cmp(&hunk.buffer_range.start, buffer)
                                 .is_eq()
-                            // dbg!(expanded_anchor.to_offset(buffer).max(buffer_range.start))
-                            //     == dbg!(hunk_range.start.max(buffer_range.start))
                         })
                     {
                         log::trace!("skipping a hunk that's not marked as expanded");
-                        dbg!(self.expanded_diff_hunks_by_buffer.get(dbg!(&buffer_id)));
                         continue;
                     }
 
@@ -2559,7 +2555,6 @@ impl ReferenceMultibuffer {
                         continue;
                     }
 
-                    dbg!("HUNK IS VALID");
                     if hunk_range.start >= offset {
                         // Add the buffer text before the hunk
                         let len = text.len();
@@ -2757,6 +2752,7 @@ impl ReferenceMultibuffer {
             .iter()
             .filter(|excerpt| excerpt.buffer.read(cx).remote_id() == buffer_id)
             .collect::<Vec<_>>();
+        dbg!(&excerpts);
         let Some(buffer) = excerpts.first().map(|excerpt| excerpt.buffer.clone()) else {
             self.expanded_diff_hunks_by_buffer.remove(&buffer_id);
             return;
@@ -2775,7 +2771,6 @@ impl ReferenceMultibuffer {
             .or_default()
             .retain(|hunk_anchor| {
                 if !hunk_anchor.is_valid(&buffer_snapshot) {
-                    dbg!("NO LONGER VALID");
                     return false;
                 }
 
@@ -2785,10 +2780,13 @@ impl ReferenceMultibuffer {
                     return false;
                 };
                 let hunk_range = hunks[ix].buffer_range.to_point(&buffer_snapshot);
+                dbg!(&excerpts);
                 excerpts.iter().any(|excerpt| {
                     let excerpt_range = excerpt.range.to_point(&buffer_snapshot);
-                    dbg!(hunk_range.end) >= dbg!(excerpt_range.start)
-                        && dbg!(hunk_range.start) <= dbg!(excerpt_range.end)
+                    dbg!(
+                        dbg!(hunk_range.end) >= dbg!(excerpt_range.start)
+                            && dbg!(hunk_range.start) <= dbg!(excerpt_range.end)
+                    )
                 })
             });
     }
@@ -3162,14 +3160,18 @@ fn mutate_excerpt_ranges(
         // todo!() logging
         match rng.random_range(0..5) {
             0..=1 if !existing_ranges.is_empty() => {
-                log::info!("Removing excerpt",);
                 let index = rng.random_range(0..existing_ranges.len());
+                log::info!("Removing excerpt at index {index}");
                 existing_ranges.remove(index);
             }
             _ => {
-                log::info!("Inserting excerpt",);
                 let end_row = rng.random_range(0..=buffer.max_point().row);
                 let start_row = rng.random_range(0..=end_row);
+                log::info!(
+                    "Inserting excerpt for buffer {:?}, row range {:?}",
+                    buffer.remote_id(),
+                    start_row..end_row
+                );
                 ranges_to_add.push(Point::new(start_row, 0)..Point::new(end_row, 0));
             }
         }
@@ -3217,28 +3219,6 @@ fn check_multibuffer(
     );
 
     log::info!("Multibuffer content:\n{}", actual_diff);
-    dbg!(
-        snapshot
-            .excerpts()
-            .map(|(buffer_snapshot, excerpt)| {
-                (
-                    buffer_snapshot.remote_id(),
-                    excerpt.range.to_point(&buffer_snapshot),
-                )
-            })
-            .collect::<Vec<_>>()
-    );
-    dbg!(
-        reference
-            .excerpts
-            .iter()
-            .cloned()
-            .map(|excerpt| (
-                excerpt.path_key,
-                excerpt.range.to_point(&excerpt.buffer.read(cx).snapshot())
-            ))
-            .collect::<Vec<_>>()
-    );
 
     assert_eq!(
         actual_row_infos.len(),
