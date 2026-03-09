@@ -182,7 +182,7 @@ fn conflicts_updated(
     let excerpts = multibuffer.excerpts_for_buffer(buffer_id, cx);
     let Some(buffer_snapshot) = excerpts
         .first()
-        .and_then(|(excerpt_id, _)| snapshot.buffer_for_excerpt(*excerpt_id))
+        .and_then(|(excerpt_id, _, _)| snapshot.buffer_for_excerpt(*excerpt_id))
     else {
         return;
     };
@@ -221,7 +221,7 @@ fn conflicts_updated(
         let mut removed_highlighted_ranges = Vec::new();
         let mut removed_block_ids = HashSet::default();
         for (conflict_range, block_id) in old_conflicts {
-            let Some((excerpt_id, _)) = excerpts.iter().find(|(_, range)| {
+            let Some((excerpt_id, _, _)) = excerpts.iter().find(|(_, _, range)| {
                 let precedes_start = range
                     .context
                     .start
@@ -263,7 +263,7 @@ fn conflicts_updated(
     let new_conflicts = &conflict_set.conflicts[event.new_range.clone()];
     let mut blocks = Vec::new();
     for conflict in new_conflicts {
-        let Some((excerpt_id, _)) = excerpts.iter().find(|(_, range)| {
+        let Some((excerpt_id, _, _)) = excerpts.iter().find(|(_, _, range)| {
             let precedes_start = range
                 .context
                 .start
