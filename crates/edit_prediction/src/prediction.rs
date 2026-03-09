@@ -156,7 +156,7 @@ mod tests {
             model_version: None,
             inputs: ZetaPromptInput {
                 events: vec![],
-                related_files: vec![],
+                related_files: Some(vec![]),
                 cursor_path: Path::new("path.txt").into(),
                 cursor_offset_in_excerpt: 0,
                 cursor_excerpt: "".into(),

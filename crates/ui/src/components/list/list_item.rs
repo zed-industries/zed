@@ -4,7 +4,7 @@ use component::{Component, ComponentScope, example_group_with_title, single_exam
 use gpui::{AnyElement, AnyView, ClickEvent, MouseButton, MouseDownEvent, Pixels, px};
 use smallvec::SmallVec;
 
-use crate::{Disclosure, prelude::*};
+use crate::{Disclosure, GradientFade, prelude::*};
 
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy, Default)]
 pub enum ListItemSpacing {
@@ -42,7 +42,6 @@ pub struct ListItem {
     selectable: bool,
     always_show_disclosure_icon: bool,
     outlined: bool,
-    selection_outlined: Option<bool>,
     rounded: bool,
     overflow_x: bool,
     focused: Option<bool>,
@@ -72,7 +71,6 @@ impl ListItem {
             selectable: true,
             always_show_disclosure_icon: false,
             outlined: false,
-            selection_outlined: None,
             rounded: false,
             overflow_x: false,
             focused: None,
@@ -173,11 +171,6 @@ impl ListItem {
         self
     }
 
-    pub fn selection_outlined(mut self, outlined: bool) -> Self {
-        self.selection_outlined = Some(outlined);
-        self
-    }
-
     pub fn rounded(mut self) -> Self {
         self.rounded = true;
         self
@@ -216,6 +209,21 @@ impl ParentElement for ListItem {
 
 impl RenderOnce for ListItem {
     fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
+        let color = cx.theme().colors();
+
+        let base_bg = if self.selected {
+            color.element_active
+        } else {
+            color.panel_background
+        };
+
+        let end_hover_gradient_overlay =
+            GradientFade::new(base_bg, color.element_hover, color.element_active)
+                .width(px(96.0))
+                .when_some(self.group_name.clone(), |fade, group| {
+                    fade.group_name(group)
+                });
+
         h_flex()
             .id(self.id)
             .when_some(self.group_name, |this, group| this.group(group))
@@ -227,34 +235,24 @@ impl RenderOnce for ListItem {
                     .px(DynamicSpacing::Base04.rems(cx))
             })
             .when(!self.inset && !self.disabled, |this| {
-                this
-                    // TODO: Add focus state
-                    // .when(self.state == InteractionState::Focused, |this| {
-                    .when_some(self.focused, |this, focused| {
-                        if focused {
-                            this.border_1()
-                                .border_color(cx.theme().colors().border_focused)
-                        } else {
-                            this.border_1()
-                        }
-                    })
-                    .when(self.selectable, |this| {
-                        this.hover(|style| style.bg(cx.theme().colors().ghost_element_hover))
-                            .active(|style| style.bg(cx.theme().colors().ghost_element_active))
-                            .when(self.outlined, |this| this.rounded_sm())
-                            .when(self.selected, |this| {
-                                this.bg(cx.theme().colors().ghost_element_selected)
-                            })
-                    })
+                this.when_some(self.focused, |this, focused| {
+                    if focused {
+                        this.border_1()
+                            .border_color(cx.theme().colors().border_focused)
+                    } else {
+                        this.border_1()
+                    }
+                })
+                .when(self.selectable, |this| {
+                    this.hover(|style| style.bg(cx.theme().colors().ghost_element_hover))
+                        .active(|style| style.bg(cx.theme().colors().ghost_element_active))
+                        .when(self.outlined, |this| this.rounded_sm())
+                        .when(self.selected, |this| {
+                            this.bg(cx.theme().colors().ghost_element_selected)
+                        })
+                })
             })
             .when(self.rounded, |this| this.rounded_sm())
-            .when_some(self.selection_outlined, |this, outlined| {
-                this.border_1()
-                    .border_color(gpui::transparent_black())
-                    .when(outlined, |this| {
-                        this.border_color(cx.theme().colors().panel_focused_border)
-                    })
-            })
             .when_some(self.on_hover, |this, on_hover| this.on_hover(on_hover))
             .child(
                 h_flex()
@@ -364,6 +362,7 @@ impl RenderOnce for ListItem {
                                 .right(DynamicSpacing::Base06.rems(cx))
                                 .top_0()
                                 .visible_on_hover("list_item")
+                                .child(end_hover_gradient_overlay)
                                 .child(end_hover_slot),
                         )
                     }),

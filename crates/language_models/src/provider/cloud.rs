@@ -866,7 +866,10 @@ impl LanguageModel for CloudLanguageModel {
                 );
 
                 if enable_thinking && let Some(effort) = effort {
-                    request.reasoning = Some(open_ai::responses::ReasoningConfig { effort });
+                    request.reasoning = Some(open_ai::responses::ReasoningConfig {
+                        effort,
+                        summary: Some(open_ai::responses::ReasoningSummaryMode::Auto),
+                    });
                 }
 
                 let future = self.request_limiter.stream(async move {

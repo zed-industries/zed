@@ -64,7 +64,6 @@ tendril = "0.4.3"
 
 [dev-dependencies]
 git2.workspace = true
-indoc.workspace = true
 rand.workspace = true
 util_macros.workspace = true
 pretty_assertions.workspace = true
