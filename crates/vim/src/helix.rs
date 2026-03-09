@@ -571,6 +571,8 @@ impl Vim {
                     self.search = SearchState {
                         direction: searchable::Direction::Next,
                         count: 1,
+                        vim_mode_search: true,
+                        show_match_highlights: false,
                         prior_selections,
                         prior_operator: self.operator_stack.last().cloned(),
                         prior_mode: self.mode,
