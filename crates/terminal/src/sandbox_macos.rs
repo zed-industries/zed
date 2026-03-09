@@ -108,7 +108,11 @@ fn generate_sbpl_profile(config: &SandboxConfig) -> String {
         ] {
             let path = home.join(dotfile);
             if path.exists() {
-                let _ = write!(p, "(allow file-read* (literal \"{}\"))\n", path.display());
+                let _ = write!(
+                    p,
+                    "(allow file-read* (literal \"{}\"))\n",
+                    sbpl_escape(&path)
+                );
             }
         }
         // XDG config directory
@@ -128,10 +132,17 @@ fn generate_sbpl_profile(config: &SandboxConfig) -> String {
     p
 }
 
+fn sbpl_escape(path: &Path) -> String {
+    path.display()
+        .to_string()
+        .replace('\\', "\\\\")
+        .replace('"', "\\\"")
+}
+
 fn write_subpath_rule(p: &mut String, path: &Path, permissions: &str) {
     let _ = write!(
         p,
         "(allow {permissions} (subpath \"{}\"))\n",
-        path.display()
+        sbpl_escape(path)
     );
 }
