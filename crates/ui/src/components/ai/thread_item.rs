@@ -224,7 +224,7 @@ impl RenderOnce for ThreadItem {
             .absolute()
             .top_0()
             .right(px(-10.0))
-            .w_16()
+            .w_8()
             .h_full()
             .bg(linear_gradient(
                 90.,
