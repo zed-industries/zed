@@ -122,6 +122,11 @@ pub(crate) fn generate_sbpl_profile(config: &SandboxConfig) -> String {
 
     p.push_str("(allow sysctl-read)\n");
 
+    // Root directory entry must be readable for path resolution (getcwd, realpath, etc.)
+    p.push_str("(allow file-read* (literal \"/\"))\n");
+    // Default shell selector symlink on macOS
+    p.push_str("(allow file-read* (subpath \"/private/var/select\"))\n");
+
     // No iokit-open rules: a terminal shell does not need to open IOKit user
     // clients (kernel driver interfaces). IOKit access is needed for GPU/
     // graphics (IOAccelerator, AGPMClient), audio (IOAudioEngine), USB,

@@ -17,12 +17,32 @@ use std::process::Command;
 // ---------------------------------------------------------------------------
 
 /// Build a minimal `SandboxConfig` for testing.
-/// Uses the OS-specific default system paths so that `/bin/sh` and basic
+///
+/// Uses default executable and read-only system paths so `/bin/sh` and
 /// commands like `echo`, `cat`, `rm`, `env`, and `curl` are available.
+///
+/// Crucially, the read-write system paths are restricted to `/dev` and
+/// `/private/tmp` only — NOT `/private/var/folders`. This is because the
+/// test temp directories live under `/private/var/folders`, and granting
+/// blanket access there would make it impossible to test that the sandbox
+/// blocks access to sibling directories outside the project.
 fn test_sandbox_config(project_dir: PathBuf) -> SandboxConfig {
+    let defaults = ResolvedSystemPaths::with_defaults();
     SandboxConfig {
         project_dir,
-        system_paths: ResolvedSystemPaths::with_defaults(),
+        system_paths: ResolvedSystemPaths {
+            executable: defaults.executable,
+            read_only: defaults.read_only,
+            read_write: vec![
+                PathBuf::from("/dev"),
+                #[cfg(target_os = "macos")]
+                PathBuf::from("/private/tmp"),
+                #[cfg(target_os = "linux")]
+                PathBuf::from("/tmp"),
+                #[cfg(target_os = "linux")]
+                PathBuf::from("/var/tmp"),
+            ],
+        },
         additional_executable_paths: vec![],
         additional_read_only_paths: vec![],
         additional_read_write_paths: vec![],
@@ -41,6 +61,7 @@ fn run_sandboxed_command(config: &SandboxConfig, shell_command: &str) -> (bool, 
 
     let mut cmd = Command::new("/bin/sh");
     cmd.arg("-c").arg(shell_command);
+    cmd.current_dir(&config.project_dir);
 
     unsafe {
         cmd.pre_exec(move || {
@@ -68,7 +89,8 @@ fn run_sandboxed_command(config: &SandboxConfig, shell_command: &str) -> (bool, 
 
 /// Like `run_sandboxed_command`, but also filters environment variables
 /// the way `sandbox_exec_main` does: only allowed vars + Zed-specific
-/// vars are passed through. Extra env vars can be injected.
+/// vars are passed through. Extra env vars are injected into the parent
+/// env *before* filtering, so they are subject to the same filter.
 fn run_sandboxed_with_env(
     config: &SandboxConfig,
     extra_env: &[(&str, &str)],
@@ -88,16 +110,20 @@ fn run_sandboxed_with_env(
 
     let mut cmd = Command::new("/bin/sh");
     cmd.arg("-c").arg(shell_command);
+    cmd.current_dir(&config.project_dir);
 
-    // Filter env: start clean, then add only allowed vars
-    cmd.env_clear();
-    for (key, value) in std::env::vars() {
-        if allowed.contains(key.as_str()) || zed_vars.contains(&key.as_str()) {
-            cmd.env(&key, &value);
-        }
-    }
+    // Combine real parent env with extra_env, then filter.
+    // extra_env simulates vars that would exist in the parent process.
+    let mut combined_env: Vec<(String, String)> = std::env::vars().collect();
     for &(key, value) in extra_env {
-        cmd.env(key, value);
+        combined_env.push((key.to_string(), value.to_string()));
+    }
+
+    cmd.env_clear();
+    for (key, value) in &combined_env {
+        if allowed.contains(key.as_str()) || zed_vars.contains(&key.as_str()) {
+            cmd.env(key, value);
+        }
     }
 
     unsafe {
@@ -406,6 +432,15 @@ mod sbpl_tests {
 // Integration tests: filesystem enforcement
 // ---------------------------------------------------------------------------
 
+/// Create a tempdir and return its canonicalized path.
+/// On macOS, /var/folders -> /private/var/folders, so we must use the
+/// canonical path for both shell commands and sandbox rules to match.
+fn canonical_tempdir() -> (tempfile::TempDir, PathBuf) {
+    let dir = tempfile::tempdir().expect("failed to create temp dir");
+    let canonical = dir.path().canonicalize().expect("failed to canonicalize");
+    (dir, canonical)
+}
+
 /// Creates a directory with a known file for testing.
 /// Returns (dir_path, file_path).
 fn create_test_directory(base: &Path, name: &str, content: &str) -> (PathBuf, PathBuf) {
@@ -418,11 +453,10 @@ fn create_test_directory(base: &Path, name: &str, content: &str) -> (PathBuf, Pa
 
 #[test]
 fn test_sandbox_blocks_rm_rf() {
-    let base = tempfile::tempdir().expect("failed to create temp dir");
+    let (_base_guard, base) = canonical_tempdir();
 
-    let (project_dir, _) = create_test_directory(base.path(), "project", "project content");
-    let (target_dir, target_file) =
-        create_test_directory(base.path(), "target", "do not delete me");
+    let (project_dir, _) = create_test_directory(&base, "project", "project content");
+    let (target_dir, target_file) = create_test_directory(&base, "target", "do not delete me");
 
     // Sandboxed: rm -rf should be blocked
     let config = test_sandbox_config(project_dir.clone());
@@ -450,8 +484,8 @@ fn test_sandbox_blocks_rm_rf() {
 
 #[test]
 fn test_sandbox_allows_writes_in_project() {
-    let base = tempfile::tempdir().expect("failed to create temp dir");
-    let project_dir = base.path().join("project");
+    let (_base_guard, base) = canonical_tempdir();
+    let project_dir = base.join("project");
     fs::create_dir_all(&project_dir).expect("failed to create project dir");
 
     let config = test_sandbox_config(project_dir.clone());
@@ -473,12 +507,12 @@ fn test_sandbox_allows_writes_in_project() {
 
 #[test]
 fn test_sandbox_blocks_reads_outside_project() {
-    let base = tempfile::tempdir().expect("failed to create temp dir");
-    let project_dir = base.path().join("project");
+    let (_base_guard, base) = canonical_tempdir();
+    let project_dir = base.join("project");
     fs::create_dir_all(&project_dir).expect("failed to create project dir");
 
     let secret_content = "TOP_SECRET_DATA_12345";
-    let (_, secret_file) = create_test_directory(base.path(), "secrets", secret_content);
+    let (_, secret_file) = create_test_directory(&base, "secrets", secret_content);
 
     let config = test_sandbox_config(project_dir.clone());
 
@@ -494,11 +528,11 @@ fn test_sandbox_blocks_reads_outside_project() {
 
 #[test]
 fn test_additional_read_write_paths_grant_access() {
-    let base = tempfile::tempdir().expect("failed to create temp dir");
-    let project_dir = base.path().join("project");
+    let (_base_guard, base) = canonical_tempdir();
+    let project_dir = base.join("project");
     fs::create_dir_all(&project_dir).expect("failed to create project dir");
 
-    let extra_dir = base.path().join("extra_rw");
+    let extra_dir = base.join("extra_rw");
     fs::create_dir_all(&extra_dir).expect("failed to create extra dir");
 
     let test_file = extra_dir.join("rw_test.txt");
@@ -532,13 +566,13 @@ fn test_additional_read_write_paths_grant_access() {
 
 #[test]
 fn test_additional_read_only_paths_allow_read_block_write() {
-    let base = tempfile::tempdir().expect("failed to create temp dir");
-    let project_dir = base.path().join("project");
+    let (_base_guard, base) = canonical_tempdir();
+    let project_dir = base.join("project");
     fs::create_dir_all(&project_dir).expect("failed to create project dir");
 
     let known_content = "known_readonly_content";
     let (readonly_dir, readonly_file) =
-        create_test_directory(base.path(), "readonly_data", known_content);
+        create_test_directory(&base, "readonly_data", known_content);
 
     let mut config = test_sandbox_config(project_dir.clone());
     config.additional_read_only_paths = vec![readonly_dir.clone()];
@@ -577,8 +611,8 @@ fn test_additional_read_only_paths_allow_read_block_write() {
 
 #[test]
 fn test_env_var_filtering() {
-    let base = tempfile::tempdir().expect("failed to create temp dir");
-    let project_dir = base.path().join("project");
+    let (_base_guard, base) = canonical_tempdir();
+    let project_dir = base.join("project");
     fs::create_dir_all(&project_dir).expect("failed to create project dir");
 
     let config = test_sandbox_config(project_dir);
@@ -611,8 +645,8 @@ fn test_env_var_filtering() {
 #[cfg(target_os = "macos")]
 #[test]
 fn test_network_blocking() {
-    let base = tempfile::tempdir().expect("failed to create temp dir");
-    let project_dir = base.path().join("project");
+    let (_base_guard, base) = canonical_tempdir();
+    let project_dir = base.join("project");
     fs::create_dir_all(&project_dir).expect("failed to create project dir");
 
     let mut config = test_sandbox_config(project_dir);
@@ -635,8 +669,8 @@ fn test_network_blocking() {
 
 #[test]
 fn test_sandbox_basic_echo_succeeds() {
-    let base = tempfile::tempdir().expect("failed to create temp dir");
-    let project_dir = base.path().join("project");
+    let (_base_guard, base) = canonical_tempdir();
+    let project_dir = base.join("project");
     fs::create_dir_all(&project_dir).expect("failed to create project dir");
 
     let config = test_sandbox_config(project_dir);
