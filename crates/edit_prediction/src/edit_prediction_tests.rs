@@ -1663,9 +1663,8 @@ async fn test_rejections_flushing(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-fn test_zeta2_prompt_input_includes_only_diagnostics_in_search_range(cx: &mut TestAppContext) {
+fn test_active_buffer_diagnostics_fetching(cx: &mut TestAppContext) {
     let diagnostic_marker: TextRangeMarker = ('«', '»').into();
-    let cursor_marker: TextRangeMarker = 'ˇ'.into();
     let search_range_marker: TextRangeMarker = ('[', ']').into();
 
     let (text, mut ranges) = marked_text_ranges_by(
@@ -1683,20 +1682,11 @@ fn test_zeta2_prompt_input_includes_only_diagnostics_in_search_range(cx: &mut Te
                 let «fourth_value» = missing_other_symbol;
             }
         "#},
-        vec![
-            diagnostic_marker.clone(),
-            cursor_marker.clone(),
-            search_range_marker.clone(),
-        ],
+        vec![diagnostic_marker.clone(), search_range_marker.clone()],
     );
 
     let diagnostic_ranges = ranges.remove(&diagnostic_marker).unwrap_or_default();
-    let cursor_ranges = ranges.remove(&cursor_marker).unwrap_or_default();
     let search_ranges = ranges.remove(&search_range_marker).unwrap_or_default();
-
-    assert_eq!(diagnostic_ranges.len(), 3);
-    assert_eq!(cursor_ranges.len(), 1);
-    assert_eq!(search_ranges.len(), 1);
 
     let buffer = cx.new(|cx| Buffer::local(&text, cx));
 
@@ -1732,25 +1722,13 @@ fn test_zeta2_prompt_input_includes_only_diagnostics_in_search_range(cx: &mut Te
     });
 
     let snapshot = buffer.read_with(cx, |buffer, _cx| buffer.snapshot());
-    let cursor_offset = cursor_ranges[0].start;
     let search_range = snapshot.offset_to_point(search_ranges[0].start)
         ..snapshot.offset_to_point(search_ranges[0].end);
 
-    let (_, prompt_input) = zeta::zeta2_prompt_input(
-        &snapshot,
-        Vec::new(),
-        Vec::new(),
-        search_range,
-        Path::new("test.rs").into(),
-        cursor_offset,
-        None,
-        false,
-        false,
-        None,
-    );
+    let active_buffer_diagnostics = zeta::active_buffer_diagnostics(&snapshot, search_range, 100);
 
     assert_eq!(
-        prompt_input.active_buffer_diagnostics,
+        active_buffer_diagnostics,
         vec![zeta_prompt::ActiveBufferDiagnostic {
             severity: Some(1),
             message: "second error".to_string(),
@@ -1759,10 +1737,7 @@ fn test_zeta2_prompt_input_includes_only_diagnostics_in_search_range(cx: &mut Te
             diagnostic_range_in_snippet: 61..73,
         }]
     );
-}
 
-#[gpui::test]
-fn test_zeta2_prompt_input_matches_diagnostic_search_range_boundaries(cx: &mut TestAppContext) {
     let buffer = cx.new(|cx| {
         Buffer::local(
             indoc! {"
@@ -1820,24 +1795,12 @@ fn test_zeta2_prompt_input_matches_diagnostic_search_range_boundaries(cx: &mut T
     });
 
     let snapshot = buffer.read_with(cx, |buffer, _cx| buffer.snapshot());
-    let cursor_offset = Point::new(2, 0).to_offset(&snapshot);
 
-    let (_, prompt_input) = zeta::zeta2_prompt_input(
-        &snapshot,
-        Vec::new(),
-        Vec::new(),
-        Point::new(2, 0)..Point::new(4, 0),
-        Path::new("test.rs").into(),
-        cursor_offset,
-        None,
-        false,
-        false,
-        None,
-    );
+    let active_buffer_diagnostics =
+        zeta::active_buffer_diagnostics(&snapshot, Point::new(2, 0)..Point::new(4, 0), 100);
 
     assert_eq!(
-        prompt_input
-            .active_buffer_diagnostics
+        active_buffer_diagnostics
             .iter()
             .map(|diagnostic| (
                 diagnostic.severity,

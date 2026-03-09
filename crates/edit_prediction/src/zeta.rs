@@ -482,6 +482,45 @@ fn handle_api_response<T>(
     }
 }
 
+pub(crate) fn active_buffer_diagnostics(
+    snapshot: &language::BufferSnapshot,
+    diagnostic_search_range: Range<Point>,
+    additional_context_token_count: usize,
+) -> Vec<zeta_prompt::ActiveBufferDiagnostic> {
+    snapshot
+        .diagnostics_in_range::<Point, Point>(diagnostic_search_range, false)
+        .filter_map(|entry| {
+            let severity = match entry.diagnostic.severity {
+                DiagnosticSeverity::ERROR => Some(1),
+                DiagnosticSeverity::WARNING => Some(2),
+                DiagnosticSeverity::INFORMATION => Some(3),
+                DiagnosticSeverity::HINT => Some(4),
+                _ => None,
+            };
+            let diagnostic_point_range = entry.range.clone();
+            let snippet_point_range = cursor_excerpt::expand_context_syntactically_then_linewise(
+                snapshot,
+                diagnostic_point_range.clone(),
+                additional_context_token_count,
+            );
+            let snippet = snapshot
+                .text_for_range(snippet_point_range.clone())
+                .collect::<String>();
+            let snippet_start_offset = snippet_point_range.start.to_offset(snapshot);
+            let diagnostic_offset_range = diagnostic_point_range.to_offset(snapshot);
+            Some(zeta_prompt::ActiveBufferDiagnostic {
+                severity,
+                message: entry.diagnostic.message.clone(),
+                snippet,
+                snippet_buffer_row_range: diagnostic_point_range.start.row
+                    ..diagnostic_point_range.end.row,
+                diagnostic_range_in_snippet: diagnostic_offset_range.start - snippet_start_offset
+                    ..diagnostic_offset_range.end - snippet_start_offset,
+            })
+        })
+        .collect()
+}
+
 pub fn zeta2_prompt_input(
     snapshot: &language::BufferSnapshot,
     related_files: Vec<zeta_prompt::RelatedFile>,
@@ -508,38 +547,8 @@ pub fn zeta2_prompt_input(
         &syntax_ranges,
     );
 
-    let active_buffer_diagnostics = snapshot
-        .diagnostics_in_range::<Point, Point>(diagnostic_search_range, false)
-        .filter_map(|entry| {
-            let severity = match entry.diagnostic.severity {
-                DiagnosticSeverity::ERROR => Some(1),
-                DiagnosticSeverity::WARNING => Some(2),
-                DiagnosticSeverity::INFORMATION => Some(3),
-                DiagnosticSeverity::HINT => Some(4),
-                _ => None,
-            };
-            let diagnostic_point_range = entry.range.clone();
-            let snippet_point_range = cursor_excerpt::expand_context_syntactically_then_linewise(
-                snapshot,
-                diagnostic_point_range.clone(),
-                100,
-            );
-            let snippet = snapshot
-                .text_for_range(snippet_point_range.clone())
-                .collect::<String>();
-            let snippet_start_offset = snippet_point_range.start.to_offset(snapshot);
-            let diagnostic_offset_range = diagnostic_point_range.to_offset(snapshot);
-            Some(zeta_prompt::ActiveBufferDiagnostic {
-                severity,
-                message: entry.diagnostic.message.clone(),
-                snippet,
-                snippet_buffer_row_range: diagnostic_point_range.start.row
-                    ..diagnostic_point_range.end.row,
-                diagnostic_range_in_snippet: diagnostic_offset_range.start - snippet_start_offset
-                    ..diagnostic_offset_range.end - snippet_start_offset,
-            })
-        })
-        .collect();
+    let active_buffer_diagnostics =
+        active_buffer_diagnostics(snapshot, diagnostic_search_range, 100);
 
     let prompt_input = zeta_prompt::ZetaPromptInput {
         cursor_path: excerpt_path,
