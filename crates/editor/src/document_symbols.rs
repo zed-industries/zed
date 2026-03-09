@@ -8,8 +8,8 @@ use itertools::Itertools as _;
 use language::language_settings::language_settings;
 use language::{Buffer, OutlineItem};
 use multi_buffer::{
-    Anchor, AnchorRangeExt as _, MultiBuffer, MultiBufferOffset, MultiBufferRow,
-    MultiBufferSnapshot, ToOffset as _, ToPoint,
+    Anchor, AnchorRangeExt as _, MultiBufferOffset, MultiBufferRow, MultiBufferSnapshot,
+    ToOffset as _,
 };
 use text::BufferId;
 use theme::{ActiveTheme as _, SyntaxTheme};
@@ -17,7 +17,7 @@ use unicode_segmentation::UnicodeSegmentation as _;
 use util::maybe;
 
 use crate::display_map::DisplaySnapshot;
-use crate::{Editor, LSP_REQUEST_DEBOUNCE_TIMEOUT, MULTI_BUFFER_EXCERPT_HEADER_HEIGHT};
+use crate::{Editor, LSP_REQUEST_DEBOUNCE_TIMEOUT};
 
 impl Editor {
     /// Returns all document outline items for a buffer, using LSP or
@@ -220,7 +220,7 @@ impl Editor {
                         let display_snapshot =
                             editor.display_map.update(cx, |map, cx| map.snapshot(cx));
                         let mut highlighted_results = results;
-                        for (buffer_id, items) in &mut highlighted_results {
+                        for items in highlighted_results.values_mut() {
                             for item in items {
                                 if let Some(highlights) =
                                     highlights_from_buffer(&display_snapshot, &item, &syntax)
@@ -269,8 +269,8 @@ fn highlights_from_buffer(
         ]);
     let Some(anchor_range) = maybe!({
         Some(
-            multi_buffer_source_range_anchors.get(0)?.clone()?
-                ..multi_buffer_source_range_anchors.get(1)?.clone()?,
+            (*multi_buffer_source_range_anchors.get(0)?)?
+                ..(*multi_buffer_source_range_anchors.get(1)?)?,
         )
     }) else {
         return None;

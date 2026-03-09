@@ -107,7 +107,7 @@ use project::{InlayId, lsp_store::LspFoldingRange, lsp_store::TokenType};
 use serde::Deserialize;
 use smallvec::SmallVec;
 use sum_tree::{Bias, TreeMap};
-use text::{BufferId, LineIndent, Patch, ToOffset as _};
+use text::{BufferId, LineIndent, Patch};
 use ui::{SharedString, px};
 use unicode_segmentation::UnicodeSegmentation;
 use ztracing::instrument;
