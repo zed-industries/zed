@@ -120,12 +120,41 @@ pub fn write_editable_with_markers(
     }
 }
 
+/// Strip any `<|marker_N|>` tags from `text`.
+///
+/// When a marker tag sits on its own line (followed by `\n`), the trailing
+/// newline is also removed so the surrounding lines stay joined naturally.
+fn strip_marker_tags(text: &str) -> String {
+    let mut result = String::with_capacity(text.len());
+    let mut pos = 0;
+    let bytes = text.as_bytes();
+    while let Some(rel) = text[pos..].find(MARKER_TAG_PREFIX) {
+        result.push_str(&text[pos..pos + rel]);
+        let num_start = pos + rel + MARKER_TAG_PREFIX.len();
+        if let Some(suffix_rel) = text[num_start..].find(MARKER_TAG_SUFFIX) {
+            let mut tag_end = num_start + suffix_rel + MARKER_TAG_SUFFIX.len();
+            if bytes.get(tag_end) == Some(&b'\n') {
+                tag_end += 1;
+            }
+            pos = tag_end;
+        } else {
+            result.push_str(MARKER_TAG_PREFIX);
+            pos = num_start;
+        }
+    }
+    result.push_str(&text[pos..]);
+    result
+}
+
 /// Parse model output that uses the marker format.
 ///
 /// Returns `(start_marker_num, end_marker_num, content_between_markers)`.
 /// The leading format-level newline after the start marker is stripped.
 /// Trailing newlines are preserved so blank-line endings in the editable
 /// region are not lost.
+///
+/// Any extra intermediate marker tags that the model may have inserted
+/// between the first and last markers are stripped from the returned content.
 pub fn extract_marker_span(text: &str) -> Result<(usize, usize, String)> {
     let first_tag_start = text
         .find(MARKER_TAG_PREFIX)
@@ -166,7 +195,8 @@ pub fn extract_marker_span(text: &str) -> Result<(usize, usize, String)> {
     let content_end = last_tag_start;
 
     let content = &text[content_start..content_end.max(content_start)];
-    Ok((start_num, end_num, content.to_string()))
+    let content = strip_marker_tags(content);
+    Ok((start_num, end_num, content))
 }
 
 /// Given old editable text and model output with marker span, reconstruct the
@@ -332,24 +362,7 @@ pub fn extract_editable_region_from_markers(text: &str) -> Option<String> {
     }
 
     let raw = &text[content_start..content_end];
-
-    let mut result = String::with_capacity(raw.len());
-    let mut pos = 0;
-    let raw_bytes = raw.as_bytes();
-    while let Some(rel) = raw[pos..].find(MARKER_TAG_PREFIX) {
-        result.push_str(&raw[pos..pos + rel]);
-        let tag_num_start = pos + rel + MARKER_TAG_PREFIX.len();
-        let tag_suffix_pos = raw[tag_num_start..]
-            .find(MARKER_TAG_SUFFIX)
-            .map(|i| i + tag_num_start)?;
-        let mut tag_end = tag_suffix_pos + MARKER_TAG_SUFFIX.len();
-        if raw_bytes.get(tag_end) == Some(&b'\n') {
-            tag_end += 1;
-        }
-        pos = tag_end;
-    }
-    result.push_str(&raw[pos..]);
-
+    let result = strip_marker_tags(raw);
     let result = result.strip_suffix('\n').unwrap_or(&result).to_string();
     Some(result)
 }
@@ -504,5 +517,41 @@ mod tests {
         .unwrap();
         assert!(result.contains("<|user_cursor|>"), "result: {result}");
         assert!(result.contains("B<|user_cursor|>BB"), "result: {result}");
+    }
+
+    #[test]
+    fn test_extract_marker_span_strips_intermediate_markers() {
+        let text = "<|marker_2|>\nline1\n<|marker_3|>\nline2\n<|marker_4|>";
+        let (start, end, content) = extract_marker_span(text).unwrap();
+        assert_eq!(start, 2);
+        assert_eq!(end, 4);
+        assert_eq!(content, "line1\nline2\n");
+    }
+
+    #[test]
+    fn test_extract_marker_span_strips_multiple_intermediate_markers() {
+        let text = "<|marker_1|>\naaa\n<|marker_2|>\nbbb\n<|marker_3|>\nccc\n<|marker_4|>";
+        let (start, end, content) = extract_marker_span(text).unwrap();
+        assert_eq!(start, 1);
+        assert_eq!(end, 4);
+        assert_eq!(content, "aaa\nbbb\nccc\n");
+    }
+
+    #[test]
+    fn test_apply_marker_span_with_extra_intermediate_marker() {
+        let old = "aaa\nbbb\nccc\n";
+        let output = "<|marker_1|>\naaa\n<|marker_1|>\nBBB\nccc\n<|marker_2|>";
+        let result = apply_marker_span(old, output).unwrap();
+        assert_eq!(result, "aaa\nBBB\nccc\n");
+    }
+
+    #[test]
+    fn test_strip_marker_tags_inline() {
+        assert_eq!(strip_marker_tags("no markers here"), "no markers here");
+        assert_eq!(strip_marker_tags("before<|marker_5|>after"), "beforeafter");
+        assert_eq!(
+            strip_marker_tags("line1\n<|marker_3|>\nline2"),
+            "line1\nline2"
+        );
     }
 }
