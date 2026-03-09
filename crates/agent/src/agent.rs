@@ -352,6 +352,8 @@ impl NativeAgent {
         let parent_session_id = thread.parent_thread_id();
         let title = thread.title();
         let draft_prompt = thread.draft_prompt().map(Vec::from);
+        let scroll_position = thread.ui_scroll_position();
+        let token_usage = thread.latest_token_usage();
         let project = thread.project.clone();
         let action_log = thread.action_log.clone();
         let prompt_capabilities_rx = thread.prompt_capabilities_rx.clone();
@@ -359,6 +361,7 @@ impl NativeAgent {
             let mut acp_thread = acp_thread::AcpThread::new(
                 parent_session_id,
                 title,
+                None,
                 connection,
                 project.clone(),
                 action_log.clone(),
@@ -367,6 +370,8 @@ impl NativeAgent {
                 cx,
             );
             acp_thread.set_draft_prompt(draft_prompt);
+            acp_thread.set_ui_scroll_position(scroll_position);
+            acp_thread.update_token_usage(token_usage, cx);
             acp_thread
         });
 
@@ -1273,13 +1278,14 @@ impl acp_thread::AgentConnection for NativeAgentConnection {
 
     fn load_session(
         self: Rc<Self>,
-        session: AgentSessionInfo,
+        session_id: acp::SessionId,
         _project: Entity<Project>,
         _cwd: &Path,
+        _title: Option<SharedString>,
         cx: &mut App,
     ) -> Task<Result<Entity<acp_thread::AcpThread>>> {
         self.0
-            .update(cx, |agent, cx| agent.open_thread(session.session_id, cx))
+            .update(cx, |agent, cx| agent.open_thread(session_id, cx))
     }
 
     fn supports_close_session(&self) -> bool {
@@ -1486,16 +1492,6 @@ impl NativeAgentSessionList {
         }
     }
 
-    fn to_session_info(entry: DbThreadMetadata) -> AgentSessionInfo {
-        AgentSessionInfo {
-            session_id: entry.id,
-            cwd: None,
-            title: Some(entry.title),
-            updated_at: Some(entry.updated_at),
-            meta: None,
-        }
-    }
-
     pub fn thread_store(&self) -> &Entity<ThreadStore> {
         &self.thread_store
     }
@@ -1511,7 +1507,7 @@ impl AgentSessionList for NativeAgentSessionList {
             .thread_store
             .read(cx)
             .entries()
-            .map(Self::to_session_info)
+            .map(|entry| AgentSessionInfo::from(&entry))
             .collect();
         Task::ready(Ok(AgentSessionListResponse::new(sessions)))
     }
@@ -1635,6 +1631,16 @@ impl NativeThreadEnvironment {
             agent.register_session(subagent_thread.clone(), cx)
         })?;
 
+        let depth = current_depth + 1;
+
+        telemetry::event!(
+            "Subagent Started",
+            session = parent_thread_entity.read(cx).id().to_string(),
+            subagent_session = session_id.to_string(),
+            depth,
+            is_resumed = false,
+        );
+
         self.prompt_subagent(session_id, subagent_thread, acp_thread)
     }
 
@@ -1650,6 +1656,18 @@ impl NativeThreadEnvironment {
                 .ok_or_else(|| anyhow!("No subagent session found with id {session_id}"))?;
             anyhow::Ok((session.thread.clone(), session.acp_thread.clone()))
         })??;
+
+        let depth = subagent_thread.read(cx).depth();
+
+        if let Some(parent_thread_entity) = self.thread.upgrade() {
+            telemetry::event!(
+                "Subagent Started",
+                session = parent_thread_entity.read(cx).id().to_string(),
+                subagent_session = session_id.to_string(),
+                depth,
+                is_resumed = true,
+            );
+        }
 
         self.prompt_subagent(session_id, subagent_thread, acp_thread)
     }
@@ -1917,7 +1935,9 @@ mod internal_tests {
     use gpui::TestAppContext;
     use indoc::formatdoc;
     use language_model::fake_provider::{FakeLanguageModel, FakeLanguageModelProvider};
-    use language_model::{LanguageModelProviderId, LanguageModelProviderName};
+    use language_model::{
+        LanguageModelCompletionEvent, LanguageModelProviderId, LanguageModelProviderName,
+    };
     use serde_json::json;
     use settings::SettingsStore;
     use util::{path, rel_path::rel_path};
@@ -2549,6 +2569,13 @@ mod internal_tests {
         cx.run_until_parked();
 
         model.send_last_completion_stream_text_chunk("Lorem.");
+        model.send_last_completion_stream_event(LanguageModelCompletionEvent::UsageUpdate(
+            language_model::TokenUsage {
+                input_tokens: 150,
+                output_tokens: 75,
+                ..Default::default()
+            },
+        ));
         model.end_last_completion_stream();
         cx.run_until_parked();
         summary_model
@@ -2586,6 +2613,12 @@ mod internal_tests {
         ];
         acp_thread.update(cx, |thread, _cx| {
             thread.set_draft_prompt(Some(draft_blocks.clone()));
+        });
+        thread.update(cx, |thread, _cx| {
+            thread.set_ui_scroll_position(Some(gpui::ListOffset {
+                item_ix: 5,
+                offset_in_item: gpui::px(12.5),
+            }));
         });
         thread.update(cx, |_thread, cx| cx.notify());
         cx.run_until_parked();
@@ -2631,6 +2664,24 @@ mod internal_tests {
         // Ensure the draft prompt with rich content blocks survived the round-trip.
         acp_thread.read_with(cx, |thread, _| {
             assert_eq!(thread.draft_prompt(), Some(draft_blocks.as_slice()));
+        });
+
+        // Ensure token usage survived the round-trip.
+        acp_thread.read_with(cx, |thread, _| {
+            let usage = thread
+                .token_usage()
+                .expect("token usage should be restored after reload");
+            assert_eq!(usage.input_tokens, 150);
+            assert_eq!(usage.output_tokens, 75);
+        });
+
+        // Ensure scroll position survived the round-trip.
+        acp_thread.read_with(cx, |thread, _| {
+            let scroll = thread
+                .ui_scroll_position()
+                .expect("scroll position should be restored after reload");
+            assert_eq!(scroll.item_ix, 5);
+            assert_eq!(scroll.offset_in_item, gpui::px(12.5));
         });
     }
 

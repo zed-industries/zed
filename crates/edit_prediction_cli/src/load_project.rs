@@ -105,6 +105,7 @@ pub async fn run_load_project(
                 in_open_source_repo: false,
                 can_collect_data: false,
                 experiment: None,
+                repo_url: None,
             },
             language_name,
         )

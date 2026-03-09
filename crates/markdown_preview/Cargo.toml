@@ -25,6 +25,7 @@ html5ever.workspace = true
 language.workspace = true
 linkify.workspace = true
 log.workspace = true
+markdown.workspace = true
 markup5ever_rcdom.workspace = true
 pretty_assertions.workspace = true
 pulldown-cmark.workspace = true
