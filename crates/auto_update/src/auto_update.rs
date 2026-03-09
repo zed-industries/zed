@@ -380,6 +380,10 @@ impl AutoUpdater {
 
     pub fn poll(&mut self, check_type: UpdateCheckType, cx: &mut Context<Self>) {
         if self.pending_poll.is_some() {
+            if self.update_check_type == UpdateCheckType::Automatic {
+                self.update_check_type = check_type;
+                cx.notify();
+            }
             return;
         }
         self.update_check_type = check_type;
@@ -549,7 +553,7 @@ impl AutoUpdater {
                 asset,
                 metrics_id: metrics_id.as_deref(),
                 system_id: system_id.as_deref(),
-                is_staff: is_staff,
+                is_staff,
             },
         )?;
 
