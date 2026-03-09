@@ -9,6 +9,8 @@ pub mod sandbox_exec;
 pub mod sandbox_linux;
 #[cfg(target_os = "macos")]
 pub mod sandbox_macos;
+#[cfg(all(test, unix))]
+mod sandbox_tests;
 mod terminal_hyperlinks;
 pub mod terminal_settings;
 

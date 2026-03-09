@@ -47,7 +47,7 @@ pub fn apply_sandbox(config: &SandboxConfig) -> Result<()> {
 }
 
 /// Generate an SBPL (Sandbox Profile Language) profile from the sandbox config.
-fn generate_sbpl_profile(config: &SandboxConfig) -> String {
+pub(crate) fn generate_sbpl_profile(config: &SandboxConfig) -> String {
     let mut p = String::from("(version 1)\n(deny default)\n");
 
     // Process lifecycle
@@ -207,7 +207,7 @@ fn generate_sbpl_profile(config: &SandboxConfig) -> String {
     p
 }
 
-fn sbpl_escape(path: &Path) -> String {
+pub(crate) fn sbpl_escape(path: &Path) -> String {
     path.display()
         .to_string()
         .replace('\\', "\\\\")
