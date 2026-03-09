@@ -16,15 +16,24 @@ impl SyncEngine {
         }
     }
 
-    fn run_git_command(&self, args: &[&str], current_dir: Option<&PathBuf>, token: Option<&str>) -> Result<()> {
+    fn make_auth_url(repo_url: &str, token: &str) -> Result<String> {
+        if let Some(rest) = repo_url.strip_prefix("https://") {
+            Ok(format!("https://oauth2:{}@{}", token, rest))
+        } else {
+            Err(anyhow::anyhow!("Only HTTPS repository URLs are supported for token authentication"))
+        }
+    }
+
+    fn run_git_command(&self, args: &[&str], current_dir: Option<&PathBuf>) -> Result<()> {
         let mut command = Command::new("git");
         
-        if let Some(token) = token {
-            // Use a credential helper that simply returns the token
-            command.args(["-c", "credential.helper=!f() { echo \"username=PAT\"; echo \"password=$SYNC_TOKEN\"; }; f"]);
-            command.env("SYNC_TOKEN", token);
-        }
-        
+        // Strictly disable any interactive prompts
+        command.env("GIT_TERMINAL_PROMPT", "0");
+        command.env("GIT_ASKPASS", "echo");
+        command.env("SSH_ASKPASS", "echo");
+        #[cfg(target_os = "linux")]
+        command.env("DISPLAY", "");
+
         command.args(args);
         if let Some(dir) = current_dir {
             command.current_dir(dir);
@@ -33,9 +42,47 @@ impl SyncEngine {
         let output = command.output().context("Failed to execute git command")?;
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
-            return Err(anyhow::anyhow!("Git command failed: {} - {}", args.join(" "), stderr));
+            return Err(Self::classify_git_error(&stderr, None));
         }
         Ok(())
+    }
+
+    fn classify_git_error(stderr: &str, _token: Option<&str>) -> anyhow::Error {
+        let lower = stderr.to_lowercase();
+
+        if lower.contains("write access to repository not granted") {
+            return anyhow::anyhow!(
+                "Write access denied. Your token does not have write permission to this repository. \
+                Ensure the token has the 'repo' scope (not just 'read:repo')."
+            );
+        }
+        if lower.contains("remote: repository not found") || lower.contains("not found") && lower.contains("404") {
+            return anyhow::anyhow!(
+                "Repository not found. Check that the URL is correct and your token has access to it."
+            );
+        }
+        if lower.contains("could not read username")
+            || lower.contains("terminal prompts disabled")
+            || lower.contains("invalid credentials")
+            || lower.contains("authentication failed")
+            || lower.contains("401")
+        {
+            return anyhow::anyhow!(
+                "Authentication failed. Ensure your token is valid and has the 'repo' scope."
+            );
+        }
+        if lower.contains("403") || lower.contains("access denied") || lower.contains("forbidden") {
+            return anyhow::anyhow!(
+                "Access denied (403). Ensure your token has the 'repo' scope and write access to this repository."
+            );
+        }
+
+        let message = stderr.trim();
+        if message.is_empty() {
+            anyhow::anyhow!("Git operation failed with no output.")
+        } else {
+            anyhow::anyhow!("{}", message)
+        }
     }
 
     fn init_repo(&self, repo_url: &str, token: Option<&str>) -> Result<Repository> {
@@ -54,7 +101,15 @@ impl SyncEngine {
 
     fn clone_repo(&self, repo_url: &str, token: Option<&str>) -> Result<Repository> {
         log::info!("Cloning settings repository {} to {:?}", repo_url, self.mirror_dir);
-        self.run_git_command(&["clone", repo_url, self.mirror_dir.to_str().unwrap()], None, token)?;
+        let url = if let Some(token) = token {
+            Self::make_auth_url(repo_url, token)?
+        } else {
+            repo_url.to_string()
+        };
+        self.run_git_command(
+            &["clone", &url, self.mirror_dir.to_str().unwrap()],
+            None,
+        )?;
         Repository::open(&self.mirror_dir).map_err(|e| anyhow::anyhow!("Failed to open cloned repository: {}", e))
     }
 
@@ -102,9 +157,14 @@ impl SyncEngine {
             &parents,
         )?;
 
-        // Use git binary for push to leverage system auth
+        // Use git binary for push to leverage auth url with token
         log::info!("Pushing to {} on branch {}", repo_url, branch);
-        self.run_git_command(&["push", "origin", branch], Some(&self.mirror_dir), token)?;
+        let push_url = if let Some(token) = token {
+            Self::make_auth_url(repo_url, token)?
+        } else {
+            repo_url.to_string()
+        };
+        self.run_git_command(&["push", &push_url, branch], Some(&self.mirror_dir))?;
 
         Ok(())
     }
@@ -112,9 +172,14 @@ impl SyncEngine {
     pub fn pull(&self, repo_url: &str, branch: &str, token: Option<&str>) -> Result<()> {
         let _repo = self.init_repo(repo_url, token)?;
 
-        // Use git binary for pull to leverage system auth
+        // Use git binary for pull to leverage auth url with token
         log::info!("Pulling from {} on branch {}", repo_url, branch);
-        self.run_git_command(&["pull", "origin", branch, "--rebase"], Some(&self.mirror_dir), token)?;
+        let pull_url = if let Some(token) = token {
+            Self::make_auth_url(repo_url, token)?
+        } else {
+            repo_url.to_string()
+        };
+        self.run_git_command(&["pull", &pull_url, branch, "--rebase"], Some(&self.mirror_dir))?;
 
         let config_dir = paths::config_dir();
         for file_name in &["settings.json", "keymap.json", "tasks.json"] {

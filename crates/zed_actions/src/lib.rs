@@ -76,6 +76,8 @@ actions!(
         SyncSettingsToGit,
         /// Pulls and applies settings from the configured Git repository.
         PullSettingsFromGit,
+        /// Set the GitHub Personal Access Token for Settings Sync
+        SetSettingsSyncToken,
     ]
 );
 
