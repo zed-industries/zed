@@ -870,12 +870,13 @@ impl ExtensionsPage {
             )
             .child(
                 h_flex()
+                    .min_w_0()
+                    .w_full()
                     .justify_between()
                     .child(
                         h_flex()
-                            .gap_1()
-                            .flex_1()
                             .min_w_0()
+                            .gap_1()
                             .child(
                                 Icon::new(IconName::Person)
                                     .size(IconSize::XSmall)
