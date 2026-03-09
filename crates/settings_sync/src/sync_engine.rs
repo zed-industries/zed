@@ -1,4 +1,5 @@
 use std::path::PathBuf;
+use std::sync::{Arc, Mutex};
 use git2::{Repository, Signature};
 use anyhow::{Result, Context};
 use std::fs;
@@ -7,12 +8,14 @@ use std::process::Command;
 
 pub struct SyncEngine {
     mirror_dir: PathBuf,
+    lock: Arc<Mutex<()>>,
 }
 
 impl SyncEngine {
     pub fn new() -> Self {
         Self {
             mirror_dir: paths::data_dir().join("settings_sync_mirror"),
+            lock: Arc::new(Mutex::new(())),
         }
     }
 
@@ -146,6 +149,10 @@ impl SyncEngine {
     }
 
     pub fn push(&self, repo_url: &str, branch: &str, token: Option<&str>) -> Result<()> {
+        let _guard = self.lock.try_lock().map_err(|_| {
+            anyhow::anyhow!("A sync operation is already in progress. Please wait.")
+        })?;
+
         Self::check_repo_is_private(repo_url)?;
         let repo = self.init_repo(repo_url, token)?;
 
@@ -190,30 +197,46 @@ impl SyncEngine {
             &parents,
         )?;
 
-        // Use git binary for push to leverage auth url with token
         log::info!("Pushing to {} on branch {}", repo_url, branch);
         let push_url = if let Some(token) = token {
             Self::make_auth_url(repo_url, token)?
         } else {
             repo_url.to_string()
         };
-        self.run_git_command(&["push", &push_url, branch], Some(&self.mirror_dir))?;
+
+        let push_result = self.run_git_command(&["push", &push_url, branch], Some(&self.mirror_dir));
+        if let Err(ref e) = push_result {
+            let msg = e.to_string().to_lowercase();
+            if msg.contains("non-fast-forward") || msg.contains("fetch first") || msg.contains("rejected") {
+                log::info!("Push rejected (non-fast-forward), pulling and retrying");
+                self.run_git_command(&["pull", &push_url, branch, "--rebase"], Some(&self.mirror_dir))?;
+                self.run_git_command(&["push", &push_url, branch], Some(&self.mirror_dir))?;
+            } else {
+                push_result?;
+            }
+        }
 
         Ok(())
     }
 
     pub fn pull(&self, repo_url: &str, branch: &str, token: Option<&str>) -> Result<()> {
+        let _guard = self.lock.try_lock().map_err(|_| {
+            anyhow::anyhow!("A sync operation is already in progress. Please wait.")
+        })?;
+
         Self::check_repo_is_private(repo_url)?;
         let _repo = self.init_repo(repo_url, token)?;
 
-        // Use git binary for pull to leverage auth url with token
         log::info!("Pulling from {} on branch {}", repo_url, branch);
         let pull_url = if let Some(token) = token {
             Self::make_auth_url(repo_url, token)?
         } else {
             repo_url.to_string()
         };
-        self.run_git_command(&["pull", &pull_url, branch, "--rebase"], Some(&self.mirror_dir))?;
+
+        // Force overwrite local changes: fetch then hard reset to remote state
+        self.run_git_command(&["fetch", &pull_url, branch], Some(&self.mirror_dir))?;
+        self.run_git_command(&["reset", "--hard", "FETCH_HEAD"], Some(&self.mirror_dir))?;
 
         let config_dir = paths::config_dir();
         for file_name in &["settings.json", "keymap.json", "tasks.json"] {
