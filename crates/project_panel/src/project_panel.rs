@@ -6879,14 +6879,17 @@ impl Render for ProjectPanel {
                     Button::new("open_project", "Open Project")
                         .full_width()
                         .key_binding(KeyBinding::for_action_in(
-                            &workspace::Open,
+                            &workspace::Open::default(),
                             &focus_handle,
                             cx,
                         ))
                         .on_click(cx.listener(|this, _, window, cx| {
                             this.workspace
                                 .update(cx, |_, cx| {
-                                    window.dispatch_action(workspace::Open.boxed_clone(), cx);
+                                    window.dispatch_action(
+                                        workspace::Open::default().boxed_clone(),
+                                        cx,
+                                    );
                                 })
                                 .log_err();
                         })),

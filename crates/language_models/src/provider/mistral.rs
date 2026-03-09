@@ -512,6 +512,13 @@ pub fn into_mistral(
             model: model.id().to_string(),
             messages,
             stream,
+            stream_options: if stream {
+                Some(mistral::StreamOptions {
+                    stream_tool_calls: Some(true),
+                })
+            } else {
+                None
+            },
             max_tokens: max_output_tokens,
             temperature: request.temperature,
             response_format: None,
@@ -620,12 +627,16 @@ impl MistralEventMapper {
             for tool_call in tool_calls {
                 let entry = self.tool_calls_by_index.entry(tool_call.index).or_default();
 
-                if let Some(tool_id) = tool_call.id.clone() {
+                if let Some(tool_id) = tool_call.id.clone()
+                    && !tool_id.is_empty()
+                {
                     entry.id = tool_id;
                 }
 
                 if let Some(function) = tool_call.function.as_ref() {
-                    if let Some(name) = function.name.clone() {
+                    if let Some(name) = function.name.clone()
+                        && !name.is_empty()
+                    {
                         entry.name = name;
                     }
 

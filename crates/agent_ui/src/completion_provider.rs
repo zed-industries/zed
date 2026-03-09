@@ -5,7 +5,8 @@ use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 
 use crate::ThreadHistory;
-use acp_thread::{AgentSessionInfo, MentionUri};
+use acp_thread::MentionUri;
+use agent_client_protocol as acp;
 use anyhow::Result;
 use editor::{
     CompletionProvider, Editor, ExcerptId, code_context_menus::COMPLETION_MENU_MAX_WIDTH,
@@ -144,8 +145,8 @@ impl PromptContextType {
 pub(crate) enum Match {
     File(FileMatch),
     Symbol(SymbolMatch),
-    Thread(AgentSessionInfo),
-    RecentThread(AgentSessionInfo),
+    Thread(SessionMatch),
+    RecentThread(SessionMatch),
     Fetch(SharedString),
     Rules(RulesContextEntry),
     Entry(EntryMatch),
@@ -165,15 +166,19 @@ impl Match {
     }
 }
 
+#[derive(Debug, Clone)]
+pub struct SessionMatch {
+    session_id: acp::SessionId,
+    title: SharedString,
+}
+
 pub struct EntryMatch {
     mat: Option<StringMatch>,
     entry: PromptContextEntry,
 }
 
-fn session_title(session: &AgentSessionInfo) -> SharedString {
-    session
-        .title
-        .clone()
+fn session_title(title: Option<SharedString>) -> SharedString {
+    title
         .filter(|title| !title.is_empty())
         .unwrap_or_else(|| SharedString::new_static("New Thread"))
 }
@@ -266,7 +271,8 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
     }
 
     fn completion_for_thread(
-        thread_entry: AgentSessionInfo,
+        session_id: acp::SessionId,
+        title: Option<SharedString>,
         source_range: Range<Anchor>,
         recent: bool,
         source: Arc<T>,
@@ -275,9 +281,9 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
         workspace: Entity<Workspace>,
         cx: &mut App,
     ) -> Completion {
-        let title = session_title(&thread_entry);
+        let title = session_title(title);
         let uri = MentionUri::Thread {
-            id: thread_entry.session_id,
+            id: session_id,
             name: title.to_string(),
         };
 
@@ -841,7 +847,15 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
 
             Some(PromptContextType::Thread) => {
                 if let Some(history) = self.history.upgrade() {
-                    let sessions = history.read(cx).sessions().to_vec();
+                    let sessions = history
+                        .read(cx)
+                        .sessions()
+                        .iter()
+                        .map(|session| SessionMatch {
+                            session_id: session.session_id.clone(),
+                            title: session_title(session.title.clone()),
+                        })
+                        .collect::<Vec<_>>();
                     let search_task =
                         filter_sessions_by_query(query, cancellation_flag, sessions, cx);
                     cx.spawn(async move |_cx| {
@@ -1018,15 +1032,18 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
                     .read(cx)
                     .sessions()
                     .into_iter()
+                    .map(|session| SessionMatch {
+                        session_id: session.session_id.clone(),
+                        title: session_title(session.title.clone()),
+                    })
                     .filter(|session| {
                         let uri = MentionUri::Thread {
                             id: session.session_id.clone(),
-                            name: session_title(session).to_string(),
+                            name: session.title.to_string(),
                         };
                         !mentions.contains(&uri)
                     })
                     .take(RECENT_COUNT)
-                    .cloned()
                     .map(Match::RecentThread),
             );
             return Task::ready(recent);
@@ -1298,7 +1315,8 @@ impl<T: PromptCompletionProviderDelegate> CompletionProvider for PromptCompletio
                                     )
                                 }
                                 Match::Thread(thread) => Some(Self::completion_for_thread(
-                                    thread,
+                                    thread.session_id,
+                                    Some(thread.title),
                                     source_range.clone(),
                                     false,
                                     source.clone(),
@@ -1308,7 +1326,8 @@ impl<T: PromptCompletionProviderDelegate> CompletionProvider for PromptCompletio
                                     cx,
                                 )),
                                 Match::RecentThread(thread) => Some(Self::completion_for_thread(
-                                    thread,
+                                    thread.session_id,
+                                    Some(thread.title),
                                     source_range.clone(),
                                     true,
                                     source.clone(),
@@ -1878,9 +1897,9 @@ pub(crate) fn search_symbols(
 fn filter_sessions_by_query(
     query: String,
     cancellation_flag: Arc<AtomicBool>,
-    sessions: Vec<AgentSessionInfo>,
+    sessions: Vec<SessionMatch>,
     cx: &mut App,
-) -> Task<Vec<AgentSessionInfo>> {
+) -> Task<Vec<SessionMatch>> {
     if query.is_empty() {
         return Task::ready(sessions);
     }
@@ -1893,10 +1912,13 @@ fn filter_sessions_by_query(
 async fn filter_sessions(
     query: String,
     cancellation_flag: Arc<AtomicBool>,
-    sessions: Vec<AgentSessionInfo>,
+    sessions: Vec<SessionMatch>,
     executor: BackgroundExecutor,
-) -> Vec<AgentSessionInfo> {
-    let titles = sessions.iter().map(session_title).collect::<Vec<_>>();
+) -> Vec<SessionMatch> {
+    let titles = sessions
+        .iter()
+        .map(|session| session.title.clone())
+        .collect::<Vec<_>>();
     let candidates = titles
         .iter()
         .enumerate()
@@ -2338,10 +2360,14 @@ mod tests {
 
     #[gpui::test]
     async fn test_filter_sessions_by_query(cx: &mut TestAppContext) {
-        let mut alpha = AgentSessionInfo::new("session-alpha");
-        alpha.title = Some("Alpha Session".into());
-        let mut beta = AgentSessionInfo::new("session-beta");
-        beta.title = Some("Beta Session".into());
+        let alpha = SessionMatch {
+            session_id: acp::SessionId::new("session-alpha"),
+            title: "Alpha Session".into(),
+        };
+        let beta = SessionMatch {
+            session_id: acp::SessionId::new("session-beta"),
+            title: "Beta Session".into(),
+        };
 
         let sessions = vec![alpha.clone(), beta];
 

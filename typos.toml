@@ -4,6 +4,9 @@ ignore-hidden = false
 extend-exclude = [
     ".git/",
 
+    # Typewriter model names used for agent branch names aren't typos.
+    "crates/agent_ui/src/branch_names.rs",
+
     # Contributor names aren't typos.
     ".mailmap",
 

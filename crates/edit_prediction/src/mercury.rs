@@ -72,7 +72,7 @@ impl Mercury {
                     MAX_REWRITE_TOKENS,
                 );
 
-            let related_files = crate::filter_redundant_excerpts(
+            let related_files = zeta_prompt::filter_redundant_excerpts(
                 related_files,
                 full_path.as_ref(),
                 context_range.start.row..context_range.end.row,
@@ -91,7 +91,7 @@ impl Mercury {
 
             let inputs = zeta_prompt::ZetaPromptInput {
                 events,
-                related_files,
+                related_files: Some(related_files),
                 cursor_offset_in_excerpt: cursor_point.to_offset(&snapshot)
                     - context_offset_range.start,
                 cursor_path: full_path.clone(),
@@ -260,7 +260,7 @@ fn build_prompt(inputs: &ZetaPromptInput) -> String {
         &mut prompt,
         RECENTLY_VIEWED_SNIPPETS_START..RECENTLY_VIEWED_SNIPPETS_END,
         |prompt| {
-            for related_file in inputs.related_files.iter() {
+            for related_file in inputs.related_files.as_deref().unwrap_or_default().iter() {
                 for related_excerpt in &related_file.excerpts {
                     push_delimited(
                         prompt,
