@@ -94,7 +94,7 @@ impl Mercury {
                 events,
                 related_files: Some(related_files),
                 cursor_offset_in_excerpt: cursor_point.to_offset(&snapshot)
-                    - context_offset_range.start,
+                    - excerpt_offset_range.start,
                 cursor_path: full_path.clone(),
                 cursor_excerpt,
                 experiment: None,
