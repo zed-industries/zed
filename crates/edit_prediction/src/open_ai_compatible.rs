@@ -131,3 +131,23 @@ pub(crate) async fn send_custom_server_request(
         }
     }
 }
+
+pub(crate) async fn request_sweep_prompt_prediction(
+    provider: settings::EditPredictionProvider,
+    settings: &OpenAiCompatibleEditPredictionSettings,
+    prompt: String,
+    api_key: Option<Arc<str>>,
+    http_client: &Arc<dyn http_client::HttpClient>,
+) -> Result<(String, String)> {
+    send_custom_server_request(
+        provider,
+        settings,
+        prompt,
+        settings.max_output_tokens,
+        vec!["<|file_sep|>".to_string(), "</s>".to_string()],
+        api_key,
+        http_client,
+    )
+    .await
+    .context("sweep prompt request failed")
+}

@@ -209,8 +209,7 @@ pub struct CustomEditPredictionProviderSettingsContent {
     ///
     /// Default: ""
     pub model: Option<String>,
-    /// Maximum tokens to generate for FIM models.
-    /// This setting does not apply to sweep models.
+    /// Maximum tokens to generate for FIM models and self-hosted Sweep rewrite responses.
     ///
     /// Default: 256
     pub max_output_tokens: Option<u32>,
@@ -243,6 +242,7 @@ pub enum EditPredictionPromptFormat {
     CodeGemma,
     Codestral,
     Glm,
+    Sweep,
 }
 
 #[with_fallible_options]
@@ -326,8 +326,7 @@ pub struct OllamaEditPredictionSettingsContent {
     ///
     /// Default: none
     pub model: Option<OllamaModelName>,
-    /// Maximum tokens to generate for FIM models.
-    /// This setting does not apply to sweep models.
+    /// Maximum tokens to generate for FIM models and self-hosted Sweep rewrite responses.
     ///
     /// Default: 256
     pub max_output_tokens: Option<u32>,

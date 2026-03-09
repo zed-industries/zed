@@ -64,6 +64,7 @@ mod onboarding_modal;
 pub mod open_ai_response;
 mod prediction;
 pub mod sweep_ai;
+pub mod sweep_prompt;
 
 pub mod udiff;
 
@@ -162,6 +163,7 @@ pub enum EditPredictionModel {
     Zeta,
     Fim { format: EditPredictionPromptFormat },
     Sweep,
+    SweepPrompt,
     Mercury,
 }
 
@@ -172,6 +174,7 @@ pub struct EditPredictionModelInput {
     snapshot: BufferSnapshot,
     position: Anchor,
     events: Vec<Arc<zeta_prompt::Event>>,
+    stored_events: Vec<StoredEvent>,
     related_files: Vec<RelatedFile>,
     recent_paths: VecDeque<ProjectPath>,
     trigger: PredictEditsRequestTrigger,
@@ -871,7 +874,7 @@ impl EditPredictionStore {
                     .with_down(IconName::ZedPredictDown)
                     .with_error(IconName::ZedPredictError)
             }
-            EditPredictionModel::Fim { .. } => {
+            EditPredictionModel::Fim { .. } | EditPredictionModel::SweepPrompt => {
                 let settings = &all_language_settings(None, cx).edit_predictions;
                 match settings.provider {
                     EditPredictionProvider::Ollama => {
@@ -1451,7 +1454,7 @@ impl EditPredictionStore {
                     zeta::edit_prediction_accepted(self, current_prediction, cx)
                 }
             }
-            EditPredictionModel::Fim { .. } => {}
+            EditPredictionModel::Fim { .. } | EditPredictionModel::SweepPrompt => {}
         }
     }
 
@@ -1747,7 +1750,9 @@ impl EditPredictionStore {
                     cx,
                 );
             }
-            EditPredictionModel::Sweep | EditPredictionModel::Fim { .. } => {}
+            EditPredictionModel::Sweep
+            | EditPredictionModel::SweepPrompt
+            | EditPredictionModel::Fim { .. } => {}
         }
     }
 
@@ -2248,6 +2253,7 @@ impl EditPredictionStore {
             snapshot,
             position,
             events,
+            stored_events: stored_events.clone(),
             related_files,
             recent_paths,
             trigger,
@@ -2266,6 +2272,7 @@ impl EditPredictionStore {
             }
             EditPredictionModel::Fim { format } => fim::request_prediction(inputs, format, cx),
             EditPredictionModel::Sweep => self.sweep_ai.request_prediction_with_sweep(inputs, cx),
+            EditPredictionModel::SweepPrompt => sweep_prompt::request_prediction(inputs, cx),
             EditPredictionModel::Mercury => self.mercury.request_prediction(inputs, cx),
         };
 
