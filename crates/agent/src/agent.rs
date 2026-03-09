@@ -1,3 +1,4 @@
+pub mod command_queue;
 mod db;
 mod edit_agent;
 mod legacy_thread;
@@ -12,6 +13,7 @@ mod thread_store;
 mod tool_permissions;
 mod tools;
 
+pub use command_queue::{CommandQueue, configured_command_timeout};
 use context_server::ContextServerId;
 pub use db::*;
 use itertools::Itertools;

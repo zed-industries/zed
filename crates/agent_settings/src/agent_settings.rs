@@ -51,6 +51,14 @@ pub struct AgentSettings {
     pub message_editor_min_lines: usize,
     pub show_turn_stats: bool,
     pub tool_permissions: ToolPermissions,
+    pub command_timeout: CommandTimeout,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum CommandTimeout {
+    Seconds(f64),
+    Auto,
+    Never,
 }
 
 impl AgentSettings {
@@ -438,6 +446,13 @@ impl Settings for AgentSettings {
             message_editor_min_lines: agent.message_editor_min_lines.unwrap(),
             show_turn_stats: agent.show_turn_stats.unwrap(),
             tool_permissions: compile_tool_permissions(agent.tool_permissions),
+            command_timeout: match agent.command_timeout {
+                Some(settings::CommandTimeoutContent::Seconds(s)) => CommandTimeout::Seconds(s),
+                Some(settings::CommandTimeoutContent::Mode(
+                    settings::CommandTimeoutModeContent::Never,
+                )) => CommandTimeout::Never,
+                _ => CommandTimeout::Auto,
+            },
         }
     }
 }

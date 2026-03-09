@@ -305,6 +305,7 @@ pub fn init(
     cx: &mut App,
 ) {
     agent::ThreadStore::init_global(cx);
+    agent::CommandQueue::init(cx);
     assistant_text_thread::init(client, cx);
     rules_library::init(cx);
     if !is_eval {
@@ -594,6 +595,7 @@ mod tests {
             message_editor_min_lines: 1,
             tool_permissions: Default::default(),
             show_turn_stats: false,
+            command_timeout: agent_settings::CommandTimeout::Auto,
         };
 
         cx.update(|cx| {
