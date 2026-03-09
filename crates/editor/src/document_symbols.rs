@@ -1,4 +1,4 @@
-use std::{cmp, ops::Range};
+use std::ops::Range;
 
 use collections::HashMap;
 use futures::FutureExt;
@@ -8,8 +8,9 @@ use itertools::Itertools as _;
 use language::language_settings::language_settings;
 use language::{Buffer, OutlineItem};
 use multi_buffer::{Anchor, MultiBufferSnapshot};
-use text::{Bias, BufferId, OffsetRangeExt as _, ToOffset as _};
+use text::{BufferId, OffsetRangeExt as _, ToOffset as _};
 use theme::{ActiveTheme as _, SyntaxTheme};
+use unicode_segmentation::UnicodeSegmentation as _;
 
 use crate::display_map::DisplaySnapshot;
 use crate::{Editor, LSP_REQUEST_DEBOUNCE_TIMEOUT};
@@ -259,8 +260,8 @@ fn highlights_from_buffer(
     syntax_theme: &SyntaxTheme,
     cx: &App,
 ) -> Option<Vec<(Range<usize>, HighlightStyle)>> {
-    let name = &item.text;
-    if name.is_empty() {
+    let outline_text = &item.text;
+    if outline_text.is_empty() {
         return None;
     }
 
@@ -273,105 +274,57 @@ fn highlights_from_buffer(
             item.range.start.is_valid(&buffer_snapshot) && item.range.end.is_valid(&buffer_snapshot)
         })?;
 
-    let symbol_range = item.range.to_offset(&buffer_snapshot);
-    let selection_start_offset = item.source_range_for_text.start.to_offset(&buffer_snapshot);
-    let range_start_offset = symbol_range.start;
-    let range_end_offset = symbol_range.end;
+    let selection_point_range = item.source_range_for_text.to_point(&buffer_snapshot);
+    let mut search_start = selection_point_range.start;
+    search_start.column = 0;
+    let search_start_offset = search_start.to_offset(&buffer_snapshot);
+    let mut search_end = selection_point_range.end;
+    search_end.column = buffer_snapshot.line_len(search_end.row);
 
-    // Try to find the name verbatim in the buffer near the selection range.
-    let search_start = buffer_snapshot.clip_offset(
-        selection_start_offset
-            .saturating_sub(name.len())
-            .max(range_start_offset),
-        Bias::Right,
-    );
-    let search_end = buffer_snapshot.clip_offset(
-        cmp::min(selection_start_offset + name.len() * 2, range_end_offset),
-        Bias::Left,
-    );
+    let search_text = buffer_snapshot
+        .text_for_range(search_start..search_end)
+        .collect::<String>();
 
-    if search_start < search_end {
-        let buffer_text: String = buffer_snapshot
-            .text_for_range(search_start..search_end)
-            .collect();
-        if let Some(found_at) = buffer_text.find(name) {
-            let name_start_offset = search_start + found_at;
-            let name_end_offset = name_start_offset + name.len();
-            let result = highlights_for_buffer_range(
-                0,
-                name_start_offset..name_end_offset,
+    let mut outline_text_highlights = Vec::new();
+    match search_text.find(outline_text) {
+        Some(outline_name_start) => {
+            let name_buffer_offset = outline_name_start + search_start_offset;
+            outline_text_highlights.extend(display_snapshot.combined_highlights(
                 buffer_id,
-                display_snapshot,
+                name_buffer_offset..name_buffer_offset + outline_text.len(),
                 syntax_theme,
-            );
-            if result.is_some() {
-                return result;
+            ));
+        }
+        None => {
+            for (outline_text_word_start, outline_word) in outline_text.split_word_bound_indices() {
+                if let Some(outline_word_buffer_start) = search_text.find(outline_word) {
+                    let word_buffer_offset = search_start_offset + outline_word_buffer_start;
+                    outline_text_highlights.extend(
+                        display_snapshot
+                            .combined_highlights(
+                                buffer_id,
+                                word_buffer_offset..word_buffer_offset + outline_word.len(),
+                                syntax_theme,
+                            )
+                            .into_iter()
+                            .map(|(range_in_word, style)| {
+                                (
+                                    outline_text_word_start + range_in_word.start
+                                        ..outline_text_word_start + range_in_word.end,
+                                    style,
+                                )
+                            }),
+                    );
+                }
             }
         }
     }
 
-    // Fallback: match word-by-word. Split the name on whitespace and find
-    // each word sequentially in the buffer's symbol range.
-    let range_start_offset = buffer_snapshot.clip_offset(range_start_offset, Bias::Right);
-    let range_end_offset = buffer_snapshot.clip_offset(range_end_offset, Bias::Left);
-
-    let mut highlights = Vec::new();
-    let mut got_any = false;
-    let buffer_text: String = buffer_snapshot
-        .text_for_range(range_start_offset..range_end_offset)
-        .collect();
-    let mut buf_search_from = 0usize;
-    let mut name_search_from = 0usize;
-    for word in name.split_whitespace() {
-        let name_word_start = name[name_search_from..]
-            .find(word)
-            .map(|pos| name_search_from + pos)
-            .unwrap_or(name_search_from);
-        if let Some(found_in_buf) = buffer_text[buf_search_from..].find(word) {
-            let buf_word_start = range_start_offset + buf_search_from + found_in_buf;
-            let buf_word_end = buf_word_start + word.len();
-            if let Some(mut word_highlights) = highlights_for_buffer_range(
-                name_word_start,
-                buf_word_start..buf_word_end,
-                buffer_id,
-                display_snapshot,
-                syntax_theme,
-            ) {
-                got_any = true;
-                highlights.append(&mut word_highlights);
-            }
-            buf_search_from = buf_search_from + found_in_buf + word.len();
-        }
-        name_search_from = name_word_start + word.len();
+    if outline_text_highlights.is_empty() {
+        None
+    } else {
+        Some(outline_text_highlights)
     }
-
-    got_any.then_some(highlights)
-}
-
-/// Gets combined (tree-sitter + semantic token) highlights for a buffer byte
-/// range via the editor's display snapshot, then shifts the returned ranges
-/// so they start at `text_cursor_start` (the position in the outline item text).
-fn highlights_for_buffer_range(
-    text_cursor_start: usize,
-    buffer_range: Range<usize>,
-    buffer_id: BufferId,
-    display_snapshot: &DisplaySnapshot,
-    syntax_theme: &SyntaxTheme,
-) -> Option<Vec<(Range<usize>, HighlightStyle)>> {
-    let raw = display_snapshot.combined_highlights(buffer_id, buffer_range, syntax_theme);
-    if raw.is_empty() {
-        return None;
-    }
-    Some(
-        raw.into_iter()
-            .map(|(range, style)| {
-                (
-                    range.start + text_cursor_start..range.end + text_cursor_start,
-                    style,
-                )
-            })
-            .collect(),
-    )
 }
 
 #[cfg(test)]
