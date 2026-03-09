@@ -1486,34 +1486,25 @@ impl GitPanel {
         cx: &mut Context<Self>,
     ) {
         maybe!({
-            let active_repo = self.active_repository.clone()?;
-            let path = active_repo
-                .read(cx)
-                .repo_path_to_project_path(&entry.repo_path, cx)?;
-            let workspace = self.workspace.clone();
+            let repo_path = entry.repo_path.clone();
+            let filename = repo_path.file_name()?.to_string();
 
             if entry.status.staging().has_staged() {
                 self.change_file_stage(false, vec![entry.clone()], cx);
             }
-            let filename = path.path.file_name()?.to_string();
 
             if !entry.status.is_created() {
                 self.perform_checkout(vec![entry.clone()], window, cx);
             } else {
                 let prompt = prompt(&format!("Trash {}?", filename), None, window, cx);
-                cx.spawn_in(window, async move |_, cx| {
+                let entry = entry.clone();
+                cx.spawn_in(window, async move |this, cx| {
                     match prompt.await? {
                         TrashCancel::Trash => {}
                         TrashCancel::Cancel => return Ok(()),
                     }
-                    let task = workspace.update(cx, |workspace, cx| {
-                        workspace
-                            .project()
-                            .update(cx, |project, cx| project.delete_file(path, true, cx))
-                    })?;
-                    if let Some(task) = task {
-                        task.await?;
-                    }
+                    let task = this.update(cx, |this, cx| this.trash_entries(vec![entry], cx))?;
+                    task.await?;
                     Ok(())
                 })
                 .detach_and_prompt_err(
@@ -1525,6 +1516,47 @@ impl GitPanel {
             }
             Some(())
         });
+    }
+
+    fn trash_entries(
+        &self,
+        entries: Vec<GitStatusEntry>,
+        cx: &mut Context<Self>,
+    ) -> Task<anyhow::Result<()>> {
+        let project = self.project.clone();
+        let Some(active_repository) = self.active_repository.clone() else {
+            return Task::ready(Ok(()));
+        };
+
+        cx.spawn(async move |_, cx| {
+            let mut repo_paths_to_trash = Vec::new();
+
+            for entry in entries {
+                let project_path = active_repository.read_with(cx, |repo, cx| {
+                    repo.repo_path_to_project_path(&entry.repo_path, cx)
+                });
+
+                if let Some(project_path) = project_path {
+                    let task = project.update(cx, |project, cx| {
+                        project.delete_file(project_path, true, cx)
+                    });
+                    if let Some(task) = task {
+                        task.await?;
+                        continue;
+                    }
+                }
+
+                repo_paths_to_trash.push(entry.repo_path);
+            }
+
+            if !repo_paths_to_trash.is_empty() {
+                let task = active_repository
+                    .update(cx, |repo, cx| repo.trash_paths(repo_paths_to_trash, cx));
+                task.await?;
+            }
+
+            Ok(())
+        })
     }
 
     fn perform_checkout(
@@ -1654,10 +1686,6 @@ impl GitPanel {
     }
 
     fn clean_all(&mut self, _: &TrashUntrackedFiles, window: &mut Window, cx: &mut Context<Self>) {
-        let workspace = self.workspace.clone();
-        let Some(active_repo) = self.active_repository.clone() else {
-            return;
-        };
         let to_delete = self
             .entries
             .iter()
@@ -1695,27 +1723,14 @@ impl GitPanel {
                 TrashCancel::Trash => {}
                 TrashCancel::Cancel => return Ok(()),
             }
-            let tasks = workspace.update(cx, |workspace, cx| {
-                to_delete
-                    .iter()
-                    .filter_map(|entry| {
-                        workspace.project().update(cx, |project, cx| {
-                            let project_path = active_repo
-                                .read(cx)
-                                .repo_path_to_project_path(&entry.repo_path, cx)?;
-                            project.delete_file(project_path, true, cx)
-                        })
-                    })
-                    .collect::<Vec<_>>()
-            })?;
             let to_unstage = to_delete
-                .into_iter()
+                .iter()
                 .filter(|entry| !entry.status.staging().is_fully_unstaged())
+                .cloned()
                 .collect();
             this.update(cx, |this, cx| this.change_file_stage(false, to_unstage, cx))?;
-            for task in tasks {
-                task.await?;
-            }
+            let task = this.update(cx, |this, cx| this.trash_entries(to_delete, cx))?;
+            task.await?;
             Ok(())
         })
         .detach_and_prompt_err("Failed to trash files", window, cx, |e, _, _| {
@@ -6398,7 +6413,7 @@ mod tests {
     };
     use gpui::{TestAppContext, UpdateGlobal, VisualTestContext};
     use indoc::indoc;
-    use project::FakeFs;
+    use project::{FakeFs, Fs as _};
     use serde_json::json;
     use settings::SettingsStore;
     use theme::LoadThemes;
@@ -6584,6 +6599,118 @@ mod tests {
                 },),
             ],
         );
+    }
+
+    #[gpui::test]
+    async fn test_trash_untracked_repo_root_entry_from_subdirectory_worktree(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(
+            "/root",
+            json!({
+                "zed": {
+                    ".git": {},
+                    "foo": "",
+                    "crates": {
+                        "gpui": {
+                            "gpui.rs": "fn main() {}\n"
+                        }
+                    }
+                },
+            }),
+        )
+        .await;
+
+        fs.set_head_and_index_for_repo(
+            Path::new(path!("/root/zed/.git")),
+            &[("crates/gpui/gpui.rs", "fn main() {}\n".into())],
+        );
+
+        let project =
+            Project::test(fs.clone(), [path!("/root/zed/crates/gpui").as_ref()], cx).await;
+        project
+            .update(cx, |project, cx| project.git_scans_complete(cx))
+            .await;
+
+        let window_handle =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = window_handle
+            .read_with(cx, |mw, _| mw.workspace().clone())
+            .unwrap();
+        let cx = &mut VisualTestContext::from_window(window_handle.into(), cx);
+
+        cx.read(|cx| {
+            project
+                .read(cx)
+                .worktrees(cx)
+                .next()
+                .unwrap()
+                .read(cx)
+                .as_local()
+                .unwrap()
+                .scan_complete()
+        })
+        .await;
+
+        cx.executor().run_until_parked();
+
+        let panel = workspace.update_in(cx, GitPanel::new);
+
+        let handle = cx.update_window_entity(&panel, |panel, _, _| {
+            std::mem::replace(&mut panel.update_visible_entries_task, Task::ready(()))
+        });
+        cx.executor().advance_clock(2 * UPDATE_DEBOUNCE);
+        handle.await;
+
+        let entry = panel.read_with(cx, |panel, _| {
+            panel
+                .entries
+                .iter()
+                .find_map(|entry| match entry {
+                    GitListEntry::Status(status) if status.repo_path == repo_path("foo") => {
+                        Some(status.clone())
+                    }
+                    _ => None,
+                })
+                .expect("repo-root untracked entry should be visible")
+        });
+
+        let task = panel.update(cx, |panel, cx| panel.trash_entries(vec![entry], cx));
+        task.await.unwrap();
+
+        cx.executor().run_until_parked();
+
+        let handle = cx.update_window_entity(&panel, |panel, _, _| {
+            std::mem::replace(&mut panel.update_visible_entries_task, Task::ready(()))
+        });
+        cx.executor().advance_clock(2 * UPDATE_DEBOUNCE);
+        handle.await;
+
+        assert!(!fs.is_file(Path::new(path!("/root/zed/foo"))).await);
+
+        let active_repository = panel.read_with(cx, |panel, _| {
+            panel
+                .active_repository
+                .clone()
+                .expect("active repository should exist")
+        });
+        active_repository.read_with(cx, |repo, _| {
+            assert_eq!(
+                repo.work_directory_abs_path,
+                Path::new(path!("/root/zed")).into()
+            );
+            assert_eq!(repo.status_for_path(&repo_path("foo")), None);
+        });
+
+        panel.read_with(cx, |panel, _| {
+            assert!(!panel.entries.iter().any(|entry| {
+                entry
+                    .status_entry()
+                    .is_some_and(|status| status.repo_path == repo_path("foo"))
+            }));
+        });
     }
 
     #[gpui::test]

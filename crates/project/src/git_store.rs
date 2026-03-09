@@ -17,7 +17,7 @@ use buffer_diff::{BufferDiff, BufferDiffEvent};
 use client::ProjectId;
 use collections::HashMap;
 pub use conflict_set::{ConflictRegion, ConflictSet, ConflictSetSnapshot, ConflictSetUpdate};
-use fs::Fs;
+use fs::{Fs, RemoveOptions};
 use futures::{
     FutureExt, StreamExt,
     channel::{
@@ -4197,6 +4197,67 @@ impl Repository {
         let worktree_store = git_store.read(cx).worktree_store.read(cx);
         let abs_path = worktree_store.absolutize(path, cx)?;
         self.snapshot.abs_path_to_repo_path(&abs_path)
+    }
+
+    pub fn trash_paths(
+        &mut self,
+        paths: Vec<RepoPath>,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<()>> {
+        if paths.is_empty() {
+            return Task::ready(Ok(()));
+        }
+
+        let abs_paths = paths
+            .iter()
+            .map(|path| self.snapshot.repo_path_to_abs_path(path))
+            .collect::<Vec<_>>();
+        self.spawn_job_with_tracking(
+            paths.clone(),
+            pending_op::GitStatus::Reverted,
+            cx,
+            async move |this, cx| {
+                this.update(cx, |this, _| {
+                    this.send_job(Some("trash files".into()), move |git_repo, _| {
+                        let abs_paths = abs_paths.clone();
+                        async move {
+                            match git_repo {
+                                RepositoryState::Local(LocalRepositoryState { fs, .. }) => {
+                                    for abs_path in abs_paths {
+                                        let metadata = fs.metadata(&abs_path).await?.with_context(
+                                            || format!("missing path to trash: {abs_path:?}"),
+                                        )?;
+                                        if metadata.is_dir {
+                                            fs.trash_dir(
+                                                &abs_path,
+                                                RemoveOptions {
+                                                    recursive: true,
+                                                    ignore_if_not_exists: false,
+                                                },
+                                            )
+                                            .await?;
+                                        } else {
+                                            fs.trash_file(&abs_path, Default::default()).await?;
+                                        }
+                                    }
+                                    Ok(())
+                                }
+                                RepositoryState::Remote(_) => {
+                                    bail!("Trashing untracked files outside opened worktrees is not supported for remote repositories")
+                                }
+                            }
+                        }
+                    })
+                })?
+                .await??;
+
+                this.update(cx, |this, cx| {
+                    this.paths_changed(paths, None, cx);
+                })?;
+
+                Ok(())
+            },
+        )
     }
 
     pub fn contains_sub_repo(&self, other: &Entity<Self>, cx: &App) -> bool {
