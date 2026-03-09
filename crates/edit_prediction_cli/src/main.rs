@@ -762,7 +762,7 @@ async fn load_examples(
             "skipping Snowflake inputs because --limit is already satisfied by example files"
         );
     } else {
-        let max_rows_per_timestamp = remaining_limit_for_snowflake.unwrap_or(5000);
+        let max_rows_per_timestamp = remaining_limit_for_snowflake;
 
         if !rejected_after_timestamps.is_empty() {
             rejected_after_timestamps.sort();
