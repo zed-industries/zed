@@ -1280,6 +1280,7 @@ pub struct Editor {
     show_selection_menu: Option<bool>,
     blame: Option<Entity<GitBlame>>,
     blame_subscription: Option<Subscription>,
+    pending_blame_hover_observation: Option<Subscription>,
     custom_context_menu: Option<
         Box<
             dyn 'static
@@ -2528,6 +2529,7 @@ impl Editor {
             }),
             blame: None,
             blame_subscription: None,
+            pending_blame_hover_observation: None,
             tasks: BTreeMap::default(),
 
             breakpoint_store,
@@ -7304,6 +7306,29 @@ impl Editor {
     }
 
     pub fn blame_hover(&mut self, _: &BlameHover, window: &mut Window, cx: &mut Context<Self>) {
+        let just_started = self.blame.is_none();
+        if just_started {
+            self.start_git_blame(true, window, cx);
+        }
+        let Some(blame) = self.blame.as_ref() else {
+            return;
+        };
+
+        if just_started && !blame.read(cx).has_generated_entries() {
+            let subscription = cx.observe_in(blame, window, |editor, blame, window, cx| {
+                if blame.read(cx).has_generated_entries() {
+                    editor.pending_blame_hover_observation.take();
+                    editor.show_blame_hover_popover(window, cx);
+                }
+            });
+            self.pending_blame_hover_observation = Some(subscription);
+            return;
+        }
+
+        self.show_blame_hover_popover(window, cx);
+    }
+
+    fn show_blame_hover_popover(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let snapshot = self.snapshot(window, cx);
         let cursor = self
             .selections
@@ -7314,9 +7339,6 @@ impl Editor {
             return;
         };
 
-        if self.blame.is_none() {
-            self.start_git_blame(true, window, cx);
-        }
         let Some(blame) = self.blame.as_ref() else {
             return;
         };

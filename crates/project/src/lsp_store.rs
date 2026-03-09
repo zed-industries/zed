@@ -140,7 +140,7 @@ use util::{
     paths::{PathStyle, SanitizedPath, UrlExt},
     post_inc,
     redact::redact_command,
-    rel_path::RelPath,
+    rel_path::{RelPath, RelPathBuf},
 };
 
 pub use document_colors::DocumentColors;
@@ -9258,12 +9258,13 @@ impl LspStore {
             cx.clone(),
         )
         .await;
-        this.read_with(&cx, |this, _| {
+        this.read_with(&cx, |this, cx| {
             this.did_rename_entry(
                 old_worktree_id,
                 &old_abs_path,
                 &new_abs_path,
                 old_entry.is_dir(),
+                cx,
             );
         });
         response
@@ -9696,34 +9697,63 @@ impl LspStore {
         old_path: &Path,
         new_path: &Path,
         is_dir: bool,
+        cx: &App,
     ) {
         maybe!({
             let local_store = self.as_local()?;
 
-            let old_uri = lsp::Uri::from_file_path(old_path)
-                .ok()
-                .map(|uri| uri.to_string())?;
-            let new_uri = lsp::Uri::from_file_path(new_path)
-                .ok()
-                .map(|uri| uri.to_string())?;
+            if is_dir {
+                let file_renames =
+                    Self::expand_directory_rename(local_store, worktree_id, old_path, new_path, cx);
 
-            for language_server in local_store.language_servers_for_worktree(worktree_id) {
-                let Some(filter) = local_store
-                    .language_server_paths_watched_for_rename
-                    .get(&language_server.server_id())
-                else {
-                    continue;
-                };
+                for language_server in local_store.language_servers_for_worktree(worktree_id) {
+                    let Some(filter) = local_store
+                        .language_server_paths_watched_for_rename
+                        .get(&language_server.server_id())
+                    else {
+                        continue;
+                    };
 
-                if filter.should_send_did_rename(&old_uri, is_dir) {
-                    language_server
-                        .notify::<DidRenameFiles>(RenameFilesParams {
-                            files: vec![FileRename {
-                                old_uri: old_uri.clone(),
-                                new_uri: new_uri.clone(),
-                            }],
+                    let files: Vec<FileRename> = file_renames
+                        .iter()
+                        .filter(|rename| {
+                            filter.should_send_did_rename(&rename.old_uri, false)
                         })
-                        .ok();
+                        .cloned()
+                        .collect();
+
+                    if !files.is_empty() {
+                        language_server
+                            .notify::<DidRenameFiles>(RenameFilesParams { files })
+                            .ok();
+                    }
+                }
+            } else {
+                let old_uri = lsp::Uri::from_file_path(old_path)
+                    .ok()
+                    .map(|uri| uri.to_string())?;
+                let new_uri = lsp::Uri::from_file_path(new_path)
+                    .ok()
+                    .map(|uri| uri.to_string())?;
+
+                for language_server in local_store.language_servers_for_worktree(worktree_id) {
+                    let Some(filter) = local_store
+                        .language_server_paths_watched_for_rename
+                        .get(&language_server.server_id())
+                    else {
+                        continue;
+                    };
+
+                    if filter.should_send_did_rename(&old_uri, false) {
+                        language_server
+                            .notify::<DidRenameFiles>(RenameFilesParams {
+                                files: vec![FileRename {
+                                    old_uri: old_uri.clone(),
+                                    new_uri: new_uri.clone(),
+                                }],
+                            })
+                            .ok();
+                    }
                 }
             }
             Some(())
@@ -9738,18 +9768,35 @@ impl LspStore {
         is_dir: bool,
         cx: AsyncApp,
     ) -> Task<ProjectTransaction> {
-        let old_uri = lsp::Uri::from_file_path(old_path)
-            .ok()
-            .map(|uri| uri.to_string());
-        let new_uri = lsp::Uri::from_file_path(new_path)
-            .ok()
-            .map(|uri| uri.to_string());
+        let old_path = old_path.to_path_buf();
+        let new_path = new_path.to_path_buf();
         cx.spawn(async move |cx| {
             let mut tasks = vec![];
             this.update(cx, |this, cx| {
                 let local_store = this.as_local()?;
-                let old_uri = old_uri?;
-                let new_uri = new_uri?;
+
+                let file_renames = if is_dir {
+                    Self::expand_directory_rename(
+                        local_store,
+                        worktree_id,
+                        &old_path,
+                        &new_path,
+                        cx,
+                    )
+                } else {
+                    let old_uri = lsp::Uri::from_file_path(&old_path)
+                        .ok()
+                        .map(|uri| uri.to_string())?;
+                    let new_uri = lsp::Uri::from_file_path(&new_path)
+                        .ok()
+                        .map(|uri| uri.to_string())?;
+                    vec![FileRename { old_uri, new_uri }]
+                };
+
+                if file_renames.is_empty() {
+                    return Some(());
+                }
+
                 for language_server in local_store.language_servers_for_worktree(worktree_id) {
                     let Some(filter) = local_store
                         .language_server_paths_watched_for_rename
@@ -9758,23 +9805,28 @@ impl LspStore {
                         continue;
                     };
 
-                    if !filter.should_send_will_rename(&old_uri, is_dir) {
+                    let files: Vec<FileRename> = file_renames
+                        .iter()
+                        .filter(|rename| {
+                            filter.should_send_will_rename(&rename.old_uri, false)
+                        })
+                        .cloned()
+                        .collect();
+
+                    if files.is_empty() {
                         continue;
                     }
+
                     let request_timeout = ProjectSettings::get_global(cx)
                         .global_lsp_settings
                         .get_request_timeout();
 
                     let apply_edit = cx.spawn({
-                        let old_uri = old_uri.clone();
-                        let new_uri = new_uri.clone();
                         let language_server = language_server.clone();
                         async move |this, cx| {
                             let edit = language_server
                                 .request::<WillRenameFiles>(
-                                    RenameFilesParams {
-                                        files: vec![FileRename { old_uri, new_uri }],
-                                    },
+                                    RenameFilesParams { files },
                                     request_timeout,
                                 )
                                 .await
@@ -9812,6 +9864,97 @@ impl LspStore {
             }
             merged_transaction
         })
+    }
+
+    fn expand_directory_rename(
+        local_store: &LocalLspStore,
+        worktree_id: WorktreeId,
+        old_abs_path: &Path,
+        new_abs_path: &Path,
+        cx: &App,
+    ) -> Vec<FileRename> {
+        let worktree = local_store
+            .worktree_store
+            .read(cx)
+            .worktree_for_id(worktree_id, cx);
+        let Some(worktree) = worktree else {
+            return Vec::new();
+        };
+        let worktree = worktree.read(cx);
+        let worktree_root = worktree.abs_path();
+        let snapshot = worktree.snapshot();
+
+        let to_rel_path = |abs: &Path| -> Option<RelPathBuf> {
+            let stripped = abs.strip_prefix(&*worktree_root).ok()?;
+            RelPath::new(stripped, PathStyle::local())
+                .ok()
+                .map(|cow| cow.into_owned())
+        };
+
+        let relative_old = to_rel_path(old_abs_path);
+        let relative_new = to_rel_path(new_abs_path);
+
+        // For will_rename, the old path still exists in the snapshot.
+        // For did_rename, the new path exists. Try both to find entries.
+        let (traverse_rel_path, is_old_path) = if let Some(ref rel) = relative_old {
+            if snapshot.entry_for_path(rel).is_some() {
+                (rel.clone(), true)
+            } else if let Some(ref rel_new) = relative_new {
+                if snapshot.entry_for_path(rel_new).is_some() {
+                    (rel_new.clone(), false)
+                } else {
+                    return Vec::new();
+                }
+            } else {
+                return Vec::new();
+            }
+        } else if let Some(ref rel_new) = relative_new {
+            if snapshot.entry_for_path(rel_new).is_some() {
+                (rel_new.clone(), false)
+            } else {
+                return Vec::new();
+            }
+        } else {
+            return Vec::new();
+        };
+
+        let mut file_renames = Vec::new();
+        let traversal = snapshot.traverse_from_path(true, false, true, &traverse_rel_path);
+        for entry in traversal {
+            if !entry.path.starts_with(&traverse_rel_path) {
+                break;
+            }
+            if !entry.is_file() {
+                continue;
+            }
+
+            let Ok(relative_to_dir) = entry.path.strip_prefix(&traverse_rel_path) else {
+                continue;
+            };
+
+            let (file_old_abs, file_new_abs) = if is_old_path {
+                let file_old_abs = worktree_root.join(entry.path.as_std_path());
+                let file_new_abs = new_abs_path.join(relative_to_dir.as_std_path());
+                (file_old_abs, file_new_abs)
+            } else {
+                let file_new_abs = worktree_root.join(entry.path.as_std_path());
+                let file_old_abs = old_abs_path.join(relative_to_dir.as_std_path());
+                (file_old_abs, file_new_abs)
+            };
+
+            let old_uri = lsp::Uri::from_file_path(&file_old_abs)
+                .ok()
+                .map(|uri| uri.to_string());
+            let new_uri = lsp::Uri::from_file_path(&file_new_abs)
+                .ok()
+                .map(|uri| uri.to_string());
+
+            if let (Some(old_uri), Some(new_uri)) = (old_uri, new_uri) {
+                file_renames.push(FileRename { old_uri, new_uri });
+            }
+        }
+
+        file_renames
     }
 
     fn lsp_notify_abs_paths_changed(
