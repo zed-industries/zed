@@ -1143,7 +1143,7 @@ impl OutlinePanel {
                             .excerpts_for_buffer(buffer.read(cx).remote_id(), cx)
                     })
                     .and_then(|excerpts| {
-                        let (excerpt_id, excerpt_range) = excerpts.first()?;
+                        let (excerpt_id, _, excerpt_range) = excerpts.first()?;
                         multi_buffer_snapshot
                             .anchor_in_excerpt(*excerpt_id, excerpt_range.context.start)
                     })
