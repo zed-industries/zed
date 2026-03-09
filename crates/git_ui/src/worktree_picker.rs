@@ -39,7 +39,7 @@ pub fn open(
     window: &mut Window,
     cx: &mut Context<Workspace>,
 ) {
-    let repository = workspace.project().read(cx).active_repository(cx);
+    let repository = workspace.effective_active_repository(cx);
     let workspace_handle = workspace.weak_handle();
     workspace.toggle_modal(window, cx, |window, cx| {
         WorktreeList::new(repository, workspace_handle, rems(34.), window, cx)

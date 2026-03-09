@@ -90,6 +90,7 @@ use project::{
     DirectoryLister, Project, ProjectEntryId, ProjectPath, ResolvedPath, Worktree, WorktreeId,
     WorktreeSettings,
     debugger::{breakpoint_store::BreakpointStoreEvent, session::ThreadStatus},
+    git_store::Repository,
     project_settings::ProjectSettings,
     toolchain_store::ToolchainStoreEvent,
     trusted_worktrees::{RemoteHostLocation, TrustedWorktrees, TrustedWorktreesEvent},
@@ -2661,6 +2662,46 @@ impl Workspace {
     pub fn clear_active_worktree_override(&mut self, cx: &mut Context<Self>) {
         self.active_worktree_override = None;
         cx.notify();
+    }
+
+    pub fn effective_active_worktree(&self, cx: &App) -> Option<Entity<Worktree>> {
+        let project = self.project.read(cx);
+
+        if let Some(override_id) = self.active_worktree_override()
+            && let Some(worktree) = project.worktree_for_id(override_id, cx)
+        {
+            return Some(worktree);
+        }
+
+        if let Some(repo) = project.active_repository(cx) {
+            let repo = repo.read(cx);
+            let repo_path = &repo.work_directory_abs_path;
+
+            for worktree in project.visible_worktrees(cx) {
+                let worktree_path = worktree.read(cx).abs_path();
+                if worktree_path == *repo_path || worktree_path.starts_with(repo_path.as_ref()) {
+                    return Some(worktree);
+                }
+            }
+        }
+
+        project.visible_worktrees(cx).next()
+    }
+
+    pub fn effective_active_repository(&self, cx: &App) -> Option<Entity<Repository>> {
+        let worktree = self.effective_active_worktree(cx)?;
+        let worktree_abs_path = worktree.read(cx).abs_path();
+        let project = self.project.read(cx);
+        let git_store = project.git_store().read(cx);
+
+        git_store
+            .repositories()
+            .values()
+            .find(|repo| {
+                let repo_path = &repo.read(cx).work_directory_abs_path;
+                *repo_path == worktree_abs_path || worktree_abs_path.starts_with(repo_path.as_ref())
+            })
+            .cloned()
     }
 
     /// Call the given callback with a workspace whose project is local or remote via WSL (allowing host access).
@@ -9973,7 +10014,7 @@ pub fn with_active_or_new_workspace(
 
 #[cfg(test)]
 mod tests {
-    use std::{cell::RefCell, rc::Rc};
+    use std::{cell::RefCell, path::Path, rc::Rc};
 
     use super::*;
     use crate::{
@@ -10134,6 +10175,96 @@ mod tests {
         // Remove a project folder
         project.update(cx, |project, cx| project.remove_worktree(worktree_id, cx));
         assert_eq!(cx.window_title().as_deref(), Some("root2 — one.txt"));
+    }
+
+    #[gpui::test]
+    async fn test_effective_active_worktree_prefers_override_then_active_repo(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            "/project_a",
+            json!({
+                ".git": {},
+                "a.txt": "CHANGED_A\n",
+            }),
+        )
+        .await;
+        fs.insert_tree(
+            "/project_b",
+            json!({
+                ".git": {},
+                "b.txt": "CHANGED_B\n",
+            }),
+        )
+        .await;
+
+        fs.set_head_and_index_for_repo(
+            Path::new("/project_a/.git"),
+            &[("a.txt", "original_a\n".to_string())],
+        );
+        fs.set_head_and_index_for_repo(
+            Path::new("/project_b/.git"),
+            &[("b.txt", "original_b\n".to_string())],
+        );
+
+        let project = Project::test(
+            fs.clone(),
+            [Path::new("/project_a"), Path::new("/project_b")],
+            cx,
+        )
+        .await;
+
+        let (worktree_a_id, worktree_b_id) = project.read_with(cx, |project, cx| {
+            let mut worktrees: Vec<_> = project.worktrees(cx).collect();
+            worktrees.sort_by_key(|worktree| worktree.read(cx).abs_path());
+            (worktrees[0].read(cx).id(), worktrees[1].read(cx).id())
+        });
+
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        cx.run_until_parked();
+
+        workspace.update(cx, |workspace, cx| {
+            workspace.set_active_worktree_override(Some(worktree_a_id), cx);
+        });
+        let effective_override = workspace.read_with(cx, |workspace, cx| {
+            workspace
+                .effective_active_worktree(cx)
+                .map(|worktree| worktree.read(cx).id())
+        });
+        assert_eq!(effective_override, Some(worktree_a_id));
+
+        workspace.update(cx, |workspace, cx| {
+            workspace.clear_active_worktree_override(cx);
+        });
+        project.update(cx, |project, cx| {
+            project.git_store().update(cx, |git_store, cx| {
+                git_store.set_active_repo_for_path(
+                    &ProjectPath {
+                        worktree_id: worktree_b_id,
+                        path: rel_path("b.txt").into(),
+                    },
+                    cx,
+                );
+            });
+        });
+
+        let effective_active_repo = workspace.read_with(cx, |workspace, cx| {
+            workspace
+                .effective_active_worktree(cx)
+                .map(|worktree| worktree.read(cx).id())
+        });
+        assert_eq!(effective_active_repo, Some(worktree_b_id));
+
+        let effective_repository = workspace.read_with(cx, |workspace, cx| {
+            workspace
+                .effective_active_repository(cx)
+                .map(|repository| repository.read(cx).work_directory_abs_path.clone())
+        });
+        assert_eq!(effective_repository, Some(Path::new("/project_b").into()));
     }
 
     #[gpui::test]

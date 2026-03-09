@@ -149,22 +149,9 @@ fn get_open_folders(workspace: &Workspace, cx: &App) -> Vec<OpenFolderEntry> {
         return Vec::new();
     }
 
-    let active_worktree_id = workspace.active_worktree_override().or_else(|| {
-        if let Some(repo) = project.active_repository(cx) {
-            let repo = repo.read(cx);
-            let repo_path = &repo.work_directory_abs_path;
-            for worktree in project.visible_worktrees(cx) {
-                let worktree_path = worktree.read(cx).abs_path();
-                if worktree_path == *repo_path || worktree_path.starts_with(repo_path.as_ref()) {
-                    return Some(worktree.read(cx).id());
-                }
-            }
-        }
-        project
-            .visible_worktrees(cx)
-            .next()
-            .map(|wt| wt.read(cx).id())
-    });
+    let active_worktree_id = workspace
+        .effective_active_worktree(cx)
+        .map(|worktree| worktree.read(cx).id());
 
     let git_store = project.git_store().read(cx);
     let repositories: Vec<_> = git_store.repositories().values().cloned().collect();

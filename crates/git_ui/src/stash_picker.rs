@@ -35,7 +35,7 @@ pub fn open(
     window: &mut Window,
     cx: &mut Context<Workspace>,
 ) {
-    let repository = workspace.project().read(cx).active_repository(cx);
+    let repository = workspace.effective_active_repository(cx);
     let weak_workspace = workspace.weak_handle();
     workspace.toggle_modal(window, cx, |window, cx| {
         StashList::new(repository, weak_workspace, rems(34.), window, cx)

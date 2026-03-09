@@ -417,29 +417,11 @@ impl TitleBar {
     /// - Otherwise, derive from the active repository
     /// - Fall back to the first visible worktree
     pub fn effective_active_worktree(&self, cx: &App) -> Option<Entity<project::Worktree>> {
-        let project = self.project.read(cx);
-
         if let Some(workspace) = self.workspace.upgrade() {
-            if let Some(override_id) = workspace.read(cx).active_worktree_override() {
-                if let Some(worktree) = project.worktree_for_id(override_id, cx) {
-                    return Some(worktree);
-                }
-            }
+            return workspace.read(cx).effective_active_worktree(cx);
         }
 
-        if let Some(repo) = project.active_repository(cx) {
-            let repo = repo.read(cx);
-            let repo_path = &repo.work_directory_abs_path;
-
-            for worktree in project.visible_worktrees(cx) {
-                let worktree_path = worktree.read(cx).abs_path();
-                if worktree_path == *repo_path || worktree_path.starts_with(repo_path.as_ref()) {
-                    return Some(worktree);
-                }
-            }
-        }
-
-        project.visible_worktrees(cx).next()
+        self.project.read(cx).visible_worktrees(cx).next()
     }
 
     pub fn set_active_worktree_override(
