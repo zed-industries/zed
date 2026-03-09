@@ -82,6 +82,8 @@ actions!(
         NewTextThread,
         /// Toggles the menu to create new agent threads.
         ToggleNewThreadMenu,
+        /// Toggles the selector for choosing where new threads start (current project or new worktree).
+        ToggleStartThreadInSelector,
         /// Toggles the navigation menu for switching between threads and views.
         ToggleNavigationMenu,
         /// Toggles the options menu for agent settings and preferences.
