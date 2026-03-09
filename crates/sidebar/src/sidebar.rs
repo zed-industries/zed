@@ -89,6 +89,7 @@ enum ListEntry {
     ViewMore {
         path_list: PathList,
         remaining_count: usize,
+        is_fully_expanded: bool,
     },
     NewThread {
         path_list: PathList,
@@ -174,7 +175,7 @@ pub struct Sidebar {
     focused_thread: Option<acp::SessionId>,
     active_entry_index: Option<usize>,
     collapsed_groups: HashSet<PathList>,
-    expanded_groups: HashSet<PathList>,
+    expanded_groups: HashMap<PathList, usize>,
 }
 
 impl EventEmitter<SidebarEvent> for Sidebar {}
@@ -269,7 +270,7 @@ impl Sidebar {
             focused_thread: None,
             active_entry_index: None,
             collapsed_groups: HashSet::new(),
-            expanded_groups: HashSet::new(),
+            expanded_groups: HashMap::new(),
         }
     }
 
@@ -579,21 +580,20 @@ impl Sidebar {
                 }
 
                 let total = threads.len();
-                let show_view_more =
-                    total > DEFAULT_THREADS_SHOWN && !self.expanded_groups.contains(&path_list);
 
-                let count = if show_view_more {
-                    DEFAULT_THREADS_SHOWN
-                } else {
-                    total
-                };
+                let extra_batches = self.expanded_groups.get(&path_list).copied().unwrap_or(0);
+                let threads_to_show =
+                    DEFAULT_THREADS_SHOWN + (extra_batches * DEFAULT_THREADS_SHOWN);
+                let count = threads_to_show.min(total);
+                let is_fully_expanded = count >= total;
 
                 entries.extend(threads.into_iter().take(count));
 
-                if show_view_more {
+                if total > DEFAULT_THREADS_SHOWN {
                     entries.push(ListEntry::ViewMore {
                         path_list: path_list.clone(),
-                        remaining_count: total - DEFAULT_THREADS_SHOWN,
+                        remaining_count: total.saturating_sub(count),
+                        is_fully_expanded,
                     });
                 }
 
@@ -720,7 +720,15 @@ impl Sidebar {
             ListEntry::ViewMore {
                 path_list,
                 remaining_count,
-            } => self.render_view_more(ix, path_list, *remaining_count, is_selected, cx),
+                is_fully_expanded,
+            } => self.render_view_more(
+                ix,
+                path_list,
+                *remaining_count,
+                *is_fully_expanded,
+                is_selected,
+                cx,
+            ),
             ListEntry::NewThread {
                 path_list,
                 workspace,
@@ -766,6 +774,8 @@ impl Sidebar {
         let workspace_for_remove = workspace.clone();
         // let workspace_for_activate = workspace.clone();
         let path_list_for_toggle = path_list.clone();
+        let path_list_for_collapse = path_list.clone();
+        let is_expanded = self.expanded_groups.contains_key(path_list);
         let multi_workspace = self.multi_workspace.upgrade();
         let workspace_count = multi_workspace
             .as_ref()
@@ -851,6 +861,25 @@ impl Sidebar {
                                     this.remove_workspace(&workspace_for_remove, window, cx);
                                 },
                             )),
+                        )
+                    })
+                    .when(is_expanded, |this| {
+                        this.child(
+                            IconButton::new(
+                                SharedString::from(format!("project-header-collapse-{}", ix)),
+                                IconName::ListCollapse,
+                            )
+                            .icon_size(IconSize::Small)
+                            .icon_color(Color::Muted)
+                            .tooltip(Tooltip::text("Collapse Displayed Threads"))
+                            .on_click(cx.listener({
+                                let path_list_for_collapse = path_list_for_collapse.clone();
+                                move |this, _, _window, cx| {
+                                    this.selection = None;
+                                    this.expanded_groups.remove(&path_list_for_collapse);
+                                    this.update_entries(cx);
+                                }
+                            })),
                         )
                     })
                     .when(has_threads, |this| {
@@ -1031,9 +1060,18 @@ impl Sidebar {
                 let workspace = workspace.clone();
                 self.activate_thread(session_info, &workspace, window, cx);
             }
-            ListEntry::ViewMore { path_list, .. } => {
+            ListEntry::ViewMore {
+                path_list,
+                is_fully_expanded,
+                ..
+            } => {
                 let path_list = path_list.clone();
-                self.expanded_groups.insert(path_list);
+                if *is_fully_expanded {
+                    self.expanded_groups.remove(&path_list);
+                } else {
+                    let current = self.expanded_groups.get(&path_list).copied().unwrap_or(0);
+                    self.expanded_groups.insert(path_list, current + 1);
+                }
                 self.update_entries(cx);
             }
             ListEntry::NewThread { workspace, .. } => {
@@ -1202,32 +1240,42 @@ impl Sidebar {
         ix: usize,
         path_list: &PathList,
         remaining_count: usize,
+        is_fully_expanded: bool,
         is_selected: bool,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let path_list = path_list.clone();
         let id = SharedString::from(format!("view-more-{}", ix));
 
-        let count = format!("({})", remaining_count);
+        let (icon, label) = if is_fully_expanded {
+            (IconName::ListCollapse, "Collapse List")
+        } else {
+            (IconName::Plus, "View More")
+        };
 
         ListItem::new(id)
             .focused(is_selected)
             .child(
                 h_flex()
-                    .px_1()
-                    .py_1p5()
+                    .p_1()
                     .gap_1p5()
-                    .child(
-                        Icon::new(IconName::Plus)
-                            .size(IconSize::Small)
-                            .color(Color::Muted),
-                    )
-                    .child(Label::new("View More").color(Color::Muted))
-                    .child(Label::new(count).color(Color::Muted).size(LabelSize::Small)),
+                    .child(Icon::new(icon).size(IconSize::Small).color(Color::Muted))
+                    .child(Label::new(label).color(Color::Muted))
+                    .when(!is_fully_expanded, |this| {
+                        this.child(
+                            Label::new(format!("({})", remaining_count))
+                                .color(Color::Custom(cx.theme().colors().text_muted.opacity(0.5))),
+                        )
+                    }),
             )
             .on_click(cx.listener(move |this, _, _window, cx| {
                 this.selection = None;
-                this.expanded_groups.insert(path_list.clone());
+                if is_fully_expanded {
+                    this.expanded_groups.remove(&path_list);
+                } else {
+                    let current = this.expanded_groups.get(&path_list).copied().unwrap_or(0);
+                    this.expanded_groups.insert(path_list.clone(), current + 1);
+                }
                 this.update_entries(cx);
             }))
             .into_any_element()
@@ -1660,9 +1708,15 @@ mod tests {
                             )
                         }
                         ListEntry::ViewMore {
-                            remaining_count, ..
+                            remaining_count,
+                            is_fully_expanded,
+                            ..
                         } => {
-                            format!("  + View More ({}){}", remaining_count, selected)
+                            if *is_fully_expanded {
+                                format!("  - Collapse{}", selected)
+                            } else {
+                                format!("  + View More ({}){}", remaining_count, selected)
+                            }
                         }
                         ListEntry::NewThread { .. } => {
                             format!("  [+ New Thread]{}", selected)
@@ -1984,6 +2038,7 @@ mod tests {
                 ListEntry::ViewMore {
                     path_list: expanded_path.clone(),
                     remaining_count: 42,
+                    is_fully_expanded: false,
                 },
                 // Collapsed project header
                 ListEntry::ProjectHeader {
@@ -2237,10 +2292,11 @@ mod tests {
         cx.dispatch_action(Confirm);
         cx.run_until_parked();
 
-        // All 8 threads should now be visible, no "View More"
+        // All 8 threads should now be visible with a "Collapse" button
         let entries = visible_entries_as_strings(&sidebar, cx);
-        assert_eq!(entries.len(), 9); // header + 8 threads
+        assert_eq!(entries.len(), 10); // header + 8 threads + Collapse button
         assert!(!entries.iter().any(|e| e.contains("View More")));
+        assert!(entries.iter().any(|e| e.contains("Collapse")));
     }
 
     #[gpui::test]
