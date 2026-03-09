@@ -2371,8 +2371,8 @@ impl ProjectPanel {
             }
             let answer = if !skip_prompt {
                 let operation = if trash { "Trash" } else { "Delete" };
-                let message = if trash {
-                    operation
+                let message_start = if trash {
+                    "Do you want to trash"
                 } else {
                     "Are you sure you want to permanently delete"
                 };
@@ -2384,7 +2384,7 @@ impl ProjectPanel {
                             ""
                         };
 
-                        format!("{message} {path}?{unsaved_warning}")
+                        format!("{message_start} {path}?{unsaved_warning}")
                     }
                     _ => {
                         const CUTOFF_POINT: usize = 10;
@@ -2416,8 +2416,7 @@ impl ProjectPanel {
                         };
 
                         format!(
-                            "Do you want to {} the following {} files?\n{}{unsaved_warning}",
-                            operation.to_lowercase(),
+                            "{message_start} the following {} files?\n{}{unsaved_warning}",
                             file_paths.len(),
                             names.join("\n")
                         )
