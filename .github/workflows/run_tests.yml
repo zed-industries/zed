@@ -189,7 +189,7 @@ jobs:
     needs:
     - orchestrate
     if: needs.orchestrate.outputs.run_tests == 'true'
-    runs-on: namespace-profile-16x32-ubuntu-2204
+    runs-on: namespace-profile-ubuntu22-x86-16x32-custom
     env:
       CC: clang
       CXX: clang++
@@ -302,7 +302,7 @@ jobs:
     needs:
     - orchestrate
     if: needs.orchestrate.outputs.run_tests == 'true'
-    runs-on: namespace-profile-16x32-ubuntu-2204
+    runs-on: namespace-profile-ubuntu22-x86-16x32-custom
     env:
       CC: clang
       CXX: clang++
@@ -405,7 +405,7 @@ jobs:
     needs:
     - orchestrate
     if: needs.orchestrate.outputs.run_tests == 'true'
-    runs-on: namespace-profile-16x32-ubuntu-2204
+    runs-on: namespace-profile-ubuntu22-x86-16x32-custom
     env:
       CC: clang
       CXX: clang++
@@ -674,7 +674,7 @@ jobs:
     needs:
     - orchestrate
     if: needs.orchestrate.outputs.run_tests == 'true'
-    runs-on: namespace-profile-16x32-ubuntu-2204
+    runs-on: namespace-profile-ubuntu22-x86-16x32-custom
     env:
       GIT_AUTHOR_NAME: Protobuf Action
       GIT_AUTHOR_EMAIL: ci@zed.dev

@@ -29,6 +29,7 @@ self-hosted-runner:
     # Namespace Limited Preview
     - namespace-profile-8x16-ubuntu-2004-arm-m4
     - namespace-profile-8x32-ubuntu-2004-arm-m4
+    - namespace-profile-ubuntu22-x86-16x32-custom
     # Namespace mac
     - namespace-profile-mac-large
     # Self Hosted Runners
