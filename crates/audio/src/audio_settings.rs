@@ -42,12 +42,8 @@ pub struct AudioSettings {
     ///
     /// You need to rejoin a call for this setting to apply
     pub legacy_audio_compatible: bool,
-    /// Requires 'rodio_audio: true'
-    ///
     /// Select specific output audio device.
     pub output_audio_device: Option<DeviceId>,
-    /// Requires 'rodio_audio: true'
-    ///
     /// Select specific input audio device.
     pub input_audio_device: Option<DeviceId>,
 }

@@ -9,12 +9,12 @@ use collections::{HashMap, HashSet};
 pub use custom::*;
 use fs::Fs;
 use http_client::read_no_proxy_from_env;
+use project::Project;
 use project::agent_server_store::AgentServerStore;
 
 use acp_thread::AgentConnection;
 use anyhow::Result;
 use gpui::{App, AppContext, Entity, SharedString, Task};
-use project::Project;
 use settings::SettingsStore;
 use std::{any::Any, rc::Rc, sync::Arc};
 
