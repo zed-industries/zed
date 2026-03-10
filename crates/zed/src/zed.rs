@@ -674,11 +674,12 @@ fn interpret_panel_dock_position(
     preferred: DockPosition,
     agent_mode: bool,
 ) -> DockPosition {
-    let is_agent_panel = panel.panel_key() == agent_ui::AgentPanel::panel_key();
     if agent_mode {
+        let is_agent_panel = panel.panel_key() == agent_ui::AgentPanel::panel_key();
         if is_agent_panel {
             return DockPosition::Left;
-        } else if preferred == DockPosition::Left {
+        }
+        if preferred == DockPosition::Left {
             return DockPosition::Right;
         }
     }
@@ -762,6 +763,13 @@ fn update_panel_positions(
     agent_mode: bool,
     cx: &mut Context<Workspace>,
 ) {
+    if agent_mode {
+        let agent_panel_view = find_agent_panel_view(workspace, cx);
+        workspace.set_left_item(agent_panel_view, cx);
+    } else {
+        workspace.set_left_item(None, cx);
+    }
+
     let panels_and_positions = workspace.all_panel_ids_and_positions(cx);
     for (panel_id, current_position) in panels_and_positions {
         let panel_handle = workspace
@@ -782,6 +790,25 @@ fn update_panel_positions(
             workspace.move_panel_to_dock(panel_id, target_position, window, cx);
         }
     }
+}
+
+fn find_agent_panel_view(workspace: &Workspace, cx: &App) -> Option<Arc<dyn PanelHandle>> {
+    for dock in workspace.all_docks() {
+        let dock = dock.read(cx);
+        for panel_id in dock.panel_ids() {
+            if let Some(panel) = dock.panel_for_id(panel_id) {
+                if panel.panel_key() == agent_ui::AgentPanel::panel_key() {
+                    return Some(panel.clone());
+                }
+            }
+        }
+    }
+    if let Some(left_item) = workspace.left_item() {
+        if left_item.panel_key() == agent_ui::AgentPanel::panel_key() {
+            return Some(left_item.clone());
+        }
+    }
+    None
 }
 
 fn setup_or_teardown_ai_panel<P: Panel>(

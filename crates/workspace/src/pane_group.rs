@@ -29,6 +29,8 @@ const VERTICAL_MIN_SIZE: f32 = 100.;
 pub struct PaneGroup {
     pub root: Member,
     pub is_center: bool,
+    left_item_flexes: Arc<Mutex<Vec<f32>>>,
+    left_item_bounding_boxes: Arc<Mutex<Vec<Option<Bounds<Pixels>>>>>,
 }
 
 pub struct PaneRenderResult {
@@ -41,6 +43,8 @@ impl PaneGroup {
         Self {
             root,
             is_center: false,
+            left_item_flexes: Arc::new(Mutex::new(Vec::new())),
+            left_item_bounding_boxes: Arc::new(Mutex::new(Vec::new())),
         }
     }
 
@@ -48,6 +52,8 @@ impl PaneGroup {
         Self {
             root: Member::Pane(pane),
             is_center: false,
+            left_item_flexes: Arc::new(Mutex::new(Vec::new())),
+            left_item_bounding_boxes: Arc::new(Mutex::new(Vec::new())),
         }
     }
 
@@ -221,13 +227,67 @@ impl PaneGroup {
     }
 
     pub fn render(
-        &self,
+        &mut self,
         zoomed: Option<&AnyWeakView>,
+        left_item: Option<AnyView>,
         render_cx: &dyn PaneLeaderDecorator,
         window: &mut Window,
         cx: &mut App,
-    ) -> impl IntoElement {
-        self.root.render(0, zoomed, render_cx, window, cx).element
+    ) -> gpui::AnyElement {
+        let Some(left_item) = left_item else {
+            return self.root.render(0, zoomed, render_cx, window, cx).element;
+        };
+
+        let left_element = div()
+            .relative()
+            .flex_1()
+            .size_full()
+            .child(left_item)
+            .into_any_element();
+
+        let mut children: Vec<AnyElement> = vec![left_element];
+        let mut is_leaf_pane_mask: Vec<bool> = vec![false];
+
+        match &self.root {
+            Member::Axis(axis) if axis.axis == Axis::Horizontal => {
+                for (ix, member) in axis.members.iter().enumerate() {
+                    let result = member.render((0 + ix) * 10, zoomed, render_cx, window, cx);
+                    children.push(result.element.into_any_element());
+                    is_leaf_pane_mask.push(matches!(member, Member::Pane(_)));
+                }
+            }
+            _ => {
+                let result = self.root.render(0, zoomed, render_cx, window, cx);
+                children.push(result.element.into_any_element());
+                is_leaf_pane_mask.push(false);
+            }
+        }
+
+        let child_count = children.len();
+
+        {
+            let mut flexes = self.left_item_flexes.lock();
+            if flexes.len() != child_count {
+                *flexes = vec![1.0; child_count];
+            }
+        }
+        {
+            let mut bounding_boxes = self.left_item_bounding_boxes.lock();
+            if bounding_boxes.len() != child_count {
+                *bounding_boxes = vec![None; child_count];
+            }
+        }
+
+        pane_axis(
+            Axis::Horizontal,
+            usize::MAX / 2,
+            self.left_item_flexes.clone(),
+            self.left_item_bounding_boxes.clone(),
+            render_cx.workspace().clone(),
+        )
+        .with_is_leaf_pane_mask(is_leaf_pane_mask)
+        .children(children)
+        .into_any_element()
     }
 
     pub fn panes(&self) -> Vec<&Entity<Pane>> {

@@ -109,18 +109,17 @@ impl Render for RunningState {
             .into_iter()
             .find(|pane| pane.read(cx).is_zoomed());
 
-        let active = self.panes.panes().into_iter().next();
+        let active = self.panes.panes().into_iter().next().cloned();
         let pane = if let Some(zoomed_pane) = zoomed_pane {
             zoomed_pane.update(cx, |pane, cx| pane.render(window, cx).into_any_element())
         } else if let Some(active) = active {
-            self.panes
-                .render(
-                    None,
-                    &ActivePaneDecorator::new(active, &self.workspace),
-                    window,
-                    cx,
-                )
-                .into_any_element()
+            self.panes.render(
+                None,
+                None,
+                &ActivePaneDecorator::new(&active, &self.workspace),
+                window,
+                cx,
+            )
         } else {
             div().into_any_element()
         };
