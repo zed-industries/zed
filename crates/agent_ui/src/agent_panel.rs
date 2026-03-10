@@ -376,10 +376,13 @@ pub fn init(cx: &mut App) {
                             panel.external_thread(
                                 None,
                                 None,
+                                None,
+                                None,
                                 Some(AgentInitialContent::ContentBlock {
                                     blocks: content_blocks,
                                     auto_submit: true,
                                 }),
+                                true,
                                 window,
                                 cx,
                             );
@@ -401,10 +404,13 @@ pub fn init(cx: &mut App) {
                             panel.external_thread(
                                 None,
                                 None,
+                                None,
+                                None,
                                 Some(AgentInitialContent::ContentBlock {
                                     blocks: content_blocks,
                                     auto_submit: true,
                                 }),
+                                true,
                                 window,
                                 cx,
                             );
