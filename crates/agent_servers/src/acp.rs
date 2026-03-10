@@ -131,6 +131,7 @@ impl AgentSessionList for AcpSessionList {
                                 .ok()
                                 .map(|dt| dt.with_timezone(&chrono::Utc))
                         }),
+                        created_at: None,
                         meta: s.meta,
                     })
                     .collect(),
@@ -385,7 +386,7 @@ impl AgentConnection for AcpConnection {
 
         cx.spawn(async move |cx| {
             let response = self.connection
-                .new_session(acp::NewSessionRequest::new(cwd).mcp_servers(mcp_servers))
+                .new_session(acp::NewSessionRequest::new(cwd.clone()).mcp_servers(mcp_servers))
                 .await
                 .map_err(map_acp_error)?;
 
@@ -560,6 +561,7 @@ impl AgentConnection for AcpConnection {
                 AcpThread::new(
                     None,
                     self.display_name.clone(),
+                    Some(cwd),
                     self.clone(),
                     project,
                     action_log,
@@ -598,9 +600,10 @@ impl AgentConnection for AcpConnection {
 
     fn load_session(
         self: Rc<Self>,
-        session: AgentSessionInfo,
+        session_id: acp::SessionId,
         project: Entity<Project>,
         cwd: &Path,
+        title: Option<SharedString>,
         cx: &mut App,
     ) -> Task<Result<Entity<AcpThread>>> {
         if !self.agent_capabilities.load_session {
@@ -612,25 +615,23 @@ impl AgentConnection for AcpConnection {
         let cwd = cwd.to_path_buf();
         let mcp_servers = mcp_servers_for_project(&project, cx);
         let action_log = cx.new(|_| ActionLog::new(project.clone()));
-        let title = session
-            .title
-            .clone()
-            .unwrap_or_else(|| self.display_name.clone());
+        let title = title.unwrap_or_else(|| self.display_name.clone());
         let thread: Entity<AcpThread> = cx.new(|cx| {
             AcpThread::new(
                 None,
                 title,
+                Some(cwd.clone()),
                 self.clone(),
                 project,
                 action_log,
-                session.session_id.clone(),
+                session_id.clone(),
                 watch::Receiver::constant(self.agent_capabilities.prompt_capabilities.clone()),
                 cx,
             )
         });
 
         self.sessions.borrow_mut().insert(
-            session.session_id.clone(),
+            session_id.clone(),
             AcpSession {
                 thread: thread.downgrade(),
                 suppress_abort_err: false,
@@ -644,21 +645,20 @@ impl AgentConnection for AcpConnection {
             let response = match self
                 .connection
                 .load_session(
-                    acp::LoadSessionRequest::new(session.session_id.clone(), cwd)
-                        .mcp_servers(mcp_servers),
+                    acp::LoadSessionRequest::new(session_id.clone(), cwd).mcp_servers(mcp_servers),
                 )
                 .await
             {
                 Ok(response) => response,
                 Err(err) => {
-                    self.sessions.borrow_mut().remove(&session.session_id);
+                    self.sessions.borrow_mut().remove(&session_id);
                     return Err(map_acp_error(err));
                 }
             };
 
             let (modes, models, config_options) =
                 config_state(response.modes, response.models, response.config_options);
-            if let Some(session) = self.sessions.borrow_mut().get_mut(&session.session_id) {
+            if let Some(session) = self.sessions.borrow_mut().get_mut(&session_id) {
                 session.session_modes = modes;
                 session.models = models;
                 session.config_options = config_options.map(ConfigOptions::new);
@@ -670,9 +670,10 @@ impl AgentConnection for AcpConnection {
 
     fn resume_session(
         self: Rc<Self>,
-        session: AgentSessionInfo,
+        session_id: acp::SessionId,
         project: Entity<Project>,
         cwd: &Path,
+        title: Option<SharedString>,
         cx: &mut App,
     ) -> Task<Result<Entity<AcpThread>>> {
         if self
@@ -689,25 +690,23 @@ impl AgentConnection for AcpConnection {
         let cwd = cwd.to_path_buf();
         let mcp_servers = mcp_servers_for_project(&project, cx);
         let action_log = cx.new(|_| ActionLog::new(project.clone()));
-        let title = session
-            .title
-            .clone()
-            .unwrap_or_else(|| self.display_name.clone());
+        let title = title.unwrap_or_else(|| self.display_name.clone());
         let thread: Entity<AcpThread> = cx.new(|cx| {
             AcpThread::new(
                 None,
                 title,
+                Some(cwd.clone()),
                 self.clone(),
                 project,
                 action_log,
-                session.session_id.clone(),
+                session_id.clone(),
                 watch::Receiver::constant(self.agent_capabilities.prompt_capabilities.clone()),
                 cx,
             )
         });
 
         self.sessions.borrow_mut().insert(
-            session.session_id.clone(),
+            session_id.clone(),
             AcpSession {
                 thread: thread.downgrade(),
                 suppress_abort_err: false,
@@ -721,21 +720,21 @@ impl AgentConnection for AcpConnection {
             let response = match self
                 .connection
                 .resume_session(
-                    acp::ResumeSessionRequest::new(session.session_id.clone(), cwd)
+                    acp::ResumeSessionRequest::new(session_id.clone(), cwd)
                         .mcp_servers(mcp_servers),
                 )
                 .await
             {
                 Ok(response) => response,
                 Err(err) => {
-                    self.sessions.borrow_mut().remove(&session.session_id);
+                    self.sessions.borrow_mut().remove(&session_id);
                     return Err(map_acp_error(err));
                 }
             };
 
             let (modes, models, config_options) =
                 config_state(response.modes, response.models, response.config_options);
-            if let Some(session) = self.sessions.borrow_mut().get_mut(&session.session_id) {
+            if let Some(session) = self.sessions.borrow_mut().get_mut(&session_id) {
                 session.session_modes = modes;
                 session.models = models;
                 session.config_options = config_options.map(ConfigOptions::new);

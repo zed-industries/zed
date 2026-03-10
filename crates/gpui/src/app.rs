@@ -744,13 +744,46 @@ impl App {
         }));
 
         platform.on_quit(Box::new({
-            let cx = app.clone();
+            let cx = Rc::downgrade(&app);
             move || {
-                cx.borrow_mut().shutdown();
+                if let Some(cx) = cx.upgrade() {
+                    cx.borrow_mut().shutdown();
+                }
             }
         }));
 
         app
+    }
+
+    #[doc(hidden)]
+    pub fn ref_counts_drop_handle(&self) -> impl Sized + use<> {
+        self.entities.ref_counts_drop_handle()
+    }
+
+    /// Captures a snapshot of all entities that currently have alive handles.
+    ///
+    /// The returned [`LeakDetectorSnapshot`] can later be passed to
+    /// [`assert_no_new_leaks`](Self::assert_no_new_leaks) to verify that no
+    /// entities created after the snapshot are still alive.
+    #[cfg(any(test, feature = "leak-detection"))]
+    pub fn leak_detector_snapshot(&self) -> LeakDetectorSnapshot {
+        self.entities.leak_detector_snapshot()
+    }
+
+    /// Asserts that no entities created after `snapshot` still have alive handles.
+    ///
+    /// Entities that were already tracked at the time of the snapshot are ignored,
+    /// even if they still have handles. Only *new* entities (those whose
+    /// `EntityId` was not present in the snapshot) are considered leaks.
+    ///
+    /// # Panics
+    ///
+    /// Panics if any new entity handles exist. The panic message lists every
+    /// leaked entity with its type name, and includes allocation-site backtraces
+    /// when `LEAK_BACKTRACE` is set.
+    #[cfg(any(test, feature = "leak-detection"))]
+    pub fn assert_no_new_leaks(&self, snapshot: &LeakDetectorSnapshot) {
+        self.entities.assert_no_new_leaks(snapshot)
     }
 
     /// Quit the application gracefully. Handlers registered with [`Context::on_app_quit`]
@@ -2579,13 +2612,6 @@ impl<'a, T> Drop for GpuiBorrow<'a, T> {
         self.app.notify(lease.id);
         self.app.entities.end_lease(lease);
         self.app.finish_update();
-    }
-}
-
-impl Drop for App {
-    fn drop(&mut self) {
-        self.foreground_executor.close();
-        self.background_executor.close();
     }
 }
 

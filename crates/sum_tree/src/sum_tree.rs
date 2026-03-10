@@ -1,4 +1,6 @@
 mod cursor;
+#[cfg(any(test, feature = "test-support"))]
+pub mod property_test;
 mod tree_map;
 
 use arrayvec::ArrayVec;

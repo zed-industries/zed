@@ -503,9 +503,8 @@ pub mod named {
 }
 
 pub fn git_checkout(ref_name: &dyn std::fmt::Display) -> Step<Run> {
-    named::bash(&format!(
-        "git fetch origin {ref_name} && git checkout {ref_name}"
-    ))
+    named::bash(r#"git fetch origin "$REF_NAME" && git checkout "$REF_NAME""#)
+        .add_env(("REF_NAME", ref_name.to_string()))
 }
 
 pub fn authenticate_as_zippy() -> (Step<Use>, StepOutput) {
