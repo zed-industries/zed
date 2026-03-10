@@ -125,7 +125,7 @@ pub fn apply_sandbox(config: &SandboxConfig) -> Result<()> {
         }
         let proc_self = Path::new("/proc/self");
         if proc_self.exists() {
-            ruleset = add_path_rule(ruleset, proc_self, fs_read())
+            ruleset = add_path_rule(ruleset, proc_self, fs_all())
                 .map_err(|e| Error::other(format!("landlock /proc/self rule: {e}")))?;
         }
     }
