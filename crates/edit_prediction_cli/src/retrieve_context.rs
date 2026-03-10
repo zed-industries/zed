@@ -24,6 +24,7 @@ pub async fn run_context_retrieval(
         .prompt_inputs
         .as_ref()
         .is_some_and(|inputs| inputs.related_files.is_some())
+        || example.spec.repository_url.is_empty()
     {
         return Ok(());
     }

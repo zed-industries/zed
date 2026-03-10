@@ -3202,6 +3202,7 @@ dependencies = [
  "serde",
  "serde_json",
  "text",
+ "zeta_prompt",
 ]
 
 [[package]]
@@ -14478,20 +14479,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "rich_text"
-version = "0.1.0"
-dependencies = [
- "futures 0.3.31",
- "gpui",
- "language",
- "linkify",
- "pulldown-cmark 0.13.0",
- "theme",
- "ui",
- "util",
-]
-
-[[package]]
 name = "ring"
 version = "0.17.14"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -15838,6 +15825,7 @@ dependencies = [
  "language_model",
  "menu",
  "project",
+ "recent_projects",
  "serde_json",
  "settings",
  "theme",

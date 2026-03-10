@@ -7500,7 +7500,8 @@ impl Editor {
                     let mut read_ranges = Vec::new();
                     for highlight in highlights {
                         let buffer_id = cursor_buffer.read(cx).remote_id();
-                        for (excerpt_id, excerpt_range) in buffer.excerpts_for_buffer(buffer_id, cx)
+                        for (excerpt_id, _, excerpt_range) in
+                            buffer.excerpts_for_buffer(buffer_id, cx)
                         {
                             let start = highlight
                                 .range
@@ -20539,7 +20540,7 @@ impl Editor {
         let mut all_folded_excerpt_ids = Vec::new();
         for buffer_id in &ids_to_fold {
             let folded_excerpts = self.buffer().read(cx).excerpts_for_buffer(*buffer_id, cx);
-            all_folded_excerpt_ids.extend(folded_excerpts.into_iter().map(|(id, _)| id));
+            all_folded_excerpt_ids.extend(folded_excerpts.into_iter().map(|(id, _, _)| id));
         }
 
         self.display_map.update(cx, |display_map, cx| {
@@ -20569,7 +20570,7 @@ impl Editor {
             display_map.unfold_buffers([buffer_id], cx);
         });
         cx.emit(EditorEvent::BufferFoldToggled {
-            ids: unfolded_excerpts.iter().map(|&(id, _)| id).collect(),
+            ids: unfolded_excerpts.iter().map(|&(id, _, _)| id).collect(),
             folded: false,
         });
         cx.notify();
@@ -22941,7 +22942,7 @@ impl Editor {
                 .snapshot();
 
             let mut handled = false;
-            for (id, ExcerptRange { context, .. }) in
+            for (id, _, ExcerptRange { context, .. }) in
                 self.buffer.read(cx).excerpts_for_buffer(buffer_id, cx)
             {
                 if context.start.cmp(&position, &snapshot).is_ge()

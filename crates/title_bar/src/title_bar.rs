@@ -151,6 +151,7 @@ pub struct TitleBar {
     user_store: Entity<UserStore>,
     client: Arc<Client>,
     workspace: WeakEntity<Workspace>,
+    multi_workspace: Option<WeakEntity<MultiWorkspace>>,
     application_menu: Option<Entity<ApplicationMenu>>,
     _subscriptions: Vec<Subscription>,
     banner: Entity<OnboardingBanner>,
@@ -188,7 +189,7 @@ impl Render for TitleBar {
                                 .when(title_bar_settings.show_project_items, |title_bar| {
                                     title_bar
                                         .children(self.render_project_host(cx))
-                                        .child(self.render_project_name(cx))
+                                        .child(self.render_project_name(window, cx))
                                 })
                                 .when(title_bar_settings.show_branch_name, |title_bar| {
                                     title_bar.children(self.render_project_branch(cx))
@@ -389,6 +390,7 @@ impl TitleBar {
                     if let Some(this) = this.upgrade() {
                         this.update(cx, |this, _| {
                             this._subscriptions.push(subscription);
+                            this.multi_workspace = Some(multi_workspace.downgrade());
                         });
                     }
                 });
@@ -400,6 +402,7 @@ impl TitleBar {
             platform_titlebar,
             application_menu,
             workspace: workspace.weak_handle(),
+            multi_workspace: None,
             project,
             user_store,
             client,
@@ -718,7 +721,11 @@ impl TitleBar {
         )
     }
 
-    pub fn render_project_name(&self, cx: &mut Context<Self>) -> impl IntoElement {
+    pub fn render_project_name(
+        &self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
         let workspace = self.workspace.clone();
 
         let name = self.effective_active_worktree(cx).map(|worktree| {
@@ -733,6 +740,19 @@ impl TitleBar {
         } else {
             "Open Recent Project".to_string()
         };
+
+        let is_sidebar_open = self.platform_titlebar.read(cx).is_workspace_sidebar_open();
+
+        if is_sidebar_open {
+            return self
+                .render_project_name_with_sidebar_popover(
+                    window,
+                    display_name,
+                    is_project_selected,
+                    cx,
+                )
+                .into_any_element();
+        }
 
         let focus_handle = workspace
             .upgrade()
@@ -771,6 +791,49 @@ impl TitleBar {
             )
             .anchor(gpui::Corner::TopLeft)
             .into_any_element()
+    }
+
+    fn render_project_name_with_sidebar_popover(
+        &self,
+        _window: &Window,
+        display_name: String,
+        is_project_selected: bool,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let multi_workspace = self.multi_workspace.clone();
+
+        let is_popover_deployed = multi_workspace
+            .as_ref()
+            .and_then(|mw| mw.upgrade())
+            .map(|mw| mw.read(cx).is_recent_projects_popover_deployed(cx))
+            .unwrap_or(false);
+
+        Button::new("project_name_trigger", display_name)
+            .label_size(LabelSize::Small)
+            .when(self.worktree_count(cx) > 1, |this| {
+                this.icon(IconName::ChevronDown)
+                    .icon_color(Color::Muted)
+                    .icon_size(IconSize::XSmall)
+            })
+            .toggle_state(is_popover_deployed)
+            .selected_style(ButtonStyle::Tinted(TintColor::Accent))
+            .when(!is_project_selected, |s| s.color(Color::Muted))
+            .tooltip(move |_window, cx| {
+                Tooltip::for_action(
+                    "Recent Projects",
+                    &zed_actions::OpenRecent {
+                        create_new_window: false,
+                    },
+                    cx,
+                )
+            })
+            .on_click(move |_, window, cx| {
+                if let Some(mw) = multi_workspace.as_ref().and_then(|mw| mw.upgrade()) {
+                    mw.update(cx, |mw, cx| {
+                        mw.toggle_recent_projects_popover(window, cx);
+                    });
+                }
+            })
     }
 
     pub fn render_project_branch(&self, cx: &mut Context<Self>) -> Option<impl IntoElement> {
