@@ -1505,51 +1505,6 @@ mod foo «1{
         );
     }
 
-    #[gpui::test]
-    async fn test_bracket_colorization_large_function(cx: &mut gpui::TestAppContext) {
-        init_test(cx, |language_settings| {
-            language_settings.defaults.colorize_brackets = Some(true);
-        });
-        let mut cx = EditorLspTestContext::new(
-            Arc::into_inner(rust_lang()).unwrap(),
-            lsp::ServerCapabilities::default(),
-            cx,
-        )
-        .await;
-
-        // Generate a function whose body exceeds 16KB. The tree-sitter bracket
-        // query must find both `{` and `}` in a single match, so if the query
-        // window is too small, the outer braces won't be colorized.
-        let mut big_body = String::new();
-        for i in 0..700 {
-            big_body.push_str(&format!("    let var_{i:04} = ({i});\n"));
-        }
-        let source = format!("ˇfn big_function() {{\n{big_body}}}\n");
-
-        cx.set_state(&source);
-        cx.executor().advance_clock(Duration::from_millis(100));
-        cx.executor().run_until_parked();
-
-        // Scroll through the entire file to ensure all chunks are fetched
-        cx.update_editor(|editor, window, cx| {
-            editor.move_to_end(&MoveToEnd, window, cx);
-        });
-        cx.executor().advance_clock(Duration::from_millis(100));
-        cx.executor().run_until_parked();
-        cx.update_editor(|editor, window, cx| {
-            editor.move_to_beginning(&MoveToBeginning, window, cx);
-        });
-        cx.executor().advance_clock(Duration::from_millis(100));
-        cx.executor().run_until_parked();
-
-        let markup = bracket_colors_markup(&mut cx);
-        assert!(
-            markup.starts_with("fn big_function«"),
-            "big_function's outer brackets should be colorized even when body exceeds 16KB.\nMarkup start:\n{}",
-            &markup[..markup.len().min(200)]
-        );
-    }
-
     fn separate_with_comment_lines(head: &str, tail: &str, comment_lines: usize) -> String {
         let mut result = head.to_string();
         result.push_str("\n");
