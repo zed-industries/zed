@@ -796,13 +796,15 @@ impl Sidebar {
         };
 
         let color = cx.theme().colors();
-        let gradient_overlay = GradientFade::new(
-            color.panel_background,
-            color.element_hover,
-            color.element_active,
-        )
-        .width(px(48.0))
-        .group_name(group_name.clone());
+        let base_bg = if is_active_workspace {
+            color.ghost_element_selected
+        } else {
+            color.panel_background
+        };
+        let gradient_overlay =
+            GradientFade::new(base_bg, color.element_hover, color.element_active)
+                .width(px(48.0))
+                .group_name(group_name.clone());
 
         ListItem::new(id)
             .group_name(group_name)
