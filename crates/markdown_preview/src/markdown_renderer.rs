@@ -1,9 +1,10 @@
 use crate::{
     markdown_elements::{
         HeadingLevel, Image, Link, MarkdownParagraph, MarkdownParagraphChunk, ParsedMarkdown,
-        ParsedMarkdownBlockQuote, ParsedMarkdownCodeBlock, ParsedMarkdownElement,
-        ParsedMarkdownHeading, ParsedMarkdownListItem, ParsedMarkdownListItemType,
-        ParsedMarkdownMermaidDiagram, ParsedMarkdownMermaidDiagramContents, ParsedMarkdownTable,
+        ParsedMarkdownBlockQuote, ParsedMarkdownCodeBlock, ParsedMarkdownDetails,
+        ParsedMarkdownElement, ParsedMarkdownHeading, ParsedMarkdownListItem,
+        ParsedMarkdownListItemType, ParsedMarkdownMermaidDiagram,
+        ParsedMarkdownMermaidDiagramContents, ParsedMarkdownSummaryContent, ParsedMarkdownTable,
         ParsedMarkdownTableAlignment, ParsedMarkdownTableRow,
     },
     markdown_preview_view::MarkdownPreviewView,
@@ -320,6 +321,7 @@ pub fn render_markdown_block(block: &ParsedMarkdownElement, cx: &mut RenderConte
         MermaidDiagram(mermaid) => render_mermaid_diagram(mermaid, cx),
         HorizontalRule(_) => render_markdown_rule(cx),
         Image(image) => render_markdown_image(image, cx),
+        Details(details) => render_markdown_details(details, cx),
     }
 }
 
@@ -741,6 +743,63 @@ fn render_markdown_block_quote(
                 .children(children),
         )
         .into_any()
+}
+
+fn render_markdown_details(
+    parsed: &ParsedMarkdownDetails,
+    cx: &mut RenderContext,
+) -> AnyElement {
+    let is_expanded = parsed.open;
+
+    let summary_content = match &parsed.summary {
+        Some(ParsedMarkdownSummaryContent::Phrasing(paragraph)) => {
+            render_markdown_paragraph(paragraph, cx)
+        }
+        Some(ParsedMarkdownSummaryContent::Heading(heading)) => {
+            render_markdown_heading(heading, cx)
+        }
+        None => div()
+            .child(SharedString::from("Details"))
+            .into_any(),
+    };
+
+    let chevron = if is_expanded {
+        ui::Icon::new(ui::IconName::ChevronDown)
+            .size(ui::IconSize::Small)
+            .color(ui::Color::Muted)
+    } else {
+        ui::Icon::new(ui::IconName::ChevronRight)
+            .size(ui::IconSize::Small)
+            .color(ui::Color::Muted)
+    };
+
+    let summary_row = h_flex()
+        .gap_1()
+        .items_start()
+        .child(div().mt(cx.scaled_rems(0.15)).child(chevron))
+        .child(summary_content);
+
+    if is_expanded {
+        cx.indent += 1;
+        let body_children: Vec<AnyElement> = parsed
+            .body
+            .iter()
+            .enumerate()
+            .map(|(ix, child)| {
+                cx.with_last_child(ix + 1 == parsed.body.len(), |cx| {
+                    render_markdown_block(child, cx)
+                })
+            })
+            .collect();
+        cx.indent -= 1;
+
+        cx.with_common_p(div())
+            .child(summary_row)
+            .child(div().pl(cx.scaled_rems(1.5)).children(body_children))
+            .into_any()
+    } else {
+        cx.with_common_p(div()).child(summary_row).into_any()
+    }
 }
 
 fn render_markdown_code_block(
