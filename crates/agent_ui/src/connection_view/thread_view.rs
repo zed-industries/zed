@@ -4003,6 +4003,12 @@ impl ThreadView {
                                             entry_ix,
                                             chunk_ix,
                                             md.clone(),
+                                            is_last
+                                                && chunk_ix + 1 == chunks.len()
+                                                && matches!(
+                                                    self.thread.read(cx).status(),
+                                                    ThreadStatus::Generating
+                                                ),
                                             window,
                                             cx,
                                         )
@@ -4579,6 +4585,7 @@ impl ThreadView {
         entry_ix: usize,
         chunk_ix: usize,
         chunk: Entity<Markdown>,
+        is_running: bool,
         window: &Window,
         cx: &Context<Self>,
     ) -> AnyElement {
@@ -4587,7 +4594,7 @@ impl ThreadView {
 
         let key = (entry_ix, chunk_ix);
 
-        let is_open = self.expanded_thinking_blocks.contains(&key);
+        let is_open = is_running || self.expanded_thinking_blocks.contains(&key);
 
         let scroll_handle = self
             .entry_view_state
@@ -4641,25 +4648,29 @@ impl ThreadView {
                             .opened_icon(IconName::ChevronUp)
                             .closed_icon(IconName::ChevronDown)
                             .visible_on_hover(&card_header_id)
-                            .on_click(cx.listener({
-                                move |this, _event, _window, cx| {
-                                    if is_open {
-                                        this.expanded_thinking_blocks.remove(&key);
-                                    } else {
-                                        this.expanded_thinking_blocks.insert(key);
+                            .when(!is_running, |this| {
+                                this.on_click(cx.listener({
+                                    move |this, _event, _window, cx| {
+                                        if is_open {
+                                            this.expanded_thinking_blocks.remove(&key);
+                                        } else {
+                                            this.expanded_thinking_blocks.insert(key);
+                                        }
+                                        cx.notify();
                                     }
-                                    cx.notify();
-                                }
-                            })),
+                                }))
+                            }),
                     )
-                    .on_click(cx.listener(move |this, _event, _window, cx| {
-                        if is_open {
-                            this.expanded_thinking_blocks.remove(&key);
-                        } else {
-                            this.expanded_thinking_blocks.insert(key);
-                        }
-                        cx.notify();
-                    })),
+                    .when(!is_running, |this| {
+                        this.on_click(cx.listener(move |this, _event, _window, cx| {
+                            if is_open {
+                                this.expanded_thinking_blocks.remove(&key);
+                            } else {
+                                this.expanded_thinking_blocks.insert(key);
+                            }
+                            cx.notify();
+                        }))
+                    }),
             )
             .when(is_open, |this| {
                 this.child(
