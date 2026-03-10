@@ -1231,6 +1231,90 @@ mod tests {
         })
     }
 
+    fn image(url: &str) -> MarkdownParagraphChunk {
+        MarkdownParagraphChunk::Image(Image {
+            source_range: 0..1,
+            link: Link::Web {
+                url: url.to_string(),
+            },
+            alt_text: None,
+            height: None,
+            width: None,
+        })
+    }
+
+    fn dummy_elements(count: usize) -> Vec<AnyElement> {
+        (0..count).map(|_| div().into_any()).collect()
+    }
+
+    #[test]
+    fn test_group_inline_images_consecutive_images() {
+        let chunks = vec![
+            image("a.png"),
+            text(" "),
+            image("b.png"),
+            text(" "),
+            image("c.png"),
+        ];
+        let elements = dummy_elements(chunks.len());
+        let grouped = group_inline_images(&chunks, elements);
+        // 5 chunks (3 images + 2 whitespace) → 1 flex-row wrapper
+        assert_eq!(grouped.len(), 1);
+    }
+
+    #[test]
+    fn test_group_inline_images_single_image_not_grouped() {
+        let chunks = vec![image("a.png")];
+        let elements = dummy_elements(chunks.len());
+        let grouped = group_inline_images(&chunks, elements);
+        // Single image stays unwrapped
+        assert_eq!(grouped.len(), 1);
+    }
+
+    #[test]
+    fn test_group_inline_images_with_real_text_between() {
+        let chunks = vec![image("a.png"), text(" hello "), image("b.png")];
+        let elements = dummy_elements(chunks.len());
+        let grouped = group_inline_images(&chunks, elements);
+        // Non-whitespace text breaks the run — no grouping
+        assert_eq!(grouped.len(), 3);
+    }
+
+    #[test]
+    fn test_group_inline_images_mixed_content() {
+        // text, then image run, then text
+        let chunks = vec![
+            text("Check out "),
+            image("a.png"),
+            text(" "),
+            image("b.png"),
+            text(" "),
+            image("c.png"),
+            text(" cool stuff"),
+        ];
+        let elements = dummy_elements(chunks.len());
+        let grouped = group_inline_images(&chunks, elements);
+        // "Check out " + grouped(img, " ", img, " ", img) + " cool stuff"
+        assert_eq!(grouped.len(), 3);
+    }
+
+    #[test]
+    fn test_group_inline_images_no_images() {
+        let chunks = vec![text("just text"), text(" more text")];
+        let elements = dummy_elements(chunks.len());
+        let grouped = group_inline_images(&chunks, elements);
+        assert_eq!(grouped.len(), 2);
+    }
+
+    #[test]
+    fn test_group_inline_images_adjacent_no_whitespace() {
+        // Two images directly adjacent (no text between)
+        let chunks = vec![image("a.png"), image("b.png")];
+        let elements = dummy_elements(chunks.len());
+        let grouped = group_inline_images(&chunks, elements);
+        assert_eq!(grouped.len(), 1);
+    }
+
     fn column(
         col_span: usize,
         row_span: usize,
