@@ -292,7 +292,7 @@ mod tests {
     use super::*;
     use agent_client_protocol as acp;
     use fs::Fs as _;
-    use gpui::{TestAppContext, UpdateGlobal};
+    use gpui::{AppContext, TestAppContext, UpdateGlobal};
     use indoc::indoc;
     use project::{FakeFs, Project};
     use prompt_store::{ProjectContext, WorktreeContext};

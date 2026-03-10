@@ -2174,7 +2174,9 @@ mod internal_tests {
         });
 
         // Ensure the unused worktree entity remains part of the project for the duration of the test.
-        assert_eq!(worktree_a.read(cx).root_name_str(), "a");
+        worktree_a.read_with(cx, |worktree, _| {
+            assert_eq!(worktree.root_name_str(), "a");
+        });
     }
 
     #[gpui::test]

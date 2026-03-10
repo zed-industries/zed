@@ -53,7 +53,7 @@ use std::{
     time::Duration,
 };
 use util::path;
-use workspace::Workspace;
+use workspace::MultiWorkspace;
 
 mod edit_file_thread_test;
 mod test_tools;
@@ -63,6 +63,7 @@ fn init_test(cx: &mut TestAppContext) {
     cx.update(|cx| {
         let settings_store = SettingsStore::test(cx);
         cx.set_global(settings_store);
+        theme::init(theme::LoadThemes::JustBase, cx);
     });
 }
 
@@ -5039,8 +5040,11 @@ async fn test_worktree_tool_is_present_when_workspace_context_is_available(
     let fs = FakeFs::new(cx.executor());
     fs.insert_tree(path!("/test"), json!({})).await;
     let project = Project::test(fs, [path!("/test").as_ref()], cx).await;
-    let (workspace, cx) =
-        cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+    let (multi_workspace, _window_cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let workspace = multi_workspace.read_with(cx, |multi_workspace, _cx| {
+        multi_workspace.workspace().clone()
+    });
     let project_context = cx.new(|_cx| ProjectContext::default());
     let context_server_store = project.read_with(cx, |project, _| project.context_server_store());
     let context_server_registry =

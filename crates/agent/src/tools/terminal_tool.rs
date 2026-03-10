@@ -345,7 +345,7 @@ fn working_dir(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use gpui::TestAppContext;
+    use gpui::{AppContext, TestAppContext};
     use project::{FakeFs, Project};
     use prompt_store::{ProjectContext, WorktreeContext};
     use settings::SettingsStore;

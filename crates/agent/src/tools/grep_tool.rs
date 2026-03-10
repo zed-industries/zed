@@ -357,7 +357,7 @@ mod tests {
     use crate::ToolCallEventStream;
 
     use super::*;
-    use gpui::{TestAppContext, UpdateGlobal};
+    use gpui::{AppContext, TestAppContext, UpdateGlobal};
     use project::{FakeFs, Project};
     use prompt_store::{ProjectContext, WorktreeContext};
     use serde_json::json;

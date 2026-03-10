@@ -79,7 +79,7 @@ mod tests {
         let project = prompt_store::ProjectContext::new(
             vec![prompt_store::WorktreeContext {
                 root_name: "root".to_string(),
-                abs_path: "/tmp/root".as_ref().into(),
+                abs_path: std::path::PathBuf::from("/tmp/root").into(),
                 is_active: true,
                 rules_file: None,
             }],
