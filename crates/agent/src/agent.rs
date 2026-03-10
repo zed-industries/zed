@@ -1460,7 +1460,7 @@ impl acp_thread::AgentConnection for NativeAgentConnection {
         log::debug!("Prompt blocks count: {}", params.prompt.len());
 
         let Some(project_state) = self.0.read(cx).session_project_state(&session_id) else {
-            return Task::ready(Err(anyhow::anyhow!("Project state not found for session")));
+            return Task::ready(Err(anyhow::anyhow!("Session not found")));
         };
 
         if let Some(parsed_command) = Command::parse(&params.prompt) {
@@ -2103,6 +2103,15 @@ mod internal_tests {
         let thread_store = cx.new(|cx| ThreadStore::new(cx));
         let agent =
             cx.update(|cx| NativeAgent::new(thread_store, Templates::new(), None, fs.clone(), cx));
+
+        // Creating a session registers the project and triggers context building.
+        let connection = NativeAgentConnection(agent.clone());
+        let _acp_thread = cx
+            .update(|cx| Rc::new(connection).new_session(project.clone(), Path::new("/"), cx))
+            .await
+            .unwrap();
+        cx.run_until_parked();
+
         agent.read_with(cx, |agent, cx| {
             let project_id = project.entity_id();
             let state = agent.projects.get(&project_id).unwrap();
