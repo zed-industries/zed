@@ -141,6 +141,7 @@ pub fn init(languages: Arc<LanguageRegistry>, fs: Arc<dyn Fs>, node: NodeRuntime
             name: "go",
             adapters: vec![go_lsp_adapter.clone()],
             context: Some(go_context_provider.clone()),
+            semantic_token_rules: Some(go::semantic_token_rules()),
             ..Default::default()
         },
         LanguageInfo {

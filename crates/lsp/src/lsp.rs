@@ -1970,10 +1970,14 @@ impl FakeLanguageServer {
                 let responded_tx = responded_tx.clone();
                 let executor = cx.background_executor().clone();
                 async move {
+                    let _guard = gpui_util::defer({
+                        let responded_tx = responded_tx.clone();
+                        move || {
+                            responded_tx.unbounded_send(()).ok();
+                        }
+                    });
                     executor.simulate_random_delay().await;
-                    let result = result.await;
-                    responded_tx.unbounded_send(()).ok();
-                    result
+                    result.await
                 }
             })
             .detach();

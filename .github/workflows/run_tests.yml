@@ -35,7 +35,7 @@ jobs:
           git fetch origin "$GITHUB_BASE_REF" --depth=350
           COMPARE_REV="$(git merge-base "origin/${GITHUB_BASE_REF}" HEAD)"
         fi
-        CHANGED_FILES="$(git diff --name-only "$COMPARE_REV" ${{ github.sha }})"
+        CHANGED_FILES="$(git diff --name-only "$COMPARE_REV" "$GITHUB_SHA")"
 
         check_pattern() {
           local output_name="$1"
@@ -653,8 +653,14 @@ jobs:
       name: run_tests::check_scripts::download_actionlint
       run: bash <(curl https://raw.githubusercontent.com/rhysd/actionlint/main/scripts/download-actionlint.bash)
     - name: run_tests::check_scripts::run_actionlint
-      run: |
-        ${{ steps.get_actionlint.outputs.executable }} -color
+      run: '"$ACTIONLINT_BIN" -color'
+      env:
+        ACTIONLINT_BIN: ${{ steps.get_actionlint.outputs.executable }}
+    - name: steps::cache_rust_dependencies_namespace
+      uses: namespacelabs/nscloud-cache-action@v1
+      with:
+        cache: rust
+        path: ~/.rustup
     - name: run_tests::check_scripts::check_xtask_workflows
       run: |
         cargo xtask workflows
@@ -735,23 +741,39 @@ jobs:
           if [[ "$2" != "skipped" && "$2" != "success" ]]; then EXIT_CODE=1; fi
         }
 
-        check_result "orchestrate" "${{ needs.orchestrate.result }}"
-        check_result "check_style" "${{ needs.check_style.result }}"
-        check_result "clippy_windows" "${{ needs.clippy_windows.result }}"
-        check_result "clippy_linux" "${{ needs.clippy_linux.result }}"
-        check_result "clippy_mac" "${{ needs.clippy_mac.result }}"
-        check_result "run_tests_windows" "${{ needs.run_tests_windows.result }}"
-        check_result "run_tests_linux" "${{ needs.run_tests_linux.result }}"
-        check_result "run_tests_mac" "${{ needs.run_tests_mac.result }}"
-        check_result "doctests" "${{ needs.doctests.result }}"
-        check_result "check_workspace_binaries" "${{ needs.check_workspace_binaries.result }}"
-        check_result "check_wasm" "${{ needs.check_wasm.result }}"
-        check_result "check_dependencies" "${{ needs.check_dependencies.result }}"
-        check_result "check_docs" "${{ needs.check_docs.result }}"
-        check_result "check_licenses" "${{ needs.check_licenses.result }}"
-        check_result "check_scripts" "${{ needs.check_scripts.result }}"
+        check_result "orchestrate" "$RESULT_ORCHESTRATE"
+        check_result "check_style" "$RESULT_CHECK_STYLE"
+        check_result "clippy_windows" "$RESULT_CLIPPY_WINDOWS"
+        check_result "clippy_linux" "$RESULT_CLIPPY_LINUX"
+        check_result "clippy_mac" "$RESULT_CLIPPY_MAC"
+        check_result "run_tests_windows" "$RESULT_RUN_TESTS_WINDOWS"
+        check_result "run_tests_linux" "$RESULT_RUN_TESTS_LINUX"
+        check_result "run_tests_mac" "$RESULT_RUN_TESTS_MAC"
+        check_result "doctests" "$RESULT_DOCTESTS"
+        check_result "check_workspace_binaries" "$RESULT_CHECK_WORKSPACE_BINARIES"
+        check_result "check_wasm" "$RESULT_CHECK_WASM"
+        check_result "check_dependencies" "$RESULT_CHECK_DEPENDENCIES"
+        check_result "check_docs" "$RESULT_CHECK_DOCS"
+        check_result "check_licenses" "$RESULT_CHECK_LICENSES"
+        check_result "check_scripts" "$RESULT_CHECK_SCRIPTS"
 
         exit $EXIT_CODE
+      env:
+        RESULT_ORCHESTRATE: ${{ needs.orchestrate.result }}
+        RESULT_CHECK_STYLE: ${{ needs.check_style.result }}
+        RESULT_CLIPPY_WINDOWS: ${{ needs.clippy_windows.result }}
+        RESULT_CLIPPY_LINUX: ${{ needs.clippy_linux.result }}
+        RESULT_CLIPPY_MAC: ${{ needs.clippy_mac.result }}
+        RESULT_RUN_TESTS_WINDOWS: ${{ needs.run_tests_windows.result }}
+        RESULT_RUN_TESTS_LINUX: ${{ needs.run_tests_linux.result }}
+        RESULT_RUN_TESTS_MAC: ${{ needs.run_tests_mac.result }}
+        RESULT_DOCTESTS: ${{ needs.doctests.result }}
+        RESULT_CHECK_WORKSPACE_BINARIES: ${{ needs.check_workspace_binaries.result }}
+        RESULT_CHECK_WASM: ${{ needs.check_wasm.result }}
+        RESULT_CHECK_DEPENDENCIES: ${{ needs.check_dependencies.result }}
+        RESULT_CHECK_DOCS: ${{ needs.check_docs.result }}
+        RESULT_CHECK_LICENSES: ${{ needs.check_licenses.result }}
+        RESULT_CHECK_SCRIPTS: ${{ needs.check_scripts.result }}
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref_name }}-${{ github.ref_name == 'main' && github.sha || 'anysha' }}
   cancel-in-progress: true
