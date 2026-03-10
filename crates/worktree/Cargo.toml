@@ -21,7 +21,7 @@ workspace = true
 [features]
 test-support = [
     "gpui/test-support",
-    "http_client/test-support",
+
     "language/test-support",
     "pretty_assertions",
     "settings/test-support",
@@ -63,9 +63,7 @@ ztracing.workspace = true
 [dev-dependencies]
 clock = { workspace = true, features = ["test-support"] }
 collections = { workspace = true, features = ["test-support"] }
-git2.workspace = true
 gpui = { workspace = true, features = ["test-support"] }
-http_client.workspace = true
 paths = { workspace = true, features = ["test-support"] }
 rand.workspace = true
 rpc = { workspace = true, features = ["test-support"] }

@@ -13,7 +13,7 @@ use gpui::{
 };
 use itertools::Itertools;
 use language::{Buffer, BufferSnapshot, LanguageRegistry};
-use multi_buffer::{Anchor, ExcerptRange, MultiBufferOffset, MultiBufferRow};
+use multi_buffer::{Anchor, ExcerptRange, MultiBufferOffset, MultiBufferRow, PathKey};
 use parking_lot::RwLock;
 use project::{FakeFs, Project};
 use std::{
@@ -128,10 +128,26 @@ impl EditorTestContext {
     ) -> EditorTestContext {
         let mut multibuffer = MultiBuffer::new(language::Capability::ReadWrite);
         let buffer = cx.new(|cx| {
-            for excerpt in excerpts.into_iter() {
+            for (index, excerpt) in excerpts.into_iter().enumerate() {
                 let (text, ranges) = marked_text_ranges(excerpt, false);
                 let buffer = cx.new(|cx| Buffer::local(text, cx));
-                multibuffer.push_excerpts(buffer, ranges.into_iter().map(ExcerptRange::new), cx);
+                let point_ranges: Vec<_> = {
+                    let snapshot = buffer.read(cx);
+                    ranges
+                        .into_iter()
+                        .map(|range| {
+                            snapshot.offset_to_point(range.start)
+                                ..snapshot.offset_to_point(range.end)
+                        })
+                        .collect()
+                };
+                multibuffer.set_excerpts_for_path(
+                    PathKey::sorted(index as u64),
+                    buffer,
+                    point_ranges,
+                    0,
+                    cx,
+                );
             }
             multibuffer
         });

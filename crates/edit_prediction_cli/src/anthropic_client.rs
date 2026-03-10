@@ -50,6 +50,7 @@ impl PlainLlmClient {
             metadata: None,
             output_config: None,
             stop_sequences: Vec::new(),
+            speed: None,
             temperature: None,
             top_k: None,
             top_p: None,
@@ -89,6 +90,7 @@ impl PlainLlmClient {
             metadata: None,
             output_config: None,
             stop_sequences: Vec::new(),
+            speed: None,
             temperature: None,
             top_k: None,
             top_p: None,
@@ -578,6 +580,7 @@ impl BatchingLlmClient {
                     temperature: None,
                     top_k: None,
                     top_p: None,
+                    speed: None,
                 };
 
                 let custom_id = format!("req_hash_{}", hash);

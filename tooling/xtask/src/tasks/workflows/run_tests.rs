@@ -3,9 +3,13 @@ use gh_workflow::{
     Workflow,
 };
 use indexmap::IndexMap;
+use indoc::formatdoc;
 
 use crate::tasks::workflows::{
-    steps::{CommonJobConditions, repository_owner_guard_expression},
+    steps::{
+        CommonJobConditions, cache_rust_dependencies_namespace, repository_owner_guard_expression,
+        use_clang,
+    },
     vars::{self, PathCondition},
 };
 
@@ -50,6 +54,7 @@ pub(crate) fn run_tests() -> Workflow {
         should_run_tests.guard(run_platform_tests(Platform::Mac)),
         should_run_tests.guard(doctests()),
         should_run_tests.guard(check_workspace_binaries()),
+        should_run_tests.guard(check_wasm()),
         should_run_tests.guard(check_dependencies()), // could be more specific here?
         should_check_docs.guard(check_docs()),
         should_check_licences.guard(check_licenses()),
@@ -114,7 +119,7 @@ fn orchestrate_impl(rules: &[&PathCondition], include_package_filter: bool) -> N
           git fetch origin "$GITHUB_BASE_REF" --depth=350
           COMPARE_REV="$(git merge-base "origin/${GITHUB_BASE_REF}" HEAD)"
         fi
-        CHANGED_FILES="$(git diff --name-only "$COMPARE_REV" ${{ github.sha }})"
+        CHANGED_FILES="$(git diff --name-only "$COMPARE_REV" "$GITHUB_SHA")"
 
         check_pattern() {
           local output_name="$1"
@@ -238,15 +243,20 @@ pub fn tests_pass(jobs: &[NamedJob]) -> NamedJob {
 
     "#});
 
+    let env_entries: Vec<_> = jobs
+        .iter()
+        .map(|job| {
+            let env_name = format!("RESULT_{}", job.name.to_uppercase());
+            let env_value = format!("${{{{ needs.{}.result }}}}", job.name);
+            (env_name, env_value)
+        })
+        .collect();
+
     script.push_str(
         &jobs
             .iter()
-            .map(|job| {
-                format!(
-                    "check_result \"{}\" \"${{{{ needs.{}.result }}}}\"",
-                    job.name, job.name
-                )
-            })
+            .zip(env_entries.iter())
+            .map(|(job, (env_name, _))| format!("check_result \"{}\" \"${}\"", job.name, env_name))
             .collect::<Vec<_>>()
             .join("\n"),
     );
@@ -261,9 +271,41 @@ pub fn tests_pass(jobs: &[NamedJob]) -> NamedJob {
                 .collect::<Vec<String>>(),
         )
         .cond(repository_owner_guard_expression(true))
-        .add_step(named::bash(&script));
+        .add_step(
+            env_entries
+                .into_iter()
+                .fold(named::bash(&script), |step, env_item| {
+                    step.add_env(env_item)
+                }),
+        );
 
     named::job(job)
+}
+
+const TS_QUERY_LS_FILE: &str = "ts_query_ls-x86_64-unknown-linux-gnu.tar.gz";
+const CI_TS_QUERY_RELEASE: &str = "tags/v3.15.1";
+
+pub(crate) fn fetch_ts_query_ls() -> Step<Use> {
+    named::uses(
+        "dsaltares",
+        "fetch-gh-release-asset",
+        "aa37ae5c44d3c9820bc12fe675e8670ecd93bd1c",
+    ) // v1.1.1
+    .add_with(("repo", "ribru17/ts_query_ls"))
+    .add_with(("version", CI_TS_QUERY_RELEASE))
+    .add_with(("file", TS_QUERY_LS_FILE))
+}
+
+pub(crate) fn run_ts_query_ls() -> Step<Run> {
+    named::bash(formatdoc!(
+        r#"tar -xf {TS_QUERY_LS_FILE}
+        ./ts_query_ls format --check . || {{
+            echo "Found unformatted queries, please format them with ts_query_ls."
+            echo "For easy use, install the Tree-sitter query extension:"
+            echo "zed://extension/tree-sitter-query"
+            false
+        }}"#
+    ))
 }
 
 fn check_style() -> NamedJob {
@@ -275,6 +317,7 @@ fn check_style() -> NamedJob {
         ) // v1.40.0
         .with(("config", "./typos.toml"))
     }
+
     named::job(
         release_job(&[])
             .runs_on(runners::LINUX_MEDIUM)
@@ -285,7 +328,9 @@ fn check_style() -> NamedJob {
             .add_step(steps::cargo_fmt())
             .add_step(steps::script("./script/check-todos"))
             .add_step(steps::script("./script/check-keymaps"))
-            .add_step(check_for_typos()),
+            .add_step(check_for_typos())
+            .add_step(fetch_ts_query_ls())
+            .add_step(run_ts_query_ls()),
     )
 }
 
@@ -323,7 +368,7 @@ fn check_dependencies() -> NamedJob {
         .with(("license-check", false))
     }
 
-    named::job(
+    named::job(use_clang(
         release_job(&[])
             .runs_on(runners::LINUX_SMALL)
             .add_step(steps::checkout_repo())
@@ -332,11 +377,43 @@ fn check_dependencies() -> NamedJob {
             .add_step(run_cargo_machete())
             .add_step(check_cargo_lock())
             .add_step(check_vulnerable_dependencies()),
+    ))
+}
+
+fn check_wasm() -> NamedJob {
+    fn install_nightly_wasm_toolchain() -> Step<Run> {
+        named::bash(
+            "rustup toolchain install nightly --component rust-src --target wasm32-unknown-unknown",
+        )
+    }
+
+    fn cargo_check_wasm() -> Step<Run> {
+        named::bash(concat!(
+            "cargo +nightly -Zbuild-std=std,panic_abort ",
+            "check --target wasm32-unknown-unknown -p gpui_platform",
+        ))
+        .add_env((
+            "CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUSTFLAGS",
+            "-C target-feature=+atomics,+bulk-memory,+mutable-globals",
+        ))
+    }
+
+    named::job(
+        release_job(&[])
+            .runs_on(runners::LINUX_LARGE)
+            .add_step(steps::checkout_repo())
+            .add_step(steps::setup_cargo_config(Platform::Linux))
+            .add_step(steps::cache_rust_dependencies_namespace())
+            .add_step(install_nightly_wasm_toolchain())
+            .add_step(steps::setup_sccache(Platform::Linux))
+            .add_step(cargo_check_wasm())
+            .add_step(steps::show_sccache_stats(Platform::Linux))
+            .add_step(steps::cleanup_cargo_config(Platform::Linux)),
     )
 }
 
 fn check_workspace_binaries() -> NamedJob {
-    named::job(
+    named::job(use_clang(
         release_job(&[])
             .runs_on(runners::LINUX_LARGE)
             .add_step(steps::checkout_repo())
@@ -348,7 +425,7 @@ fn check_workspace_binaries() -> NamedJob {
             .add_step(steps::script("cargo build --workspace --bins --examples"))
             .add_step(steps::show_sccache_stats(Platform::Linux))
             .add_step(steps::cleanup_cargo_config(Platform::Linux)),
-    )
+    ))
 }
 
 pub(crate) fn clippy(platform: Platform) -> NamedJob {
@@ -357,23 +434,27 @@ pub(crate) fn clippy(platform: Platform) -> NamedJob {
         Platform::Linux => runners::LINUX_DEFAULT,
         Platform::Mac => runners::MAC_DEFAULT,
     };
+    let mut job = release_job(&[])
+        .runs_on(runner)
+        .add_step(steps::checkout_repo())
+        .add_step(steps::setup_cargo_config(platform))
+        .when(
+            platform == Platform::Linux || platform == Platform::Mac,
+            |this| this.add_step(steps::cache_rust_dependencies_namespace()),
+        )
+        .when(
+            platform == Platform::Linux,
+            steps::install_linux_dependencies,
+        )
+        .add_step(steps::setup_sccache(platform))
+        .add_step(steps::clippy(platform))
+        .add_step(steps::show_sccache_stats(platform));
+    if platform == Platform::Linux {
+        job = use_clang(job);
+    }
     NamedJob {
         name: format!("clippy_{platform}"),
-        job: release_job(&[])
-            .runs_on(runner)
-            .add_step(steps::checkout_repo())
-            .add_step(steps::setup_cargo_config(platform))
-            .when(
-                platform == Platform::Linux || platform == Platform::Mac,
-                |this| this.add_step(steps::cache_rust_dependencies_namespace()),
-            )
-            .when(
-                platform == Platform::Linux,
-                steps::install_linux_dependencies,
-            )
-            .add_step(steps::setup_sccache(platform))
-            .add_step(steps::clippy(platform))
-            .add_step(steps::show_sccache_stats(platform)),
+        job,
     }
 }
 
@@ -411,10 +492,12 @@ fn run_platform_tests_impl(platform: Platform, filter_packages: bool) -> NamedJo
             })
             .add_step(steps::checkout_repo())
             .add_step(steps::setup_cargo_config(platform))
-            .when(
-                platform == Platform::Linux || platform == Platform::Mac,
-                |this| this.add_step(steps::cache_rust_dependencies_namespace()),
-            )
+            .when(platform == Platform::Mac, |this| {
+                this.add_step(steps::cache_rust_dependencies_namespace())
+            })
+            .when(platform == Platform::Linux, |this| {
+                use_clang(this.add_step(steps::cache_rust_dependencies_namespace()))
+            })
             .when(
                 platform == Platform::Linux,
                 steps::install_linux_dependencies,
@@ -464,6 +547,14 @@ pub(crate) fn check_postgres_and_protobuf_migrations() -> NamedJob {
             .add_with(("against", "https://github.com/${GITHUB_REPOSITORY}.git#branch=${BUF_BASE_BRANCH},subdir=crates/proto/proto/"))
     }
 
+    fn buf_lint() -> Step<Run> {
+        named::bash("buf lint crates/proto/proto")
+    }
+
+    fn check_protobuf_formatting() -> Step<Run> {
+        named::bash("buf format --diff --exit-code crates/proto/proto")
+    }
+
     named::job(
         release_job(&[])
             .runs_on(runners::LINUX_DEFAULT)
@@ -474,7 +565,9 @@ pub(crate) fn check_postgres_and_protobuf_migrations() -> NamedJob {
             .add_step(steps::checkout_repo().with_full_history())
             .add_step(ensure_fresh_merge())
             .add_step(bufbuild_setup_action())
-            .add_step(bufbuild_breaking_action()),
+            .add_step(bufbuild_breaking_action())
+            .add_step(buf_lint())
+            .add_step(check_protobuf_formatting()),
     )
 }
 
@@ -486,7 +579,7 @@ fn doctests() -> NamedJob {
         .id("run_doctests")
     }
 
-    named::job(
+    named::job(use_clang(
         release_job(&[])
             .runs_on(runners::LINUX_DEFAULT)
             .add_step(steps::checkout_repo())
@@ -497,7 +590,7 @@ fn doctests() -> NamedJob {
             .add_step(run_doctests())
             .add_step(steps::show_sccache_stats(Platform::Linux))
             .add_step(steps::cleanup_cargo_config(Platform::Linux)),
-    )
+    ))
 }
 
 fn check_licenses() -> NamedJob {
@@ -539,7 +632,7 @@ fn check_docs() -> NamedJob {
         "#})
     }
 
-    named::job(
+    named::job(use_clang(
         release_job(&[])
             .runs_on(runners::LINUX_LARGE)
             .add_step(steps::checkout_repo())
@@ -556,7 +649,7 @@ fn check_docs() -> NamedJob {
             .add_step(
                 lychee_link_check("target/deploy/docs"), // check links in generated html
             ),
-    )
+    ))
 }
 
 pub(crate) fn check_scripts() -> NamedJob {
@@ -567,9 +660,10 @@ pub(crate) fn check_scripts() -> NamedJob {
     }
 
     fn run_actionlint() -> Step<Run> {
-        named::bash(indoc::indoc! {r#"
-            ${{ steps.get_actionlint.outputs.executable }} -color
-        "#})
+        named::bash(r#""$ACTIONLINT_BIN" -color"#).add_env((
+            "ACTIONLINT_BIN",
+            "${{ steps.get_actionlint.outputs.executable }}",
+        ))
     }
 
     fn run_shellcheck() -> Step<Run> {
@@ -594,6 +688,7 @@ pub(crate) fn check_scripts() -> NamedJob {
             .add_step(run_shellcheck())
             .add_step(download_actionlint().id("get_actionlint"))
             .add_step(run_actionlint())
+            .add_step(cache_rust_dependencies_namespace())
             .add_step(check_xtask_workflows()),
     )
 }

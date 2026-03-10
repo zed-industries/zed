@@ -463,7 +463,7 @@ impl<'a> Iterator for BatchIterator<'a> {
     ),
     allow(dead_code)
 )]
-#[expect(missing_docs)]
+#[allow(missing_docs)]
 pub enum PrimitiveBatch {
     Shadows(Range<usize>),
     Quads(Range<usize>),
@@ -717,7 +717,7 @@ impl From<PolychromeSprite> for Primitive {
 }
 
 #[derive(Clone, Debug)]
-#[expect(missing_docs)]
+#[allow(missing_docs)]
 pub struct PaintSurface {
     pub order: DrawOrder,
     pub bounds: Bounds<ScaledPixels>,

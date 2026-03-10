@@ -5,7 +5,8 @@ use gpui::{
     ManagedView, MouseButton, Pixels, Render, Subscription, Task, Tiling, Window, WindowId,
     actions, deferred, px,
 };
-use project::Project;
+use project::{DisableAiSettings, Project};
+use settings::Settings;
 use std::future::Future;
 use std::path::PathBuf;
 use ui::prelude::*;
@@ -14,8 +15,8 @@ use util::ResultExt;
 const SIDEBAR_RESIZE_HANDLE_SIZE: Pixels = px(6.0);
 
 use crate::{
-    DockPosition, Item, ModalView, Panel, Toast, Workspace, WorkspaceId, client_side_decorations,
-    notifications::NotificationId,
+    CloseIntent, CloseWindow, DockPosition, Event as WorkspaceEvent, Item, ModalView, Panel, Toast,
+    Workspace, WorkspaceId, client_side_decorations, notifications::NotificationId,
 };
 
 actions!(
@@ -34,6 +35,12 @@ actions!(
     ]
 );
 
+pub enum MultiWorkspaceEvent {
+    ActiveWorkspaceChanged,
+    WorkspaceAdded(Entity<Workspace>),
+    WorkspaceRemoved(EntityId),
+}
+
 pub enum SidebarEvent {
     Open,
     Close,
@@ -43,6 +50,8 @@ pub trait Sidebar: EventEmitter<SidebarEvent> + Focusable + Render + Sized {
     fn width(&self, cx: &App) -> Pixels;
     fn set_width(&mut self, width: Option<Pixels>, cx: &mut Context<Self>);
     fn has_notifications(&self, cx: &App) -> bool;
+    fn toggle_recent_projects_popover(&self, window: &mut Window, cx: &mut App);
+    fn is_recent_projects_popover_deployed(&self) -> bool;
 }
 
 pub trait SidebarHandle: 'static + Send + Sync {
@@ -53,6 +62,8 @@ pub trait SidebarHandle: 'static + Send + Sync {
     fn has_notifications(&self, cx: &App) -> bool;
     fn to_any(&self) -> AnyView;
     fn entity_id(&self) -> EntityId;
+    fn toggle_recent_projects_popover(&self, window: &mut Window, cx: &mut App);
+    fn is_recent_projects_popover_deployed(&self, cx: &App) -> bool;
 }
 
 #[derive(Clone)]
@@ -93,6 +104,16 @@ impl<T: Sidebar> SidebarHandle for Entity<T> {
     fn entity_id(&self) -> EntityId {
         Entity::entity_id(self)
     }
+
+    fn toggle_recent_projects_popover(&self, window: &mut Window, cx: &mut App) {
+        self.update(cx, |this, cx| {
+            this.toggle_recent_projects_popover(window, cx);
+        });
+    }
+
+    fn is_recent_projects_popover_deployed(&self, cx: &App) -> bool {
+        self.read(cx).is_recent_projects_popover_deployed()
+    }
 }
 
 pub struct MultiWorkspace {
@@ -108,6 +129,8 @@ pub struct MultiWorkspace {
     _subscriptions: Vec<Subscription>,
 }
 
+impl EventEmitter<MultiWorkspaceEvent> for MultiWorkspace {}
+
 impl MultiWorkspace {
     pub fn new(workspace: Entity<Workspace>, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let release_subscription = cx.on_release(|this: &mut MultiWorkspace, _cx| {
@@ -122,6 +145,13 @@ impl MultiWorkspace {
             }
         });
         let quit_subscription = cx.on_app_quit(Self::app_will_quit);
+        let settings_subscription =
+            cx.observe_global_in::<settings::SettingsStore>(window, |this, window, cx| {
+                if DisableAiSettings::get_global(cx).disable_ai && this.sidebar_open {
+                    this.close_sidebar(window, cx);
+                }
+            });
+        Self::subscribe_to_workspace(&workspace, cx);
         Self {
             window_id: window.window_handle().window_id(),
             workspaces: vec![workspace],
@@ -132,7 +162,11 @@ impl MultiWorkspace {
             pending_removal_tasks: Vec::new(),
             _serialize_task: None,
             _create_task: None,
-            _subscriptions: vec![release_subscription, quit_subscription],
+            _subscriptions: vec![
+                release_subscription,
+                quit_subscription,
+                settings_subscription,
+            ],
         }
     }
 
@@ -167,8 +201,20 @@ impl MultiWorkspace {
             .map_or(false, |s| s.has_notifications(cx))
     }
 
+    pub fn toggle_recent_projects_popover(&self, window: &mut Window, cx: &mut App) {
+        if let Some(sidebar) = &self.sidebar {
+            sidebar.toggle_recent_projects_popover(window, cx);
+        }
+    }
+
+    pub fn is_recent_projects_popover_deployed(&self, cx: &App) -> bool {
+        self.sidebar
+            .as_ref()
+            .map_or(false, |s| s.is_recent_projects_popover_deployed(cx))
+    }
+
     pub fn multi_workspace_enabled(&self, cx: &App) -> bool {
-        cx.has_flag::<AgentV2FeatureFlag>()
+        cx.has_flag::<AgentV2FeatureFlag>() && !DisableAiSettings::get_global(cx).disable_ai
     }
 
     pub fn toggle_sidebar(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -237,6 +283,41 @@ impl MultiWorkspace {
         cx.notify();
     }
 
+    pub fn close_window(&mut self, _: &CloseWindow, window: &mut Window, cx: &mut Context<Self>) {
+        cx.spawn_in(window, async move |this, cx| {
+            let workspaces = this.update(cx, |multi_workspace, _cx| {
+                multi_workspace.workspaces().to_vec()
+            })?;
+
+            for workspace in workspaces {
+                let should_continue = workspace
+                    .update_in(cx, |workspace, window, cx| {
+                        workspace.prepare_to_close(CloseIntent::CloseWindow, window, cx)
+                    })?
+                    .await?;
+                if !should_continue {
+                    return anyhow::Ok(());
+                }
+            }
+
+            cx.update(|window, _cx| {
+                window.remove_window();
+            })?;
+
+            anyhow::Ok(())
+        })
+        .detach_and_log_err(cx);
+    }
+
+    fn subscribe_to_workspace(workspace: &Entity<Workspace>, cx: &mut Context<Self>) {
+        cx.subscribe(workspace, |this, workspace, event, cx| {
+            if let WorkspaceEvent::Activate = event {
+                this.activate(workspace, cx);
+            }
+        })
+        .detach();
+    }
+
     pub fn is_sidebar_open(&self) -> bool {
         self.sidebar_open
     }
@@ -257,6 +338,7 @@ impl MultiWorkspace {
         if !self.multi_workspace_enabled(cx) {
             self.workspaces[0] = workspace;
             self.active_workspace_index = 0;
+            cx.emit(MultiWorkspaceEvent::ActiveWorkspaceChanged);
             cx.notify();
             return;
         }
@@ -274,7 +356,11 @@ impl MultiWorkspace {
         cx: &mut Context<Self>,
     ) -> usize {
         let index = self.add_workspace(workspace, cx);
+        let changed = self.active_workspace_index != index;
         self.active_workspace_index = index;
+        if changed {
+            cx.emit(MultiWorkspaceEvent::ActiveWorkspaceChanged);
+        }
         cx.notify();
         index
     }
@@ -290,7 +376,9 @@ impl MultiWorkspace {
                     workspace.set_workspace_sidebar_open(true, cx);
                 });
             }
-            self.workspaces.push(workspace);
+            Self::subscribe_to_workspace(&workspace, cx);
+            self.workspaces.push(workspace.clone());
+            cx.emit(MultiWorkspaceEvent::WorkspaceAdded(workspace));
             cx.notify();
             self.workspaces.len() - 1
         }
@@ -301,9 +389,13 @@ impl MultiWorkspace {
             index < self.workspaces.len(),
             "workspace index out of bounds"
         );
+        let changed = self.active_workspace_index != index;
         self.active_workspace_index = index;
         self.serialize(cx);
         self.focus_active_workspace(window, cx);
+        if changed {
+            cx.emit(MultiWorkspaceEvent::ActiveWorkspaceChanged);
+        }
         cx.notify();
     }
 
@@ -358,7 +450,7 @@ impl MultiWorkspace {
         }
     }
 
-    fn focus_active_workspace(&self, window: &mut Window, cx: &mut App) {
+    pub fn focus_active_workspace(&self, window: &mut Window, cx: &mut App) {
         // If a dock panel is zoomed, focus it instead of the center pane.
         // Otherwise, focusing the center pane triggers dismiss_zoomed_items_to_reveal
         // which closes the zoomed dock.
@@ -412,6 +504,7 @@ impl MultiWorkspace {
             .update(cx, |workspace, cx| workspace.focus_panel::<T>(window, cx))
     }
 
+    // used in a test
     pub fn toggle_modal<V: ModalView, B>(
         &mut self,
         window: &mut Window,
@@ -584,6 +677,10 @@ impl MultiWorkspace {
 
         self.serialize(cx);
         self.focus_active_workspace(window, cx);
+        cx.emit(MultiWorkspaceEvent::WorkspaceRemoved(
+            removed_workspace.entity_id(),
+        ));
+        cx.emit(MultiWorkspaceEvent::ActiveWorkspaceChanged);
         cx.notify();
     }
 
@@ -673,10 +770,20 @@ impl Render for MultiWorkspace {
             None
         };
 
+        let ui_font = theme::setup_ui_font(window, cx);
+        let text_color = cx.theme().colors().text;
+
+        let workspace = self.workspace().clone();
+        let workspace_key_context = workspace.update(cx, |workspace, cx| workspace.key_context(cx));
+        let root = workspace.update(cx, |workspace, cx| workspace.actions(h_flex(), window, cx));
+
         client_side_decorations(
-            h_flex()
-                .key_context("Workspace")
+            root.key_context(workspace_key_context)
+                .relative()
                 .size_full()
+                .font(ui_font)
+                .text_color(text_color)
+                .on_action(cx.listener(Self::close_window))
                 .on_action(
                     cx.listener(|this: &mut Self, _: &NewWorkspaceInWindow, window, cx| {
                         this.create_workspace(window, cx);
@@ -692,16 +799,18 @@ impl Render for MultiWorkspace {
                         this.activate_previous_workspace(window, cx);
                     },
                 ))
-                .on_action(cx.listener(
-                    |this: &mut Self, _: &ToggleWorkspaceSidebar, window, cx| {
-                        this.toggle_sidebar(window, cx);
-                    },
-                ))
-                .on_action(
-                    cx.listener(|this: &mut Self, _: &FocusWorkspaceSidebar, window, cx| {
-                        this.focus_sidebar(window, cx);
-                    }),
-                )
+                .when(self.multi_workspace_enabled(cx), |this| {
+                    this.on_action(cx.listener(
+                        |this: &mut Self, _: &ToggleWorkspaceSidebar, window, cx| {
+                            this.toggle_sidebar(window, cx);
+                        },
+                    ))
+                    .on_action(cx.listener(
+                        |this: &mut Self, _: &FocusWorkspaceSidebar, window, cx| {
+                            this.focus_sidebar(window, cx);
+                        },
+                    ))
+                })
                 .when(
                     self.sidebar_open() && self.multi_workspace_enabled(cx),
                     |this| {
@@ -723,7 +832,8 @@ impl Render for MultiWorkspace {
                         .size_full()
                         .overflow_hidden()
                         .child(self.workspace().clone()),
-                ),
+                )
+                .child(self.workspace().read(cx).modal_layer.clone()),
             window,
             cx,
             Tiling {
@@ -731,5 +841,94 @@ impl Render for MultiWorkspace {
                 ..Tiling::default()
             },
         )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use fs::FakeFs;
+    use gpui::TestAppContext;
+    use settings::SettingsStore;
+
+    fn init_test(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            let settings_store = SettingsStore::test(cx);
+            cx.set_global(settings_store);
+            theme::init(theme::LoadThemes::JustBase, cx);
+            DisableAiSettings::register(cx);
+            cx.update_flags(false, vec!["agent-v2".into()]);
+        });
+    }
+
+    #[gpui::test]
+    async fn test_sidebar_disabled_when_disable_ai_is_enabled(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
+
+        multi_workspace.read_with(cx, |mw, cx| {
+            assert!(mw.multi_workspace_enabled(cx));
+        });
+
+        multi_workspace.update_in(cx, |mw, _window, cx| {
+            mw.open_sidebar(cx);
+            assert!(mw.is_sidebar_open());
+        });
+
+        cx.update(|_window, cx| {
+            DisableAiSettings::override_global(DisableAiSettings { disable_ai: true }, cx);
+        });
+        cx.run_until_parked();
+
+        multi_workspace.read_with(cx, |mw, cx| {
+            assert!(
+                !mw.is_sidebar_open(),
+                "Sidebar should be closed when disable_ai is true"
+            );
+            assert!(
+                !mw.multi_workspace_enabled(cx),
+                "Multi-workspace should be disabled when disable_ai is true"
+            );
+        });
+
+        multi_workspace.update_in(cx, |mw, window, cx| {
+            mw.toggle_sidebar(window, cx);
+        });
+        multi_workspace.read_with(cx, |mw, _cx| {
+            assert!(
+                !mw.is_sidebar_open(),
+                "Sidebar should remain closed when toggled with disable_ai true"
+            );
+        });
+
+        cx.update(|_window, cx| {
+            DisableAiSettings::override_global(DisableAiSettings { disable_ai: false }, cx);
+        });
+        cx.run_until_parked();
+
+        multi_workspace.read_with(cx, |mw, cx| {
+            assert!(
+                mw.multi_workspace_enabled(cx),
+                "Multi-workspace should be enabled after re-enabling AI"
+            );
+            assert!(
+                !mw.is_sidebar_open(),
+                "Sidebar should still be closed after re-enabling AI (not auto-opened)"
+            );
+        });
+
+        multi_workspace.update_in(cx, |mw, window, cx| {
+            mw.toggle_sidebar(window, cx);
+        });
+        multi_workspace.read_with(cx, |mw, _cx| {
+            assert!(
+                mw.is_sidebar_open(),
+                "Sidebar should open when toggled after re-enabling AI"
+            );
+        });
     }
 }
