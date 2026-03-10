@@ -66,11 +66,11 @@ const MIGRATION_SCHEMA_FILES = [
   "crates/collab/migrations.sqlite/20221109000000_test_schema.sql",
 ];
 
-const modifiedMigrationFiles = danger.git.modified_files.filter((file) =>
+const modifiedSchemaFiles = danger.git.modified_files.filter((file) =>
   MIGRATION_SCHEMA_FILES.some((migrationFile) => file.endsWith(migrationFile)),
 );
 
-if (modifiedMigrationFiles.length > 0) {
+if (modifiedSchemaFiles.length > 0) {
   warn(
     [
       "This PR modifies database schema files.",
