@@ -121,6 +121,15 @@ pub struct AgentSettingsContent {
     /// the action. Per-tool regex patterns (`always_allow`, `always_deny`,
     /// `always_confirm`) match against the tool's text input (command, path,
     /// URL, etc.).
+    /// Whether to automatically compact the conversation when token usage
+    /// approaches the context window limit.
+    ///
+    /// Default: false
+    pub auto_compact: Option<bool>,
+    /// Token usage ratio (0.0–1.0) at which auto-compact triggers.
+    ///
+    /// Default: 0.95
+    pub auto_compact_threshold: Option<f32>,
     pub tool_permissions: Option<ToolPermissionsContent>,
 }
 

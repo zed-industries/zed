@@ -51,6 +51,8 @@ pub struct AgentSettings {
     pub message_editor_min_lines: usize,
     pub show_turn_stats: bool,
     pub tool_permissions: ToolPermissions,
+    pub auto_compact: bool,
+    pub auto_compact_threshold: f32,
 }
 
 impl AgentSettings {
@@ -438,6 +440,8 @@ impl Settings for AgentSettings {
             message_editor_min_lines: agent.message_editor_min_lines.unwrap(),
             show_turn_stats: agent.show_turn_stats.unwrap(),
             tool_permissions: compile_tool_permissions(agent.tool_permissions),
+            auto_compact: agent.auto_compact.unwrap_or(false),
+            auto_compact_threshold: agent.auto_compact_threshold.unwrap_or(0.95),
         }
     }
 }
