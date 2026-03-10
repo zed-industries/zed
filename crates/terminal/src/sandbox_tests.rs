@@ -51,55 +51,45 @@ fn test_sandbox_config(project_dir: PathBuf) -> SandboxConfig {
     }
 }
 
-/// Spawn `/bin/sh -c <shell_command>` in a child process that has the OS-level
-/// sandbox applied (Seatbelt on macOS, Landlock on Linux).
+/// Exercises the full `sandbox_exec_main` production codepath in a child
+/// process:
+///
+/// 1. `SandboxConfig` → `SandboxExecConfig` (as `terminal.rs` does)
+/// 2. Serialize to JSON (the CLI argument in production)
+/// 3. Parse JSON back (as `sandbox_exec_main` does)
+/// 4. Convert to `SandboxConfig` (as `sandbox_exec_main` does)
+/// 5. Canonicalize paths (as `sandbox_exec_main` does)
+/// 6. Filter env vars with `env_clear().envs()` (as `sandbox_exec_main` does)
+/// 7. Apply OS sandbox in `pre_exec` (as `sandbox_exec_main` does)
+/// 8. Exec `/bin/sh -c <command>` (as `sandbox_exec_main` does)
+///
+/// `extra_parent_env` injects vars into the parent environment *before*
+/// filtering, so they are subject to the same allowlist. This lets tests
+/// verify that disallowed vars are stripped.
 ///
 /// Returns `(success, stdout, stderr)`.
-fn run_sandboxed_command(config: &SandboxConfig, shell_command: &str) -> (bool, String, String) {
-    let mut config = config.clone();
-    config.canonicalize_paths();
-
-    let mut cmd = Command::new("/bin/sh");
-    cmd.arg("-c").arg(shell_command);
-    cmd.current_dir(&config.project_dir);
-
-    unsafe {
-        cmd.pre_exec(move || {
-            #[cfg(target_os = "macos")]
-            {
-                crate::sandbox_macos::apply_sandbox(&config)?;
-            }
-            #[cfg(target_os = "linux")]
-            {
-                crate::sandbox_linux::apply_sandbox(&config)?;
-            }
-            Ok(())
-        });
-    }
-
-    let output = cmd
-        .output()
-        .expect("failed to spawn sandboxed child process");
-    (
-        output.status.success(),
-        String::from_utf8_lossy(&output.stdout).into_owned(),
-        String::from_utf8_lossy(&output.stderr).into_owned(),
-    )
-}
-
-/// Like `run_sandboxed_command`, but also filters environment variables
-/// the way `sandbox_exec_main` does: only allowed vars + Zed-specific
-/// vars are passed through. Extra env vars are injected into the parent
-/// env *before* filtering, so they are subject to the same filter.
-fn run_sandboxed_with_env(
+fn run_sandboxed_command(
     config: &SandboxConfig,
-    extra_env: &[(&str, &str)],
+    extra_parent_env: &[(&str, &str)],
     shell_command: &str,
 ) -> (bool, String, String) {
-    let mut config = config.clone();
-    config.canonicalize_paths();
+    // Step 1: Convert to the serializable form (as terminal.rs does at spawn time)
+    let exec_config = SandboxExecConfig::from_sandbox_config(config);
 
-    let allowed: HashSet<&str> = config.allowed_env_vars.iter().map(|s| s.as_str()).collect();
+    // Step 2: Serialize to JSON (this is what gets passed as a CLI arg)
+    let config_json = exec_config.to_json();
+
+    // Step 3: Parse it back (as sandbox_exec_main does)
+    let parsed = SandboxExecConfig::from_json(&config_json)
+        .expect("SandboxExecConfig JSON roundtrip failed");
+
+    // Step 4: Convert back to SandboxConfig (as sandbox_exec_main does)
+    let mut sandbox_config = parsed.to_sandbox_config();
+
+    // Step 5: Canonicalize paths (as sandbox_exec_main does)
+    sandbox_config.canonicalize_paths();
+
+    // Step 6: Build filtered env (as sandbox_exec_main does)
     let zed_vars = [
         "ZED_TERM",
         "TERM_PROGRAM",
@@ -107,34 +97,33 @@ fn run_sandboxed_with_env(
         "COLORTERM",
         "TERM_PROGRAM_VERSION",
     ];
+    let allowed: HashSet<&str> = parsed.allowed_env_vars.iter().map(|s| s.as_str()).collect();
 
+    let mut parent_env: Vec<(String, String)> = std::env::vars().collect();
+    for &(key, value) in extra_parent_env {
+        parent_env.push((key.to_string(), value.to_string()));
+    }
+    let filtered_env: Vec<(String, String)> = parent_env
+        .into_iter()
+        .filter(|(key, _)| allowed.contains(key.as_str()) || zed_vars.contains(&key.as_str()))
+        .collect();
+
+    // Step 7+8: Build command with env_clear().envs() and pre_exec sandbox
     let mut cmd = Command::new("/bin/sh");
     cmd.arg("-c").arg(shell_command);
-    cmd.current_dir(&config.project_dir);
-
-    // Combine real parent env with extra_env, then filter.
-    // extra_env simulates vars that would exist in the parent process.
-    let mut combined_env: Vec<(String, String)> = std::env::vars().collect();
-    for &(key, value) in extra_env {
-        combined_env.push((key.to_string(), value.to_string()));
-    }
-
+    cmd.current_dir(&sandbox_config.project_dir);
     cmd.env_clear();
-    for (key, value) in &combined_env {
-        if allowed.contains(key.as_str()) || zed_vars.contains(&key.as_str()) {
-            cmd.env(key, value);
-        }
-    }
+    cmd.envs(filtered_env);
 
     unsafe {
         cmd.pre_exec(move || {
             #[cfg(target_os = "macos")]
             {
-                crate::sandbox_macos::apply_sandbox(&config)?;
+                crate::sandbox_macos::apply_sandbox(&sandbox_config)?;
             }
             #[cfg(target_os = "linux")]
             {
-                crate::sandbox_linux::apply_sandbox(&config)?;
+                crate::sandbox_linux::apply_sandbox(&sandbox_config)?;
             }
             Ok(())
         });
@@ -461,7 +450,7 @@ fn test_sandbox_blocks_rm_rf() {
     // Sandboxed: rm -rf should be blocked
     let config = test_sandbox_config(project_dir.clone());
     let cmd = format!("rm -rf {}", target_dir.display());
-    let (success, _stdout, _stderr) = run_sandboxed_command(&config, &cmd);
+    let (success, _stdout, _stderr) = run_sandboxed_command(&config, &[], &cmd);
 
     // The rm might "succeed" (exit 0) on some platforms even if individual
     // deletes fail, or it might fail. Either way, the files should still exist.
@@ -491,7 +480,7 @@ fn test_sandbox_allows_writes_in_project() {
     let config = test_sandbox_config(project_dir.clone());
     let output_file = project_dir.join("sandbox_output.txt");
     let cmd = format!("echo 'hello from sandbox' > {}", output_file.display());
-    let (success, _stdout, stderr) = run_sandboxed_command(&config, &cmd);
+    let (success, _stdout, stderr) = run_sandboxed_command(&config, &[], &cmd);
 
     assert!(
         success,
@@ -518,7 +507,7 @@ fn test_sandbox_blocks_reads_outside_project() {
 
     // Try to cat the secret file and capture stdout
     let cmd = format!("cat {} 2>/dev/null || true", secret_file.display());
-    let (_success, stdout, _stderr) = run_sandboxed_command(&config, &cmd);
+    let (_success, stdout, _stderr) = run_sandboxed_command(&config, &[], &cmd);
 
     assert!(
         !stdout.contains(secret_content),
@@ -540,7 +529,7 @@ fn test_additional_read_write_paths_grant_access() {
     // First, WITHOUT the extra path — write should fail
     let config_without = test_sandbox_config(project_dir.clone());
     let cmd = format!("echo 'written' > {}", test_file.display());
-    let (_success, _stdout, _stderr) = run_sandboxed_command(&config_without, &cmd);
+    let (_success, _stdout, _stderr) = run_sandboxed_command(&config_without, &[], &cmd);
     let file_written_without = test_file.exists()
         && fs::read_to_string(&test_file)
             .map(|c| c.contains("written"))
@@ -553,7 +542,7 @@ fn test_additional_read_write_paths_grant_access() {
     // Now, WITH the extra path — write should succeed
     let mut config_with = test_sandbox_config(project_dir);
     config_with.additional_read_write_paths = vec![extra_dir.clone()];
-    let (success, _stdout, stderr) = run_sandboxed_command(&config_with, &cmd);
+    let (success, _stdout, stderr) = run_sandboxed_command(&config_with, &[], &cmd);
     assert!(
         success,
         "Write to extra dir should succeed with additional_read_write_paths. stderr: {stderr}"
@@ -584,7 +573,7 @@ fn test_additional_read_only_paths_allow_read_block_write() {
         readonly_file.display(),
         output_file.display()
     );
-    let (success, _stdout, stderr) = run_sandboxed_command(&config, &cmd);
+    let (success, _stdout, stderr) = run_sandboxed_command(&config, &[], &cmd);
     assert!(
         success,
         "Reading from read-only path should succeed. stderr: {stderr}"
@@ -597,7 +586,7 @@ fn test_additional_read_only_paths_allow_read_block_write() {
 
     // Try to overwrite the read-only file — should fail
     let cmd = format!("echo 'overwritten' > {}", readonly_file.display());
-    let (_success, _stdout, _stderr) = run_sandboxed_command(&config, &cmd);
+    let (_success, _stdout, _stderr) = run_sandboxed_command(&config, &[], &cmd);
     let current_content = fs::read_to_string(&readonly_file).expect("file should still exist");
     assert_eq!(
         current_content, known_content,
@@ -618,7 +607,7 @@ fn test_env_var_filtering() {
     let config = test_sandbox_config(project_dir);
 
     // HOME is in the default allowlist; AWS_SECRET is not
-    let (success, stdout, stderr) = run_sandboxed_with_env(
+    let (success, stdout, stderr) = run_sandboxed_command(
         &config,
         &[("AWS_SECRET", "super_secret_key_12345")],
         "echo HOME=$HOME; echo AWS=$AWS_SECRET",
@@ -654,7 +643,7 @@ fn test_network_blocking() {
 
     // Try to fetch a URL — should fail due to network being blocked
     let cmd = "curl -s --max-time 5 https://example.com 2>&1 || true";
-    let (_success, stdout, _stderr) = run_sandboxed_command(&config, &cmd);
+    let (_success, stdout, _stderr) = run_sandboxed_command(&config, &[], &cmd);
 
     // The response should NOT contain the expected HTML from example.com
     assert!(
@@ -674,7 +663,7 @@ fn test_sandbox_basic_echo_succeeds() {
     fs::create_dir_all(&project_dir).expect("failed to create project dir");
 
     let config = test_sandbox_config(project_dir);
-    let (success, stdout, stderr) = run_sandboxed_command(&config, "echo 'sandbox works'");
+    let (success, stdout, stderr) = run_sandboxed_command(&config, &[], "echo 'sandbox works'");
 
     assert!(
         success,

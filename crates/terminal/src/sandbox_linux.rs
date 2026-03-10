@@ -155,22 +155,18 @@ pub fn apply_sandbox(config: &SandboxConfig) -> Result<()> {
             log::info!("Landlock sandbox fully enforced");
         }
         RulesetStatus::PartiallyEnforced => {
-            if !config.allow_network {
-                log::warn!(
-                    "Landlock sandbox partially enforced; \
-                     network restriction may not be enforced on this kernel"
-                );
-            } else {
-                log::warn!("Landlock sandbox partially enforced (older kernel ABI)");
-            }
+            return Err(Error::other(
+                "Landlock sandbox only partially enforced on this kernel. \
+                 The sandbox cannot guarantee the requested restrictions. \
+                 Upgrade to kernel 6.4+ for full enforcement, or disable sandboxing.",
+            ));
         }
         RulesetStatus::NotEnforced => {
-            if !config.allow_network {
-                return Err(Error::other(
-                    "Landlock not supported on this kernel but network restriction was requested",
-                ));
-            }
-            log::warn!("Landlock not supported on this kernel; running unsandboxed");
+            return Err(Error::other(
+                "Landlock is not supported on this kernel (requires 5.13+). \
+                 The terminal cannot be sandboxed. \
+                 Upgrade your kernel or disable sandboxing.",
+            ));
         }
     }
 
