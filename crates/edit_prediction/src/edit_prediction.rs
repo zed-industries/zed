@@ -1158,7 +1158,7 @@ impl EditPredictionStore {
                 }
             }
             project::Event::DiagnosticsUpdated { .. } => {
-                if cx.has_flag::<EditPredictionJumpsFeatureFlag>() && project.read(cx).is_local() {
+                if cx.has_flag::<EditPredictionJumpsFeatureFlag>()  {
                     self.refresh_prediction_from_diagnostics(
                         project,
                         DiagnosticSearchScope::Global,
