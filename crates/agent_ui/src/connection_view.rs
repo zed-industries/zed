@@ -510,7 +510,7 @@ impl ConnectionView {
         Self {
             agent: agent.clone(),
             agent_server_store,
-            workspace,
+            workspace: workspace.clone(),
             project: project.clone(),
             thread_store,
             prompt_store,
@@ -519,6 +519,7 @@ impl ConnectionView {
                 resume_session_id,
                 cwd,
                 title,
+                workspace.clone(),
                 project,
                 initial_content,
                 window,
@@ -561,6 +562,7 @@ impl ConnectionView {
             resume_session_id,
             cwd,
             title,
+            self.workspace.clone(),
             self.project.clone(),
             None,
             window,
@@ -587,6 +589,7 @@ impl ConnectionView {
         resume_session_id: Option<acp::SessionId>,
         cwd: Option<PathBuf>,
         title: Option<SharedString>,
+        workspace: WeakEntity<Workspace>,
         project: Entity<Project>,
         initial_content: Option<AgentInitialContent>,
         window: &mut Window,
@@ -645,7 +648,7 @@ impl ConnectionView {
         let delegate = AgentServerDelegate::new(
             project.read(cx).agent_server_store().clone(),
             project.clone(),
-            Some(self.workspace.clone()),
+            Some(workspace),
             Some(status_tx),
             Some(new_version_available_tx),
         );
