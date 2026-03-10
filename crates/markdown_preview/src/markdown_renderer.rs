@@ -15,7 +15,8 @@ use gpui::{
     AbsoluteLength, Animation, AnimationExt, AnyElement, App, AppContext as _, Context, Div,
     Element, ElementId, Entity, HighlightStyle, Hsla, ImageSource, InteractiveText, IntoElement,
     Keystroke, Modifiers, ParentElement, Render, RenderImage, Resource, SharedString, Styled,
-    StyledText, Task, TextStyle, WeakEntity, Window, div, img, pulsating_between, rems,
+    StyledText, Task, TextStyle, Transformation, WeakEntity, Window, div, img, pulsating_between,
+    radians, rems,
 };
 use settings::Settings;
 use std::{
@@ -790,15 +791,12 @@ fn render_markdown_details(
         None => div().child(SharedString::from("Details")).into_any(),
     };
 
-    let chevron = if is_expanded {
-        ui::Icon::new(ui::IconName::ChevronDown)
-            .size(ui::IconSize::Small)
-            .color(ui::Color::Muted)
-    } else {
-        ui::Icon::new(ui::IconName::ChevronRight)
-            .size(ui::IconSize::Small)
-            .color(ui::Color::Muted)
-    };
+    let triangle = ui::Icon::new(ui::IconName::TriangleRight)
+        .size(ui::IconSize::Medium)
+        .color(ui::Color::Muted)
+        .when(is_expanded, |icon| {
+            icon.transform(Transformation::rotate(radians(std::f32::consts::PI / 2.0)))
+        });
 
     let new_expanded = !is_expanded;
     let source_range_start = parsed.source_range.start;
@@ -807,7 +805,7 @@ fn render_markdown_details(
         .gap_1()
         .items_center()
         .cursor_pointer()
-        .child(chevron)
+        .child(triangle)
         .child(summary_content)
         .when_some(cx.details_toggle_callback.clone(), |this, callback| {
             this.on_click(move |_, window, cx| {

@@ -22,6 +22,7 @@ pub use crate::traits::disableable::*;
 pub use crate::traits::fixed::*;
 pub use crate::traits::styled_ext::*;
 pub use crate::traits::toggleable::*;
+pub use crate::traits::transformable::*;
 pub use crate::traits::visible_on_hover::*;
 pub use crate::{Button, ButtonSize, ButtonStyle, IconButton, SelectableButton};
 pub use crate::{ButtonCommon, Color};
