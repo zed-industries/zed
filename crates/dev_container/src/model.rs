@@ -7,7 +7,6 @@ use std::{
 };
 
 use http_client::HttpClient;
-use paths::devcontainer_dir;
 use serde::{Deserialize, Deserializer, Serialize};
 use serde_json_lenient::Value;
 use smol::process::Command;
@@ -25,6 +24,16 @@ use crate::{
     get_oci_token_for_repo, safe_id_lower,
 };
 
+/**
+ * What's needed next:
+ * - Create a DevContainer manifest
+ * - Load the features up front (and put them in that manifest)
+ * - Move merged stuff into that struct
+ * - Move variable expansion into that struct
+ * - Continue on with lifecycle scripts
+ *
+ */
+
 /*
  * - What's left now:
  * INITIALIZING the dev container (next week)
@@ -38,7 +47,6 @@ use crate::{
  * - Provide option to rebuild in any event
  * - When installing an extension from within a dev container, offer to add it to the json definition
  */
-
 // So, when remoteUser is specified here, it seems that this is _not_ propagated to the labels in the docker container
 // Which is interesting. I guess the read-configuration API just need to talk to the file, not the docker itself
 // And the configuration doesn't make any promises about creating the user. Still weird though
@@ -91,6 +99,50 @@ pub(crate) struct DevContainer {
     host_requirements: Option<HostRequirements>,
 }
 
+#[derive(Debug, Eq, PartialEq, Default)]
+struct DevContainerManifest {
+    config: DevContainer,
+    directory: PathBuf,
+    file_name: String,
+}
+impl DevContainerManifest {
+    fn new(config_path: &Path) -> Result<Self, DevContainerErrorV2> {
+        log::info!("parsing devcontainer json found in {:?}", &config_path);
+        let devcontainer_contents = std::fs::read_to_string(&config_path).map_err(|e| {
+            log::error!("Unable to read devcontainer contents: {e}");
+            DevContainerErrorV2::UnmappedError
+        })?;
+
+        let devcontainer = deserialize_devcontainer_json(&devcontainer_contents)?;
+
+        let devcontainer_directory = config_path.parent().ok_or_else(|| {
+            log::error!("Dev container file should be in a directory");
+            DevContainerErrorV2::UnmappedError
+        })?;
+        let file_name = config_path
+            .file_name()
+            .and_then(|f| f.to_str())
+            .ok_or_else(|| {
+                log::error!("Dev container file has no file name, or is invalid unicode");
+                DevContainerErrorV2::UnmappedError
+            })?;
+
+        Ok(Self {
+            config: devcontainer,
+            directory: devcontainer_directory.to_path_buf(),
+            file_name: file_name.to_string(),
+        })
+    }
+
+    fn validate_config(&self) -> Result<(), DevContainerErrorV2> {
+        // TODO
+        Ok(())
+    }
+    fn config_file(&self) -> PathBuf {
+        self.directory.join(&self.file_name).clone()
+    }
+}
+
 #[derive(Debug, PartialEq, Eq)]
 enum DevContainerBuildType {
     Image,
@@ -100,11 +152,11 @@ enum DevContainerBuildType {
 }
 
 impl DevContainer {
-    fn validate_structure(&self) -> Result<(), DevContainerErrorV2> {
+    fn _validate_structure(&self) -> Result<(), DevContainerErrorV2> {
         // TODO
         Ok(())
     }
-    fn validate_features(&self) -> Result<(), DevContainerErrorV2> {
+    fn _validate_features(&self) -> Result<(), DevContainerErrorV2> {
         // TODO
         Ok(())
     }
@@ -567,20 +619,11 @@ pub(crate) async fn spawn_dev_container(
 ) -> Result<DevContainerUp, DevContainerErrorV2> {
     // 1. parse the devcontainer file
     let config_path = local_project_path.join(config.config_path.clone());
-    log::info!("parsing devcontainer json found in {:?}", &config_path);
-    let devcontainer_contents = std::fs::read_to_string(&config_path).map_err(|e| {
-        log::error!("Unable to read devcontainer contents: {e}");
-        DevContainerErrorV2::UnmappedError
-    })?;
 
-    let devcontainer = deserialize_devcontainer_json(&devcontainer_contents)?;
+    let devcontainer_manifest = DevContainerManifest::new(&config_path)?;
     // 2. ensure that object is valid
-    devcontainer.validate_structure()?;
+    devcontainer_manifest.validate_config()?;
 
-    log::info!("Devcontainer is valid. Proceeding");
-    // 3. check for disallowed features (?)
-    devcontainer.validate_features()?;
-    log::info!("Features defined are valid. Proceeding");
     // 4. run any initializeCommands
     log::info!("TODO, run initialze commands");
 
@@ -591,7 +634,7 @@ pub(crate) async fn spawn_dev_container(
         ),
         (
             "devcontainer.config_file",
-            (&config_path.display()).to_string(),
+            (&devcontainer_manifest.config_file().display()).to_string(),
         ),
     ];
 
@@ -604,7 +647,7 @@ pub(crate) async fn spawn_dev_container(
         //     3. If exists and not running, start it
         log::info!("TODO start the container if it's not running");
 
-        let remote_user = get_remote_user_from_config(&docker_inspect, &devcontainer)?;
+        let remote_user = get_remote_user_from_config(&docker_inspect, &devcontainer_manifest)?;
 
         let remote_folder = get_remote_dir_from_config(
             &docker_inspect,
@@ -620,15 +663,17 @@ pub(crate) async fn spawn_dev_container(
     } else {
         log::info!("Existing container not found. Building");
 
-        let devcontainer_dir = config_path
-            .parent()
-            .expect("TODO, this should actually combine the dockerfile property with the parent");
-
+        // So eventually, build resources should belong to DevContainerManifest
         let build_resources =
-            build_dev_container_resources(&devcontainer, http_client, devcontainer_dir, &labels)
-                .await?;
+            build_dev_container_resources(&devcontainer_manifest, http_client, &labels).await?;
 
-        run_dev_container(build_resources, &devcontainer, &local_project_path, &labels).await
+        run_dev_container(
+            build_resources,
+            &devcontainer_manifest,
+            &local_project_path,
+            &labels,
+        )
+        .await
     }
 }
 
@@ -647,20 +692,14 @@ enum DevContainerBuildResources {
 }
 
 async fn build_dev_container_resources(
-    dev_container: &DevContainer,
+    dev_container: &DevContainerManifest,
     http_client: Arc<dyn HttpClient>,
-    devcontainer_dir: &Path,
     labels: &Vec<(&str, String)>,
 ) -> Result<DevContainerBuildResources, DevContainerErrorV2> {
-    match dev_container.build_type() {
+    match dev_container.config.build_type() {
         DevContainerBuildType::Image | DevContainerBuildType::Dockerfile => {
-            let (built_docker_image, feature_manifests) = build_docker_image(
-                http_client,
-                dev_container,
-                devcontainer_dir,
-                devcontainer_dir.display().to_string(),
-            )
-            .await?;
+            let (built_docker_image, feature_manifests) =
+                build_docker_image(http_client, dev_container).await?;
 
             let resources =
                 build_merged_resources(built_docker_image, dev_container, feature_manifests);
@@ -668,13 +707,8 @@ async fn build_dev_container_resources(
         }
         DevContainerBuildType::DockerCompose => {
             log::info!("Using docker compose. Building extended compose files");
-            let docker_compose_files = build_and_extend_compose_files(
-                http_client,
-                dev_container,
-                devcontainer_dir,
-                &labels,
-            )
-            .await?;
+            let docker_compose_files =
+                build_and_extend_compose_files(http_client, dev_container, &labels).await?;
 
             log::info!(
                 "Created {} docker_compose files",
@@ -692,7 +726,7 @@ async fn build_dev_container_resources(
 
 async fn run_dev_container(
     build_resources: DevContainerBuildResources,
-    dev_container: &DevContainer,
+    dev_container: &DevContainerManifest,
     local_project_path: &Arc<&Path>,
     labels: &Vec<(&str, String)>,
 ) -> Result<DevContainerUp, DevContainerErrorV2> {
@@ -748,7 +782,7 @@ async fn run_docker_compose(
     }
 
     if let Some(docker_ps) = check_for_existing_container(&labels).await? {
-        log::info!("Dev container already found. Proceeding with it");
+        log::info!("Found newly created dev container");
         return inspect_image(&docker_ps.id).await;
     }
 
@@ -759,12 +793,10 @@ async fn run_docker_compose(
 
 async fn build_and_extend_compose_files(
     http_client: Arc<dyn HttpClient + 'static>,
-    devcontainer: &DevContainer,
-    devcontainer_dir: &Path,
+    devcontainer: &DevContainerManifest,
     labels: &Vec<(&str, String)>,
 ) -> Result<Vec<String>, DevContainerErrorV2> {
-    let mut docker_compose_manifest =
-        docker_compose_manifest(devcontainer, devcontainer_dir).await?;
+    let mut docker_compose_manifest = docker_compose_manifest(devcontainer).await?;
 
     let build_info = prepare_features_build_info(devcontainer)?;
 
@@ -772,20 +804,16 @@ async fn build_and_extend_compose_files(
         find_primary_service(&docker_compose_manifest, devcontainer)?;
     let (built_service_image, feature_manifests) = if let Some(image) = &main_service.image {
         if devcontainer
+            .config
             .features
             .as_ref()
             .is_none_or(|features| features.is_empty())
         {
             (inspect_image(image).await?, vec![])
         } else {
-            let features_manifests = construct_features_build_resources(
-                devcontainer,
-                devcontainer_dir.to_path_buf(),
-                &build_info,
-                &http_client,
-                None,
-            )
-            .await?;
+            let features_manifests =
+                construct_features_build_resources(devcontainer, &build_info, &http_client, None)
+                    .await?;
             let build_override = DockerComposeConfig {
                 name: None,
                 services: HashMap::from([(
@@ -843,11 +871,10 @@ async fn build_and_extend_compose_files(
         .as_ref()
         .and_then(|b| b.dockerfile.as_ref())
     {
-        let dockerfile_location = devcontainer_dir.join(dockerfile);
+        let dockerfile_location = devcontainer.directory.join(dockerfile);
         // TODO weird side-effects here means it has to be done first. Maybe there's a better way.
         let features_manifests = construct_features_build_resources(
             devcontainer,
-            devcontainer_dir.to_path_buf(),
             &build_info,
             &http_client,
             Some(dockerfile_location),
@@ -930,15 +957,14 @@ async fn build_and_extend_compose_files(
 }
 
 async fn docker_compose_manifest(
-    devcontainer: &DevContainer,
-    devcontainer_dir: &Path,
+    devcontainer: &DevContainerManifest,
 ) -> Result<DockerComposeManifest, DevContainerErrorV2> {
-    let Some(docker_compose_files) = devcontainer.docker_compose_file.clone() else {
+    let Some(docker_compose_files) = devcontainer.config.docker_compose_file.clone() else {
         return Err(DevContainerErrorV2::UnmappedError);
     };
     let docker_compose_full_paths = docker_compose_files
         .iter()
-        .map(|relative| devcontainer_dir.join(relative))
+        .map(|relative| devcontainer.directory.join(relative))
         .collect::<Vec<PathBuf>>();
     let docker_compose_config_command =
         create_docker_compose_config_command(&docker_compose_full_paths)?;
@@ -956,12 +982,13 @@ async fn docker_compose_manifest(
 }
 
 // TODO move entrypoint into this
+// TODO move this into the DevContainerManifest struct
 fn build_merged_resources(
     base_image: DockerInspect,
-    dev_container: &DevContainer,
+    dev_container: &DevContainerManifest,
     feature_manifests: Vec<FeatureManifest>,
 ) -> DockerBuildResources {
-    let mut mounts = dev_container.mounts.clone().unwrap_or(Vec::new());
+    let mut mounts = dev_container.config.mounts.clone().unwrap_or(Vec::new());
 
     let mut feature_mounts = feature_manifests
         .iter()
@@ -970,7 +997,7 @@ fn build_merged_resources(
 
     mounts.append(&mut feature_mounts);
 
-    let privileged = dev_container.privileged.unwrap_or(false)
+    let privileged = dev_container.config.privileged.unwrap_or(false)
         || feature_manifests.iter().any(|f| f.privileged());
 
     let entrypoints = feature_manifests
@@ -1141,9 +1168,9 @@ fn build_runtime_override(
 
 fn find_primary_service(
     docker_compose: &DockerComposeManifest,
-    devcontainer: &DevContainer,
+    devcontainer: &DevContainerManifest,
 ) -> Result<(String, DockerComposeService), DevContainerErrorV2> {
-    let Some(service_name) = &devcontainer.service else {
+    let Some(service_name) = &devcontainer.config.service else {
         return Err(DevContainerErrorV2::UnmappedError);
     };
 
@@ -1193,11 +1220,11 @@ async fn run_docker_image(
 }
 
 fn generate_features_image_tag(
-    dev_container: &DevContainer,
+    dev_container: &DevContainerManifest,
     dockerfile_build_path: String,
 ) -> String {
     let mut hasher = DefaultHasher::new();
-    let prefix = match &dev_container.name {
+    let prefix = match &dev_container.config.name {
         Some(name) => &safe_id_lower(name),
         None => "zed-dc",
     };
@@ -1215,7 +1242,7 @@ fn generate_features_image_tag(
 /// The actual feature content (install scripts, env files) must be staged into the returned
 /// `features_content_dir` before executing the build command.
 fn prepare_features_build_info(
-    dev_container: &DevContainer,
+    dev_container: &DevContainerManifest,
 ) -> Result<FeaturesBuildInfo, DevContainerErrorV2> {
     // Covers both image and Dockefile cases, not yet docker-compose
     let temp_base = std::env::temp_dir().join("devcontainer-zed");
@@ -1243,7 +1270,7 @@ fn prepare_features_build_info(
         dockerfile_path,
         features_content_dir,
         empty_context_dir,
-        base_image: dev_container.image.clone(),
+        base_image: dev_container.config.image.clone(),
         image_tag,
     })
 }
@@ -1544,19 +1571,18 @@ USER $_DEV_CONTAINERS_IMAGE_USER
 /// If any step of the download fails the function returns an error
 /// immediately.
 async fn construct_features_build_resources(
-    dev_container: &DevContainer,
-    dev_container_dir: PathBuf,
+    dev_container: &DevContainerManifest,
     build_info: &FeaturesBuildInfo,
     http_client: &Arc<dyn HttpClient>,
     dockerfile_location: Option<PathBuf>,
 ) -> Result<Vec<FeatureManifest>, DevContainerErrorV2> {
     // TODO probably a more elegant way of doing this
-    let features = match &dev_container.features {
+    let features = match &dev_container.config.features {
         Some(features) => features,
         None => &HashMap::new(),
     };
 
-    let base_image = get_base_image_from_config(dev_container, dev_container_dir).await?;
+    let base_image = get_base_image_from_config(dev_container).await?;
     let base_image = inspect_image(&base_image).await?;
 
     let container_user = get_container_user_from_config(&base_image, dev_container)?;
@@ -1578,8 +1604,10 @@ async fn construct_features_build_resources(
     })?;
 
     // --- 2. Determine installation order ---
-    let ordered_features =
-        resolve_feature_order(features, &dev_container.override_feature_install_order);
+    let ordered_features = resolve_feature_order(
+        features,
+        &dev_container.config.override_feature_install_order,
+    );
 
     log::info!("Test: ordered features len is {}", ordered_features.len());
 
@@ -1700,17 +1728,16 @@ async fn construct_features_build_resources(
 // TODO this only applies to docker stuff, not sure it needs devcontainer any more
 async fn build_docker_image(
     http_client: Arc<dyn HttpClient>,
-    dev_container: &DevContainer,
-    dev_container_dir: &Path,
-    dockerfile_dir: String,
+    dev_container: &DevContainerManifest,
 ) -> Result<(DockerInspect, Vec<FeatureManifest>), DevContainerErrorV2> {
-    match dev_container.build_type() {
+    match dev_container.config.build_type() {
         DevContainerBuildType::Image => {
-            let Some(image_tag) = &dev_container.image else {
+            let Some(image_tag) = &dev_container.config.image else {
                 return Err(DevContainerErrorV2::UnmappedError);
             };
             let base_image = inspect_image(image_tag).await?;
             if dev_container
+                .config
                 .features
                 .as_ref()
                 .is_none_or(|features| features.is_empty())
@@ -1726,26 +1753,26 @@ async fn build_docker_image(
         }
     };
 
-    let build_info = prepare_features_build_info(dev_container)?;
+    // TODO come back to this
+    let build_info = prepare_features_build_info(&dev_container)?;
 
     let dockerfile_location = dev_container
+        .config
         .build
         .as_ref()
-        .map(|build| PathBuf::from(&dockerfile_dir).join(&build.dockerfile));
+        .map(|build| PathBuf::from(&dev_container.directory).join(&build.dockerfile));
 
-    let get_base_image_from_config =
-        get_base_image_from_config(dev_container, dev_container_dir.to_path_buf()).await?;
+    let get_base_image_from_config = get_base_image_from_config(dev_container).await?;
     let base_image = inspect_image(&get_base_image_from_config).await?;
 
     let feature_manifests = construct_features_build_resources(
         dev_container,
-        dev_container_dir.to_path_buf(),
         &build_info,
         &http_client,
         dockerfile_location,
     )
     .await?;
-    let mut command = create_docker_build(&build_info, dev_container, &dockerfile_dir, base_image)?;
+    let mut command = create_docker_build(&build_info, dev_container, base_image)?;
 
     let output = command.output().await.map_err(|e| {
         log::error!("Error building docker image: {e}");
@@ -1799,8 +1826,7 @@ fn deserialize_devcontainer_json(json: &str) -> Result<DevContainer, DevContaine
 /// ```
 fn create_docker_build(
     build_info: &FeaturesBuildInfo,
-    dev_container: &DevContainer,
-    dockerfile_dir: &str,
+    dev_container: &DevContainerManifest,
     base_image: DockerInspect,
 ) -> Result<Command, DevContainerErrorV2> {
     let mut command = smol::process::Command::new(docker_cli());
@@ -1847,7 +1873,12 @@ fn create_docker_build(
         "_DEV_CONTAINERS_FEATURE_CONTENT_SOURCE=dev_container_feature_content_temp",
     ]);
 
-    if let Some(args) = dev_container.build.as_ref().and_then(|b| b.args.as_ref()) {
+    if let Some(args) = dev_container
+        .config
+        .build
+        .as_ref()
+        .and_then(|b| b.args.as_ref())
+    {
         for (key, value) in args {
             command.args(["--build-arg", &format!("{}={}", key, value)]);
         }
@@ -1862,8 +1893,8 @@ fn create_docker_build(
     // Tag the resulting image
     command.args(["-t", &build_info.image_tag]);
 
-    if dev_container.build_type() == DevContainerBuildType::Dockerfile {
-        command.arg(dockerfile_dir.to_string());
+    if dev_container.config.build_type() == DevContainerBuildType::Dockerfile {
+        command.arg(dev_container.directory.display().to_string());
     } else {
         // Use an empty folder as the build context to avoid pulling in unneeded files.
         // The actual feature content is supplied via the BuildKit build context above.
@@ -2012,32 +2043,30 @@ fn get_remote_dir_from_config(
 /// - The image sourced in the docker-compose main service dockerfile, if one is specified
 /// If no such image is available, return an error
 async fn get_base_image_from_config(
-    devcontainer: &DevContainer,
-    devcontainer_dir: PathBuf,
+    devcontainer: &DevContainerManifest,
 ) -> Result<String, DevContainerErrorV2> {
-    if let Some(image) = &devcontainer.image {
+    if let Some(image) = &devcontainer.config.image {
         return Ok(image.to_string());
     }
-    if let Some(dockerfile) = devcontainer.build.as_ref().map(|b| &b.dockerfile) {
-        let dockerfile_contents = std::fs::read_to_string(devcontainer_dir.join(dockerfile))
+    if let Some(dockerfile) = devcontainer.config.build.as_ref().map(|b| &b.dockerfile) {
+        let dockerfile_contents = std::fs::read_to_string(devcontainer.directory.join(dockerfile))
             .map_err(|e| {
                 log::error!("Error reading dockerfile: {e}");
                 DevContainerErrorV2::UnmappedError
             })?;
         return image_from_dockerfile(devcontainer, dockerfile_contents);
     }
-    if devcontainer.docker_compose_file.is_some() {
-        let docker_compose_manifest =
-            docker_compose_manifest(devcontainer, &devcontainer_dir).await?;
-        let (_, main_service) = find_primary_service(&docker_compose_manifest, devcontainer)?;
+    if devcontainer.config.docker_compose_file.is_some() {
+        let docker_compose_manifest = docker_compose_manifest(devcontainer).await?;
+        let (_, main_service) = find_primary_service(&docker_compose_manifest, &devcontainer)?;
 
         if let Some(dockerfile) = main_service
             .build
             .as_ref()
             .and_then(|b| b.dockerfile.as_ref())
         {
-            let dockerfile_contents = std::fs::read_to_string(devcontainer_dir.join(dockerfile))
-                .map_err(|e| {
+            let dockerfile_contents =
+                std::fs::read_to_string(devcontainer.directory.join(dockerfile)).map_err(|e| {
                     log::error!("Error reading dockerfile: {e}");
                     DevContainerErrorV2::UnmappedError
                 })?;
@@ -2056,7 +2085,7 @@ async fn get_base_image_from_config(
 
 /// TODO test
 fn image_from_dockerfile(
-    devcontainer: &DevContainer,
+    devcontainer: &DevContainerManifest,
     dockerfile_contents: String,
 ) -> Result<String, DevContainerErrorV2> {
     let mut raw_contents = dockerfile_contents
@@ -2075,6 +2104,7 @@ fn image_from_dockerfile(
         })?;
 
     for (k, v) in devcontainer
+        .config
         .build
         .as_ref()
         .and_then(|b| b.args.as_ref())
@@ -2089,12 +2119,12 @@ fn image_from_dockerfile(
 // This should come from spec - see the docs
 fn get_remote_user_from_config(
     docker_config: &DockerInspect,
-    devcontainer_config: &DevContainer,
+    devcontainer: &DevContainerManifest,
 ) -> Result<String, DevContainerErrorV2> {
     if let DevContainer {
         remote_user: Some(user),
         ..
-    } = devcontainer_config
+    } = &devcontainer.config
     {
         return Ok(user.clone());
     }
@@ -2115,9 +2145,9 @@ fn get_remote_user_from_config(
 // This should come from spec - see the docs
 fn get_container_user_from_config(
     docker_config: &DockerInspect,
-    devcontainer_config: &DevContainer,
+    devcontainer: &DevContainerManifest,
 ) -> Result<String, DevContainerErrorV2> {
-    if let Some(user) = &devcontainer_config.container_user {
+    if let Some(user) = &devcontainer.config.container_user {
         return Ok(user.to_string());
     }
     if let Some(metadata) = &docker_config.config.labels.metadata {
@@ -2154,12 +2184,12 @@ mod test {
         docker::{DockerConfigLabels, DockerInspectConfig, docker_cli},
         features::{DevContainerFeatureJson, FeatureManifest},
         model::{
-            ContainerBuild, DevContainer, DevContainerBuildType, DockerBuildResources,
-            DockerComposeConfig, DockerComposeService, DockerInspect, DockerPs, FeatureOptionValue,
-            FeatureOptions, FeaturesBuildInfo, ForwardPort, HostRequirements, LifecycleCommand,
-            LifecyleScript, MountDefinition, OnAutoForward, PortAttributeProtocol, PortAttributes,
-            ShutdownAction, UserEnvProbe, build_runtime_override,
-            construct_features_build_resources, create_docker_build,
+            ContainerBuild, DevContainer, DevContainerBuildType, DevContainerManifest,
+            DockerBuildResources, DockerComposeConfig, DockerComposeManifest, DockerComposeService,
+            DockerInspect, DockerPs, FeatureOptionValue, FeatureOptions, FeaturesBuildInfo,
+            ForwardPort, HostRequirements, LifecycleCommand, LifecyleScript, MountDefinition,
+            OnAutoForward, PortAttributeProtocol, PortAttributes, ShutdownAction, UserEnvProbe,
+            build_runtime_override, construct_features_build_resources, create_docker_build,
             create_docker_compose_config_command, create_docker_run_command,
             deserialize_devcontainer_json, extract_feature_id, find_primary_service,
             generate_dockerfile_extended, get_remote_dir_from_config, get_remote_user_from_config,
@@ -2924,10 +2954,13 @@ mod test {
 
     #[test]
     fn should_get_remote_user_from_devcontainer_if_available() {
-        let given_dev_container = DevContainer {
-            image: Some("image".to_string()),
-            name: None,
-            remote_user: Some("root".to_string()),
+        let given_dev_container = DevContainerManifest {
+            config: DevContainer {
+                image: Some("image".to_string()),
+                name: None,
+                remote_user: Some("root".to_string()),
+                ..Default::default()
+            },
             ..Default::default()
         };
 
@@ -2973,10 +3006,13 @@ mod test {
 
         let remote_user = get_remote_user_from_config(
             &given_docker_config,
-            &DevContainer {
-                image: None,
-                name: None,
-                remote_user: None,
+            &DevContainerManifest {
+                config: DevContainer {
+                    image: None,
+                    name: None,
+                    remote_user: None,
+                    ..Default::default()
+                },
                 ..Default::default()
             },
         );
@@ -3003,11 +3039,13 @@ mod test {
 
         let docker_build_command = create_docker_build(
             &build_info,
-            &DevContainer {
-                image: Some("mcr.microsoft.com/devcontainers/rust:2-1-bookworm".to_string()),
+            &DevContainerManifest {
+                config: DevContainer {
+                    image: Some("mcr.microsoft.com/devcontainers/rust:2-1-bookworm".to_string()),
+                    ..Default::default()
+                },
                 ..Default::default()
             },
-            "",
             DockerInspect {
                 id: "mcr.microsoft.com/devcontainers/rust:2-1-bookworm".to_string(),
                 config: DockerInspectConfig {
@@ -3104,19 +3142,22 @@ mod test {
                 image_tag: "vsc-test-features".to_string(),
             };
 
-            let dev_container = DevContainer {
-                image: Some("mcr.microsoft.com/devcontainers/rust:2-1-bookworm".to_string()),
-                features: Some(HashMap::from([
-                    (
-                        "ghcr.io/devcontainers/features/aws-cli:1".to_string(),
-                        FeatureOptions::Options(HashMap::new()),
-                    ),
-                    (
-                        "ghcr.io/devcontainers/features/node:1".to_string(),
-                        FeatureOptions::String("18".to_string()),
-                    ),
-                ])),
-                remote_user: Some("vscode".to_string()),
+            let dev_container = DevContainerManifest {
+                config: DevContainer {
+                    image: Some("mcr.microsoft.com/devcontainers/rust:2-1-bookworm".to_string()),
+                    features: Some(HashMap::from([
+                        (
+                            "ghcr.io/devcontainers/features/aws-cli:1".to_string(),
+                            FeatureOptions::Options(HashMap::new()),
+                        ),
+                        (
+                            "ghcr.io/devcontainers/features/node:1".to_string(),
+                            FeatureOptions::String("18".to_string()),
+                        ),
+                    ])),
+                    remote_user: Some("vscode".to_string()),
+                    ..Default::default()
+                },
                 ..Default::default()
             };
 
@@ -3217,25 +3258,28 @@ mod test {
                 image_tag: "vsc-test-order".to_string(),
             };
 
-            let dev_container = DevContainer {
-                image: Some("mcr.microsoft.com/devcontainers/base:ubuntu".to_string()),
-                features: Some(HashMap::from([
-                    (
-                        "ghcr.io/devcontainers/features/aws-cli:1".to_string(),
-                        FeatureOptions::Options(HashMap::new()),
-                    ),
-                    (
+            let dev_container = DevContainerManifest {
+                config: DevContainer {
+                    image: Some("mcr.microsoft.com/devcontainers/base:ubuntu".to_string()),
+                    features: Some(HashMap::from([
+                        (
+                            "ghcr.io/devcontainers/features/aws-cli:1".to_string(),
+                            FeatureOptions::Options(HashMap::new()),
+                        ),
+                        (
+                            "ghcr.io/devcontainers/features/node:1".to_string(),
+                            FeatureOptions::Options(HashMap::from([(
+                                "version".to_string(),
+                                FeatureOptionValue::String("20".to_string()),
+                            )])),
+                        ),
+                    ])),
+                    override_feature_install_order: Some(vec![
                         "ghcr.io/devcontainers/features/node:1".to_string(),
-                        FeatureOptions::Options(HashMap::from([(
-                            "version".to_string(),
-                            FeatureOptionValue::String("20".to_string()),
-                        )])),
-                    ),
-                ])),
-                override_feature_install_order: Some(vec![
-                    "ghcr.io/devcontainers/features/node:1".to_string(),
-                    "ghcr.io/devcontainers/features/aws-cli:1".to_string(),
-                ]),
+                        "ghcr.io/devcontainers/features/aws-cli:1".to_string(),
+                    ]),
+                    ..Default::default()
+                },
                 ..Default::default()
             };
 
@@ -3293,18 +3337,21 @@ mod test {
                 image_tag: "vsc-test-disabled".to_string(),
             };
 
-            let dev_container = DevContainer {
-                image: Some("mcr.microsoft.com/devcontainers/base:ubuntu".to_string()),
-                features: Some(HashMap::from([
-                    (
-                        "ghcr.io/devcontainers/features/aws-cli:1".to_string(),
-                        FeatureOptions::Bool(false),
-                    ),
-                    (
-                        "ghcr.io/devcontainers/features/node:1".to_string(),
-                        FeatureOptions::Bool(true),
-                    ),
-                ])),
+            let dev_container = DevContainerManifest {
+                config: DevContainer {
+                    image: Some("mcr.microsoft.com/devcontainers/base:ubuntu".to_string()),
+                    features: Some(HashMap::from([
+                        (
+                            "ghcr.io/devcontainers/features/aws-cli:1".to_string(),
+                            FeatureOptions::Bool(false),
+                        ),
+                        (
+                            "ghcr.io/devcontainers/features/node:1".to_string(),
+                            FeatureOptions::Bool(true),
+                        ),
+                    ])),
+                    ..Default::default()
+                },
                 ..Default::default()
             };
 
@@ -3347,12 +3394,15 @@ mod test {
                 image_tag: "vsc-test-fail".to_string(),
             };
 
-            let dev_container = DevContainer {
-                image: Some("mcr.microsoft.com/devcontainers/base:ubuntu".to_string()),
-                features: Some(HashMap::from([(
-                    "ghcr.io/devcontainers/features/go:1".to_string(),
-                    FeatureOptions::Options(HashMap::new()),
-                )])),
+            let dev_container = DevContainerManifest {
+                config: DevContainer {
+                    image: Some("mcr.microsoft.com/devcontainers/base:ubuntu".to_string()),
+                    features: Some(HashMap::from([(
+                        "ghcr.io/devcontainers/features/go:1".to_string(),
+                        FeatureOptions::Options(HashMap::new()),
+                    )])),
+                    ..Default::default()
+                },
                 ..Default::default()
             };
 
@@ -3497,10 +3547,13 @@ while sleep 1 & wait $!; do :; done
         let config = deserialized.unwrap();
         let remote_user = get_remote_user_from_config(
             &config,
-            &DevContainer {
-                image: None,
-                name: None,
-                remote_user: None,
+            &DevContainerManifest {
+                config: DevContainer {
+                    image: None,
+                    name: None,
+                    remote_user: None,
+                    ..Default::default()
+                },
                 ..Default::default()
             },
         );
@@ -3882,8 +3935,8 @@ USER $_DEV_CONTAINERS_IMAGE_USER
     #[test]
     fn should_create_docker_compose_command() {
         let docker_compose_files = vec![
-            "/var/test/docker-compose.yml".to_string(),
-            "/var/other/docker-compose2.yml".to_string(),
+            PathBuf::from("/var/test/docker-compose.yml"),
+            PathBuf::from("/var/other/docker-compose2.yml"),
         ];
 
         let command = create_docker_compose_config_command(&docker_compose_files).unwrap();
@@ -4015,12 +4068,13 @@ USER $_DEV_CONTAINERS_IMAGE_USER
     #[test]
     fn should_find_primary_service_in_docker_compose() {
         // State where service not defined in dev container
-        let given_dev_container = DevContainer {
-            ..Default::default()
-        };
-        let given_docker_compose_config = DockerComposeConfig {
-            name: Some("devcontainers".to_string()),
-            services: HashMap::new(),
+        let given_dev_container = DevContainerManifest::default();
+        let given_docker_compose_config = DockerComposeManifest {
+            config: DockerComposeConfig {
+                name: Some("devcontainers".to_string()),
+                services: HashMap::new(),
+                ..Default::default()
+            },
             ..Default::default()
         };
 
@@ -4029,13 +4083,19 @@ USER $_DEV_CONTAINERS_IMAGE_USER
         assert!(bad_result.is_err());
 
         // State where service defined in devcontainer, not found in DockerCompose config
-        let given_dev_container = DevContainer {
-            service: Some("not_found_service".to_string()),
+        let given_dev_container = DevContainerManifest {
+            config: DevContainer {
+                service: Some("not_found_service".to_string()),
+                ..Default::default()
+            },
             ..Default::default()
         };
-        let given_docker_compose_config = DockerComposeConfig {
-            name: Some("devcontainers".to_string()),
-            services: HashMap::new(),
+        let given_docker_compose_config = DockerComposeManifest {
+            config: DockerComposeConfig {
+                name: Some("devcontainers".to_string()),
+                services: HashMap::new(),
+                ..Default::default()
+            },
             ..Default::default()
         };
 
@@ -4043,18 +4103,24 @@ USER $_DEV_CONTAINERS_IMAGE_USER
 
         assert!(bad_result.is_err());
         // State where service defined in devcontainer and in DockerCompose config
-        let given_dev_container = DevContainer {
-            service: Some("found_service".to_string()),
+        let given_dev_container = DevContainerManifest {
+            config: DevContainer {
+                service: Some("found_service".to_string()),
+                ..Default::default()
+            },
             ..Default::default()
         };
-        let given_docker_compose_config = DockerComposeConfig {
-            name: Some("devcontainers".to_string()),
-            services: HashMap::from([(
-                "found_service".to_string(),
-                DockerComposeService {
-                    ..Default::default()
-                },
-            )]),
+        let given_docker_compose_config = DockerComposeManifest {
+            config: DockerComposeConfig {
+                name: Some("devcontainers".to_string()),
+                services: HashMap::from([(
+                    "found_service".to_string(),
+                    DockerComposeService {
+                        ..Default::default()
+                    },
+                )]),
+                ..Default::default()
+            },
             ..Default::default()
         };
 
