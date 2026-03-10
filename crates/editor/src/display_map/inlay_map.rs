@@ -948,22 +948,26 @@ impl InlaySnapshot {
         self.inlay_point_cursor().map(point, Bias::Left)
     }
 
-    /// Converts a buffer offset range into one or more `InlayOffset` ranges that
-    /// cover only the actual buffer text, skipping any inlay hint text that falls
-    /// within the range. When there are no inlays the returned vec contains a
-    /// single element identical to the input mapped into inlay-offset space.
-    pub fn buffer_offset_to_inlay_ranges(
+    /// Converts a buffer offset range into one or more `InlayOffset` ranges.
+    /// Inlay hints are included if they logically fall within the selected text.
+    pub fn display_ranges_for_buffer_range(
         &self,
         range: Range<MultiBufferOffset>,
     ) -> impl Iterator<Item = Range<InlayOffset>> {
         let mut cursor = self
             .transforms
             .cursor::<Dimensions<MultiBufferOffset, InlayOffset>>(());
-        cursor.seek(&range.start, Bias::Right);
+        cursor.seek(&range.start, Bias::Left);
+
+        let mut current_range: Option<Range<InlayOffset>> = None;
 
         std::iter::from_fn(move || {
             loop {
-                match cursor.item()? {
+                let item = cursor.item();
+                if item.is_none() {
+                    return current_range.take();
+                }
+                match item.unwrap() {
                     Transform::Isomorphic(_) => {
                         let seg_buffer_start = cursor.start().0;
                         let seg_buffer_end = cursor.end().0;
@@ -980,14 +984,50 @@ impl InlaySnapshot {
                                 InlayOffset(seg_inlay_start.0 + (overlap_start - seg_buffer_start));
                             let inlay_end =
                                 InlayOffset(seg_inlay_start.0 + (overlap_end - seg_buffer_start));
-                            return Some(inlay_start..inlay_end);
+                            
+                            if let Some(r) = &mut current_range {
+                                if r.end == inlay_start {
+                                    r.end = inlay_end;
+                                } else {
+                                    let old_range = current_range.replace(inlay_start..inlay_end);
+                                    return old_range;
+                                }
+                            } else {
+                                current_range = Some(inlay_start..inlay_end);
+                            }
                         }
 
                         if past_end {
-                            return None;
+                            return current_range.take();
                         }
                     }
-                    Transform::Inlay(_) => cursor.next(),
+                    Transform::Inlay(inlay) => {
+                        let inlay_buffer_offset = cursor.start().0;
+                        let inlay_inlay_start = cursor.start().1;
+                        let inlay_inlay_end = cursor.end().1;
+                        
+                        let is_included = if inlay.position.bias() == Bias::Left {
+                            inlay_buffer_offset >= range.start && inlay_buffer_offset < range.end
+                        } else {
+                            inlay_buffer_offset > range.start && inlay_buffer_offset <= range.end
+                        };
+
+                        cursor.next();
+                        if is_included {
+                            if let Some(r) = &mut current_range {
+                                if r.end == inlay_inlay_start {
+                                    r.end = inlay_inlay_end;
+                                } else {
+                                    let old_range = current_range.replace(inlay_inlay_start..inlay_inlay_end);
+                                    return old_range;
+                                }
+                            } else {
+                                current_range = Some(inlay_inlay_start..inlay_inlay_end);
+                            }
+                        } else if current_range.is_some() {
+                            return current_range.take();
+                        }
+                    }
                 }
             }
         })
