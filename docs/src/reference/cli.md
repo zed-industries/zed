@@ -35,6 +35,12 @@ Open a directory as a workspace:
 zed ~/projects/myproject
 ```
 
+Open a workspace and run a command in Zed's terminal:
+
+```sh
+zed ~/projects/myproject --command "echo ready"
+```
+
 Open multiple files or directories:
 
 ```sh
@@ -93,6 +99,22 @@ Open a diff view comparing two files. Can be specified multiple times:
 zed --diff file1.txt file2.txt
 zed --diff old.rs new.rs --diff old2.rs new2.rs
 ```
+
+### `--command <COMMAND>`
+
+Open a local workspace directory and immediately run a command in a Zed terminal tab:
+
+```sh
+zed ~/projects/myproject --command "echo ready"
+```
+
+Can be specified multiple times to open multiple terminal tabs in the order provided:
+
+```sh
+zed ~/projects/myproject --command "echo first" --command "sleep 1"
+```
+
+`--command` only supports local workspace directory opens. It cannot be combined with URL opens, remote/WSL opens, diff-only opens, or file-only opens.
 
 ### `--foreground`
 

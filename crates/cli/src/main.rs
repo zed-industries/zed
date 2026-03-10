@@ -58,7 +58,9 @@ Examples:
     `zed path-to-your-project`
           Open your project in Zed
     `zed -n path-to-file `
-          Open file/folder in a new window",
+          Open file/folder in a new window
+    `zed path-to-your-project --command \"echo ready\"`
+          Open a project and run a command in Zed's terminal",
     after_help = "To read from stdin, append '-', e.g. 'ps axf | zed -'"
 )]
 struct Args {
@@ -90,6 +92,10 @@ struct Args {
     ///
     /// Use `path:line:column` syntax to open a file at the given line and column.
     paths_with_position: Vec<String>,
+    /// Run a command in Zed's terminal after opening a local workspace directory.
+    /// Can be specified multiple times to open multiple terminal tabs.
+    #[arg(long, action = clap::ArgAction::Append, value_name = "COMMAND")]
+    command: Vec<String>,
     /// Print Zed's version and the app path.
     #[arg(short, long)]
     version: bool,
@@ -401,6 +407,29 @@ mod tests {
         .unwrap();
         assert_eq!(result, expected);
     }
+
+    #[test]
+    fn test_parse_command_flag() {
+        let args =
+            Args::try_parse_from(["zed", "/tmp/project", "--command", "echo ready"]).unwrap();
+
+        assert_eq!(args.command, vec!["echo ready"]);
+    }
+
+    #[test]
+    fn test_parse_multiple_command_flags() {
+        let args = Args::try_parse_from([
+            "zed",
+            "/tmp/project",
+            "--command",
+            "echo first",
+            "--command",
+            "sleep 1",
+        ])
+        .unwrap();
+
+        assert_eq!(args.command, vec!["echo first", "sleep 1"]);
+    }
 }
 
 fn parse_path_in_wsl(source: &str, wsl: &str) -> Result<String> {
@@ -664,6 +693,7 @@ fn main() -> Result<()> {
                     urls,
                     diff_paths,
                     diff_all: diff_all_mode,
+                    command: args.command,
                     wsl,
                     wait: args.wait,
                     open_new_workspace,

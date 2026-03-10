@@ -156,6 +156,7 @@ fn send_args_to_instance(args: &Args) -> anyhow::Result<()> {
             urls,
             diff_paths,
             diff_all: false,
+            command: args.command.clone(),
             wait: false,
             wsl: args.wsl.clone(),
             open_new_workspace: None,

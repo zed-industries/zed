@@ -24,12 +24,14 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
+use terminal::Terminal;
+use terminal_view::terminal_panel::TerminalPanel;
 use ui::SharedString;
 use util::ResultExt;
 use util::paths::PathWithPosition;
 use workspace::PathList;
 use workspace::item::ItemHandle;
-use workspace::{AppState, MultiWorkspace, OpenOptions, SerializedWorkspaceLocation};
+use workspace::{AppState, MultiWorkspace, OpenOptions, OpenTerminal, SerializedWorkspaceLocation};
 
 #[derive(Default, Debug)]
 pub struct OpenRequest {
@@ -37,6 +39,7 @@ pub struct OpenRequest {
     pub open_paths: Vec<String>,
     pub diff_paths: Vec<[String; 2]>,
     pub diff_all: bool,
+    pub command: Vec<String>,
     pub open_channel_notes: Vec<(u64, Option<String>)>,
     pub join_channel: Option<u64>,
     pub remote_connection: Option<RemoteConnectionOptions>,
@@ -78,6 +81,7 @@ impl OpenRequest {
 
         this.diff_paths = request.diff_paths;
         this.diff_all = request.diff_all;
+        this.command = request.command;
         if let Some(wsl) = request.wsl {
             let (user, distro_name) = if let Some((user, distro)) = wsl.split_once('@') {
                 if user.is_empty() {
@@ -257,6 +261,7 @@ pub struct RawOpenRequest {
     pub diff_paths: Vec<[String; 2]>,
     pub diff_all: bool,
     pub wsl: Option<String>,
+    pub command: Vec<String>,
 }
 
 impl Global for OpenListener {}
@@ -391,6 +396,121 @@ pub async fn open_paths_with_positions(
     Ok((multi_workspace, items))
 }
 
+pub(crate) async fn validate_command_request(
+    request: &OpenRequest,
+    app_state: &Arc<AppState>,
+) -> Result<()> {
+    validate_command_target(
+        &request.command,
+        &request.open_paths,
+        &request.diff_paths,
+        request.kind.is_some(),
+        request.remote_connection.is_some(),
+        &app_state.fs,
+    )
+    .await
+}
+
+async fn validate_command_target(
+    commands: &[String],
+    open_paths: &[String],
+    diff_paths: &[[String; 2]],
+    has_special_open_kind: bool,
+    is_remote: bool,
+    fs: &Arc<dyn Fs>,
+) -> Result<()> {
+    if commands.is_empty() {
+        return Ok(());
+    }
+
+    if !diff_paths.is_empty() {
+        anyhow::bail!("--command cannot be used with --diff");
+    }
+
+    if has_special_open_kind {
+        anyhow::bail!("--command only supports local workspace directory opens");
+    }
+
+    if is_remote {
+        anyhow::bail!("--command does not support remote or WSL opens");
+    }
+
+    if open_paths.is_empty() {
+        anyhow::bail!("--command requires at least one local directory path");
+    }
+
+    for path in open_paths {
+        if fs.is_dir(Path::new(path)).await {
+            return Ok(());
+        }
+    }
+
+    anyhow::bail!("--command requires at least one local directory path")
+}
+
+async fn spawn_command_in_workspace(
+    workspace: &WindowHandle<MultiWorkspace>,
+    command: String,
+    cx: &mut AsyncApp,
+) -> Result<()> {
+    wait_for_workspace_panels(workspace, cx).await?;
+
+    let terminal = workspace.update(cx, |multi_workspace, window, cx| -> Result<_> {
+        let workspace = multi_workspace.workspace().clone();
+        workspace.update(cx, |workspace, cx| -> Result<_> {
+            let working_directory = workspace
+                .project()
+                .read(cx)
+                .first_project_directory(cx)
+                .context("failed to determine workspace directory for --command")?;
+
+            Ok(TerminalPanel::open_terminal_task(
+                workspace,
+                &OpenTerminal {
+                    working_directory,
+                    local: false,
+                },
+                window,
+                cx,
+            ))
+        })
+    })??;
+
+    let terminal = terminal.await?;
+    send_command_to_terminal(&terminal, &command, cx).await?;
+    Ok(())
+}
+
+async fn wait_for_workspace_panels(
+    workspace: &WindowHandle<MultiWorkspace>,
+    cx: &mut AsyncApp,
+) -> Result<()> {
+    let panels_task = workspace.update(cx, |multi_workspace, _window, cx| {
+        let workspace = multi_workspace.workspace().clone();
+        workspace.update(cx, |workspace, _cx| workspace.take_panels_task())
+    })?;
+
+    if let Some(task) = panels_task {
+        task.await?;
+    }
+
+    Ok(())
+}
+
+async fn send_command_to_terminal(
+    terminal: &gpui::WeakEntity<Terminal>,
+    command: &str,
+    cx: &mut AsyncApp,
+) -> Result<()> {
+    terminal.update(cx, |terminal: &mut Terminal, _cx| {
+        let mut input = command.as_bytes().to_vec();
+        input.push(b'\r');
+        terminal.input(input);
+    })?;
+
+    Ok(())
+}
+
 pub async fn handle_cli_connection(
     (mut requests, responses): (mpsc::Receiver<CliRequest>, IpcSender<CliResponse>),
     app_state: Arc<AppState>,
@@ -403,6 +523,7 @@ pub async fn handle_cli_connection(
                 paths,
                 diff_paths,
                 diff_all,
+                command,
                 wait,
                 wsl,
                 open_new_workspace,
@@ -411,30 +532,57 @@ pub async fn handle_cli_connection(
                 user_data_dir: _,
             } => {
                 if !urls.is_empty() {
-                    cx.update(|cx| {
-                        match OpenRequest::parse(
+                    let open_request = cx.update(|cx| {
+                        OpenRequest::parse(
                             RawOpenRequest {
                                 urls,
                                 diff_paths,
                                 diff_all,
                                 wsl,
+                                command,
                             },
                             cx,
-                        ) {
-                            Ok(open_request) => {
-                                handle_open_request(open_request, app_state.clone(), cx);
-                                responses.send(CliResponse::Exit { status: 0 }).log_err();
-                            }
-                            Err(e) => {
+                        )
+                    });
+
+                    match open_request {
+                        Ok(open_request) => {
+                            if let Err(error) =
+                                validate_command_request(&open_request, &app_state).await
+                            {
                                 responses
                                     .send(CliResponse::Stderr {
-                                        message: format!("{e}"),
+                                        message: error.to_string(),
                                     })
                                     .log_err();
                                 responses.send(CliResponse::Exit { status: 1 }).log_err();
+                                return;
                             }
-                        };
-                    });
+
+                            cx.update(|cx| {
+                                handle_open_request(open_request, app_state.clone(), cx)
+                            });
+                            responses.send(CliResponse::Exit { status: 0 }).log_err();
+                        }
+                        Err(e) => {
+                            responses
+                                .send(CliResponse::Stderr {
+                                    message: format!("{e}"),
+                                })
+                                .log_err();
+                            responses.send(CliResponse::Exit { status: 1 }).log_err();
+                        }
+                    }
+                    return;
+                }
+
+                if !command.is_empty() && wsl.is_some() {
+                    responses
+                        .send(CliResponse::Stderr {
+                            message: "--command does not support remote or WSL opens".to_string(),
+                        })
+                        .log_err();
+                    responses.send(CliResponse::Exit { status: 1 }).log_err();
                     return;
                 }
 
@@ -442,6 +590,7 @@ pub async fn handle_cli_connection(
                     paths,
                     diff_paths,
                     diff_all,
+                    command,
                     open_new_workspace,
                     reuse,
                     &responses,
@@ -463,6 +612,7 @@ async fn open_workspaces(
     paths: Vec<String>,
     diff_paths: Vec<[String; 2]>,
     diff_all: bool,
+    command: Vec<String>,
     open_new_workspace: Option<bool>,
     reuse: bool,
     responses: &IpcSender<CliResponse>,
@@ -471,6 +621,16 @@ async fn open_workspaces(
     env: Option<collections::HashMap<String, String>>,
     cx: &mut AsyncApp,
 ) -> Result<()> {
+    validate_command_target(&command, &paths, &diff_paths, false, false, &app_state.fs)
+        .await
+        .inspect_err(|error| {
+            responses
+                .send(CliResponse::Stderr {
+                    message: error.to_string(),
+                })
+                .log_err();
+        })?;
+
     if paths.is_empty() && diff_paths.is_empty() && open_new_workspace != Some(true) {
         return restore_or_create_workspace(app_state, cx).await;
     }
@@ -542,6 +702,7 @@ async fn open_workspaces(
                     workspace_paths,
                     diff_paths.clone(),
                     diff_all,
+                    command.clone(),
                     open_options,
                     responses,
                     &app_state,
@@ -586,20 +747,20 @@ async fn open_local_workspace(
     workspace_paths: Vec<String>,
     diff_paths: Vec<[String; 2]>,
     diff_all: bool,
+    command: Vec<String>,
     open_options: workspace::OpenOptions,
     responses: &IpcSender<CliResponse>,
     app_state: &Arc<AppState>,
     cx: &mut AsyncApp,
 ) -> bool {
-    let paths_with_position =
-        derive_paths_with_position(app_state.fs.as_ref(), workspace_paths).await;
-
-    let (workspace, items) = match open_paths_with_positions(
-        &paths_with_position,
-        &diff_paths,
+    let workspace_paths_for_error = workspace_paths.clone();
+    let (workspace, paths_with_position, items) = match open_local_paths(
+        workspace_paths,
+        diff_paths.clone(),
         diff_all,
-        app_state.clone(),
+        command,
         open_options.clone(),
+        app_state.clone(),
         cx,
     )
     .await
@@ -608,7 +769,7 @@ async fn open_local_workspace(
         Err(error) => {
             responses
                 .send(CliResponse::Stderr {
-                    message: format!("error opening {paths_with_position:?}: {error}"),
+                    message: format!("error opening {workspace_paths_for_error:?}: {error}"),
                 })
                 .log_err();
             return true;
@@ -695,6 +856,39 @@ async fn open_local_workspace(
     errored
 }
 
+pub(crate) async fn open_local_paths(
+    workspace_paths: Vec<String>,
+    diff_paths: Vec<[String; 2]>,
+    diff_all: bool,
+    commands: Vec<String>,
+    open_options: workspace::OpenOptions,
+    app_state: Arc<AppState>,
+    cx: &mut AsyncApp,
+) -> Result<(
+    WindowHandle<MultiWorkspace>,
+    Vec<PathWithPosition>,
+    Vec<Option<Result<Box<dyn ItemHandle>>>>,
+)> {
+    let paths_with_position =
+        derive_paths_with_position(app_state.fs.as_ref(), workspace_paths).await;
+
+    let (workspace, items) = open_paths_with_positions(
+        &paths_with_position,
+        &diff_paths,
+        diff_all,
+        app_state,
+        open_options,
+        cx,
+    )
+    .await?;
+
+    for command in commands {
+        spawn_command_in_workspace(&workspace, command, cx).await?;
+    }
+
+    Ok((workspace, paths_with_position, items))
+}
+
 pub async fn derive_paths_with_position(
     fs: &dyn Fs,
     path_strings: impl IntoIterator<Item = impl AsRef<str>>,
@@ -740,9 +934,57 @@ mod tests {
     use remote::SshConnectionOptions;
     use rope::Rope;
     use serde_json::json;
-    use std::{sync::Arc, task::Poll};
+    use std::{
+        path::PathBuf,
+        sync::Arc,
+        task::Poll,
+        time::{SystemTime, UNIX_EPOCH},
+    };
+    use terminal_view::{TerminalView, terminal_panel::TerminalPanel};
     use util::path;
     use workspace::{AppState, MultiWorkspace};
+
+    fn create_real_project_dir(prefix: &str) -> PathBuf {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let project_path = std::env::temp_dir().join(format!("{prefix}-{nonce}"));
+        std::fs::create_dir_all(&project_path).unwrap();
+        project_path
+    }
+
+    fn count_terminal_views(
+        workspace: &WindowHandle<MultiWorkspace>,
+        cx: &mut TestAppContext,
+    ) -> usize {
+        workspace
+            .update(cx, |multi_workspace, _, cx| {
+                multi_workspace.workspace().update(cx, |workspace, cx| {
+                    let terminal_panel = workspace.panel::<TerminalPanel>(cx).unwrap();
+                    terminal_panel
+                        .read(cx)
+                        .panes()
+                        .into_iter()
+                        .flat_map(|pane| pane.read(cx).items())
+                        .filter_map(|item| item.downcast::<TerminalView>())
+                        .count()
+                })
+            })
+            .unwrap()
+    }
+
+    async fn wait_for_workspace_panels_in_test(
+        workspace: &WindowHandle<MultiWorkspace>,
+        cx: &mut TestAppContext,
+    ) {
+        cx.spawn({
+            let workspace = workspace.clone();
+            move |mut cx| async move { wait_for_workspace_panels(&workspace, &mut cx).await }
+        })
+        .await
+        .unwrap();
+    }
 
     #[gpui::test]
     fn test_parse_ssh_url(cx: &mut TestAppContext) {
@@ -903,6 +1145,25 @@ mod tests {
         });
 
         assert!(request.kind.is_none());
+    }
+
+    #[gpui::test]
+    fn test_parse_file_url_preserves_command(cx: &mut TestAppContext) {
+        let _app_state = init_test(cx);
+
+        let request = cx.update(|cx| {
+            OpenRequest::parse(
+                RawOpenRequest {
+                    urls: vec!["file:///tmp/project".into()],
+                    command: vec!["printf zed-cli".into(), "echo second".into()],
+                    ..Default::default()
+                },
+                cx,
+            )
+            .unwrap()
+        });
+
+        assert_eq!(request.command, vec!["printf zed-cli", "echo second"]);
     }
 
     #[gpui::test]
@@ -1081,6 +1342,7 @@ mod tests {
                     workspace_paths,
                     vec![],
                     false,
+                    Vec::new(),
                     workspace::OpenOptions {
                         wait: true,
                         ..Default::default()
@@ -1106,6 +1368,343 @@ mod tests {
 
         let errored = done_rx.await.unwrap();
         assert!(!errored);
+    }
+
+    #[gpui::test]
+    async fn test_wait_with_directory_and_command_waits_for_window_close(cx: &mut TestAppContext) {
+        let app_state = init_test(cx);
+        let project_path = create_real_project_dir("zed-cli-wait");
+
+        app_state
+            .fs
+            .as_fake()
+            .insert_tree(
+                &project_path,
+                json!({
+                    "file1.txt": "content1",
+                }),
+            )
+            .await;
+
+        let (response_tx, _) = ipc::channel::<CliResponse>().unwrap();
+        let workspace_paths = vec![project_path.to_string_lossy().into_owned()];
+
+        let (done_tx, mut done_rx) = futures::channel::oneshot::channel();
+        cx.spawn({
+            let app_state = app_state.clone();
+            move |mut cx| async move {
+                let errored = open_local_workspace(
+                    workspace_paths,
+                    vec![],
+                    false,
+                    vec!["echo zed-cli-command".to_string()],
+                    workspace::OpenOptions {
+                        wait: true,
+                        ..Default::default()
+                    },
+                    &response_tx,
+                    &app_state,
+                    &mut cx,
+                )
+                .await;
+                let _ = done_tx.send(errored);
+            }
+        })
+        .detach();
+
+        cx.background_executor.run_until_parked();
+        assert_eq!(cx.windows().len(), 1);
+        assert!(matches!(poll!(&mut done_rx), Poll::Pending));
+
+        let window = cx.windows()[0];
+        cx.update_window(window, |_, window, _| window.remove_window())
+            .unwrap();
+        cx.background_executor.run_until_parked();
+
+        let errored = done_rx.await.unwrap();
+        assert!(!errored);
+    }
+
+    #[gpui::test]
+    async fn test_open_directory_with_command_spawns_terminal(cx: &mut TestAppContext) {
+        cx.executor().allow_parking();
+
+        let app_state = init_test(cx);
+        let project_path = create_real_project_dir("zed-cli-open");
+
+        app_state
+            .fs
+            .as_fake()
+            .insert_tree(
+                &project_path,
+                json!({
+                    "file1.txt": "content1",
+                }),
+            )
+            .await;
+
+        let workspace_paths = vec![project_path.to_string_lossy().into_owned()];
+        let (workspace, _, _) = cx
+            .spawn({
+                let app_state = app_state.clone();
+                move |mut cx| async move {
+                    open_local_paths(
+                        workspace_paths,
+                        vec![],
+                        false,
+                        Vec::new(),
+                        workspace::OpenOptions::default(),
+                        app_state,
+                        &mut cx,
+                    )
+                    .await
+                }
+            })
+            .await
+            .unwrap();
+
+        wait_for_workspace_panels_in_test(&workspace, cx).await;
+        let terminal_count_before = count_terminal_views(&workspace, cx);
+        cx.spawn({
+            let workspace = workspace.clone();
+            move |mut cx| async move {
+                spawn_command_in_workspace(&workspace, "echo zed-cli-terminal".to_string(), &mut cx)
+                    .await
+            }
+        })
+        .await
+        .unwrap();
+
+        assert!(count_terminal_views(&workspace, cx) >= terminal_count_before + 1);
+    }
+
+    #[gpui::test]
+    async fn test_command_always_opens_a_new_terminal(cx: &mut TestAppContext) {
+        cx.executor().allow_parking();
+
+        let app_state = init_test(cx);
+        let project_path = create_real_project_dir("zed-cli-existing-terminal");
+
+        app_state
+            .fs
+            .as_fake()
+            .insert_tree(
+                &project_path,
+                json!({
+                    "file1.txt": "content1",
+                }),
+            )
+            .await;
+
+        let workspace_paths = vec![project_path.to_string_lossy().into_owned()];
+        let (workspace, _, _) = cx
+            .spawn({
+                let app_state = app_state.clone();
+                move |mut cx| async move {
+                    open_local_paths(
+                        workspace_paths,
+                        vec![],
+                        false,
+                        Vec::new(),
+                        workspace::OpenOptions::default(),
+                        app_state,
+                        &mut cx,
+                    )
+                    .await
+                }
+            })
+            .await
+            .unwrap();
+
+        workspace
+            .update(cx, |multi_workspace, window, cx| {
+                let workspace = multi_workspace.workspace().clone();
+                workspace.update(cx, |workspace, cx| {
+                    TerminalPanel::open_terminal(
+                        workspace,
+                        &workspace::OpenTerminal {
+                            working_directory: project_path.clone(),
+                            local: false,
+                        },
+                        window,
+                        cx,
+                    );
+                });
+            })
+            .unwrap();
+        cx.background_executor.run_until_parked();
+
+        wait_for_workspace_panels_in_test(&workspace, cx).await;
+        let terminal_count_before = count_terminal_views(&workspace, cx);
+        assert_eq!(terminal_count_before, 1);
+
+        cx.spawn({
+            let workspace = workspace.clone();
+            move |mut cx| async move {
+                spawn_command_in_workspace(&workspace, "echo fresh-terminal".to_string(), &mut cx)
+                    .await
+            }
+        })
+        .await
+        .unwrap();
+
+        assert_eq!(
+            count_terminal_views(&workspace, cx),
+            terminal_count_before + 1
+        );
+    }
+
+    #[gpui::test]
+    async fn test_command_requires_directory_path(cx: &mut TestAppContext) {
+        let app_state = init_test(cx);
+
+        app_state
+            .fs
+            .as_fake()
+            .insert_tree(path!("/root"), json!({"file.txt": "content"}))
+            .await;
+
+        let error = validate_command_target(
+            &["echo zed-cli".to_string()],
+            &[path!("/root/file.txt").to_string()],
+            &[],
+            false,
+            false,
+            &app_state.fs,
+        )
+        .await
+        .unwrap_err();
+
+        assert_eq!(
+            error.to_string(),
+            "--command requires at least one local directory path"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_command_rejects_diff_paths(cx: &mut TestAppContext) {
+        let app_state = init_test(cx);
+
+        let error = validate_command_target(
+            &["echo zed-cli".to_string()],
+            &[path!("/root/project").to_string()],
+            &[[
+                path!("/root/old").to_string(),
+                path!("/root/new").to_string(),
+            ]],
+            false,
+            false,
+            &app_state.fs,
+        )
+        .await
+        .unwrap_err();
+
+        assert_eq!(error.to_string(), "--command cannot be used with --diff");
+    }
+
+    #[gpui::test]
+    async fn test_command_requires_open_paths(cx: &mut TestAppContext) {
+        let app_state = init_test(cx);
+
+        let error = validate_command_target(
+            &["echo zed-cli".to_string()],
+            &[],
+            &[],
+            false,
+            false,
+            &app_state.fs,
+        )
+        .await
+        .unwrap_err();
+
+        assert_eq!(
+            error.to_string(),
+            "--command requires at least one local directory path"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_invalid_command_reports_cli_error(cx: &mut TestAppContext) {
+        let app_state = init_test(cx);
+        let (response_tx, response_rx) = ipc::channel::<CliResponse>().unwrap();
+
+        let error = cx
+            .spawn({
+                let app_state = app_state.clone();
+                move |mut cx| async move {
+                    open_workspaces(
+                        vec![path!("/root/file.txt").to_string()],
+                        vec![],
+                        false,
+                        vec!["echo zed-cli".to_string()],
+                        None,
+                        false,
+                        &response_tx,
+                        false,
+                        app_state,
+                        None,
+                        &mut cx,
+                    )
+                    .await
+                    .unwrap_err()
+                    .to_string()
+                }
+            })
+            .await;
+
+        assert_eq!(
+            error,
+            "--command requires at least one local directory path"
+        );
+        match response_rx.recv().unwrap() {
+            CliResponse::Stderr { message } => assert_eq!(
+                message,
+                "--command requires at least one local directory path"
+            ),
+            response => panic!("expected stderr response, got {response:?}"),
+        }
+    }
+
+    #[gpui::test]
+    async fn test_command_rejects_special_open_kinds(cx: &mut TestAppContext) {
+        let app_state = init_test(cx);
+
+        let error = validate_command_target(
+            &["echo zed-cli".to_string()],
+            &[],
+            &[],
+            true,
+            false,
+            &app_state.fs,
+        )
+        .await
+        .unwrap_err();
+
+        assert_eq!(
+            error.to_string(),
+            "--command only supports local workspace directory opens"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_command_rejects_remote_paths(cx: &mut TestAppContext) {
+        let app_state = init_test(cx);
+
+        let error = validate_command_target(
+            &["echo zed-cli".to_string()],
+            &[path!("/root/project").to_string()],
+            &[],
+            false,
+            true,
+            &app_state.fs,
+        )
+        .await
+        .unwrap_err();
+
+        assert_eq!(
+            error.to_string(),
+            "--command does not support remote or WSL opens"
+        );
     }
 
     #[gpui::test]
@@ -1179,6 +1778,7 @@ mod tests {
                     workspace_paths,
                     vec![],
                     false,
+                    Vec::new(),
                     workspace::OpenOptions {
                         open_new_workspace,
                         ..Default::default()
@@ -1253,6 +1853,7 @@ mod tests {
                         workspace_paths,
                         vec![],
                         false,
+                        Vec::new(),
                         workspace::OpenOptions::default(),
                         &response_tx,
                         &app_state,
@@ -1286,6 +1887,7 @@ mod tests {
                         workspace_paths_reuse,
                         vec![],
                         false,
+                        Vec::new(),
                         workspace::OpenOptions {
                             replace_window: Some(window_to_replace),
                             ..Default::default()
@@ -1437,6 +2039,7 @@ mod tests {
                         workspace_paths_1,
                         Vec::new(),
                         false,
+                        Vec::new(),
                         workspace::OpenOptions::default(),
                         &response_tx,
                         &app_state,
@@ -1461,6 +2064,7 @@ mod tests {
                         workspace_paths_2,
                         Vec::new(),
                         false,
+                        Vec::new(),
                         workspace::OpenOptions {
                             open_new_workspace: Some(true), // Force new window
                             ..Default::default()
@@ -1507,6 +2111,7 @@ mod tests {
                         workspace_paths_add,
                         Vec::new(),
                         false,
+                        Vec::new(),
                         workspace::OpenOptions {
                             open_new_workspace: Some(false), // --add flag
                             ..Default::default()

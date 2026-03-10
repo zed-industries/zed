@@ -526,24 +526,31 @@ impl TerminalPanel {
         window: &mut Window,
         cx: &mut Context<Workspace>,
     ) {
+        Self::open_terminal_task(workspace, action, window, cx).detach_and_log_err(cx);
+    }
+
+    pub fn open_terminal_task(
+        workspace: &mut Workspace,
+        action: &workspace::OpenTerminal,
+        window: &mut Window,
+        cx: &mut Context<Workspace>,
+    ) -> Task<Result<WeakEntity<Terminal>>> {
         let Some(terminal_panel) = workspace.panel::<Self>(cx) else {
-            return;
+            return Task::ready(Err(anyhow!("terminal panel is not available")));
         };
 
-        terminal_panel
-            .update(cx, |panel, cx| {
-                if action.local {
-                    panel.add_local_terminal_shell(RevealStrategy::Always, window, cx)
-                } else {
-                    panel.add_terminal_shell(
-                        Some(action.working_directory.clone()),
-                        RevealStrategy::Always,
-                        window,
-                        cx,
-                    )
-                }
-            })
-            .detach_and_log_err(cx);
+        terminal_panel.update(cx, |panel, cx| {
+            if action.local {
+                panel.add_local_terminal_shell(RevealStrategy::Always, window, cx)
+            } else {
+                panel.add_terminal_shell(
+                    Some(action.working_directory.clone()),
+                    RevealStrategy::Always,
+                    window,
+                    cx,
+                )
+            }
+        })
     }
 
     pub fn spawn_task(

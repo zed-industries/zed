@@ -843,12 +843,13 @@ fn main() {
         #[cfg(not(target_os = "windows"))]
         let wsl = None;
 
-        if !urls.is_empty() || !diff_paths.is_empty() {
+        if !urls.is_empty() || !diff_paths.is_empty() || !args.command.is_empty() {
             open_listener.open(RawOpenRequest {
                 urls,
                 diff_paths,
                 wsl,
                 diff_all: diff_all_mode,
+                command: args.command.clone(),
             })
         }
 
@@ -859,7 +860,25 @@ fn main() {
             .and_then(|request| OpenRequest::parse(request, cx).log_err())
         {
             Some(request) => {
-                handle_open_request(request, app_state.clone(), cx);
+                if !request.command.is_empty() {
+                    cx.spawn({
+                        let app_state = app_state.clone();
+                        async move |cx| {
+                            if let Err(error) =
+                                crate::zed::validate_command_request(&request, &app_state).await
+                            {
+                                eprintln!("{error}");
+                                cx.update(|cx| cx.quit());
+                                return;
+                            }
+
+                            cx.update(|cx| handle_open_request(request, app_state.clone(), cx));
+                        }
+                    })
+                    .detach();
+                } else {
+                    handle_open_request(request, app_state.clone(), cx);
+                }
             }
             None => {
                 cx.spawn({
@@ -882,7 +901,27 @@ fn main() {
             while let Some(urls) = open_rx.next().await {
                 cx.update(|cx| {
                     if let Some(request) = OpenRequest::parse(urls, cx).log_err() {
-                        handle_open_request(request, app_state.clone(), cx);
+                        if !request.command.is_empty() {
+                            cx.spawn({
+                                let app_state = app_state.clone();
+                                async move |cx| {
+                                    if let Err(error) =
+                                        crate::zed::validate_command_request(&request, &app_state)
+                                            .await
+                                    {
+                                        eprintln!("{error}");
+                                        return;
+                                    }
+
+                                    cx.update(|cx| {
+                                        handle_open_request(request, app_state.clone(), cx)
+                                    });
+                                }
+                            })
+                            .detach();
+                        } else {
+                            handle_open_request(request, app_state.clone(), cx);
+                        }
                     }
                 });
             }
@@ -1203,14 +1242,13 @@ fn handle_open_request(request: OpenRequest, app_state: Arc<AppState>, cx: &mut 
     if !request.open_paths.is_empty() || !request.diff_paths.is_empty() {
         let app_state = app_state.clone();
         task = Some(cx.spawn(async move |cx| {
-            let paths_with_position =
-                derive_paths_with_position(app_state.fs.as_ref(), request.open_paths).await;
-            let (_window, results) = open_paths_with_positions(
-                &paths_with_position,
-                &request.diff_paths,
+            let (_window, _paths_with_position, results) = crate::zed::open_local_paths(
+                request.open_paths,
+                request.diff_paths,
                 request.diff_all,
-                app_state,
+                request.command,
                 workspace::OpenOptions::default(),
+                app_state,
                 cx,
             )
             .await?;
@@ -1598,6 +1636,11 @@ struct Args {
     /// URLs can either be `file://` or `zed://` scheme, or relative to <https://zed.dev>.
     paths_or_urls: Vec<String>,
 
+    /// Run a command in Zed's terminal after opening a local workspace directory.
+    /// Can be specified multiple times to open multiple terminal tabs.
+    #[arg(long, action = clap::ArgAction::Append, value_name = "COMMAND")]
+    command: Vec<String>,
+
     /// Pairs of file paths to diff. Can be specified multiple times.
     /// When directories are provided, recurses into them and shows all changed files in a single multi-diff view.
     #[arg(long, action = clap::ArgAction::Append, num_args = 2, value_names = ["OLD_PATH", "NEW_PATH"])]
@@ -1904,5 +1947,33 @@ fn check_for_conpty_dll() {
         }
     } else {
         log::warn!("Failed to load conpty.dll. Terminal will work with reduced functionality.");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_parse_command_flag() {
+        let args =
+            Args::try_parse_from(["zed", "/tmp/project", "--command", "echo ready"]).unwrap();
+
+        assert_eq!(args.command, vec!["echo ready"]);
+    }
+
+    #[test]
+    fn test_parse_multiple_command_flags() {
+        let args = Args::try_parse_from([
+            "zed",
+            "/tmp/project",
+            "--command",
+            "echo first",
+            "--command",
+            "sleep 1",
+        ])
+        .unwrap();
+
+        assert_eq!(args.command, vec!["echo first", "sleep 1"]);
     }
 }
