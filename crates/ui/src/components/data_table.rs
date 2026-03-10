@@ -112,6 +112,115 @@ impl TableInteractionState {
     }
 }
 
+/// Internal module used solely to add an extra indentation level for render_resize_handles,
+/// which helps reduce noise in diffs. Should be removed with next refactor
+use resize_handles::render_resize_handles;
+mod resize_handles {
+    use super::*;
+    /// Renders invisible resize handles overlaid on top of table content.
+    ///
+    /// - Spacer: invisible element that matches the width of table column content
+    /// - Divider: contains the actual resize handle that users can drag to resize columns
+    ///
+    /// Structure: [spacer] [divider] [spacer] [divider] [spacer]
+    ///
+    /// Business logic:
+    /// 1. Creates spacers matching each column width
+    /// 2. Intersperses (inserts) resize handles between spacers (interactive only for resizable columns)
+    /// 3. Each handle supports hover highlighting, double-click to reset, and drag to resize
+    /// 4. Returns an absolute-positioned overlay that sits on top of table content
+    pub fn render_resize_handles(
+        column_widths: &TableRow<Length>,
+        resizable_columns: &TableRow<TableResizeBehavior>,
+        initial_sizes: &TableRow<DefiniteLength>,
+        columns: Option<Entity<RedistributableColumnsState>>,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> AnyElement {
+        let spacers = column_widths
+            .as_slice()
+            .iter()
+            .map(|width| base_cell_style(Some(*width)).into_any_element());
+
+        let mut column_ix = 0;
+        let resizable_columns_shared = Rc::new(resizable_columns.clone());
+        let initial_sizes_shared = Rc::new(initial_sizes.clone());
+        let mut resizable_columns_iter = resizable_columns.as_slice().iter();
+
+        let dividers = intersperse_with(spacers, || {
+            let resizable_columns = Rc::clone(&resizable_columns_shared);
+            let initial_sizes = Rc::clone(&initial_sizes_shared);
+            window.with_id(column_ix, |window| {
+                let mut resize_divider =
+                    div().id(column_ix).relative().top_0().w_px().h_full().bg(cx
+                        .theme()
+                        .colors()
+                        .border
+                        .opacity(0.8));
+
+                let mut resize_handle = div()
+                    .id("column-resize-handle")
+                    .absolute()
+                    .left_neg_0p5()
+                    .w(px(RESIZE_COLUMN_WIDTH))
+                    .h_full();
+
+                if resizable_columns_iter
+                    .next()
+                    .is_some_and(TableResizeBehavior::is_resizable)
+                {
+                    let hovered = window.use_state(cx, |_window, _cx| false);
+
+                    resize_divider = resize_divider
+                        .when(*hovered.read(cx), |div: Stateful<Div>| {
+                            div.bg(cx.theme().colors().border_focused)
+                        });
+
+                    resize_handle = resize_handle
+                        .on_hover(move |&was_hovered, _, cx| hovered.write(cx, was_hovered))
+                        .cursor_col_resize()
+                        .when_some(
+                            columns.clone(),
+                            |this: Stateful<Div>, columns: Entity<RedistributableColumnsState>| {
+                                this.on_click(
+                                    move |event: &ClickEvent, window: &mut Window, cx: &mut App| {
+                                        if event.click_count() >= 2 {
+                                            columns.update(cx, |columns, _| {
+                                                columns.on_double_click(
+                                                    column_ix,
+                                                    &initial_sizes,
+                                                    &resizable_columns,
+                                                    window,
+                                                );
+                                            })
+                                        }
+
+                                        cx.stop_propagation();
+                                    },
+                                )
+                            },
+                        )
+                        .on_drag(
+                            DraggedColumn(column_ix),
+                            |_, _offset, _window, cx: &mut App| cx.new(|_cx| gpui::Empty),
+                        )
+                }
+
+                column_ix += 1;
+                resize_divider.child(resize_handle).into_any_element()
+            })
+        });
+
+        h_flex()
+            .id("resize-handles")
+            .absolute()
+            .inset_0()
+            .w_full()
+            .children(dividers)
+            .into_any_element()
+    }
+}
+
 #[derive(Debug, Copy, Clone, PartialEq)]
 pub enum TableResizeBehavior {
     None,
@@ -486,98 +595,6 @@ impl RedistributableColumnsState {
 
         diff_remaining
     }
-}
-
-/// Renders invisible resize handles overlaid on top of table content.
-///
-/// Structure: [spacer] [divider] [spacer] [divider] [spacer]
-fn render_resize_handles(
-    column_widths: &TableRow<Length>,
-    resizable_columns: &TableRow<TableResizeBehavior>,
-    initial_sizes: &TableRow<DefiniteLength>,
-    columns: Option<Entity<RedistributableColumnsState>>,
-    window: &mut Window,
-    cx: &mut App,
-) -> AnyElement {
-    let spacers = column_widths
-        .as_slice()
-        .iter()
-        .map(|width| base_cell_style(Some(*width)).into_any_element());
-
-    let mut column_ix = 0;
-    let resizable_columns_shared = Rc::new(resizable_columns.clone());
-    let initial_sizes_shared = Rc::new(initial_sizes.clone());
-    let mut resizable_columns_iter = resizable_columns.as_slice().iter();
-
-    let dividers = intersperse_with(spacers, || {
-        let resizable_columns = Rc::clone(&resizable_columns_shared);
-        let initial_sizes = Rc::clone(&initial_sizes_shared);
-        window.with_id(column_ix, |window| {
-            let mut resize_divider = div().id(column_ix).relative().top_0().w_px().h_full().bg(cx
-                .theme()
-                .colors()
-                .border
-                .opacity(0.8));
-
-            let mut resize_handle = div()
-                .id("column-resize-handle")
-                .absolute()
-                .left_neg_0p5()
-                .w(px(RESIZE_COLUMN_WIDTH))
-                .h_full();
-
-            if resizable_columns_iter
-                .next()
-                .is_some_and(TableResizeBehavior::is_resizable)
-            {
-                let hovered = window.use_state(cx, |_window, _cx| false);
-
-                resize_divider = resize_divider.when(*hovered.read(cx), |div: Stateful<Div>| {
-                    div.bg(cx.theme().colors().border_focused)
-                });
-
-                resize_handle = resize_handle
-                    .on_hover(move |&was_hovered, _, cx| hovered.write(cx, was_hovered))
-                    .cursor_col_resize()
-                    .when_some(
-                        columns.clone(),
-                        |this: Stateful<Div>, columns: Entity<RedistributableColumnsState>| {
-                            this.on_click(
-                                move |event: &ClickEvent, window: &mut Window, cx: &mut App| {
-                                    if event.click_count() >= 2 {
-                                        columns.update(cx, |columns, _| {
-                                            columns.on_double_click(
-                                                column_ix,
-                                                &initial_sizes,
-                                                &resizable_columns,
-                                                window,
-                                            );
-                                        })
-                                    }
-
-                                    cx.stop_propagation();
-                                },
-                            )
-                        },
-                    )
-                    .on_drag(
-                        DraggedColumn(column_ix),
-                        |_, _offset, _window, cx: &mut App| cx.new(|_cx| gpui::Empty),
-                    )
-            }
-
-            column_ix += 1;
-            resize_divider.child(resize_handle).into_any_element()
-        })
-    });
-
-    h_flex()
-        .id("resize-handles")
-        .absolute()
-        .inset_0()
-        .w_full()
-        .children(dividers)
-        .into_any_element()
 }
 
 /// A table component
