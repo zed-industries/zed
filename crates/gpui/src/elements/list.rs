@@ -493,28 +493,19 @@ impl ListState {
     /// This value remains constant while dragging to prevent the scrollbar from moving away unexpectedly.
     pub fn max_offset_for_scrollbar(&self) -> Point<Pixels> {
         let state = self.0.borrow();
-        let bounds = state.last_layout_bounds.unwrap_or_default();
-
-        let height = state
-            .scrollbar_drag_start_height
-            .unwrap_or_else(|| state.items.summary().height);
-
-        point(Pixels::ZERO, Pixels::ZERO.max(height - bounds.size.height))
+        point(Pixels::ZERO, state.max_scroll_offset())
     }
 
     /// Returns the current scroll offset adjusted for the scrollbar
     pub fn scroll_px_offset_for_scrollbar(&self) -> Point<Pixels> {
         let state = &self.0.borrow();
 
-        // When bottom-aligned and pinned to the end, logical_scroll_top() returns
-        // item_ix = items.count, causing the cursor to sum the full content height.
-        // Return max_offset directly instead so the thumb stays at the bottom of the track.
+        // Bottom-aligned lists use `None` as a sentinel meaning "pinned to the
+        // end." `logical_scroll_top()` resolves that to `item_ix = items.count`,
+        // which makes the cursor overshoot to the full content height. Return
+        // the max offset directly for this case.
         if state.logical_scroll_top.is_none() && state.alignment == ListAlignment::Bottom {
-            let bounds = state.last_layout_bounds.unwrap_or_default();
-            let height = state
-                .scrollbar_drag_start_height
-                .unwrap_or_else(|| state.items.summary().height);
-            return Point::new(px(0.), -Pixels::ZERO.max(height - bounds.size.height));
+            return Point::new(px(0.), -state.max_scroll_offset());
         }
 
         let logical_scroll_top = state.logical_scroll_top();
@@ -538,6 +529,14 @@ impl ListState {
 }
 
 impl StateInner {
+    fn max_scroll_offset(&self) -> Pixels {
+        let bounds = self.last_layout_bounds.unwrap_or_default();
+        let height = self
+            .scrollbar_drag_start_height
+            .unwrap_or_else(|| self.items.summary().height);
+        (height - bounds.size.height).max(px(0.))
+    }
+
     fn visible_range(
         items: &SumTree<ListItem>,
         height: Pixels,
