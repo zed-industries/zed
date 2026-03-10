@@ -6,9 +6,8 @@ use chrono::Utc;
 use editor::{Editor, EditorElement, EditorStyle};
 use feature_flags::{AgentV2FeatureFlag, FeatureFlagViewExt as _};
 use gpui::{
-    AnyElement, App, Context, Entity, EventEmitter, FocusHandle, Focusable, FontStyle, ListState,
-    Pixels, Render, SharedString, TextStyle, WeakEntity, Window, actions, list, prelude::*, px,
-    relative, rems,
+    AnyElement, App, Context, Entity, FocusHandle, Focusable, FontStyle, ListState, Pixels, Render,
+    SharedString, TextStyle, WeakEntity, Window, actions, list, prelude::*, px, relative, rems,
 };
 use menu::{Cancel, Confirm, SelectFirst, SelectLast, SelectNext, SelectPrevious};
 use project::Event as ProjectEvent;
@@ -22,9 +21,7 @@ use ui::{
     PopoverMenuHandle, Tab, ThreadItem, Tooltip, WithScrollbar, prelude::*,
 };
 use util::path_list::PathList;
-use workspace::{
-    MultiWorkspace, MultiWorkspaceEvent, Sidebar as WorkspaceSidebar, SidebarEvent, Workspace,
-};
+use workspace::{MultiWorkspace, MultiWorkspaceEvent, Workspace};
 use zed_actions::editor::{MoveDown, MoveUp};
 
 actions!(
@@ -170,6 +167,7 @@ fn workspace_path_list_and_label(
 
 pub struct Sidebar {
     multi_workspace: WeakEntity<MultiWorkspace>,
+    is_open: bool,
     width: Pixels,
     focus_handle: FocusHandle,
     filter_editor: Entity<Editor>,
@@ -185,8 +183,6 @@ pub struct Sidebar {
     expanded_groups: HashMap<PathList, usize>,
     recent_projects_popover_handle: PopoverMenuHandle<RecentProjects>,
 }
-
-impl EventEmitter<SidebarEvent> for Sidebar {}
 
 impl Sidebar {
     pub fn new(
@@ -269,6 +265,7 @@ impl Sidebar {
 
         Self {
             multi_workspace: multi_workspace.downgrade(),
+            is_open: false,
             width: DEFAULT_WIDTH,
             focus_handle,
             filter_editor,
@@ -1309,25 +1306,66 @@ impl Sidebar {
     }
 }
 
-impl WorkspaceSidebar for Sidebar {
-    fn width(&self, _cx: &App) -> Pixels {
+impl Sidebar {
+    pub fn is_open(&self) -> bool {
+        self.is_open
+    }
+
+    pub fn set_open(&mut self, open: bool, cx: &mut Context<Self>) {
+        if self.is_open == open {
+            return;
+        }
+        self.is_open = open;
+        cx.notify();
+    }
+
+    pub fn toggle(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let new_state = !self.is_open;
+        self.set_open(new_state, cx);
+        if new_state {
+            cx.focus_self(window);
+        }
+    }
+
+    pub fn focus_or_unfocus(
+        &mut self,
+        workspace: &mut Workspace,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.is_open {
+            let sidebar_is_focused = self.focus_handle(cx).contains_focused(window, cx);
+            if sidebar_is_focused {
+                let active_pane = workspace.active_pane().clone();
+                let pane_focus = active_pane.read(cx).focus_handle(cx);
+                window.focus(&pane_focus, cx);
+            } else {
+                cx.focus_self(window);
+            }
+        } else {
+            self.set_open(true, cx);
+            cx.focus_self(window);
+        }
+    }
+
+    pub fn width(&self, _cx: &App) -> Pixels {
         self.width
     }
 
-    fn set_width(&mut self, width: Option<Pixels>, cx: &mut Context<Self>) {
+    pub fn set_width(&mut self, width: Option<Pixels>, cx: &mut Context<Self>) {
         self.width = width.unwrap_or(DEFAULT_WIDTH).clamp(MIN_WIDTH, MAX_WIDTH);
         cx.notify();
     }
 
-    fn has_notifications(&self, _cx: &App) -> bool {
+    pub fn has_notifications(&self, _cx: &App) -> bool {
         !self.contents.notified_threads.is_empty()
     }
 
-    fn toggle_recent_projects_popover(&self, window: &mut Window, cx: &mut App) {
+    pub fn toggle_recent_projects_popover(&self, window: &mut Window, cx: &mut App) {
         self.recent_projects_popover_handle.toggle(window, cx);
     }
 
-    fn is_recent_projects_popover_deployed(&self) -> bool {
+    pub fn is_recent_projects_popover_deployed(&self) -> bool {
         self.recent_projects_popover_handle.is_deployed()
     }
 }
@@ -1467,9 +1505,6 @@ mod tests {
         let multi_workspace = multi_workspace.clone();
         let sidebar =
             cx.update(|window, cx| cx.new(|cx| Sidebar::new(multi_workspace.clone(), window, cx)));
-        multi_workspace.update_in(cx, |mw, window, cx| {
-            mw.register_sidebar(sidebar.clone(), window, cx);
-        });
         cx.run_until_parked();
         sidebar
     }
@@ -1479,9 +1514,15 @@ mod tests {
         project: &Entity<project::Project>,
         cx: &mut gpui::VisualTestContext,
     ) -> (Entity<Sidebar>, Entity<AgentPanel>) {
-        let sidebar = setup_sidebar(multi_workspace, cx);
         let workspace = multi_workspace.read_with(cx, |mw, _cx| mw.workspace().clone());
         let panel = add_agent_panel(&workspace, project, cx);
+        cx.run_until_parked();
+        let sidebar = panel.read_with(cx, |panel, _cx| {
+            panel
+                .sidebar
+                .clone()
+                .expect("AgentPanel should have created a sidebar")
+        });
         (sidebar, panel)
     }
 
@@ -1529,16 +1570,10 @@ mod tests {
         cx.run_until_parked();
     }
 
-    fn open_and_focus_sidebar(
-        sidebar: &Entity<Sidebar>,
-        multi_workspace: &Entity<MultiWorkspace>,
-        cx: &mut gpui::VisualTestContext,
-    ) {
-        multi_workspace.update_in(cx, |mw, window, cx| {
-            mw.toggle_sidebar(window, cx);
-        });
+    fn open_and_focus_sidebar(sidebar: &Entity<Sidebar>, cx: &mut gpui::VisualTestContext) {
         cx.run_until_parked();
-        sidebar.update_in(cx, |_, window, cx| {
+        sidebar.update_in(cx, |sidebar, window, cx| {
+            sidebar.set_open(true, cx);
             cx.focus_self(window);
         });
         cx.run_until_parked();
@@ -1792,7 +1827,7 @@ mod tests {
         assert!(entries.iter().any(|e| e.contains("View More (12)")));
 
         // Focus and navigate to View More, then confirm to expand by one batch
-        open_and_focus_sidebar(&sidebar, &multi_workspace, cx);
+        open_and_focus_sidebar(&sidebar, cx);
         for _ in 0..7 {
             cx.dispatch_action(SelectNext);
         }
@@ -2075,7 +2110,7 @@ mod tests {
         // Entries: [header, thread3, thread2, thread1]
         // Focusing the sidebar does not set a selection; select_next/select_previous
         // handle None gracefully by starting from the first or last entry.
-        open_and_focus_sidebar(&sidebar, &multi_workspace, cx);
+        open_and_focus_sidebar(&sidebar, cx);
         assert_eq!(sidebar.read_with(cx, |s, _| s.selection), None);
 
         // First SelectNext from None starts at index 0
@@ -2124,7 +2159,7 @@ mod tests {
         multi_workspace.update_in(cx, |_, _window, cx| cx.notify());
         cx.run_until_parked();
 
-        open_and_focus_sidebar(&sidebar, &multi_workspace, cx);
+        open_and_focus_sidebar(&sidebar, cx);
 
         // SelectLast jumps to the end
         cx.dispatch_action(SelectLast);
@@ -2147,7 +2182,7 @@ mod tests {
 
         // Open the sidebar so it's rendered, then focus it to trigger focus_in.
         // focus_in no longer sets a default selection.
-        open_and_focus_sidebar(&sidebar, &multi_workspace, cx);
+        open_and_focus_sidebar(&sidebar, cx);
         assert_eq!(sidebar.read_with(cx, |s, _| s.selection), None);
 
         // Manually set a selection, blur, then refocus — selection should be preserved
@@ -2205,7 +2240,7 @@ mod tests {
         );
 
         // Focus the sidebar and manually select the header (index 0)
-        open_and_focus_sidebar(&sidebar, &multi_workspace, cx);
+        open_and_focus_sidebar(&sidebar, cx);
         sidebar.update_in(cx, |sidebar, _window, _cx| {
             sidebar.selection = Some(0);
         });
@@ -2248,7 +2283,7 @@ mod tests {
         assert!(entries.iter().any(|e| e.contains("View More (3)")));
 
         // Focus sidebar (selection starts at None), then navigate down to the "View More" entry (index 6)
-        open_and_focus_sidebar(&sidebar, &multi_workspace, cx);
+        open_and_focus_sidebar(&sidebar, cx);
         for _ in 0..7 {
             cx.dispatch_action(SelectNext);
         }
@@ -2283,7 +2318,7 @@ mod tests {
         );
 
         // Focus sidebar and manually select the header (index 0). Press left to collapse.
-        open_and_focus_sidebar(&sidebar, &multi_workspace, cx);
+        open_and_focus_sidebar(&sidebar, cx);
         sidebar.update_in(cx, |sidebar, _window, _cx| {
             sidebar.selection = Some(0);
         });
@@ -2323,7 +2358,7 @@ mod tests {
         cx.run_until_parked();
 
         // Focus sidebar (selection starts at None), then navigate down to the thread (child)
-        open_and_focus_sidebar(&sidebar, &multi_workspace, cx);
+        open_and_focus_sidebar(&sidebar, cx);
         cx.dispatch_action(SelectNext);
         cx.dispatch_action(SelectNext);
         assert_eq!(sidebar.read_with(cx, |s, _| s.selection), Some(1));
@@ -2358,7 +2393,7 @@ mod tests {
         );
 
         // Focus sidebar — focus_in does not set a selection
-        open_and_focus_sidebar(&sidebar, &multi_workspace, cx);
+        open_and_focus_sidebar(&sidebar, cx);
         assert_eq!(sidebar.read_with(cx, |s, _| s.selection), None);
 
         // First SelectNext from None starts at index 0 (header)
@@ -2391,7 +2426,7 @@ mod tests {
         cx.run_until_parked();
 
         // Focus sidebar (selection starts at None), navigate down to the thread (index 1)
-        open_and_focus_sidebar(&sidebar, &multi_workspace, cx);
+        open_and_focus_sidebar(&sidebar, cx);
         cx.dispatch_action(SelectNext);
         cx.dispatch_action(SelectNext);
         assert_eq!(sidebar.read_with(cx, |s, _| s.selection), Some(1));
@@ -2679,7 +2714,7 @@ mod tests {
         );
 
         // User types a search query to filter down.
-        open_and_focus_sidebar(&sidebar, &multi_workspace, cx);
+        open_and_focus_sidebar(&sidebar, cx);
         type_in_search(&sidebar, "alpha", cx);
         assert_eq!(
             visible_entries_as_strings(&sidebar, cx),
@@ -3002,7 +3037,7 @@ mod tests {
 
         // User focuses the sidebar and collapses the group using keyboard:
         // manually select the header, then press CollapseSelectedEntry to collapse.
-        open_and_focus_sidebar(&sidebar, &multi_workspace, cx);
+        open_and_focus_sidebar(&sidebar, cx);
         sidebar.update_in(cx, |sidebar, _window, _cx| {
             sidebar.selection = Some(0);
         });
@@ -3052,7 +3087,7 @@ mod tests {
         }
         cx.run_until_parked();
 
-        open_and_focus_sidebar(&sidebar, &multi_workspace, cx);
+        open_and_focus_sidebar(&sidebar, cx);
 
         // User types "fix" — two threads match.
         type_in_search(&sidebar, "fix", cx);

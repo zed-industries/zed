@@ -13,7 +13,7 @@ pub mod visual_tests;
 #[cfg(target_os = "windows")]
 pub(crate) mod windows_only_instance;
 
-use agent_ui::{AgentDiffToolbar, AgentPanelDelegate, sidebar::Sidebar};
+use agent_ui::{AgentDiffToolbar, AgentPanelDelegate};
 use anyhow::Context as _;
 pub use app_menus::*;
 use assets::Assets;
@@ -384,20 +384,6 @@ pub fn initialize_workspace(
                     false
                 })
                 .unwrap_or(true)
-        });
-
-        let window_handle = window.window_handle();
-        let multi_workspace_handle = cx.entity();
-        cx.defer(move |cx| {
-            window_handle
-                .update(cx, |_, window, cx| {
-                    let sidebar =
-                        cx.new(|cx| Sidebar::new(multi_workspace_handle.clone(), window, cx));
-                    multi_workspace_handle.update(cx, |multi_workspace, cx| {
-                        multi_workspace.register_sidebar(sidebar, window, cx);
-                    });
-                })
-                .ok();
         });
     })
     .detach();

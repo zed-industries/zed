@@ -29,7 +29,7 @@ pub use dock::Panel;
 pub use multi_workspace::{
     DraggedSidebar, FocusWorkspaceSidebar, MultiWorkspace, MultiWorkspaceEvent,
     NewWorkspaceInWindow, NextWorkspaceInWindow, PreviousWorkspaceInWindow,
-    SIDEBAR_RESIZE_HANDLE_SIZE, Sidebar, SidebarEvent, SidebarHandle, ToggleWorkspaceSidebar,
+    SIDEBAR_RESIZE_HANDLE_SIZE, ToggleWorkspaceSidebar,
 };
 pub use path_list::{PathList, SerializedPathList};
 pub use toast_layer::{ToastAction, ToastLayer, ToastView};
@@ -2152,12 +2152,6 @@ impl Workspace {
 
     pub fn status_bar(&self) -> &Entity<StatusBar> {
         &self.status_bar
-    }
-
-    pub fn set_workspace_sidebar_open(&self, open: bool, cx: &mut App) {
-        self.status_bar.update(cx, |status_bar, cx| {
-            status_bar.set_workspace_sidebar_open(open, cx);
-        });
     }
 
     pub fn status_bar_visible(&self, cx: &App) -> bool {
@@ -8265,14 +8259,6 @@ pub async fn restore_multiworkspace(
                 if !multi_workspace.workspaces().is_empty() {
                     multi_workspace.activate_index(0, window, cx);
                 }
-            })
-            .ok();
-    }
-
-    if state.sidebar_open {
-        window_handle
-            .update(cx, |multi_workspace, _, cx| {
-                multi_workspace.open_sidebar(cx);
             })
             .ok();
     }

@@ -2340,7 +2340,7 @@ impl ConnectionView {
         }
 
         if let Some(multi_workspace) = window.root::<MultiWorkspace>().flatten() {
-            multi_workspace.read(cx).is_sidebar_open()
+            crate::agent_panel::sidebar_is_open(window, cx)
                 || self.agent_panel_visible(&multi_workspace, cx)
         } else {
             self.workspace

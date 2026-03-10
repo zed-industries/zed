@@ -63,12 +63,9 @@ pub struct SessionWorkspace {
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 pub struct MultiWorkspaceState {
     pub active_workspace_id: Option<WorkspaceId>,
-    pub sidebar_open: bool,
 }
 
-/// The serialized state of a single MultiWorkspace window from a previous session:
-/// all workspaces that shared the window, which one was active, and whether the
-/// sidebar was open.
+/// The serialized state of a single MultiWorkspace window from a previous session.
 #[derive(Debug, Clone)]
 pub struct SerializedMultiWorkspace {
     pub workspaces: Vec<SessionWorkspace>,

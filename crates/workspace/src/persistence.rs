@@ -3877,7 +3877,6 @@ mod tests {
             window_10,
             MultiWorkspaceState {
                 active_workspace_id: Some(WorkspaceId(2)),
-                sidebar_open: true,
             },
         )
         .await;
@@ -3886,7 +3885,6 @@ mod tests {
             window_20,
             MultiWorkspaceState {
                 active_workspace_id: Some(WorkspaceId(3)),
-                sidebar_open: false,
             },
         )
         .await;
@@ -3924,23 +3922,20 @@ mod tests {
         // Should produce 3 groups: window 10, window 20, and the orphan.
         assert_eq!(results.len(), 3);
 
-        // Window 10 group: 2 workspaces, active_workspace_id = 2, sidebar open.
+        // Window 10 group: 2 workspaces, active_workspace_id = 2.
         let group_10 = &results[0];
         assert_eq!(group_10.workspaces.len(), 2);
         assert_eq!(group_10.state.active_workspace_id, Some(WorkspaceId(2)));
-        assert_eq!(group_10.state.sidebar_open, true);
 
-        // Window 20 group: 1 workspace, active_workspace_id = 3, sidebar closed.
+        // Window 20 group: 1 workspace, active_workspace_id = 3.
         let group_20 = &results[1];
         assert_eq!(group_20.workspaces.len(), 1);
         assert_eq!(group_20.state.active_workspace_id, Some(WorkspaceId(3)));
-        assert_eq!(group_20.state.sidebar_open, false);
 
         // Orphan group: no window_id, so state is default.
         let group_none = &results[2];
         assert_eq!(group_none.workspaces.len(), 1);
         assert_eq!(group_none.state.active_workspace_id, None);
-        assert_eq!(group_none.state.sidebar_open, false);
     }
 
     #[gpui::test]

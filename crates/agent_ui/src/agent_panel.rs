@@ -86,9 +86,9 @@ use ui::{
 };
 use util::ResultExt as _;
 use workspace::{
-    CollaboratorId, DraggedSelection, DraggedSidebar, DraggedTab, MultiWorkspace,
-    SIDEBAR_RESIZE_HANDLE_SIZE, ToggleWorkspaceSidebar, ToggleZoom, ToolbarItemView, Workspace,
-    WorkspaceId,
+    CollaboratorId, DraggedSelection, DraggedSidebar, DraggedTab, FocusWorkspaceSidebar,
+    MultiWorkspace, SIDEBAR_RESIZE_HANDLE_SIZE, ToggleWorkspaceSidebar, ToggleZoom,
+    ToolbarItemView, Workspace, WorkspaceId,
     dock::{DockPosition, Panel, PanelEvent},
 };
 use zed_actions::{
@@ -100,6 +100,48 @@ use zed_actions::{
 const AGENT_PANEL_KEY: &str = "agent_panel";
 const RECENTLY_UPDATED_MENU_LIMIT: usize = 6;
 const DEFAULT_THREAD_TITLE: &str = "New Thread";
+
+#[derive(Default)]
+struct SidebarsByWindow(
+    collections::HashMap<gpui::WindowId, gpui::WeakEntity<crate::sidebar::Sidebar>>,
+);
+
+impl gpui::Global for SidebarsByWindow {}
+
+pub(crate) fn sidebar_is_open(window: &Window, cx: &App) -> bool {
+    let window_id = window.window_handle().window_id();
+    cx.try_global::<SidebarsByWindow>()
+        .and_then(|sidebars| sidebars.0.get(&window_id)?.upgrade())
+        .is_some_and(|sidebar| sidebar.read(cx).is_open())
+}
+
+fn find_or_create_sidebar_for_window(
+    window: &mut Window,
+    cx: &mut App,
+) -> Option<Entity<crate::sidebar::Sidebar>> {
+    let window_id = window.window_handle().window_id();
+    let multi_workspace = window.root::<MultiWorkspace>().flatten()?;
+
+    if !cx.has_global::<SidebarsByWindow>() {
+        cx.set_global(SidebarsByWindow::default());
+    }
+
+    let existing = cx
+        .global::<SidebarsByWindow>()
+        .0
+        .get(&window_id)
+        .and_then(|weak| weak.upgrade());
+
+    if let Some(sidebar) = existing {
+        return Some(sidebar);
+    }
+
+    let sidebar = cx.new(|cx| crate::sidebar::Sidebar::new(multi_workspace, window, cx));
+    cx.global_mut::<SidebarsByWindow>()
+        .0
+        .insert(window_id, sidebar.downgrade());
+    Some(sidebar)
+}
 
 fn read_serialized_panel(workspace_id: workspace::WorkspaceId) -> Option<SerializedAgentPanel> {
     let scope = KEY_VALUE_STORE.scoped(AGENT_PANEL_KEY);
@@ -425,6 +467,24 @@ pub fn init(cx: &mut App) {
                         panel.update(cx, |panel, cx| {
                             panel.set_start_thread_in(action, cx);
                         });
+                    }
+                })
+                .register_action(|workspace, _: &ToggleWorkspaceSidebar, window, cx| {
+                    if let Some(panel) = workspace.panel::<AgentPanel>(cx) {
+                        if let Some(sidebar) = panel.read(cx).sidebar.clone() {
+                            sidebar.update(cx, |sidebar, cx| {
+                                sidebar.toggle(window, cx);
+                            });
+                        }
+                    }
+                })
+                .register_action(|workspace, _: &FocusWorkspaceSidebar, window, cx| {
+                    if let Some(panel) = workspace.panel::<AgentPanel>(cx) {
+                        if let Some(sidebar) = panel.read(cx).sidebar.clone() {
+                            sidebar.update(cx, |sidebar, cx| {
+                                sidebar.focus_or_unfocus(workspace, window, cx);
+                            });
+                        }
                     }
                 });
         },
@@ -822,6 +882,7 @@ pub struct AgentPanel {
     last_configuration_error_telemetry: Option<String>,
     on_boarding_upsell_dismissed: AtomicBool,
     _active_view_observation: Option<Subscription>,
+    pub(crate) sidebar: Option<Entity<crate::sidebar::Sidebar>>,
 }
 
 impl AgentPanel {
@@ -1150,10 +1211,17 @@ impl AgentPanel {
             last_configuration_error_telemetry: None,
             on_boarding_upsell_dismissed: AtomicBool::new(OnboardingUpsell::dismissed()),
             _active_view_observation: None,
+            sidebar: None,
         };
 
         // Initial sync of agent servers from extensions
         panel.sync_agent_servers_from_extensions(cx);
+
+        cx.defer_in(window, move |this, window, cx| {
+            this.sidebar = find_or_create_sidebar_for_window(window, cx);
+            cx.notify();
+        });
+
         panel
     }
 
@@ -3528,28 +3596,28 @@ impl AgentPanel {
     }
 
     fn sidebar_info(&self, window: &Window, cx: &App) -> Option<(AnyView, Pixels, bool)> {
-        let multi_workspace_handle = window.window_handle().downcast::<MultiWorkspace>()?;
-        let multi_workspace = multi_workspace_handle.entity(cx).ok()?;
+        let multi_workspace = window.root::<MultiWorkspace>().flatten()?;
         let multi_workspace = multi_workspace.read(cx);
         if !multi_workspace.multi_workspace_enabled(cx) {
             return None;
         }
-        let sidebar = multi_workspace.sidebar()?;
-        let is_open = multi_workspace.sidebar_open();
-        let view = sidebar.to_any();
-        let width = sidebar.width(cx);
+        let sidebar = self.sidebar.as_ref()?;
+        let is_open = sidebar.read(cx).is_open();
+        let width = sidebar.read(cx).width(cx);
+        let view: AnyView = sidebar.clone().into();
         Some((view, width, is_open))
     }
 
     fn render_sidebar_toggle(&self, window: &Window, cx: &Context<Self>) -> Option<AnyElement> {
-        let multi_workspace_handle = window.window_handle().downcast::<MultiWorkspace>()?;
-        let multi_workspace = multi_workspace_handle.entity(cx).ok()?;
+        let multi_workspace = window.root::<MultiWorkspace>().flatten()?;
         let multi_workspace = multi_workspace.read(cx);
         if !multi_workspace.multi_workspace_enabled(cx) {
             return None;
         }
-        let is_open = multi_workspace.sidebar_open();
-        let has_notifications = multi_workspace.sidebar_has_notifications(cx);
+        let sidebar = self.sidebar.as_ref()?;
+        let sidebar_read = sidebar.read(cx);
+        let is_open = sidebar_read.is_open();
+        let has_notifications = sidebar_read.has_notifications(cx);
 
         let icon = if is_open {
             IconName::WorkspaceNavOpen
@@ -3585,8 +3653,7 @@ impl AgentPanel {
             return None;
         }
 
-        let multi_workspace_handle = window.window_handle().downcast::<MultiWorkspace>()?;
-        let weak = multi_workspace_handle.entity(cx).ok()?.downgrade();
+        let sidebar = self.sidebar.as_ref()?.downgrade();
 
         let resize_handle = deferred(
             div()
@@ -3606,12 +3673,11 @@ impl AgentPanel {
                 })
                 .on_mouse_up(MouseButton::Left, move |event, _, cx| {
                     if event.click_count == 2 {
-                        weak.update(cx, |this, cx| {
-                            if let Some(sidebar) = this.sidebar() {
+                        sidebar
+                            .update(cx, |sidebar, cx| {
                                 sidebar.set_width(None, cx);
-                            }
-                        })
-                        .ok();
+                            })
+                            .ok();
                         cx.stop_propagation();
                     }
                 })
@@ -4722,17 +4788,12 @@ impl Render for AgentPanel {
         let panel = h_flex()
             .size_full()
             .when(has_sidebar, |this| {
-                let multi_workspace_handle = window.window_handle().downcast::<MultiWorkspace>();
                 this.on_drag_move(cx.listener(
-                    move |_this, e: &DragMoveEvent<DraggedSidebar>, _window, cx| {
-                        if let Some(handle) = &multi_workspace_handle {
-                            handle
-                                .update(cx, |multi_workspace, _window, cx| {
-                                    if let Some(sidebar) = multi_workspace.sidebar() {
-                                        sidebar.set_width(Some(e.event.position.x), cx);
-                                    }
-                                })
-                                .ok();
+                    move |this, e: &DragMoveEvent<DraggedSidebar>, _window, cx| {
+                        if let Some(sidebar) = &this.sidebar {
+                            sidebar.update(cx, |sidebar, cx| {
+                                sidebar.set_width(Some(e.event.position.x), cx);
+                            });
                         }
                     },
                 ))
