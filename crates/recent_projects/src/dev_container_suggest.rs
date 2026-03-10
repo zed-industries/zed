@@ -1,5 +1,6 @@
+use crate::RemoteServerProjects;
 use db::kvp::KEY_VALUE_STORE;
-use dev_container::find_configs_in_snapshot;
+use dev_container::{DevContainerContext, find_configs_in_snapshot, find_devcontainer_configs};
 use gpui::{SharedString, Window};
 use project::{Project, WorktreeId};
 use std::sync::LazyLock;
@@ -11,6 +12,33 @@ use workspace::notifications::simple_message_notification::MessageNotification;
 use worktree::UpdatedEntriesSet;
 
 const DEV_CONTAINER_SUGGEST_KEY: &str = "dev_container_suggest_dismissed";
+
+fn open_dev_container_modal(
+    workspace: &mut Workspace,
+    window: &mut Window,
+    cx: &mut Context<Workspace>,
+) {
+    if !workspace.project().read(cx).is_local() {
+        return;
+    }
+
+    let fs = workspace.project().read(cx).fs().clone();
+    let configs = find_devcontainer_configs(workspace, cx);
+    let app_state = workspace.app_state().clone();
+    let dev_container_context = DevContainerContext::from_workspace(workspace, cx);
+    let handle = cx.entity().downgrade();
+    workspace.toggle_modal(window, cx, |window, cx| {
+        RemoteServerProjects::new_dev_container(
+            fs,
+            configs,
+            app_state,
+            dev_container_context,
+            window,
+            handle,
+            cx,
+        )
+    });
+}
 
 fn devcontainer_dir_path() -> &'static RelPath {
     static PATH: LazyLock<&'static RelPath> =
@@ -29,17 +57,20 @@ fn project_devcontainer_key(project_path: &str) -> String {
 }
 
 pub fn suggest_on_worktree_updated(
+    workspace: &mut Workspace,
     worktree_id: WorktreeId,
     updated_entries: &UpdatedEntriesSet,
     project: &gpui::Entity<Project>,
     window: &mut Window,
     cx: &mut Context<Workspace>,
 ) {
+    let cli_auto_open = workspace.open_in_dev_container();
+
     let devcontainer_updated = updated_entries.iter().any(|(path, _, _)| {
         path.as_ref() == devcontainer_dir_path() || path.as_ref() == devcontainer_json_path()
     });
 
-    if !devcontainer_updated {
+    if !devcontainer_updated && !cli_auto_open {
         return;
     }
 
@@ -53,7 +84,43 @@ pub fn suggest_on_worktree_updated(
         return;
     }
 
-    if find_configs_in_snapshot(worktree).is_empty() {
+    let has_configs = !find_configs_in_snapshot(worktree).is_empty();
+
+    if cli_auto_open {
+        workspace.set_open_in_dev_container(false);
+        let task = cx.spawn_in(window, async move |workspace, cx| {
+            let scans_complete = workspace
+                .update(cx, |workspace, cx| {
+                    workspace.worktree_scans_complete(cx)
+                })?;
+            scans_complete.await;
+
+            workspace.update_in(cx, |workspace, window, cx| {
+                let has_configs = workspace
+                    .project()
+                    .read(cx)
+                    .worktrees(cx)
+                    .any(|wt| !find_configs_in_snapshot(wt.read(cx)).is_empty());
+                if has_configs {
+                    // Defer to next frame for test compatibility: the modal spawns
+                    // `docker --version` on a real blocking thread that can't be cancelled.
+                    // Without this deferral the blocking thread outlives the test scheduler.
+                    // TODO: Remove once dev container commands are mockable in tests.
+                    cx.on_next_frame(window, move |workspace, window, cx| {
+                        open_dev_container_modal(workspace, window, cx);
+                    });
+                } else {
+                    log::warn!(
+                        "--dev-container: no devcontainer configuration found in project"
+                    );
+                }
+            })
+        });
+        workspace.set_dev_container_task(task);
+        return;
+    }
+
+    if !has_configs {
         return;
     }
 

@@ -414,11 +414,12 @@ pub fn init(cx: &mut App) {
             cx.subscribe_in(
                 workspace.project(),
                 window,
-                move |_, project, event, window, cx| {
+                move |workspace, project, event, window, cx| {
                     if let project::Event::WorktreeUpdatedEntries(worktree_id, updated_entries) =
                         event
                     {
                         dev_container_suggest::suggest_on_worktree_updated(
+                            workspace,
                             *worktree_id,
                             updated_entries,
                             project,
