@@ -6,19 +6,17 @@ use crate::tasks::workflows::{
     vars::{WorkflowInput, bundle_envs},
 };
 
-const TAG: &str = "${{ inputs.tag }}";
-
 pub fn reupload_sentry_symbols() -> Workflow {
     let tag = WorkflowInput::string("tag", None)
         .description("Git tag to rebuild and upload symbols for (e.g. v0.200.0-pre)");
 
     let jobs = [
-        upload_job(Platform::Linux, Arch::X86_64),
-        upload_job(Platform::Linux, Arch::AARCH64),
-        upload_job(Platform::Mac, Arch::X86_64),
-        upload_job(Platform::Mac, Arch::AARCH64),
-        upload_job(Platform::Windows, Arch::X86_64),
-        upload_job(Platform::Windows, Arch::AARCH64),
+        upload_job(&tag, Platform::Linux, Arch::X86_64),
+        upload_job(&tag, Platform::Linux, Arch::AARCH64),
+        upload_job(&tag, Platform::Mac, Arch::X86_64),
+        upload_job(&tag, Platform::Mac, Arch::AARCH64),
+        upload_job(&tag, Platform::Windows, Arch::X86_64),
+        upload_job(&tag, Platform::Windows, Arch::AARCH64),
     ];
 
     let mut workflow = named::workflow()
@@ -34,7 +32,7 @@ pub fn reupload_sentry_symbols() -> Workflow {
     workflow
 }
 
-fn upload_job(platform: Platform, arch: Arch) -> NamedJob {
+fn upload_job(tag: &WorkflowInput, platform: Platform, arch: Arch) -> NamedJob {
     fn upload_symbols_unix() -> Step<Run> {
         named::bash("./script/upload-sentry-symbols --verify")
     }
@@ -54,7 +52,7 @@ fn upload_job(platform: Platform, arch: Arch) -> NamedJob {
         .timeout_minutes(60u32)
         .with_repository_owner_guard()
         .envs(bundle_envs(platform))
-        .add_step(steps::checkout_repo().with_ref(TAG))
+        .add_step(steps::checkout_repo().with_ref(tag))
         .add_step(steps::setup_sentry());
 
     if platform == Platform::Linux {
