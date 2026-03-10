@@ -1,12 +1,13 @@
 use std::{
     collections::HashMap,
-    fmt::Debug,
+    fmt::{Debug, Display},
     hash::{DefaultHasher, Hash, Hasher},
     path::{Path, PathBuf},
     sync::Arc,
 };
 
 use http_client::HttpClient;
+use paths::devcontainer_dir;
 use serde::{Deserialize, Deserializer, Serialize};
 use serde_json_lenient::Value;
 use smol::process::Command;
@@ -16,9 +17,12 @@ use crate::{
     DevContainerConfig, DevContainerErrorV2,
     command_json::evaluate_json_command,
     devcontainer_api::DevContainerUp,
-    docker::{DockerConfigLabels, DockerInspect, DockerPs, docker_cli, inspect_image},
-    download_and_extract_oci_feature, fetch_oci_feature_manifest, get_oci_token_for_repo,
-    parse_oci_feature_ref,
+    docker::{DockerInspect, DockerPs, docker_cli, inspect_image},
+    features::{
+        FeatureManifest, download_and_extract_oci_feature, fetch_oci_feature_manifest,
+        parse_oci_feature_ref,
+    },
+    get_oci_token_for_repo, safe_id_lower,
 };
 
 /*
@@ -213,13 +217,33 @@ where
     Ok(Some(mounts))
 }
 
-#[derive(Debug, Deserialize, Serialize, Eq, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct MountDefinition {
     source: String,
     target: String,
     #[serde(rename = "type")]
     mount_type: Option<String>,
+}
+
+// TODO generalize this to include DevContainer predefined variables
+// Probably just need to create a new crate for this
+impl Display for MountDefinition {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "type={},source={},target={},consistency=cached",
+            self.mount_type.clone().unwrap_or_else(|| {
+                if self.source.starts_with('/') {
+                    "bind".to_string()
+                } else {
+                    "volume".to_string()
+                }
+            }),
+            self.source,
+            self.target
+        )
+    }
 }
 
 /// Represents the value associated with a feature ID in the `features` map of devcontainer.json.
@@ -254,71 +278,6 @@ impl std::fmt::Display for FeatureOptionValue {
     }
 }
 
-/// Minimal representation of a `devcontainer-feature.json` file, used to
-/// extract option default values after the feature tarball is downloaded.
-///
-/// See: https://containers.dev/implementors/features/#devcontainer-featurejson-properties
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct DevContainerFeatureJson {
-    #[serde(rename = "id")]
-    _id: Option<String>,
-    #[serde(default)]
-    options: HashMap<String, FeatureOptionDefinition>,
-}
-
-/// A single option definition inside `devcontainer-feature.json`.
-/// We only need the `default` field to populate env variables.
-#[derive(Debug, Deserialize)]
-struct FeatureOptionDefinition {
-    default: Option<Value>,
-}
-
-/// Reads `devcontainer-feature.json` from a feature's staging directory and
-/// returns a map of option-name → default-value (as strings).
-///
-/// Mirrors the CLI's `getFeatureValueDefaults` in
-/// `containerFeaturesConfiguration.ts`.
-fn read_feature_option_defaults(
-    feature_dir: &Path,
-) -> Result<HashMap<String, String>, DevContainerErrorV2> {
-    let json_path = feature_dir.join("devcontainer-feature.json");
-    if !json_path.exists() {
-        log::info!(
-            "No devcontainer-feature.json found in {:?}, no defaults to apply",
-            feature_dir
-        );
-        return Ok(HashMap::new());
-    }
-
-    let contents = std::fs::read_to_string(&json_path).map_err(|e| {
-        log::error!("Failed to read devcontainer-feature.json: {e}");
-        DevContainerErrorV2::UnmappedError
-    })?;
-
-    let feature_json: DevContainerFeatureJson =
-        serde_json_lenient::from_str(&contents).map_err(|e| {
-            log::error!("Failed to parse devcontainer-feature.json: {e}");
-            DevContainerErrorV2::UnmappedError
-        })?;
-
-    dbg!(&feature_json);
-
-    let mut defaults = HashMap::new();
-    for (name, definition) in &feature_json.options {
-        if let Some(default_value) = &definition.default {
-            let value_str = match default_value {
-                Value::Bool(b) => b.to_string(),
-                Value::String(s) => s.to_string(),
-                Value::Number(n) => n.to_string(),
-                other => other.to_string(),
-            };
-            defaults.insert(name.clone(), value_str);
-        }
-    }
-    Ok(defaults)
-}
-
 /// Holds all the information needed to construct a `docker buildx build` command
 /// that extends a base image with dev container features.
 ///
@@ -333,8 +292,6 @@ pub(crate) struct FeaturesBuildInfo {
     pub empty_context_dir: PathBuf,
     /// The base image name (e.g. "mcr.microsoft.com/devcontainers/rust:2-1-bookworm")
     pub base_image: Option<String>,
-    /// The user from the base image (e.g. "root")
-    pub image_user: String,
     /// The tag to apply to the built image (e.g. "vsc-myproject-features")
     pub image_tag: String,
 }
@@ -551,13 +508,28 @@ struct DockerComposeService {
     labels: Option<Vec<String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     build: Option<DockerComposeServiceBuild>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    privileged: Option<bool>,
+    volumes: Vec<MountDefinition>,
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize, Eq, PartialEq)]
+#[derive(Debug, Clone, Deserialize, Serialize, Eq, PartialEq, Default)]
+struct DockerComposeVolume {
+    name: String,
+}
+
+#[derive(Debug, Clone, Eq, PartialEq, Default)]
+struct DockerComposeManifest {
+    files: Vec<PathBuf>,
+    config: DockerComposeConfig,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, Eq, PartialEq, Default)]
 struct DockerComposeConfig {
     #[serde(skip_serializing_if = "Option::is_none")]
     name: Option<String>,
     services: HashMap<String, DockerComposeService>,
+    volumes: HashMap<String, DockerComposeVolume>,
 }
 
 pub(crate) fn read_devcontainer_configuration(
@@ -660,9 +632,18 @@ pub(crate) async fn spawn_dev_container(
     }
 }
 
+#[derive(Debug)]
+struct DockerBuildResources {
+    image: DockerInspect,
+    additional_mounts: Vec<MountDefinition>,
+    privileged: bool,
+    entrypoints: Vec<String>,
+}
+
+#[derive(Debug)]
 enum DevContainerBuildResources {
     DockerComposeFiles(Vec<String>),
-    Docker(DockerInspect),
+    Docker(DockerBuildResources),
 }
 
 async fn build_dev_container_resources(
@@ -673,14 +654,17 @@ async fn build_dev_container_resources(
 ) -> Result<DevContainerBuildResources, DevContainerErrorV2> {
     match dev_container.build_type() {
         DevContainerBuildType::Image | DevContainerBuildType::Dockerfile => {
-            let built_docker_image = build_docker_image(
+            let (built_docker_image, feature_manifests) = build_docker_image(
                 http_client,
                 dev_container,
+                devcontainer_dir,
                 devcontainer_dir.display().to_string(),
             )
             .await?;
 
-            Ok(DevContainerBuildResources::Docker(built_docker_image))
+            let resources =
+                build_merged_resources(built_docker_image, dev_container, feature_manifests);
+            Ok(DevContainerBuildResources::Docker(resources))
         }
         DevContainerBuildType::DockerCompose => {
             log::info!("Using docker compose. Building extended compose files");
@@ -717,9 +701,9 @@ async fn run_dev_container(
             dbg!(&docker_compose_files);
             run_docker_compose(docker_compose_files, &labels).await?
         }
-        DevContainerBuildResources::Docker(built_docker_image) => {
-            dbg!(&built_docker_image);
-            run_docker_image(&built_docker_image, &labels, &local_project_path).await?
+        DevContainerBuildResources::Docker(resources) => {
+            dbg!(&resources);
+            run_docker_image(resources, &labels, &local_project_path).await?
         }
     };
 
@@ -779,55 +763,29 @@ async fn build_and_extend_compose_files(
     devcontainer_dir: &Path,
     labels: &Vec<(&str, String)>,
 ) -> Result<Vec<String>, DevContainerErrorV2> {
-    let Some(docker_compose_files) = devcontainer.docker_compose_file.clone() else {
-        return Err(DevContainerErrorV2::UnmappedError);
-    };
-    let mut docker_compose_full_paths = docker_compose_files
-        .iter()
-        .map(|relative| devcontainer_dir.join(relative).display().to_string())
-        .collect::<Vec<String>>();
+    let mut docker_compose_manifest =
+        docker_compose_manifest(devcontainer, devcontainer_dir).await?;
 
-    let docker_compose_config_command =
-        create_docker_compose_config_command(&docker_compose_full_paths)?;
-
-    dbg!(&docker_compose_config_command);
-
-    let Some(docker_compose_config) =
-        evaluate_json_command::<DockerComposeConfig>(docker_compose_config_command).await?
-    else {
-        log::error!("Output could not deserialize into DockerComposeConfig");
-        return Err(DevContainerErrorV2::UnmappedError);
-    };
-
-    // TODO
-    // The CLI determines the image user from `imageDetails.Config.User || 'root'`.
-    // Our DockerInspect doesn't yet carry the User field, so we default to "root".
-    let image_user = "root";
-
-    let build_info = prepare_features_build_info(devcontainer, image_user)?; // can this just get re-used?
-
-    dbg!(&docker_compose_config);
+    let build_info = prepare_features_build_info(devcontainer)?;
 
     let (main_service_name, main_service) =
-        find_primary_service(&docker_compose_config, devcontainer)?;
-    let built_service_image = if let Some(image) = &main_service.image {
-        // if no features
+        find_primary_service(&docker_compose_manifest, devcontainer)?;
+    let (built_service_image, feature_manifests) = if let Some(image) = &main_service.image {
         if devcontainer
             .features
             .as_ref()
             .is_none_or(|features| features.is_empty())
         {
-            // Do the build here also though
-            inspect_image(image).await?
+            (inspect_image(image).await?, vec![])
         } else {
-            construct_features_build_resources(
+            let features_manifests = construct_features_build_resources(
                 devcontainer,
+                devcontainer_dir.to_path_buf(),
                 &build_info,
                 &http_client,
-                None, // TODO this should be the dockerfile found from docker-compose.yml
+                None,
             )
             .await?;
-
             let build_override = DockerComposeConfig {
                 name: None,
                 services: HashMap::from([(
@@ -851,12 +809,15 @@ async fn build_and_extend_compose_files(
                                 build_info.features_content_dir.display().to_string(),
                             )])),
                         }),
+                        volumes: Vec::new(),
+                        ..Default::default()
                     },
                 )]),
+                volumes: HashMap::new(),
             };
 
             let temp_base = std::env::temp_dir().join("devcontainer-zed");
-            let config_location = temp_base.join("docker_compose_build.yml");
+            let config_location = temp_base.join("docker_compose_build.json");
 
             let config_json = serde_json_lenient::to_string(&build_override).map_err(|e| {
                 log::error!("Error serializing docker compose runtime override: {e}");
@@ -868,11 +829,14 @@ async fn build_and_extend_compose_files(
                 DevContainerErrorV2::UnmappedError
             })?;
 
-            docker_compose_full_paths.push(config_location.display().to_string());
+            docker_compose_manifest.files.push(config_location);
 
-            run_docker_compose_build(&docker_compose_full_paths).await?;
+            run_docker_compose_build(&docker_compose_manifest).await?;
 
-            inspect_image(&build_info.image_tag).await?
+            (
+                inspect_image(&build_info.image_tag).await?,
+                features_manifests,
+            )
         }
     } else if let Some(dockerfile) = main_service // TODO this has to be reversed, I think?
         .build
@@ -880,8 +844,10 @@ async fn build_and_extend_compose_files(
         .and_then(|b| b.dockerfile.as_ref())
     {
         let dockerfile_location = devcontainer_dir.join(dockerfile);
-        construct_features_build_resources(
+        // TODO weird side-effects here means it has to be done first. Maybe there's a better way.
+        let features_manifests = construct_features_build_resources(
             devcontainer,
+            devcontainer_dir.to_path_buf(),
             &build_info,
             &http_client,
             Some(dockerfile_location),
@@ -914,12 +880,15 @@ async fn build_and_extend_compose_files(
                             build_info.features_content_dir.display().to_string(),
                         )])),
                     }),
+                    volumes: Vec::new(),
+                    ..Default::default()
                 },
             )]),
+            volumes: HashMap::new(),
         };
 
         let temp_base = std::env::temp_dir().join("devcontainer-zed");
-        let config_location = temp_base.join("docker_compose_build.yml");
+        let config_location = temp_base.join("docker_compose_build.json");
 
         let config_json = serde_json_lenient::to_string(&build_override).map_err(|e| {
             log::error!("Error serializing docker compose runtime override: {e}");
@@ -931,36 +900,100 @@ async fn build_and_extend_compose_files(
             DevContainerErrorV2::UnmappedError
         })?;
 
-        docker_compose_full_paths.push(config_location.display().to_string());
+        docker_compose_manifest.files.push(config_location);
 
-        run_docker_compose_build(&docker_compose_full_paths).await?;
+        run_docker_compose_build(&docker_compose_manifest).await?;
 
-        inspect_image(&build_info.image_tag).await?
+        (
+            inspect_image(&build_info.image_tag).await?,
+            features_manifests,
+        )
     } else {
         log::error!("Docker compose must have either image or dockerfile defined");
         return Err(DevContainerErrorV2::UnmappedError);
     };
 
-    let runtime_override_file =
-        build_runtime_override_file(&main_service_name, &built_service_image, labels)?;
+    let resources = build_merged_resources(built_service_image, devcontainer, feature_manifests);
+
+    let runtime_override_file = build_runtime_override_file(&main_service_name, resources, labels)?;
 
     dbg!(&runtime_override_file);
 
-    docker_compose_full_paths.push(runtime_override_file);
+    docker_compose_manifest.files.push(runtime_override_file);
 
-    dbg!(&docker_compose_full_paths);
+    // TODO complete this refactor
+    Ok(docker_compose_manifest
+        .files
+        .iter()
+        .map(|file| file.display().to_string())
+        .collect())
+}
 
-    Ok(docker_compose_full_paths)
+async fn docker_compose_manifest(
+    devcontainer: &DevContainer,
+    devcontainer_dir: &Path,
+) -> Result<DockerComposeManifest, DevContainerErrorV2> {
+    let Some(docker_compose_files) = devcontainer.docker_compose_file.clone() else {
+        return Err(DevContainerErrorV2::UnmappedError);
+    };
+    let docker_compose_full_paths = docker_compose_files
+        .iter()
+        .map(|relative| devcontainer_dir.join(relative))
+        .collect::<Vec<PathBuf>>();
+    let docker_compose_config_command =
+        create_docker_compose_config_command(&docker_compose_full_paths)?;
+
+    let Some(config) =
+        evaluate_json_command::<DockerComposeConfig>(docker_compose_config_command).await?
+    else {
+        log::error!("Output could not deserialize into DockerComposeConfig");
+        return Err(DevContainerErrorV2::UnmappedError);
+    };
+    Ok(DockerComposeManifest {
+        files: docker_compose_full_paths,
+        config,
+    })
+}
+
+// TODO move entrypoint into this
+fn build_merged_resources(
+    base_image: DockerInspect,
+    dev_container: &DevContainer,
+    feature_manifests: Vec<FeatureManifest>,
+) -> DockerBuildResources {
+    let mut mounts = dev_container.mounts.clone().unwrap_or(Vec::new());
+
+    let mut feature_mounts = feature_manifests
+        .iter()
+        .flat_map(|f| f.mounts().clone())
+        .collect();
+
+    mounts.append(&mut feature_mounts);
+
+    let privileged = dev_container.privileged.unwrap_or(false)
+        || feature_manifests.iter().any(|f| f.privileged());
+
+    let entrypoints = feature_manifests
+        .iter()
+        .filter_map(|f| f.entrypoint())
+        .collect();
+
+    DockerBuildResources {
+        image: base_image,
+        additional_mounts: mounts,
+        privileged,
+        entrypoints,
+    }
 }
 
 async fn run_docker_compose_build(
-    docker_compose_files: &Vec<String>,
+    docker_compose: &DockerComposeManifest,
 ) -> Result<(), DevContainerErrorV2> {
     let mut command = Command::new(docker_cli());
     // TODO project name how
     command.args(&["compose", "--project-name", "rustwebstarter_devcontainer"]);
-    for docker_compose_file in docker_compose_files {
-        command.args(&["-f", &docker_compose_file]);
+    for docker_compose_file in &docker_compose.files {
+        command.args(&["-f", &docker_compose_file.display().to_string()]);
     }
     command.arg("build");
 
@@ -980,14 +1013,16 @@ async fn run_docker_compose_build(
     Ok(())
 }
 
+// TODO the mounts have to make it here
 fn build_runtime_override_file(
     main_service_name: &str,
-    docker_image: &DockerInspect,
+    resources: DockerBuildResources,
+    // docker_image: &DockerInspect,
     labels: &Vec<(&str, String)>,
-) -> Result<String, DevContainerErrorV2> {
-    let config = build_runtime_override(main_service_name, docker_image, labels)?;
+) -> Result<PathBuf, DevContainerErrorV2> {
+    let config = build_runtime_override(main_service_name, resources, labels)?;
     let temp_base = std::env::temp_dir().join("devcontainer-zed");
-    let config_location = temp_base.join("docker_compose_runtime.yml");
+    let config_location = temp_base.join("docker_compose_runtime.json");
 
     let config_json = serde_json_lenient::to_string(&config).map_err(|e| {
         log::error!("Error serializing docker compose runtime override: {e}");
@@ -999,17 +1034,17 @@ fn build_runtime_override_file(
         DevContainerErrorV2::UnmappedError
     })?;
 
-    Ok(config_location.display().to_string())
+    Ok(config_location)
 }
 
 fn build_runtime_override(
     main_service_name: &str,
-    docker_image: &DockerInspect,
+    resources: DockerBuildResources,
     labels: &Vec<(&str, String)>,
 ) -> Result<DockerComposeConfig, DevContainerErrorV2> {
     let mut runtime_labels = vec![];
 
-    if let Some(metadata) = &docker_image.config.labels.metadata {
+    if let Some(metadata) = &resources.image.config.labels.metadata {
         let serialized_metadata = serde_json_lenient::to_string(metadata).map_err(|e| {
             log::error!("Error serializing docker image metadata: {e}");
             DevContainerErrorV2::UnmappedError
@@ -1025,6 +1060,59 @@ fn build_runtime_override(
         runtime_labels.push(format!("{}={}", k, v));
     }
 
+    let config_volumes: HashMap<String, DockerComposeVolume> = resources
+        .additional_mounts
+        .iter()
+        .filter_map(|mount| {
+            if let Some(mount_type) = &mount.mount_type
+                && mount_type.to_lowercase() == "volume"
+            {
+                Some((
+                    mount
+                        .source
+                        .clone()
+                        .replace("${devcontainerId}", "devcontainer123"),
+                    DockerComposeVolume {
+                        name: mount
+                            .source
+                            .clone()
+                            .replace("${devcontainerId}", "devcontainer123"),
+                    },
+                ))
+            } else {
+                None
+            }
+        })
+        .collect();
+    // TODO Probably worth its own method
+    let mut entrypoint_script_lines = vec![
+        "echo Container started".to_string(),
+        "trap \"exit 0\" 15".to_string(),
+    ];
+    for entrypoint in resources.entrypoints {
+        entrypoint_script_lines.push(entrypoint.clone());
+    }
+    entrypoint_script_lines.append(&mut vec![
+        "exec \"$@\"".to_string(),
+        "while sleep 1 & wait $!; do :; done".to_string(),
+    ]);
+
+    let volumes: Vec<MountDefinition> = resources
+        .additional_mounts
+        .iter()
+        .map(|v| MountDefinition {
+            source: v
+                .source
+                .clone()
+                .replace("${devcontainerId}", "devcontainer123"),
+            target: v
+                .target
+                .clone()
+                .replace("${devcontainerId}", "devcontainer123"),
+            mount_type: v.mount_type.clone(),
+        })
+        .collect();
+
     let new_docker_compose_config = DockerComposeConfig {
         name: None,
         services: HashMap::from([(
@@ -1033,65 +1121,66 @@ fn build_runtime_override(
                 entrypoint: Some(vec![
                     "/bin/sh".to_string(),
                     "-c".to_string(),
-                    "
-echo Container started
-trap \"exit 0\" 15
-exec \"$@\"
-while sleep 1 & wait $!; do :; done"
-                        .to_string(),
+                    entrypoint_script_lines.join("\n").trim().to_string(),
                     "-".to_string(),
                 ]),
                 cap_add: Some(vec!["SYS_PTRACE".to_string()]),
                 security_opt: Some(vec!["seccomp=unconfined".to_string()]),
                 labels: Some(runtime_labels),
-                ..Default::default() // This is what we need
+                volumes,
+                privileged: Some(resources.privileged),
+                ..Default::default()
             },
         )]),
+        volumes: config_volumes,
+        ..Default::default()
     };
 
     Ok(new_docker_compose_config)
 }
 
 fn find_primary_service(
-    docker_compose_config: &DockerComposeConfig,
+    docker_compose: &DockerComposeManifest,
     devcontainer: &DevContainer,
 ) -> Result<(String, DockerComposeService), DevContainerErrorV2> {
     let Some(service_name) = &devcontainer.service else {
         return Err(DevContainerErrorV2::UnmappedError);
     };
 
-    match docker_compose_config.services.get(service_name) {
+    match docker_compose.config.services.get(service_name) {
         Some(service) => Ok((service_name.clone(), service.clone())),
         None => Err(DevContainerErrorV2::UnmappedError),
     }
 }
 
 fn create_docker_compose_config_command(
-    docker_compose_full_paths: &Vec<String>,
+    docker_compose_full_paths: &Vec<PathBuf>,
 ) -> Result<Command, DevContainerErrorV2> {
     let mut command = smol::process::Command::new(docker_cli());
     command.arg("compose");
     for file_path in docker_compose_full_paths {
-        command.args(&["-f", &file_path]);
+        command.args(&["-f", &file_path.display().to_string()]);
     }
     command.args(&["config", "--format", "json"]);
     Ok(command)
 }
 
 async fn run_docker_image(
-    built_docker_image: &DockerInspect,
+    build_resources: DockerBuildResources,
     labels: &Vec<(&str, String)>,
     local_project_path: &Arc<&Path>,
 ) -> Result<DockerInspect, DevContainerErrorV2> {
-    let mut docker_run_command = create_docker_run_command(
-        local_project_path,
-        &built_docker_image.config.labels,
-        Some(labels),
-        &built_docker_image.id,
-    )?;
+    let mut docker_run_command =
+        create_docker_run_command(build_resources, local_project_path, Some(labels))?;
 
-    if let Err(e) = docker_run_command.output().await {
+    let output = docker_run_command.output().await.map_err(|e| {
         log::error!("Error running docker run: {e}");
+        DevContainerErrorV2::UnmappedError
+    })?;
+
+    if !output.status.success() {
+        let std_err = String::from_utf8_lossy(&output.stderr);
+        log::error!("Non-success status from docker run. StdErr: {std_err}");
         return Err(DevContainerErrorV2::UnmappedError);
     }
 
@@ -1109,7 +1198,7 @@ fn generate_features_image_tag(
 ) -> String {
     let mut hasher = DefaultHasher::new();
     let prefix = match &dev_container.name {
-        Some(name) => &get_safe_id(name),
+        Some(name) => &safe_id_lower(name),
         None => "zed-dc",
     };
     let prefix = prefix.get(..6).unwrap_or(prefix);
@@ -1127,7 +1216,6 @@ fn generate_features_image_tag(
 /// `features_content_dir` before executing the build command.
 fn prepare_features_build_info(
     dev_container: &DevContainer,
-    image_user: &str,
 ) -> Result<FeaturesBuildInfo, DevContainerErrorV2> {
     // Covers both image and Dockefile cases, not yet docker-compose
     let temp_base = std::env::temp_dir().join("devcontainer-zed");
@@ -1156,7 +1244,6 @@ fn prepare_features_build_info(
         features_content_dir,
         empty_context_dir,
         base_image: dev_container.image.clone(),
-        image_user: image_user.to_string(),
         image_tag,
     })
 }
@@ -1184,31 +1271,6 @@ fn escape_regex_chars(input: &str) -> String {
         result.push(c);
     }
     result
-}
-
-/// Converts a string to a safe environment variable name.
-///
-/// Mirrors the CLI's `getSafeId` in `containerFeatures.ts`:
-/// replaces non-alphanumeric/underscore characters with `_`, replaces a
-/// leading sequence of digits/underscores with a single `_`, and uppercases.
-fn get_safe_id(input: &str) -> String {
-    let replaced: String = input
-        .chars()
-        .map(|c| {
-            if c.is_alphanumeric() || c == '_' {
-                c
-            } else {
-                '_'
-            }
-        })
-        .collect();
-    let without_leading = replaced.trim_start_matches(|c: char| c.is_ascii_digit() || c == '_');
-    let result = if without_leading.len() < replaced.len() {
-        format!("_{}", without_leading)
-    } else {
-        replaced
-    };
-    result.to_lowercase()
 }
 
 /// Extracts the short feature ID from a full feature reference string.
@@ -1277,43 +1339,6 @@ fn resolve_feature_order<'a>(
         entries.sort_by_key(|(id, _)| id.as_str());
         entries
     }
-}
-
-/// Generates the `devcontainer-features.env` content for a single feature by
-/// merging user-provided options on top of defaults from
-/// `devcontainer-feature.json`.
-///
-/// Mirrors the CLI's `getFeatureValueObject` + `getFeatureEnvVariables`
-/// pipeline in `containerFeaturesConfiguration.ts` and
-/// `containerFeatures.ts`.
-fn generate_feature_env(options: &FeatureOptions, defaults: &HashMap<String, String>) -> String {
-    let mut merged: HashMap<String, String> = defaults
-        .iter()
-        .map(|(k, v)| (get_safe_id(k), v.clone()))
-        .collect();
-
-    match options {
-        FeatureOptions::Bool(_) => {} // TODO what?
-        FeatureOptions::String(version) => {
-            merged.insert("VERSION".to_string(), version.clone());
-        }
-        FeatureOptions::Options(map) => {
-            for (key, value) in map {
-                merged.insert(get_safe_id(key), value.to_string());
-            }
-        }
-    }
-
-    if merged.is_empty() {
-        return String::new();
-    }
-
-    let mut lines: Vec<String> = merged
-        .iter()
-        .map(|(key, value)| format!("{}=\"{}\"", key, value))
-        .collect();
-    lines.sort();
-    lines.join("\n") + "\n"
 }
 
 /// Generates the `devcontainer-features-install.sh` wrapper script for one feature.
@@ -1520,26 +1545,26 @@ USER $_DEV_CONTAINERS_IMAGE_USER
 /// immediately.
 async fn construct_features_build_resources(
     dev_container: &DevContainer,
+    dev_container_dir: PathBuf,
     build_info: &FeaturesBuildInfo,
     http_client: &Arc<dyn HttpClient>,
     dockerfile_location: Option<PathBuf>,
-) -> Result<(), DevContainerErrorV2> {
+) -> Result<Vec<FeatureManifest>, DevContainerErrorV2> {
     // TODO probably a more elegant way of doing this
     let features = match &dev_container.features {
         Some(features) => features,
         None => &HashMap::new(),
     };
 
-    let container_user = dev_container
-        .container_user
-        .as_deref()
-        .unwrap_or(&build_info.image_user);
-    let remote_user = dev_container
-        .remote_user
-        .as_deref()
-        .unwrap_or(container_user);
+    let base_image = get_base_image_from_config(dev_container, dev_container_dir).await?;
+    let base_image = inspect_image(&base_image).await?;
+
+    let container_user = get_container_user_from_config(&base_image, dev_container)?;
+    let remote_user = get_remote_user_from_config(&base_image, dev_container)?;
 
     // --- 1. Write devcontainer-features.builtin.env ---
+    // So this is a slight problem - containerUser should be what's specified in devcontainer or root
+    // remoteUser should be what's specified in devcontainer or what's specified in image or containerUser
     let builtin_env_content = format!(
         "_CONTAINER_USER={}\n_REMOTE_USER={}\n",
         container_user, remote_user
@@ -1560,6 +1585,8 @@ async fn construct_features_build_resources(
 
     // --- 3. Stage each feature's directory and files ---
     let mut feature_layers = String::new();
+
+    let mut features = Vec::new();
 
     for (index, (feature_ref, options)) in ordered_features.iter().enumerate() {
         if matches!(options, FeatureOptions::Bool(false)) {
@@ -1618,34 +1645,19 @@ async fn construct_features_build_resources(
                 DevContainerErrorV2::UnmappedError
             })?
             .digest;
-        download_and_extract_oci_feature(&oci_ref, digest, &token, &feature_dir, http_client)
-            .await
-            .map_err(|e| {
-                log::error!("Failed to download OCI feature '{}': {e}", feature_ref);
-                DevContainerErrorV2::UnmappedError
-            })?;
+        let feature_manifest =
+            download_and_extract_oci_feature(&oci_ref, digest, &token, &feature_dir, http_client)
+                .await
+                .map_err(|e| {
+                    log::error!("Failed to download OCI feature '{}': {e}", feature_ref);
+                    DevContainerErrorV2::UnmappedError
+                })?;
 
         log::info!("Downloaded OCI feature content for '{}'", feature_ref);
 
-        // --- Now that the tarball is extracted, read option defaults from
-        // the feature's devcontainer-feature.json and merge with user options.
-        let defaults = read_feature_option_defaults(&feature_dir)?;
-        if !defaults.is_empty() {
-            log::info!(
-                "Feature '{}': read {} option default(s) from devcontainer-feature.json",
-                feature_ref,
-                defaults.len(),
-            );
-        }
+        let env_content = feature_manifest.write_feature_env(options)?;
 
-        let env_content = generate_feature_env(options, &defaults);
-        std::fs::write(feature_dir.join("devcontainer-features.env"), &env_content).map_err(
-            |e| {
-                log::error!("Failed to write feature env for {}: {e}", feature_ref);
-                DevContainerErrorV2::UnmappedError
-            },
-        )?;
-
+        // TODO kill this next
         // Write devcontainer-features-install.sh (wrapper that sources env + runs install.sh)
         let wrapper_content = generate_install_wrapper(feature_ref, feature_id, &env_content);
         std::fs::write(
@@ -1658,6 +1670,7 @@ async fn construct_features_build_resources(
         })?;
 
         feature_layers.push_str(&generate_feature_layer(&consecutive_id));
+        features.push(feature_manifest);
     }
 
     let dockerfile_base_content = dockerfile_location
@@ -1667,8 +1680,8 @@ async fn construct_features_build_resources(
     // --- 4. Generate and write Dockerfile.extended ---
     let dockerfile_content = generate_dockerfile_extended(
         &feature_layers,
-        container_user,
-        remote_user,
+        &container_user,
+        &remote_user,
         dockerfile_base_content,
     );
     std::fs::write(&build_info.dockerfile_path, &dockerfile_content).map_err(|e| {
@@ -1681,15 +1694,16 @@ async fn construct_features_build_resources(
         build_info.features_content_dir
     );
 
-    Ok(())
+    Ok(features)
 }
 
 // TODO this only applies to docker stuff, not sure it needs devcontainer any more
 async fn build_docker_image(
     http_client: Arc<dyn HttpClient>,
     dev_container: &DevContainer,
+    dev_container_dir: &Path,
     dockerfile_dir: String,
-) -> Result<DockerInspect, DevContainerErrorV2> {
+) -> Result<(DockerInspect, Vec<FeatureManifest>), DevContainerErrorV2> {
     match dev_container.build_type() {
         DevContainerBuildType::Image => {
             let Some(image_tag) = &dev_container.image else {
@@ -1702,7 +1716,7 @@ async fn build_docker_image(
                 .is_none_or(|features| features.is_empty())
             {
                 log::info!("No features to add. Using base image");
-                return Ok(base_image.clone());
+                return Ok((base_image.clone(), vec![]));
             }
         }
         DevContainerBuildType::Dockerfile => {}
@@ -1711,26 +1725,27 @@ async fn build_docker_image(
             return Err(DevContainerErrorV2::UnmappedError);
         }
     };
-    // TODO
-    // The CLI determines the image user from `imageDetails.Config.User || 'root'`.
-    // Our DockerInspect doesn't yet carry the User field, so we default to "root".
-    let image_user = "root";
 
-    let build_info = prepare_features_build_info(dev_container, image_user)?;
+    let build_info = prepare_features_build_info(dev_container)?;
 
     let dockerfile_location = dev_container
         .build
         .as_ref()
         .map(|build| PathBuf::from(&dockerfile_dir).join(&build.dockerfile));
 
-    construct_features_build_resources(
+    let get_base_image_from_config =
+        get_base_image_from_config(dev_container, dev_container_dir.to_path_buf()).await?;
+    let base_image = inspect_image(&get_base_image_from_config).await?;
+
+    let feature_manifests = construct_features_build_resources(
         dev_container,
+        dev_container_dir.to_path_buf(),
         &build_info,
         &http_client,
         dockerfile_location,
     )
     .await?;
-    let mut command = create_docker_build(&build_info, dev_container, &dockerfile_dir)?;
+    let mut command = create_docker_build(&build_info, dev_container, &dockerfile_dir, base_image)?;
 
     let output = command.output().await.map_err(|e| {
         log::error!("Error building docker image: {e}");
@@ -1744,16 +1759,15 @@ async fn build_docker_image(
     }
 
     // After a successful build, inspect the newly tagged image to get its metadata
-    inspect_image(&build_info.image_tag).await
+    let image = inspect_image(&build_info.image_tag).await?;
+
+    Ok((image, feature_manifests))
 }
 
 async fn check_for_existing_container(
     labels: &Vec<(&str, String)>,
 ) -> Result<Option<DockerPs>, DevContainerErrorV2> {
     let command = create_docker_query_containers(Some(labels))?;
-    dbg!(&command);
-
-    // Execute command, get back ids (or not)
     evaluate_json_command(command).await
 }
 
@@ -1787,6 +1801,7 @@ fn create_docker_build(
     build_info: &FeaturesBuildInfo,
     dev_container: &DevContainer,
     dockerfile_dir: &str,
+    base_image: DockerInspect,
 ) -> Result<Command, DevContainerErrorV2> {
     let mut command = smol::process::Command::new(docker_cli());
 
@@ -1812,15 +1827,18 @@ fn create_docker_build(
             &format!("_DEV_CONTAINERS_BASE_IMAGE={}", base_image),
         ]);
     } else {
-        // TODO not generalized
         command.args([
             "--build-arg",
             "_DEV_CONTAINERS_BASE_IMAGE=dev_container_auto_added_stage_label",
         ]);
     }
+
     command.args([
         "--build-arg",
-        &format!("_DEV_CONTAINERS_IMAGE_USER={}", build_info.image_user),
+        &format!(
+            "_DEV_CONTAINERS_IMAGE_USER={}",
+            base_image.config.image_user.unwrap_or("root".to_string())
+        ),
     ]);
 
     // TODO if featuers exist, add this
@@ -1874,14 +1892,10 @@ fn create_docker_query_containers(
 }
 
 fn create_docker_run_command(
+    build_resources: DockerBuildResources,
     local_project_directory: &Arc<&Path>,
-    image_labels: &DockerConfigLabels,
     labels: Option<&Vec<(&str, String)>>,
-    image_id: &str,
 ) -> Result<Command, DevContainerErrorV2> {
-    let image = image_id;
-    // let remote_user = get_remote_user_from_config(config)?;
-
     let Some(project_directory) = local_project_directory.file_name() else {
         return Err(DevContainerErrorV2::UnmappedError);
     };
@@ -1889,20 +1903,29 @@ fn create_docker_run_command(
 
     let mut command = Command::new(docker_cli());
 
-    // TODO TODO
     command.arg("run");
+
+    if build_resources.privileged {
+        command.arg("--privileged");
+    }
+
     command.arg("--sig-proxy=false");
     command.arg("-d");
-    // command.arg("-a");
-    // command.arg("STDOUT");
-    // command.arg("-a");
-    // command.arg("STDERR");
     command.arg("--mount");
     command.arg(format!(
         "type=bind,source={},target={},consistency=cached",
         local_project_directory.display(),
         remote_workspace_folder
     ));
+
+    for mount in &build_resources.additional_mounts {
+        command.arg("--mount");
+        command.arg(
+            mount
+                .to_string()
+                .replace("${devcontainerId}", "devcontainer123"), // TODO So this is what we're doing tomorrow
+        );
+    }
 
     if let Some(labels) = labels {
         for (key, val) in labels {
@@ -1911,7 +1934,7 @@ fn create_docker_run_command(
         }
     }
 
-    if let Some(metadata) = &image_labels.metadata {
+    if let Some(metadata) = &build_resources.image.config.labels.metadata {
         let serialized_metadata = serde_json_lenient::to_string(metadata).map_err(|e| {
             log::error!("Problem serializing image metadata: {e}");
             DevContainerErrorV2::UnmappedError
@@ -1925,17 +1948,22 @@ fn create_docker_run_command(
 
     command.arg("--entrypoint");
     command.arg("/bin/sh");
-    command.arg(image);
+    command.arg(&build_resources.image.id);
     command.arg("-c");
-    command.arg(
-        "
-echo Container started
-trap \"exit 0\" 15
-exec \"$@\"
-while sleep 1 & wait $!; do :; done
-        "
-        .trim(),
-    );
+    // TODO Probably worth its own method
+    let mut entrypoint_script_lines = vec![
+        "echo Container started".to_string(),
+        "trap \"exit 0\" 15".to_string(),
+    ];
+    for entrypoint in build_resources.entrypoints {
+        entrypoint_script_lines.push(entrypoint.clone());
+    }
+    entrypoint_script_lines.append(&mut vec![
+        "exec \"$@\"".to_string(),
+        "while sleep 1 & wait $!; do :; done".to_string(),
+    ]);
+
+    command.arg(entrypoint_script_lines.join("\n").trim());
     command.arg("-");
 
     Ok(command)
@@ -1975,6 +2003,90 @@ fn get_remote_dir_from_config(
     Err(DevContainerErrorV2::UnmappedError)
 }
 
+// TODO to this whole section - might be a good thing to tackle while wally is asleep
+
+/// Gets the base image from the devcontainer with the following precedence:
+/// - The devcontainer image if an image is specified
+/// - The image sourced in the Dockerfile if a Dockerfile is specified
+/// - The image sourced in the docker-compose main service, if one is specified
+/// - The image sourced in the docker-compose main service dockerfile, if one is specified
+/// If no such image is available, return an error
+async fn get_base_image_from_config(
+    devcontainer: &DevContainer,
+    devcontainer_dir: PathBuf,
+) -> Result<String, DevContainerErrorV2> {
+    if let Some(image) = &devcontainer.image {
+        return Ok(image.to_string());
+    }
+    if let Some(dockerfile) = devcontainer.build.as_ref().map(|b| &b.dockerfile) {
+        let dockerfile_contents = std::fs::read_to_string(devcontainer_dir.join(dockerfile))
+            .map_err(|e| {
+                log::error!("Error reading dockerfile: {e}");
+                DevContainerErrorV2::UnmappedError
+            })?;
+        return image_from_dockerfile(devcontainer, dockerfile_contents);
+    }
+    if devcontainer.docker_compose_file.is_some() {
+        let docker_compose_manifest =
+            docker_compose_manifest(devcontainer, &devcontainer_dir).await?;
+        let (_, main_service) = find_primary_service(&docker_compose_manifest, devcontainer)?;
+
+        if let Some(dockerfile) = main_service
+            .build
+            .as_ref()
+            .and_then(|b| b.dockerfile.as_ref())
+        {
+            let dockerfile_contents = std::fs::read_to_string(devcontainer_dir.join(dockerfile))
+                .map_err(|e| {
+                    log::error!("Error reading dockerfile: {e}");
+                    DevContainerErrorV2::UnmappedError
+                })?;
+            return image_from_dockerfile(devcontainer, dockerfile_contents);
+        }
+        if let Some(image) = &main_service.image {
+            return Ok(image.to_string());
+        }
+
+        log::error!("No valid base image found in docker-compose configuration");
+        return Err(DevContainerErrorV2::UnmappedError);
+    }
+    log::error!("No valid base image found in dev container configuration");
+    Err(DevContainerErrorV2::UnmappedError)
+}
+
+/// TODO test
+fn image_from_dockerfile(
+    devcontainer: &DevContainer,
+    dockerfile_contents: String,
+) -> Result<String, DevContainerErrorV2> {
+    let mut raw_contents = dockerfile_contents
+        .lines()
+        .find(|line| line.starts_with("FROM"))
+        .and_then(|from_line| {
+            from_line
+                .split(' ')
+                .collect::<Vec<&str>>()
+                .get(1)
+                .map(|s| s.to_string())
+        })
+        .ok_or_else(|| {
+            log::error!("Could not find an image definition in dockerfile");
+            DevContainerErrorV2::UnmappedError
+        })?;
+
+    for (k, v) in devcontainer
+        .build
+        .as_ref()
+        .and_then(|b| b.args.as_ref())
+        .unwrap_or(&HashMap::new())
+    {
+        raw_contents = raw_contents.replace(&format!("${{{}}}", k), v);
+    }
+    Ok(raw_contents)
+}
+
+// Container user things
+// This should come from spec - see the docs
 fn get_remote_user_from_config(
     docker_config: &DockerInspect,
     devcontainer_config: &DevContainer,
@@ -2000,6 +2112,30 @@ fn get_remote_user_from_config(
     Err(DevContainerErrorV2::UnmappedError)
 }
 
+// This should come from spec - see the docs
+fn get_container_user_from_config(
+    docker_config: &DockerInspect,
+    devcontainer_config: &DevContainer,
+) -> Result<String, DevContainerErrorV2> {
+    if let Some(user) = &devcontainer_config.container_user {
+        return Ok(user.to_string());
+    }
+    if let Some(metadata) = &docker_config.config.labels.metadata {
+        for metadatum in metadata {
+            if let Some(container_user) = metadatum.get("containerUser") {
+                if let Some(container_user_str) = container_user.as_str() {
+                    return Ok(container_user_str.to_string());
+                }
+            }
+        }
+    }
+    if let Some(image_user) = &docker_config.config.image_user {
+        return Ok(image_user.to_string());
+    }
+
+    Err(DevContainerErrorV2::UnmappedError)
+}
+
 #[cfg(test)]
 mod test {
     use std::{
@@ -2010,25 +2146,25 @@ mod test {
         sync::Arc,
     };
 
-    use serde_json_lenient::{Value, json};
-
     use http_client::{FakeHttpClient, HttpClient};
 
     use crate::{
         DevContainerErrorV2,
         command_json::deserialize_json_output,
         docker::{DockerConfigLabels, DockerInspectConfig, docker_cli},
+        features::{DevContainerFeatureJson, FeatureManifest},
         model::{
-            ContainerBuild, DevContainer, DevContainerBuildType, DockerComposeConfig,
-            DockerComposeService, DockerInspect, DockerPs, FeatureOptionValue, FeatureOptions,
-            FeaturesBuildInfo, ForwardPort, HostRequirements, LifecycleCommand, LifecyleScript,
-            MountDefinition, OnAutoForward, PortAttributeProtocol, PortAttributes, ShutdownAction,
-            UserEnvProbe, build_runtime_override, construct_features_build_resources,
-            create_docker_build, create_docker_compose_config_command, create_docker_run_command,
+            ContainerBuild, DevContainer, DevContainerBuildType, DockerBuildResources,
+            DockerComposeConfig, DockerComposeService, DockerInspect, DockerPs, FeatureOptionValue,
+            FeatureOptions, FeaturesBuildInfo, ForwardPort, HostRequirements, LifecycleCommand,
+            LifecyleScript, MountDefinition, OnAutoForward, PortAttributeProtocol, PortAttributes,
+            ShutdownAction, UserEnvProbe, build_runtime_override,
+            construct_features_build_resources, create_docker_build,
+            create_docker_compose_config_command, create_docker_run_command,
             deserialize_devcontainer_json, extract_feature_id, find_primary_service,
             generate_dockerfile_extended, get_remote_dir_from_config, get_remote_user_from_config,
-            get_safe_id,
         },
+        safe_id_upper,
     };
 
     fn fake_http_client() -> Arc<dyn HttpClient> {
@@ -2806,6 +2942,7 @@ mod test {
                 labels: DockerConfigLabels {
                     metadata: Some(vec![metadata]),
                 },
+                image_user: None,
             },
             mounts: None,
         };
@@ -2829,6 +2966,7 @@ mod test {
                 labels: DockerConfigLabels {
                     metadata: Some(vec![metadata]),
                 },
+                image_user: None,
             },
             mounts: None,
         };
@@ -2860,7 +2998,6 @@ mod test {
             features_content_dir: features_content_dir.clone(),
             empty_context_dir: empty_context_dir.clone(),
             base_image: Some("mcr.microsoft.com/devcontainers/rust:2-1-bookworm".to_string()),
-            image_user: "root".to_string(),
             image_tag: "vsc-cli-abc123-features".to_string(),
         };
 
@@ -2871,6 +3008,14 @@ mod test {
                 ..Default::default()
             },
             "",
+            DockerInspect {
+                id: "mcr.microsoft.com/devcontainers/rust:2-1-bookworm".to_string(),
+                config: DockerInspectConfig {
+                    labels: DockerConfigLabels { metadata: None },
+                    image_user: Some("root".to_string()),
+                },
+                mounts: Some(Vec::new()),
+            },
         )
         .unwrap();
 
@@ -2927,14 +3072,14 @@ mod test {
 
     #[test]
     fn should_get_safe_id() {
-        assert_eq!(get_safe_id("version"), "version");
-        assert_eq!(get_safe_id("aws-cli"), "aws_cli");
-        assert_eq!(get_safe_id("optionA"), "optiona");
-        assert_eq!(get_safe_id("123abc"), "_abc");
-        assert_eq!(get_safe_id("___test"), "_test");
+        assert_eq!(safe_id_upper("version"), "VERSION");
+        assert_eq!(safe_id_upper("aws-cli"), "AWS_CLI");
+        assert_eq!(safe_id_upper("optionA"), "OPTIONA");
+        assert_eq!(safe_id_upper("123abc"), "_ABC");
+        assert_eq!(safe_id_upper("___test"), "_TEST");
         assert_eq!(
-            get_safe_id("DevContainer Name for (Greatness"),
-            "devcontainer_name_for__greatness"
+            safe_id_upper("DevContainer Name for (Greatness"),
+            "DEVCONTAINER_NAME_FOR__GREATNESS"
         );
     }
 
@@ -2956,7 +3101,6 @@ mod test {
                 features_content_dir: features_dir.clone(),
                 empty_context_dir: empty_dir,
                 base_image: Some("mcr.microsoft.com/devcontainers/rust:2-1-bookworm".to_string()),
-                image_user: "root".to_string(),
                 image_tag: "vsc-test-features".to_string(),
             };
 
@@ -3070,7 +3214,6 @@ mod test {
                 features_content_dir: features_dir.clone(),
                 empty_context_dir: empty_dir,
                 base_image: Some("mcr.microsoft.com/devcontainers/base:ubuntu".to_string()),
-                image_user: "root".to_string(),
                 image_tag: "vsc-test-order".to_string(),
             };
 
@@ -3147,7 +3290,6 @@ mod test {
                 features_content_dir: features_dir.clone(),
                 empty_context_dir: empty_dir,
                 base_image: Some("mcr.microsoft.com/devcontainers/base:ubuntu".to_string()),
-                image_user: "root".to_string(),
                 image_tag: "vsc-test-disabled".to_string(),
             };
 
@@ -3202,7 +3344,6 @@ mod test {
                 features_content_dir: features_dir.clone(),
                 empty_context_dir: empty_dir,
                 base_image: Some("mcr.microsoft.com/devcontainers/base:ubuntu".to_string()),
-                image_user: "root".to_string(),
                 image_tag: "vsc-test-fail".to_string(),
             };
 
@@ -3239,43 +3380,23 @@ mod test {
             ("label2", "value2".to_string()),
         ];
 
-        let image_labels = DockerConfigLabels {
-            metadata: Some(vec![
-                HashMap::from([(
-                    "id".to_string(),
-                    Value::String("ghcr.io/devcontainers/features/common-utils:2".to_string()),
-                )]),
-                HashMap::from([
-                    (
-                        "id".to_string(),
-                        Value::String("ghcr.io/devcontainers/features/git:1".to_string()),
-                    ),
-                    (
-                        "customizations".to_string(),
-                        json!(
-                        {
-                            "vscode": {
-                                "settings": {
-                                    "github.copilot.chat.codeGeneration.instructions": [
-                                        { "text": "This dev container includes an up-to-date version of Git, built from source as needed, pre-installed and available on the `PATH`." }
-                                    ]
-                                }
-                            }
-                        }),
-                    ),
-                ]),
-                HashMap::from([(
-                    "remoteUser".to_string(),
-                    Value::String("vscode".to_string()),
-                )]),
-            ]),
+        let build_resources = DockerBuildResources {
+            image: DockerInspect {
+                id: "mcr.microsoft.com/devcontainers/base:ubuntu".to_string(),
+                config: DockerInspectConfig {
+                    labels: DockerConfigLabels { metadata: None },
+                    image_user: None,
+                },
+                mounts: None,
+            },
+            additional_mounts: vec![],
+            privileged: false,
+            entrypoints: vec![],
         };
-
         let docker_run_command = create_docker_run_command(
+            build_resources,
             &Arc::new(Path::new("/local/project_app")),
-            &image_labels,
             Some(&labels),
-            "mcr.microsoft.com/devcontainers/base:ubuntu",
         );
 
         assert!(docker_run_command.is_ok());
@@ -3885,6 +4006,7 @@ USER $_DEV_CONTAINERS_IMAGE_USER
                     },
                 ),
             ]),
+            ..Default::default()
         };
 
         assert_eq!(docker_compose_config, expected_config);
@@ -3899,6 +4021,7 @@ USER $_DEV_CONTAINERS_IMAGE_USER
         let given_docker_compose_config = DockerComposeConfig {
             name: Some("devcontainers".to_string()),
             services: HashMap::new(),
+            ..Default::default()
         };
 
         let bad_result = find_primary_service(&given_docker_compose_config, &given_dev_container);
@@ -3913,6 +4036,7 @@ USER $_DEV_CONTAINERS_IMAGE_USER
         let given_docker_compose_config = DockerComposeConfig {
             name: Some("devcontainers".to_string()),
             services: HashMap::new(),
+            ..Default::default()
         };
 
         let bad_result = find_primary_service(&given_docker_compose_config, &given_dev_container);
@@ -3931,6 +4055,7 @@ USER $_DEV_CONTAINERS_IMAGE_USER
                     ..Default::default()
                 },
             )]),
+            ..Default::default()
         };
 
         let (service_name, _) =
@@ -3946,13 +4071,21 @@ USER $_DEV_CONTAINERS_IMAGE_USER
             // Todo add some labels and make this test pass
             config: DockerInspectConfig {
                 labels: DockerConfigLabels { metadata: None },
+                image_user: None,
             },
             mounts: None,
         };
 
         let given_labels = vec![("label1", "label1val".to_string())];
 
-        let runtime_override = build_runtime_override("app", &docker_image, &given_labels).unwrap();
+        let resources = DockerBuildResources {
+            image: docker_image,
+            additional_mounts: vec![],
+            privileged: false,
+            entrypoints: vec![],
+        };
+
+        let runtime_override = build_runtime_override("app", resources, &given_labels).unwrap();
 
         // ugh how are we going to do labels
         let expected_runtime_override = DockerComposeConfig {
@@ -3977,8 +4110,31 @@ while sleep 1 & wait $!; do :; done"
                     ..Default::default()
                 },
             )]),
+            ..Default::default()
         };
 
         assert_eq!(runtime_override, expected_runtime_override)
+    }
+
+    // TODO turn this into a merged config test more broadly
+    #[test]
+    fn test_privileged() {
+        let dev_container = DevContainer::default();
+
+        let feature_manifests = vec![FeatureManifest::new(
+            PathBuf::from("/"),
+            DevContainerFeatureJson {
+                _id: None,
+                options: HashMap::new(),
+                mounts: None,
+                privileged: Some(true),
+                entrypoint: None,
+            },
+        )];
+
+        let privileged = dev_container.privileged.unwrap_or(false)
+            || feature_manifests.iter().any(|f| f.privileged());
+
+        assert!(privileged);
     }
 }

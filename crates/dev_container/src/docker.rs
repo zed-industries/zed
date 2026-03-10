@@ -33,8 +33,11 @@ pub(crate) struct DockerConfigLabels {
 #[serde(rename_all = "PascalCase")]
 pub(crate) struct DockerInspectConfig {
     pub(crate) labels: DockerConfigLabels,
+    #[serde(rename = "User")]
+    pub(crate) image_user: Option<String>,
 }
 
+// TODO can I replace this with MountDefinition? Or should they be separated by Docker vs DevContainer?
 #[derive(Debug, Clone, Deserialize, Serialize, Eq, PartialEq)]
 #[serde(rename_all = "PascalCase")]
 pub(crate) struct DockerInspectMount {
