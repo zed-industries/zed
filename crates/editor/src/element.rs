@@ -9618,28 +9618,34 @@ impl Element for EditorElement {
                     EditorMode::Full {
                         sizing_behavior, ..
                     } => {
-                        let mut style = Style::default();
-                        style.size.width = relative(1.).into();
                         if sizing_behavior == SizingBehavior::SizeByContent {
-                            let snapshot = editor.snapshot(window, cx);
-                            let line_height =
-                                self.style.text.line_height_in_pixels(window.rem_size());
-                            let mut scroll_height =
-                                (snapshot.max_point().row().next_row().0 as f32) * line_height;
-                            let horizontal_scrollbar_enabled =
-                                editor.show_scrollbars.horizontal
-                                    && EditorSettings::get_global(cx).scrollbar.axes.horizontal
-                                    && EditorSettings::get_global(cx).scrollbar.show
-                                        != ShowScrollbar::Never
-                                    && !self.style.scrollbar_width.is_zero();
-                            if horizontal_scrollbar_enabled {
-                                scroll_height += self.style.scrollbar_width;
-                            }
-                            style.size.height = scroll_height.into();
+                            let editor_handle = cx.entity();
+                            let scrollbar_width = self.style.scrollbar_width;
+                            let editor_style = self.style.clone();
+                            window.request_measured_layout(
+                                Style::default(),
+                                move |known_dimensions, available_space, window, cx| {
+                                    editor_handle
+                                        .update(cx, |editor, cx| {
+                                            compute_size_by_content_layout(
+                                                editor,
+                                                &editor_style,
+                                                scrollbar_width,
+                                                known_dimensions,
+                                                available_space.width,
+                                                window,
+                                                cx,
+                                            )
+                                        })
+                                        .unwrap_or_default()
+                                },
+                            )
                         } else {
+                            let mut style = Style::default();
+                            style.size.width = relative(1.).into();
                             style.size.height = relative(1.).into();
+                            window.request_layout(style, None, cx)
                         }
-                        window.request_layout(style, None, cx)
                     }
                 };
 
@@ -12423,6 +12429,65 @@ fn compute_auto_height_layout(
     Some(size(width, final_height))
 }
 
+fn compute_size_by_content_layout(
+    editor: &mut Editor,
+    editor_style: &EditorStyle,
+    scrollbar_width: Pixels,
+    known_dimensions: Size<Option<Pixels>>,
+    available_width: AvailableSpace,
+    window: &mut Window,
+    cx: &mut Context<Editor>,
+) -> Option<Size<Pixels>> {
+    let width = known_dimensions.width.or({
+        if let AvailableSpace::Definite(available_width) = available_width {
+            Some(available_width)
+        } else {
+            None
+        }
+    })?;
+    if let Some(height) = known_dimensions.height {
+        return Some(size(width, height));
+    }
+
+    let style = editor.style.as_ref().unwrap_or(editor_style);
+    let font_id = window.text_system().resolve_font(&style.text.font());
+    let font_size = style.text.font_size.to_pixels(window.rem_size());
+    let line_height = style.text.line_height_in_pixels(window.rem_size());
+    let em_width = window.text_system().em_width(font_id, font_size).ok()?;
+
+    let snapshot = editor.snapshot(window, cx);
+    let gutter_dimensions = snapshot.gutter_dimensions(font_id, font_size, style, window, cx);
+    let text_width = width - gutter_dimensions.width;
+    let editor_width = text_width - gutter_dimensions.margin - 2. * em_width;
+
+    let mut scroll_height =
+        (snapshot.max_point().row().next_row().0 as f32) * line_height;
+
+    let horizontal_scrollbar_enabled = editor.show_scrollbars.horizontal
+        && EditorSettings::get_global(cx).scrollbar.axes.horizontal
+        && EditorSettings::get_global(cx).scrollbar.show != ShowScrollbar::Never
+        && !scrollbar_width.is_zero();
+
+    if horizontal_scrollbar_enabled {
+        let longest_line_width = layout_line(
+            snapshot.longest_row(),
+            &snapshot,
+            style,
+            editor_width,
+            |_| false,
+            window,
+            cx,
+        )
+        .width;
+
+        if longest_line_width > editor_width {
+            scroll_height += scrollbar_width;
+        }
+    }
+
+    Some(size(width, scroll_height))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -12431,7 +12496,7 @@ mod tests {
         display_map::{BlockPlacement, BlockProperties},
         editor_tests::{init_test, update_test_language_settings},
     };
-    use gpui::{TestAppContext, VisualTestContext};
+    use gpui::{TestAppContext, VisualTestContext, WindowHandle};
     use language::{Buffer, language_settings, tree_sitter_python};
     use log::info;
     use rand::{RngCore, rngs::StdRng};
@@ -13600,79 +13665,61 @@ mod tests {
         let long_line = "a".repeat(500);
         let short_text = "short\nline";
 
-        let long_line_window = cx.add_window(|window, cx| {
-            let buffer = MultiBuffer::build_simple(&long_line, cx);
-            let mut editor = Editor::new(
-                EditorMode::Full {
-                    scale_ui_elements_with_buffer_font_size: false,
-                    show_active_line_background: false,
-                    sizing_behavior: SizingBehavior::SizeByContent,
-                },
-                buffer,
-                None,
-                window,
-                cx,
-            );
-            editor.set_soft_wrap_mode(language_settings::SoftWrap::None, cx);
-            editor.set_show_vertical_scrollbar(false, cx);
-            editor
-        });
+        let make_editor = |text: &str, cx: &mut TestAppContext| {
+            cx.add_window(|window, cx| {
+                let buffer = MultiBuffer::build_simple(text, cx);
+                let mut editor = Editor::new(
+                    EditorMode::Full {
+                        scale_ui_elements_with_buffer_font_size: false,
+                        show_active_line_background: false,
+                        sizing_behavior: SizingBehavior::SizeByContent,
+                    },
+                    buffer,
+                    None,
+                    window,
+                    cx,
+                );
+                editor.set_soft_wrap_mode(language_settings::SoftWrap::None, cx);
+                editor.set_show_vertical_scrollbar(false, cx);
+                editor
+            })
+        };
 
-        let short_text_window = cx.add_window(|window, cx| {
-            let buffer = MultiBuffer::build_simple(short_text, cx);
-            let mut editor = Editor::new(
-                EditorMode::Full {
-                    scale_ui_elements_with_buffer_font_size: false,
-                    show_active_line_background: false,
-                    sizing_behavior: SizingBehavior::SizeByContent,
-                },
-                buffer,
-                None,
-                window,
-                cx,
-            );
-            editor.set_soft_wrap_mode(language_settings::SoftWrap::None, cx);
-            editor.set_show_vertical_scrollbar(false, cx);
-            editor
-        });
+        let draw_and_get_height =
+            |window: WindowHandle<Editor>, cx: &mut TestAppContext| -> (Pixels, Pixels) {
+                let visual_cx = &mut VisualTestContext::from_window(*window, cx);
+                let editor = window.root(visual_cx).unwrap();
+                let style = visual_cx
+                    .update(|_, cx| editor.update(cx, |editor: &mut Editor, cx| editor.style(cx).clone()));
 
-        let long_cx = &mut VisualTestContext::from_window(*long_line_window, cx);
-        let long_editor = long_line_window.root(long_cx).unwrap();
-        let long_style = long_cx
-            .update(|_, cx| long_editor.update(cx, |editor, cx| editor.style(cx).clone()));
+                let (_, state) = visual_cx.draw(
+                    Default::default(),
+                    size(px(200.), px(500.)),
+                    |_, _| EditorElement::new(&editor, style),
+                );
+                (
+                    state.hitbox.bounds.size.height,
+                    state.position_map.line_height,
+                )
+            };
 
-        let (_, long_state) = long_cx.draw(
-            Default::default(),
-            size(px(200.), px(500.)),
-            |_, _| EditorElement::new(&long_editor, long_style.clone()),
-        );
-
-        let short_cx = &mut VisualTestContext::from_window(*short_text_window, cx);
-        let short_editor = short_text_window.root(short_cx).unwrap();
-        let short_style = short_cx
-            .update(|_, cx| short_editor.update(cx, |editor, cx| editor.style(cx).clone()));
-
-        let (_, short_state) = short_cx.draw(
-            Default::default(),
-            size(px(200.), px(500.)),
-            |_, _| EditorElement::new(&short_editor, short_style.clone()),
-        );
-
-        let long_height = long_state.hitbox.bounds.size.height;
-        let short_height = short_state.hitbox.bounds.size.height;
+        let long_line_window = make_editor(&long_line, cx);
+        let (long_height, line_height) = draw_and_get_height(long_line_window, cx);
         let scrollbar_width = EditorElement::SCROLLBAR_WIDTH;
-        let line_height = long_state.position_map.line_height;
 
         assert_eq!(
             long_height,
             line_height + scrollbar_width,
-            "Single long line editor should have height = line_height + scrollbar_width"
+            "Long line that overflows should include scrollbar height"
         );
+
+        let short_text_window = make_editor(short_text, cx);
+        let (short_height, _) = draw_and_get_height(short_text_window, cx);
 
         assert_eq!(
             short_height,
-            line_height * 2. + scrollbar_width,
-            "Two line editor should have height = 2 * line_height + scrollbar_width"
+            line_height * 2.,
+            "Short text that fits should NOT include scrollbar height"
         );
 
         let no_hscroll_window = cx.add_window(|window, cx| {
@@ -13694,20 +13741,10 @@ mod tests {
             editor
         });
 
-        let no_hscroll_cx = &mut VisualTestContext::from_window(*no_hscroll_window, cx);
-        let no_hscroll_editor = no_hscroll_window.root(no_hscroll_cx).unwrap();
-        let no_hscroll_style = no_hscroll_cx.update(|_, cx| {
-            no_hscroll_editor.update(cx, |editor, cx| editor.style(cx).clone())
-        });
-
-        let (_, no_hscroll_state) = no_hscroll_cx.draw(
-            Default::default(),
-            size(px(200.), px(500.)),
-            |_, _| EditorElement::new(&no_hscroll_editor, no_hscroll_style.clone()),
-        );
+        let (no_hscroll_height, _) = draw_and_get_height(no_hscroll_window, cx);
 
         assert_eq!(
-            no_hscroll_state.hitbox.bounds.size.height,
+            no_hscroll_height,
             line_height,
             "Editor with horizontal scrollbar disabled should not include scrollbar height"
         );
