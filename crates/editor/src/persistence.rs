@@ -224,7 +224,7 @@ impl Domain for EditorDb {
             );
         ),
         sql! (
-            CREATE TABLE undo_history (
+            CREATE TABLE persist_history (
                 workspace_id INTEGER NOT NULL,
                 abs_path BLOB NOT NULL,
                 content_hash TEXT NOT NULL,
@@ -425,27 +425,27 @@ WHERE EXISTS (SELECT 1 FROM editors WHERE item_id = ?1 AND workspace_id = ?2);
     }
 
     query! {
-        pub fn get_undo_history_meta(
+        pub fn get_persist_history_meta(
             workspace_id: WorkspaceId,
             abs_path: &Path
         ) -> Result<Option<(String, i64, i32, String)>> {
             SELECT content_hash, mtime_seconds, mtime_nanos, last_accessed_at
-            FROM undo_history
+            FROM persist_history
             WHERE workspace_id = ?1 AND abs_path = ?2
         }
     }
 
     query! {
-        pub fn get_undo_history_paths(
+        pub fn get_persist_history_paths(
             workspace_id: WorkspaceId
         ) -> Result<Vec<PathBuf>> {
             SELECT abs_path
-            FROM undo_history
+            FROM persist_history
             WHERE workspace_id = ?1
         }
     }
 
-    pub async fn save_undo_history_meta(
+    pub async fn save_persist_history_meta(
         &self,
         workspace_id: WorkspaceId,
         abs_path: Arc<Path>,
@@ -455,7 +455,7 @@ WHERE EXISTS (SELECT 1 FROM editors WHERE item_id = ?1 AND workspace_id = ?2);
     ) -> Result<()> {
         self.write(move |conn| {
             conn.exec_bound(sql!(
-                INSERT INTO undo_history
+                INSERT INTO persist_history
                     (workspace_id, abs_path, content_hash, mtime_seconds, mtime_nanos, last_accessed_at)
                 VALUES (?1, ?2, ?3, ?4, ?5, CURRENT_TIMESTAMP)
                 ON CONFLICT(workspace_id, abs_path) DO UPDATE SET
@@ -468,14 +468,14 @@ WHERE EXISTS (SELECT 1 FROM editors WHERE item_id = ?1 AND workspace_id = ?2);
         .await
     }
 
-    pub async fn delete_undo_history(
+    pub async fn delete_persist_history(
         &self,
         workspace_id: WorkspaceId,
         abs_path: Arc<Path>,
     ) -> Result<()> {
         self.write(move |conn| {
             conn.exec_bound(sql!(
-                DELETE FROM undo_history WHERE workspace_id = ?1 AND abs_path = ?2;
+                DELETE FROM persist_history WHERE workspace_id = ?1 AND abs_path = ?2;
             ))?((workspace_id, abs_path.as_ref()))
         })
         .await
@@ -487,14 +487,14 @@ mod tests {
     use super::*;
 
     #[gpui::test]
-    async fn test_save_and_get_undo_history_meta() {
+    async fn test_save_and_get_persist_history_meta() {
         let workspace_id = workspace::WORKSPACE_DB.next_id().await.unwrap();
 
         let path_a: Arc<Path> = Arc::from(Path::new("/tmp/test_undo_a.rs"));
         let path_b: Arc<Path> = Arc::from(Path::new("/tmp/test_undo_b.rs"));
 
         // Test 1: save and retrieve a row with correct field values
-        DB.save_undo_history_meta(
+        DB.save_persist_history_meta(
             workspace_id,
             path_a.clone(),
             "abc123hash".to_string(),
@@ -505,7 +505,7 @@ mod tests {
         .unwrap();
 
         let result = DB
-            .get_undo_history_meta(workspace_id, &path_a)
+            .get_persist_history_meta(workspace_id, &path_a)
             .unwrap()
             .unwrap();
         let (content_hash, mtime_seconds, mtime_nanos, last_accessed_at) = result;
@@ -515,7 +515,7 @@ mod tests {
         assert!(!last_accessed_at.is_empty(), "last_accessed_at should be non-empty");
 
         // Test 2: upsert — calling save again with a different hash overwrites, not duplicates
-        DB.save_undo_history_meta(
+        DB.save_persist_history_meta(
             workspace_id,
             path_a.clone(),
             "newhash456".to_string(),
@@ -526,7 +526,7 @@ mod tests {
         .unwrap();
 
         let result = DB
-            .get_undo_history_meta(workspace_id, &path_a)
+            .get_persist_history_meta(workspace_id, &path_a)
             .unwrap()
             .unwrap();
         let (content_hash, mtime_seconds, mtime_nanos, _last_accessed_at) = result;
@@ -535,14 +535,14 @@ mod tests {
         assert_eq!(mtime_nanos, 99_i32);
 
         // Test 3: delete removes the row, get returns None
-        DB.delete_undo_history(workspace_id, path_a.clone())
+        DB.delete_persist_history(workspace_id, path_a.clone())
             .await
             .unwrap();
-        let deleted = DB.get_undo_history_meta(workspace_id, &path_a).unwrap();
+        let deleted = DB.get_persist_history_meta(workspace_id, &path_a).unwrap();
         assert!(deleted.is_none(), "row should be gone after delete");
 
         // Test 4: two different paths in the same workspace are independent
-        DB.save_undo_history_meta(
+        DB.save_persist_history_meta(
             workspace_id,
             path_a.clone(),
             "hash_for_a".to_string(),
@@ -551,7 +551,7 @@ mod tests {
         )
         .await
         .unwrap();
-        DB.save_undo_history_meta(
+        DB.save_persist_history_meta(
             workspace_id,
             path_b.clone(),
             "hash_for_b".to_string(),
@@ -562,11 +562,11 @@ mod tests {
         .unwrap();
 
         let result_a = DB
-            .get_undo_history_meta(workspace_id, &path_a)
+            .get_persist_history_meta(workspace_id, &path_a)
             .unwrap()
             .unwrap();
         let result_b = DB
-            .get_undo_history_meta(workspace_id, &path_b)
+            .get_persist_history_meta(workspace_id, &path_b)
             .unwrap()
             .unwrap();
 
