@@ -863,13 +863,11 @@ impl<'a> MarkdownParser<'a> {
         let mut remaining = html;
         while let Some(pos) = remaining.find('<') {
             remaining = &remaining[pos..];
-            if remaining.starts_with("</details") {
-                let after = &remaining["</details".len()..];
+            if let Some(after) = remaining.strip_prefix("</details") {
                 if after.is_empty() || after.starts_with(|c: char| c == '>' || c.is_whitespace()) {
                     depth -= 1;
                 }
-            } else if remaining.starts_with("<details") {
-                let after = &remaining["<details".len()..];
+            } else if let Some(after) = remaining.strip_prefix("<details") {
                 if after.is_empty() || after.starts_with(|c: char| c == '>' || c.is_whitespace()) {
                     depth += 1;
                 }
@@ -925,11 +923,7 @@ impl<'a> MarkdownParser<'a> {
         if let Some(start) = html_source_range_start {
             if Self::count_unclosed_details(&html_buffer) > 0 {
                 return self
-                    .parse_details_with_markdown_body(
-                        start,
-                        html_source_range_end,
-                        html_buffer,
-                    )
+                    .parse_details_with_markdown_body(start, html_source_range_end, html_buffer)
                     .await;
             }
         }
@@ -1610,8 +1604,7 @@ impl<'a> MarkdownParser<'a> {
             if let markup5ever_rcdom::NodeData::Element { name, .. } = &child.data {
                 if local_name!("summary") == name.local {
                     if summary.is_none() {
-                        summary =
-                            Some(self.parse_summary_content(source_range.clone(), child));
+                        summary = Some(self.parse_summary_content(source_range.clone(), child));
                     }
                     continue;
                 }
@@ -3550,8 +3543,7 @@ fn main() {
 
     #[gpui::test]
     async fn test_html_details_open() {
-        let parsed =
-            parse("<details open>\n<summary>Open summary</summary>\n</details>").await;
+        let parsed = parse("<details open>\n<summary>Open summary</summary>\n</details>").await;
 
         assert_eq!(
             parsed,
@@ -3576,12 +3568,7 @@ fn main() {
         assert_eq!(
             parsed,
             ParsedMarkdown {
-                children: vec![details(
-                    0..38,
-                    None,
-                    vec![p("No summary", 0..38)],
-                    false,
-                )]
+                children: vec![details(0..38, None, vec![p("No summary", 0..38)], false,)]
             }
         );
     }
@@ -3656,10 +3643,8 @@ fn main() {
     async fn test_html_details_body_with_markdown_list() {
         // Body uses markdown list syntax — pulldown-cmark parses it as a proper List
         // (not plain text), so the rendered body should contain ListItem elements.
-        let parsed = parse(
-            "<details>\n<summary>Items</summary>\n\n- Item 1\n- Item 2\n\n</details>",
-        )
-        .await;
+        let parsed =
+            parse("<details>\n<summary>Items</summary>\n\n- Item 1\n- Item 2\n\n</details>").await;
 
         assert_eq!(parsed.children.len(), 1);
         let ParsedMarkdownElement::Details(details) = &parsed.children[0] else {

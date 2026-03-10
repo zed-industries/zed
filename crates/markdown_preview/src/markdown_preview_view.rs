@@ -20,7 +20,6 @@ use workspace::{Pane, Workspace};
 
 use crate::markdown_elements::ParsedMarkdownElement;
 use crate::markdown_renderer::{CheckboxClickedEvent, DetailsToggleEvent, MermaidState};
-use collections::HashMap;
 use crate::{
     OpenFollowingPreview, OpenPreview, OpenPreviewToTheSide, ScrollPageDown, ScrollPageUp,
     markdown_elements::ParsedMarkdown,
@@ -28,6 +27,7 @@ use crate::{
     markdown_renderer::{RenderContext, render_markdown_block},
 };
 use crate::{ScrollDown, ScrollDownByItem, ScrollUp, ScrollUpByItem};
+use collections::HashMap;
 
 const REPARSE_DEBOUNCE: Duration = Duration::from_millis(200);
 

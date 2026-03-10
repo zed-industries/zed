@@ -781,10 +781,7 @@ fn details_is_expanded(
         .unwrap_or(open)
 }
 
-fn render_markdown_details(
-    parsed: &ParsedMarkdownDetails,
-    cx: &mut RenderContext,
-) -> AnyElement {
+fn render_markdown_details(parsed: &ParsedMarkdownDetails, cx: &mut RenderContext) -> AnyElement {
     let is_expanded = details_is_expanded(
         parsed.source_range.start,
         parsed.open,
