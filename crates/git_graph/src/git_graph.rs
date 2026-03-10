@@ -2931,34 +2931,47 @@ mod tests {
                 .get(&commit.sha)
                 .context("Commit is missing an actual branch id")?;
 
+            let mut merge_edge_branch_ids: SmallVec<[BranchId; 4]> = SmallVec::new();
+
             for (parent_idx, parent) in commit.parents.iter().enumerate() {
                 let line_branch_id = *actual_line_branch_ids
                     .get(&(commit.sha, *parent))
                     .context("Line is missing an actual branch id")?;
 
-                if parent_idx > 0
-                    && let Some(origin_branch_id) = parent_to_seen_branch_ids
-                        .get(parent)
-                        .and_then(|branch_ids| branch_ids.first().copied())
-                {
-                    if line_branch_id != origin_branch_id {
+                if parent_idx > 0 {
+                    if line_branch_id == commit_branch_id {
                         bail!(
-                            "Line {:?} -> {:?} has branch_id {:?}, expected origin branch id {:?}",
+                            "Merge edge {:?} -> {:?} reused the commit's own branch_id {:?}",
                             commit.sha,
                             parent,
-                            line_branch_id,
-                            origin_branch_id
+                            commit_branch_id
                         );
                     }
 
-                    if line_branch_id == commit_branch_id {
+                    if merge_edge_branch_ids.contains(&line_branch_id) {
                         bail!(
-                            "Line {:?} -> {:?} reused merged-into branch id {:?} instead of origin branch id {:?}",
+                            "Merge edge {:?} -> {:?} has branch_id {:?} which duplicates another merge edge of the same commit",
                             commit.sha,
                             parent,
-                            commit_branch_id,
-                            origin_branch_id
+                            line_branch_id
                         );
+                    }
+
+                    merge_edge_branch_ids.push(line_branch_id);
+
+                    if let Some(origin_branch_id) = parent_to_seen_branch_ids
+                        .get(parent)
+                        .and_then(|branch_ids| branch_ids.first().copied())
+                    {
+                        if line_branch_id != origin_branch_id {
+                            bail!(
+                                "Line {:?} -> {:?} has branch_id {:?}, expected origin branch id {:?}",
+                                commit.sha,
+                                parent,
+                                line_branch_id,
+                                origin_branch_id
+                            );
+                        }
                     }
                 }
 
@@ -2976,6 +2989,44 @@ mod tests {
         for expected_branch_id in 0..=max_branch_id {
             if !seen_branch_ids.contains(&expected_branch_id) {
                 bail!("Missing branch id {}", expected_branch_id);
+            }
+        }
+
+        Ok(())
+    }
+
+    fn verify_branch_color_consistency(
+        graph: &GraphData,
+        commits: &[Arc<InitialGraphCommitData>],
+    ) -> Result<()> {
+        let actual_commit_branch_ids: HashMap<Oid, BranchId> = graph
+            .commits
+            .iter()
+            .map(|commit| (commit.data.sha, commit.branch_id))
+            .collect();
+        let actual_line_branch_ids: HashMap<(Oid, Oid), BranchId> = graph
+            .lines
+            .iter()
+            .map(|line| ((line.child, line.parent), line.branch_id))
+            .collect();
+
+        for commit in commits {
+            for parent in &commit.parents {
+                let line_branch_id = *actual_line_branch_ids
+                    .get(&(commit.sha, *parent))
+                    .context("Line is missing an actual branch id")?;
+
+                if let Some(&parent_commit_branch_id) = actual_commit_branch_ids.get(parent) {
+                    if line_branch_id != parent_commit_branch_id {
+                        bail!(
+                            "Line {:?} -> {:?} has branch_id {:?}, but target parent commit has branch_id {:?}",
+                            commit.sha,
+                            parent,
+                            line_branch_id,
+                            parent_commit_branch_id
+                        );
+                    }
+                }
             }
         }
 
@@ -3133,6 +3184,199 @@ mod tests {
     }
 
     #[test]
+    fn test_git_graph_octopus_merge() {
+        let mut rng = StdRng::seed_from_u64(99);
+
+        let head = Oid::random(&mut rng);
+        let parent_a = Oid::random(&mut rng);
+        let parent_b = Oid::random(&mut rng);
+        let parent_c = Oid::random(&mut rng);
+        let base = Oid::random(&mut rng);
+
+        //   head (octopus merge)
+        //   /|\n        //  a b c
+        //   \|/
+        //   base
+        let commits = vec![
+            Arc::new(InitialGraphCommitData {
+                sha: head,
+                parents: smallvec![parent_a, parent_b, parent_c],
+                ref_names: vec!["HEAD".into()],
+            }),
+            Arc::new(InitialGraphCommitData {
+                sha: parent_a,
+                parents: smallvec![base],
+                ref_names: vec![],
+            }),
+            Arc::new(InitialGraphCommitData {
+                sha: parent_b,
+                parents: smallvec![base],
+                ref_names: vec![],
+            }),
+            Arc::new(InitialGraphCommitData {
+                sha: parent_c,
+                parents: smallvec![base],
+                ref_names: vec![],
+            }),
+            Arc::new(InitialGraphCommitData {
+                sha: base,
+                parents: smallvec![],
+                ref_names: vec![],
+            }),
+        ];
+
+        let mut graph_data = GraphData::new();
+        graph_data.add_commits(&commits);
+
+        if let Err(error) = verify_all_invariants(&graph_data, &commits) {
+            panic!("Graph invariant violation for octopus merge:\n{:#}", error);
+        }
+        if let Err(error) = verify_branch_color_consistency(&graph_data, &commits) {
+            panic!(
+                "Branch color consistency violation for octopus merge:\n{:#}",
+                error
+            );
+        }
+    }
+
+    #[test]
+    fn test_git_graph_octopus_merge_with_prior_branches() {
+        let mut rng = StdRng::seed_from_u64(77);
+
+        let tip = Oid::random(&mut rng);
+        let merge = Oid::random(&mut rng);
+        let branch_a = Oid::random(&mut rng);
+        let branch_b = Oid::random(&mut rng);
+        let branch_c = Oid::random(&mut rng);
+        let base = Oid::random(&mut rng);
+
+        // tip
+        //  |
+        // merge (octopus)
+        // /|\
+        // a b c
+        // \|/
+        // base
+        //
+        // The merge edges to b and c should each get their own unique
+        // branch_id, distinct from the tip->merge->a chain.
+        let commits = vec![
+            Arc::new(InitialGraphCommitData {
+                sha: tip,
+                parents: smallvec![merge],
+                ref_names: vec!["HEAD".into()],
+            }),
+            Arc::new(InitialGraphCommitData {
+                sha: merge,
+                parents: smallvec![branch_a, branch_b, branch_c],
+                ref_names: vec![],
+            }),
+            Arc::new(InitialGraphCommitData {
+                sha: branch_a,
+                parents: smallvec![base],
+                ref_names: vec![],
+            }),
+            Arc::new(InitialGraphCommitData {
+                sha: branch_b,
+                parents: smallvec![base],
+                ref_names: vec![],
+            }),
+            Arc::new(InitialGraphCommitData {
+                sha: branch_c,
+                parents: smallvec![base],
+                ref_names: vec![],
+            }),
+            Arc::new(InitialGraphCommitData {
+                sha: base,
+                parents: smallvec![],
+                ref_names: vec![],
+            }),
+        ];
+
+        let mut graph_data = GraphData::new();
+        graph_data.add_commits(&commits);
+
+        if let Err(error) = verify_all_invariants(&graph_data, &commits) {
+            panic!(
+                "Graph invariant violation for octopus merge with prior branches:\n{:#}",
+                error
+            );
+        }
+        if let Err(error) = verify_branch_color_consistency(&graph_data, &commits) {
+            panic!(
+                "Branch color consistency violation for octopus merge with prior branches:\n{:#}",
+                error
+            );
+        }
+    }
+
+    #[test]
+    fn test_git_graph_multiple_merges_into_same_target() {
+        let mut rng = StdRng::seed_from_u64(55);
+
+        let merge1 = Oid::random(&mut rng);
+        let merge2 = Oid::random(&mut rng);
+        let branch_a = Oid::random(&mut rng);
+        let branch_b = Oid::random(&mut rng);
+        let target = Oid::random(&mut rng);
+        let base = Oid::random(&mut rng);
+
+        // merge1 (parents: a, target)
+        // merge2 (parents: b, target)
+        //
+        // Both merges target the same commit via secondary parents.
+        // The merge edges should both match target's branch.
+        let commits = vec![
+            Arc::new(InitialGraphCommitData {
+                sha: merge1,
+                parents: smallvec![branch_a, target],
+                ref_names: vec!["HEAD".into()],
+            }),
+            Arc::new(InitialGraphCommitData {
+                sha: merge2,
+                parents: smallvec![branch_b, target],
+                ref_names: vec![],
+            }),
+            Arc::new(InitialGraphCommitData {
+                sha: branch_a,
+                parents: smallvec![base],
+                ref_names: vec![],
+            }),
+            Arc::new(InitialGraphCommitData {
+                sha: branch_b,
+                parents: smallvec![base],
+                ref_names: vec![],
+            }),
+            Arc::new(InitialGraphCommitData {
+                sha: target,
+                parents: smallvec![base],
+                ref_names: vec![],
+            }),
+            Arc::new(InitialGraphCommitData {
+                sha: base,
+                parents: smallvec![],
+                ref_names: vec![],
+            }),
+        ];
+
+        let mut graph_data = GraphData::new();
+        graph_data.add_commits(&commits);
+
+        if let Err(error) = verify_all_invariants(&graph_data, &commits) {
+            panic!(
+                "Graph invariant violation for multiple merges into same target:\n{:#}",
+                error
+            );
+        }
+        if let Err(error) = verify_branch_color_consistency(&graph_data, &commits) {
+            panic!(
+                "Branch color consistency violation for multiple merges into same target:\n{:#}",
+                error
+            );
+        }
+    }
+
+    #[test]
     fn test_git_graph_linear_commits() {
         let mut rng = StdRng::seed_from_u64(42);
 
@@ -3218,6 +3462,13 @@ mod tests {
             if let Err(error) = verify_branch_ids(&graph_data, &commits) {
                 panic!(
                     "Branch id invariant violation (seed={}, adversarial={}, num_commits={}):\n{:#}",
+                    seed, adversarial, num_commits, error
+                );
+            }
+
+            if let Err(error) = verify_branch_color_consistency(&graph_data, &commits) {
+                panic!(
+                    "Branch color consistency violation (seed={}, adversarial={}, num_commits={}):\n{:#}",
                     seed, adversarial, num_commits, error
                 );
             }
