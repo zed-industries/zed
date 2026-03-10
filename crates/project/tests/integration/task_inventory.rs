@@ -334,7 +334,7 @@ async fn test_loading_worktree_scripts(cx: &mut TestAppContext) {
     });
 
     let scripts = inventory.update(cx, |inventory, _| {
-        inventory.list_worktree_scripts(worktree_id)
+        inventory.list_git_worktree_scripts(worktree_id)
     });
     assert_eq!(scripts.len(), 1);
 
@@ -382,7 +382,7 @@ async fn test_loading_worktree_scripts(cx: &mut TestAppContext) {
     });
 
     let scripts = inventory.update(cx, |inventory, _| {
-        inventory.list_worktree_scripts(worktree_id)
+        inventory.list_git_worktree_scripts(worktree_id)
     });
     assert!(
         scripts.is_empty(),

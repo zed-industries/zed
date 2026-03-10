@@ -647,7 +647,7 @@ impl Inventory {
         self.templates_from_settings.worktree_scenarios(worktree)
     }
 
-    pub fn list_worktree_scripts(
+    pub fn list_git_worktree_scripts(
         &self,
         worktree: WorktreeId,
     ) -> Vec<(TaskSourceKind, WorktreeTasks)> {
