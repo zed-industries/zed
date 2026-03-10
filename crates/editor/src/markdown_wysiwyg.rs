@@ -1107,3 +1107,69 @@ pub fn on_selection_changed(editor: &mut Editor, cx: &mut Context<Editor>) {
     }
     refresh_wysiwyg_decorations(editor, cx);
 }
+
+/// Attempts to handle an image paste when WYSIWYG mode is active.
+/// Returns true if an image was handled, false otherwise (so normal paste continues).
+pub fn try_handle_image_paste(
+    editor: &mut Editor,
+    image: &gpui::Image,
+    window: &mut Window,
+    cx: &mut Context<Editor>,
+) -> bool {
+    if !editor.markdown_wysiwyg_state.active {
+        return false;
+    }
+
+    let extension = match image.format {
+        gpui::ImageFormat::Png => "png",
+        gpui::ImageFormat::Jpeg => "jpg",
+        gpui::ImageFormat::Webp => "webp",
+        gpui::ImageFormat::Gif => "gif",
+        _ => "png",
+    };
+
+    // Get the workspace root directory from the buffer's file
+    let workspace_root = {
+        let multi_buffer = editor.buffer().read(cx);
+        let buffers = multi_buffer.all_buffers();
+        let mut root_path: Option<PathBuf> = None;
+        for buffer in buffers {
+            let buffer_read = buffer.read(cx);
+            if let Some(file) = buffer_read.file() {
+                if let Some(local_file) = file.as_local() {
+                    let abs = local_file.abs_path(cx);
+                    root_path = abs.parent().map(|p| p.to_path_buf());
+                    break;
+                }
+            }
+        }
+        root_path
+    };
+
+    let save_dir = match workspace_root {
+        Some(dir) => dir,
+        None => return false,
+    };
+
+    // Generate a unique filename using a timestamp
+    let timestamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or(0);
+    let filename = format!("pasted-image-{}.{}", timestamp, extension);
+    let save_path = save_dir.join(&filename);
+
+    // Write the image bytes to disk
+    if std::fs::write(&save_path, &image.bytes).is_err() {
+        return false;
+    }
+
+    // Insert a wikilink image reference at the cursor
+    let wikilink_text = format!("![[{}]]", filename);
+    editor.insert(&wikilink_text, window, cx);
+
+    // Trigger a WYSIWYG refresh so the image renders immediately
+    schedule_wysiwyg_refresh(editor, cx);
+
+    true
+}

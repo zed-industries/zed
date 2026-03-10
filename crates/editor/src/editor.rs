@@ -14093,6 +14093,12 @@ impl Editor {
         if let Some(item) = cx.read_from_clipboard() {
             let entries = item.entries();
 
+            // In WYSIWYG mode, intercept image clipboard entries
+            if let Some(ClipboardEntry::Image(image)) = entries.first() {
+                if markdown_wysiwyg::try_handle_image_paste(self, image, window, cx) {
+                    return;
+                }
+            }
             match entries.first() {
                 // For now, we only support applying metadata if there's one string. In the future, we can incorporate all the selections
                 // of all the pasted entries.
