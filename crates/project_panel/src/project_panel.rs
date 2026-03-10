@@ -46,6 +46,7 @@ use settings::{
     update_settings_file,
 };
 use smallvec::SmallVec;
+use std::ops::Neg;
 use std::{any::TypeId, time::Instant};
 use std::{
     cell::OnceCell,
@@ -3402,8 +3403,7 @@ impl ProjectPanel {
         _: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if let Some((worktree, entry)) = self.selected_sub_entry(cx) {
-            let path = worktree.read(cx).absolutize(&entry.path);
+        if let Some(path) = self.reveal_in_file_manager_path(cx) {
             self.project
                 .update(cx, |project, cx| project.reveal_path(&path, cx));
         }
@@ -3760,6 +3760,20 @@ impl ProjectPanel {
         }
         Some((worktree, entry))
     }
+
+    fn reveal_in_file_manager_path(&self, cx: &App) -> Option<PathBuf> {
+        if let Some((worktree, entry)) = self.selected_sub_entry(cx) {
+            return Some(worktree.read(cx).absolutize(&entry.path));
+        }
+
+        let root_entry_id = self.state.last_worktree_root_id?;
+        let project = self.project.read(cx);
+        let worktree = project.worktree_for_entry(root_entry_id, cx)?;
+        let worktree = worktree.read(cx);
+        let root_entry = worktree.entry_for_id(root_entry_id)?;
+        Some(worktree.absolutize(&root_entry.path))
+    }
+
     fn selected_entry_handle<'a>(
         &self,
         cx: &'a App,
@@ -4414,16 +4428,24 @@ impl ProjectPanel {
                 return;
             }
 
+            let workspace = self.workspace.clone();
             if folded_selection_info.is_empty() {
                 for (_, task) in move_tasks {
-                    task.detach_and_log_err(cx);
+                    let workspace = workspace.clone();
+                    cx.spawn_in(window, async move |_, mut cx| {
+                        task.await.notify_workspace_async_err(workspace, &mut cx);
+                    })
+                    .detach();
                 }
             } else {
-                cx.spawn_in(window, async move |project_panel, cx| {
+                cx.spawn_in(window, async move |project_panel, mut cx| {
                     // Await all move tasks and collect successful results
                     let mut move_results: Vec<(ProjectEntryId, Entry)> = Vec::new();
                     for (entry_id, task) in move_tasks {
-                        if let Some(CreatedEntry::Included(new_entry)) = task.await.log_err() {
+                        if let Some(CreatedEntry::Included(new_entry)) = task
+                            .await
+                            .notify_workspace_async_err(workspace.clone(), &mut cx)
+                        {
                             move_results.push((entry_id, new_entry));
                         }
                     }
@@ -6457,11 +6479,14 @@ impl Render for ProjectPanel {
                             el.on_action(cx.listener(Self::trash))
                         })
                 })
-                .when(project.is_local(), |el| {
-                    el.on_action(cx.listener(Self::reveal_in_finder))
-                        .on_action(cx.listener(Self::open_system))
-                        .on_action(cx.listener(Self::open_in_terminal))
-                })
+                .when(
+                    project.is_local() || project.is_via_wsl_with_host_interop(cx),
+                    |el| {
+                        el.on_action(cx.listener(Self::reveal_in_finder))
+                            .on_action(cx.listener(Self::open_system))
+                            .on_action(cx.listener(Self::open_in_terminal))
+                    },
+                )
                 .when(project.is_via_remote_server(), |el| {
                     el.on_action(cx.listener(Self::open_in_terminal))
                         .on_action(cx.listener(Self::download_from_remote))
@@ -6688,6 +6713,24 @@ impl Render for ProjectPanel {
                                 .id("project-panel-blank-area")
                                 .block_mouse_except_scroll()
                                 .flex_grow()
+                                .on_scroll_wheel({
+                                    let scroll_handle = self.scroll_handle.clone();
+                                    let entity_id = cx.entity().entity_id();
+                                    move |event, window, cx| {
+                                        let state = scroll_handle.0.borrow();
+                                        let base_handle = &state.base_handle;
+                                        let current_offset = base_handle.offset();
+                                        let max_offset = base_handle.max_offset();
+                                        let delta = event.delta.pixel_delta(window.line_height());
+                                        let new_offset = (current_offset + delta)
+                                            .clamp(&max_offset.neg(), &Point::default());
+
+                                        if new_offset != current_offset {
+                                            base_handle.set_offset(new_offset);
+                                            cx.notify(entity_id);
+                                        }
+                                    }
+                                })
                                 .when(
                                     self.drag_target_entry.as_ref().is_some_and(
                                         |entry| match entry {
@@ -6857,14 +6900,17 @@ impl Render for ProjectPanel {
                     Button::new("open_project", "Open Project")
                         .full_width()
                         .key_binding(KeyBinding::for_action_in(
-                            &workspace::Open,
+                            &workspace::Open::default(),
                             &focus_handle,
                             cx,
                         ))
                         .on_click(cx.listener(|this, _, window, cx| {
                             this.workspace
                                 .update(cx, |_, cx| {
-                                    window.dispatch_action(workspace::Open.boxed_clone(), cx);
+                                    window.dispatch_action(
+                                        workspace::Open::default().boxed_clone(),
+                                        cx,
+                                    );
                                 })
                                 .log_err();
                         })),

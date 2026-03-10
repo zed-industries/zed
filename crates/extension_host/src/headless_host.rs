@@ -140,7 +140,9 @@ impl HeadlessExtensionStore {
         for language_path in &manifest.languages {
             let language_path = extension_dir
                 .join(RelPath::new(language_path.as_path(), PathStyle::Windows)?.as_std_path());
-            let config = fs.load(&language_path.join("config.toml")).await?;
+            let config = fs
+                .load(&language_path.join(LanguageConfig::FILE_NAME))
+                .await?;
             let mut config = ::toml::from_str::<LanguageConfig>(&config)?;
 
             this.update(cx, |this, _cx| {

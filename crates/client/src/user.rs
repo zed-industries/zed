@@ -140,6 +140,7 @@ pub enum Event {
     ParticipantIndicesChanged,
     PrivateUserInfoUpdated,
     PlanUpdated,
+    OrganizationChanged,
 }
 
 #[derive(Clone, Copy)]
@@ -694,8 +695,21 @@ impl UserStore {
         self.current_organization.clone()
     }
 
-    pub fn set_current_organization(&mut self, organization: Arc<Organization>) {
-        self.current_organization.replace(organization);
+    pub fn set_current_organization(
+        &mut self,
+        organization: Arc<Organization>,
+        cx: &mut Context<Self>,
+    ) {
+        let is_same_organization = self
+            .current_organization
+            .as_ref()
+            .is_some_and(|current| current.id == organization.id);
+
+        if !is_same_organization {
+            self.current_organization.replace(organization);
+            cx.emit(Event::OrganizationChanged);
+            cx.notify();
+        }
     }
 
     pub fn organizations(&self) -> &Vec<Arc<Organization>> {

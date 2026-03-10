@@ -831,6 +831,7 @@ fn render_diff_hunk_controls(
                                         &snapshot,
                                         position,
                                         Direction::Next,
+                                        true,
                                         window,
                                         cx,
                                     );
@@ -866,6 +867,7 @@ fn render_diff_hunk_controls(
                                         &snapshot,
                                         point,
                                         Direction::Prev,
+                                        true,
                                         window,
                                         cx,
                                     );

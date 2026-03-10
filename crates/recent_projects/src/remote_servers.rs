@@ -1161,12 +1161,11 @@ impl RemoteServerProjects {
                 workspace.toggle_modal(window, cx, |window, cx| {
                     RemoteConnectionModal::new(&connection_options, Vec::new(), window, cx)
                 });
-                let prompt = workspace
-                    .active_modal::<RemoteConnectionModal>(cx)
-                    .unwrap()
-                    .read(cx)
-                    .prompt
-                    .clone();
+                // can be None if another copy of this modal opened in the meantime
+                let Some(modal) = workspace.active_modal::<RemoteConnectionModal>(cx) else {
+                    return;
+                };
+                let prompt = modal.read(cx).prompt.clone();
 
                 let connect = connect(
                     ConnectionIdentifier::setup(),
@@ -1657,7 +1656,9 @@ impl RemoteServerProjects {
 
     fn delete_ssh_server(&mut self, server: SshServerIndex, cx: &mut Context<Self>) {
         self.update_settings_file(cx, move |setting, _| {
-            if let Some(connections) = setting.ssh_connections.as_mut() {
+            if let Some(connections) = setting.ssh_connections.as_mut()
+                && connections.get(server.0).is_some()
+            {
                 connections.remove(server.0);
             }
         });
