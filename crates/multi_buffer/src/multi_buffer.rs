@@ -1987,7 +1987,7 @@ impl MultiBuffer {
         &self,
         buffer_id: BufferId,
         cx: &App,
-    ) -> Vec<(ExcerptId, ExcerptRange<text::Anchor>)> {
+    ) -> Vec<(ExcerptId, Arc<BufferSnapshot>, ExcerptRange<text::Anchor>)> {
         let mut excerpts = Vec::new();
         let snapshot = self.read(cx);
         let mut cursor = snapshot.excerpts.cursor::<Option<&Locator>>(());
@@ -1997,7 +1997,7 @@ impl MultiBuffer {
                 if let Some(excerpt) = cursor.item()
                     && excerpt.locator == *locator
                 {
-                    excerpts.push((excerpt.id, excerpt.range.clone()));
+                    excerpts.push((excerpt.id, excerpt.buffer.clone(), excerpt.range.clone()));
                 }
             }
         }
@@ -2128,7 +2128,7 @@ impl MultiBuffer {
     ) -> Option<Anchor> {
         let mut found = None;
         let snapshot = buffer.read(cx).snapshot();
-        for (excerpt_id, range) in self.excerpts_for_buffer(snapshot.remote_id(), cx) {
+        for (excerpt_id, _, range) in self.excerpts_for_buffer(snapshot.remote_id(), cx) {
             let start = range.context.start.to_point(&snapshot);
             let end = range.context.end.to_point(&snapshot);
             if start <= point && point < end {
@@ -2157,7 +2157,7 @@ impl MultiBuffer {
         cx: &App,
     ) -> Option<Anchor> {
         let snapshot = buffer.read(cx).snapshot();
-        for (excerpt_id, range) in self.excerpts_for_buffer(snapshot.remote_id(), cx) {
+        for (excerpt_id, _, range) in self.excerpts_for_buffer(snapshot.remote_id(), cx) {
             if range.context.start.cmp(&anchor, &snapshot).is_le()
                 && range.context.end.cmp(&anchor, &snapshot).is_ge()
             {

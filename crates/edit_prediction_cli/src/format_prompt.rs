@@ -95,7 +95,7 @@ pub fn zeta2_output_for_patch(
     cursor_offset: Option<usize>,
     version: ZetaFormat,
 ) -> Result<String> {
-    let (context, editable_range, _) = resolve_cursor_region(input, version);
+    let (context, editable_range, _, _) = resolve_cursor_region(input, version);
     let mut old_editable_region = context[editable_range].to_string();
 
     if !old_editable_region.ends_with_newline() {
@@ -259,7 +259,10 @@ impl TeacherPrompt {
     }
 
     pub fn format_context(example: &Example) -> String {
-        let related_files = example.prompt_inputs.as_ref().map(|pi| &pi.related_files);
+        let related_files = example
+            .prompt_inputs
+            .as_ref()
+            .and_then(|pi| pi.related_files.as_deref());
         let Some(related_files) = related_files else {
             return "(No context)".to_string();
         };

@@ -38,7 +38,6 @@ dependencies = [
  "sum_tree",
  "task",
  "telemetry",
- "tempfile",
  "terminal",
  "text",
  "ui",
@@ -47,7 +46,6 @@ dependencies = [
  "util",
  "uuid",
  "watch",
- "zlog",
 ]
 
 [[package]]
@@ -81,7 +79,6 @@ dependencies = [
  "fs",
  "futures 0.3.31",
  "gpui",
- "indoc",
  "language",
  "log",
  "pretty_assertions",
@@ -110,7 +107,6 @@ dependencies = [
  "language",
  "project",
  "proto",
- "release_channel",
  "smallvec",
  "ui",
  "util",
@@ -216,11 +212,9 @@ dependencies = [
  "task",
  "telemetry",
  "tempfile",
- "terminal",
  "text",
  "theme",
  "thiserror 2.0.17",
- "tree-sitter-rust",
  "ui",
  "unindent",
  "url",
@@ -228,7 +222,6 @@ dependencies = [
  "uuid",
  "watch",
  "web_search",
- "worktree",
  "zed_env_vars",
  "zlog",
  "zstd",
@@ -287,7 +280,6 @@ dependencies = [
  "gpui_tokio",
  "http_client",
  "indoc",
- "language",
  "language_model",
  "libc",
  "log",
@@ -321,7 +313,6 @@ dependencies = [
  "gpui",
  "language_model",
  "log",
- "paths",
  "project",
  "regex",
  "schemars",
@@ -354,7 +345,6 @@ dependencies = [
  "buffer_diff",
  "chrono",
  "client",
- "clock",
  "cloud_api_types",
  "cloud_llm_client",
  "collections",
@@ -400,9 +390,7 @@ dependencies = [
  "prompt_store",
  "proto",
  "rand 0.9.2",
- "recent_projects",
  "release_channel",
- "remote_connection",
  "reqwest_client",
  "rope",
  "rules_library",
@@ -417,14 +405,12 @@ dependencies = [
  "streaming_diff",
  "task",
  "telemetry",
- "tempfile",
  "terminal",
  "terminal_view",
  "text",
  "theme",
  "time",
  "time_format",
- "title_bar",
  "tree-sitter-md",
  "ui",
  "ui_input",
@@ -673,17 +659,13 @@ dependencies = [
  "anyhow",
  "chrono",
  "futures 0.3.31",
- "gpui",
- "gpui_tokio",
  "http_client",
- "reqwest_client",
  "schemars",
  "serde",
  "serde_json",
  "settings",
  "strum 0.27.2",
  "thiserror 2.0.17",
- "tokio",
 ]
 
 [[package]]
@@ -733,7 +715,7 @@ checksum = "0ae92a5119aa49cdbcf6b9f893fe4e1d98b04ccbf82ee0584ad948a44a734dea"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 2.0.106",
+ "syn 2.0.117",
 ]
 
 [[package]]
@@ -895,7 +877,6 @@ dependencies = [
  "futures 0.3.31",
  "fuzzy",
  "gpui",
- "indoc",
  "itertools 0.14.0",
  "language",
  "language_model",
@@ -1130,7 +1111,7 @@ checksum = "3b43422f69d8ff38f95f1b2bb76517c91589a924d1559a0e935d7c8ce0274c11"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 2.0.106",
+ "syn 2.0.117",
 ]
 
 [[package]]
@@ -1198,7 +1179,7 @@ checksum = "c7c24de15d275a1ecfd47a380fb4d5ec9bfe0933f309ed5e705b775596a3574d"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 2.0.106",
+ "syn 2.0.117",
 ]
 
 [[package]]
@@ -1228,7 +1209,7 @@ checksum = "9035ad2d096bed7955a320ee7e2230574d28fd3c3a0f186cbea1ff3c7eed5dbb"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 2.0.106",
+ "syn 2.0.117",
 ]
 
 [[package]]
@@ -2067,7 +2048,7 @@ dependencies = [
  "regex",
  "rustc-hash 2.1.1",
  "shlex",
- "syn 2.0.106",
+ "syn 2.0.117",
 ]
 
 [[package]]
@@ -2085,7 +2066,7 @@ dependencies = [
  "regex",
  "rustc-hash 2.1.1",
  "shlex",
- "syn 2.0.106",
+ "syn 2.0.117",
 ]
 
 [[package]]
@@ -2220,7 +2201,7 @@ dependencies = [
  "proc-macro2",
  "quote",
  "rustversion",
- "syn 2.0.106",
+ "syn 2.0.117",
 ]
 
 [[package]]
@@ -2249,7 +2230,7 @@ dependencies = [
  "proc-macro-crate",
  "proc-macro2",
  "quote",
- "syn 2.0.106",
+ "syn 2.0.117",
 ]
 
 [[package]]
@@ -2322,7 +2303,6 @@ dependencies = [
  "pretty_assertions",
  "rand 0.9.2",
  "rope",
- "serde_json",
  "settings",
  "sum_tree",
  "text",
@@ -2399,7 +2379,7 @@ checksum = "f9abbd1bc6865053c427f7198e6af43bfdedc55ab791faed4fbd361d789575ff"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 2.0.106",
+ "syn 2.0.117",
 ]
 
 [[package]]
@@ -2484,7 +2464,7 @@ dependencies = [
  "darling",
  "proc-macro2",
  "quote",
- "syn 2.0.106",
+ "syn 2.0.117",
 ]
 
 [[package]]
@@ -2506,7 +2486,6 @@ dependencies = [
  "futures 0.3.31",
  "gpui",
  "gpui_tokio",
- "http_client",
  "language",
  "livekit_client",
  "log",
@@ -2738,7 +2717,7 @@ dependencies = [
  "quote",
  "serde",
  "serde_json",
- "syn 2.0.106",
+ "syn 2.0.117",
  "tempfile",
  "toml 0.8.23",
 ]
@@ -2967,7 +2946,7 @@ dependencies = [
  "heck 0.5.0",
  "proc-macro2",
  "quote",
- "syn 2.0.106",
+ "syn 2.0.117",
 ]
 
 [[package]]
@@ -3101,8 +3080,6 @@ name = "cloud_llm_client"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "indoc",
- "pretty_assertions",
  "serde",
  "serde_json",
  "strum 0.27.2",
@@ -3227,6 +3204,7 @@ dependencies = [
  "serde",
  "serde_json",
  "text",
+ "zeta_prompt",
 ]
 
 [[package]]
@@ -3234,15 +3212,11 @@ name = "collab"
 version = "0.44.0"
 dependencies = [
  "agent",
- "agent-client-protocol",
- "agent_settings",
- "agent_ui",
  "anyhow",
  "assistant_slash_command",
  "assistant_text_thread",
  "async-trait",
  "async-tungstenite",
- "audio",
  "aws-config",
  "aws-sdk-kinesis",
  "aws-sdk-s3",
@@ -3258,10 +3232,8 @@ dependencies = [
  "collab_ui",
  "collections",
  "command_palette_hooks",
- "context_server",
  "ctor",
  "dap",
- "dap-types",
  "dap_adapters",
  "dashmap",
  "debugger_ui",
@@ -3278,7 +3250,6 @@ dependencies = [
  "gpui_tokio",
  "hex",
  "http_client",
- "hyper 0.14.32",
  "indoc",
  "language",
  "language_model",
@@ -3320,7 +3291,6 @@ dependencies = [
  "text",
  "theme",
  "time",
- "title_bar",
  "tokio",
  "toml 0.8.23",
  "tower 0.4.13",
@@ -3351,12 +3321,10 @@ dependencies = [
  "futures 0.3.31",
  "fuzzy",
  "gpui",
- "http_client",
  "log",
  "menu",
  "notifications",
  "picker",
- "pretty_assertions",
  "project",
  "release_channel",
  "rpc",
@@ -3369,7 +3337,6 @@ dependencies = [
  "time",
  "time_format",
  "title_bar",
- "tree-sitter-md",
  "ui",
  "util",
  "workspace",
@@ -3423,10 +3390,8 @@ dependencies = [
  "client",
  "collections",
  "command_palette_hooks",
- "ctor",
  "db",
  "editor",
- "env_logger 0.11.8",
  "fuzzy",
  "go_to_line",
  "gpui",
@@ -3437,7 +3402,6 @@ dependencies = [
  "postage",
  "project",
  "serde",
- "serde_json",
  "settings",
  "telemetry",
  "theme",
@@ -3646,23 +3610,28 @@ dependencies = [
 ]
 
 [[package]]
+name = "convert_case"
+version = "0.11.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "affbf0190ed2caf063e3def54ff444b449371d55c58e513a95ab98eca50adb49"
+dependencies = [
+ "unicode-segmentation",
+]
+
+[[package]]
 name = "copilot"
 version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-std",
- "client",
- "clock",
  "collections",
  "command_palette_hooks",
  "copilot_chat",
- "ctor",
  "edit_prediction_types",
  "editor",
  "fs",
  "futures 0.3.31",
  "gpui",
- "http_client",
  "icons",
  "indoc",
  "language",
@@ -3689,6 +3658,7 @@ dependencies = [
 name = "copilot_chat"
 version = "0.1.0"
 dependencies = [
+ "anthropic",
  "anyhow",
  "collections",
  "dirs 4.0.0",
@@ -4356,7 +4326,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "13b588ba4ac1a99f7f2964d24b3d896ddc6bf847ee3855dbd4366f058cfcd331"
 dependencies = [
  "quote",
- "syn 2.0.106",
+ "syn 2.0.117",
 ]
 
 [[package]]
@@ -4433,7 +4403,7 @@ dependencies = [
  "proc-macro2",
  "quote",
  "scratch",
- "syn 2.0.106",
+ "syn 2.0.117",
 ]
 
 [[package]]
@@ -4447,7 +4417,7 @@ dependencies = [
  "indexmap",
  "proc-macro2",
  "quote",
- "syn 2.0.106",
+ "syn 2.0.117",
 ]
 
 [[package]]
@@ -4465,7 +4435,7 @@ dependencies = [
  "indexmap",
  "proc-macro2",
  "quote",
- "syn 2.0.106",
+ "syn 2.0.117",
 ]
 
 [[package]]
@@ -4499,8 +4469,6 @@ dependencies = [
  "smol",
  "task",
  "telemetry",
- "tree-sitter",
- "tree-sitter-go",
  "util",
  "zlog",
 ]
@@ -4562,7 +4530,7 @@ dependencies = [
  "proc-macro2",
  "quote",
  "strsim",
- "syn 2.0.106",
+ "syn 2.0.117",
 ]
 
 [[package]]
@@ -4573,7 +4541,7 @@ checksum = "fc34b93ccb385b40dc71c6fceac4b2ad23662c7eeb248cf10d529b7e055b6ead"
 dependencies = [
  "darling_core",
  "quote",
- "syn 2.0.106",
+ "syn 2.0.117",
 ]
 
 [[package]]
@@ -4805,7 +4773,7 @@ checksum = "1e567bd82dcff979e4b03460c307b3cdc9e96fde3d73bed1496d2bc75d9dd62a"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 2.0.106",
+ "syn 2.0.117",
 ]
 
 [[package]]
@@ -4827,7 +4795,7 @@ dependencies = [
  "proc-macro2",
  "quote",
  "rustc_version",
- "syn 2.0.106",
+ "syn 2.0.117",
  "unicode-xid",
 ]
 
@@ -4837,7 +4805,7 @@ version = "0.1.0"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 2.0.106",
+ "syn 2.0.117",
 ]
 
 [[package]]
@@ -4849,7 +4817,7 @@ dependencies = [
  "darling",
  "proc-macro2",
  "quote",
- "syn 2.0.106",
+ "syn 2.0.117",
 ]
 
 [[package]]
@@ -4871,7 +4839,6 @@ dependencies = [
  "serde_json",
  "settings",
  "smol",
- "theme",
  "ui",
  "util",
  "workspace",
@@ -4883,7 +4850,6 @@ name = "diagnostics"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "client",
  "collections",
  "component",
  "ctor",
@@ -5040,7 +5006,7 @@ checksum = "97369cbbc041bc366949bc74d34658d6cda5621039731c6310521892a3a20ae0"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 2.0.106",
+ "syn 2.0.117",
 ]
 
 [[package]]
@@ -5103,7 +5069,7 @@ dependencies = [
  "proc-macro2",
  "quote",
  "strum 0.27.2",
- "syn 2.0.106",
+ "syn 2.0.117",
 ]
 
 [[package]]
@@ -5276,7 +5242,6 @@ dependencies = [
  "thiserror 2.0.17",
  "time",
  "toml 0.8.23",
- "tree-sitter-rust",
  "ui",
  "util",
  "uuid",
@@ -5374,7 +5339,6 @@ dependencies = [
  "tree-sitter",
  "util",
  "zeta_prompt",
- "zlog",
 ]
 
 [[package]]
@@ -5395,7 +5359,6 @@ dependencies = [
  "anyhow",
  "buffer_diff",
  "client",
- "clock",
  "cloud_llm_client",
  "codestral",
  "collections",
@@ -5412,18 +5375,12 @@ dependencies = [
  "gpui",
  "indoc",
  "language",
- "language_model",
- "lsp",
  "markdown",
  "menu",
  "multi_buffer",
  "paths",
- "pretty_assertions",
  "project",
  "regex",
- "release_channel",
- "semver",
- "serde_json",
  "settings",
  "telemetry",
  "text",
@@ -5434,7 +5391,6 @@ dependencies = [
  "workspace",
  "zed_actions",
  "zeta_prompt",
- "zlog",
 ]
 
 [[package]]
@@ -5463,7 +5419,6 @@ dependencies = [
  "fuzzy",
  "git",
  "gpui",
- "http_client",
  "indoc",
  "itertools 0.14.0",
  "language",
@@ -5478,6 +5433,8 @@ dependencies = [
  "parking_lot",
  "pretty_assertions",
  "project",
+ "proptest",
+ "proptest-derive",
  "rand 0.9.2",
  "regex",
  "release_channel",
@@ -5494,7 +5451,6 @@ dependencies = [
  "sum_tree",
  "task",
  "telemetry",
- "tempfile",
  "text",
  "theme",
  "time",
@@ -5654,7 +5610,7 @@ dependencies = [
  "heck 0.5.0",
  "proc-macro2",
  "quote",
- "syn 2.0.106",
+ "syn 2.0.117",
 ]
 
 [[package]]
@@ -5675,7 +5631,7 @@ checksum = "67c78a4d8fdf9953a5c9d458f9efe940fd97a0cab0941c075a813ac594733827"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 2.0.106",
+ "syn 2.0.117",
 ]
 
 [[package]]
@@ -5740,7 +5696,7 @@ checksum = "44f23cf4b44bfce11a86ace86f8a73ffdec849c9fd00a386a53d278bd9e81fb3"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 2.0.106",
+ "syn 2.0.117",
 ]
 
 [[package]]
@@ -5789,6 +5745,15 @@ checksum = "aa68f1b12764fab894d2755d2518754e71b4fd80ecfb822714a1206c2aab39bf"
 dependencies = [
  "cc",
  "libc",
+]
+
+[[package]]
+name = "error-graph"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9b920e777967421aa5f9bf34f842c0ab6ba19b3bdb4a082946093860f5858879"
+dependencies = [
+ "serde",
 ]
 
 [[package]]
@@ -5891,6 +5856,47 @@ dependencies = [
  "unindent",
  "util",
  "uuid",
+ "watch",
+]
+
+[[package]]
+name = "eval_cli"
+version = "0.1.0"
+dependencies = [
+ "acp_thread",
+ "agent",
+ "agent-client-protocol",
+ "agent_ui",
+ "anyhow",
+ "clap",
+ "client",
+ "ctrlc",
+ "debug_adapter_extension",
+ "env_logger 0.11.8",
+ "extension",
+ "feature_flags",
+ "fs",
+ "futures 0.3.31",
+ "gpui",
+ "gpui_platform",
+ "gpui_tokio",
+ "language",
+ "language_extension",
+ "language_model",
+ "language_models",
+ "languages",
+ "node_runtime",
+ "paths",
+ "project",
+ "prompt_store",
+ "release_channel",
+ "reqwest_client",
+ "serde",
+ "serde_json",
+ "settings",
+ "shellexpand 2.1.2",
+ "terminal_view",
+ "util",
  "watch",
 ]
 
@@ -6022,7 +6028,9 @@ dependencies = [
  "serde",
  "serde_json",
  "serde_json_lenient",
+ "settings_content",
  "snippet_provider",
+ "task",
  "theme",
  "tokio",
  "toml 0.8.23",
@@ -6059,7 +6067,6 @@ dependencies = [
  "parking_lot",
  "paths",
  "project",
- "rand 0.9.2",
  "release_channel",
  "remote",
  "reqwest_client",
@@ -6120,6 +6127,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "failspot"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c942e64b20ecd39933d5ff938ca4fdb6ef0d298cc3855b231179a5ef0b24948d"
+
+[[package]]
 name = "fallible-iterator"
 version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6174,7 +6187,7 @@ checksum = "a0aca10fb742cb43f9e7bb8467c91aa9bcb8e3ffbc6a6f7389bb93ffc920577d"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 2.0.106",
+ "syn 2.0.117",
 ]
 
 [[package]]
@@ -6209,7 +6222,6 @@ dependencies = [
 name = "feedback"
 version = "0.1.0"
 dependencies = [
- "editor",
  "gpui",
  "system_specs",
  "urlencoding",
@@ -6240,7 +6252,6 @@ dependencies = [
  "futures 0.3.31",
  "fuzzy",
  "gpui",
- "language",
  "menu",
  "open_path_prompt",
  "picker",
@@ -6473,7 +6484,7 @@ checksum = "1a5c6c585bc94aaf2c7b51dd4c2ba22680844aba4c687be581871a6f518c5742"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 2.0.106",
+ "syn 2.0.117",
 ]
 
 [[package]]
@@ -6742,7 +6753,7 @@ checksum = "162ee34ebcb7c64a8abebc059ce0fee27c2262618d7b60ed8faf72fef13c3650"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 2.0.106",
+ "syn 2.0.117",
 ]
 
 [[package]]
@@ -7153,7 +7164,7 @@ source = "git+https://github.com/zed-industries/gh-workflow?rev=c9eac0ed361583e1
 dependencies = [
  "heck 0.5.0",
  "quote",
- "syn 2.0.106",
+ "syn 2.0.117",
 ]
 
 [[package]]
@@ -7226,7 +7237,6 @@ dependencies = [
  "text",
  "thiserror 2.0.17",
  "time",
- "unindent",
  "url",
  "urlencoding",
  "util",
@@ -7263,7 +7273,6 @@ dependencies = [
  "menu",
  "project",
  "rand 0.9.2",
- "recent_projects",
  "serde_json",
  "settings",
  "smallvec",
@@ -7314,7 +7323,6 @@ dependencies = [
  "futures 0.3.31",
  "fuzzy",
  "git",
- "git_hosting_providers",
  "gpui",
  "indoc",
  "itertools 0.14.0",
@@ -7402,7 +7410,7 @@ dependencies = [
  "proc-macro-crate",
  "proc-macro2",
  "quote",
- "syn 2.0.106",
+ "syn 2.0.117",
 ]
 
 [[package]]
@@ -7483,8 +7491,6 @@ dependencies = [
  "settings",
  "text",
  "theme",
- "tree-sitter-rust",
- "tree-sitter-typescript",
  "ui",
  "util",
  "workspace",
@@ -7503,9 +7509,9 @@ dependencies = [
 
 [[package]]
 name = "goblin"
-version = "0.8.2"
+version = "0.9.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1b363a30c165f666402fe6a3024d3bec7ebc898f96a4a23bd1c99f8dbf3f4f47"
+checksum = "daa0a64d21a7eb230583b4c5f4e23b7e4e57974f96620f42a7e75e08ae66d745"
 dependencies = [
  "log",
  "plain",
@@ -7615,8 +7621,8 @@ dependencies = [
  "pin-project",
  "pollster 0.4.0",
  "postage",
- "pretty_assertions",
  "profiling",
+ "proptest",
  "rand 0.9.2",
  "raw-window-handle",
  "refineable",
@@ -7744,7 +7750,7 @@ dependencies = [
  "heck 0.5.0",
  "proc-macro2",
  "quote",
- "syn 2.0.106",
+ "syn 2.0.117",
 ]
 
 [[package]]
@@ -8172,7 +8178,7 @@ dependencies = [
  "markup5ever 0.12.1",
  "proc-macro2",
  "quote",
- "syn 2.0.106",
+ "syn 2.0.117",
 ]
 
 [[package]]
@@ -8630,7 +8636,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "525e9ff3e1a4be2fbea1fdf0e98686a6d98b4d8f937e1bf7402245af1909e8c3"
 dependencies = [
  "byteorder-lite",
- "quick-error",
+ "quick-error 2.0.1",
 ]
 
 [[package]]
@@ -8706,7 +8712,7 @@ checksum = "c727f80bfa4a6c6e2508d2f05b6f4bfce242030bd88ed15ae5331c5b5d30fba7"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 2.0.106",
+ "syn 2.0.117",
 ]
 
 [[package]]
@@ -8801,7 +8807,7 @@ checksum = "c34819042dc3d3971c46c2190835914dfbe0c3c13f61449b2997f4e9722dfa60"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 2.0.106",
+ "syn 2.0.117",
 ]
 
 [[package]]
@@ -8993,7 +8999,7 @@ checksum = "03343451ff899767262ec32146f6d559dd759fdadf42ff0e227c7c48f72594b4"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 2.0.106",
+ "syn 2.0.117",
 ]
 
 [[package]]
@@ -9415,7 +9421,6 @@ dependencies = [
  "copilot_ui",
  "credentials_provider",
  "deepseek",
- "editor",
  "extension",
  "extension_host",
  "fs",
@@ -9435,7 +9440,6 @@ dependencies = [
  "open_router",
  "partial-json-fixer",
  "pretty_assertions",
- "project",
  "release_channel",
  "schemars",
  "semver",
@@ -9563,7 +9567,6 @@ dependencies = [
  "snippet",
  "task",
  "terminal",
- "text",
  "theme",
  "toml 0.8.23",
  "tree-sitter",
@@ -9587,7 +9590,6 @@ dependencies = [
  "unindent",
  "url",
  "util",
- "workspace",
 ]
 
 [[package]]
@@ -9634,9 +9636,9 @@ checksum = "7a79a3332a6609480d7d0c9eab957bca6b455b91bb84e66d19f5ff66294b85b8"
 
 [[package]]
 name = "libc"
-version = "0.2.177"
+version = "0.2.182"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2874a2af47a2325c2001a6e6fad9b16a53b802102b528163885171cf92b15976"
+checksum = "6800badb6cb2082ffd7b6a67e6125bb39f18782f793520caee8cb8846be06112"
 
 [[package]]
 name = "libdbus-sys"
@@ -9941,7 +9943,6 @@ dependencies = [
  "serde_json",
  "serde_urlencoded",
  "settings",
- "sha2",
  "simplelog",
  "smallvec",
  "ui",
@@ -10205,6 +10206,7 @@ dependencies = [
  "language",
  "linkify",
  "log",
+ "markdown",
  "markup5ever_rcdom",
  "mermaid-rs-renderer",
  "pretty_assertions",
@@ -10263,7 +10265,7 @@ checksum = "ac84fd3f360fcc43dc5f5d186f02a94192761a080e8bc58621ad4d12296a58cf"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 2.0.106",
+ "syn 2.0.117",
 ]
 
 [[package]]
@@ -10497,9 +10499,9 @@ dependencies = [
 
 [[package]]
 name = "minidump-common"
-version = "0.21.2"
+version = "0.26.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5c4d14bcca0fd3ed165a03000480aaa364c6860c34e900cb2dafdf3b95340e77"
+checksum = "2e16d10087ae9e375bad7a40e8ef5504bc08e808ccc6019067ff9de42a84570f"
 dependencies = [
  "bitflags 2.10.0",
  "debugid",
@@ -10512,14 +10514,16 @@ dependencies = [
 
 [[package]]
 name = "minidump-writer"
-version = "0.8.9"
+version = "0.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e2abcd9c8a1e6e1e9d56ce3627851f39a17ea83e17c96bc510f29d7e43d78a7d"
+checksum = "0e1fc14d6ded915b8e850801465e7096f77ed60bf87e4e85878d463720d9dc4d"
 dependencies = [
  "bitflags 2.10.0",
  "byteorder",
  "cfg-if",
  "crash-context",
+ "error-graph",
+ "failspot",
  "goblin",
  "libc",
  "log",
@@ -10527,18 +10531,20 @@ dependencies = [
  "memmap2",
  "memoffset",
  "minidump-common",
- "nix 0.28.0",
+ "nix 0.29.0",
  "procfs-core",
  "scroll",
+ "serde",
+ "serde_json",
  "tempfile",
- "thiserror 1.0.69",
+ "thiserror 2.0.17",
 ]
 
 [[package]]
 name = "minidumper"
-version = "0.8.3"
+version = "0.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9b4ebc9d1f8847ec1d078f78b35ed598e0ebefa1f242d5f83cd8d7f03960a7d1"
+checksum = "10d9254e42a48098d045472a5c0cb892007a42e25342eddbf2642f6978bf381a"
 dependencies = [
  "cfg-if",
  "crash-context",
@@ -10548,7 +10554,7 @@ dependencies = [
  "parking_lot",
  "polling",
  "scroll",
- "thiserror 1.0.69",
+ "thiserror 2.0.17",
  "uds",
 ]
 
@@ -10681,7 +10687,6 @@ dependencies = [
  "log",
  "parking_lot",
  "pretty_assertions",
- "project",
  "rand 0.9.2",
  "rope",
  "serde",
@@ -10732,7 +10737,7 @@ dependencies = [
 [[package]]
 name = "naga"
 version = "28.0.1"
-source = "git+https://github.com/zed-industries/wgpu?rev=9459e95113c5bd116b2cc2c87e8424b28059e17c#9459e95113c5bd116b2cc2c87e8424b28059e17c"
+source = "git+https://github.com/zed-industries/wgpu?rev=465557eccfe77c840a9b4936f1408da9503372c4#465557eccfe77c840a9b4936f1408da9503372c4"
 dependencies = [
  "arrayvec",
  "bit-set",
@@ -10959,12 +10964,10 @@ dependencies = [
  "anyhow",
  "channel",
  "client",
- "collections",
  "component",
  "db",
  "gpui",
  "rpc",
- "settings",
  "sum_tree",
  "time",
  "ui",
@@ -11130,7 +11133,7 @@ checksum = "ed3955f1a9c7c0c15e092f9c887db08b1fc683305fdf6eb6684f22555355e202"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 2.0.106",
+ "syn 2.0.117",
 ]
 
 [[package]]
@@ -11213,7 +11216,7 @@ dependencies = [
  "proc-macro-crate",
  "proc-macro2",
  "quote",
- "syn 2.0.106",
+ "syn 2.0.117",
 ]
 
 [[package]]
@@ -11606,7 +11609,7 @@ checksum = "a948666b637a0f465e8564c73e89d4dde00d72d4d473cc972f390fc3dcee7d9c"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 2.0.106",
+ "syn 2.0.117",
 ]
 
 [[package]]
@@ -11635,7 +11638,7 @@ checksum = "969ccca8ffc4fb105bd131a228107d5c9dd89d9d627edf3295cbe979156f9712"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 2.0.106",
+ "syn 2.0.117",
 ]
 
 [[package]]
@@ -11693,7 +11696,7 @@ dependencies = [
  "proc-macro2",
  "proc-macro2-diagnostics",
  "quote",
- "syn 2.0.106",
+ "syn 2.0.117",
 ]
 
 [[package]]
@@ -11715,8 +11718,6 @@ dependencies = [
  "settings",
  "smol",
  "theme",
- "tree-sitter-rust",
- "tree-sitter-typescript",
  "ui",
  "util",
  "workspace",
@@ -11803,7 +11804,7 @@ dependencies = [
  "by_address",
  "proc-macro2",
  "quote",
- "syn 2.0.106",
+ "syn 2.0.117",
 ]
 
 [[package]]
@@ -12066,7 +12067,7 @@ dependencies = [
  "pest_meta",
  "proc-macro2",
  "quote",
- "syn 2.0.106",
+ "syn 2.0.117",
 ]
 
 [[package]]
@@ -12545,7 +12546,7 @@ dependencies = [
  "phf_shared 0.11.3",
  "proc-macro2",
  "quote",
- "syn 2.0.106",
+ "syn 2.0.117",
 ]
 
 [[package]]
@@ -12558,7 +12559,7 @@ dependencies = [
  "phf_shared 0.12.1",
  "proc-macro2",
  "quote",
- "syn 2.0.106",
+ "syn 2.0.117",
 ]
 
 [[package]]
@@ -12584,14 +12585,12 @@ name = "picker"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "ctor",
  "editor",
- "env_logger 0.11.8",
  "gpui",
  "menu",
  "schemars",
  "serde",
- "serde_json",
+ "settings",
  "theme",
  "ui",
  "ui_input",
@@ -12622,7 +12621,7 @@ checksum = "6e918e4ff8c4549eb882f14b3a4bc8c8bc93de829416eacf579f1207a8fbf861"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 2.0.106",
+ "syn 2.0.117",
 ]
 
 [[package]]
@@ -12946,7 +12945,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "479ca8adacdd7ce8f1fb39ce9ecccbfe93a3f1344b3d0d97f20bc0196208f62b"
 dependencies = [
  "proc-macro2",
- "syn 2.0.106",
+ "syn 2.0.117",
 ]
 
 [[package]]
@@ -13010,7 +13009,7 @@ dependencies = [
  "proc-macro-error-attr2",
  "proc-macro2",
  "quote",
- "syn 2.0.106",
+ "syn 2.0.117",
 ]
 
 [[package]]
@@ -13030,19 +13029,20 @@ checksum = "af066a9c399a26e020ada66a034357a868728e72cd426f3adcd35f80d88d88c8"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 2.0.106",
+ "syn 2.0.117",
  "version_check",
  "yansi",
 ]
 
 [[package]]
 name = "procfs-core"
-version = "0.16.0"
+version = "0.17.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2d3554923a69f4ce04c4a754260c338f505ce22642d3830e049a399fc2059a29"
+checksum = "239df02d8349b06fc07398a3a1697b06418223b1c7725085e801e7c0fc6a12ec"
 dependencies = [
  "bitflags 2.10.0",
  "hex",
+ "serde",
 ]
 
 [[package]]
@@ -13061,7 +13061,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "52717f9a02b6965224f95ca2a81e2e0c5c43baacd28ca057577988930b6c3d5b"
 dependencies = [
  "quote",
- "syn 2.0.106",
+ "syn 2.0.117",
 ]
 
 [[package]]
@@ -13080,8 +13080,6 @@ dependencies = [
  "collections",
  "context_server",
  "dap",
- "dap_adapters",
- "db",
  "encoding_rs",
  "extension",
  "fancy-regex",
@@ -13188,7 +13186,6 @@ dependencies = [
  "pretty_assertions",
  "project",
  "rayon",
- "remote_connection",
  "schemars",
  "search",
  "serde",
@@ -13271,6 +13268,47 @@ dependencies = [
 ]
 
 [[package]]
+name = "proptest"
+version = "1.10.0"
+source = "git+https://github.com/proptest-rs/proptest?rev=3dca198a8fef1b32e3a66f1e1897c955b4dc5b5b#3dca198a8fef1b32e3a66f1e1897c955b4dc5b5b"
+dependencies = [
+ "bit-set",
+ "bit-vec",
+ "bitflags 2.10.0",
+ "num-traits",
+ "proptest-macro",
+ "rand 0.9.2",
+ "rand_chacha 0.9.0",
+ "rand_xorshift",
+ "regex-syntax",
+ "rusty-fork",
+ "tempfile",
+ "unarray",
+]
+
+[[package]]
+name = "proptest-derive"
+version = "0.8.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c57924a81864dddafba92e1bf92f9bf82f97096c44489548a60e888e1547549b"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.117",
+]
+
+[[package]]
+name = "proptest-macro"
+version = "0.5.0"
+source = "git+https://github.com/proptest-rs/proptest?rev=3dca198a8fef1b32e3a66f1e1897c955b4dc5b5b#3dca198a8fef1b32e3a66f1e1897c955b4dc5b5b"
+dependencies = [
+ "convert_case 0.11.0",
+ "proc-macro2",
+ "quote",
+ "syn 2.0.117",
+]
+
+[[package]]
 name = "prost"
 version = "0.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -13327,7 +13365,7 @@ dependencies = [
  "prost 0.12.6",
  "prost-types 0.12.6",
  "regex",
- "syn 2.0.106",
+ "syn 2.0.117",
  "tempfile",
 ]
 
@@ -13354,7 +13392,7 @@ dependencies = [
  "itertools 0.12.1",
  "proc-macro2",
  "quote",
- "syn 2.0.106",
+ "syn 2.0.117",
 ]
 
 [[package]]
@@ -13381,11 +13419,9 @@ name = "proto"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "collections",
  "prost 0.9.0",
  "prost-build 0.9.0",
  "serde",
- "typed-path",
 ]
 
 [[package]]
@@ -13521,6 +13557,12 @@ checksum = "7f6d64c71eb498fe9eae14ce4ec935c555749aef511cca85b5568910d6e48001"
 dependencies = [
  "bytemuck",
 ]
+
+[[package]]
+name = "quick-error"
+version = "1.2.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a1d01941d82fa2ab50be1e79e6714289dd7cde78eba4c074bc5a4374f650dfe0"
 
 [[package]]
 name = "quick-error"
@@ -13748,6 +13790,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "rand_xorshift"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "513962919efc330f829edb2535844d1b912b0fbe2ca165d613e4e8788bb05a5a"
+dependencies = [
+ "rand_core 0.9.3",
+]
+
+[[package]]
 name = "random_choice"
 version = "0.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -13821,7 +13872,7 @@ dependencies = [
  "avif-serialize",
  "imgref",
  "loop9",
- "quick-error",
+ "quick-error 2.0.1",
  "rav1e",
  "rayon",
  "rgb",
@@ -13923,7 +13974,6 @@ dependencies = [
  "anyhow",
  "askpass",
  "chrono",
- "dap",
  "db",
  "dev_container",
  "editor",
@@ -14021,7 +14071,7 @@ checksum = "b7186006dcb21920990093f30e3dea63b7d6e977bf1256be20c3563a5db070da"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 2.0.106",
+ "syn 2.0.117",
 ]
 
 [[package]]
@@ -14172,7 +14222,6 @@ dependencies = [
  "collections",
  "crash-handler",
  "crashes",
- "dap",
  "dap_adapters",
  "debug_adapter_extension",
  "editor",
@@ -14204,7 +14253,6 @@ dependencies = [
  "paths",
  "pretty_assertions",
  "project",
- "prompt_store",
  "proto",
  "rayon",
  "release_channel",
@@ -14228,7 +14276,6 @@ dependencies = [
  "uuid",
  "watch",
  "windows 0.61.3",
- "workspace",
  "worktree",
  "zlog",
 ]
@@ -14262,7 +14309,6 @@ dependencies = [
  "collections",
  "command_palette_hooks",
  "editor",
- "env_logger 0.11.8",
  "feature_flags",
  "file_icons",
  "futures 0.3.31",
@@ -14390,7 +14436,6 @@ dependencies = [
  "anyhow",
  "bytes 1.11.1",
  "futures 0.3.31",
- "gpui",
  "gpui_util",
  "http_client",
  "http_client_tls",
@@ -14433,20 +14478,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0c6a884d2998352bb4daf0183589aec883f16a6da1f4dde84d8e2e9a5409a1ce"
 dependencies = [
  "bytemuck",
-]
-
-[[package]]
-name = "rich_text"
-version = "0.1.0"
-dependencies = [
- "futures 0.3.31",
- "gpui",
- "language",
- "linkify",
- "pulldown-cmark 0.13.0",
- "theme",
- "ui",
- "util",
 ]
 
 [[package]]
@@ -14698,7 +14729,7 @@ dependencies = [
  "proc-macro2",
  "quote",
  "rust-embed-utils",
- "syn 2.0.106",
+ "syn 2.0.117",
  "walkdir",
 ]
 
@@ -14953,6 +14984,18 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b39cdef0fa800fc44525c84ccb54a029961a8215f9619753635a9c0d2538d46d"
 
 [[package]]
+name = "rusty-fork"
+version = "0.3.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cc6bf79ff24e648f6da1f8d1f011e9cac26491b619e6b9280f2b47f1774e6ee2"
+dependencies = [
+ "fnv",
+ "quick-error 1.2.3",
+ "tempfile",
+ "wait-timeout",
+]
+
+[[package]]
 name = "rustybuzz"
 version = "0.20.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -15071,7 +15114,7 @@ dependencies = [
  "proc-macro2",
  "quote",
  "serde_derive_internals",
- "syn 2.0.106",
+ "syn 2.0.117",
 ]
 
 [[package]]
@@ -15132,7 +15175,7 @@ checksum = "1783eabc414609e28a5ba76aee5ddd52199f7107a0b24c2e9746a1ecc34a683d"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 2.0.106",
+ "syn 2.0.117",
 ]
 
 [[package]]
@@ -15161,7 +15204,7 @@ dependencies = [
  "proc-macro-error2",
  "proc-macro2",
  "quote",
- "syn 2.0.106",
+ "syn 2.0.117",
 ]
 
 [[package]]
@@ -15203,7 +15246,7 @@ dependencies = [
  "proc-macro2",
  "quote",
  "sea-bae",
- "syn 2.0.106",
+ "syn 2.0.117",
  "unicode-ident",
 ]
 
@@ -15252,7 +15295,6 @@ dependencies = [
  "any_vec",
  "anyhow",
  "bitflags 2.10.0",
- "client",
  "collections",
  "editor",
  "fs",
@@ -15388,7 +15430,7 @@ checksum = "d540f220d3187173da220f885ab66608367b6574e925011a9353e4badda91d79"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 2.0.106",
+ "syn 2.0.117",
 ]
 
 [[package]]
@@ -15399,7 +15441,7 @@ checksum = "18d26a20a969b9e3fdf2fc2d9f21eda6c40e2de84c9408bb5d3b05d499aae711"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 2.0.106",
+ "syn 2.0.117",
 ]
 
 [[package]]
@@ -15457,7 +15499,7 @@ checksum = "175ee3e80ae9982737ca543e96133087cbd9a485eecc3bc4de9c1a37b47ea59c"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 2.0.106",
+ "syn 2.0.117",
 ]
 
 [[package]]
@@ -15597,18 +15639,16 @@ version = "0.1.0"
 dependencies = [
  "quote",
  "settings",
- "syn 2.0.106",
+ "syn 2.0.117",
 ]
 
 [[package]]
 name = "settings_profile_selector"
 version = "0.1.0"
 dependencies = [
- "client",
  "editor",
  "fuzzy",
  "gpui",
- "language",
  "menu",
  "picker",
  "project",
@@ -15627,9 +15667,7 @@ dependencies = [
  "agent",
  "agent_settings",
  "anyhow",
- "assets",
  "audio",
- "client",
  "codestral",
  "component",
  "copilot",
@@ -15647,13 +15685,11 @@ dependencies = [
  "language",
  "log",
  "menu",
- "node_runtime",
  "paths",
  "picker",
  "platform_title_bar",
  "pretty_assertions",
  "project",
- "recent_projects",
  "regex",
  "release_channel",
  "rodio",
@@ -15661,7 +15697,6 @@ dependencies = [
  "search",
  "serde",
  "serde_json",
- "session",
  "settings",
  "shell_command_parser",
  "strum 0.27.2",
@@ -15672,7 +15707,6 @@ dependencies = [
  "util",
  "workspace",
  "zed_actions",
- "zlog",
 ]
 
 [[package]]
@@ -15781,22 +15815,26 @@ name = "sidebar"
 version = "0.1.0"
 dependencies = [
  "acp_thread",
+ "agent",
+ "agent-client-protocol",
  "agent_ui",
+ "assistant_text_thread",
  "chrono",
  "editor",
  "feature_flags",
  "fs",
- "fuzzy",
  "gpui",
- "picker",
+ "language_model",
+ "menu",
  "project",
  "recent_projects",
+ "serde_json",
  "settings",
  "theme",
  "ui",
- "ui_input",
  "util",
  "workspace",
+ "zed_actions",
 ]
 
 [[package]]
@@ -15968,7 +16006,7 @@ checksum = "0eb01866308440fc64d6c44d9e86c5cc17adfe33c4d6eed55da9145044d0ffc1"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 2.0.106",
+ "syn 2.0.117",
 ]
 
 [[package]]
@@ -16146,7 +16184,7 @@ version = "0.1.0"
 dependencies = [
  "sqlez",
  "sqlformat",
- "syn 2.0.106",
+ "syn 2.0.117",
 ]
 
 [[package]]
@@ -16223,7 +16261,7 @@ dependencies = [
  "quote",
  "sqlx-core",
  "sqlx-macros-core",
- "syn 2.0.106",
+ "syn 2.0.117",
 ]
 
 [[package]]
@@ -16246,7 +16284,7 @@ dependencies = [
  "sqlx-mysql",
  "sqlx-postgres",
  "sqlx-sqlite",
- "syn 2.0.106",
+ "syn 2.0.117",
  "tokio",
  "url",
 ]
@@ -16405,7 +16443,7 @@ checksum = "172175341049678163e979d9107ca3508046d4d2a7c6682bee46ac541b17db69"
 dependencies = [
  "proc-macro-error2",
  "quote",
- "syn 2.0.106",
+ "syn 2.0.117",
 ]
 
 [[package]]
@@ -16548,7 +16586,7 @@ dependencies = [
  "heck 0.5.0",
  "proc-macro2",
  "quote",
- "syn 2.0.106",
+ "syn 2.0.117",
 ]
 
 [[package]]
@@ -16564,6 +16602,7 @@ dependencies = [
  "arrayvec",
  "ctor",
  "log",
+ "proptest",
  "rand 0.9.2",
  "rayon",
  "tracing",
@@ -16849,9 +16888,9 @@ dependencies = [
 
 [[package]]
 name = "syn"
-version = "2.0.106"
+version = "2.0.117"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ede7c438028d4436d71104916910f5bb611972c5cfd7f89b8300a8186e6fada6"
+checksum = "e665b8803e7b1d2a727f4023456bbbbe74da67099c585258af0ad9c5013b9b99"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -16890,7 +16929,7 @@ checksum = "728a70f3dbaf5bab7f0c4b1ac8d7ae5ea60a4b5549c8a5914361c99147a709d2"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 2.0.106",
+ "syn 2.0.117",
 ]
 
 [[package]]
@@ -17061,13 +17100,11 @@ dependencies = [
 name = "tab_switcher"
 version = "0.1.0"
 dependencies = [
- "anyhow",
  "collections",
  "ctor",
  "editor",
  "fuzzy",
  "gpui",
- "language",
  "menu",
  "picker",
  "project",
@@ -17256,7 +17293,6 @@ dependencies = [
  "release_channel",
  "schemars",
  "serde",
- "serde_json",
  "settings",
  "smol",
  "sysinfo 0.37.2",
@@ -17288,7 +17324,6 @@ dependencies = [
  "assistant_slash_command",
  "async-recursion",
  "breadcrumbs",
- "client",
  "collections",
  "db",
  "dirs 4.0.0",
@@ -17301,7 +17336,6 @@ dependencies = [
  "menu",
  "pretty_assertions",
  "project",
- "rand 0.9.2",
  "regex",
  "schemars",
  "serde",
@@ -17326,7 +17360,6 @@ dependencies = [
  "collections",
  "ctor",
  "gpui",
- "http_client",
  "log",
  "parking_lot",
  "postage",
@@ -17440,7 +17473,7 @@ checksum = "4fee6c4efc90059e10f81e6d42c60a18f76588c3d74cb83a0b242a2b6c7504c1"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 2.0.106",
+ "syn 2.0.117",
 ]
 
 [[package]]
@@ -17451,7 +17484,7 @@ checksum = "3ff15c8ecd7de3849db632e14d18d2571fa09dfc5ed93479bc4485c7a517c913"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 2.0.106",
+ "syn 2.0.117",
 ]
 
 [[package]]
@@ -17472,7 +17505,7 @@ dependencies = [
  "fax",
  "flate2",
  "half",
- "quick-error",
+ "quick-error 2.0.1",
  "weezl",
  "zune-jpeg",
 ]
@@ -17629,15 +17662,12 @@ dependencies = [
  "chrono",
  "client",
  "cloud_api_types",
- "collections",
  "db",
  "feature_flags",
  "git_ui",
  "gpui",
- "http_client",
  "notifications",
  "platform_title_bar",
- "pretty_assertions",
  "project",
  "recent_projects",
  "release_channel",
@@ -17651,7 +17681,6 @@ dependencies = [
  "story",
  "telemetry",
  "theme",
- "tree-sitter-md",
  "ui",
  "util",
  "windows 0.61.3",
@@ -17695,7 +17724,7 @@ checksum = "af407857209536a95c8e56f8231ef2c2e2aff839b22e07a1ffcbc617e9db9fa5"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 2.0.106",
+ "syn 2.0.117",
 ]
 
 [[package]]
@@ -18033,7 +18062,7 @@ checksum = "7490cfa5ec963746568740651ac6781f701c9c5ea257c58e057f3ba8cf69e8da"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 2.0.106",
+ "syn 2.0.117",
 ]
 
 [[package]]
@@ -18128,7 +18157,7 @@ checksum = "70977707304198400eb4835a78f6a9f928bf41bba420deb8fdb175cd965d77a7"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 2.0.106",
+ "syn 2.0.117",
 ]
 
 [[package]]
@@ -18482,12 +18511,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "typed-path"
-version = "0.11.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c462d18470a2857aa657d338af5fa67170bb48bcc80a296710ce3b0802a32566"
-
-[[package]]
 name = "typeid"
 version = "1.0.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -18585,7 +18608,7 @@ version = "0.1.0"
 dependencies = [
  "component",
  "quote",
- "syn 2.0.106",
+ "syn 2.0.117",
  "ui",
 ]
 
@@ -18601,6 +18624,12 @@ dependencies = [
  "ui",
  "workspace",
 ]
+
+[[package]]
+name = "unarray"
+version = "0.1.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "eaea85b334db583fe3274d12b4cd1880032beab409c0d774be044d4480ab9a94"
 
 [[package]]
 name = "unicase"
@@ -18807,7 +18836,6 @@ dependencies = [
  "git2",
  "globset",
  "gpui_util",
- "indoc",
  "itertools 0.14.0",
  "libc",
  "log",
@@ -18840,7 +18868,7 @@ version = "0.1.0"
 dependencies = [
  "perf",
  "quote",
- "syn 2.0.106",
+ "syn 2.0.117",
 ]
 
 [[package]]
@@ -18952,7 +18980,6 @@ name = "vim"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "assets",
  "async-compat",
  "async-trait",
  "collections",
@@ -18992,7 +19019,6 @@ dependencies = [
  "task",
  "text",
  "theme",
- "title_bar",
  "tokio",
  "ui",
  "util",
@@ -19056,6 +19082,15 @@ dependencies = [
  "log",
  "memchr",
  "serde",
+]
+
+[[package]]
+name = "wait-timeout"
+version = "0.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "09ac3b126d3914f9849036f826e054cbabdc8519970b8998ddaf3b5bd3c65f11"
+dependencies = [
+ "libc",
 ]
 
 [[package]]
@@ -19187,7 +19222,7 @@ dependencies = [
  "bumpalo",
  "proc-macro2",
  "quote",
- "syn 2.0.106",
+ "syn 2.0.117",
  "wasm-bindgen-shared",
 ]
 
@@ -19483,7 +19518,7 @@ dependencies = [
  "anyhow",
  "proc-macro2",
  "quote",
- "syn 2.0.106",
+ "syn 2.0.117",
  "wasmtime-component-util",
  "wasmtime-wit-bindgen",
  "wit-parser 0.229.0",
@@ -19598,7 +19633,7 @@ checksum = "d0963c1438357a3d8c0efe152b4ef5259846c1cf8b864340270744fe5b3bae5e"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 2.0.106",
+ "syn 2.0.117",
 ]
 
 [[package]]
@@ -19691,7 +19726,6 @@ dependencies = [
  "futures 0.3.31",
  "gpui",
  "parking_lot",
- "rand 0.9.2",
  "zlog",
 ]
 
@@ -19923,7 +19957,7 @@ checksum = "a751b3277700db47d3e574514de2eced5e54dc8a5436a3bf7a0b248b2cee16f3"
 [[package]]
 name = "wgpu"
 version = "28.0.1"
-source = "git+https://github.com/zed-industries/wgpu?rev=9459e95113c5bd116b2cc2c87e8424b28059e17c#9459e95113c5bd116b2cc2c87e8424b28059e17c"
+source = "git+https://github.com/zed-industries/wgpu?rev=465557eccfe77c840a9b4936f1408da9503372c4#465557eccfe77c840a9b4936f1408da9503372c4"
 dependencies = [
  "arrayvec",
  "bitflags 2.10.0",
@@ -19952,7 +19986,7 @@ dependencies = [
 [[package]]
 name = "wgpu-core"
 version = "28.0.1"
-source = "git+https://github.com/zed-industries/wgpu?rev=9459e95113c5bd116b2cc2c87e8424b28059e17c#9459e95113c5bd116b2cc2c87e8424b28059e17c"
+source = "git+https://github.com/zed-industries/wgpu?rev=465557eccfe77c840a9b4936f1408da9503372c4#465557eccfe77c840a9b4936f1408da9503372c4"
 dependencies = [
  "arrayvec",
  "bit-set",
@@ -19983,7 +20017,7 @@ dependencies = [
 [[package]]
 name = "wgpu-core-deps-apple"
 version = "28.0.1"
-source = "git+https://github.com/zed-industries/wgpu?rev=9459e95113c5bd116b2cc2c87e8424b28059e17c#9459e95113c5bd116b2cc2c87e8424b28059e17c"
+source = "git+https://github.com/zed-industries/wgpu?rev=465557eccfe77c840a9b4936f1408da9503372c4#465557eccfe77c840a9b4936f1408da9503372c4"
 dependencies = [
  "wgpu-hal",
 ]
@@ -19991,7 +20025,7 @@ dependencies = [
 [[package]]
 name = "wgpu-core-deps-emscripten"
 version = "28.0.1"
-source = "git+https://github.com/zed-industries/wgpu?rev=9459e95113c5bd116b2cc2c87e8424b28059e17c#9459e95113c5bd116b2cc2c87e8424b28059e17c"
+source = "git+https://github.com/zed-industries/wgpu?rev=465557eccfe77c840a9b4936f1408da9503372c4#465557eccfe77c840a9b4936f1408da9503372c4"
 dependencies = [
  "wgpu-hal",
 ]
@@ -19999,7 +20033,7 @@ dependencies = [
 [[package]]
 name = "wgpu-core-deps-windows-linux-android"
 version = "28.0.1"
-source = "git+https://github.com/zed-industries/wgpu?rev=9459e95113c5bd116b2cc2c87e8424b28059e17c#9459e95113c5bd116b2cc2c87e8424b28059e17c"
+source = "git+https://github.com/zed-industries/wgpu?rev=465557eccfe77c840a9b4936f1408da9503372c4#465557eccfe77c840a9b4936f1408da9503372c4"
 dependencies = [
  "wgpu-hal",
 ]
@@ -20007,7 +20041,7 @@ dependencies = [
 [[package]]
 name = "wgpu-hal"
 version = "28.0.1"
-source = "git+https://github.com/zed-industries/wgpu?rev=9459e95113c5bd116b2cc2c87e8424b28059e17c#9459e95113c5bd116b2cc2c87e8424b28059e17c"
+source = "git+https://github.com/zed-industries/wgpu?rev=465557eccfe77c840a9b4936f1408da9503372c4#465557eccfe77c840a9b4936f1408da9503372c4"
 dependencies = [
  "android_system_properties",
  "arrayvec",
@@ -20054,7 +20088,7 @@ dependencies = [
 [[package]]
 name = "wgpu-types"
 version = "28.0.1"
-source = "git+https://github.com/zed-industries/wgpu?rev=9459e95113c5bd116b2cc2c87e8424b28059e17c#9459e95113c5bd116b2cc2c87e8424b28059e17c"
+source = "git+https://github.com/zed-industries/wgpu?rev=465557eccfe77c840a9b4936f1408da9503372c4#465557eccfe77c840a9b4936f1408da9503372c4"
 dependencies = [
  "bitflags 2.10.0",
  "bytemuck",
@@ -20136,7 +20170,7 @@ dependencies = [
  "heck 0.5.0",
  "proc-macro2",
  "quote",
- "syn 2.0.106",
+ "syn 2.0.117",
  "witx",
 ]
 
@@ -20148,7 +20182,7 @@ checksum = "d873bb5b59ca703b5e41562e96a4796d1af61bf4cf80bf8a7abda755a380ec1c"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 2.0.106",
+ "syn 2.0.117",
  "wiggle-generate",
 ]
 
@@ -20371,7 +20405,7 @@ checksum = "9107ddc059d5b6fbfbffdfa7a7fe3e22a226def0b2608f72e9d552763d3e1ad7"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 2.0.106",
+ "syn 2.0.117",
 ]
 
 [[package]]
@@ -20382,7 +20416,7 @@ checksum = "2bbd5b46c938e506ecbce286b6628a02171d56153ba733b6c741fc627ec9579b"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 2.0.106",
+ "syn 2.0.117",
 ]
 
 [[package]]
@@ -20393,7 +20427,7 @@ checksum = "053e2e040ab57b9dc951b72c264860db7eb3b0200ba345b4e4c3b14f67855ddf"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 2.0.106",
+ "syn 2.0.117",
 ]
 
 [[package]]
@@ -20404,7 +20438,7 @@ checksum = "29bee4b38ea3cde66011baa44dba677c432a78593e202392d1e9070cf2a7fca7"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 2.0.106",
+ "syn 2.0.117",
 ]
 
 [[package]]
@@ -20415,7 +20449,7 @@ checksum = "053c4c462dc91d3b1504c6fe5a726dd15e216ba718e84a0e46a88fbe5ded3515"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 2.0.106",
+ "syn 2.0.117",
 ]
 
 [[package]]
@@ -20426,7 +20460,7 @@ checksum = "3f316c4a2570ba26bbec722032c4099d8c8bc095efccdc15688708623367e358"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 2.0.106",
+ "syn 2.0.117",
 ]
 
 [[package]]
@@ -21064,7 +21098,7 @@ dependencies = [
  "heck 0.5.0",
  "indexmap",
  "prettyplease",
- "syn 2.0.106",
+ "syn 2.0.117",
  "wasm-metadata 0.227.1",
  "wit-bindgen-core 0.41.0",
  "wit-component 0.227.1",
@@ -21080,7 +21114,7 @@ dependencies = [
  "heck 0.5.0",
  "indexmap",
  "prettyplease",
- "syn 2.0.106",
+ "syn 2.0.117",
  "wasm-metadata 0.244.0",
  "wit-bindgen-core 0.51.0",
  "wit-component 0.244.0",
@@ -21095,7 +21129,7 @@ dependencies = [
  "anyhow",
  "proc-macro2",
  "quote",
- "syn 2.0.106",
+ "syn 2.0.117",
  "wit-bindgen-core 0.22.0",
  "wit-bindgen-rust 0.22.0",
 ]
@@ -21110,7 +21144,7 @@ dependencies = [
  "prettyplease",
  "proc-macro2",
  "quote",
- "syn 2.0.106",
+ "syn 2.0.117",
  "wit-bindgen-core 0.41.0",
  "wit-bindgen-rust 0.41.0",
 ]
@@ -21125,7 +21159,7 @@ dependencies = [
  "prettyplease",
  "proc-macro2",
  "quote",
- "syn 2.0.106",
+ "syn 2.0.117",
  "wit-bindgen-core 0.51.0",
  "wit-bindgen-rust 0.51.0",
 ]
@@ -21283,7 +21317,6 @@ dependencies = [
  "clock",
  "collections",
  "component",
- "dap",
  "db",
  "feature_flags",
  "fs",
@@ -21336,9 +21369,7 @@ dependencies = [
  "futures 0.3.31",
  "fuzzy",
  "git",
- "git2",
  "gpui",
- "http_client",
  "ignore",
  "language",
  "log",
@@ -21656,7 +21687,7 @@ checksum = "2380878cad4ac9aac1e2435f3eb4020e8374b5f13c296cb75b4620ff8e229154"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 2.0.106",
+ "syn 2.0.117",
  "synstructure",
 ]
 
@@ -21668,7 +21699,7 @@ checksum = "38da3c9736e16c5d3c8c597a9aaa5d1fa565d0532ae05e27c24aa62fb32c0ab6"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 2.0.106",
+ "syn 2.0.117",
  "synstructure",
 ]
 
@@ -21716,7 +21747,7 @@ dependencies = [
  "proc-macro-crate",
  "proc-macro2",
  "quote",
- "syn 2.0.106",
+ "syn 2.0.117",
  "zbus_names",
  "zvariant",
  "zvariant_utils",
@@ -21772,7 +21803,6 @@ dependencies = [
  "copilot_ui",
  "crashes",
  "csv_preview",
- "dap",
  "dap_adapters",
  "db",
  "debug_adapter_extension",
@@ -21882,8 +21912,6 @@ dependencies = [
  "title_bar",
  "toolchain_selector",
  "tracing",
- "tree-sitter-md",
- "tree-sitter-rust",
  "ui",
  "ui_prompt",
  "url",
@@ -22114,7 +22142,7 @@ checksum = "88d2b8d9c68ad2b9e4340d7832716a4d21a22a1154777ad56ea55c51a9cf3831"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 2.0.106",
+ "syn 2.0.117",
 ]
 
 [[package]]
@@ -22134,7 +22162,7 @@ checksum = "d71e5d6e06ab090c67b5e44993ec16b72dcbaabc526db883a360057678b48502"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 2.0.106",
+ "syn 2.0.117",
  "synstructure",
 ]
 
@@ -22155,7 +22183,7 @@ checksum = "ce36e65b0d2999d2aafac989fb249189a141aee1f53c612c1f37d72631959f69"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 2.0.106",
+ "syn 2.0.117",
 ]
 
 [[package]]
@@ -22212,7 +22240,7 @@ checksum = "5b96237efa0c878c64bd89c436f661be4e46b2f3eff1ebb976f7ef2321d2f58f"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 2.0.106",
+ "syn 2.0.117",
 ]
 
 [[package]]
@@ -22374,7 +22402,7 @@ dependencies = [
  "proc-macro-crate",
  "proc-macro2",
  "quote",
- "syn 2.0.106",
+ "syn 2.0.117",
  "zvariant_utils",
 ]
 
@@ -22387,6 +22415,6 @@ dependencies = [
  "proc-macro2",
  "quote",
  "serde",
- "syn 2.0.106",
+ "syn 2.0.117",
  "winnow",
 ]

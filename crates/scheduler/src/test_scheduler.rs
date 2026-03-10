@@ -320,10 +320,6 @@ impl TestScheduler {
         };
 
         if let Some(runnable) = runnable {
-            // Check if the executor that spawned this task was closed
-            if runnable.runnable.metadata().is_closed() {
-                return true;
-            }
             let is_foreground = runnable.session_id.is_some();
             let was_main_thread = self.state.lock().is_main_thread;
             self.state.lock().is_main_thread = is_foreground;

@@ -66,6 +66,7 @@ members = [
     "crates/encoding_selector",
     "crates/etw_tracing",
     "crates/eval",
+    "crates/eval_cli",
     "crates/eval_utils",
     "crates/explorer_command_injector",
     "crates/extension",
@@ -158,7 +159,6 @@ members = [
     "crates/remote_server",
     "crates/repl",
     "crates/reqwest_client",
-    "crates/rich_text",
     "crates/rope",
     "crates/rpc",
     "crates/rules_library",
@@ -595,7 +595,7 @@ lsp-types = { git = "https://github.com/zed-industries/lsp-types", rev = "a4f410
 mach2 = "0.5"
 markup5ever_rcdom = "0.3.0"
 metal = "0.33"
-minidumper = "0.8"
+minidumper = "0.9"
 moka = { version = "0.12.10", features = ["sync"] }
 naga = { version = "28.0", features = ["wgsl-in"] }
 nanoid = "0.4"
@@ -649,6 +649,9 @@ postage = { version = "0.5", features = ["futures-traits"] }
 pretty_assertions = { version = "1.3.0", features = ["unstable"] }
 proc-macro2 = "1.0.93"
 profiling = "1"
+# replace this with main when #635 is merged
+proptest = { git = "https://github.com/proptest-rs/proptest", rev = "3dca198a8fef1b32e3a66f1e1897c955b4dc5b5b", features = ["attr-macro"] }
+proptest-derive = "0.8.0"
 prost = "0.9"
 prost-build = "0.9"
 prost-types = "0.9"
@@ -779,7 +782,7 @@ wax = "0.7"
 which = "6.0.0"
 wasm-bindgen = "0.2.113"
 web-time = "1.1.0"
-wgpu = { git = "https://github.com/zed-industries/wgpu", rev = "9459e95113c5bd116b2cc2c87e8424b28059e17c" }
+wgpu = { git = "https://github.com/zed-industries/wgpu", rev = "465557eccfe77c840a9b4936f1408da9503372c4" }
 windows-core = "0.61"
 yawc = "0.2.5"
 zeroize = "1.8"

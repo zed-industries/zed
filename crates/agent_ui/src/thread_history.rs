@@ -948,12 +948,12 @@ impl RenderOnce for HistoryEntryElement {
                         })
                         .on_click({
                             let thread_view = self.thread_view.clone();
-                            let entry = self.entry.clone();
+                            let session_id = self.entry.session_id.clone();
 
                             move |_event, _window, cx| {
                                 if let Some(thread_view) = thread_view.upgrade() {
                                     thread_view.update(cx, |thread_view, cx| {
-                                        thread_view.delete_history_entry(entry.clone(), cx);
+                                        thread_view.delete_history_entry(&session_id, cx);
                                     });
                                 }
                             }
@@ -973,7 +973,13 @@ impl RenderOnce for HistoryEntryElement {
                     {
                         if let Some(panel) = workspace.read(cx).panel::<AgentPanel>(cx) {
                             panel.update(cx, |panel, cx| {
-                                panel.load_agent_thread(entry.clone(), window, cx);
+                                panel.load_agent_thread(
+                                    entry.session_id.clone(),
+                                    entry.cwd.clone(),
+                                    entry.title.clone(),
+                                    window,
+                                    cx,
+                                );
                             });
                         }
                     }

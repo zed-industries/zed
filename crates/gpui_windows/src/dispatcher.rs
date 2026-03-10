@@ -58,10 +58,6 @@ impl WindowsDispatcher {
             let mut task_wrapper = Some(runnable);
             WorkItemHandler::new(move |_| {
                 let runnable = task_wrapper.take().unwrap();
-                // Check if the executor that spawned this task was closed
-                if runnable.metadata().is_closed() {
-                    return Ok(());
-                }
                 Self::execute_runnable(runnable);
                 Ok(())
             })
@@ -75,10 +71,6 @@ impl WindowsDispatcher {
             let mut task_wrapper = Some(runnable);
             TimerElapsedHandler::new(move |_| {
                 let runnable = task_wrapper.take().unwrap();
-                // Check if the executor that spawned this task was closed
-                if runnable.metadata().is_closed() {
-                    return Ok(());
-                }
                 Self::execute_runnable(runnable);
                 Ok(())
             })

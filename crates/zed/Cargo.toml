@@ -48,7 +48,6 @@ visual-tests = [
     "language_model/test-support",
     "fs/test-support",
     "recent_projects/test-support",
-    "sidebar/test-support",
     "title_bar/test-support",
 ]
 
@@ -244,7 +243,6 @@ pkg-config = "0.3.22"
 
 [dev-dependencies]
 call = { workspace = true, features = ["test-support"] }
-dap = { workspace = true, features = ["test-support"] }
 editor = { workspace = true, features = ["test-support"] }
 gpui = { workspace = true, features = ["test-support"] }
 image_viewer = { workspace = true, features = ["test-support"] }
@@ -254,8 +252,6 @@ pretty_assertions.workspace = true
 project = { workspace = true, features = ["test-support"] }
 semver.workspace = true
 terminal_view = { workspace = true, features = ["test-support"] }
-tree-sitter-md.workspace = true
-tree-sitter-rust.workspace = true
 title_bar = { workspace = true, features = ["test-support"] }
 workspace = { workspace = true, features = ["test-support"] }
 image.workspace = true
