@@ -67,7 +67,7 @@ const MIGRATION_SCHEMA_FILES = [
 ];
 
 const modifiedSchemaFiles = danger.git.modified_files.filter((file) =>
-  MIGRATION_SCHEMA_FILES.some((migrationFile) => file.endsWith(migrationFile)),
+  MIGRATION_SCHEMA_FILES.some((schemaFilePath) => file.endsWith(schemaFilePath)),
 );
 
 if (modifiedSchemaFiles.length > 0) {
