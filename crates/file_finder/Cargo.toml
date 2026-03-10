@@ -43,6 +43,7 @@ gpui = { workspace = true, features = ["test-support"] }
 
 picker = { workspace = true, features = ["test-support"] }
 pretty_assertions.workspace = true
+remote_connection = { workspace = true, features = ["test-support"] }
 serde_json.workspace = true
 theme = { workspace = true, features = ["test-support"] }
 workspace = { workspace = true, features = ["test-support"] }

@@ -2254,6 +2254,24 @@ impl BufferSnapshot {
         (row_end_offset - row_start_offset) as u32
     }
 
+    pub fn point_for_row_and_column_from_external_source(&self, row: u32, column: u32) -> Point {
+        let row = row.min(self.max_point().row);
+        let mut byte_column = 0;
+        let mut remaining_columns = column;
+
+        for chunk in self.text_for_range(Point::new(row, 0)..Point::new(row, self.line_len(row))) {
+            for character in chunk.chars() {
+                if remaining_columns == 0 {
+                    return Point::new(row, byte_column);
+                }
+                remaining_columns -= 1;
+                byte_column += character.len_utf8() as u32;
+            }
+        }
+
+        Point::new(row, byte_column)
+    }
+
     pub fn line_indents_in_row_range(
         &self,
         row_range: Range<u32>,
