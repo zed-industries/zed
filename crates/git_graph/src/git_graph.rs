@@ -33,7 +33,7 @@ use std::{
     sync::OnceLock,
     time::{Duration, Instant},
 };
-use theme::{AccentColors, ThemeSettings};
+use theme::ThemeSettings;
 use time::{OffsetDateTime, UtcOffset, format_description::BorrowedFormatItem};
 use ui::{
     ButtonLike, Chip, CommonAnimationExt as _, ContextMenu, DiffStat, Divider, ScrollableHandle,
@@ -270,12 +270,8 @@ fn format_timestamp(timestamp: i64) -> String {
         .unwrap_or_default()
 }
 
-fn accent_colors_count(accents: &AccentColors) -> usize {
-    accents.0.len()
-}
-
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
-struct BranchId(usize);
+struct BranchId(u32);
 
 #[derive(Debug)]
 enum LaneState {
@@ -538,7 +534,7 @@ struct GraphData {
 }
 
 impl GraphData {
-    fn new(_accent_colors_count: usize) -> Self {
+    fn new() -> Self {
         GraphData {
             lane_states: SmallVec::default(),
             parent_to_lanes: HashMap::default(),
@@ -576,7 +572,9 @@ impl GraphData {
 
     fn allocate_branch_id(&mut self) -> BranchId {
         let branch_id = self.next_branch_id;
-        self.next_branch_id = BranchId(self.next_branch_id.0 + 1);
+        // todo(git_graph) We should figure what what branch ids are unused
+        // instead of hoping saturating add never conflicts when it overflows
+        self.next_branch_id = BranchId(self.next_branch_id.0.saturating_add(1));
         branch_id
     }
 
@@ -894,8 +892,7 @@ impl GitGraph {
             .detach();
 
         let git_store = project.read(cx).git_store().clone();
-        let accent_colors = cx.theme().accents();
-        let graph = GraphData::new(accent_colors_count(accent_colors));
+        let graph = GraphData::new();
         let log_source = LogSource::default();
         let log_order = LogOrder::default();
 
@@ -1135,7 +1132,7 @@ impl GitGraph {
                 }
 
                 let accent_colors = cx.theme().accents();
-                let accent_color = accent_colors.color_for_index(commit.branch_id.0 as u32);
+                let accent_color = accent_colors.color_for_index(commit.branch_id.0);
 
                 let is_selected = self.selected_entry_idx == Some(idx);
                 let column_label = |label: SharedString| {
@@ -1351,7 +1348,7 @@ impl GitGraph {
         let ref_names = commit_entry.data.ref_names.clone();
 
         let accent_colors = cx.theme().accents();
-        let accent_color = accent_colors.color_for_index(commit_entry.branch_id.0 as u32);
+        let accent_color = accent_colors.color_for_index(commit_entry.branch_id.0);
 
         let (author_name, author_email, commit_timestamp, subject) = match &data {
             CommitDataState::Loaded(data) => (
@@ -1722,7 +1719,7 @@ impl GitGraph {
             .cloned()
             .collect();
 
-        let mut lines: BTreeMap<usize, Vec<_>> = BTreeMap::new();
+        let mut lines: BTreeMap<u32, Vec<_>> = BTreeMap::new();
 
         let hovered_entry_idx = self.hovered_entry_idx;
         let selected_entry_idx = self.selected_entry_idx;
@@ -1767,7 +1764,7 @@ impl GitGraph {
                     }
 
                     for (row_idx, row) in rows.into_iter().enumerate() {
-                        let row_color = accent_colors.color_for_index(row.branch_id.0 as u32);
+                        let row_color = accent_colors.color_for_index(row.branch_id.0);
                         let row_y_center =
                             bounds.origin.y + row_idx as f32 * row_height + row_height / 2.0
                                 - vertical_scroll_offset;
@@ -1909,7 +1906,7 @@ impl GitGraph {
                     }
 
                     for (branch_id, builders) in lines {
-                        let line_color = accent_colors.color_for_index(branch_id as u32);
+                        let line_color = accent_colors.color_for_index(branch_id);
 
                         for builder in builders {
                             if let Ok(path) = builder.build() {
@@ -2840,7 +2837,7 @@ mod tests {
         let mut parent_to_branch_ids: HashMap<Oid, SmallVec<[BranchId; 1]>> = HashMap::default();
         let mut commit_branch_ids = HashMap::default();
         let mut line_branch_ids = HashMap::default();
-        let mut next_branch_id = 0usize;
+        let mut next_branch_id = 0u32;
 
         let mut allocate_branch_id = || {
             let branch_id = BranchId(next_branch_id);
@@ -3127,7 +3124,7 @@ mod tests {
             }),
         ];
 
-        let mut graph_data = GraphData::new(8);
+        let mut graph_data = GraphData::new();
         graph_data.add_commits(&commits);
 
         if let Err(error) = verify_all_invariants(&graph_data, &commits) {
@@ -3161,7 +3158,7 @@ mod tests {
             }),
         ];
 
-        let mut graph_data = GraphData::new(8);
+        let mut graph_data = GraphData::new();
         graph_data.add_commits(&commits);
 
         if let Err(error) = verify_all_invariants(&graph_data, &commits) {
@@ -3190,7 +3187,7 @@ mod tests {
                 seed
             );
 
-            let mut graph_data = GraphData::new(8);
+            let mut graph_data = GraphData::new();
             graph_data.add_commits(&commits);
 
             if let Err(error) = verify_all_invariants(&graph_data, &commits) {
@@ -3215,7 +3212,7 @@ mod tests {
             };
 
             let commits = generate_random_commit_dag(&mut rng, num_commits, adversarial);
-            let mut graph_data = GraphData::new(8);
+            let mut graph_data = GraphData::new();
             graph_data.add_commits(&commits);
 
             if let Err(error) = verify_branch_ids(&graph_data, &commits) {
@@ -3284,7 +3281,7 @@ mod tests {
             .to_vec()
         });
 
-        let mut graph_data = GraphData::new(8);
+        let mut graph_data = GraphData::new();
         graph_data.add_commits(&graph_commits);
 
         if let Err(error) = verify_all_invariants(&graph_data, &commits) {
