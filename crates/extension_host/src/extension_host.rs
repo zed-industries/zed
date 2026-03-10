@@ -32,8 +32,8 @@ use futures::{
     select_biased,
 };
 use gpui::{
-    App, AppContext as _, AsyncApp, Context, Entity, EventEmitter, Global, Task, WeakEntity,
-    actions,
+    App, AppContext as _, AsyncApp, Context, Entity, EventEmitter, Global, Task, UpdateGlobal as _,
+    WeakEntity, actions,
 };
 use http_client::{AsyncBody, HttpClient, HttpClientWithUrl};
 use language::{
@@ -46,7 +46,7 @@ use release_channel::ReleaseChannel;
 use remote::RemoteClient;
 use semver::Version;
 use serde::{Deserialize, Serialize};
-use settings::Settings;
+use settings::{SemanticTokenRules, Settings, SettingsStore};
 use std::ops::RangeInclusive;
 use std::str::FromStr;
 use std::{
@@ -55,6 +55,7 @@ use std::{
     sync::Arc,
     time::{Duration, Instant},
 };
+use task::TaskTemplates;
 use url::Url;
 use util::{ResultExt, paths::RemotePathBuf};
 use wasm_host::{
@@ -1220,6 +1221,15 @@ impl ExtensionStore {
         self.proxy
             .remove_languages(&languages_to_remove, &grammars_to_remove);
 
+        // Remove semantic token rules for languages being unloaded.
+        if !languages_to_remove.is_empty() {
+            SettingsStore::update_global(cx, |store, cx| {
+                for language in &languages_to_remove {
+                    store.remove_language_semantic_token_rules(language.as_ref(), cx);
+                }
+            });
+        }
+
         let mut grammars_to_add = Vec::new();
         let mut themes_to_add = Vec::new();
         let mut icon_themes_to_add = Vec::new();
@@ -1267,23 +1277,33 @@ impl ExtensionStore {
             .iter()
             .filter(|(_, entry)| extensions_to_load.contains(&entry.extension))
             .collect::<Vec<_>>();
+        let mut semantic_token_rules_to_add: Vec<(LanguageName, SemanticTokenRules)> = Vec::new();
         for (language_name, language) in languages_to_add {
             let mut language_path = self.installed_dir.clone();
             language_path.extend([
                 Path::new(language.extension.as_ref()),
                 language.path.as_path(),
             ]);
+
+            // Load semantic token rules if present in the language directory.
+            let rules_path = language_path.join(SemanticTokenRules::FILE_NAME);
+            if std::fs::exists(&rules_path).is_ok_and(|exists| exists)
+                && let Some(rules) = SemanticTokenRules::load(&rules_path).log_err()
+            {
+                semantic_token_rules_to_add.push((language_name.clone(), rules));
+            }
+
             self.proxy.register_language(
                 language_name.clone(),
                 language.grammar.clone(),
                 language.matcher.clone(),
                 language.hidden,
                 Arc::new(move || {
-                    let config = std::fs::read_to_string(language_path.join("config.toml"))?;
-                    let config: LanguageConfig = ::toml::from_str(&config)?;
+                    let config =
+                        LanguageConfig::load(language_path.join(LanguageConfig::FILE_NAME))?;
                     let queries = load_plugin_queries(&language_path);
                     let context_provider =
-                        std::fs::read_to_string(language_path.join("tasks.json"))
+                        std::fs::read_to_string(language_path.join(TaskTemplates::FILE_NAME))
                             .ok()
                             .and_then(|contents| {
                                 let definitions =
@@ -1300,6 +1320,15 @@ impl ExtensionStore {
                     })
                 }),
             );
+        }
+
+        // Register semantic token rules for newly loaded extension languages.
+        if !semantic_token_rules_to_add.is_empty() {
+            SettingsStore::update_global(cx, |store, cx| {
+                for (language_name, rules) in semantic_token_rules_to_add {
+                    store.set_language_semantic_token_rules(language_name.0.clone(), rules, cx);
+                }
+            });
         }
 
         let fs = self.fs.clone();
@@ -1544,7 +1573,7 @@ impl ExtensionStore {
                 if !fs_metadata.is_dir {
                     continue;
                 }
-                let language_config_path = language_path.join("config.toml");
+                let language_config_path = language_path.join(LanguageConfig::FILE_NAME);
                 let config = fs.load(&language_config_path).await.with_context(|| {
                     format!("loading language config from {language_config_path:?}")
                 })?;
@@ -1667,7 +1696,7 @@ impl ExtensionStore {
         cx.background_spawn(async move {
             const EXTENSION_TOML: &str = "extension.toml";
             const EXTENSION_WASM: &str = "extension.wasm";
-            const CONFIG_TOML: &str = "config.toml";
+            const CONFIG_TOML: &str = LanguageConfig::FILE_NAME;
 
             if is_dev {
                 let manifest_toml = toml::to_string(&loaded_extension.manifest)?;

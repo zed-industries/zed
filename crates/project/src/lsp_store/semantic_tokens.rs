@@ -12,8 +12,11 @@ use gpui::{App, AppContext, AsyncApp, Context, Entity, ReadGlobal as _, SharedSt
 use language::{Buffer, LanguageName, language_settings::all_language_settings};
 use lsp::{AdapterServerCapabilities, LanguageServerId};
 use rpc::{TypedEnvelope, proto};
-use settings::{SemanticTokenRule, SemanticTokenRules, Settings as _, SettingsStore};
+use settings::{
+    DefaultSemanticTokenRules, SemanticTokenRule, SemanticTokenRules, Settings as _, SettingsStore,
+};
 use smol::future::yield_now;
+
 use text::{Anchor, Bias, OffsetUtf16, PointUtf16, Unclipped};
 use util::ResultExt as _;
 
@@ -56,6 +59,15 @@ impl SemanticTokenConfig {
         } else {
             false
         }
+    }
+
+    /// Clears all cached stylizers.
+    ///
+    /// This is called when settings change to ensure that any modifications to
+    /// language-specific semantic token rules (e.g. from extension install/uninstall)
+    /// are picked up. Stylizers are recreated lazily on next use.
+    pub(super) fn clear_stylizers(&mut self) {
+        self.stylizers.clear();
     }
 
     pub(super) fn update_global_mode(&mut self, new_mode: settings::SemanticTokens) -> bool {
@@ -462,6 +474,7 @@ impl SemanticTokenStylizer {
         let global_rules = &ProjectSettings::get_global(cx)
             .global_lsp_settings
             .semantic_token_rules;
+        let default_rules = cx.global::<DefaultSemanticTokenRules>();
 
         let rules_by_token_type = token_types
             .iter()
@@ -475,6 +488,7 @@ impl SemanticTokenStylizer {
                     .rules
                     .iter()
                     .chain(language_rules.into_iter().flat_map(|lr| &lr.rules))
+                    .chain(default_rules.0.rules.iter())
                     .rev()
                     .filter(filter)
                     .cloned()

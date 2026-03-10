@@ -415,6 +415,8 @@ impl TerminalBuilder {
             event_loop_task: Task::ready(Ok(())),
             background_executor: background_executor.clone(),
             path_style,
+            #[cfg(any(test, feature = "test-support"))]
+            input_log: Vec::new(),
         };
 
         Ok(TerminalBuilder {
@@ -646,6 +648,8 @@ impl TerminalBuilder {
                 event_loop_task: Task::ready(Ok(())),
                 background_executor,
                 path_style,
+                #[cfg(any(test, feature = "test-support"))]
+                input_log: Vec::new(),
             };
 
             if !activation_script.is_empty() && no_task {
@@ -870,6 +874,8 @@ pub struct Terminal {
     event_loop_task: Task<Result<(), anyhow::Error>>,
     background_executor: BackgroundExecutor,
     path_style: PathStyle,
+    #[cfg(any(test, feature = "test-support"))]
+    input_log: Vec<Vec<u8>>,
 }
 
 struct CopyTemplate {
@@ -1451,7 +1457,16 @@ impl Terminal {
             .push_back(InternalEvent::Scroll(AlacScroll::Bottom));
         self.events.push_back(InternalEvent::SetSelection(None));
 
+        let input = input.into();
+        #[cfg(any(test, feature = "test-support"))]
+        self.input_log.push(input.to_vec());
+
         self.write_to_pty(input);
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn take_input_log(&mut self) -> Vec<Vec<u8>> {
+        std::mem::take(&mut self.input_log)
     }
 
     pub fn toggle_vi_mode(&mut self) {

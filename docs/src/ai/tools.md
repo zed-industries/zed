@@ -91,6 +91,6 @@ Executes shell commands and returns the combined output, creating a new shell pr
 
 ## Other Tools
 
-### `subagent`
+### `spawn_agent`
 
-Spawns a subagent with its own context window to perform a delegated task. Useful for running parallel investigations, completing self-contained tasks, or performing research where only the outcome matters. Each subagent has access to the same tools as the parent agent.
+Spawns a subagent with its own context window to perform a delegated task. Each subagent has access to the same tools as the parent agent.

@@ -2632,6 +2632,84 @@ async fn test_in_progress_send_canceled_by_next_send(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_retry_cancelled_promptly_on_new_send(cx: &mut TestAppContext) {
+    // Regression test: when a completion fails with a retryable error (e.g. upstream 500),
+    // the retry loop waits on a timer. If the user switches models and sends a new message
+    // during that delay, the old turn should exit immediately instead of retrying with the
+    // stale model.
+    let ThreadTest { model, thread, .. } = setup(cx, TestModel::Fake).await;
+    let model_a = model.as_fake();
+
+    // Start a turn with model_a.
+    let events_1 = thread
+        .update(cx, |thread, cx| {
+            thread.send(UserMessageId::new(), ["Hello"], cx)
+        })
+        .unwrap();
+    cx.run_until_parked();
+    assert_eq!(model_a.completion_count(), 1);
+
+    // Model returns a retryable upstream 500. The turn enters the retry delay.
+    model_a.send_last_completion_stream_error(
+        LanguageModelCompletionError::UpstreamProviderError {
+            message: "Internal server error".to_string(),
+            status: http_client::StatusCode::INTERNAL_SERVER_ERROR,
+            retry_after: None,
+        },
+    );
+    model_a.end_last_completion_stream();
+    cx.run_until_parked();
+
+    // The old completion was consumed; model_a has no pending requests yet because the
+    // retry timer hasn't fired.
+    assert_eq!(model_a.completion_count(), 0);
+
+    // Switch to model_b and send a new message. This cancels the old turn.
+    let model_b = Arc::new(FakeLanguageModel::with_id_and_thinking(
+        "fake", "model-b", "Model B", false,
+    ));
+    thread.update(cx, |thread, cx| {
+        thread.set_model(model_b.clone(), cx);
+    });
+    let events_2 = thread
+        .update(cx, |thread, cx| {
+            thread.send(UserMessageId::new(), ["Continue"], cx)
+        })
+        .unwrap();
+    cx.run_until_parked();
+
+    // model_b should have received its completion request.
+    assert_eq!(model_b.as_fake().completion_count(), 1);
+
+    // Advance the clock well past the retry delay (BASE_RETRY_DELAY = 5s).
+    cx.executor().advance_clock(Duration::from_secs(10));
+    cx.run_until_parked();
+
+    // model_a must NOT have received another completion request — the cancelled turn
+    // should have exited during the retry delay rather than retrying with the old model.
+    assert_eq!(
+        model_a.completion_count(),
+        0,
+        "old model should not receive a retry request after cancellation"
+    );
+
+    // Complete model_b's turn.
+    model_b
+        .as_fake()
+        .send_last_completion_stream_text_chunk("Done!");
+    model_b
+        .as_fake()
+        .send_last_completion_stream_event(LanguageModelCompletionEvent::Stop(StopReason::EndTurn));
+    model_b.as_fake().end_last_completion_stream();
+
+    let events_1 = events_1.collect::<Vec<_>>().await;
+    assert_eq!(stop_events(events_1), vec![acp::StopReason::Cancelled]);
+
+    let events_2 = events_2.collect::<Vec<_>>().await;
+    assert_eq!(stop_events(events_2), vec![acp::StopReason::EndTurn]);
+}
+
+#[gpui::test]
 async fn test_subsequent_successful_sends_dont_cancel(cx: &mut TestAppContext) {
     let ThreadTest { model, thread, .. } = setup(cx, TestModel::Fake).await;
     let fake_model = model.as_fake();
@@ -3089,7 +3167,7 @@ async fn test_agent_connection(cx: &mut TestAppContext) {
         let clock = Arc::new(clock::FakeSystemClock::new());
         let client = Client::new(clock, http_client, cx);
         let user_store = cx.new(|cx| UserStore::new(client.clone(), cx));
-        language_model::init(client.clone(), cx);
+        language_model::init(user_store.clone(), client.clone(), cx);
         language_models::init(user_store, client.clone(), cx);
         LanguageModelRegistry::test(cx);
     });
@@ -3527,6 +3605,113 @@ async fn test_send_max_retries_exceeded(cx: &mut TestAppContext) {
     ));
 }
 
+#[gpui::test]
+async fn test_streaming_tool_completes_when_llm_stream_ends_without_final_input(
+    cx: &mut TestAppContext,
+) {
+    init_test(cx);
+    always_allow_tools(cx);
+
+    let ThreadTest { model, thread, .. } = setup(cx, TestModel::Fake).await;
+    let fake_model = model.as_fake();
+
+    thread.update(cx, |thread, _cx| {
+        thread.add_tool(StreamingEchoTool::new());
+    });
+
+    let _events = thread
+        .update(cx, |thread, cx| {
+            thread.send(UserMessageId::new(), ["Use the streaming_echo tool"], cx)
+        })
+        .unwrap();
+    cx.run_until_parked();
+
+    // Send a partial tool use (is_input_complete = false), simulating the LLM
+    // streaming input for a tool.
+    let tool_use = LanguageModelToolUse {
+        id: "tool_1".into(),
+        name: "streaming_echo".into(),
+        raw_input: r#"{"text": "partial"}"#.into(),
+        input: json!({"text": "partial"}),
+        is_input_complete: false,
+        thought_signature: None,
+    };
+    fake_model
+        .send_last_completion_stream_event(LanguageModelCompletionEvent::ToolUse(tool_use.clone()));
+    cx.run_until_parked();
+
+    // Send a stream error WITHOUT ever sending is_input_complete = true.
+    // Before the fix, this would deadlock: the tool waits for more partials
+    // (or cancellation), run_turn_internal waits for the tool, and the sender
+    // keeping the channel open lives inside RunningTurn.
+    fake_model.send_last_completion_stream_error(
+        LanguageModelCompletionError::UpstreamProviderError {
+            message: "Internal server error".to_string(),
+            status: http_client::StatusCode::INTERNAL_SERVER_ERROR,
+            retry_after: None,
+        },
+    );
+    fake_model.end_last_completion_stream();
+
+    // Advance past the retry delay so run_turn_internal retries.
+    cx.executor().advance_clock(Duration::from_secs(5));
+    cx.run_until_parked();
+
+    // The retry request should contain the streaming tool's error result,
+    // proving the tool terminated and its result was forwarded.
+    let completion = fake_model
+        .pending_completions()
+        .pop()
+        .expect("No running turn");
+    assert_eq!(
+        completion.messages[1..],
+        vec![
+            LanguageModelRequestMessage {
+                role: Role::User,
+                content: vec!["Use the streaming_echo tool".into()],
+                cache: false,
+                reasoning_details: None,
+            },
+            LanguageModelRequestMessage {
+                role: Role::Assistant,
+                content: vec![language_model::MessageContent::ToolUse(tool_use.clone())],
+                cache: false,
+                reasoning_details: None,
+            },
+            LanguageModelRequestMessage {
+                role: Role::User,
+                content: vec![language_model::MessageContent::ToolResult(
+                    LanguageModelToolResult {
+                        tool_use_id: tool_use.id.clone(),
+                        tool_name: tool_use.name,
+                        is_error: true,
+                        content: "Failed to receive tool input: tool input was not fully received"
+                            .into(),
+                        output: Some(
+                            "Failed to receive tool input: tool input was not fully received"
+                                .into()
+                        ),
+                    }
+                )],
+                cache: true,
+                reasoning_details: None,
+            },
+        ]
+    );
+
+    // Finish the retry round so the turn completes cleanly.
+    fake_model.send_last_completion_stream_text_chunk("Done");
+    fake_model.end_last_completion_stream();
+    cx.run_until_parked();
+
+    thread.read_with(cx, |thread, _cx| {
+        assert!(
+            thread.is_turn_complete(),
+            "Thread should not be stuck; the turn should have completed",
+        );
+    });
+}
+
 /// Filters out the stop events for asserting against in tests
 fn stop_events(result_events: Vec<Result<ThreadEvent>>) -> Vec<acp::StopReason> {
     result_events
@@ -3582,7 +3767,9 @@ async fn setup(cx: &mut TestAppContext, model: TestModel) -> ThreadTest {
                             ToolRequiringPermission::NAME: true,
                             InfiniteTool::NAME: true,
                             CancellationAwareTool::NAME: true,
-                            (TerminalTool::NAME): true,
+                            StreamingEchoTool::NAME: true,
+                            StreamingFailingEchoTool::NAME: true,
+                            TerminalTool::NAME: true,
                         }
                     }
                 }
@@ -3604,7 +3791,7 @@ async fn setup(cx: &mut TestAppContext, model: TestModel) -> ThreadTest {
                 cx.set_http_client(Arc::new(http_client));
                 let client = Client::production(cx);
                 let user_store = cx.new(|cx| UserStore::new(client.clone(), cx));
-                language_model::init(client.clone(), cx);
+                language_model::init(user_store.clone(), client.clone(), cx);
                 language_models::init(user_store, client.clone(), cx);
             }
         };
@@ -6148,4 +6335,197 @@ async fn test_queued_message_ends_turn_at_boundary(cx: &mut TestAppContext) {
             "Thread should not be running after turn ends"
         );
     });
+}
+
+#[gpui::test]
+async fn test_streaming_tool_error_breaks_stream_loop_immediately(cx: &mut TestAppContext) {
+    init_test(cx);
+    always_allow_tools(cx);
+
+    let ThreadTest { model, thread, .. } = setup(cx, TestModel::Fake).await;
+    let fake_model = model.as_fake();
+
+    thread.update(cx, |thread, _cx| {
+        thread.add_tool(StreamingFailingEchoTool {
+            receive_chunks_until_failure: 1,
+        });
+    });
+
+    let _events = thread
+        .update(cx, |thread, cx| {
+            thread.send(
+                UserMessageId::new(),
+                ["Use the streaming_failing_echo tool"],
+                cx,
+            )
+        })
+        .unwrap();
+    cx.run_until_parked();
+
+    let tool_use = LanguageModelToolUse {
+        id: "call_1".into(),
+        name: StreamingFailingEchoTool::NAME.into(),
+        raw_input: "hello".into(),
+        input: json!({}),
+        is_input_complete: false,
+        thought_signature: None,
+    };
+
+    fake_model
+        .send_last_completion_stream_event(LanguageModelCompletionEvent::ToolUse(tool_use.clone()));
+
+    cx.run_until_parked();
+
+    let completions = fake_model.pending_completions();
+    let last_completion = completions.last().unwrap();
+
+    assert_eq!(
+        last_completion.messages[1..],
+        vec![
+            LanguageModelRequestMessage {
+                role: Role::User,
+                content: vec!["Use the streaming_failing_echo tool".into()],
+                cache: false,
+                reasoning_details: None,
+            },
+            LanguageModelRequestMessage {
+                role: Role::Assistant,
+                content: vec![language_model::MessageContent::ToolUse(tool_use.clone())],
+                cache: false,
+                reasoning_details: None,
+            },
+            LanguageModelRequestMessage {
+                role: Role::User,
+                content: vec![language_model::MessageContent::ToolResult(
+                    LanguageModelToolResult {
+                        tool_use_id: tool_use.id.clone(),
+                        tool_name: tool_use.name,
+                        is_error: true,
+                        content: "failed".into(),
+                        output: Some("failed".into()),
+                    }
+                )],
+                cache: true,
+                reasoning_details: None,
+            },
+        ]
+    );
+}
+
+#[gpui::test]
+async fn test_streaming_tool_error_waits_for_prior_tools_to_complete(cx: &mut TestAppContext) {
+    init_test(cx);
+    always_allow_tools(cx);
+
+    let ThreadTest { model, thread, .. } = setup(cx, TestModel::Fake).await;
+    let fake_model = model.as_fake();
+
+    let (complete_streaming_echo_tool_call_tx, complete_streaming_echo_tool_call_rx) =
+        oneshot::channel();
+
+    thread.update(cx, |thread, _cx| {
+        thread.add_tool(
+            StreamingEchoTool::new().with_wait_until_complete(complete_streaming_echo_tool_call_rx),
+        );
+        thread.add_tool(StreamingFailingEchoTool {
+            receive_chunks_until_failure: 1,
+        });
+    });
+
+    let _events = thread
+        .update(cx, |thread, cx| {
+            thread.send(
+                UserMessageId::new(),
+                ["Use the streaming_echo tool and the streaming_failing_echo tool"],
+                cx,
+            )
+        })
+        .unwrap();
+    cx.run_until_parked();
+
+    fake_model.send_last_completion_stream_event(LanguageModelCompletionEvent::ToolUse(
+        LanguageModelToolUse {
+            id: "call_1".into(),
+            name: StreamingEchoTool::NAME.into(),
+            raw_input: "hello".into(),
+            input: json!({ "text": "hello" }),
+            is_input_complete: false,
+            thought_signature: None,
+        },
+    ));
+    let first_tool_use = LanguageModelToolUse {
+        id: "call_1".into(),
+        name: StreamingEchoTool::NAME.into(),
+        raw_input: "hello world".into(),
+        input: json!({ "text": "hello world" }),
+        is_input_complete: true,
+        thought_signature: None,
+    };
+    fake_model.send_last_completion_stream_event(LanguageModelCompletionEvent::ToolUse(
+        first_tool_use.clone(),
+    ));
+    let second_tool_use = LanguageModelToolUse {
+        name: StreamingFailingEchoTool::NAME.into(),
+        raw_input: "hello".into(),
+        input: json!({ "text": "hello" }),
+        is_input_complete: false,
+        thought_signature: None,
+        id: "call_2".into(),
+    };
+    fake_model.send_last_completion_stream_event(LanguageModelCompletionEvent::ToolUse(
+        second_tool_use.clone(),
+    ));
+
+    cx.run_until_parked();
+
+    complete_streaming_echo_tool_call_tx.send(()).unwrap();
+
+    cx.run_until_parked();
+
+    let completions = fake_model.pending_completions();
+    let last_completion = completions.last().unwrap();
+
+    assert_eq!(
+        last_completion.messages[1..],
+        vec![
+            LanguageModelRequestMessage {
+                role: Role::User,
+                content: vec![
+                    "Use the streaming_echo tool and the streaming_failing_echo tool".into()
+                ],
+                cache: false,
+                reasoning_details: None,
+            },
+            LanguageModelRequestMessage {
+                role: Role::Assistant,
+                content: vec![
+                    language_model::MessageContent::ToolUse(first_tool_use.clone()),
+                    language_model::MessageContent::ToolUse(second_tool_use.clone())
+                ],
+                cache: false,
+                reasoning_details: None,
+            },
+            LanguageModelRequestMessage {
+                role: Role::User,
+                content: vec![
+                    language_model::MessageContent::ToolResult(LanguageModelToolResult {
+                        tool_use_id: second_tool_use.id.clone(),
+                        tool_name: second_tool_use.name,
+                        is_error: true,
+                        content: "failed".into(),
+                        output: Some("failed".into()),
+                    }),
+                    language_model::MessageContent::ToolResult(LanguageModelToolResult {
+                        tool_use_id: first_tool_use.id.clone(),
+                        tool_name: first_tool_use.name,
+                        is_error: false,
+                        content: "hello world".into(),
+                        output: Some("hello world".into()),
+                    }),
+                ],
+                cache: true,
+                reasoning_details: None,
+            },
+        ]
+    );
 }

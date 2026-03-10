@@ -150,7 +150,10 @@ impl Room {
             info!("Using experimental.rodio_audio audio pipeline for output");
             playback::play_remote_audio_track(&track.0, speaker, cx)
         } else if speaker.sends_legacy_audio {
-            Ok(self.playback.play_remote_audio_track(&track.0))
+            let output_audio_device = AudioSettings::get_global(cx).output_audio_device.clone();
+            Ok(self
+                .playback
+                .play_remote_audio_track(&track.0, output_audio_device))
         } else {
             Err(anyhow!("Client version too old to play audio in call"))
         }
