@@ -55,13 +55,6 @@ pub(crate) fn extension_bump() -> Workflow {
     );
 
     named::workflow()
-        .defaults(
-            Defaults::default().run(
-                RunDefaults::default()
-                    .shell(BASH_SHELL)
-                    .working_directory(working_directory.to_string()),
-            ),
-        )
         .add_event(
             Event::default().workflow_call(
                 WorkflowCall::default()
@@ -91,10 +84,19 @@ pub(crate) fn extension_bump() -> Workflow {
         .add_job(trigger_release.name, trigger_release.job)
 }
 
+fn extension_job_defaults() -> Defaults {
+    Defaults::default().run(
+        RunDefaults::default()
+            .shell(BASH_SHELL)
+            .working_directory("${{ inputs.working-directory }}"),
+    )
+}
+
 fn check_version_changed() -> (NamedJob, StepOutput, StepOutput) {
     let (compare_versions, version_changed, current_version) = compare_versions();
 
     let job = Job::default()
+        .defaults(extension_job_defaults())
         .with_repository_owner_guard()
         .outputs([
             (version_changed.name.to_owned(), version_changed.to_string()),
@@ -121,6 +123,7 @@ fn create_version_label(
     let (generate_token, generated_token) =
         generate_token(&app_id.to_string(), &app_secret.to_string(), None);
     let job = steps::dependant_job(dependencies)
+        .defaults(extension_job_defaults())
         .cond(Expression::new(format!(
             "{DEFAULT_REPOSITORY_OWNER_GUARD} && github.event_name == 'push' && \
             github.ref == 'refs/heads/main' && {version_changed} == 'true'",
@@ -199,6 +202,7 @@ fn bump_extension_version(
     let (bump_version, _new_version, title, body) = bump_version(current_version, bump_type);
 
     let job = steps::dependant_job(dependencies)
+        .defaults(extension_job_defaults())
         .cond(Expression::new(format!(
             "{DEFAULT_REPOSITORY_OWNER_GUARD} &&\n({force_bump} == true || {version_changed} == 'false')",
             force_bump = force_bump_output.expr(),
@@ -353,6 +357,7 @@ fn trigger_release(
     let (get_extension_id, extension_id) = get_extension_id();
 
     let job = dependant_job(dependencies)
+        .defaults(extension_job_defaults())
         .with_repository_owner_guard()
         .runs_on(runners::LINUX_SMALL)
         .add_step(generate_token)

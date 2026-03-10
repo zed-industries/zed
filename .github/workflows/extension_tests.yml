@@ -62,6 +62,10 @@ jobs:
     outputs:
       check_rust: ${{ steps.filter.outputs.check_rust }}
       check_extension: ${{ steps.filter.outputs.check_extension }}
+    defaults:
+      run:
+        shell: bash -euxo pipefail {0}
+        working-directory: ${{ inputs.working-directory }}
   check_rust:
     needs:
     - orchestrate
@@ -100,6 +104,10 @@ jobs:
         PACKAGE_NAME: ${{ steps.get-package-name.outputs.package_name }}
         NEXTEST_NO_TESTS: warn
     timeout-minutes: 6
+    defaults:
+      run:
+        shell: bash -euxo pipefail {0}
+        working-directory: ${{ inputs.working-directory }}
   check_extension:
     needs:
     - orchestrate
@@ -179,6 +187,10 @@ jobs:
         VERSION_CHANGED: ${{ steps.compare-versions-check.outputs.version_changed }}
         PR_USER_LOGIN: ${{ github.event.pull_request.user.login }}
     timeout-minutes: 6
+    defaults:
+      run:
+        shell: bash -euxo pipefail {0}
+        working-directory: ${{ inputs.working-directory }}
   tests_pass:
     needs:
     - orchestrate
@@ -206,10 +218,13 @@ jobs:
         RESULT_ORCHESTRATE: ${{ needs.orchestrate.result }}
         RESULT_CHECK_RUST: ${{ needs.check_rust.result }}
         RESULT_CHECK_EXTENSION: ${{ needs.check_extension.result }}
+    defaults:
+      run:
+        shell: bash -euxo pipefail {0}
+        working-directory: ${{ inputs.working-directory }}
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref_name }}-${{ github.ref_name == 'main' && github.sha || 'anysha' }}
   cancel-in-progress: true
 defaults:
   run:
     shell: bash -euxo pipefail {0}
-    working-directory: ${{ inputs.working-directory }}

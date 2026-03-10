@@ -23,7 +23,10 @@ pub(crate) fn extension_tests() -> Workflow {
     let should_check_extension =
         PathCondition::new("check_extension", r"^(extension\.toml|.*\.scm)$");
 
-    let orchestrate = orchestrate_for_extension(&[&should_check_rust, &should_check_extension]);
+    let orchestrate = with_extension_defaults(orchestrate_for_extension(&[
+        &should_check_rust,
+        &should_check_extension,
+    ]));
 
     let jobs = [
         orchestrate,
@@ -31,18 +34,11 @@ pub(crate) fn extension_tests() -> Workflow {
         should_check_extension.guard(check_extension()),
     ];
 
-    let tests_pass = tests_pass(&jobs);
+    let tests_pass = with_extension_defaults(tests_pass(&jobs));
 
     let working_directory = WorkflowInput::string("working-directory", Some(".".to_owned()));
 
     named::workflow()
-        .defaults(
-            Defaults::default().run(
-                RunDefaults::default()
-                    .shell(BASH_SHELL)
-                    .working_directory(working_directory.to_string()),
-            ),
-        )
         .add_event(
             Event::default().workflow_call(
                 WorkflowCall::default()
@@ -98,10 +94,26 @@ fn run_nextest(package_name: &StepOutput) -> Step<Run> {
     .add_env(("NEXTEST_NO_TESTS", "warn"))
 }
 
+fn extension_job_defaults() -> Defaults {
+    Defaults::default().run(
+        RunDefaults::default()
+            .shell(BASH_SHELL)
+            .working_directory("${{ inputs.working-directory }}"),
+    )
+}
+
+fn with_extension_defaults(named_job: NamedJob) -> NamedJob {
+    NamedJob {
+        name: named_job.name,
+        job: named_job.job.defaults(extension_job_defaults()),
+    }
+}
+
 fn check_rust() -> NamedJob {
     let (get_package, package_name) = get_package_name();
 
     let job = Job::default()
+        .defaults(extension_job_defaults())
         .with_repository_owner_guard()
         .runs_on(runners::LINUX_LARGE_RAM)
         .timeout_minutes(6u32)
@@ -122,6 +134,7 @@ pub(crate) fn check_extension() -> NamedJob {
     let (check_version_job, version_changed, _) = compare_versions();
 
     let job = Job::default()
+        .defaults(extension_job_defaults())
         .with_repository_owner_guard()
         .runs_on(runners::LINUX_LARGE_RAM)
         .timeout_minutes(6u32)
