@@ -624,6 +624,12 @@ pub struct GitPanelSettingsContent {
     ///
     /// Default: false
     pub diff_stats: Option<bool>,
+
+    /// Whether to open a separate diff tab per file instead of the
+    /// project-wide diff view.
+    ///
+    /// Default: false
+    pub file_based_diff: Option<bool>,
 }
 
 #[derive(

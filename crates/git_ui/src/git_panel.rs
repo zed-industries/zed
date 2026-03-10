@@ -6,7 +6,8 @@ use crate::project_diff::{self, BranchDiff, Diff, ProjectDiff};
 use crate::remote_output::{self, RemoteAction, SuccessMessage};
 use crate::{branch_picker, picker_prompt, render_remote_button};
 use crate::{
-    file_history_view::FileHistoryView, git_panel_settings::GitPanelSettings, git_status_icon,
+    file_diff_view::FileDiffView, file_history_view::FileHistoryView,
+    git_panel_settings::GitPanelSettings, git_status_icon,
     repository_selector::RepositorySelector,
 };
 use agent_settings::AgentSettings;
@@ -1251,28 +1252,43 @@ impl GitPanel {
     fn open_diff(&mut self, _: &menu::Confirm, window: &mut Window, cx: &mut Context<Self>) {
         maybe!({
             let entry = self.entries.get(self.selected_entry?)?.status_entry()?;
-            let workspace = self.workspace.upgrade()?;
-            let git_repo = self.active_repository.as_ref()?;
 
-            if let Some(project_diff) = workspace.read(cx).active_item_as::<ProjectDiff>(cx)
-                && let Some(project_path) = project_diff.read(cx).active_path(cx)
-                && Some(&entry.repo_path)
-                    == git_repo
-                        .read(cx)
-                        .project_path_to_repo_path(&project_path, cx)
-                        .as_ref()
-            {
-                project_diff.focus_handle(cx).focus(window, cx);
-                project_diff.update(cx, |project_diff, cx| project_diff.autoscroll(cx));
-                return None;
-            };
+            if GitPanelSettings::get_global(cx).file_based_diff {
+                let active_repo = self.active_repository.as_ref()?;
+                let path = active_repo
+                    .read(cx)
+                    .repo_path_to_project_path(&entry.repo_path, cx)?;
+                if entry.status.is_deleted() {
+                    return None;
+                }
 
-            self.workspace
-                .update(cx, |workspace, cx| {
-                    ProjectDiff::deploy_at(workspace, Some(entry.clone()), window, cx);
-                })
-                .ok();
-            self.focus_handle.focus(window, cx);
+                let workspace = self.workspace.clone();
+                FileDiffView::open_git_diff(path, workspace, window, cx)
+                    .detach_and_log_err(cx);
+            } else {
+                let workspace = self.workspace.upgrade()?;
+                let git_repo = self.active_repository.as_ref()?;
+
+                if let Some(project_diff) = workspace.read(cx).active_item_as::<ProjectDiff>(cx)
+                    && let Some(project_path) = project_diff.read(cx).active_path(cx)
+                    && Some(&entry.repo_path)
+                        == git_repo
+                            .read(cx)
+                            .project_path_to_repo_path(&project_path, cx)
+                            .as_ref()
+                {
+                    project_diff.focus_handle(cx).focus(window, cx);
+                    project_diff.update(cx, |project_diff, cx| project_diff.autoscroll(cx));
+                    return None;
+                }
+
+                self.workspace
+                    .update(cx, |workspace, cx| {
+                        ProjectDiff::deploy_at(workspace, Some(entry.clone()), window, cx);
+                    })
+                    .ok();
+                self.focus_handle.focus(window, cx);
+            }
 
             Some(())
         });

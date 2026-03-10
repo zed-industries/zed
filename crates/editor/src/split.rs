@@ -513,8 +513,13 @@ impl SplittableEditor {
         };
         let project = workspace.read(cx).project().clone();
 
+        let rhs_show_headers = self.rhs_multibuffer.read(cx).snapshot(cx).show_headers();
         let lhs_multibuffer = cx.new(|cx| {
-            let mut multibuffer = MultiBuffer::new(Capability::ReadOnly);
+            let mut multibuffer = if rhs_show_headers {
+                MultiBuffer::new(Capability::ReadOnly)
+            } else {
+                MultiBuffer::without_headers(Capability::ReadOnly)
+            };
             multibuffer.set_all_diff_hunks_expanded(cx);
             multibuffer
         });

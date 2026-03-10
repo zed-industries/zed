@@ -926,6 +926,11 @@
     //
     // Default: false
     "diff_stats": false,
+    // Whether to open a separate diff tab per file instead of the
+    // project-wide diff view.
+    //
+    // Default: false
+    "file_based_diff": false,
   },
   "message_editor": {
     // Whether to automatically replace emoji shortcodes with emoji characters.

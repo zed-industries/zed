@@ -14,7 +14,7 @@ use any_vec::AnyVec;
 use collections::HashMap;
 use editor::{
     Editor, EditorSettings, MultiBufferOffset, SplittableEditor, ToggleSplitDiff,
-    actions::{Backtab, FoldAll, Tab, ToggleFoldAll, UnfoldAll},
+    actions::{Backtab, FoldAll, OpenExcerpts, Tab, ToggleFoldAll, UnfoldAll},
 };
 use futures::channel::oneshot;
 use gpui::{
@@ -215,6 +215,34 @@ impl Render for BufferSearchBar {
         } else {
             None
         };
+
+        if self.dismissed && self.is_headerless_multibuffer(cx) {
+            let editor = self
+                .active_searchable_item
+                .as_ref()
+                .and_then(|item| item.act_as_type(TypeId::of::<Editor>(), cx))
+                .and_then(|item| item.downcast::<Editor>().ok());
+            return h_flex()
+                .w_full()
+                .justify_between()
+                .pl_0p5()
+                .when_some(editor, |this, editor| {
+                    this.child(
+                        IconButton::new("open-file-pencil", IconName::Pencil)
+                            .shape(IconButtonShape::Square)
+                            .tooltip(|_, cx| Tooltip::simple("Open File", cx))
+                            .on_click(move |_, window, cx| {
+                                editor.update(cx, |editor, cx| {
+                                    editor.open_excerpts(&OpenExcerpts, window, cx);
+                                });
+                            }),
+                    )
+                })
+                .when(has_splittable_editor, |this| {
+                    this.child(h_flex().gap_1().children(split_buttons))
+                })
+                .into_any_element();
+        }
 
         let collapse_expand_button = if self.needs_expand_collapse_option(cx) {
             let query_editor_focus = self.query_editor.focus_handle(cx);
@@ -710,7 +738,7 @@ impl ToolbarItemView for BufferSearchBar {
             let is_project_search = searchable_item_handle.supported_options(cx).find_in_results;
             self.active_searchable_item = Some(searchable_item_handle);
             drop(self.update_matches(true, false, window, cx));
-            if self.needs_expand_collapse_option(cx) {
+            if self.needs_expand_collapse_option(cx) || self.is_headerless_multibuffer(cx) {
                 return ToolbarItemLocation::PrimaryLeft;
             } else if !self.is_dismissed() {
                 if is_project_search {
@@ -1043,11 +1071,27 @@ impl BufferSearchBar {
 
     // We provide an expand/collapse button if we are in a multibuffer
     // and not doing a project search.
+    fn is_headerless_multibuffer(&self, cx: &App) -> bool {
+        self.active_searchable_item
+            .as_ref()
+            .and_then(|item| item.act_as_type(TypeId::of::<Editor>(), cx))
+            .and_then(|item| item.downcast::<Editor>().ok())
+            .is_some_and(|editor| {
+                let editor = editor.read(cx);
+                let multibuffer = editor.buffer().read(cx);
+                !multibuffer.is_singleton() && !multibuffer.snapshot(cx).show_headers()
+            })
+    }
+
     fn needs_expand_collapse_option(&self, cx: &App) -> bool {
         if let Some(item) = &self.active_searchable_item {
             let buffer_kind = item.buffer_kind(cx);
 
             if buffer_kind == ItemBufferKind::Singleton {
+                return false;
+            }
+
+            if self.is_headerless_multibuffer(cx) {
                 return false;
             }
 
