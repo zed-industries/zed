@@ -7,9 +7,7 @@ use std::time::Duration;
 
 use anyhow::{Context as _, Result};
 use collections::{HashMap, HashSet};
-use context_server::oauth::{
-    self, McpOAuthTokenProvider, OAuthDiscovery, OAuthSession,
-};
+use context_server::oauth::{self, McpOAuthTokenProvider, OAuthDiscovery, OAuthSession};
 use context_server::transport::{HttpTransport, TransportError};
 use context_server::{ContextServer, ContextServerCommand, ContextServerId};
 use credentials_provider::CredentialsProvider;
@@ -813,8 +811,7 @@ impl ContextServerStore {
             let id = id.clone();
             cx.spawn(async move |_this, cx| {
                 let credentials_provider = cx.update(|cx| <dyn CredentialsProvider>::global(cx));
-                if let Err(err) =
-                    Self::clear_session(&credentials_provider, &server_url, &cx).await
+                if let Err(err) = Self::clear_session(&credentials_provider, &server_url, &cx).await
                 {
                     log::warn!("{} failed to clear OAuth session on removal: {}", id, err);
                 }
@@ -1208,14 +1205,10 @@ impl ContextServerStore {
         // redirect URI changes every time. Authorization servers that do strict
         // redirect URI matching (e.g. Notion) reject the token exchange when
         // the redirect URI doesn't match what was registered with the client.
-        let client_registration = oauth::resolve_client_registration(
-            &http_client,
-            &discovery,
-            &redirect_uri,
-            None,
-        )
-        .await
-        .context("Failed to resolve OAuth client registration")?;
+        let client_registration =
+            oauth::resolve_client_registration(&http_client, &discovery, &redirect_uri, None)
+                .await
+                .context("Failed to resolve OAuth client registration")?;
 
         let auth_url = oauth::build_authorization_url(
             &discovery.auth_server_metadata,
@@ -1356,7 +1349,6 @@ impl ContextServerStore {
     fn dcr_keychain_key(auth_server_issuer: &url::Url) -> String {
         oauth::dcr_registration_cache_key(auth_server_issuer)
     }
-
 
     /// Clear the cached DCR client registration from the keychain.
     async fn clear_dcr_registration(
