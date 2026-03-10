@@ -421,6 +421,27 @@ fn set_or_clear_highlight(
     }
 }
 
+fn collect_block_replaced_ranges(decorations: &MarkdownDecorations) -> Vec<Range<usize>> {
+    let mut block_ranges: Vec<Range<usize>> = Vec::new();
+    for heading in &decorations.headings {
+        block_ranges.push(heading.line_range.clone());
+    }
+    for table in &decorations.tables {
+        block_ranges.push(table.range.clone());
+    }
+    for image in &decorations.images {
+        block_ranges.push(image.range.clone());
+    }
+    block_ranges.sort_by_key(|range| range.start);
+    block_ranges
+}
+
+fn marker_overlaps_block(marker: &Range<usize>, block_ranges: &[Range<usize>]) -> bool {
+    block_ranges.iter().any(|block| {
+        marker.start < block.end && marker.end > block.start
+    })
+}
+
 fn apply_folds(
     editor: &mut Editor,
     snapshot: &MultiBufferSnapshot,
@@ -429,42 +450,57 @@ fn apply_folds(
 ) {
     let type_id = TypeId::of::<WysiwygFoldTag>();
 
-    let buffer_len = snapshot.len();
-    let full_range = vec![
-        MultiBufferOffset(0)..buffer_len,
-    ];
-    editor.remove_folds_with_type(&full_range, type_id, false, cx);
+    let block_ranges = collect_block_replaced_ranges(decorations);
 
-    if decorations.syntax_markers.is_empty() {
+    let valid_markers: Vec<&SyntaxMarker> = decorations
+        .syntax_markers
+        .iter()
+        .filter(|marker| {
+            marker.range.start < marker.range.end
+                && !marker_overlaps_block(&marker.range, &block_ranges)
+        })
+        .collect();
+
+    if valid_markers.is_empty() {
         return;
     }
 
     let placeholder = FoldPlaceholder {
         render: Arc::new(|_, _, _| gpui::Empty.into_any_element()),
-        constrain_width: false,
+        constrain_width: true,
         merge_adjacent: false,
         type_tag: Some(type_id),
-        collapsed_text: Some(SharedString::from("")),
+        collapsed_text: Some(SharedString::from("\u{200B}")),
     };
 
-    let creases: Vec<Crease<MultiBufferOffset>> = decorations
-        .syntax_markers
-        .iter()
-        .filter(|marker| marker.range.start < marker.range.end)
-        .map(|marker| {
+    let mut sorted_markers = valid_markers;
+    sorted_markers.sort_by_key(|marker| marker.range.start);
+
+    let mut merged_ranges: Vec<Range<usize>> = Vec::new();
+    for marker in &sorted_markers {
+        if let Some(last) = merged_ranges.last_mut() {
+            if marker.range.start <= last.end {
+                last.end = last.end.max(marker.range.end);
+                continue;
+            }
+        }
+        merged_ranges.push(marker.range.clone());
+    }
+
+    let creases: Vec<Crease<MultiBufferOffset>> = merged_ranges
+        .into_iter()
+        .map(|range| {
             Crease::simple(
-                MultiBufferOffset(marker.range.start)..MultiBufferOffset(marker.range.end),
+                MultiBufferOffset(range.start)..MultiBufferOffset(range.end),
                 placeholder.clone(),
             )
         })
         .collect();
 
-    if !creases.is_empty() {
-        editor.display_map.update(cx, |display_map, cx| {
-            display_map.fold(creases, cx);
-        });
-        cx.notify();
-    }
+    editor.display_map.update(cx, |display_map, cx| {
+        display_map.fold(creases, cx);
+    });
+    cx.notify();
 }
 
 fn apply_blocks(
