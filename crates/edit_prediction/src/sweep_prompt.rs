@@ -367,7 +367,7 @@ fn map_current_offset_to_old_snapshot(
             break;
         }
 
-        if current_offset <= edit.new.end {
+        if current_offset < edit.new.end {
             let offset_in_edit = current_offset.saturating_sub(edit.new.start);
             return Some(
                 (edit.old.start + offset_in_edit.min(edit.old.len())).min(old_snapshot.len()),
@@ -377,7 +377,7 @@ fn map_current_offset_to_old_snapshot(
 
     let old_offset = current_snapshot
         .edits_since::<usize>(old_snapshot.version())
-        .take_while(|edit| current_offset > edit.new.end)
+        .take_while(|edit| current_offset >= edit.new.end)
         .fold(current_offset as isize, |old_offset, edit| {
             old_offset + edit.old.len() as isize - edit.new.len() as isize
         });
@@ -545,6 +545,43 @@ mod tests {
                 None
             );
 
+            buffer
+        });
+    }
+
+    #[gpui::test]
+    fn test_original_window_for_current_window_treats_edit_end_as_post_edit_position(
+        cx: &mut App,
+    ) {
+        cx.new(|cx| {
+            let mut buffer = Buffer::local("aaaaabbbbb", cx);
+            let old_snapshot = buffer.text_snapshot();
+            buffer.edit([(5..10, "b")], None, cx);
+            let current_snapshot = buffer.snapshot();
+            let window = Point::new(0, 0)..Point::new(0, current_snapshot.line_len(0));
+
+            let stored_event = StoredEvent {
+                event: Arc::new(zeta_prompt::Event::BufferChange {
+                    old_path: Arc::from(std::path::Path::new("test.txt")),
+                    path: Arc::from(std::path::Path::new("test.txt")),
+                    diff: String::new(),
+                    in_open_source_repo: false,
+                    predicted: false,
+                }),
+                old_snapshot,
+                edit_range: current_snapshot.anchor_before(5)..current_snapshot.anchor_before(6),
+            };
+
+            assert_eq!(
+                map_current_offset_to_old_snapshot(6, &stored_event, &current_snapshot),
+                Some(10)
+            );
+
+            let original_window =
+                original_window_for_current_window(window, Some(&stored_event), &current_snapshot)
+                    .expect("expected original window");
+
+            assert_eq!(original_window, "aaaaabbbbb");
             buffer
         });
     }
