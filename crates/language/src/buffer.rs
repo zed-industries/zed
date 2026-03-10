@@ -435,7 +435,7 @@ pub enum DiskState {
     /// File created in Zed that has not been saved.
     New,
     /// File present on the filesystem.
-    Present { mtime: MTime },
+    Present { mtime: MTime, size: u64 },
     /// Deleted file that was previously present.
     Deleted,
     /// An old version of a file that was previously present
@@ -448,7 +448,17 @@ impl DiskState {
     pub fn mtime(self) -> Option<MTime> {
         match self {
             DiskState::New => None,
-            DiskState::Present { mtime } => Some(mtime),
+            DiskState::Present { mtime, .. } => Some(mtime),
+            DiskState::Deleted => None,
+            DiskState::Historic { .. } => None,
+        }
+    }
+
+    /// Returns the file's size on disk in bytes.
+    pub fn size(self) -> Option<u64> {
+        match self {
+            DiskState::New => None,
+            DiskState::Present { size, .. } => Some(size),
             DiskState::Deleted => None,
             DiskState::Historic { .. } => None,
         }
@@ -2377,7 +2387,7 @@ impl Buffer {
         };
         match file.disk_state() {
             DiskState::New => false,
-            DiskState::Present { mtime } => match self.saved_mtime {
+            DiskState::Present { mtime, .. } => match self.saved_mtime {
                 Some(saved_mtime) => {
                     mtime.bad_is_greater_than(saved_mtime) && self.has_unsaved_edits()
                 }
