@@ -595,10 +595,6 @@ const ROW_COL_CAPTURE_REGEX: &str = r"(?xs)
         |
         \((\d+)\)()     # filename:(row)
     )
-    (?:
-        -\(\d+(?:[,:]\d+)?\) # filename:(row,column)-(row,column), filename:(row,column)-(row)
-    )?
-    \:*$
     |
     ([^\(]+)(?:
         \((\d+)[,:](\d+)\) # filename(row,column), filename(row:column)
