@@ -63,6 +63,7 @@ impl From<&ActiveThreadInfo> for acp_thread::AgentSessionInfo {
             cwd: None,
             title: Some(info.title.clone()),
             updated_at: Some(Utc::now()),
+            created_at: Some(Utc::now()),
             meta: None,
         }
     }
@@ -512,7 +513,7 @@ impl Sidebar {
                     }
                 }
 
-                threads.sort_by(|a, b| b.session_info.updated_at.cmp(&a.session_info.updated_at));
+                threads.sort_by(|a, b| b.session_info.created_at.cmp(&a.session_info.created_at));
             }
 
             if !query.is_empty() {
@@ -2017,6 +2018,7 @@ mod tests {
                         cwd: None,
                         title: Some("Completed thread".into()),
                         updated_at: Some(Utc::now()),
+                        created_at: Some(Utc::now()),
                         meta: None,
                     },
                     icon: IconName::ZedAgent,
@@ -2034,6 +2036,7 @@ mod tests {
                         cwd: None,
                         title: Some("Running thread".into()),
                         updated_at: Some(Utc::now()),
+                        created_at: Some(Utc::now()),
                         meta: None,
                     },
                     icon: IconName::ZedAgent,
@@ -2051,6 +2054,7 @@ mod tests {
                         cwd: None,
                         title: Some("Error thread".into()),
                         updated_at: Some(Utc::now()),
+                        created_at: Some(Utc::now()),
                         meta: None,
                     },
                     icon: IconName::ZedAgent,
@@ -2068,6 +2072,7 @@ mod tests {
                         cwd: None,
                         title: Some("Waiting thread".into()),
                         updated_at: Some(Utc::now()),
+                        created_at: Some(Utc::now()),
                         meta: None,
                     },
                     icon: IconName::ZedAgent,
@@ -2085,6 +2090,7 @@ mod tests {
                         cwd: None,
                         title: Some("Notified thread".into()),
                         updated_at: Some(Utc::now()),
+                        created_at: Some(Utc::now()),
                         meta: None,
                     },
                     icon: IconName::ZedAgent,
@@ -3456,6 +3462,7 @@ mod tests {
                     cwd: None,
                     title: Some("Test".into()),
                     updated_at: None,
+                    created_at: None,
                     meta: None,
                 },
                 &workspace_a,
@@ -3511,6 +3518,7 @@ mod tests {
                     cwd: None,
                     title: Some("Thread B".into()),
                     updated_at: None,
+                    created_at: None,
                     meta: None,
                 },
                 &workspace_b,

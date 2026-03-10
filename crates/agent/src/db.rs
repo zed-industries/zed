@@ -45,6 +45,7 @@ impl From<&DbThreadMetadata> for acp_thread::AgentSessionInfo {
             cwd: None,
             title: Some(meta.title.clone()),
             updated_at: Some(meta.updated_at),
+            created_at: meta.created_at,
             meta: None,
         }
     }

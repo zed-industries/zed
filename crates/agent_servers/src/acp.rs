@@ -131,6 +131,7 @@ impl AgentSessionList for AcpSessionList {
                                 .ok()
                                 .map(|dt| dt.with_timezone(&chrono::Utc))
                         }),
+                        created_at: None,
                         meta: s.meta,
                     })
                     .collect(),
