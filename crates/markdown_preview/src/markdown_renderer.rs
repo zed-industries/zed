@@ -770,16 +770,26 @@ fn render_markdown_block_quote(
         .into_any()
 }
 
+fn details_is_expanded(
+    source_range_start: usize,
+    open: bool,
+    expanded_details: Option<&HashMap<usize, bool>>,
+) -> bool {
+    expanded_details
+        .and_then(|map| map.get(&source_range_start))
+        .copied()
+        .unwrap_or(open)
+}
+
 fn render_markdown_details(
     parsed: &ParsedMarkdownDetails,
     cx: &mut RenderContext,
 ) -> AnyElement {
-    let is_expanded = cx
-        .expanded_details
-        .as_ref()
-        .and_then(|map| map.get(&parsed.source_range.start))
-        .copied()
-        .unwrap_or(parsed.open);
+    let is_expanded = details_is_expanded(
+        parsed.source_range.start,
+        parsed.open,
+        cx.expanded_details.as_deref(),
+    );
 
     let summary_content = match &parsed.summary {
         Some(ParsedMarkdownSummaryContent::Phrasing(paragraph)) => {
@@ -1594,5 +1604,30 @@ mod tests {
             Arc::ptr_eq(&fallback.unwrap(), &svg_a),
             "Fallback should be the old duplicate diagram's image"
         );
+    }
+
+    #[test]
+    fn test_details_is_expanded_defaults_to_open_attribute() {
+        assert!(!details_is_expanded(0, false, None));
+        assert!(details_is_expanded(0, true, None));
+    }
+
+    #[test]
+    fn test_details_is_expanded_no_entry_falls_back_to_open_attribute() {
+        let map: HashMap<usize, bool> = HashMap::default();
+        assert!(!details_is_expanded(42, false, Some(&map)));
+        assert!(details_is_expanded(42, true, Some(&map)));
+    }
+
+    #[test]
+    fn test_details_is_expanded_explicit_toggle_overrides_open_attribute() {
+        let mut map: HashMap<usize, bool> = HashMap::default();
+        map.insert(10, false);
+        map.insert(20, true);
+
+        // open=true but user toggled closed
+        assert!(!details_is_expanded(10, true, Some(&map)));
+        // open=false but user toggled open
+        assert!(details_is_expanded(20, false, Some(&map)));
     }
 }

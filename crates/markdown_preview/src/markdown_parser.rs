@@ -3380,6 +3380,123 @@ fn main() {
         }
     }
 
+    fn details(
+        source_range: Range<usize>,
+        summary: Option<ParsedMarkdownSummaryContent>,
+        body: Vec<ParsedMarkdownElement>,
+        open: bool,
+    ) -> ParsedMarkdownElement {
+        ParsedMarkdownElement::Details(ParsedMarkdownDetails {
+            source_range,
+            summary,
+            body,
+            open,
+        })
+    }
+
+    #[gpui::test]
+    async fn test_html_details_collapsed() {
+        let parsed =
+            parse("<details>\n<summary>Click to expand</summary>\n<p>Body content</p>\n</details>")
+                .await;
+
+        assert_eq!(
+            parsed,
+            ParsedMarkdown {
+                children: vec![details(
+                    0..75,
+                    Some(ParsedMarkdownSummaryContent::Phrasing(text(
+                        "Click to expand",
+                        0..75
+                    ))),
+                    vec![p("Body content", 0..75)],
+                    false,
+                )]
+            }
+        );
+    }
+
+    #[gpui::test]
+    async fn test_html_details_open() {
+        let parsed =
+            parse("<details open>\n<summary>Open summary</summary>\n</details>").await;
+
+        assert_eq!(
+            parsed,
+            ParsedMarkdown {
+                children: vec![details(
+                    0..57,
+                    Some(ParsedMarkdownSummaryContent::Phrasing(text(
+                        "Open summary",
+                        0..57
+                    ))),
+                    vec![],
+                    true,
+                )]
+            }
+        );
+    }
+
+    #[gpui::test]
+    async fn test_html_details_without_summary() {
+        let parsed = parse("<details>\n<p>No summary</p>\n</details>").await;
+
+        assert_eq!(
+            parsed,
+            ParsedMarkdown {
+                children: vec![details(
+                    0..38,
+                    None,
+                    vec![p("No summary", 0..38)],
+                    false,
+                )]
+            }
+        );
+    }
+
+    #[gpui::test]
+    async fn test_html_details_heading_summary() {
+        let parsed = parse(
+            "<details>\n<summary><h2>Heading Summary</h2></summary>\n<p>Body</p>\n</details>",
+        )
+        .await;
+
+        assert_eq!(
+            parsed,
+            ParsedMarkdown {
+                children: vec![details(
+                    0..76,
+                    Some(ParsedMarkdownSummaryContent::Heading(
+                        ParsedMarkdownHeading {
+                            source_range: 0..76,
+                            level: HeadingLevel::H2,
+                            contents: text("Heading Summary", 0..76),
+                        }
+                    )),
+                    vec![p("Body", 0..76)],
+                    false,
+                )]
+            }
+        );
+    }
+
+    #[gpui::test]
+    async fn test_html_details_with_leading_space() {
+        // pulldown-cmark emits a leading Text event for HTML blocks with a leading space.
+        // Verify this does not prevent the block from being parsed.
+        let parsed = parse(" <details>\n<summary>Indented</summary>\n</details>").await;
+
+        assert_eq!(parsed.children.len(), 1);
+        let ParsedMarkdownElement::Details(details) = &parsed.children[0] else {
+            panic!("expected Details element");
+        };
+        assert!(!details.open);
+        assert!(matches!(
+            &details.summary,
+            Some(ParsedMarkdownSummaryContent::Phrasing(_))
+        ));
+    }
+
     impl PartialEq for ParsedMarkdownTable {
         fn eq(&self, other: &Self) -> bool {
             self.source_range == other.source_range
