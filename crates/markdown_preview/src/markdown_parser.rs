@@ -878,6 +878,12 @@ impl<'a> MarkdownParser<'a> {
                     html_buffer.push_str(html);
                     self.cursor += 1;
                 }
+                // pulldown_cmark emits a Text event (zero-length range) for any
+                // leading whitespace before the first HTML tag in an HTML block.
+                // Skip it so we don't bail out before collecting any HTML content.
+                Event::Text(_) if html_buffer.is_empty() => {
+                    self.cursor += 1;
+                }
                 Event::End(TagEnd::CodeBlock) => {
                     self.cursor += 1;
                     break;
