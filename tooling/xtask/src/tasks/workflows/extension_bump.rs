@@ -196,8 +196,7 @@ fn bump_extension_version(
 ) -> NamedJob {
     let (generate_token, generated_token) =
         generate_token(&app_id.to_string(), &app_secret.to_string(), None);
-    let (bump_version, new_version, pr_title, commit_message) =
-        bump_version(current_version, bump_type);
+    let (bump_version, _new_version, title, body) = bump_version(current_version, bump_type);
 
     let job = steps::dependant_job(dependencies)
         .cond(Expression::new(format!(
@@ -212,9 +211,8 @@ fn bump_extension_version(
         .add_step(install_bump_2_version())
         .add_step(bump_version)
         .add_step(create_pull_request(
-            new_version,
-            pr_title,
-            commit_message,
+            title,
+            body,
             generated_token,
         ));
 
@@ -293,13 +291,14 @@ fn bump_version(
 
         NEW_VERSION="$({VERSION_CHECK})"
         EXTENSION_ID="$(sed -n 's/^id = "\(.*\)"/\1/p' < extension.toml | head -1 | tr -d '[:space:]')"
+        EXTENSION_NAME="$(sed -n 's/^name = "\(.*\)"/\1/p' < extension.toml | head -1 | tr -d '[:space:]')"
 
         if [[ "$WORKING_DIR" == "." || -z "$WORKING_DIR" ]]; then
-            echo "pr_title=Bump version to ${{NEW_VERSION}}" >> "$GITHUB_OUTPUT"
-            echo "commit_message=Bump version to v${{NEW_VERSION}}" >> "$GITHUB_OUTPUT"
+            echo "title=Bump version to ${{NEW_VERSION}}" >> "$GITHUB_OUTPUT"
+            echo "body=This PR bumps the version of this extension to v${{NEW_VERSION}}" >> "$GITHUB_OUTPUT"
         else
-            echo "pr_title=${{EXTENSION_ID}}: Bump to v${{NEW_VERSION}}" >> "$GITHUB_OUTPUT"
-            echo "commit_message=${{EXTENSION_ID}}: Bump to v${{NEW_VERSION}}" >> "$GITHUB_OUTPUT"
+            echo "title=${{EXTENSION_ID}}: Bump to v${{NEW_VERSION}}" >> "$GITHUB_OUTPUT"
+            echo "body=This PR bumps the version of the ${{EXTENSION_NAME}} extension to v${{NEW_VERSION}}" >> "$GITHUB_OUTPUT"
         fi
 
         echo "new_version=${{NEW_VERSION}}" >> "$GITHUB_OUTPUT"
@@ -311,27 +310,21 @@ fn bump_version(
     .add_env(("WORKING_DIR", "${{ inputs.working-directory }}"));
 
     let new_version = StepOutput::new(&step, "new_version");
-    let pr_title = StepOutput::new(&step, "pr_title");
-    let commit_message = StepOutput::new(&step, "commit_message");
-    (step, new_version, pr_title, commit_message)
+    let title = StepOutput::new(&step, "title");
+    let body = StepOutput::new(&step, "body");
+    (step, new_version, title, body)
 }
 
 fn create_pull_request(
-    new_version: StepOutput,
-    pr_title: StepOutput,
-    commit_message: StepOutput,
+    title: StepOutput,
+    body: StepOutput,
     generated_token: StepOutput,
 ) -> Step<Use> {
-    let formatted_version = format!("v{new_version}");
-
     named::uses("peter-evans", "create-pull-request", "v7").with(
         Input::default()
-            .add("title", pr_title.to_string())
-            .add(
-                "body",
-                format!("This PR bumps the version of this extension to {formatted_version}",),
-            )
-            .add("commit-message", commit_message.to_string())
+            .add("title", title.to_string())
+            .add("body", body.to_string())
+            .add("commit-message", title.to_string())
             .add("branch", "zed-zippy-autobump")
             .add(
                 "committer",
