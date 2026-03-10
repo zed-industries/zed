@@ -104,23 +104,17 @@ pub fn apply_sandbox(config: &SandboxConfig) -> Result<()> {
 
     if let Ok(home) = std::env::var("HOME") {
         let home = Path::new(&home);
-        for dotfile in &[
-            ".bashrc",
-            ".bash_profile",
-            ".bash_login",
-            ".profile",
-            ".zshrc",
-            ".zshenv",
-            ".zprofile",
-            ".zlogin",
-            ".zlogout",
-            ".inputrc",
-            ".terminfo",
-            ".gitconfig",
-        ] {
+        for dotfile in SandboxConfig::READ_ONLY_DOTFILES {
             let path = home.join(dotfile);
             if path.exists() {
                 ruleset = add_path_rule(ruleset, &path, fs_read())
+                    .map_err(|e| Error::other(format!("landlock dotfile rule: {e}")))?;
+            }
+        }
+        for dotfile in SandboxConfig::READ_WRITE_DOTFILES {
+            let path = home.join(dotfile);
+            if path.exists() {
+                ruleset = add_path_rule(ruleset, &path, fs_all())
                     .map_err(|e| Error::other(format!("landlock dotfile rule: {e}")))?;
             }
         }

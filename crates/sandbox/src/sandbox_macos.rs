@@ -420,28 +420,26 @@ pub(crate) fn generate_sbpl_profile(
         write_subpath_rule(&mut p, path, "file-read* file-write*");
     }
 
-    // User shell config files: read-only access to $HOME dotfiles
+    // User shell config files
     if let Ok(home) = std::env::var("HOME") {
         let home = Path::new(&home);
-        for dotfile in &[
-            ".zshrc",
-            ".zshenv",
-            ".zprofile",
-            ".zlogin",
-            ".zlogout",
-            ".bashrc",
-            ".bash_profile",
-            ".bash_login",
-            ".profile",
-            ".inputrc",
-            ".terminfo",
-            ".gitconfig",
-        ] {
+        for dotfile in SandboxConfig::READ_ONLY_DOTFILES {
             let path = home.join(dotfile);
             if path.exists() {
                 write!(
                     p,
                     "(allow file-read* (literal \"{}\"))\n",
+                    sbpl_escape(&path)
+                )
+                .unwrap();
+            }
+        }
+        for dotfile in SandboxConfig::READ_WRITE_DOTFILES {
+            let path = home.join(dotfile);
+            if path.exists() {
+                write!(
+                    p,
+                    "(allow file-read* file-write* (literal \"{}\"))\n",
                     sbpl_escape(&path)
                 )
                 .unwrap();

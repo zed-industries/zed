@@ -170,6 +170,30 @@ impl ResolvedSystemPaths {
 }
 
 impl SandboxConfig {
+    /// Shell configuration dotfiles that need read-only access.
+    /// Both macOS and Linux sandbox implementations use this list.
+    pub const READ_ONLY_DOTFILES: &[&str] = &[
+        ".bashrc",
+        ".bash_login",
+        ".bash_profile",
+        ".gitconfig",
+        ".inputrc",
+        ".profile",
+        ".terminfo",
+        ".zlogin",
+        ".zlogout",
+        ".zprofile",
+        ".zshenv",
+        ".zshrc",
+    ];
+
+    /// Shell history dotfiles that need read-write access so shells can
+    /// persist command history without silent failures.
+    pub const READ_WRITE_DOTFILES: &[&str] = &[
+        ".bash_history",
+        ".zsh_history",
+    ];
+
     /// Default environment variables to pass through to sandboxed terminals.
     pub fn default_allowed_env_vars() -> Vec<String> {
         vec![
