@@ -460,6 +460,10 @@ impl LanguageRegistry {
         state
             .all_lsp_adapters
             .insert(cached.name.clone(), cached.clone());
+        // Notify subscribers so that open buffers can be re-evaluated
+        // and language servers started for already-open files.
+        state.version += 1;
+        *state.subscription.0.borrow_mut() = ();
     }
 
     /// Register a fake language server and adapter

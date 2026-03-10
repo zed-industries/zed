@@ -1396,11 +1396,14 @@ impl ExtensionStore {
                 .await
                 .with_context(|| format!("Loading extension from {extension_path:?}"));
 
+                eprintln!("[DEVIN-DEBUG] Extension {} WASM load attempt complete for path {:?}", extension.manifest.id, extension_path);
                 match wasm_extension {
                     Ok(wasm_extension) => {
+                        eprintln!("[DEVIN-DEBUG] Extension {} loaded successfully!", extension.manifest.id);
                         wasm_extensions.push((extension.manifest.clone(), wasm_extension))
                     }
                     Err(e) => {
+                        eprintln!("[DEVIN-DEBUG] Extension {} FAILED to load: {:#}", extension.manifest.id, e);
                         log::error!(
                             "Failed to load extension: {}, {:#}",
                             extension.manifest.id,

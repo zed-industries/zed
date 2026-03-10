@@ -4713,6 +4713,33 @@ impl LspStore {
                             }
                         }
 
+                        // Also re-register buffers that already have a language,
+                        // in case new LSP adapters were registered (e.g. from extensions loading).
+                        let buffers_with_language: Vec<_> = this
+                            .buffer_store
+                            .read(cx)
+                            .buffers()
+                            .filter(|handle| {
+                                let buffer = handle.read(cx);
+                                buffer.language().is_some()
+                                    && buffer.language() != Some(&*language::PLAIN_TEXT)
+                            })
+                            .collect();
+                        for handle in buffers_with_language {
+                            if let Some(local) = this.as_local_mut() {
+                                if local
+                                    .registered_buffers
+                                    .contains_key(&handle.read(cx).remote_id())
+                                {
+                                    local.register_buffer_with_language_servers(
+                                        &handle,
+                                        HashSet::default(),
+                                        cx,
+                                    );
+                                }
+                            }
+                        }
+
                         for buffer in buffers_with_unknown_injections {
                             buffer.update(cx, |buffer, cx| buffer.reparse(cx, false));
                         }
