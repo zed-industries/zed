@@ -144,7 +144,7 @@ Images are hosted externally. Reference format:
 - Comparisons that disparage other tools—be factual, not competitive
 - Lots of use of em or en dashes.
 
-## Examples
+## Examples of Good Copy
 
 ### Good: Direct and actionable
 ```
