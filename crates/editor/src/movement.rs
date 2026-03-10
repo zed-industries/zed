@@ -975,10 +975,10 @@ mod tests {
         }
 
         // Subword boundaries are respected
-        assert("lorem_ˇipˇsum", cx);
+        assert("loremˇ_ˇipsum", cx);
         assert("lorem_ˇipsumˇ", cx);
         assert("ˇlorem_ˇipsum", cx);
-        assert("lorem_ˇipsum_ˇdolor", cx);
+        assert("lorem_ˇipsumˇ_dolor", cx);
         assert("loremˇIpˇsum", cx);
         assert("loremˇIpsumˇ", cx);
 
@@ -1158,10 +1158,10 @@ mod tests {
         }
 
         // Subword boundaries are respected
-        assert("loˇremˇ_ipsum", cx);
+        assert("loremˇ_ˇipsum", cx);
         assert("ˇloremˇ_ipsum", cx);
         assert("loremˇ_ipsumˇ", cx);
-        assert("loremˇ_ipsumˇ_dolor", cx);
+        assert("lorem_ˇipsumˇ_dolor", cx);
         assert("loˇremˇIpsum", cx);
         assert("loremˇIpsumˇDolor", cx);
 
@@ -1174,7 +1174,7 @@ mod tests {
         assert("loremˇ    ipsumˇ   ", cx);
         assert("loremˇ-ˇipsum", cx);
         assert("loremˇ#$@-ˇipsum", cx);
-        assert("loremˇ_ipsumˇ", cx);
+        assert("loremˇ_ˇipsum", cx);
         assert(" ˇbcˇΔ", cx);
         assert(" abˇ——ˇcd", cx);
     }
