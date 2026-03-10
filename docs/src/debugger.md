@@ -165,8 +165,6 @@ The debug adapter will then stop whenever an exception of a given kind occurs. W
 
 ## Working with Split Panes
 
-> **Changed in Preview (v0.225).** See [release notes](/releases#0.225).
-
 When debugging with multiple split panes open, Zed shows the active debug line in one pane and preserves your layout in others. If you have the same file open in multiple panes, the debugger picks a pane where the file is already the active tab—it won't switch tabs in panes where the file is inactive.
 
 Once the debugger picks a pane, it continues using that pane for subsequent breakpoints during the session. If you drag the tab with the active debug line to a different split, the debugger tracks the move and uses the new pane.

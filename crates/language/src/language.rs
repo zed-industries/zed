@@ -23,7 +23,7 @@ mod toolchain;
 pub mod buffer_tests;
 
 use crate::language_settings::SoftWrap;
-pub use crate::language_settings::{EditPredictionsMode, IndentGuideSettings};
+pub use crate::language_settings::{AutoIndentMode, EditPredictionsMode, IndentGuideSettings};
 use anyhow::{Context as _, Result};
 use async_trait::async_trait;
 use collections::{HashMap, HashSet, IndexSet};
@@ -835,6 +835,11 @@ pub struct LanguageConfig {
     pub name: LanguageName,
     /// The name of this language for a Markdown code fence block
     pub code_fence_block_name: Option<Arc<str>>,
+    /// Alternative language names that Jupyter kernels may report for this language.
+    /// Used when a kernel's `language` field differs from Zed's language name.
+    /// For example, the Nu extension would set this to `["nushell"]`.
+    #[serde(default)]
+    pub kernel_language_names: Vec<Arc<str>>,
     // The name of the grammar in a WASM bundle (experimental).
     pub grammar: Option<Arc<str>>,
     /// The criteria for matching this language to a given file.
@@ -1141,6 +1146,7 @@ impl Default for LanguageConfig {
         Self {
             name: LanguageName::new_static(""),
             code_fence_block_name: None,
+            kernel_language_names: Default::default(),
             grammar: None,
             matcher: LanguageMatcher::default(),
             brackets: Default::default(),
@@ -2073,6 +2079,23 @@ impl Language {
             .code_fence_block_name
             .clone()
             .unwrap_or_else(|| self.config.name.as_ref().to_lowercase().into())
+    }
+
+    pub fn matches_kernel_language(&self, kernel_language: &str) -> bool {
+        let kernel_language_lower = kernel_language.to_lowercase();
+
+        if self.code_fence_block_name().to_lowercase() == kernel_language_lower {
+            return true;
+        }
+
+        if self.config.name.as_ref().to_lowercase() == kernel_language_lower {
+            return true;
+        }
+
+        self.config
+            .kernel_language_names
+            .iter()
+            .any(|name| name.to_lowercase() == kernel_language_lower)
     }
 
     pub fn context_provider(&self) -> Option<Arc<dyn ContextProvider>> {

@@ -63,13 +63,18 @@ jobs:
             }
 
       - if: steps.is-post-close-comment.outputs.result == 'true' && steps.check-staff.outputs.result == 'true'
+        env:
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
         run: |
-          echo "::notice::Skipping issue #${{ github.event.issue.number }} - commenter is staff member"
+          echo "::notice::Skipping issue #$ISSUE_NUMBER - commenter is staff member"
 
       # github-script outputs are JSON strings, so we compare against 'false' (string)
       - if: steps.is-post-close-comment.outputs.result == 'true' && steps.check-staff.outputs.result == 'false'
+        env:
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+          COMMENT_USER_LOGIN: ${{ github.event.comment.user.login }}
         run: |
-          echo "::notice::Adding issue #${{ github.event.issue.number }} to project (comment by ${{ github.event.comment.user.login }})"
+          echo "::notice::Adding issue #$ISSUE_NUMBER to project (comment by $COMMENT_USER_LOGIN)"
 
       - if: steps.is-post-close-comment.outputs.result == 'true' && steps.check-staff.outputs.result == 'false'
         uses: actions/add-to-project@244f685bbc3b7adfa8466e08b698b5577571133e # v1.0.2

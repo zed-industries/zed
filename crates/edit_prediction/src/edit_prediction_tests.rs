@@ -1487,6 +1487,52 @@ async fn test_jump_and_edit_throttles_are_independent(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_same_frame_duplicate_requests_deduplicated(cx: &mut TestAppContext) {
+    let (ep_store, mut requests) = init_test_with_fake_client(cx);
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        "/root",
+        json!({
+            "foo.md":  "Hello!\nHow\nBye\n"
+        }),
+    )
+    .await;
+    let project = Project::test(fs, vec![path!("/root").as_ref()], cx).await;
+
+    let buffer = project
+        .update(cx, |project, cx| {
+            let path = project.find_project_path(path!("root/foo.md"), cx).unwrap();
+            project.open_buffer(path, cx)
+        })
+        .await
+        .unwrap();
+    let snapshot = buffer.read_with(cx, |buffer, _cx| buffer.snapshot());
+    let position = snapshot.anchor_before(language::Point::new(1, 3));
+
+    // Enqueue two refresh calls in the same synchronous frame (no yielding).
+    // Both `cx.spawn` tasks are created before either executes, so they both
+    // capture the same `proceed_count_at_enqueue`. Only the first task should
+    // pass the deduplication gate; the second should be skipped.
+    ep_store.update(cx, |ep_store, cx| {
+        ep_store.refresh_prediction_from_buffer(project.clone(), buffer.clone(), position, cx);
+        ep_store.refresh_prediction_from_buffer(project.clone(), buffer.clone(), position, cx);
+    });
+
+    // Let both spawned tasks run to completion (including any throttle waits).
+    cx.run_until_parked();
+
+    // Exactly one prediction request should have been sent.
+    let (request, respond_tx) = requests.predict.next().await.unwrap();
+    respond_tx
+        .send(model_response(&request, SIMPLE_DIFF))
+        .unwrap();
+    cx.run_until_parked();
+
+    // No second request should be pending.
+    assert_no_predict_request_ready(&mut requests.predict);
+}
+
+#[gpui::test]
 async fn test_rejections_flushing(cx: &mut TestAppContext) {
     let (ep_store, mut requests) = init_test_with_fake_client(cx);
 
@@ -1704,12 +1750,8 @@ async fn test_rejections_flushing(cx: &mut TestAppContext) {
 
 // Generate a model response that would apply the given diff to the active file.
 fn model_response(request: &PredictEditsV3Request, diff_to_apply: &str) -> PredictEditsV3Response {
-    let editable_range = request
-        .input
-        .excerpt_ranges
-        .as_ref()
-        .map(|r| zeta_prompt::excerpt_range_for_format(Default::default(), r).1)
-        .unwrap_or(request.input.editable_range_in_excerpt.clone());
+    let editable_range =
+        zeta_prompt::excerpt_range_for_format(Default::default(), &request.input.excerpt_ranges).1;
     let excerpt = request.input.cursor_excerpt[editable_range.clone()].to_string();
     let new_excerpt = apply_diff_to_string(diff_to_apply, &excerpt).unwrap();
 
@@ -1846,13 +1888,13 @@ async fn test_edit_prediction_basic_interpolation(cx: &mut TestAppContext) {
             related_files: Default::default(),
             cursor_path: Path::new("").into(),
             cursor_excerpt: "".into(),
-            editable_range_in_excerpt: 0..0,
             cursor_offset_in_excerpt: 0,
             excerpt_start_row: None,
-            excerpt_ranges: None,
-            preferred_model: None,
+            excerpt_ranges: Default::default(),
+            experiment: None,
             in_open_source_repo: false,
             can_collect_data: false,
+            repo_url: None,
         },
         buffer_snapshotted_at: Instant::now(),
         response_received_at: Instant::now(),
@@ -2183,7 +2225,7 @@ async fn make_test_ep_store(
 
     let ep_store = cx.new(|cx| {
         let mut ep_store = EditPredictionStore::new(client, project.read(cx).user_store(), cx);
-        ep_store.set_edit_prediction_model(EditPredictionModel::Zeta1);
+        ep_store.set_edit_prediction_model(EditPredictionModel::Zeta);
 
         let worktrees = project.read(cx).worktrees(cx).collect::<Vec<_>>();
         for worktree in worktrees {
@@ -2282,7 +2324,7 @@ async fn test_unauthenticated_without_custom_url_blocks_prediction_impl(cx: &mut
     cx.background_executor.run_until_parked();
 
     let completion_task = ep_store.update(cx, |ep_store, cx| {
-        ep_store.set_edit_prediction_model(EditPredictionModel::Zeta1);
+        ep_store.set_edit_prediction_model(EditPredictionModel::Zeta);
         ep_store.request_prediction(&project, &buffer, cursor, Default::default(), cx)
     });
 
@@ -2608,8 +2650,8 @@ async fn test_edit_prediction_settled(cx: &mut TestAppContext) {
         .await
         .unwrap();
 
-    let settled_events: Arc<Mutex<Vec<(EditPredictionId, String)>>> =
-        Arc::new(Mutex::new(Vec::new()));
+    type SettledEventRecord = (EditPredictionId, String);
+    let settled_events: Arc<Mutex<Vec<SettledEventRecord>>> = Arc::new(Mutex::new(Vec::new()));
 
     ep_store.update(cx, |ep_store, cx| {
         ep_store.register_buffer(&buffer, &project, cx);
@@ -2632,13 +2674,15 @@ async fn test_edit_prediction_settled(cx: &mut TestAppContext) {
 
     // Region A: first 10 lines of the buffer.
     let editable_region_a = 0..snapshot_a.point_to_offset(Point::new(10, 0));
+
     ep_store.update(cx, |ep_store, cx| {
         ep_store.enqueue_settled_prediction(
             EditPredictionId("prediction-a".into()),
             &project,
             &buffer,
             &snapshot_a,
-            editable_region_a,
+            editable_region_a.clone(),
+            None,
             cx,
         );
     });
@@ -2693,13 +2737,15 @@ async fn test_edit_prediction_settled(cx: &mut TestAppContext) {
 
     let snapshot_b2 = buffer.read_with(cx, |buffer, _cx| buffer.snapshot());
     let editable_region_b = line_20_offset..snapshot_b2.point_to_offset(Point::new(25, 0));
+
     ep_store.update(cx, |ep_store, cx| {
         ep_store.enqueue_settled_prediction(
             EditPredictionId("prediction-b".into()),
             &project,
             &buffer,
             &snapshot_b2,
-            editable_region_b,
+            editable_region_b.clone(),
+            None,
             cx,
         );
     });
@@ -2725,7 +2771,7 @@ async fn test_edit_prediction_settled(cx: &mut TestAppContext) {
         assert_eq!(
             events.len(),
             1,
-            "only prediction A should have settled, got: {events:?}"
+            "prediction and capture_sample for A should have settled, got: {events:?}"
         );
         assert_eq!(events[0].0, EditPredictionId("prediction-a".into()));
     }
@@ -2742,7 +2788,7 @@ async fn test_edit_prediction_settled(cx: &mut TestAppContext) {
         assert_eq!(
             events.len(),
             2,
-            "both predictions should have settled, got: {events:?}"
+            "both prediction and capture_sample settled events should be emitted for each request, got: {events:?}"
         );
         assert_eq!(events[1].0, EditPredictionId("prediction-b".into()));
     }
