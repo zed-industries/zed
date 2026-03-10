@@ -829,6 +829,24 @@ async fn post_token_request(
 }
 
 // -- Loopback HTTP callback server -------------------------------------------
+//
+// FIXME: Everything below is a hand-rolled, single-request HTTP/1.1 server on
+// a bare TCP socket. It exists because we need a loopback redirect URI for the
+// OAuth authorization code flow, and the loopback approach is the most portable
+// (works on all platforms without custom URL scheme registration). The right
+// long-term fix is to switch to `zed://oauth/callback` as the redirect URI,
+// which would eliminate this server entirely, allow DCR registrations to be
+// cached across flows (the redirect URI would be stable), and give a cleaner
+// UX (no leftover browser tab). That requires:
+//   1. A global callback dispatch table keyed by the `state` parameter, since
+//      the URL arrives through the OS event loop rather than a dedicated socket.
+//   2. Implementing `register_url_scheme` on Linux and Windows (currently
+//      unimplemented in gpui).
+//   3. Verifying that MCP-spec-compliant auth servers accept non-HTTP redirect
+//      URIs (RFC 8252 blesses `http://127.0.0.1`, but custom schemes are less
+//      universally supported).
+// Until then, please resist the temptation to grow this into a real HTTP server
+// — it only needs to read one request line and send one canned response.
 
 /// An OAuth authorization callback received via the loopback HTTP server.
 #[derive(Debug)]
