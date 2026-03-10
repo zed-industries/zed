@@ -360,7 +360,9 @@ enum PredictionProvider {
     Zeta2(ZetaFormat),
     Baseten(ZetaFormat),
     Teacher(TeacherBackend),
+    TeacherMultiRegion(TeacherBackend),
     TeacherNonBatching(TeacherBackend),
+    TeacherMultiRegionNonBatching(TeacherBackend),
     Repair,
 }
 
@@ -379,8 +381,14 @@ impl std::fmt::Display for PredictionProvider {
             PredictionProvider::Zeta2(format) => write!(f, "zeta2:{format}"),
             PredictionProvider::Baseten(format) => write!(f, "baseten:{format}"),
             PredictionProvider::Teacher(backend) => write!(f, "teacher:{backend}"),
+            PredictionProvider::TeacherMultiRegion(backend) => {
+                write!(f, "teacher-multi-region:{backend}")
+            }
             PredictionProvider::TeacherNonBatching(backend) => {
                 write!(f, "teacher-non-batching:{backend}")
+            }
+            PredictionProvider::TeacherMultiRegionNonBatching(backend) => {
+                write!(f, "teacher-multi-region-non-batching:{backend}")
             }
             PredictionProvider::Repair => write!(f, "repair"),
         }
@@ -409,12 +417,26 @@ impl std::str::FromStr for PredictionProvider {
                     .unwrap_or(TeacherBackend::default());
                 Ok(PredictionProvider::Teacher(backend))
             }
-            "teacher-non-batching" | "teacher_non_batching" | "teachernonbatching" => {
+            "teacher-multi-region" | "teacher_multi_region" => {
+                let backend = arg
+                    .map(|a| a.parse())
+                    .transpose()?
+                    .unwrap_or(TeacherBackend::default());
+                Ok(PredictionProvider::TeacherMultiRegion(backend))
+            }
+            "teacher-non-batching" | "teacher_non_batching" => {
                 let backend = arg
                     .map(|a| a.parse())
                     .transpose()?
                     .unwrap_or(TeacherBackend::default());
                 Ok(PredictionProvider::TeacherNonBatching(backend))
+            }
+            "teacher-multi-region-non-batching" | "teacher_multi_region_non_batching" => {
+                let backend = arg
+                    .map(|a| a.parse())
+                    .transpose()?
+                    .unwrap_or(TeacherBackend::default());
+                Ok(PredictionProvider::TeacherMultiRegionNonBatching(backend))
             }
             "repair" => Ok(PredictionProvider::Repair),
             "baseten" => {
@@ -426,9 +448,9 @@ impl std::str::FromStr for PredictionProvider {
             }
             _ => {
                 anyhow::bail!(
-                    "unknown provider `{provider}`. Valid options: sweep, mercury, zeta1, zeta2, zeta2:<version>, teacher, teacher:<backend>, teacher-non-batching, repair\n\
+                    "unknown provider `{provider}`. Valid options: sweep, mercury, zeta1, zeta2, zeta2:<version>, teacher, teacher:<backend>, teacher-multi-region, teacher-multi-region:<backend>, teacher-non-batching, teacher-multi-region-non-batching, repair\n\
                  For zeta2, you can optionally specify a version like `zeta2:ordered` or `zeta2:V0113_Ordered`.\n\
-                 For teacher, you can specify a backend like `teacher:sonnet46` or `teacher:gpt52`.\n\
+                 For teacher providers, you can specify a backend like `teacher:sonnet46`, `teacher-multi-region:sonnet46`, `teacher-multi-region-non-batching:sonnet46`, or `teacher:gpt52`.\n\
                  Available zeta versions:\n{}",
                     ZetaFormat::options_as_string()
                 )
@@ -489,6 +511,40 @@ struct ImportBatchArgs {
 enum BatchProvider {
     Anthropic,
     Openai,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn prediction_provider_multi_region_non_batched_round_trips_to_primary_spelling() {
+        let provider: PredictionProvider = "teacher-multi-region-non-batching:sonnet46"
+            .parse()
+            .unwrap();
+        assert_eq!(
+            provider,
+            PredictionProvider::TeacherMultiRegionNonBatching(TeacherBackend::Sonnet46)
+        );
+        assert_eq!(
+            provider.to_string(),
+            "teacher-multi-region-non-batching:sonnet46"
+        );
+    }
+
+    #[test]
+    fn prediction_provider_multi_region_non_batched_alias_round_trips_to_primary_spelling() {
+        let provider: PredictionProvider =
+            "teacher_multi_region_non_batching:gpt52".parse().unwrap();
+        assert_eq!(
+            provider,
+            PredictionProvider::TeacherMultiRegionNonBatching(TeacherBackend::Gpt52)
+        );
+        assert_eq!(
+            provider.to_string(),
+            "teacher-multi-region-non-batching:gpt52"
+        );
+    }
 }
 
 impl EpArgs {
