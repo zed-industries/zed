@@ -486,8 +486,7 @@ impl ContextServerStore {
     }
 
     /// Returns true if the given server is in a state where OAuth credentials
-    /// may exist (Running, AuthRequired, or Authenticating). The UI uses this
-    /// to decide whether to show a "Log Out" menu item.
+    /// may exist (Running, AuthRequired, or Authenticating).
     pub fn server_may_have_oauth_credentials(&self, id: &ContextServerId) -> bool {
         matches!(
             self.servers.get(id),
@@ -808,6 +807,21 @@ impl ContextServerStore {
             .servers
             .remove(id)
             .context("Context server not found")?;
+
+        if let ContextServerConfiguration::Http { url, .. } = state.configuration().as_ref() {
+            let server_url = url.clone();
+            let id = id.clone();
+            cx.spawn(async move |_this, cx| {
+                let credentials_provider = cx.update(|cx| <dyn CredentialsProvider>::global(cx));
+                if let Err(err) =
+                    Self::clear_session(&credentials_provider, &server_url, &cx).await
+                {
+                    log::warn!("{} failed to clear OAuth session on removal: {}", id, err);
+                }
+            })
+            .detach();
+        }
+
         drop(state);
         cx.emit(ServerStatusChangedEvent {
             server_id: id.clone(),
