@@ -1215,6 +1215,19 @@ float4 fill_color(Background background,
           break;
         }
       }
+
+      // Dither to reduce banding in dark gradients.
+      // Triangular-distributed noise at ±0.5/255 breaks up 8-bit quantization
+      // steps without visible noise. Uses two hashed random values combined
+      // for a triangular PDF (mean-zero, so no brightness shift).
+      {
+        float2 seed = position * 0.6180339887; // golden ratio spread
+        float r1 = fract(sin(dot(seed, float2(12.9898, 78.233))) * 43758.5453);
+        float r2 = fract(sin(dot(seed, float2(39.3460, 11.135))) * 24634.6345);
+        float dither = (r1 + r2 - 1.0) / 255.0; // triangular PDF, range ±1/255
+        color.rgb += dither;
+      }
+
       break;
     }
     case 2: {
