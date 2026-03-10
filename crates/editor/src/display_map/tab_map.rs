@@ -820,6 +820,10 @@ impl<'a> TabStopCursor<'a> {
         }) {
             let chunk_len = chunk.text.len() as u32;
 
+            if chunk_len == 0 {
+                continue;
+            }
+
             if chunk.tabs == 0 {
                 let chunk_remaining = chunk_len - chunk_position;
                 if chunk_remaining >= distance_remaining {

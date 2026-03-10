@@ -9763,7 +9763,22 @@ impl Element for EditorElement {
 
                     // Offset the content_bounds from the text_bounds by the gutter margin (which
                     // is roughly half a character wide) to make hit testing work more like how we want.
-                    let content_offset = point(editor_margins.gutter.margin, Pixels::ZERO);
+                    let wysiwyg_centering_offset = if self.editor.read(cx).markdown_wysiwyg_state.active {
+                        let wrap_width = calculate_wrap_width(
+                            self.editor.read(cx).soft_wrap_mode(cx),
+                            editor_width,
+                            em_layout_width,
+                        );
+                        if let Some(wrap_width) = wrap_width {
+                            let extra = (editor_width - wrap_width).max(Pixels::ZERO);
+                            extra / 2.0
+                        } else {
+                            Pixels::ZERO
+                        }
+                    } else {
+                        Pixels::ZERO
+                    };
+                    let content_offset = point(editor_margins.gutter.margin + wysiwyg_centering_offset, Pixels::ZERO);
                     let content_origin = text_hitbox.origin + content_offset;
 
                     let height_in_lines = f64::from(bounds.size.height / line_height);
@@ -10368,7 +10383,7 @@ impl Element for EditorElement {
                                     &mut scroll_width,
                                     &editor_margins,
                                     em_width,
-                                    gutter_dimensions.full_width(),
+                                    gutter_dimensions.full_width() + wysiwyg_centering_offset,
                                     line_height,
                                     &mut line_layouts,
                                     &local_selections,
