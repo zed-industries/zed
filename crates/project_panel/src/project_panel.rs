@@ -4415,16 +4415,24 @@ impl ProjectPanel {
                 return;
             }
 
+            let workspace = self.workspace.clone();
             if folded_selection_info.is_empty() {
                 for (_, task) in move_tasks {
-                    task.detach_and_log_err(cx);
+                    let workspace = workspace.clone();
+                    cx.spawn_in(window, async move |_, mut cx| {
+                        task.await.notify_workspace_async_err(workspace, &mut cx);
+                    })
+                    .detach();
                 }
             } else {
-                cx.spawn_in(window, async move |project_panel, cx| {
+                cx.spawn_in(window, async move |project_panel, mut cx| {
                     // Await all move tasks and collect successful results
                     let mut move_results: Vec<(ProjectEntryId, Entry)> = Vec::new();
                     for (entry_id, task) in move_tasks {
-                        if let Some(CreatedEntry::Included(new_entry)) = task.await.log_err() {
+                        if let Some(CreatedEntry::Included(new_entry)) = task
+                            .await
+                            .notify_workspace_async_err(workspace.clone(), &mut cx)
+                        {
                             move_results.push((entry_id, new_entry));
                         }
                     }

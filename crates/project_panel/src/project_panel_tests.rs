@@ -4413,6 +4413,90 @@ async fn test_drag_marked_entries_in_folded_directories(cx: &mut gpui::TestAppCo
 }
 
 #[gpui::test]
+async fn test_dragging_same_named_files_preserves_one_source_on_conflict(
+    cx: &mut gpui::TestAppContext,
+) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        "/root",
+        json!({
+            "dir_a": {
+                "shared.txt": "from a"
+            },
+            "dir_b": {
+                "shared.txt": "from b"
+            }
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), ["/root".as_ref()], cx).await;
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let workspace = window
+        .read_with(cx, |multi_workspace, _| multi_workspace.workspace().clone())
+        .unwrap();
+    let cx = &mut VisualTestContext::from_window(window.into(), cx);
+    let panel = workspace.update_in(cx, ProjectPanel::new);
+    cx.run_until_parked();
+
+    panel.update_in(cx, |panel, window, cx| {
+        let (root_entry_id, worktree_id, entry_a_id, entry_b_id) = {
+            let worktree = panel.project.read(cx).visible_worktrees(cx).next().unwrap();
+            let worktree = worktree.read(cx);
+            let root_entry_id = worktree.root_entry().unwrap().id;
+            let worktree_id = worktree.id();
+            let entry_a_id = worktree
+                .entry_for_path(rel_path("dir_a/shared.txt"))
+                .unwrap()
+                .id;
+            let entry_b_id = worktree
+                .entry_for_path(rel_path("dir_b/shared.txt"))
+                .unwrap()
+                .id;
+            (root_entry_id, worktree_id, entry_a_id, entry_b_id)
+        };
+
+        let drag = DraggedSelection {
+            active_selection: SelectedEntry {
+                worktree_id,
+                entry_id: entry_a_id,
+            },
+            marked_selections: Arc::new([
+                SelectedEntry {
+                    worktree_id,
+                    entry_id: entry_a_id,
+                },
+                SelectedEntry {
+                    worktree_id,
+                    entry_id: entry_b_id,
+                },
+            ]),
+        };
+
+        panel.drag_onto(&drag, root_entry_id, false, window, cx);
+    });
+    cx.executor().run_until_parked();
+
+    let files = fs.files();
+    assert!(files.contains(&PathBuf::from(path!("/root/shared.txt"))));
+
+    let remaining_sources = [
+        PathBuf::from(path!("/root/dir_a/shared.txt")),
+        PathBuf::from(path!("/root/dir_b/shared.txt")),
+    ]
+    .into_iter()
+    .filter(|path| files.contains(path))
+    .count();
+
+    assert_eq!(
+        remaining_sources, 1,
+        "one conflicting source file should remain in place"
+    );
+}
+
+#[gpui::test]
 async fn test_drag_entries_between_different_worktrees(cx: &mut gpui::TestAppContext) {
     init_test(cx);
 

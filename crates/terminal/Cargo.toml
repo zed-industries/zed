@@ -51,7 +51,6 @@ windows.workspace = true
 [dev-dependencies]
 gpui = { workspace = true, features = ["test-support"] }
 rand.workspace = true
-serde_json.workspace = true
 settings = { workspace = true, features = ["test-support"] }
 tempfile.workspace = true
 util_macros.workspace = true
