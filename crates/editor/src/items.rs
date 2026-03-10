@@ -86,7 +86,9 @@ fn compute_content_hash(rope: &rope::Rope) -> String {
 
 fn prune_persist_history(workspace_id: WorkspaceId, cx: &App) -> Task<()> {
     use settings::Settings as _;
-    if !PersistHistorySettings::get_global(cx).enabled {
+    let enabled = PersistHistorySettings::get_global(cx).enabled;
+
+    if !enabled {
         return Task::ready(());
     }
 
@@ -1579,7 +1581,9 @@ impl Editor {
         cx: &App,
     ) -> Option<Task<()>> {
         use settings::Settings as _;
-        if !PersistHistorySettings::get_global(cx).enabled {
+        let enabled = PersistHistorySettings::get_global(cx).enabled;
+
+        if !enabled {
             return None;
         }
 
@@ -1660,7 +1664,8 @@ impl Editor {
         cx: &mut Context<Self>,
     ) {
         use settings::Settings as _;
-        if !PersistHistorySettings::get_global(cx).enabled {
+        let enabled = PersistHistorySettings::get_global(cx).enabled;
+        if !enabled {
             return;
         }
 
