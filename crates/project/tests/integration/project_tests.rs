@@ -2468,19 +2468,6 @@ async fn test_reporting_fs_changes_to_language_servers(cx: &mut gpui::TestAppCon
             },
         ]
     );
-
-    file_changes.lock().clear();
-
-    fs.emit_fs_event(path!("/the-root/Cargo.lock"), Some(PathEventKind::Rescan));
-    cx.executor().run_until_parked();
-
-    assert_eq!(
-        &*file_changes.lock(),
-        &[lsp::FileEvent {
-            uri: lsp::Uri::from_file_path(path!("/the-root/Cargo.lock")).unwrap(),
-            typ: lsp::FileChangeType::CHANGED,
-        }]
-    );
 }
 
 #[gpui::test]

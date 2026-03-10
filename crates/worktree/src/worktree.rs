@@ -4017,7 +4017,6 @@ impl BackgroundScanner {
                 matches!(event.kind, Some(fs::PathEventKind::Rescan)),
             ));
         }
-        log::trace!("process events: {path_events:?}");
         let root_path = self.state.lock().await.snapshot.abs_path.clone();
         let root_canonical_path = self.fs.canonicalize(root_path.as_path()).await;
         let root_canonical_path = match &root_canonical_path {
@@ -4413,15 +4412,11 @@ impl BackgroundScanner {
             return true;
         }
 
+        let merged_event_roots = merge_event_roots(&state.changed_paths, event_roots);
+
         let new_snapshot = state.snapshot.clone();
         let old_snapshot = mem::replace(&mut state.prev_snapshot, new_snapshot.snapshot.clone());
-        let changes = build_diff(
-            self.phase,
-            &old_snapshot,
-            &new_snapshot,
-            &state.changed_paths,
-            event_roots,
-        );
+        let changes = build_diff(self.phase, &old_snapshot, &new_snapshot, &merged_event_roots);
         state.changed_paths.clear();
 
         self.status_updates_tx
@@ -5274,19 +5269,7 @@ async fn discover_ancestor_git_repo(
     (ignores, exclude, None)
 }
 
-fn build_diff(
-    phase: BackgroundScannerPhase,
-    old_snapshot: &Snapshot,
-    new_snapshot: &Snapshot,
-    changed_paths: &[Arc<RelPath>],
-    event_roots: &[EventRoot],
-) -> UpdatedEntriesSet {
-    use BackgroundScannerPhase::*;
-    use PathChange::{Added, AddedOrUpdated, Loaded, Removed, Updated};
-
-    // Identify which paths have changed. Use the known set of changed
-    // parent paths to optimize the search.
-    let mut changes = Vec::new();
+fn merge_event_roots(changed_paths: &[Arc<RelPath>], event_roots: &[EventRoot]) -> Vec<EventRoot> {
     let mut merged_event_roots = Vec::with_capacity(changed_paths.len() + event_roots.len());
     let mut changed_paths = changed_paths.iter().peekable();
     let mut event_roots = event_roots.iter().peekable();
@@ -5312,14 +5295,29 @@ fn build_diff(
         was_rescanned: false,
     }));
     merged_event_roots.extend(event_roots.cloned());
+    merged_event_roots
+}
+
+fn build_diff(
+    phase: BackgroundScannerPhase,
+    old_snapshot: &Snapshot,
+    new_snapshot: &Snapshot,
+    event_roots: &[EventRoot],
+) -> UpdatedEntriesSet {
+    use BackgroundScannerPhase::*;
+    use PathChange::{Added, AddedOrUpdated, Loaded, Removed, Updated};
+
+    // Identify which paths have changed. Use the known set of changed
+    // parent paths to optimize the search.
+    let mut changes = Vec::new();
 
     let mut old_paths = old_snapshot.entries_by_path.cursor::<PathKey>(());
     let mut new_paths = new_snapshot.entries_by_path.cursor::<PathKey>(());
     let mut last_newly_loaded_dir_path = None;
     old_paths.next();
     new_paths.next();
-    for event_root in merged_event_roots {
-        let path = PathKey(event_root.path);
+    for event_root in event_roots {
+        let path = PathKey(event_root.path.clone());
         if old_paths.item().is_some_and(|e| e.path < path.0) {
             old_paths.seek_forward(&path, Bias::Left);
         }
