@@ -434,6 +434,22 @@ fn cursor_offset(editor: &Editor, cx: &mut Context<Editor>) -> usize {
     offset.0
 }
 
+/// Returns the full range of lines covered by the newest selection.
+/// For a collapsed cursor this is just the cursor line; for a multi-line
+/// selection it spans from the first selected line start to the last selected line end.
+fn selection_line_range(editor: &Editor, text: &str, cx: &mut Context<Editor>) -> Range<usize> {
+    let anchor = editor.selections.newest_anchor();
+    let snapshot = editor.buffer().read(cx).snapshot(cx);
+    let head_offset: usize = anchor.head().to_offset(&snapshot).0;
+    let tail_offset: usize = anchor.tail().to_offset(&snapshot).0;
+    let selection_start = head_offset.min(tail_offset);
+    let selection_end = head_offset.max(tail_offset);
+
+    let start_line = cursor_line_range(text, selection_start);
+    let end_line = cursor_line_range(text, selection_end);
+    start_line.start..end_line.end
+}
+
 fn range_contains_cursor(range: &Range<usize>, cursor: usize) -> bool {
     cursor >= range.start && cursor <= range.end
 }
@@ -516,12 +532,13 @@ fn refresh_wysiwyg_decorations(editor: &mut Editor, cx: &mut Context<Editor>) {
     let text = snapshot.text();
     let decorations = parse_markdown_decorations(&text);
     let cursor = cursor_offset(editor, cx);
-    let cursor_line = cursor_line_range(&text, cursor);
+    // Use the full selection range (covers all lines in a multi-line selection)
+    let active_line_range = selection_line_range(editor, &text, cx);
 
-    apply_highlights(editor, &snapshot, &decorations, cursor, &cursor_line, cx);
+    apply_highlights(editor, &snapshot, &decorations, cursor, &active_line_range, cx);
     remove_stale_folds(editor, cx);
-    apply_marker_folds(editor, &snapshot, &decorations, cursor, &cursor_line, cx);
-    apply_blocks(editor, &snapshot, &decorations, cursor, cx);
+    apply_marker_folds(editor, &snapshot, &decorations, cursor, &active_line_range, cx);
+    apply_blocks(editor, &snapshot, &decorations, &active_line_range, cx);
 }
 
 fn apply_highlights(
@@ -533,7 +550,7 @@ fn apply_highlights(
     cx: &mut Context<Editor>,
 ) {
     let foreground = cx.theme().colors().editor_foreground;
-    let block_ranges = collect_block_replaced_ranges(decorations, cursor);
+    let block_ranges = collect_block_replaced_ranges(decorations, cursor_line);
 
     let mut bold_ranges = Vec::new();
     let mut italic_ranges = Vec::new();
@@ -717,21 +734,21 @@ fn set_or_clear_highlight(
 
 fn collect_block_replaced_ranges(
     decorations: &MarkdownDecorations,
-    cursor: usize,
+    active_range: &Range<usize>,
 ) -> Vec<Range<usize>> {
     let mut block_ranges: Vec<Range<usize>> = Vec::new();
     for heading in &decorations.headings {
-        if !range_contains_cursor(&heading.line_range, cursor) {
+        if !range_on_cursor_line(&heading.line_range, active_range) {
             block_ranges.push(heading.line_range.clone());
         }
     }
     for table in &decorations.tables {
-        if !range_contains_cursor(&table.range, cursor) {
+        if !range_on_cursor_line(&table.range, active_range) {
             block_ranges.push(table.range.clone());
         }
     }
     for image in &decorations.images {
-        if !range_contains_cursor(&image.range, cursor) {
+        if !range_on_cursor_line(&image.range, active_range) {
             block_ranges.push(image.range.clone());
         }
     }
@@ -749,11 +766,11 @@ fn apply_marker_folds(
     editor: &mut Editor,
     snapshot: &MultiBufferSnapshot,
     decorations: &MarkdownDecorations,
-    cursor: usize,
-    cursor_line: &Range<usize>,
+    _cursor: usize,
+    active_range: &Range<usize>,
     cx: &mut Context<Editor>,
 ) {
-    let block_ranges = collect_block_replaced_ranges(decorations, cursor);
+    let block_ranges = collect_block_replaced_ranges(decorations, active_range);
     let placeholder = FoldPlaceholder {
         render: Arc::new(|_fold_id, _range, _cx| gpui::Empty.into_any_element()),
         constrain_width: false,
@@ -778,7 +795,7 @@ fn apply_marker_folds(
     for marker in &decorations.syntax_markers {
         if marker.range.start < marker.range.end
             && !marker_overlaps_block(&marker.range, &block_ranges)
-            && !range_on_cursor_line(&marker.range, cursor_line)
+            && !range_on_cursor_line(&marker.range, active_range)
         {
             let start = MultiBufferOffset(marker.range.start);
             let end = MultiBufferOffset(marker.range.end);
@@ -788,7 +805,7 @@ fn apply_marker_folds(
 
     for list_item in &decorations.list_items {
         if !marker_overlaps_block(&list_item.marker_range, &block_ranges)
-            && !range_on_cursor_line(&list_item.marker_range, cursor_line)
+            && !range_on_cursor_line(&list_item.marker_range, active_range)
         {
             let start = MultiBufferOffset(list_item.marker_range.start);
             let end = MultiBufferOffset(list_item.marker_range.end);
@@ -814,7 +831,7 @@ fn apply_blocks(
     editor: &mut Editor,
     snapshot: &MultiBufferSnapshot,
     decorations: &MarkdownDecorations,
-    cursor: usize,
+    active_range: &Range<usize>,
     cx: &mut Context<Editor>,
 ) {
     let old_block_ids: HashSet<CustomBlockId> = editor
@@ -829,7 +846,7 @@ fn apply_blocks(
     let mut block_properties: Vec<BlockProperties<Anchor>> = Vec::new();
 
     for heading in &decorations.headings {
-        if range_contains_cursor(&heading.line_range, cursor) {
+        if range_on_cursor_line(&heading.line_range, active_range) {
             continue;
         }
 
@@ -876,7 +893,7 @@ fn apply_blocks(
     }
 
     for (table_index, table) in decorations.tables.iter().enumerate() {
-        if range_contains_cursor(&table.range, cursor) {
+        if range_on_cursor_line(&table.range, active_range) {
             continue;
         }
 
@@ -997,7 +1014,7 @@ fn apply_blocks(
     }
 
     for image in &decorations.images {
-        if range_contains_cursor(&image.range, cursor) {
+        if range_on_cursor_line(&image.range, active_range) {
             continue;
         }
 
