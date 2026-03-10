@@ -872,11 +872,92 @@ fn render_mermaid_diagram(
 }
 
 fn render_markdown_paragraph(parsed: &MarkdownParagraph, cx: &mut RenderContext) -> AnyElement {
+    let elements = render_markdown_text(parsed, cx);
+    let grouped = group_inline_images(parsed, elements);
     cx.with_common_p(div())
-        .children(render_markdown_text(parsed, cx))
+        .children(grouped)
         .flex()
         .flex_col()
         .into_any_element()
+}
+
+/// Returns true if the chunk is a whitespace-only text node (the kind that
+/// appears between consecutive inline images in the parsed paragraph).
+fn is_whitespace_only_text(chunk: &MarkdownParagraphChunk) -> bool {
+    matches!(chunk, MarkdownParagraphChunk::Text(t) if t.contents.trim().is_empty())
+}
+
+/// Wraps consecutive runs of inline images into horizontal flex containers so
+/// that badges / shields / image sequences render side-by-side instead of
+/// stacking vertically.  Runs of a single image are left unwrapped.
+fn group_inline_images(parsed: &MarkdownParagraph, elements: Vec<AnyElement>) -> Vec<AnyElement> {
+    debug_assert_eq!(parsed.len(), elements.len());
+
+    // Identify which chunks belong to an "image run": a maximal sequence of
+    // Image chunks separated only by whitespace-only Text chunks.
+    let mut in_image_run = vec![false; parsed.len()];
+    let mut index = 0;
+    while index < parsed.len() {
+        if matches!(parsed[index], MarkdownParagraphChunk::Image(_)) {
+            let run_start = index;
+            index += 1;
+            while index < parsed.len() {
+                if matches!(parsed[index], MarkdownParagraphChunk::Image(_)) {
+                    index += 1;
+                } else if is_whitespace_only_text(&parsed[index])
+                    && index + 1 < parsed.len()
+                    && matches!(parsed[index + 1], MarkdownParagraphChunk::Image(_))
+                {
+                    // Whitespace text followed by another image — include both.
+                    index += 2;
+                } else {
+                    break;
+                }
+            }
+            let run_end = index;
+            // Only group runs that contain more than one image.
+            let image_count = parsed[run_start..run_end]
+                .iter()
+                .filter(|c| matches!(c, MarkdownParagraphChunk::Image(_)))
+                .count();
+            if image_count > 1 {
+                for i in run_start..run_end {
+                    in_image_run[i] = true;
+                }
+            }
+        } else {
+            index += 1;
+        }
+    }
+
+    let mut result: Vec<AnyElement> = Vec::with_capacity(elements.len());
+    let mut elements = elements.into_iter().enumerate();
+    while let Some((i, element)) = elements.next() {
+        if !in_image_run[i] {
+            result.push(element);
+            continue;
+        }
+        // Collect the entire run into a horizontal flex container.
+        let mut row_children: Vec<AnyElement> = vec![element];
+        for (j, el) in elements.by_ref() {
+            row_children.push(el);
+            if !in_image_run.get(j + 1).copied().unwrap_or(false) {
+                break;
+            }
+        }
+        result.push(
+            div()
+                .flex()
+                .flex_row()
+                .flex_wrap()
+                .gap_1()
+                .items_center()
+                .children(row_children)
+                .into_any(),
+        );
+    }
+
+    result
 }
 
 fn render_markdown_text(parsed_new: &MarkdownParagraph, cx: &mut RenderContext) -> Vec<AnyElement> {
