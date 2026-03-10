@@ -1,7 +1,7 @@
 use crate::{
     AnyElement, AnyEntity, AnyWeakEntity, App, Bounds, ContentMask, Context, Element, ElementId,
     Entity, EntityId, GlobalElementId, InspectorElementId, IntoElement, LayoutId, PaintIndex,
-    Pixels, PrepaintStateIndex, Render, Style, StyleRefinement, TextStyle, WeakEntity, relative,
+    Pixels, PrepaintStateIndex, Render, Style, StyleRefinement, Styled, TextStyle, WeakEntity,
 };
 use crate::{Empty, Window};
 use anyhow::Result;
@@ -384,10 +384,7 @@ pub trait View: 'static + Sized + Hash {
     /// The default returns a full-size style refinement (`width: 100%, height: 100%`).
     /// Return `None` to disable caching.
     fn style(&self) -> Option<StyleRefinement> {
-        let mut style = StyleRefinement::default();
-        style.size.width = Some(relative(1.).into());
-        style.size.height = Some(relative(1.).into());
-        Some(style)
+        Some(StyleRefinement::default().size_full())
     }
 }
 
