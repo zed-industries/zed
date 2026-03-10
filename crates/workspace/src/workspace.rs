@@ -1295,6 +1295,7 @@ pub struct Workspace {
     right_dock: Entity<Dock>,
     panes: Vec<Entity<Pane>>,
     active_worktree_override: Option<WorktreeId>,
+    pending_active_worktree_override_path: Option<PathBuf>,
     panes_by_item: HashMap<EntityId, WeakEntity<Pane>>,
     active_pane: Entity<Pane>,
     last_active_center_pane: Option<WeakEntity<Pane>>,
@@ -1417,6 +1418,7 @@ impl Workspace {
 
                 &project::Event::WorktreeRemoved(id) | &project::Event::WorktreeAdded(id) => {
                     this.update_window_title(window, cx);
+                    this.resolve_pending_active_worktree_override(cx);
                     if this
                         .project()
                         .read(cx)
@@ -1702,6 +1704,7 @@ impl Workspace {
             toast_layer,
             titlebar_item: None,
             active_worktree_override: None,
+            pending_active_worktree_override_path: None,
             notifications: Notifications::default(),
             suppressed_notifications: HashSet::default(),
             left_dock,
@@ -1859,6 +1862,9 @@ impl Workspace {
                         .as_ref()
                         .map(|w| w.centered_layout)
                         .unwrap_or(false);
+                    let active_worktree_path = serialized_workspace
+                        .as_ref()
+                        .and_then(|workspace| workspace.active_worktree_path.clone());
 
                     let workspace = window.update(cx, |multi_workspace, window, cx| {
                         let workspace = cx.new(|cx| {
@@ -1871,6 +1877,7 @@ impl Workspace {
                             );
 
                             workspace.centered_layout = centered_layout;
+                            workspace.restore_active_worktree_path(active_worktree_path, cx);
 
                             // Call init callback to add items before window renders
                             if let Some(init) = init {
@@ -1915,6 +1922,9 @@ impl Workspace {
                         .as_ref()
                         .map(|w| w.centered_layout)
                         .unwrap_or(false);
+                    let active_worktree_path = serialized_workspace
+                        .as_ref()
+                        .and_then(|workspace| workspace.active_worktree_path.clone());
                     let window = cx.open_window(options, {
                         let app_state = app_state.clone();
                         let project_handle = project_handle.clone();
@@ -1928,6 +1938,8 @@ impl Workspace {
                                     cx,
                                 );
                                 workspace.centered_layout = centered_layout;
+                                workspace
+                                    .restore_active_worktree_path(active_worktree_path.clone(), cx);
 
                                 // Call init callback to add items before window renders
                                 if let Some(init) = init {
@@ -2656,12 +2668,49 @@ impl Workspace {
         cx: &mut Context<Self>,
     ) {
         self.active_worktree_override = worktree_id;
+        self.pending_active_worktree_override_path = None;
         cx.notify();
     }
 
     pub fn clear_active_worktree_override(&mut self, cx: &mut Context<Self>) {
         self.active_worktree_override = None;
+        self.pending_active_worktree_override_path = None;
         cx.notify();
+    }
+
+    fn restore_active_worktree_path(
+        &mut self,
+        active_worktree_path: Option<PathBuf>,
+        cx: &mut Context<Self>,
+    ) {
+        self.pending_active_worktree_override_path = active_worktree_path;
+        self.resolve_pending_active_worktree_override(cx);
+    }
+
+    fn resolve_pending_active_worktree_override(&mut self, cx: &mut Context<Self>) {
+        let Some(active_worktree_path) = self.pending_active_worktree_override_path.as_ref() else {
+            return;
+        };
+
+        let worktree_id = self
+            .project
+            .read(cx)
+            .visible_worktrees(cx)
+            .find(|worktree| {
+                worktree.read(cx).abs_path().as_ref() == active_worktree_path.as_path()
+            })
+            .map(|worktree| worktree.read(cx).id());
+
+        if let Some(worktree_id) = worktree_id {
+            self.active_worktree_override = Some(worktree_id);
+            self.pending_active_worktree_override_path = None;
+            cx.notify();
+        }
+    }
+
+    fn serialized_active_worktree_path(&self, cx: &App) -> Option<PathBuf> {
+        self.effective_active_worktree(cx)
+            .map(|worktree| worktree.read(cx).abs_path().to_path_buf())
     }
 
     pub fn effective_active_worktree(&self, cx: &App) -> Option<Entity<Worktree>> {
@@ -6227,6 +6276,7 @@ impl Workspace {
                     id: database_id,
                     location,
                     paths,
+                    active_worktree_path: self.serialized_active_worktree_path(cx),
                     center_group,
                     window_bounds,
                     display: Default::default(),
@@ -8818,6 +8868,7 @@ pub fn open_workspace_by_id(
             .with_context(|| format!("Workspace {workspace_id:?} not found"))?;
 
         let centered_layout = serialized_workspace.centered_layout;
+        let active_worktree_path = serialized_workspace.active_worktree_path.clone();
 
         let (window, workspace) = if let Some(window) = requesting_window {
             let workspace = window.update(cx, |multi_workspace, window, cx| {
@@ -8830,6 +8881,7 @@ pub fn open_workspace_by_id(
                         cx,
                     );
                     workspace.centered_layout = centered_layout;
+                    workspace.restore_active_worktree_path(active_worktree_path.clone(), cx);
                     workspace
                 });
                 multi_workspace.add_workspace(workspace.clone(), cx);
@@ -8870,6 +8922,7 @@ pub fn open_workspace_by_id(
                             cx,
                         );
                         workspace.centered_layout = centered_layout;
+                        workspace.restore_active_worktree_path(active_worktree_path.clone(), cx);
                         workspace
                     });
                     cx.new(|cx| MultiWorkspace::new(workspace, window, cx))
@@ -9262,6 +9315,9 @@ async fn open_remote_project_inner(
 
     let workspace = window.update(cx, |multi_workspace, window, cx| {
         telemetry::event!("SSH Project Opened");
+        let active_worktree_path = serialized_workspace
+            .as_ref()
+            .and_then(|workspace| workspace.active_worktree_path.clone());
 
         let new_workspace = cx.new(|cx| {
             let mut workspace =
@@ -9271,6 +9327,7 @@ async fn open_remote_project_inner(
             if let Some(ref serialized) = serialized_workspace {
                 workspace.centered_layout = serialized.centered_layout;
             }
+            workspace.restore_active_worktree_path(active_worktree_path, cx);
 
             workspace
         });

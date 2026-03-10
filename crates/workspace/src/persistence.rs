@@ -970,6 +970,9 @@ impl Domain for WorkspaceDb {
         sql!(
             ALTER TABLE remote_connections ADD COLUMN use_podman BOOLEAN;
         ),
+        sql!(
+            ALTER TABLE workspaces ADD COLUMN active_worktree_path TEXT DEFAULT NULL;
+        ),
     ];
 
     // Allow recovering from bad migration that was initially shipped to nightly
@@ -1026,6 +1029,7 @@ impl WorkspaceDb {
             display,
             centered_layout,
             docks,
+            active_worktree_path,
             window_id,
         ): (
             WorkspaceId,
@@ -1035,6 +1039,7 @@ impl WorkspaceDb {
             Option<Uuid>,
             Option<bool>,
             DockStructure,
+            Option<String>,
             Option<u64>,
         ) = self
             .select_row_bound(sql! {
@@ -1058,6 +1063,7 @@ impl WorkspaceDb {
                     bottom_dock_visible,
                     bottom_dock_active_panel,
                     bottom_dock_zoom,
+                    active_worktree_path,
                     window_id
                 FROM workspaces
                 WHERE
@@ -1095,6 +1101,7 @@ impl WorkspaceDb {
                 None => SerializedWorkspaceLocation::Local,
             },
             paths,
+            active_worktree_path: active_worktree_path.map(PathBuf::from),
             center_group: self
                 .get_center_pane_group(workspace_id)
                 .context("Getting center group")
@@ -1122,6 +1129,7 @@ impl WorkspaceDb {
             display,
             centered_layout,
             docks,
+            active_worktree_path,
             window_id,
             remote_connection_id,
         ): (
@@ -1131,6 +1139,7 @@ impl WorkspaceDb {
             Option<Uuid>,
             Option<bool>,
             DockStructure,
+            Option<String>,
             Option<u64>,
             Option<i32>,
         ) = self
@@ -1154,6 +1163,7 @@ impl WorkspaceDb {
                     bottom_dock_visible,
                     bottom_dock_active_panel,
                     bottom_dock_zoom,
+                    active_worktree_path,
                     window_id,
                     remote_connection_id
                 FROM workspaces
@@ -1185,6 +1195,7 @@ impl WorkspaceDb {
                 None => SerializedWorkspaceLocation::Local,
             },
             paths,
+            active_worktree_path: active_worktree_path.map(PathBuf::from),
             center_group: self
                 .get_center_pane_group(workspace_id)
                 .context("Getting center group")
@@ -1433,10 +1444,11 @@ impl WorkspaceDb {
                         bottom_dock_active_panel,
                         bottom_dock_zoom,
                         session_id,
+                        active_worktree_path,
                         window_id,
                         timestamp
                     )
-                    VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, CURRENT_TIMESTAMP)
+                    VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, CURRENT_TIMESTAMP)
                     ON CONFLICT DO
                     UPDATE SET
                         paths = ?2,
@@ -1452,7 +1464,8 @@ impl WorkspaceDb {
                         bottom_dock_active_panel = ?12,
                         bottom_dock_zoom = ?13,
                         session_id = ?14,
-                        window_id = ?15,
+                        active_worktree_path = ?15,
+                        window_id = ?16,
                         timestamp = CURRENT_TIMESTAMP
                 );
                 let mut prepared_query = conn.exec_bound(query)?;
@@ -1463,6 +1476,9 @@ impl WorkspaceDb {
                     remote_connection_id,
                     workspace.docks,
                     workspace.session_id,
+                    workspace
+                        .active_worktree_path
+                        .map(|path| path.to_string_lossy().to_string()),
                     workspace.window_id,
                 );
 
@@ -2511,6 +2527,7 @@ mod tests {
         let workspace = SerializedWorkspace {
             id,
             paths: PathList::new(&["/tmp"]),
+            active_worktree_path: None,
             location: SerializedWorkspaceLocation::Local,
             center_group: Default::default(),
             window_bounds: Default::default(),
@@ -2666,6 +2683,7 @@ mod tests {
         let workspace = SerializedWorkspace {
             id,
             paths: PathList::new(&["/tmp"]),
+            active_worktree_path: None,
             location: SerializedWorkspaceLocation::Local,
             center_group: Default::default(),
             window_bounds: Default::default(),
@@ -2714,6 +2732,7 @@ mod tests {
         let workspace_without_breakpoint = SerializedWorkspace {
             id,
             paths: PathList::new(&["/tmp"]),
+            active_worktree_path: None,
             location: SerializedWorkspaceLocation::Local,
             center_group: Default::default(),
             window_bounds: Default::default(),
@@ -2812,6 +2831,7 @@ mod tests {
         let mut workspace_1 = SerializedWorkspace {
             id: WorkspaceId(1),
             paths: PathList::new(&["/tmp", "/tmp2"]),
+            active_worktree_path: None,
             location: SerializedWorkspaceLocation::Local,
             center_group: Default::default(),
             window_bounds: Default::default(),
@@ -2827,6 +2847,7 @@ mod tests {
         let workspace_2 = SerializedWorkspace {
             id: WorkspaceId(2),
             paths: PathList::new(&["/tmp"]),
+            active_worktree_path: None,
             location: SerializedWorkspaceLocation::Local,
             center_group: Default::default(),
             window_bounds: Default::default(),
@@ -2934,6 +2955,7 @@ mod tests {
         let workspace = SerializedWorkspace {
             id: WorkspaceId(5),
             paths: PathList::new(&["/tmp", "/tmp2"]),
+            active_worktree_path: None,
             location: SerializedWorkspaceLocation::Local,
             center_group,
             window_bounds: Default::default(),
@@ -2968,6 +2990,7 @@ mod tests {
         let workspace_1 = SerializedWorkspace {
             id: WorkspaceId(1),
             paths: PathList::new(&["/tmp", "/tmp2"]),
+            active_worktree_path: None,
             location: SerializedWorkspaceLocation::Local,
             center_group: Default::default(),
             window_bounds: Default::default(),
@@ -2983,6 +3006,7 @@ mod tests {
         let mut workspace_2 = SerializedWorkspace {
             id: WorkspaceId(2),
             paths: PathList::new(&["/tmp"]),
+            active_worktree_path: None,
             location: SerializedWorkspaceLocation::Local,
             center_group: Default::default(),
             window_bounds: Default::default(),
@@ -3025,6 +3049,7 @@ mod tests {
         let mut workspace_3 = SerializedWorkspace {
             id: WorkspaceId(3),
             paths: PathList::new(&["/tmp2", "/tmp"]),
+            active_worktree_path: None,
             location: SerializedWorkspaceLocation::Local,
             center_group: Default::default(),
             window_bounds: Default::default(),
@@ -3063,6 +3088,7 @@ mod tests {
         let workspace_1 = SerializedWorkspace {
             id: WorkspaceId(1),
             paths: PathList::new(&["/tmp1"]),
+            active_worktree_path: None,
             location: SerializedWorkspaceLocation::Local,
             center_group: Default::default(),
             window_bounds: Default::default(),
@@ -3078,6 +3104,7 @@ mod tests {
         let workspace_2 = SerializedWorkspace {
             id: WorkspaceId(2),
             paths: PathList::new(&["/tmp2"]),
+            active_worktree_path: None,
             location: SerializedWorkspaceLocation::Local,
             center_group: Default::default(),
             window_bounds: Default::default(),
@@ -3093,6 +3120,7 @@ mod tests {
         let workspace_3 = SerializedWorkspace {
             id: WorkspaceId(3),
             paths: PathList::new(&["/tmp3"]),
+            active_worktree_path: None,
             location: SerializedWorkspaceLocation::Local,
             center_group: Default::default(),
             window_bounds: Default::default(),
@@ -3108,6 +3136,7 @@ mod tests {
         let workspace_4 = SerializedWorkspace {
             id: WorkspaceId(4),
             paths: PathList::new(&["/tmp4"]),
+            active_worktree_path: None,
             location: SerializedWorkspaceLocation::Local,
             center_group: Default::default(),
             window_bounds: Default::default(),
@@ -3132,6 +3161,7 @@ mod tests {
         let workspace_5 = SerializedWorkspace {
             id: WorkspaceId(5),
             paths: PathList::default(),
+            active_worktree_path: None,
             location: SerializedWorkspaceLocation::Remote(
                 db.remote_connection(connection_id).unwrap(),
             ),
@@ -3149,6 +3179,7 @@ mod tests {
         let workspace_6 = SerializedWorkspace {
             id: WorkspaceId(6),
             paths: PathList::new(&["/tmp6c", "/tmp6b", "/tmp6a"]),
+            active_worktree_path: None,
             location: SerializedWorkspaceLocation::Local,
             center_group: Default::default(),
             window_bounds: Default::default(),
@@ -3206,6 +3237,7 @@ mod tests {
         SerializedWorkspace {
             id: WorkspaceId(4),
             paths: PathList::new(paths),
+            active_worktree_path: None,
             location: SerializedWorkspaceLocation::Local,
             center_group: center_group.clone(),
             window_bounds: Default::default(),
@@ -3247,6 +3279,7 @@ mod tests {
         .map(|(id, paths, window_id)| SerializedWorkspace {
             id: WorkspaceId(id),
             paths: PathList::new(paths.as_slice()),
+            active_worktree_path: None,
             location: SerializedWorkspaceLocation::Local,
             center_group: Default::default(),
             window_bounds: Default::default(),
@@ -3359,6 +3392,7 @@ mod tests {
         .map(|(id, remote_connection, window_id)| SerializedWorkspace {
             id: WorkspaceId(id),
             paths: PathList::default(),
+            active_worktree_path: None,
             location: SerializedWorkspaceLocation::Remote(remote_connection),
             center_group: Default::default(),
             window_bounds: Default::default(),
@@ -3720,6 +3754,7 @@ mod tests {
         let workspace = SerializedWorkspace {
             id,
             paths: PathList::new(empty_paths),
+            active_worktree_path: None,
             location: SerializedWorkspaceLocation::Local,
             center_group: Default::default(),
             window_bounds: None,
@@ -3753,6 +3788,45 @@ mod tests {
         assert_eq!(retrieved.window_bounds.unwrap().0, window_bounds.0);
         assert!(retrieved.display.is_some());
         assert_eq!(retrieved.display.unwrap(), display_uuid);
+    }
+
+    #[gpui::test]
+    async fn test_workspace_active_worktree_path_round_trips() {
+        zlog::init_test();
+
+        let db = WorkspaceDb::open_test_db("test_workspace_active_worktree_path_round_trips").await;
+        let id = db.next_id().await.unwrap();
+        let active_worktree_path = PathBuf::from("/tmp/worktree-a");
+
+        let workspace = SerializedWorkspace {
+            id,
+            paths: PathList::new(&["/tmp/worktree-a", "/tmp/worktree-b"]),
+            active_worktree_path: Some(active_worktree_path.clone()),
+            location: SerializedWorkspaceLocation::Local,
+            center_group: Default::default(),
+            window_bounds: None,
+            display: None,
+            docks: Default::default(),
+            breakpoints: Default::default(),
+            centered_layout: false,
+            session_id: None,
+            window_id: None,
+            user_toolchains: Default::default(),
+        };
+
+        db.save_workspace(workspace.clone()).await;
+
+        let retrieved_by_id = db.workspace_for_id(id).unwrap();
+        assert_eq!(
+            retrieved_by_id.active_worktree_path,
+            Some(active_worktree_path.clone())
+        );
+
+        let retrieved_by_roots = db.workspace_for_roots(&["/tmp/worktree-a", "/tmp/worktree-b"]);
+        assert_eq!(
+            retrieved_by_roots.unwrap().active_worktree_path,
+            Some(active_worktree_path)
+        );
     }
 
     #[gpui::test]
@@ -3796,6 +3870,7 @@ mod tests {
             db.save_workspace(SerializedWorkspace {
                 id: WorkspaceId(*id),
                 paths: PathList::new(&[*dir]),
+                active_worktree_path: None,
                 location: SerializedWorkspaceLocation::Local,
                 center_group: Default::default(),
                 window_bounds: Default::default(),
@@ -4137,6 +4212,7 @@ mod tests {
         DB.save_workspace(SerializedWorkspace {
             id: workspace2_db_id,
             paths: PathList::new(&["/tmp/remove_test"]),
+            active_worktree_path: None,
             location: SerializedWorkspaceLocation::Local,
             center_group: Default::default(),
             window_bounds: Default::default(),
@@ -4219,6 +4295,7 @@ mod tests {
         DB.save_workspace(SerializedWorkspace {
             id: ws1_id,
             paths: PathList::new(&[dir1.path()]),
+            active_worktree_path: None,
             location: SerializedWorkspaceLocation::Local,
             center_group: Default::default(),
             window_bounds: Default::default(),
@@ -4235,6 +4312,7 @@ mod tests {
         DB.save_workspace(SerializedWorkspace {
             id: ws2_id,
             paths: PathList::new(&[dir2.path()]),
+            active_worktree_path: None,
             location: SerializedWorkspaceLocation::Local,
             center_group: Default::default(),
             window_bounds: Default::default(),
@@ -4313,6 +4391,7 @@ mod tests {
         DB.save_workspace(SerializedWorkspace {
             id: workspace2_db_id,
             paths: PathList::new(&["/tmp/pending_removal_test"]),
+            active_worktree_path: None,
             location: SerializedWorkspaceLocation::Local,
             center_group: Default::default(),
             window_bounds: Default::default(),
