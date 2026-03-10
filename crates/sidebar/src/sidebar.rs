@@ -2569,15 +2569,15 @@ mod tests {
         let path_list = PathList::new(&[std::path::PathBuf::from("/my-project")]);
 
         // Open thread A and keep it generating.
-        let connection_a = StubAgentConnection::new();
-        open_thread_with_connection(&panel, connection_a.clone(), cx);
+        let connection = StubAgentConnection::new();
+        open_thread_with_connection(&panel, connection.clone(), cx);
         send_message(&panel, cx);
 
         let session_id_a = active_session_id(&panel, cx);
         save_thread_to_store(&session_id_a, &path_list, cx).await;
 
         cx.update(|_, cx| {
-            connection_a.send_update(
+            connection.send_update(
                 session_id_a.clone(),
                 acp::SessionUpdate::AgentMessageChunk(acp::ContentChunk::new("working...".into())),
                 cx,
@@ -2586,11 +2586,10 @@ mod tests {
         cx.run_until_parked();
 
         // Open thread B (idle, default response) — thread A goes to background.
-        let connection_b = StubAgentConnection::new();
-        connection_b.set_next_prompt_updates(vec![acp::SessionUpdate::AgentMessageChunk(
+        connection.set_next_prompt_updates(vec![acp::SessionUpdate::AgentMessageChunk(
             acp::ContentChunk::new("Done".into()),
         )]);
-        open_thread_with_connection(&panel, connection_b, cx);
+        open_thread_with_connection(&panel, connection, cx);
         send_message(&panel, cx);
 
         let session_id_b = active_session_id(&panel, cx);
