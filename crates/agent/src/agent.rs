@@ -349,9 +349,10 @@ impl NativeAgent {
                 .model_from_id(&LanguageModels::model_id(&default_model.model))
         });
         let thread = cx.new(|cx| {
-            Thread::new(
+            Thread::new_with_workspace(
                 project.clone(),
                 self.project_context.clone(),
+                self.workspace.clone(),
                 self.context_server_registry.clone(),
                 self.templates.clone(),
                 default_model,

@@ -53,6 +53,7 @@ use std::{
     time::Duration,
 };
 use util::path;
+use workspace::Workspace;
 
 mod edit_file_thread_test;
 mod test_tools;
@@ -5025,6 +5026,49 @@ async fn test_subagent_tool_is_present_when_feature_flag_enabled(cx: &mut TestAp
         assert!(
             thread.has_registered_tool(SpawnAgentTool::NAME),
             "subagent tool should be present when feature flag is enabled"
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_worktree_tool_is_present_when_workspace_context_is_available(
+    cx: &mut TestAppContext,
+) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(path!("/test"), json!({})).await;
+    let project = Project::test(fs, [path!("/test").as_ref()], cx).await;
+    let (workspace, cx) =
+        cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+    let project_context = cx.new(|_cx| ProjectContext::default());
+    let context_server_store = project.read_with(cx, |project, _| project.context_server_store());
+    let context_server_registry =
+        cx.new(|cx| ContextServerRegistry::new(context_server_store.clone(), cx));
+    let model = Arc::new(FakeLanguageModel::default());
+
+    let environment = Rc::new(cx.update(|cx| {
+        FakeThreadEnvironment::default().with_terminal(FakeTerminalHandle::new_never_exits(cx))
+    }));
+
+    let thread = cx.new(|cx| {
+        let mut thread = Thread::new_with_workspace(
+            project.clone(),
+            project_context,
+            Some(workspace.downgrade()),
+            context_server_registry,
+            Templates::new(),
+            Some(model),
+            cx,
+        );
+        thread.add_default_tools(environment, cx);
+        thread
+    });
+
+    thread.read_with(cx, |thread, _| {
+        assert!(
+            thread.has_registered_tool(WorktreeTool::NAME),
+            "worktree tool should be present when a workspace is available"
         );
     });
 }
