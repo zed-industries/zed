@@ -787,7 +787,15 @@ impl NotebookEditor {
         })
         .detach();
 
-        self.cell_list.reset(self.cell_order.len());
+        self.cell_list.splice(insert_index..insert_index, 1);
+        self.cell_list.scroll_to_reveal_item(insert_index);
+        markdown_cell.update(cx, |cell, cx| {
+            cell.set_editing(true);
+            cx.notify();
+        });
+        let editor = markdown_cell.read(cx).editor().clone();
+        window.focus(&editor.focus_handle(cx), cx);
+        self.notebook_mode = NotebookMode::Edit;
         cx.notify();
     }
 
@@ -847,7 +855,11 @@ impl NotebookEditor {
         })
         .detach();
 
-        self.cell_list.reset(self.cell_order.len());
+        self.cell_list.splice(insert_index..insert_index, 1);
+        self.cell_list.scroll_to_reveal_item(insert_index);
+        let editor = code_cell.read(cx).editor().clone();
+        window.focus(&editor.focus_handle(cx), cx);
+        self.notebook_mode = NotebookMode::Edit;
         cx.notify();
     }
 
