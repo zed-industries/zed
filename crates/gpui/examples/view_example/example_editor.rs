@@ -1,9 +1,9 @@
-//! The `Editor` entity — owns the truth about text content, cursor position,
+//! The `ExampleEditor` entity — owns the truth about text content, cursor position,
 //! blink state, and keyboard handling.
 //!
-//! Also contains `EditorText`, the low-level custom `Element` that shapes text
-//! and paints the cursor, and `EditorView`, a cached `View` wrapper that
-//! automatically pairs an `Editor` entity with its `EditorText` element.
+//! Also contains `ExampleEditorText`, the low-level custom `Element` that shapes text
+//! and paints the cursor, and `ExampleEditorView`, a cached `View` wrapper that
+//! automatically pairs an `ExampleEditor` entity with its `ExampleEditorText` element.
 
 use std::hash::Hash;
 use std::ops::Range;
@@ -18,7 +18,7 @@ use unicode_segmentation::*;
 
 use crate::{Backspace, Delete, End, Home, Left, Right};
 
-pub struct Editor {
+pub struct ExampleEditor {
     pub focus_handle: FocusHandle,
     pub content: String,
     pub cursor: usize,
@@ -26,7 +26,7 @@ pub struct Editor {
     _blink_task: Task<()>,
 }
 
-impl Editor {
+impl ExampleEditor {
     pub fn new(cx: &mut Context<Self>) -> Self {
         let blink_task = Self::spawn_blink_task(cx);
 
@@ -165,13 +165,13 @@ impl Editor {
     }
 }
 
-impl Focusable for Editor {
+impl Focusable for ExampleEditor {
     fn focus_handle(&self, _cx: &App) -> FocusHandle {
         self.focus_handle.clone()
     }
 }
 
-impl EntityInputHandler for Editor {
+impl EntityInputHandler for ExampleEditor {
     fn text_for_range(
         &mut self,
         range_utf16: Range<usize>,
@@ -258,26 +258,26 @@ impl EntityInputHandler for Editor {
 }
 
 // ---------------------------------------------------------------------------
-// EditorText — custom Element that shapes text & paints the cursor
+// ExampleEditorText — custom Element that shapes text & paints the cursor
 // ---------------------------------------------------------------------------
 
-struct EditorText {
-    editor: Entity<Editor>,
+struct ExampleEditorText {
+    editor: Entity<ExampleEditor>,
     text_color: Hsla,
 }
 
-struct EditorTextPrepaintState {
+struct ExampleEditorTextPrepaintState {
     lines: Vec<ShapedLine>,
     cursor: Option<PaintQuad>,
 }
 
-impl EditorText {
-    pub fn new(editor: Entity<Editor>, text_color: Hsla) -> Self {
+impl ExampleEditorText {
+    pub fn new(editor: Entity<ExampleEditor>, text_color: Hsla) -> Self {
         Self { editor, text_color }
     }
 }
 
-impl IntoElement for EditorText {
+impl IntoElement for ExampleEditorText {
     type Element = Self;
 
     fn into_element(self) -> Self::Element {
@@ -285,9 +285,9 @@ impl IntoElement for EditorText {
     }
 }
 
-impl Element for EditorText {
+impl Element for ExampleEditorText {
     type RequestLayoutState = ();
-    type PrepaintState = EditorTextPrepaintState;
+    type PrepaintState = ExampleEditorTextPrepaintState;
 
     fn id(&self) -> Option<gpui::ElementId> {
         None
@@ -395,7 +395,7 @@ impl Element for EditorText {
             None
         };
 
-        EditorTextPrepaintState {
+        ExampleEditorTextPrepaintState {
             lines: shaped_lines,
             cursor,
         }
@@ -448,20 +448,20 @@ fn cursor_line_and_offset(content: &str, cursor: usize) -> (usize, usize) {
 }
 
 // ---------------------------------------------------------------------------
-// EditorView — a cached View that pairs an Editor entity with EditorText
+// ExampleEditorView — a cached View that pairs an ExampleEditor entity with ExampleEditorText
 // ---------------------------------------------------------------------------
 
-/// A simple cached view that renders an `Editor` entity via the `EditorText`
+/// A simple cached view that renders an `ExampleEditor` entity via the `ExampleEditorText`
 /// custom element. Use this when you want a bare editor display with automatic
 /// caching and no extra chrome.
 #[derive(IntoViewElement, Hash)]
-pub struct EditorView {
-    editor: Entity<Editor>,
+pub struct ExampleEditorView {
+    editor: Entity<ExampleEditor>,
     text_color: Hsla,
 }
 
-impl EditorView {
-    pub fn new(editor: Entity<Editor>) -> Self {
+impl ExampleEditorView {
+    pub fn new(editor: Entity<ExampleEditor>) -> Self {
         Self {
             editor,
             text_color: hsla(0., 0., 0.1, 1.),
@@ -474,14 +474,14 @@ impl EditorView {
     }
 }
 
-impl gpui::View for EditorView {
-    type State = Editor;
+impl gpui::View for ExampleEditorView {
+    type Entity = ExampleEditor;
 
-    fn entity(&self) -> &Entity<Editor> {
-        &self.editor
+    fn entity(&self) -> Option<Entity<ExampleEditor>> {
+        Some(self.editor.clone())
     }
 
     fn render(self, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
-        EditorText::new(self.editor, self.text_color)
+        ExampleEditorText::new(self.editor, self.text_color)
     }
 }

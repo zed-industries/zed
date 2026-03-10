@@ -241,5 +241,5 @@ name = "mouse_pressure"
 path = "examples/mouse_pressure.rs"
 
 [[example]]
-name = "text_views"
-path = "examples/text_views/main.rs"
+name = "view_example"
+path = "examples/view_example/view_example_main.rs"

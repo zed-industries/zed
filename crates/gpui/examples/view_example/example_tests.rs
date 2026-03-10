@@ -1,4 +1,4 @@
-//! Tests for the `Editor` entity.
+//! Tests for the `ExampleEditor` entity.
 //!
 //! These use GPUI's test infrastructure which requires the `test-support` feature:
 //!
@@ -12,28 +12,28 @@ mod tests {
 
     use gpui::{Context, Entity, KeyBinding, TestAppContext, Window, prelude::*};
 
-    use crate::editor::Editor;
-    use crate::input::Input;
-    use crate::text_area::TextArea;
+    use crate::example_editor::ExampleEditor;
+    use crate::example_input::ExampleInput;
+    use crate::example_text_area::ExampleTextArea;
     use crate::{Backspace, Delete, End, Enter, Home, Left, Right};
 
     struct InputWrapper {
-        editor: Entity<Editor>,
+        editor: Entity<ExampleEditor>,
     }
 
     impl Render for InputWrapper {
         fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
-            Input::new(self.editor.clone())
+            ExampleInput::new(self.editor.clone())
         }
     }
 
     struct TextAreaWrapper {
-        editor: Entity<Editor>,
+        editor: Entity<ExampleEditor>,
     }
 
     impl Render for TextAreaWrapper {
         fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
-            TextArea::new(self.editor.clone(), 5)
+            ExampleTextArea::new(self.editor.clone(), 5)
         }
     }
 
@@ -51,11 +51,13 @@ mod tests {
         });
     }
 
-    fn init_input(cx: &mut TestAppContext) -> (Entity<Editor>, &mut gpui::VisualTestContext) {
+    fn init_input(
+        cx: &mut TestAppContext,
+    ) -> (Entity<ExampleEditor>, &mut gpui::VisualTestContext) {
         bind_keys(cx);
 
         let (wrapper, cx) = cx.add_window_view(|_window, cx| {
-            let editor = cx.new(|cx| Editor::new(cx));
+            let editor = cx.new(|cx| ExampleEditor::new(cx));
             InputWrapper { editor }
         });
 
@@ -69,11 +71,13 @@ mod tests {
         (editor, cx)
     }
 
-    fn init_textarea(cx: &mut TestAppContext) -> (Entity<Editor>, &mut gpui::VisualTestContext) {
+    fn init_textarea(
+        cx: &mut TestAppContext,
+    ) -> (Entity<ExampleEditor>, &mut gpui::VisualTestContext) {
         bind_keys(cx);
 
         let (wrapper, cx) = cx.add_window_view(|_window, cx| {
-            let editor = cx.new(|cx| Editor::new(cx));
+            let editor = cx.new(|cx| ExampleEditor::new(cx));
             TextAreaWrapper { editor }
         });
 

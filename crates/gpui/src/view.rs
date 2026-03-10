@@ -346,10 +346,10 @@ mod any_view {
 /// }
 ///
 /// impl View for Counter {
-///     type State = CounterState;
+///     type Entity = CounterState;
 ///
-///     fn entity(&self) -> &Entity<CounterState> {
-///         &self.state
+///     fn entity(&self) -> Option<Entity<CounterState>> {
+///         Some(self.state.clone())
 ///     }
 ///
 ///
@@ -364,10 +364,16 @@ mod any_view {
 /// ```
 pub trait View: 'static + Sized + Hash {
     /// The entity type that backs this view's state.
-    type State: 'static;
+    type Entity: 'static;
 
-    /// Returns a reference to the entity that backs this view.
-    fn entity(&self) -> &Entity<Self::State>;
+    /// Returns the entity that backs this view, if any.
+    ///
+    /// When `Some`, the view creates a reactive boundary in the element tree —
+    /// `cx.notify()` on the entity only re-renders this view's subtree.
+    ///
+    /// When `None`, the view behaves like a stateless component with subtree
+    /// isolation via its type name (similar to [`RenderOnce`](crate::RenderOnce)).
+    fn entity(&self) -> Option<Entity<Self::Entity>>;
 
     /// Render this view into an element tree. Takes ownership of self,
     /// consuming the component props. The entity state persists across frames.
@@ -382,6 +388,49 @@ pub trait View: 'static + Sized + Hash {
         style.size.width = Some(relative(1.).into());
         style.size.height = Some(relative(1.).into());
         Some(style)
+    }
+}
+
+/// A stateless component that renders an element tree without an entity.
+///
+/// This is the `View` equivalent of [`RenderOnce`](crate::RenderOnce). Types that
+/// implement `ComponentView` get a blanket implementation of [`View`] with
+/// `entity()` returning `None` and `style()` returning `None` — meaning no
+/// reactive boundary, no caching, just subtree isolation via the type name.
+///
+/// # Example
+///
+/// ```ignore
+/// #[derive(Hash, IntoViewElement)]
+/// struct Greeting {
+///     name: SharedString,
+/// }
+///
+/// impl ComponentView for Greeting {
+///     fn render(self, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
+///         div().child(format!("Hello, {}!", self.name))
+///     }
+/// }
+/// ```
+pub trait ComponentView: 'static + Sized + Hash {
+    /// Render this component into an element tree. Takes ownership of self,
+    /// consuming the component props.
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement;
+}
+
+impl<T: ComponentView> View for T {
+    type Entity = ();
+
+    fn entity(&self) -> Option<Entity<()>> {
+        None
+    }
+
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+        ComponentView::render(self, window, cx)
+    }
+
+    fn style(&self) -> Option<StyleRefinement> {
+        None
     }
 }
 
@@ -405,7 +454,7 @@ pub trait View: 'static + Sized + Hash {
 #[doc(hidden)]
 pub struct ViewElement<V: View> {
     view: Option<V>,
-    entity_id: EntityId,
+    entity_id: Option<EntityId>,
     props_hash: u64,
     cached_style: Option<StyleRefinement>,
     #[cfg(debug_assertions)]
@@ -419,30 +468,19 @@ impl<V: View> ViewElement<V> {
     #[track_caller]
     pub fn new(view: V) -> Self {
         use std::hash::Hasher;
-        let entity_id = view.entity().entity_id();
+        let entity_id = view.entity().map(|e| e.entity_id());
+        let cached_style = view.style();
         let mut hasher = std::collections::hash_map::DefaultHasher::new();
         view.hash(&mut hasher);
         let props_hash = hasher.finish();
         ViewElement {
             entity_id,
             props_hash,
-            cached_style: None,
+            cached_style,
             view: Some(view),
             #[cfg(debug_assertions)]
             source: core::panic::Location::caller(),
         }
-    }
-
-    /// Enable caching for this view element. When cached, the view's render,
-    /// prepaint, and paint will all be reused from the previous frame if the
-    /// entity hasn't been notified and the props hash hasn't changed.
-    ///
-    /// The provided style defines the outer layout of this view in its parent
-    /// (since the actual content render is deferred until we know if caching
-    /// can be used).
-    pub fn cached(mut self, style: StyleRefinement) -> Self {
-        self.cached_style = Some(style);
-        self
     }
 }
 
@@ -473,7 +511,7 @@ impl<V: View> Element for ViewElement<V> {
     type PrepaintState = Option<AnyElement>;
 
     fn id(&self) -> Option<ElementId> {
-        Some(ElementId::View(self.entity_id))
+        self.entity_id.map(ElementId::View)
     }
 
     fn source_location(&self) -> Option<&'static core::panic::Location<'static>> {
@@ -491,19 +529,34 @@ impl<V: View> Element for ViewElement<V> {
         window: &mut Window,
         cx: &mut App,
     ) -> (LayoutId, Self::RequestLayoutState) {
-        window.with_rendered_view(self.entity_id, |window| {
-            let caching_disabled = window.is_inspector_picking(cx);
-            match self.cached_style.as_ref() {
-                // Cached path: defer render, use style for layout.
-                // Render will happen in prepaint only on cache miss.
-                Some(style) if !caching_disabled => {
-                    let mut root_style = Style::default();
-                    root_style.refine(style);
-                    let layout_id = window.request_layout(root_style, None, cx);
-                    (layout_id, None)
+        if let Some(entity_id) = self.entity_id {
+            // Stateful path: create a reactive boundary.
+            window.with_rendered_view(entity_id, |window| {
+                let caching_disabled = window.is_inspector_picking(cx);
+                match self.cached_style.as_ref() {
+                    Some(style) if !caching_disabled => {
+                        let mut root_style = Style::default();
+                        root_style.refine(style);
+                        let layout_id = window.request_layout(root_style, None, cx);
+                        (layout_id, None)
+                    }
+                    _ => {
+                        let mut element = self
+                            .view
+                            .take()
+                            .unwrap()
+                            .render(window, cx)
+                            .into_any_element();
+                        let layout_id = element.request_layout(window, cx);
+                        (layout_id, Some(element))
+                    }
                 }
-                // Non-cached path: render eagerly.
-                _ => {
+            })
+        } else {
+            // Stateless path: isolate subtree via type name (like Component<C>).
+            window.with_id(
+                ElementId::Name(std::any::type_name::<V>().into()),
+                |window| {
                     let mut element = self
                         .view
                         .take()
@@ -512,9 +565,9 @@ impl<V: View> Element for ViewElement<V> {
                         .into_any_element();
                     let layout_id = element.request_layout(window, cx);
                     (layout_id, Some(element))
-                }
-            }
-        })
+                },
+            )
+        }
     }
 
     fn prepaint(
@@ -526,76 +579,83 @@ impl<V: View> Element for ViewElement<V> {
         window: &mut Window,
         cx: &mut App,
     ) -> Option<AnyElement> {
-        window.set_view_id(self.entity_id);
-        window.with_rendered_view(self.entity_id, |window| {
-            // Non-cached path: element was rendered in request_layout, just prepaint it.
-            if let Some(mut element) = element.take() {
-                element.prepaint(window, cx);
-                return Some(element);
-            }
+        if let Some(entity_id) = self.entity_id {
+            // Stateful path.
+            window.set_view_id(entity_id);
+            window.with_rendered_view(entity_id, |window| {
+                if let Some(mut element) = element.take() {
+                    element.prepaint(window, cx);
+                    return Some(element);
+                }
 
-            // Cached path: check cache, render only on miss.
-            window.with_element_state::<ViewElementState, _>(
-                global_id.unwrap(),
-                |element_state, window| {
-                    let content_mask = window.content_mask();
-                    let text_style = window.text_style();
+                window.with_element_state::<ViewElementState, _>(
+                    global_id.unwrap(),
+                    |element_state, window| {
+                        let content_mask = window.content_mask();
+                        let text_style = window.text_style();
 
-                    // Cache hit: entity clean, props unchanged, bounds stable.
-                    // Skip render, prepaint, and paint entirely.
-                    if let Some(mut element_state) = element_state
-                        && element_state.cache_key.bounds == bounds
-                        && element_state.cache_key.content_mask == content_mask
-                        && element_state.cache_key.text_style == text_style
-                        && element_state.cache_key.props_hash == self.props_hash
-                        && !window.dirty_views.contains(&self.entity_id)
-                        && !window.refreshing
-                    {
+                        if let Some(mut element_state) = element_state
+                            && element_state.cache_key.bounds == bounds
+                            && element_state.cache_key.content_mask == content_mask
+                            && element_state.cache_key.text_style == text_style
+                            && element_state.cache_key.props_hash == self.props_hash
+                            && !window.dirty_views.contains(&entity_id)
+                            && !window.refreshing
+                        {
+                            let prepaint_start = window.prepaint_index();
+                            window.reuse_prepaint(element_state.prepaint_range.clone());
+                            cx.entities
+                                .extend_accessed(&element_state.accessed_entities);
+                            let prepaint_end = window.prepaint_index();
+                            element_state.prepaint_range = prepaint_start..prepaint_end;
+
+                            return (None, element_state);
+                        }
+
+                        let refreshing = mem::replace(&mut window.refreshing, true);
                         let prepaint_start = window.prepaint_index();
-                        window.reuse_prepaint(element_state.prepaint_range.clone());
-                        cx.entities
-                            .extend_accessed(&element_state.accessed_entities);
+                        let (mut element, accessed_entities) = cx.detect_accessed_entities(|cx| {
+                            let mut element = self
+                                .view
+                                .take()
+                                .unwrap()
+                                .render(window, cx)
+                                .into_any_element();
+                            element.layout_as_root(bounds.size.into(), window, cx);
+                            element.prepaint_at(bounds.origin, window, cx);
+                            element
+                        });
+
                         let prepaint_end = window.prepaint_index();
-                        element_state.prepaint_range = prepaint_start..prepaint_end;
+                        window.refreshing = refreshing;
 
-                        return (None, element_state);
-                    }
-
-                    // Cache miss: render now, layout as root, prepaint.
-                    let refreshing = mem::replace(&mut window.refreshing, true);
-                    let prepaint_start = window.prepaint_index();
-                    let (mut element, accessed_entities) = cx.detect_accessed_entities(|cx| {
-                        let mut element = self
-                            .view
-                            .take()
-                            .unwrap()
-                            .render(window, cx)
-                            .into_any_element();
-                        element.layout_as_root(bounds.size.into(), window, cx);
-                        element.prepaint_at(bounds.origin, window, cx);
-                        element
-                    });
-
-                    let prepaint_end = window.prepaint_index();
-                    window.refreshing = refreshing;
-
-                    (
-                        Some(element),
-                        ViewElementState {
-                            accessed_entities,
-                            prepaint_range: prepaint_start..prepaint_end,
-                            paint_range: PaintIndex::default()..PaintIndex::default(),
-                            cache_key: ViewElementCacheKey {
-                                bounds,
-                                content_mask,
-                                text_style,
-                                props_hash: self.props_hash,
+                        (
+                            Some(element),
+                            ViewElementState {
+                                accessed_entities,
+                                prepaint_range: prepaint_start..prepaint_end,
+                                paint_range: PaintIndex::default()..PaintIndex::default(),
+                                cache_key: ViewElementCacheKey {
+                                    bounds,
+                                    content_mask,
+                                    text_style,
+                                    props_hash: self.props_hash,
+                                },
                             },
-                        },
-                    )
+                        )
+                    },
+                )
+            })
+        } else {
+            // Stateless path: just prepaint the element.
+            window.with_id(
+                ElementId::Name(std::any::type_name::<V>().into()),
+                |window| {
+                    element.as_mut().unwrap().prepaint(window, cx);
                 },
-            )
-        })
+            );
+            Some(element.take().unwrap())
+        }
     }
 
     fn paint(
@@ -608,36 +668,45 @@ impl<V: View> Element for ViewElement<V> {
         window: &mut Window,
         cx: &mut App,
     ) {
-        window.with_rendered_view(self.entity_id, |window| {
-            let caching_disabled = window.is_inspector_picking(cx);
-            if self.cached_style.is_some() && !caching_disabled {
-                // Cached path: check if we rendered or reused.
-                window.with_element_state::<ViewElementState, _>(
-                    global_id.unwrap(),
-                    |element_state, window| {
-                        let mut element_state = element_state.unwrap();
+        if let Some(entity_id) = self.entity_id {
+            // Stateful path.
+            window.with_rendered_view(entity_id, |window| {
+                let caching_disabled = window.is_inspector_picking(cx);
+                if self.cached_style.is_some() && !caching_disabled {
+                    window.with_element_state::<ViewElementState, _>(
+                        global_id.unwrap(),
+                        |element_state, window| {
+                            let mut element_state = element_state.unwrap();
 
-                        let paint_start = window.paint_index();
+                            let paint_start = window.paint_index();
 
-                        if let Some(element) = element {
-                            let refreshing = mem::replace(&mut window.refreshing, true);
-                            element.paint(window, cx);
-                            window.refreshing = refreshing;
-                        } else {
-                            window.reuse_paint(element_state.paint_range.clone());
-                        }
+                            if let Some(element) = element {
+                                let refreshing = mem::replace(&mut window.refreshing, true);
+                                element.paint(window, cx);
+                                window.refreshing = refreshing;
+                            } else {
+                                window.reuse_paint(element_state.paint_range.clone());
+                            }
 
-                        let paint_end = window.paint_index();
-                        element_state.paint_range = paint_start..paint_end;
+                            let paint_end = window.paint_index();
+                            element_state.paint_range = paint_start..paint_end;
 
-                        ((), element_state)
-                    },
-                )
-            } else {
-                // Non-cached path: just paint the element.
-                element.as_mut().unwrap().paint(window, cx);
-            }
-        });
+                            ((), element_state)
+                        },
+                    )
+                } else {
+                    element.as_mut().unwrap().paint(window, cx);
+                }
+            });
+        } else {
+            // Stateless path: just paint the element.
+            window.with_id(
+                ElementId::Name(std::any::type_name::<V>().into()),
+                |window| {
+                    element.as_mut().unwrap().paint(window, cx);
+                },
+            );
+        }
     }
 }
 

@@ -1,6 +1,6 @@
-//! The `TextArea` view — a multi-line text area component.
+//! The `ExampleTextArea` view — a multi-line text area component.
 //!
-//! Same `Editor` entity, different presentation: taller box with configurable
+//! Same `ExampleEditor` entity, different presentation: taller box with configurable
 //! row count. Demonstrates that the same entity type can back different `View`
 //! components with different props and layouts.
 
@@ -9,19 +9,19 @@ use gpui::{
     point, prelude::*, px, white,
 };
 
-use crate::editor::Editor;
-use crate::editor::EditorView;
+use crate::example_editor::ExampleEditor;
+use crate::example_editor::ExampleEditorView;
 use crate::{Backspace, Delete, End, Enter, Home, Left, Right};
 
 #[derive(Hash, IntoViewElement)]
-pub struct TextArea {
-    editor: Entity<Editor>,
+pub struct ExampleTextArea {
+    editor: Entity<ExampleEditor>,
     rows: usize,
     color: Option<Hsla>,
 }
 
-impl TextArea {
-    pub fn new(editor: Entity<Editor>, rows: usize) -> Self {
+impl ExampleTextArea {
+    pub fn new(editor: Entity<ExampleEditor>, rows: usize) -> Self {
         Self {
             editor,
             rows,
@@ -35,11 +35,11 @@ impl TextArea {
     }
 }
 
-impl gpui::View for TextArea {
-    type State = Editor;
+impl gpui::View for ExampleTextArea {
+    type Entity = ExampleEditor;
 
-    fn entity(&self) -> &Entity<Editor> {
-        &self.editor
+    fn entity(&self) -> Option<Entity<ExampleEditor>> {
+        Some(self.editor.clone())
     }
 
     fn style(&self) -> Option<StyleRefinement> {
@@ -57,7 +57,7 @@ impl gpui::View for TextArea {
         let text_color = self.color.unwrap_or(hsla(0., 0., 0.1, 1.));
         let row_height = px(20.);
         let box_height = row_height * self.rows as f32 + px(16.);
-        let editor = self.editor.clone();
+        let editor = self.editor;
 
         div()
             .id("text-area")
@@ -129,6 +129,6 @@ impl gpui::View for TextArea {
             .line_height(row_height)
             .text_size(px(14.))
             .text_color(text_color)
-            .child(EditorView::new(editor).text_color(text_color))
+            .child(ExampleEditorView::new(editor).text_color(text_color))
     }
 }

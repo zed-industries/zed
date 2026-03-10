@@ -1,6 +1,6 @@
-//! The `Input` view — a single-line text input component.
+//! The `ExampleInput` view — a single-line text input component.
 //!
-//! Composes `EditorText` inside a styled container with focus ring, border,
+//! Composes `ExampleEditorText` inside a styled container with focus ring, border,
 //! and action handlers. Implements the `View` trait with `#[derive(Hash)]`
 //! so that prop changes (color, width) automatically invalidate the render
 //! cache via `ViewElement::cached()`.
@@ -13,8 +13,8 @@ use gpui::{
     prelude::*, px, white,
 };
 
-use crate::editor::Editor;
-use crate::editor::EditorView;
+use crate::example_editor::ExampleEditor;
+use crate::example_editor::ExampleEditorView;
 use crate::{Backspace, Delete, End, Enter, Home, Left, Right};
 
 struct FlashState {
@@ -22,14 +22,14 @@ struct FlashState {
 }
 
 #[derive(Hash, IntoViewElement)]
-pub struct Input {
-    editor: Entity<Editor>,
+pub struct ExampleInput {
+    editor: Entity<ExampleEditor>,
     width: Option<Pixels>,
     color: Option<Hsla>,
 }
 
-impl Input {
-    pub fn new(editor: Entity<Editor>) -> Self {
+impl ExampleInput {
+    pub fn new(editor: Entity<ExampleEditor>) -> Self {
         Self {
             editor,
             width: None,
@@ -48,11 +48,11 @@ impl Input {
     }
 }
 
-impl gpui::View for Input {
-    type State = Editor;
+impl gpui::View for ExampleInput {
+    type Entity = ExampleEditor;
 
-    fn entity(&self) -> &Entity<Editor> {
-        &self.editor
+    fn entity(&self) -> Option<Entity<ExampleEditor>> {
+        Some(self.editor.clone())
     }
 
     fn style(&self) -> Option<StyleRefinement> {
@@ -72,7 +72,7 @@ impl gpui::View for Input {
         let is_focused = focus_handle.is_focused(window);
         let text_color = self.color.unwrap_or(hsla(0., 0., 0.1, 1.));
         let box_width = self.width.unwrap_or(px(300.));
-        let editor = self.editor.clone();
+        let editor = self.editor;
 
         let focused_border = hsla(220. / 360., 0.8, 0.5, 1.);
         let unfocused_border = hsla(0., 0., 0.75, 1.);
@@ -125,7 +125,7 @@ impl gpui::View for Input {
                 }
             })
             .on_action({
-                let flash_state = flash_state.clone();
+                let flash_state = flash_state;
                 move |_: &Enter, _window, cx| {
                     flash_state.update(cx, |state, cx| {
                         state.count += 1;
@@ -154,7 +154,7 @@ impl gpui::View for Input {
             .line_height(px(20.))
             .text_size(px(14.))
             .text_color(text_color)
-            .child(EditorView::new(editor).text_color(text_color));
+            .child(ExampleEditorView::new(editor).text_color(text_color));
 
         if count > 0 {
             base.with_animation(

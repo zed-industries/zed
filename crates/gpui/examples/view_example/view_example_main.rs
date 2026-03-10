@@ -1,6 +1,6 @@
 #![cfg_attr(target_family = "wasm", no_main)]
 
-//! **text_views** — an end-to-end GPUI example demonstrating how Entity,
+//! **view_example** — an end-to-end GPUI example demonstrating how Entity,
 //! Element, View, and Render compose together to build rich text components.
 //!
 //! ## Architecture
@@ -11,28 +11,28 @@
 //! |-----------------|---------|----------------------------------------------------------|
 //! | `editor`        | Entity  | Owns text, cursor, blink task, `EntityInputHandler`      |
 //! | `editor_text`   | Element | Shapes text, paints cursor, wires `handle_input`         |
-//! | `input`         | View    | Single-line input — composes `EditorText` with styling   |
+//! | `input`         | View    | Single-line input — composes `ExampleEditorText` with styling   |
 //! | `text_area`     | View    | Multi-line text area — same entity, different layout      |
 //! | `main` (here)   | Render  | Root view — creates entities with `use_state`, assembles  |
 //!
 //! ## Running
 //!
 //! ```sh
-//! cargo run --example text_views -p gpui
+//! cargo run --example view_example -p gpui
 //! ```
 //!
 //! ## Testing
 //!
 //! ```sh
-//! cargo test --example text_views -p gpui
+//! cargo test --example view_example -p gpui
 //! ```
 
-mod editor;
-mod input;
-mod text_area;
+mod example_editor;
+mod example_input;
+mod example_text_area;
 
 #[cfg(test)]
-mod editor_test;
+mod example_tests;
 
 use gpui::{
     App, Bounds, Context, Hsla, KeyBinding, Window, WindowBounds, WindowOptions, actions, div,
@@ -40,25 +40,25 @@ use gpui::{
 };
 use gpui_platform::application;
 
-use editor::Editor;
-use input::Input;
-use text_area::TextArea;
+use example_editor::ExampleEditor;
+use example_input::ExampleInput;
+use example_text_area::ExampleTextArea;
 
 actions!(
-    text_views,
+    view_example,
     [Backspace, Delete, Left, Right, Home, End, Enter, Quit,]
 );
 
 // ---------------------------------------------------------------------------
-// Example — the root view using `Render` and `window.use_state()`
+// ViewExample — the root view using `Render` and `window.use_state()`
 // ---------------------------------------------------------------------------
 
-struct Example {
+struct ViewExample {
     input_color: Hsla,
     textarea_color: Hsla,
 }
 
-impl Example {
+impl ViewExample {
     fn new() -> Self {
         Self {
             input_color: hsla(0., 0., 0.1, 1.),
@@ -67,10 +67,10 @@ impl Example {
     }
 }
 
-impl Render for Example {
+impl Render for ViewExample {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let input_editor = window.use_state(cx, |_window, cx| Editor::new(cx));
-        let textarea_editor = window.use_state(cx, |_window, cx| Editor::new(cx));
+        let input_editor = window.use_state(cx, |_window, cx| ExampleEditor::new(cx));
+        let textarea_editor = window.use_state(cx, |_window, cx| ExampleEditor::new(cx));
         let input_color = self.input_color;
         let textarea_color = self.textarea_color;
 
@@ -90,9 +90,13 @@ impl Render for Example {
                         div()
                             .text_sm()
                             .text_color(hsla(0., 0., 0.3, 1.))
-                            .child("Single-line input (Input — View with cached EditorText)"),
+                            .child("Single-line input (Input — View with cached ExampleEditorText)"),
                     )
-                    .child(Input::new(input_editor).width(px(320.)).color(input_color)),
+                    .child(
+                        ExampleInput::new(input_editor)
+                            .width(px(320.))
+                            .color(input_color),
+                    ),
             )
             .child(
                 div()
@@ -102,7 +106,7 @@ impl Render for Example {
                     .child(div().text_sm().text_color(hsla(0., 0., 0.3, 1.)).child(
                         "Multi-line text area (TextArea — same entity type, different View)",
                     ))
-                    .child(TextArea::new(textarea_editor, 5).color(textarea_color)),
+                    .child(ExampleTextArea::new(textarea_editor, 5).color(textarea_color)),
             )
             .child(
                 div()
@@ -112,9 +116,9 @@ impl Render for Example {
                     .mt(px(12.))
                     .text_xs()
                     .text_color(hsla(0., 0., 0.5, 1.))
-                    .child("• Editor entity owns state, blink task, EntityInputHandler")
-                    .child("• EditorText element shapes text, paints cursor, wires handle_input")
-                    .child("• Input / TextArea views compose EditorText with container styling")
+                    .child("• ExampleEditor entity owns state, blink task, EntityInputHandler")
+                    .child("• ExampleEditorText element shapes text, paints cursor, wires handle_input")
+                    .child("• Input / TextArea views compose ExampleEditorText with container styling")
                     .child("• ViewElement::cached() enables render caching via #[derive(Hash)]")
                     .child("• Entities created via window.use_state()"),
             )
@@ -144,7 +148,7 @@ fn run_example() {
                 window_bounds: Some(WindowBounds::Windowed(bounds)),
                 ..Default::default()
             },
-            |_, cx| cx.new(|_| Example::new()),
+            |_, cx| cx.new(|_| ViewExample::new()),
         )
         .unwrap();
 

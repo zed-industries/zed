@@ -14,12 +14,7 @@ pub fn derive_into_view_element(input: TokenStream) -> TokenStream {
             type Element = gpui::ViewElement<Self>;
 
             fn into_element(self) -> Self::Element {
-                let style = gpui::View::style(&self);
-                let element = gpui::ViewElement::new(self);
-                match style {
-                    Some(s) => element.cached(s),
-                    None => element,
-                }
+                gpui::ViewElement::new(self)
             }
         }
     };
