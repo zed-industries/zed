@@ -566,11 +566,6 @@ impl ConnectionView {
             })
             .unwrap_or((None, None, None));
 
-        self.connection_store.update(cx, |store, _cx| {
-            // todo!() do we need to invalidate on every reset?
-            store.invalidate(&self.connection_key);
-        });
-
         let state = Self::initial_state(
             self.agent.clone(),
             self.connection_store.clone(),

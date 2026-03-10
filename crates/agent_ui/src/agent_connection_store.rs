@@ -73,11 +73,12 @@ impl AgentConnectionStore {
                 connect_task: connect_task.clone(),
             });
 
-            self.entries.insert(key, entry.clone());
+            self.entries.insert(key.clone(), entry.clone());
 
             cx.spawn({
+                let key = key.clone();
                 let entry = entry.clone();
-                async move |_this, cx| match connect_task.await {
+                async move |this, cx| match connect_task.await {
                     Ok(connection) => {
                         entry.update(cx, |entry, cx| {
                             if let ConnectionEntry::Connecting { .. } = entry {
@@ -93,6 +94,7 @@ impl AgentConnectionStore {
                                 cx.notify();
                             }
                         });
+                        this.update(cx, |this, _cx| this.entries.remove(&key)).ok();
                     }
                 }
             })
@@ -100,7 +102,7 @@ impl AgentConnectionStore {
 
             cx.spawn({
                 let entry = entry.clone();
-                async move |_this, cx| {
+                async move |this, cx| {
                     while let Ok(version) = new_version_rx.recv().await {
                         if let Some(version) = version {
                             entry.update(cx, |_entry, cx| {
@@ -108,6 +110,7 @@ impl AgentConnectionStore {
                                     version.clone().into(),
                                 ));
                             });
+                            this.update(cx, |this, _cx| this.entries.remove(&key)).ok();
                         }
                     }
                 }
@@ -116,10 +119,6 @@ impl AgentConnectionStore {
 
             entry
         })
-    }
-
-    pub fn invalidate(&mut self, key: &ExternalAgent) {
-        self.entries.remove(key);
     }
 
     fn handle_agent_servers_updated(
