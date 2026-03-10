@@ -53,6 +53,7 @@ jobs:
     with:
       bump-type: ${{ needs.determine_bump_type.outputs.bump_type }}
       force-bump: ${{ github.event_name != 'push' }}
+      working-directory: ${{ vars.EXTENSION_DIRECTORY || '.' }}
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref_name }}-${{ github.ref_name == 'main' && github.sha || 'anysha' }}labels
   cancel-in-progress: true

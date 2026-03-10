@@ -97,14 +97,18 @@ pub(crate) fn run_tests() -> Workflow {
 // Generates a bash script that checks changed files against regex patterns
 // and sets GitHub output variables accordingly
 pub fn orchestrate(rules: &[&PathCondition]) -> NamedJob {
-    orchestrate_impl(rules, true)
+    orchestrate_impl(rules, true, false)
 }
 
-pub fn orchestrate_without_package_filter(rules: &[&PathCondition]) -> NamedJob {
-    orchestrate_impl(rules, false)
+pub fn orchestrate_for_extension(rules: &[&PathCondition]) -> NamedJob {
+    orchestrate_impl(rules, false, true)
 }
 
-fn orchestrate_impl(rules: &[&PathCondition], include_package_filter: bool) -> NamedJob {
+fn orchestrate_impl(
+    rules: &[&PathCondition],
+    include_package_filter: bool,
+    filter_by_working_directory: bool,
+) -> NamedJob {
     let name = "orchestrate".to_owned();
     let step_name = "filter".to_owned();
     let mut script = String::new();
@@ -121,6 +125,22 @@ fn orchestrate_impl(rules: &[&PathCondition], include_package_filter: bool) -> N
         fi
         CHANGED_FILES="$(git diff --name-only "$COMPARE_REV" "$GITHUB_SHA")"
 
+    "#});
+
+    if filter_by_working_directory {
+        script.push_str(indoc::indoc! {r#"
+        # When running from a subdirectory, git diff returns repo-root-relative paths.
+        # Filter to only files within the current working directory and strip the prefix.
+        REPO_SUBDIR="$(git rev-parse --show-prefix)"
+        REPO_SUBDIR="${REPO_SUBDIR%/}"
+        if [ -n "$REPO_SUBDIR" ]; then
+            CHANGED_FILES="$(echo "$CHANGED_FILES" | grep "^${REPO_SUBDIR}/" | sed "s|^${REPO_SUBDIR}/||" || true)"
+        fi
+
+    "#});
+    }
+
+    script.push_str(indoc::indoc! {r#"
         check_pattern() {
           local output_name="$1"
           local pattern="$2"
@@ -298,8 +318,8 @@ pub(crate) fn fetch_ts_query_ls() -> Step<Use> {
 
 pub(crate) fn run_ts_query_ls() -> Step<Run> {
     named::bash(formatdoc!(
-        r#"tar -xf {TS_QUERY_LS_FILE}
-        ./ts_query_ls format --check . || {{
+        r#"tar -xf "$GITHUB_WORKSPACE/{TS_QUERY_LS_FILE}" -C "$GITHUB_WORKSPACE"
+        "$GITHUB_WORKSPACE/ts_query_ls" format --check . || {{
             echo "Found unformatted queries, please format them with ts_query_ls."
             echo "For easy use, install the Tree-sitter query extension:"
             echo "zed://extension/tree-sitter-query"

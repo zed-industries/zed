@@ -17,6 +17,10 @@ on:
         description: force-bump
         required: true
         type: boolean
+      working-directory:
+        description: working-directory
+        type: string
+        default: .
     secrets:
       app-id:
         description: The app ID used to create the PR
@@ -98,17 +102,27 @@ jobs:
         fi
 
         NEW_VERSION="$(sed -n 's/^version = \"\(.*\)\"/\1/p' < extension.toml | tr -d '[:space:]')"
+        EXTENSION_ID="$(sed -n 's/^id = "\(.*\)"/\1/p' < extension.toml | head -1 | tr -d '[:space:]')"
+
+        if [[ "$WORKING_DIR" == "." || -z "$WORKING_DIR" ]]; then
+            echo "pr_title=Bump version to ${NEW_VERSION}" >> "$GITHUB_OUTPUT"
+            echo "commit_message=Bump version to v${NEW_VERSION}" >> "$GITHUB_OUTPUT"
+        else
+            echo "pr_title=${EXTENSION_ID}: Bump to v${NEW_VERSION}" >> "$GITHUB_OUTPUT"
+            echo "commit_message=${EXTENSION_ID}: Bump to v${NEW_VERSION}" >> "$GITHUB_OUTPUT"
+        fi
 
         echo "new_version=${NEW_VERSION}" >> "$GITHUB_OUTPUT"
       env:
         OLD_VERSION: ${{ needs.check_version_changed.outputs.current_version }}
         BUMP_TYPE: ${{ inputs.bump-type }}
+        WORKING_DIR: ${{ inputs.working-directory }}
     - name: extension_bump::create_pull_request
       uses: peter-evans/create-pull-request@v7
       with:
-        title: Bump version to ${{ steps.bump-version.outputs.new_version }}
+        title: ${{ steps.bump-version.outputs.pr_title }}
         body: This PR bumps the version of this extension to v${{ steps.bump-version.outputs.new_version }}
-        commit-message: Bump version to v${{ steps.bump-version.outputs.new_version }}
+        commit-message: ${{ steps.bump-version.outputs.commit_message }}
         branch: zed-zippy-autobump
         committer: zed-zippy[bot] <234243425+zed-zippy[bot]@users.noreply.github.com>
         base: main
@@ -184,3 +198,4 @@ concurrency:
 defaults:
   run:
     shell: bash -euxo pipefail {0}
+    working-directory: ${{ inputs.working-directory }}

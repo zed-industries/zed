@@ -1,4 +1,4 @@
-use gh_workflow::{Event, Job, Level, Permissions, PullRequest, Push, UsesJob, Workflow};
+use gh_workflow::{Event, Input, Job, Level, Permissions, PullRequest, Push, UsesJob, Workflow};
 
 use crate::tasks::workflows::{
     steps::{NamedJob, named},
@@ -23,7 +23,11 @@ pub(crate) fn call_extension_tests() -> NamedJob<UsesJob> {
             "zed",
             ".github/workflows/extension_tests.yml",
             "main",
-        );
+        )
+        .with(Input::default().add(
+            "working-directory",
+            "${{ vars.EXTENSION_DIRECTORY || '.' }}",
+        ));
 
     named::job(job)
 }

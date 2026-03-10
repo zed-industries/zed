@@ -3,15 +3,13 @@ use indoc::indoc;
 
 use crate::tasks::workflows::{
     extension_bump::compare_versions,
-    run_tests::{
-        fetch_ts_query_ls, orchestrate_without_package_filter, run_ts_query_ls, tests_pass,
-    },
+    run_tests::{fetch_ts_query_ls, orchestrate_for_extension, run_ts_query_ls, tests_pass},
     runners,
     steps::{
-        self, CommonJobConditions, FluentBuilder, NamedJob, cache_rust_dependencies_namespace,
-        named,
+        self, BASH_SHELL, CommonJobConditions, FluentBuilder, NamedJob,
+        cache_rust_dependencies_namespace, named,
     },
-    vars::{PathCondition, StepOutput, one_workflow_per_non_main_branch},
+    vars::{PathCondition, StepOutput, WorkflowInput, one_workflow_per_non_main_branch},
 };
 
 pub(crate) const ZED_EXTENSION_CLI_SHA: &str = "03d8e9aee95ea6117d75a48bcac2e19241f6e667";
@@ -25,8 +23,7 @@ pub(crate) fn extension_tests() -> Workflow {
     let should_check_extension =
         PathCondition::new("check_extension", r"^(extension\.toml|.*\.scm)$");
 
-    let orchestrate =
-        orchestrate_without_package_filter(&[&should_check_rust, &should_check_extension]);
+    let orchestrate = orchestrate_for_extension(&[&should_check_rust, &should_check_extension]);
 
     let jobs = [
         orchestrate,
@@ -36,8 +33,22 @@ pub(crate) fn extension_tests() -> Workflow {
 
     let tests_pass = tests_pass(&jobs);
 
+    let working_directory = WorkflowInput::string("working-directory", Some(".".to_owned()));
+
     named::workflow()
-        .add_event(Event::default().workflow_call(WorkflowCall::default()))
+        .defaults(
+            Defaults::default().run(
+                RunDefaults::default()
+                    .shell(BASH_SHELL)
+                    .working_directory(working_directory.to_string()),
+            ),
+        )
+        .add_event(
+            Event::default().workflow_call(
+                WorkflowCall::default()
+                    .add_input(working_directory.name, working_directory.call_input()),
+            ),
+        )
         .concurrency(one_workflow_per_non_main_branch())
         .add_env(("CARGO_TERM_COLOR", "always"))
         .add_env(("RUST_BACKTRACE", 1))
@@ -58,11 +69,38 @@ fn install_rust_target() -> Step<Run> {
     named::bash(format!("rustup target add {EXTENSION_RUST_TARGET}",))
 }
 
-fn run_clippy() -> Step<Run> {
-    named::bash("cargo clippy --release --all-features -- --deny warnings")
+fn get_package_name() -> (Step<Run>, StepOutput) {
+    let step = named::bash(indoc! {r#"
+        PACKAGE_NAME="$(sed -n 's/^name = "\(.*\)"/\1/p' < Cargo.toml | head -1 | tr -d '[:space:]')"
+        echo "package_name=${PACKAGE_NAME}" >> "$GITHUB_OUTPUT"
+    "#})
+    .id("get-package-name");
+
+    let output = StepOutput::new(&step, "package_name");
+    (step, output)
+}
+
+fn cargo_fmt_package(package_name: &StepOutput) -> Step<Run> {
+    named::bash(r#"cargo fmt -p "$PACKAGE_NAME" -- --check"#)
+        .add_env(("PACKAGE_NAME", package_name.to_string()))
+}
+
+fn run_clippy(package_name: &StepOutput) -> Step<Run> {
+    named::bash(r#"cargo clippy -p "$PACKAGE_NAME" --release --all-features -- --deny warnings"#)
+        .add_env(("PACKAGE_NAME", package_name.to_string()))
+}
+
+fn run_nextest(package_name: &StepOutput) -> Step<Run> {
+    named::bash(
+        r#"cargo nextest run -p "$PACKAGE_NAME" --no-fail-fast --no-tests=warn --target "$(rustc -vV | sed -n 's|host: ||p')""#,
+    )
+    .add_env(("PACKAGE_NAME", package_name.to_string()))
+    .add_env(("NEXTEST_NO_TESTS", "warn"))
 }
 
 fn check_rust() -> NamedJob {
+    let (get_package, package_name) = get_package_name();
+
     let job = Job::default()
         .with_repository_owner_guard()
         .runs_on(runners::LINUX_LARGE_RAM)
@@ -70,15 +108,11 @@ fn check_rust() -> NamedJob {
         .add_step(steps::checkout_repo())
         .add_step(steps::cache_rust_dependencies_namespace())
         .add_step(install_rust_target())
-        .add_step(steps::cargo_fmt())
-        .add_step(run_clippy())
+        .add_step(get_package)
+        .add_step(cargo_fmt_package(&package_name))
+        .add_step(run_clippy(&package_name))
         .add_step(steps::cargo_install_nextest())
-        .add_step(
-            steps::cargo_nextest(runners::Platform::Linux)
-                // Set the target to the current platform again
-                .with_target("$(rustc -vV | sed -n 's|host: ||p')")
-                .add_env(("NEXTEST_NO_TESTS", "warn")),
-        );
+        .add_step(run_nextest(&package_name));
 
     named::job(job)
 }
@@ -124,8 +158,8 @@ pub fn download_zed_extension_cli(cache_hit: StepOutput) -> Step<Run> {
     named::bash(
     indoc! {
         r#"
-        wget --quiet "https://zed-extension-cli.nyc3.digitaloceanspaces.com/$ZED_EXTENSION_CLI_SHA/x86_64-unknown-linux-gnu/zed-extension"
-        chmod +x zed-extension
+        wget --quiet "https://zed-extension-cli.nyc3.digitaloceanspaces.com/$ZED_EXTENSION_CLI_SHA/x86_64-unknown-linux-gnu/zed-extension" -O "$GITHUB_WORKSPACE/zed-extension"
+        chmod +x "$GITHUB_WORKSPACE/zed-extension"
         "#,
     }
     ).if_condition(Expression::new(format!("{} != 'true'", cache_hit.expr())))
@@ -136,7 +170,7 @@ pub fn check() -> Step<Run> {
         r#"
         mkdir -p /tmp/ext-scratch
         mkdir -p /tmp/ext-output
-        ./zed-extension --source-dir . --scratch-dir /tmp/ext-scratch --output-dir /tmp/ext-output
+        "$GITHUB_WORKSPACE/zed-extension" --source-dir . --scratch-dir /tmp/ext-scratch --output-dir /tmp/ext-output
         "#
     })
 }

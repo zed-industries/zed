@@ -5,8 +5,8 @@ use crate::tasks::workflows::{
     extension_tests::{self},
     runners,
     steps::{
-        self, CommonJobConditions, DEFAULT_REPOSITORY_OWNER_GUARD, FluentBuilder, NamedJob,
-        checkout_repo, dependant_job, named,
+        self, BASH_SHELL, CommonJobConditions, DEFAULT_REPOSITORY_OWNER_GUARD, FluentBuilder,
+        NamedJob, checkout_repo, dependant_job, named,
     },
     vars::{
         JobOutput, StepOutput, WorkflowInput, WorkflowSecret, one_workflow_per_non_main_branch,
@@ -22,6 +22,7 @@ pub(crate) fn extension_bump() -> Workflow {
     // TODO: Ideally, this would have a default of `false`, but this is currently not
     // supported in gh-workflows
     let force_bump = WorkflowInput::bool("force-bump", None);
+    let working_directory = WorkflowInput::string("working-directory", Some(".".to_owned()));
 
     let (app_id, app_secret) = extension_workflow_secrets();
     let (check_version_changed, version_changed, current_version) = check_version_changed();
@@ -54,11 +55,19 @@ pub(crate) fn extension_bump() -> Workflow {
     );
 
     named::workflow()
+        .defaults(
+            Defaults::default().run(
+                RunDefaults::default()
+                    .shell(BASH_SHELL)
+                    .working_directory(working_directory.to_string()),
+            ),
+        )
         .add_event(
             Event::default().workflow_call(
                 WorkflowCall::default()
                     .add_input(bump_type.name, bump_type.call_input())
                     .add_input(force_bump.name, force_bump.call_input())
+                    .add_input(working_directory.name, working_directory.call_input())
                     .secrets([
                         (app_id.name.to_owned(), app_id.secret_configuration()),
                         (
@@ -187,7 +196,8 @@ fn bump_extension_version(
 ) -> NamedJob {
     let (generate_token, generated_token) =
         generate_token(&app_id.to_string(), &app_secret.to_string(), None);
-    let (bump_version, new_version) = bump_version(current_version, bump_type);
+    let (bump_version, new_version, pr_title, commit_message) =
+        bump_version(current_version, bump_type);
 
     let job = steps::dependant_job(dependencies)
         .cond(Expression::new(format!(
@@ -201,7 +211,12 @@ fn bump_extension_version(
         .add_step(steps::checkout_repo())
         .add_step(install_bump_2_version())
         .add_step(bump_version)
-        .add_step(create_pull_request(new_version, generated_token));
+        .add_step(create_pull_request(
+            new_version,
+            pr_title,
+            commit_message,
+            generated_token,
+        ));
 
     named::job(job)
 }
@@ -256,7 +271,10 @@ fn install_bump_2_version() -> Step<Run> {
     )
 }
 
-fn bump_version(current_version: &JobOutput, bump_type: &WorkflowInput) -> (Step<Run>, StepOutput) {
+fn bump_version(
+    current_version: &JobOutput,
+    bump_type: &WorkflowInput,
+) -> (Step<Run>, StepOutput, StepOutput, StepOutput) {
     let step = named::bash(formatdoc! {r#"
         BUMP_FILES=("extension.toml")
         if [[ -f "Cargo.toml" ]]; then
@@ -274,32 +292,46 @@ fn bump_version(current_version: &JobOutput, bump_type: &WorkflowInput) -> (Step
         fi
 
         NEW_VERSION="$({VERSION_CHECK})"
+        EXTENSION_ID="$(sed -n 's/^id = "\(.*\)"/\1/p' < extension.toml | head -1 | tr -d '[:space:]')"
+
+        if [[ "$WORKING_DIR" == "." || -z "$WORKING_DIR" ]]; then
+            echo "pr_title=Bump version to ${{NEW_VERSION}}" >> "$GITHUB_OUTPUT"
+            echo "commit_message=Bump version to v${{NEW_VERSION}}" >> "$GITHUB_OUTPUT"
+        else
+            echo "pr_title=${{EXTENSION_ID}}: Bump to v${{NEW_VERSION}}" >> "$GITHUB_OUTPUT"
+            echo "commit_message=${{EXTENSION_ID}}: Bump to v${{NEW_VERSION}}" >> "$GITHUB_OUTPUT"
+        fi
 
         echo "new_version=${{NEW_VERSION}}" >> "$GITHUB_OUTPUT"
         "#
     })
     .id("bump-version")
     .add_env(("OLD_VERSION", current_version.to_string()))
-    .add_env(("BUMP_TYPE", bump_type.to_string()));
+    .add_env(("BUMP_TYPE", bump_type.to_string()))
+    .add_env(("WORKING_DIR", "${{ inputs.working-directory }}"));
 
     let new_version = StepOutput::new(&step, "new_version");
-    (step, new_version)
+    let pr_title = StepOutput::new(&step, "pr_title");
+    let commit_message = StepOutput::new(&step, "commit_message");
+    (step, new_version, pr_title, commit_message)
 }
 
-fn create_pull_request(new_version: StepOutput, generated_token: StepOutput) -> Step<Use> {
+fn create_pull_request(
+    new_version: StepOutput,
+    pr_title: StepOutput,
+    commit_message: StepOutput,
+    generated_token: StepOutput,
+) -> Step<Use> {
     let formatted_version = format!("v{new_version}");
 
     named::uses("peter-evans", "create-pull-request", "v7").with(
         Input::default()
-            .add("title", format!("Bump version to {new_version}"))
+            .add("title", pr_title.to_string())
             .add(
                 "body",
                 format!("This PR bumps the version of this extension to {formatted_version}",),
             )
-            .add(
-                "commit-message",
-                format!("Bump version to {formatted_version}"),
-            )
+            .add("commit-message", commit_message.to_string())
             .add("branch", "zed-zippy-autobump")
             .add(
                 "committer",
