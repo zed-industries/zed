@@ -144,12 +144,21 @@ impl ResolvedSystemPaths {
 
     #[cfg(target_os = "macos")]
     fn default_read_write() -> Vec<PathBuf> {
-        vec![
-            "/dev".into(),
-            "/private/tmp".into(),
-            "/var/folders".into(),
-            "/private/var/run/mDNSResponder".into(),
-        ]
+        let mut paths = vec![
+            PathBuf::from("/dev"),
+            PathBuf::from("/private/tmp"),
+            PathBuf::from("/private/var/run/mDNSResponder"),
+        ];
+        // Resolve $TMPDIR to the per-user, per-session temp directory
+        // (e.g. /private/var/folders/xx/xxxx/T/) rather than granting
+        // broad access to all of /var/folders.
+        if let Ok(tmpdir) = std::env::var("TMPDIR") {
+            let tmpdir = PathBuf::from(tmpdir);
+            if tmpdir.exists() {
+                paths.push(tmpdir);
+            }
+        }
+        paths
     }
 
     #[cfg(target_os = "linux")]
