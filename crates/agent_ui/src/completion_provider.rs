@@ -118,7 +118,7 @@ impl PromptContextType {
             Self::Thread => "thread",
             Self::Rules => "rule",
             Self::Diagnostics => "diagnostics",
-            Self::BranchDiff => "diff",
+            Self::BranchDiff => "branch diff",
         }
     }
 
@@ -1016,7 +1016,16 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
                     .map(|(ix, entry)| StringMatchCandidate::new(ix, entry.keyword()))
                     .collect::<Vec<_>>();
 
-                cx.background_spawn(async move {
+                let branch_diff_task = if self
+                    .source
+                    .supports_context(PromptContextType::BranchDiff, cx)
+                {
+                    self.fetch_branch_diff_match(&workspace, cx)
+                } else {
+                    None
+                };
+
+                cx.spawn(async move |cx| {
                     let mut matches = search_files_task
                         .await
                         .into_iter()
@@ -1040,6 +1049,25 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
                             mat: Some(mat),
                         })
                     }));
+
+                    if let Some(branch_diff_task) = branch_diff_task {
+                        let branch_diff_keyword = PromptContextType::BranchDiff.keyword();
+                        let branch_diff_matches = fuzzy::match_strings(
+                            &[StringMatchCandidate::new(0, branch_diff_keyword)],
+                            &query,
+                            false,
+                            true,
+                            1,
+                            &Arc::new(AtomicBool::default()),
+                            cx.background_executor().clone(),
+                        )
+                        .await;
+
+                        if !branch_diff_matches.is_empty() {
+                            let branch_diff_match = branch_diff_task.await;
+                            matches.push(Match::BranchDiff(branch_diff_match));
+                        }
+                    }
 
                     matches.sort_by(|a, b| {
                         b.score()
