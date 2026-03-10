@@ -6,20 +6,22 @@ use std::{
 use buffer_diff::{BufferDiff, BufferDiffSnapshot};
 use collections::HashMap;
 
-use gpui::{Action, AppContext as _, Entity, EventEmitter, Focusable, Subscription, WeakEntity};
+use gpui::{Action, AppContext as _, Entity, EventEmitter, Focusable, Subscription, WeakEntity, rems};
 use itertools::Itertools;
 use language::{Buffer, Capability};
 use multi_buffer::{
     Anchor, BufferOffset, ExcerptId, ExcerptRange, ExpandExcerptDirection, MultiBuffer,
     MultiBufferDiffHunk, MultiBufferPoint, MultiBufferSnapshot, PathKey,
+    ToPoint as _,
 };
 use project::Project;
 use rope::Point;
 use settings::DiffViewStyle;
 use text::{Bias, BufferId, OffsetRangeExt as _, Patch, ToPoint as _};
 use ui::{
-    App, Context, InteractiveElement as _, IntoElement as _, ParentElement as _, Render,
-    Styled as _, Window, div,
+    App, ButtonCommon as _, Checkbox, Clickable as _, Color, Context, Disableable as _,
+    FixedWidth as _, IconButton, IconName, IconSize, InteractiveElement as _, IntoElement as _,
+    ParentElement as _, Render, Styled as _, ToggleState, Tooltip, Window, div,
 };
 
 use crate::{
@@ -524,7 +526,6 @@ impl SplittableEditor {
             multibuffer
         });
 
-        let render_diff_hunk_controls = self.rhs_editor.read(cx).render_diff_hunk_controls.clone();
         let lhs_editor = cx.new(|cx| {
             let mut editor =
                 Editor::for_multibuffer(lhs_multibuffer.clone(), Some(project.clone()), window, cx);
@@ -541,7 +542,10 @@ impl SplittableEditor {
         });
 
         lhs_editor.update(cx, |editor, cx| {
-            editor.set_render_diff_hunk_controls(render_diff_hunk_controls, cx);
+            editor.set_render_diff_hunk_controls(render_lhs_diff_hunk_controls(), cx);
+        });
+        self.rhs_editor.update(cx, |editor, cx| {
+            editor.set_render_diff_hunk_controls(render_rhs_diff_hunk_controls(), cx);
         });
 
         let mut subscriptions = vec![cx.subscribe_in(
@@ -6058,4 +6062,91 @@ mod tests {
             "SplittableEditor should be able to act as Editor"
         );
     }
+}
+
+fn render_lhs_diff_hunk_controls() -> RenderDiffHunkControlsFn {
+    Arc::new(
+        |row, _status, hunk_range, is_created_file, line_height, editor, window, cx| {
+            let icon_size_px = line_height * 0.55;
+            IconButton::new(("restore", row as u64), IconName::ArrowRight)
+                .icon_color(Color::Default)
+                .icon_size(IconSize::Custom(rems(
+                    (icon_size_px / window.rem_size()).into(),
+                )))
+                .width(line_height)
+                .disabled(is_created_file)
+                .tooltip({
+                    let focus_handle = editor.focus_handle(cx);
+                    move |_window, cx| {
+                        Tooltip::for_action_in(
+                            "Restore Hunk",
+                            &::git::Restore,
+                            &focus_handle,
+                            cx,
+                        )
+                    }
+                })
+                .on_click({
+                    let editor = editor.clone();
+                    move |_event, window, cx| {
+                        editor.update(cx, |editor, cx| {
+                            let snapshot = editor.snapshot(window, cx);
+                            let point =
+                                hunk_range.start.to_point(&snapshot.buffer_snapshot());
+                            editor.restore_hunks_in_ranges(
+                                vec![point..point],
+                                window,
+                                cx,
+                            );
+                        });
+                    }
+                })
+                .into_any_element()
+        },
+    )
+}
+
+fn render_rhs_diff_hunk_controls() -> RenderDiffHunkControlsFn {
+    Arc::new(
+        |row, status, hunk_range, _is_created_file, _line_height, editor, _window, cx| {
+            let is_staged = !status.has_secondary_hunk();
+            let toggle_state = if is_staged {
+                ToggleState::Selected
+            } else {
+                ToggleState::Unselected
+            };
+            Checkbox::new(("stage", row as u64), toggle_state)
+                .check_color(Color::Default)
+                .tooltip({
+                    let focus_handle = editor.focus_handle(cx);
+                    let label = if is_staged {
+                        "Unstage Hunk"
+                    } else {
+                        "Stage Hunk"
+                    };
+                    move |_window, cx| {
+                        Tooltip::for_action_in(
+                            label,
+                            &::git::ToggleStaged,
+                            &focus_handle,
+                            cx,
+                        )
+                    }
+                })
+                .on_click({
+                    let editor = editor.clone();
+                    let stage = status.has_secondary_hunk();
+                    move |_state, _window, cx| {
+                        editor.update(cx, |editor, cx| {
+                            editor.stage_or_unstage_diff_hunks(
+                                stage,
+                                vec![hunk_range.start..hunk_range.start],
+                                cx,
+                            );
+                        });
+                    }
+                })
+                .into_any_element()
+        },
+    )
 }

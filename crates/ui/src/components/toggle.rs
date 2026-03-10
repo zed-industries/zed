@@ -52,6 +52,7 @@ pub struct Checkbox {
     label: Option<SharedString>,
     label_size: LabelSize,
     label_color: Color,
+    check_color: Option<Color>,
     tooltip: Option<Box<dyn Fn(&mut Window, &mut App) -> AnyView>>,
     on_click: Option<Box<dyn Fn(&ToggleState, &ClickEvent, &mut Window, &mut App) + 'static>>,
 }
@@ -70,6 +71,7 @@ impl Checkbox {
             label: None,
             label_size: LabelSize::Default,
             label_color: Color::Muted,
+            check_color: None,
             tooltip: None,
             on_click: None,
         }
@@ -152,6 +154,12 @@ impl Checkbox {
         self.label_color = color;
         self
     }
+
+    /// Sets a custom color for the check icon and border.
+    pub fn check_color(mut self, color: Color) -> Self {
+        self.check_color = Some(color);
+        self
+    }
 }
 
 impl Checkbox {
@@ -190,7 +198,7 @@ impl RenderOnce for Checkbox {
         let color = if self.disabled {
             Color::Disabled
         } else {
-            Color::Selected
+            self.check_color.unwrap_or(Color::Selected)
         };
 
         let icon = match self.toggle_state {
@@ -212,7 +220,11 @@ impl RenderOnce for Checkbox {
         };
 
         let bg_color = self.bg_color(cx);
-        let border_color = self.border_color(cx);
+        let border_color = if let Some(check_color) = &self.check_color {
+            check_color.color(cx)
+        } else {
+            self.border_color(cx)
+        };
         let hover_border_color = border_color.alpha(0.7);
 
         let size = Self::container_size();

@@ -5656,6 +5656,8 @@ impl EditorElement {
         row_range: Range<DisplayRow>,
         row_infos: &[RowInfo],
         text_hitbox: &Hitbox,
+        gutter_hitbox: &Hitbox,
+        gutter_dimensions: &GutterDimensions,
         newest_cursor_row: Option<DisplayRow>,
         line_height: Pixels,
         right_margin: Pixels,
@@ -5694,10 +5696,11 @@ impl EditorElement {
                     continue;
                 }
                 let row_ix = display_row_range.start.0.saturating_sub(row_range.start.0);
-                if row_infos
-                    .get(row_ix as usize)
-                    .and_then(|row_info| row_info.diff_status)
-                    .is_none()
+                if self.split_side.is_none()
+                    && row_infos
+                        .get(row_ix as usize)
+                        .and_then(|row_info| row_info.diff_status)
+                        .is_none()
                 {
                     continue;
                 }
@@ -5718,10 +5721,11 @@ impl EditorElement {
                     continue;
                 }
 
-                if active_rows
-                    .iter()
-                    .any(|row| row.is_some_and(|row| display_row_range.contains(&row)))
-                {
+                let show_control = self.split_side.is_some()
+                    || active_rows
+                        .iter()
+                        .any(|row| row.is_some_and(|row| display_row_range.contains(&row)));
+                if show_control {
                     let hunk_start_y: Pixels = (display_row_range.start.as_f64()
                         * ScrollPixelOffset::from(line_height)
                         + ScrollPixelOffset::from(text_hitbox.bounds.top())
@@ -5749,16 +5753,41 @@ impl EditorElement {
                         window,
                         cx,
                     );
-                    let size =
-                        element.layout_as_root(size(px(100.0), line_height).into(), window, cx);
 
-                    let x = text_hitbox.bounds.right() - right_margin - px(10.) - size.width;
+                    let (x, element_size) = if self.split_side.is_some() {
+                        let git_gutter_width = Self::gutter_strip_width(line_height)
+                            + gutter_dimensions
+                                .git_blame_entries_width
+                                .unwrap_or_default();
+                        let available_width =
+                            gutter_dimensions.left_padding - git_gutter_width;
+                        let element_size = element.layout_as_root(
+                            size(available_width, line_height).into(),
+                            window,
+                            cx,
+                        );
+                        let x = gutter_hitbox.bounds.left()
+                            + git_gutter_width
+                            + px(1.);
+                        (x, element_size)
+                    } else {
+                        let element_size = element.layout_as_root(
+                            size(px(100.0), line_height).into(),
+                            window,
+                            cx,
+                        );
+                        let x = text_hitbox.bounds.right()
+                            - right_margin
+                            - px(10.)
+                            - element_size.width;
+                        if x < text_hitbox.bounds.left() {
+                            continue;
+                        }
+                        (x, element_size)
+                    };
 
-                    if x < text_hitbox.bounds.left() {
-                        continue;
-                    }
-
-                    let bounds = Bounds::new(gpui::Point::new(x, y), size);
+                    let bounds =
+                        Bounds::new(gpui::Point::new(x, y), element_size);
                     control_bounds.push((display_row_range.start, bounds));
 
                     window.with_absolute_element_offset(gpui::Point::new(x, y), |window| {
@@ -6580,7 +6609,6 @@ impl EditorElement {
                 self.paint_inline_diagnostics(layout, window, cx);
                 self.paint_inline_blame(layout, window, cx);
                 self.paint_inline_code_actions(layout, window, cx);
-                self.paint_diff_hunk_controls(layout, window, cx);
                 window.with_element_namespace("crease_trailers", |window| {
                     for trailer in layout.crease_trailers.iter_mut().flatten() {
                         trailer.element.paint(window, cx);
@@ -9760,13 +9788,32 @@ impl Element for EditorElement {
                     });
 
                     let hitbox = window.insert_hitbox(bounds, HitboxBehavior::Normal);
-                    let gutter_hitbox = window.insert_hitbox(
-                        gutter_bounds(bounds, gutter_dimensions),
-                        HitboxBehavior::Normal,
-                    );
+                    let gutter_on_right =
+                        matches!(self.split_side, Some(SplitSide::Left));
+                    let gutter_hitbox = if gutter_on_right {
+                        window.insert_hitbox(
+                            Bounds {
+                                origin: point(
+                                    bounds.origin.x + text_width,
+                                    bounds.origin.y,
+                                ),
+                                size: size(gutter_dimensions.width, bounds.size.height),
+                            },
+                            HitboxBehavior::Normal,
+                        )
+                    } else {
+                        window.insert_hitbox(
+                            gutter_bounds(bounds, gutter_dimensions),
+                            HitboxBehavior::Normal,
+                        )
+                    };
                     let text_hitbox = window.insert_hitbox(
                         Bounds {
-                            origin: gutter_hitbox.top_right(),
+                            origin: if gutter_on_right {
+                                bounds.origin
+                            } else {
+                                gutter_hitbox.top_right()
+                            },
                             size: size(text_width, bounds.size.height),
                         },
                         HitboxBehavior::Normal,
@@ -10774,9 +10821,10 @@ impl Element for EditorElement {
                         Vec::new()
                     };
 
-                    let show_breakpoints = snapshot
-                        .show_breakpoints
-                        .unwrap_or(gutter_settings.breakpoints);
+                    let show_breakpoints = self.split_side.is_none()
+                        && snapshot
+                            .show_breakpoints
+                            .unwrap_or(gutter_settings.breakpoints);
                     let breakpoints = if show_breakpoints {
                         self.layout_breakpoints(
                             line_height,
@@ -11009,6 +11057,8 @@ impl Element for EditorElement {
                                 start_row..end_row,
                                 &row_infos,
                                 &text_hitbox,
+                                &gutter_hitbox,
+                                &gutter_dimensions,
                                 current_selection_head,
                                 line_height,
                                 right_margin,
@@ -11145,6 +11195,7 @@ impl Element for EditorElement {
                     }
 
                     self.paint_text(layout, window, cx);
+                    self.paint_diff_hunk_controls(layout, window, cx);
 
                     if !layout.spacer_blocks.is_empty() {
                         window.with_element_namespace("blocks", |window| {
