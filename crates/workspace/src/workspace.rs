@@ -14,6 +14,7 @@ mod persistence;
 pub mod searchable;
 mod security_modal;
 pub mod shared_screen;
+use db::smol::future::yield_now;
 pub use shared_screen::SharedScreen;
 mod status_bar;
 pub mod tasks;
@@ -26,9 +27,9 @@ mod workspace_settings;
 pub use crate::notifications::NotificationFrame;
 pub use dock::Panel;
 pub use multi_workspace::{
-    DraggedSidebar, FocusWorkspaceSidebar, MultiWorkspace, NewWorkspaceInWindow,
-    NextWorkspaceInWindow, PreviousWorkspaceInWindow, Sidebar, SidebarEvent, SidebarHandle,
-    ToggleWorkspaceSidebar,
+    DraggedSidebar, FocusWorkspaceSidebar, MultiWorkspace, MultiWorkspaceEvent,
+    NewWorkspaceInWindow, NextWorkspaceInWindow, PreviousWorkspaceInWindow, Sidebar, SidebarEvent,
+    SidebarHandle, ToggleWorkspaceSidebar,
 };
 pub use path_list::{PathList, SerializedPathList};
 pub use toast_layer::{ToastAction, ToastLayer, ToastView};
@@ -78,7 +79,10 @@ pub use pane_group::{
 use persistence::{DB, SerializedWindowBounds, model::SerializedWorkspace};
 pub use persistence::{
     DB as WORKSPACE_DB, WorkspaceDb, delete_unloaded_items,
-    model::{ItemId, SerializedMultiWorkspace, SerializedWorkspaceLocation, SessionWorkspace},
+    model::{
+        DockStructure, ItemId, SerializedMultiWorkspace, SerializedWorkspaceLocation,
+        SessionWorkspace,
+    },
     read_serialized_multi_workspaces,
 };
 use postage::stream::Stream;
@@ -148,7 +152,7 @@ use crate::{item::ItemBufferKind, notifications::NotificationId};
 use crate::{
     persistence::{
         SerializedAxis,
-        model::{DockData, DockStructure, SerializedItem, SerializedPane, SerializedPaneGroup},
+        model::{DockData, SerializedItem, SerializedPane, SerializedPaneGroup},
     },
     security_modal::SecurityModal,
 };
@@ -205,6 +209,34 @@ pub trait DebuggerProvider {
     fn active_thread_state(&self, cx: &App) -> Option<ThreadStatus>;
 }
 
+/// Opens a file or directory.
+#[derive(Clone, PartialEq, Deserialize, JsonSchema, Action)]
+#[action(namespace = workspace)]
+pub struct Open {
+    /// When true, opens in a new window. When false, adds to the current
+    /// window as a new workspace (multi-workspace).
+    #[serde(default = "Open::default_create_new_window")]
+    pub create_new_window: bool,
+}
+
+impl Open {
+    pub const DEFAULT: Self = Self {
+        create_new_window: true,
+    };
+
+    /// Used by `#[serde(default)]` on the `create_new_window` field so that
+    /// the serde default and `Open::DEFAULT` stay in sync.
+    fn default_create_new_window() -> bool {
+        Self::DEFAULT.create_new_window
+    }
+}
+
+impl Default for Open {
+    fn default() -> Self {
+        Self::DEFAULT
+    }
+}
+
 actions!(
     workspace,
     [
@@ -250,8 +282,6 @@ actions!(
         NewSearch,
         /// Opens a new window.
         NewWindow,
-        /// Opens a file or directory.
-        Open,
         /// Opens multiple files.
         OpenFiles,
         /// Opens the current location in terminal.
@@ -622,19 +652,19 @@ fn prompt_and_open_paths(app_state: Arc<AppState>, options: PathPromptOptions, c
             .update(cx, |multi_workspace, window, cx| {
                 let workspace = multi_workspace.workspace().clone();
                 workspace.update(cx, |workspace, cx| {
-                    prompt_for_open_path_and_open(workspace, app_state, options, window, cx);
+                    prompt_for_open_path_and_open(workspace, app_state, options, true, window, cx);
                 });
             })
             .ok();
     } else {
-        let task = Workspace::new_local(Vec::new(), app_state.clone(), None, None, None, cx);
+        let task = Workspace::new_local(Vec::new(), app_state.clone(), None, None, None, true, cx);
         cx.spawn(async move |cx| {
             let (window, _) = task.await?;
             window.update(cx, |multi_workspace, window, cx| {
                 window.activate_window();
                 let workspace = multi_workspace.workspace().clone();
                 workspace.update(cx, |workspace, cx| {
-                    prompt_for_open_path_and_open(workspace, app_state, options, window, cx);
+                    prompt_for_open_path_and_open(workspace, app_state, options, true, window, cx);
                 });
             })?;
             anyhow::Ok(())
@@ -647,6 +677,7 @@ pub fn prompt_for_open_path_and_open(
     workspace: &mut Workspace,
     app_state: Arc<AppState>,
     options: PathPromptOptions,
+    create_new_window: bool,
     window: &mut Window,
     cx: &mut Context<Workspace>,
 ) {
@@ -656,10 +687,24 @@ pub fn prompt_for_open_path_and_open(
         window,
         cx,
     );
+    let multi_workspace_handle = window.window_handle().downcast::<MultiWorkspace>();
     cx.spawn_in(window, async move |this, cx| {
         let Some(paths) = paths.await.log_err().flatten() else {
             return;
         };
+        if !create_new_window {
+            if let Some(handle) = multi_workspace_handle {
+                if let Some(task) = handle
+                    .update(cx, |multi_workspace, window, cx| {
+                        multi_workspace.open_project(paths, window, cx)
+                    })
+                    .log_err()
+                {
+                    task.await.log_err();
+                }
+                return;
+            }
+        }
         if let Some(task) = this
             .update_in(cx, |this, window, cx| {
                 this.open_workspace_for_paths(false, paths, window, cx)
@@ -1185,6 +1230,7 @@ pub enum Event {
     ZoomChanged,
     ModalOpened,
     Activate,
+    PanelAdded(AnyView),
 }
 
 #[derive(Debug, Clone)]
@@ -1289,6 +1335,7 @@ pub struct Workspace {
     scheduled_tasks: Vec<Task<()>>,
     last_open_dock_positions: Vec<DockPosition>,
     removing: bool,
+    _panels_task: Option<Task<Result<()>>>,
 }
 
 impl EventEmitter<Event> for Workspace {}
@@ -1659,6 +1706,7 @@ impl Workspace {
             left_dock,
             bottom_dock,
             right_dock,
+            _panels_task: None,
             project: project.clone(),
             follower_states: Default::default(),
             last_leaders_by_pane: Default::default(),
@@ -1702,6 +1750,7 @@ impl Workspace {
         requesting_window: Option<WindowHandle<MultiWorkspace>>,
         env: Option<HashMap<String, String>>,
         init: Option<Box<dyn FnOnce(&mut Workspace, &mut Window, &mut Context<Workspace>) + Send>>,
+        activate: bool,
         cx: &mut App,
     ) -> Task<
         anyhow::Result<(
@@ -1829,7 +1878,11 @@ impl Workspace {
 
                             workspace
                         });
-                        multi_workspace.activate(workspace.clone(), cx);
+                        if activate {
+                            multi_workspace.activate(workspace.clone(), cx);
+                        } else {
+                            multi_workspace.add_workspace(workspace.clone(), cx);
+                        }
                         workspace
                     })?;
                     (window, workspace)
@@ -1983,6 +2036,76 @@ impl Workspace {
         [&self.left_dock, &self.bottom_dock, &self.right_dock]
     }
 
+    pub fn capture_dock_state(&self, _window: &Window, cx: &App) -> DockStructure {
+        let left_dock = self.left_dock.read(cx);
+        let left_visible = left_dock.is_open();
+        let left_active_panel = left_dock
+            .active_panel()
+            .map(|panel| panel.persistent_name().to_string());
+        // `zoomed_position` is kept in sync with individual panel zoom state
+        // by the dock code in `Dock::new` and `Dock::add_panel`.
+        let left_dock_zoom = self.zoomed_position == Some(DockPosition::Left);
+
+        let right_dock = self.right_dock.read(cx);
+        let right_visible = right_dock.is_open();
+        let right_active_panel = right_dock
+            .active_panel()
+            .map(|panel| panel.persistent_name().to_string());
+        let right_dock_zoom = self.zoomed_position == Some(DockPosition::Right);
+
+        let bottom_dock = self.bottom_dock.read(cx);
+        let bottom_visible = bottom_dock.is_open();
+        let bottom_active_panel = bottom_dock
+            .active_panel()
+            .map(|panel| panel.persistent_name().to_string());
+        let bottom_dock_zoom = self.zoomed_position == Some(DockPosition::Bottom);
+
+        DockStructure {
+            left: DockData {
+                visible: left_visible,
+                active_panel: left_active_panel,
+                zoom: left_dock_zoom,
+            },
+            right: DockData {
+                visible: right_visible,
+                active_panel: right_active_panel,
+                zoom: right_dock_zoom,
+            },
+            bottom: DockData {
+                visible: bottom_visible,
+                active_panel: bottom_active_panel,
+                zoom: bottom_dock_zoom,
+            },
+        }
+    }
+
+    pub fn set_dock_structure(
+        &self,
+        docks: DockStructure,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        for (dock, data) in [
+            (&self.left_dock, docks.left),
+            (&self.bottom_dock, docks.bottom),
+            (&self.right_dock, docks.right),
+        ] {
+            dock.update(cx, |dock, cx| {
+                dock.serialized_dock = Some(data);
+                dock.restore_state(window, cx);
+            });
+        }
+    }
+
+    pub fn open_item_abs_paths(&self, cx: &App) -> Vec<PathBuf> {
+        self.items(cx)
+            .filter_map(|item| {
+                let project_path = item.project_path(cx)?;
+                self.project.read(cx).absolute_path(&project_path, cx)
+            })
+            .collect()
+    }
+
     pub fn dock_at_position(&self, position: DockPosition) -> &Entity<Dock> {
         match position {
             DockPosition::Left => &self.left_dock,
@@ -2007,10 +2130,13 @@ impl Workspace {
 
         let dock_position = panel.position(window, cx);
         let dock = self.dock_at_position(dock_position);
+        let any_panel = panel.to_any();
 
         dock.update(cx, |dock, cx| {
             dock.add_panel(panel, self.weak_self.clone(), window, cx)
         });
+
+        cx.emit(Event::PanelAdded(any_panel));
     }
 
     pub fn remove_panel<T: Panel>(
@@ -2040,6 +2166,14 @@ impl Workspace {
 
     pub fn app_state(&self) -> &Arc<AppState> {
         &self.app_state
+    }
+
+    pub fn set_panels_task(&mut self, task: Task<Result<()>>) {
+        self._panels_task = Some(task);
+    }
+
+    pub fn take_panels_task(&mut self) -> Option<Task<Result<()>>> {
+        self._panels_task.take()
     }
 
     pub fn user_store(&self) -> &Entity<UserStore> {
@@ -2547,7 +2681,15 @@ impl Workspace {
             Task::ready(Ok(callback(self, window, cx)))
         } else {
             let env = self.project.read(cx).cli_environment(cx);
-            let task = Self::new_local(Vec::new(), self.app_state.clone(), None, env, None, cx);
+            let task = Self::new_local(
+                Vec::new(),
+                self.app_state.clone(),
+                None,
+                env,
+                None,
+                true,
+                cx,
+            );
             cx.spawn_in(window, async move |_vh, cx| {
                 let (multi_workspace_window, _) = task.await?;
                 multi_workspace_window.update(cx, |multi_workspace, window, cx| {
@@ -2577,7 +2719,15 @@ impl Workspace {
             Task::ready(Ok(callback(self, window, cx)))
         } else {
             let env = self.project.read(cx).cli_environment(cx);
-            let task = Self::new_local(Vec::new(), self.app_state.clone(), None, env, None, cx);
+            let task = Self::new_local(
+                Vec::new(),
+                self.app_state.clone(),
+                None,
+                env,
+                None,
+                true,
+                cx,
+            );
             cx.spawn_in(window, async move |_vh, cx| {
                 let (multi_workspace_window, _) = task.await?;
                 multi_workspace_window.update(cx, |multi_workspace, window, cx| {
@@ -2820,13 +2970,15 @@ impl Workspace {
                     .spawn(cx, async move |cx| {
                         // limit to 100 keystrokes to avoid infinite recursion.
                         for _ in 0..100 {
-                            let mut state = keystrokes.borrow_mut();
-                            let Some(keystroke) = state.queue.pop_front() else {
-                                state.dispatched.clear();
-                                state.task.take();
-                                return;
+                            let keystroke = {
+                                let mut state = keystrokes.borrow_mut();
+                                let Some(keystroke) = state.queue.pop_front() else {
+                                    state.dispatched.clear();
+                                    state.task.take();
+                                    return;
+                                };
+                                keystroke
                             };
-                            drop(state);
                             cx.update(|window, cx| {
                                 let focused = window.focused(cx);
                                 window.dispatch_keystroke(keystroke.clone(), cx);
@@ -2841,6 +2993,10 @@ impl Workspace {
                                 }
                             })
                             .ok();
+
+                            // Yield between synthetic keystrokes so deferred focus and
+                            // other effects can settle before dispatching the next key.
+                            yield_now().await;
                         }
 
                         *keystrokes.borrow_mut() = Default::default();
@@ -6005,53 +6161,7 @@ impl Workspace {
             window: &mut Window,
             cx: &mut App,
         ) -> DockStructure {
-            let left_dock = this.left_dock.read(cx);
-            let left_visible = left_dock.is_open();
-            let left_active_panel = left_dock
-                .active_panel()
-                .map(|panel| panel.persistent_name().to_string());
-            let left_dock_zoom = left_dock
-                .active_panel()
-                .map(|panel| panel.is_zoomed(window, cx))
-                .unwrap_or(false);
-
-            let right_dock = this.right_dock.read(cx);
-            let right_visible = right_dock.is_open();
-            let right_active_panel = right_dock
-                .active_panel()
-                .map(|panel| panel.persistent_name().to_string());
-            let right_dock_zoom = right_dock
-                .active_panel()
-                .map(|panel| panel.is_zoomed(window, cx))
-                .unwrap_or(false);
-
-            let bottom_dock = this.bottom_dock.read(cx);
-            let bottom_visible = bottom_dock.is_open();
-            let bottom_active_panel = bottom_dock
-                .active_panel()
-                .map(|panel| panel.persistent_name().to_string());
-            let bottom_dock_zoom = bottom_dock
-                .active_panel()
-                .map(|panel| panel.is_zoomed(window, cx))
-                .unwrap_or(false);
-
-            DockStructure {
-                left: DockData {
-                    visible: left_visible,
-                    active_panel: left_active_panel,
-                    zoom: left_dock_zoom,
-                },
-                right: DockData {
-                    visible: right_visible,
-                    active_panel: right_active_panel,
-                    zoom: right_dock_zoom,
-                },
-                bottom: DockData {
-                    visible: bottom_visible,
-                    active_panel: bottom_active_panel,
-                    zoom: bottom_dock_zoom,
-                },
-            }
+            this.capture_dock_state(window, cx)
         }
 
         match self.workspace_location(cx) {
@@ -6975,7 +7085,17 @@ impl Workspace {
     }
 
     fn resize_left_dock(&mut self, new_size: Pixels, window: &mut Window, cx: &mut App) {
-        let size = new_size.min(self.bounds.right() - RESIZE_HANDLE_SIZE);
+        let workspace_width = self.bounds.size.width;
+        let mut size = new_size.min(workspace_width - RESIZE_HANDLE_SIZE);
+
+        self.right_dock.read_with(cx, |right_dock, cx| {
+            let right_dock_size = right_dock
+                .active_panel_size(window, cx)
+                .unwrap_or(Pixels::ZERO);
+            if right_dock_size + size > workspace_width {
+                size = workspace_width - right_dock_size
+            }
+        });
 
         self.left_dock.update(cx, |left_dock, cx| {
             if WorkspaceSettings::get_global(cx)
@@ -6990,13 +7110,14 @@ impl Workspace {
     }
 
     fn resize_right_dock(&mut self, new_size: Pixels, window: &mut Window, cx: &mut App) {
-        let mut size = new_size.max(self.bounds.left() - RESIZE_HANDLE_SIZE);
+        let workspace_width = self.bounds.size.width;
+        let mut size = new_size.min(workspace_width - RESIZE_HANDLE_SIZE);
         self.left_dock.read_with(cx, |left_dock, cx| {
             let left_dock_size = left_dock
                 .active_panel_size(window, cx)
                 .unwrap_or(Pixels::ZERO);
-            if left_dock_size + size > self.bounds.right() {
-                size = self.bounds.right() - left_dock_size
+            if left_dock_size + size > workspace_width {
+                size = workspace_width - left_dock_size
             }
         });
         self.right_dock.update(cx, |right_dock, cx| {
@@ -7557,6 +7678,7 @@ impl Render for Workspace {
                                             {
                                                 workspace.previous_dock_drag_coordinates =
                                                     Some(e.event.position);
+
                                                 match e.drag(cx).0 {
                                                     DockPosition::Left => {
                                                         workspace.resize_left_dock(
@@ -8080,6 +8202,7 @@ pub async fn restore_multiworkspace(
                     None,
                     None,
                     None,
+                    true,
                     cx,
                 )
             })
@@ -8109,6 +8232,7 @@ pub async fn restore_multiworkspace(
                     Some(window_handle),
                     None,
                     None,
+                    true,
                     cx,
                 )
             })
@@ -8378,6 +8502,7 @@ pub fn join_channel(
                         requesting_window,
                         None,
                         None,
+                        true,
                         cx,
                     )
                 })
@@ -8450,7 +8575,7 @@ pub async fn get_any_active_multi_workspace(
     // find an existing workspace to focus and show call controls
     let active_window = activate_any_workspace_window(&mut cx);
     if active_window.is_none() {
-        cx.update(|cx| Workspace::new_local(vec![], app_state.clone(), None, None, None, cx))
+        cx.update(|cx| Workspace::new_local(vec![], app_state.clone(), None, None, None, true, cx))
             .await?;
     }
     activate_any_workspace_window(&mut cx).context("could not open zed")
@@ -8838,6 +8963,7 @@ pub fn open_paths(
                         open_options.replace_window,
                         open_options.env,
                         None,
+                        true,
                         cx,
                     )
                 })
@@ -8901,6 +9027,7 @@ pub fn open_new(
         open_options.replace_window,
         open_options.env,
         Some(Box::new(init)),
+        true,
         cx,
     );
     cx.spawn(async move |cx| {
@@ -10579,6 +10706,85 @@ mod tests {
         cx.run_until_parked();
         assert!(cx.has_pending_prompt());
         item.read_with(cx, |item, _| assert_eq!(item.save_count, 6));
+    }
+
+    #[gpui::test]
+    async fn test_autosave_on_focus_change_in_multibuffer(cx: &mut gpui::TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
+
+        // Create a multibuffer-like item with two child focus handles,
+        // simulating individual buffer editors within a multibuffer.
+        let item = cx.new(|cx| {
+            TestItem::new(cx)
+                .with_project_items(&[TestProjectItem::new(1, "1.txt", cx)])
+                .with_child_focus_handles(2, cx)
+        });
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.add_item_to_active_pane(Box::new(item.clone()), None, true, window, cx);
+        });
+
+        // Set autosave to OnFocusChange and focus the first child handle,
+        // simulating the user's cursor being inside one of the multibuffer's excerpts.
+        item.update_in(cx, |item, window, cx| {
+            SettingsStore::update_global(cx, |settings, cx| {
+                settings.update_user_settings(cx, |settings| {
+                    settings.workspace.autosave = Some(AutosaveSetting::OnFocusChange);
+                })
+            });
+            item.is_dirty = true;
+            window.focus(&item.child_focus_handles[0], cx);
+        });
+        cx.executor().run_until_parked();
+        item.read_with(cx, |item, _| assert_eq!(item.save_count, 0));
+
+        // Moving focus from one child to another within the same item should
+        // NOT trigger autosave — focus is still within the item's focus hierarchy.
+        item.update_in(cx, |item, window, cx| {
+            window.focus(&item.child_focus_handles[1], cx);
+        });
+        cx.executor().run_until_parked();
+        item.read_with(cx, |item, _| {
+            assert_eq!(
+                item.save_count, 0,
+                "Switching focus between children within the same item should not autosave"
+            );
+        });
+
+        // Blurring the item saves the file. This is the core regression scenario:
+        // with `on_blur`, this would NOT trigger because `on_blur` only fires when
+        // the item's own focus handle is the leaf that lost focus. In a multibuffer,
+        // the leaf is always a child focus handle, so `on_blur` never detected
+        // focus leaving the item.
+        item.update_in(cx, |_, window, _| window.blur());
+        cx.executor().run_until_parked();
+        item.read_with(cx, |item, _| {
+            assert_eq!(
+                item.save_count, 1,
+                "Blurring should trigger autosave when focus was on a child of the item"
+            );
+        });
+
+        // Deactivating the window should also trigger autosave when a child of
+        // the multibuffer item currently owns focus.
+        item.update_in(cx, |item, window, cx| {
+            item.is_dirty = true;
+            window.focus(&item.child_focus_handles[0], cx);
+        });
+        cx.executor().run_until_parked();
+        item.read_with(cx, |item, _| assert_eq!(item.save_count, 1));
+
+        cx.deactivate_window();
+        item.read_with(cx, |item, _| {
+            assert_eq!(
+                item.save_count, 2,
+                "Deactivating window should trigger autosave when focus was on a child"
+            );
+        });
     }
 
     #[gpui::test]

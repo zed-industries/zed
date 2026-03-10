@@ -55,7 +55,7 @@ zed_env_vars.workspace = true
 
 [dev-dependencies]
 assistant_slash_commands.workspace = true
-indoc.workspace = true
+
 language_model = { workspace = true, features = ["test-support"] }
 pretty_assertions.workspace = true
 rand.workspace = true

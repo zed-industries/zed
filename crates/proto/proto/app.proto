@@ -4,60 +4,59 @@ package zed.messages;
 message ShutdownRemoteServer {}
 
 message Toast {
-    uint64 project_id = 1;
-    string notification_id = 2;
-    string message = 3;
+  uint64 project_id = 1;
+  string notification_id = 2;
+  string message = 3;
 }
 
 message HideToast {
-    uint64 project_id = 1;
-    string notification_id = 2;
+  uint64 project_id = 1;
+  string notification_id = 2;
 }
 
 message OpenServerSettings {
-    uint64 project_id = 1;
+  uint64 project_id = 1;
 }
 
-message GetCrashFiles {
-}
+message GetCrashFiles {}
 
 message GetCrashFilesResponse {
-    repeated CrashReport crashes = 1;
-    reserved 2; // old panics
+  repeated CrashReport crashes = 1;
+  reserved 2; // old panics
 }
 
 message CrashReport {
-    reserved 1, 2;
-    string metadata = 3;
-    bytes minidump_contents = 4;
+  reserved 1, 2;
+  string metadata = 3;
+  bytes minidump_contents = 4;
 }
 
 message Extension {
-    string id = 1;
-    string version = 2;
-    bool dev = 3;
+  string id = 1;
+  string version = 2;
+  bool dev = 3;
 }
 
 message SyncExtensions {
-    repeated Extension extensions = 1;
+  repeated Extension extensions = 1;
 }
 
 message SyncExtensionsResponse {
-    string tmp_dir = 1;
-    repeated Extension missing_extensions = 2;
+  string tmp_dir = 1;
+  repeated Extension missing_extensions = 2;
 }
 
 message InstallExtension {
-    Extension extension = 1;
-    string tmp_dir = 2;
+  Extension extension = 1;
+  string tmp_dir = 2;
 }
 
 message AskPassRequest {
-    uint64 project_id = 1;
-    reserved 2;
-    uint64 repository_id = 3;
-    uint64 askpass_id = 4;
-    string prompt = 5;
+  uint64 project_id = 1;
+  reserved 2;
+  uint64 repository_id = 3;
+  uint64 askpass_id = 4;
+  string prompt = 5;
 }
 
 message AskPassResponse {
@@ -65,29 +64,29 @@ message AskPassResponse {
 }
 
 message GetRemoteProfilingData {
-    uint64 project_id = 1;
-    bool foreground_only = 2;
+  uint64 project_id = 1;
+  bool foreground_only = 2;
 }
 
 message GetRemoteProfilingDataResponse {
-    repeated RemoteProfilingThread threads = 1;
-    uint64 now_nanos = 2;
+  repeated RemoteProfilingThread threads = 1;
+  uint64 now_nanos = 2;
 }
 
 message RemoteProfilingThread {
-    optional string thread_name = 1;
-    uint64 thread_id = 2;
-    repeated RemoteProfilingTiming timings = 3;
+  optional string thread_name = 1;
+  uint64 thread_id = 2;
+  repeated RemoteProfilingTiming timings = 3;
 }
 
 message RemoteProfilingTiming {
-    RemoteProfilingLocation location = 1;
-    uint64 start_nanos = 2;
-    uint64 duration_nanos = 3;
+  RemoteProfilingLocation location = 1;
+  uint64 start_nanos = 2;
+  uint64 duration_nanos = 3;
 }
 
 message RemoteProfilingLocation {
-    string file = 1;
-    uint32 line = 2;
-    uint32 column = 3;
+  string file = 1;
+  uint32 line = 2;
+  uint32 column = 3;
 }

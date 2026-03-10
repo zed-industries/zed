@@ -402,7 +402,13 @@ impl RatePredictionsModal {
 
             write!(&mut formatted_inputs, "## Related files\n\n").unwrap();
 
-            for included_file in prediction.inputs.related_files.iter() {
+            for included_file in prediction
+                .inputs
+                .related_files
+                .as_deref()
+                .unwrap_or_default()
+                .iter()
+            {
                 write!(
                     &mut formatted_inputs,
                     "### {}\n\n",

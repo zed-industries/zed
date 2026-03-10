@@ -1,12 +1,15 @@
 use gh_workflow::{
-    Concurrency, Container, Env, Event, Expression, Job, Port, PullRequest, Push, Run, Step, Use,
+    Concurrency, Container, Event, Expression, Job, Port, PullRequest, Push, Run, Step, Use,
     Workflow,
 };
 use indexmap::IndexMap;
 use indoc::formatdoc;
 
 use crate::tasks::workflows::{
-    steps::{CommonJobConditions, repository_owner_guard_expression},
+    steps::{
+        CommonJobConditions, cache_rust_dependencies_namespace, repository_owner_guard_expression,
+        use_clang,
+    },
     vars::{self, PathCondition},
 };
 
@@ -14,11 +17,6 @@ use super::{
     runners::{self, Platform},
     steps::{self, FluentBuilder, NamedJob, named, release_job},
 };
-
-fn use_clang(job: Job) -> Job {
-    job.add_env(Env::new("CC", "clang"))
-        .add_env(Env::new("CXX", "clang++"))
-}
 
 pub(crate) fn run_tests() -> Workflow {
     // Specify anything which should potentially skip full test suite in this regex:
@@ -121,7 +119,7 @@ fn orchestrate_impl(rules: &[&PathCondition], include_package_filter: bool) -> N
           git fetch origin "$GITHUB_BASE_REF" --depth=350
           COMPARE_REV="$(git merge-base "origin/${GITHUB_BASE_REF}" HEAD)"
         fi
-        CHANGED_FILES="$(git diff --name-only "$COMPARE_REV" ${{ github.sha }})"
+        CHANGED_FILES="$(git diff --name-only "$COMPARE_REV" "$GITHUB_SHA")"
 
         check_pattern() {
           local output_name="$1"
@@ -245,15 +243,20 @@ pub fn tests_pass(jobs: &[NamedJob]) -> NamedJob {
 
     "#});
 
+    let env_entries: Vec<_> = jobs
+        .iter()
+        .map(|job| {
+            let env_name = format!("RESULT_{}", job.name.to_uppercase());
+            let env_value = format!("${{{{ needs.{}.result }}}}", job.name);
+            (env_name, env_value)
+        })
+        .collect();
+
     script.push_str(
         &jobs
             .iter()
-            .map(|job| {
-                format!(
-                    "check_result \"{}\" \"${{{{ needs.{}.result }}}}\"",
-                    job.name, job.name
-                )
-            })
+            .zip(env_entries.iter())
+            .map(|(job, (env_name, _))| format!("check_result \"{}\" \"${}\"", job.name, env_name))
             .collect::<Vec<_>>()
             .join("\n"),
     );
@@ -268,13 +271,42 @@ pub fn tests_pass(jobs: &[NamedJob]) -> NamedJob {
                 .collect::<Vec<String>>(),
         )
         .cond(repository_owner_guard_expression(true))
-        .add_step(named::bash(&script));
+        .add_step(
+            env_entries
+                .into_iter()
+                .fold(named::bash(&script), |step, env_item| {
+                    step.add_env(env_item)
+                }),
+        );
 
     named::job(job)
 }
 
 const TS_QUERY_LS_FILE: &str = "ts_query_ls-x86_64-unknown-linux-gnu.tar.gz";
 const CI_TS_QUERY_RELEASE: &str = "tags/v3.15.1";
+
+pub(crate) fn fetch_ts_query_ls() -> Step<Use> {
+    named::uses(
+        "dsaltares",
+        "fetch-gh-release-asset",
+        "aa37ae5c44d3c9820bc12fe675e8670ecd93bd1c",
+    ) // v1.1.1
+    .add_with(("repo", "ribru17/ts_query_ls"))
+    .add_with(("version", CI_TS_QUERY_RELEASE))
+    .add_with(("file", TS_QUERY_LS_FILE))
+}
+
+pub(crate) fn run_ts_query_ls() -> Step<Run> {
+    named::bash(formatdoc!(
+        r#"tar -xf {TS_QUERY_LS_FILE}
+        ./ts_query_ls format --check . || {{
+            echo "Found unformatted queries, please format them with ts_query_ls."
+            echo "For easy use, install the Tree-sitter query extension:"
+            echo "zed://extension/tree-sitter-query"
+            false
+        }}"#
+    ))
+}
 
 fn check_style() -> NamedJob {
     fn check_for_typos() -> Step<Use> {
@@ -284,29 +316,6 @@ fn check_style() -> NamedJob {
             "2d0ce569feab1f8752f1dde43cc2f2aa53236e06",
         ) // v1.40.0
         .with(("config", "./typos.toml"))
-    }
-
-    fn fetch_ts_query_ls() -> Step<Use> {
-        named::uses(
-            "dsaltares",
-            "fetch-gh-release-asset",
-            "aa37ae5c44d3c9820bc12fe675e8670ecd93bd1c",
-        ) // v1.1.1
-        .add_with(("repo", "ribru17/ts_query_ls"))
-        .add_with(("version", CI_TS_QUERY_RELEASE))
-        .add_with(("file", TS_QUERY_LS_FILE))
-    }
-
-    fn run_ts_query_ls() -> Step<Run> {
-        named::bash(formatdoc!(
-            r#"tar -xf {TS_QUERY_LS_FILE}
-            ./ts_query_ls format --check . || {{
-                echo "Found unformatted queries, please format them with ts_query_ls."
-                echo "For easy use, install the Tree-sitter query extension:"
-                echo "zed://extension/tree-sitter-query"
-                false
-            }}"#
-        ))
     }
 
     named::job(
@@ -538,6 +547,14 @@ pub(crate) fn check_postgres_and_protobuf_migrations() -> NamedJob {
             .add_with(("against", "https://github.com/${GITHUB_REPOSITORY}.git#branch=${BUF_BASE_BRANCH},subdir=crates/proto/proto/"))
     }
 
+    fn buf_lint() -> Step<Run> {
+        named::bash("buf lint crates/proto/proto")
+    }
+
+    fn check_protobuf_formatting() -> Step<Run> {
+        named::bash("buf format --diff --exit-code crates/proto/proto")
+    }
+
     named::job(
         release_job(&[])
             .runs_on(runners::LINUX_DEFAULT)
@@ -548,7 +565,9 @@ pub(crate) fn check_postgres_and_protobuf_migrations() -> NamedJob {
             .add_step(steps::checkout_repo().with_full_history())
             .add_step(ensure_fresh_merge())
             .add_step(bufbuild_setup_action())
-            .add_step(bufbuild_breaking_action()),
+            .add_step(bufbuild_breaking_action())
+            .add_step(buf_lint())
+            .add_step(check_protobuf_formatting()),
     )
 }
 
@@ -641,9 +660,10 @@ pub(crate) fn check_scripts() -> NamedJob {
     }
 
     fn run_actionlint() -> Step<Run> {
-        named::bash(indoc::indoc! {r#"
-            ${{ steps.get_actionlint.outputs.executable }} -color
-        "#})
+        named::bash(r#""$ACTIONLINT_BIN" -color"#).add_env((
+            "ACTIONLINT_BIN",
+            "${{ steps.get_actionlint.outputs.executable }}",
+        ))
     }
 
     fn run_shellcheck() -> Step<Run> {
@@ -668,6 +688,7 @@ pub(crate) fn check_scripts() -> NamedJob {
             .add_step(run_shellcheck())
             .add_step(download_actionlint().id("get_actionlint"))
             .add_step(run_actionlint())
+            .add_step(cache_rust_dependencies_namespace())
             .add_step(check_xtask_workflows()),
     )
 }

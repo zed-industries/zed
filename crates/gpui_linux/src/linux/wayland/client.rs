@@ -95,7 +95,10 @@ use gpui::{
     ScrollDelta, ScrollWheelEvent, SharedString, Size, TaskTiming, TouchPhase, WindowParams, point,
     profiler, px, size,
 };
-use gpui_wgpu::WgpuContext;
+use gpui_wgpu::{CompositorGpuHint, GpuContext};
+use wayland_protocols::wp::linux_dmabuf::zv1::client::{
+    zwp_linux_dmabuf_feedback_v1, zwp_linux_dmabuf_v1,
+};
 
 /// Used to convert evdev scancode to xkb scancode
 const MIN_KEYCODE: u32 = 8;
@@ -201,7 +204,8 @@ pub struct Output {
 pub(crate) struct WaylandClientState {
     serial_tracker: SerialTracker,
     globals: Globals,
-    pub gpu_context: Option<WgpuContext>,
+    pub gpu_context: GpuContext,
+    pub compositor_gpu: Option<CompositorGpuHint>,
     wl_seat: wl_seat::WlSeat, // TODO: Multi seat support
     wl_pointer: Option<wl_pointer::WlPointer>,
     wl_keyboard: Option<wl_keyboard::WlKeyboard>,
@@ -217,6 +221,7 @@ pub(crate) struct WaylandClientState {
     // Output to scale mapping
     outputs: HashMap<ObjectId, Output>,
     in_progress_outputs: HashMap<ObjectId, InProgressOutput>,
+    wl_outputs: HashMap<ObjectId, wl_output::WlOutput>,
     keyboard_layout: LinuxKeyboardLayout,
     keymap_state: Option<xkb::State>,
     compose_state: Option<xkb::compose::State>,
@@ -459,6 +464,8 @@ impl WaylandClient {
         let mut seat: Option<wl_seat::WlSeat> = None;
         #[allow(clippy::mutable_key_type)]
         let mut in_progress_outputs = HashMap::default();
+        #[allow(clippy::mutable_key_type)]
+        let mut wl_outputs: HashMap<ObjectId, wl_output::WlOutput> = HashMap::default();
         globals.contents().with_list(|list| {
             for global in list {
                 match &global.interface[..] {
@@ -478,6 +485,7 @@ impl WaylandClient {
                             (),
                         );
                         in_progress_outputs.insert(output.id(), InProgressOutput::default());
+                        wl_outputs.insert(output.id(), output);
                     }
                     _ => {}
                 }
@@ -515,7 +523,8 @@ impl WaylandClient {
             })
             .unwrap();
 
-        let gpu_context = None;
+        let compositor_gpu = detect_compositor_gpu();
+        let gpu_context = Rc::new(RefCell::new(None));
 
         let seat = seat.unwrap();
         let globals = Globals::new(
@@ -571,6 +580,7 @@ impl WaylandClient {
             serial_tracker: SerialTracker::new(),
             globals,
             gpu_context,
+            compositor_gpu,
             wl_seat: seat,
             wl_pointer: None,
             wl_keyboard: None,
@@ -583,6 +593,7 @@ impl WaylandClient {
             composing: false,
             outputs: HashMap::default(),
             in_progress_outputs,
+            wl_outputs,
             windows: HashMap::default(),
             common,
             keyboard_layout: LinuxKeyboardLayout::new(UNKNOWN_KEYBOARD_LAYOUT_NAME),
@@ -714,15 +725,27 @@ impl LinuxClient for WaylandClient {
 
         let parent = state.keyboard_focused_window.clone();
 
+        let target_output = params.display_id.and_then(|display_id| {
+            let target_protocol_id: u32 = display_id.into();
+            state
+                .wl_outputs
+                .iter()
+                .find(|(id, _)| id.protocol_id() == target_protocol_id)
+                .map(|(_, output)| output.clone())
+        });
+
         let appearance = state.common.appearance;
+        let compositor_gpu = state.compositor_gpu.take();
         let (window, surface_id) = WaylandWindow::new(
             handle,
             state.globals.clone(),
-            &mut state.gpu_context,
+            state.gpu_context.clone(),
+            compositor_gpu,
             WaylandClientStatePtr(Rc::downgrade(&self.0)),
             params,
             appearance,
             parent,
+            target_output,
         )?;
         state.windows.insert(surface_id, window.0.clone());
 
@@ -904,6 +927,70 @@ impl LinuxClient for WaylandClient {
     }
 }
 
+struct DmabufProbeState {
+    device: Option<u64>,
+}
+
+impl Dispatch<wl_registry::WlRegistry, GlobalListContents> for DmabufProbeState {
+    fn event(
+        _: &mut Self,
+        _: &wl_registry::WlRegistry,
+        _: wl_registry::Event,
+        _: &GlobalListContents,
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+    }
+}
+
+impl Dispatch<zwp_linux_dmabuf_v1::ZwpLinuxDmabufV1, ()> for DmabufProbeState {
+    fn event(
+        _: &mut Self,
+        _: &zwp_linux_dmabuf_v1::ZwpLinuxDmabufV1,
+        _: zwp_linux_dmabuf_v1::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+    }
+}
+
+impl Dispatch<zwp_linux_dmabuf_feedback_v1::ZwpLinuxDmabufFeedbackV1, ()> for DmabufProbeState {
+    fn event(
+        state: &mut Self,
+        _: &zwp_linux_dmabuf_feedback_v1::ZwpLinuxDmabufFeedbackV1,
+        event: zwp_linux_dmabuf_feedback_v1::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+        if let zwp_linux_dmabuf_feedback_v1::Event::MainDevice { device } = event {
+            if let Ok(bytes) = <[u8; 8]>::try_from(device.as_slice()) {
+                state.device = Some(u64::from_ne_bytes(bytes));
+            }
+        }
+    }
+}
+
+fn detect_compositor_gpu() -> Option<CompositorGpuHint> {
+    let connection = Connection::connect_to_env().ok()?;
+    let (globals, mut event_queue) = registry_queue_init::<DmabufProbeState>(&connection).ok()?;
+    let queue_handle = event_queue.handle();
+
+    let dmabuf: zwp_linux_dmabuf_v1::ZwpLinuxDmabufV1 =
+        globals.bind(&queue_handle, 4..=4, ()).ok()?;
+    let feedback = dmabuf.get_default_feedback(&queue_handle, ());
+
+    let mut state = DmabufProbeState { device: None };
+
+    event_queue.roundtrip(&mut state).ok()?;
+
+    feedback.destroy();
+    dmabuf.destroy();
+
+    crate::linux::compositor_gpu_hint_from_dev_t(state.device?)
+}
+
 impl Dispatch<wl_registry::WlRegistry, GlobalListContents> for WaylandClientStatePtr {
     fn event(
         this: &mut Self,
@@ -948,6 +1035,7 @@ impl Dispatch<wl_registry::WlRegistry, GlobalListContents> for WaylandClientStat
                     state
                         .in_progress_outputs
                         .insert(output.id(), InProgressOutput::default());
+                    state.wl_outputs.insert(output.id(), output);
                 }
                 _ => {}
             },
