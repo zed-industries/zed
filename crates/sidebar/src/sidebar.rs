@@ -513,7 +513,14 @@ impl Sidebar {
                     }
                 }
 
-                threads.sort_by(|a, b| b.session_info.created_at.cmp(&a.session_info.created_at));
+                // Sort by created_at (newest first), with updated_at as tiebreaker
+                // for threads created in the same instant.
+                threads.sort_by(|a, b| {
+                    b.session_info
+                        .created_at
+                        .cmp(&a.session_info.created_at)
+                        .then_with(|| b.session_info.updated_at.cmp(&a.session_info.updated_at))
+                });
             }
 
             if !query.is_empty() {
