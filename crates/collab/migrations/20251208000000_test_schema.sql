@@ -1,6 +1,8 @@
 -- This file is auto-generated. Do not modify it by hand.
 -- To regenerate, run `cargo xtask db dump-schema app --collab` from the Cloud repository.
 
+-- Test change.
+
 CREATE EXTENSION IF NOT EXISTS pg_trgm WITH SCHEMA public;
 
 CREATE TABLE public.breakpoints (
