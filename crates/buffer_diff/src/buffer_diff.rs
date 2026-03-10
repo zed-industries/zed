@@ -1497,9 +1497,7 @@ fn word_diffs(
         return (Vec::default(), Vec::default());
     }
 
-    let base_text: String = diff_base
-        .chunks_in_range(diff_base_byte_range.clone())
-        .collect();
+    let base_text: String = diff_base.chunks_in_range(diff_base_byte_range).collect();
 
     let buffer_text: String = buffer.text_for_range(buffer_range.clone()).collect();
 
