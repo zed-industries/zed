@@ -513,13 +513,12 @@ impl Sidebar {
                     }
                 }
 
-                // Sort by created_at (newest first), with updated_at as tiebreaker
-                // for threads created in the same instant.
+                // Sort by created_at (newest first), falling back to updated_at
+                // for threads without a created_at (e.g., ACP sessions).
                 threads.sort_by(|a, b| {
-                    b.session_info
-                        .created_at
-                        .cmp(&a.session_info.created_at)
-                        .then_with(|| b.session_info.updated_at.cmp(&a.session_info.updated_at))
+                    let a_time = a.session_info.created_at.or(a.session_info.updated_at);
+                    let b_time = b.session_info.created_at.or(b.session_info.updated_at);
+                    b_time.cmp(&a_time)
                 });
             }
 
