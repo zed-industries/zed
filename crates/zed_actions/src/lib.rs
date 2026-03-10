@@ -747,6 +747,12 @@ pub mod notebook {
             NotebookMoveDown,
             /// Move to up in cells
             NotebookMoveUp,
+            /// Runs the current cell and advances to the next cell.
+            RunAndAdvance,
+            /// Enters the current cell's editor (edit mode).
+            EnterEditMode,
+            /// Exits the cell editor and returns to cell command mode.
+            EnterCommandMode,
         ]
     );
 }
