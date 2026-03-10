@@ -103,6 +103,10 @@ pub fn app_menus(cx: &mut App) -> Vec<Menu> {
                 #[cfg(not(target_os = "windows"))]
                 MenuItem::action("Install CLI", install_cli::InstallCliBinary),
                 MenuItem::separator(),
+                #[cfg(not(target_os = "macos"))]
+                MenuItem::action("Toggle Agent Mode", zed_actions::agent::ToggleAgentMode),
+                #[cfg(not(target_os = "macos"))]
+                MenuItem::separator(),
                 #[cfg(target_os = "macos")]
                 MenuItem::action("Hide Zed", super::Hide),
                 #[cfg(target_os = "macos")]
