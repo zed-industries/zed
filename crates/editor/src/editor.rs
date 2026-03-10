@@ -2766,7 +2766,6 @@ impl Editor {
             }
             editor.report_editor_event(ReportEditorEvent::EditorOpened, None, cx);
         }
-        markdown_wysiwyg::check_and_activate_wysiwyg(&mut editor, cx);
 
         editor
     }

@@ -825,6 +825,8 @@ actions!(
         ToggleIndentGuides,
         /// Toggles inlay hints display.
         ToggleInlayHints,
+        /// Toggles inline WYSIWYG rendering for markdown files.
+        ToggleMarkdownWysiwyg,
         /// Toggles semantic highlights display.
         ToggleSemanticHighlights,
         /// Toggles inline values display.
