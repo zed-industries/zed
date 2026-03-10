@@ -2148,7 +2148,8 @@ fn run_agent_thread_view_test(
     cx.update_window(workspace_window.into(), |_, _window, cx| {
         workspace_window
             .update(cx, |workspace, window, cx| {
-                workspace.add_panel(panel.clone(), window, cx);
+                let position = panel.read(cx).position(window, cx);
+                workspace.add_panel(panel.clone(), position, window, cx);
                 workspace.open_panel::<AgentPanel>(window, cx);
             })
             .log_err();
@@ -3249,7 +3250,8 @@ edition = "2021"
         .update(cx, |multi_workspace, window, cx| {
             let workspace = &multi_workspace.workspaces()[0];
             workspace.update(cx, |workspace, cx| {
-                workspace.add_panel(project_panel, window, cx);
+                let position = project_panel.read(cx).position(window, cx);
+                workspace.add_panel(project_panel, position, window, cx);
                 workspace.open_panel::<ProjectPanel>(window, cx);
             });
         })
@@ -3313,14 +3315,16 @@ edition = "2021"
                     if let Ok(panel) = project_panel.await {
                         workspace_handle
                             .update_in(cx, |workspace, window, cx| {
-                                workspace.add_panel(panel, window, cx);
+                                let position = panel.read(cx).position(window, cx);
+                                workspace.add_panel(panel, position, window, cx);
                             })
                             .log_err();
                     }
                     if let Ok(panel) = agent_panel.await {
                         workspace_handle
                             .update_in(cx, |workspace, window, cx| {
-                                workspace.add_panel(panel, window, cx);
+                                let position = panel.read(cx).position(window, cx);
+                                workspace.add_panel(panel, position, window, cx);
                             })
                             .log_err();
                     }
@@ -3346,7 +3350,8 @@ edition = "2021"
         .update(cx, |multi_workspace, window, cx| {
             let workspace = &multi_workspace.workspaces()[0];
             workspace.update(cx, |workspace, cx| {
-                workspace.add_panel(panel.clone(), window, cx);
+                let position = panel.read(cx).position(window, cx);
+                workspace.add_panel(panel.clone(), position, window, cx);
                 workspace.open_panel::<AgentPanel>(window, cx);
             });
         })
