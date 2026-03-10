@@ -727,12 +727,9 @@ impl Sidebar {
             } => self.render_new_thread(ix, path_list, workspace, is_selected, cx),
         };
 
-        // add the blue border here, not in the sub methods
-
         if is_group_header_after_first {
             v_flex()
                 .w_full()
-                .pt_2()
                 .border_t_1()
                 .border_color(cx.theme().colors().border_variant)
                 .child(rendered)
@@ -1473,9 +1470,9 @@ impl Render for Sidebar {
             .child(
                 h_flex()
                     .flex_none()
-                    .p_2()
+                    .px_2p5()
                     .h(Tab::container_height(cx))
-                    .gap_1p5()
+                    .gap_2()
                     .border_b_1()
                     .border_color(cx.theme().colors().border)
                     .child(
