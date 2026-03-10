@@ -247,6 +247,7 @@ pub fn token_limits_for_format(format: ZetaFormat) -> (usize, usize) {
         | ZetaFormat::V0211Prefill
         | ZetaFormat::V0211SeedCoder
         | ZetaFormat::v0226Hashline
+        | ZetaFormat::V0306SeedMultiRegions
         | ZetaFormat::V0304SeedNoEdits => (350, 150),
         ZetaFormat::V0304VariableEdit => (1024, 0),
     }
@@ -263,6 +264,7 @@ pub fn stop_tokens_for_format(format: ZetaFormat) -> &'static [&'static str] {
         | ZetaFormat::V0211Prefill
         | ZetaFormat::V0211SeedCoder
         | ZetaFormat::V0304VariableEdit
+        | ZetaFormat::V0306SeedMultiRegions
         | ZetaFormat::V0304SeedNoEdits => &[],
     }
 }
