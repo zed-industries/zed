@@ -1,37 +1,45 @@
 use std::rc::Rc;
 
-use acp_thread::AgentConnection;
+use acp_thread::{AgentConnection, LoadError};
 use agent_servers::{AgentServer, AgentServerDelegate};
 use anyhow::Result;
 use collections::HashMap;
-use gpui::{Context, Entity, SharedString, Subscription, Task};
+use futures::{FutureExt, future::Shared};
+use gpui::{AppContext, Context, Entity, SharedString, Subscription, Task};
 use project::{AgentServerStore, AgentServersUpdated, Project};
-use util::ResultExt as _;
+use watch::Receiver;
 
 use crate::ExternalAgent;
 use project::ExternalAgentServerName;
 
-enum ConnectionEntry {
+pub enum ConnectionEntry {
     Connecting {
-        /// Shared future for the in-flight connection attempt.
-        /// Multiple requesters await clones of this receiver.
-        result_rx: watch::Receiver<Option<Result<Rc<dyn AgentConnection>, SharedString>>>,
-        new_version_rx: watch::Receiver<Option<String>>,
+        connect_task: Shared<Task<Result<Rc<dyn AgentConnection>, LoadError>>>,
     },
-    Ready {
+    Connected {
         connection: Rc<dyn AgentConnection>,
-        new_version_rx: watch::Receiver<Option<String>>,
+        new_version: Option<SharedString>,
+    },
+    Error {
+        error: LoadError,
     },
 }
 
-pub struct ConnectionRequestHandle {
-    pub result: Task<Result<Rc<dyn AgentConnection>>>,
-    pub new_version_rx: watch::Receiver<Option<String>>,
+impl ConnectionEntry {
+    pub fn wait_for_connection(&self) -> Shared<Task<Result<Rc<dyn AgentConnection>, LoadError>>> {
+        match self {
+            ConnectionEntry::Connecting { connect_task } => connect_task.clone(),
+            ConnectionEntry::Connected { connection, .. } => {
+                Task::ready(Ok(connection.clone())).shared()
+            }
+            ConnectionEntry::Error { error } => Task::ready(Err(error.clone())).shared(),
+        }
+    }
 }
 
 pub struct AgentConnectionStore {
     project: Entity<Project>,
-    entries: HashMap<ExternalAgent, ConnectionEntry>,
+    entries: HashMap<ExternalAgent, Entity<ConnectionEntry>>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -51,35 +59,60 @@ impl AgentConnectionStore {
         key: ExternalAgent,
         server: Rc<dyn AgentServer>,
         cx: &mut Context<Self>,
-    ) -> ConnectionRequestHandle {
-        if let Some(entry) = self.entries.get(&key) {
-            match entry {
-                ConnectionEntry::Ready {
-                    connection,
-                    new_version_rx,
-                } => {
-                    return ConnectionRequestHandle {
-                        result: Task::ready(Ok(connection.clone())),
-                        new_version_rx: new_version_rx.clone(),
-                    };
-                }
-                ConnectionEntry::Connecting {
-                    result_rx,
-                    new_version_rx,
-                } => {
-                    let mut result_rx = result_rx.clone();
-                    let result = cx.spawn(async move |_this, _cx| {
-                        Self::await_connection_result(&mut result_rx).await
-                    });
-                    return ConnectionRequestHandle {
-                        result,
-                        new_version_rx: new_version_rx.clone(),
-                    };
-                }
-            }
-        }
+    ) -> Entity<ConnectionEntry> {
+        self.entries.get(&key).cloned().unwrap_or_else(|| {
+            let (mut new_version_rx, connect_task) = self.start_connection(server.clone(), cx);
+            let connect_task = connect_task.shared();
 
-        self.start_connection(key, server, cx)
+            let entry = cx.new(|_cx| ConnectionEntry::Connecting {
+                connect_task: connect_task.clone(),
+            });
+
+            self.entries.insert(key, entry.clone());
+
+            cx.spawn({
+                let entry = entry.clone();
+                async move |_this, cx| match connect_task.await {
+                    Ok(connection) => {
+                        entry.update(cx, |entry, cx| {
+                            if let ConnectionEntry::Connecting { .. } = entry {
+                                *entry = ConnectionEntry::Connected {
+                                    connection,
+                                    new_version: None,
+                                };
+                                cx.notify();
+                            }
+                        });
+                    }
+                    Err(error) => {
+                        entry.update(cx, |entry, cx| {
+                            if let ConnectionEntry::Connecting { .. } = entry {
+                                *entry = ConnectionEntry::Error { error };
+                                cx.notify();
+                            }
+                        });
+                    }
+                }
+            })
+            .detach();
+
+            cx.spawn({
+                let entry = entry.clone();
+                async move |_this, cx| {
+                    while let Ok(version) = new_version_rx.recv().await {
+                        entry.update(cx, |entry, cx| {
+                            if let ConnectionEntry::Connected { new_version, .. } = entry {
+                                *new_version = version.map(|v| v.into());
+                                cx.notify();
+                            }
+                        });
+                    }
+                }
+            })
+            .detach();
+
+            entry
+        })
     }
 
     pub fn invalidate(&mut self, key: &ExternalAgent) {
@@ -103,14 +136,14 @@ impl AgentConnectionStore {
     }
 
     fn start_connection(
-        &mut self,
-        key: ExternalAgent,
+        &self,
         server: Rc<dyn AgentServer>,
         cx: &mut Context<Self>,
-    ) -> ConnectionRequestHandle {
+    ) -> (
+        Receiver<Option<String>>,
+        Task<Result<Rc<dyn AgentConnection>, LoadError>>,
+    ) {
         let (new_version_tx, new_version_rx) = watch::channel::<Option<String>>(None);
-        let (mut result_tx, result_rx) =
-            watch::channel::<Option<Result<Rc<dyn AgentConnection>, SharedString>>>(None);
 
         let agent_server_store = self.project.read(cx).agent_server_store().clone();
         let delegate = AgentServerDelegate::new(
@@ -120,68 +153,13 @@ impl AgentConnectionStore {
         );
 
         let connect_task = server.connect(delegate, cx);
-        let entry_key = key.clone();
-        cx.spawn(async move |this, cx| match connect_task.await {
-            Ok(connection) => {
-                result_tx.send(Some(Ok(connection.clone()))).ok();
-                this.update(cx, |this, cx| {
-                    if let Some(ConnectionEntry::Connecting { new_version_rx, .. }) =
-                        this.entries.remove(&entry_key)
-                    {
-                        this.entries.insert(
-                            entry_key,
-                            ConnectionEntry::Ready {
-                                connection,
-                                new_version_rx,
-                            },
-                        );
-                    }
-                    cx.notify();
-                })
-                .log_err();
-            }
-            Err(err) => {
-                result_tx.send(Some(Err(err.to_string().into()))).ok();
-                this.update(cx, |this, cx| {
-                    this.entries.remove(&entry_key);
-                    cx.notify();
-                })
-                .log_err();
-            }
-        })
-        .detach();
-
-        let mut first_result_rx = result_rx.clone();
-        let result = cx.spawn(async move |_this, _cx| {
-            Self::await_connection_result(&mut first_result_rx).await
-        });
-
-        let handle_new_version_rx = new_version_rx.clone();
-
-        self.entries.insert(
-            key,
-            ConnectionEntry::Connecting {
-                result_rx,
-                new_version_rx,
+        let connect_task = cx.spawn(async move |_this, _cx| match connect_task.await {
+            Ok(connection) => Ok(connection),
+            Err(err) => match err.downcast::<LoadError>() {
+                Ok(load_error) => Err(load_error),
+                Err(err) => Err(LoadError::Other(SharedString::from(err.to_string()))),
             },
-        );
-
-        ConnectionRequestHandle {
-            result,
-            new_version_rx: handle_new_version_rx,
-        }
-    }
-
-    async fn await_connection_result(
-        result_rx: &mut watch::Receiver<Option<Result<Rc<dyn AgentConnection>, SharedString>>>,
-    ) -> Result<Rc<dyn AgentConnection>> {
-        loop {
-            match result_rx.recv().await {
-                Ok(Some(Ok(connection))) => return Ok(connection),
-                Ok(Some(Err(message))) => return Err(anyhow::anyhow!("{}", message)),
-                Ok(None) => continue,
-                Err(_) => return Err(anyhow::anyhow!("connection attempt was cancelled")),
-            }
-        }
+        });
+        (new_version_rx, connect_task)
     }
 }

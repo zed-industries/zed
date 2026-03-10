@@ -662,8 +662,7 @@ impl ConnectionView {
             store.request_connection(connection_key, agent.clone(), cx)
         });
 
-        let mut new_version_available_rx = handle.new_version_rx;
-        let connect_result = handle.result;
+        let connect_result = handle.read(cx).wait_for_connection();
 
         let load_session_id = resume_session_id.clone();
         let load_task = cx.spawn_in(window, async move |this, cx| {
@@ -671,13 +670,7 @@ impl ConnectionView {
                 Ok(connection) => connection,
                 Err(err) => {
                     this.update_in(cx, |this, window, cx| {
-                        if err.downcast_ref::<LoadError>().is_some() {
-                            this.handle_load_error(load_session_id.clone(), err, window, cx);
-                        } else if let Some(active) = this.active_thread() {
-                            active.update(cx, |active, cx| active.handle_thread_error(err, cx));
-                        } else {
-                            this.handle_load_error(load_session_id.clone(), err, window, cx);
-                        }
+                        this.handle_load_error(load_session_id.clone(), err, window, cx);
                         cx.notify();
                     })
                     .log_err();
@@ -796,29 +789,34 @@ impl ConnectionView {
                         );
                     }
                     Err(err) => {
-                        this.handle_load_error(load_session_id.clone(), err, window, cx);
+                        this.handle_load_error(
+                            load_session_id.clone(),
+                            LoadError::Other(err.to_string().into()),
+                            window,
+                            cx,
+                        );
                     }
                 };
             })
             .log_err();
         });
 
-        cx.spawn(async move |this, cx| {
-            while let Ok(new_version) = new_version_available_rx.recv().await {
-                if let Some(new_version) = new_version {
-                    this.update(cx, |this, cx| {
-                        if let Some(thread) = this.active_thread() {
-                            thread.update(cx, |thread, _cx| {
-                                thread.new_server_version_available = Some(new_version.into());
-                            });
-                        }
-                        cx.notify();
-                    })
-                    .ok();
-                }
-            }
-        })
-        .detach();
+        // cx.spawn(async move |this, cx| {
+        //     while let Ok(new_version) = new_version_available_rx.recv().await {
+        //         if let Some(new_version) = new_version {
+        //             this.update(cx, |this, cx| {
+        //                 if let Some(thread) = this.active_thread() {
+        //                     thread.update(cx, |thread, _cx| {
+        //                         thread.new_server_version_available = Some(new_version.into());
+        //                     });
+        //                 }
+        //                 cx.notify();
+        //             })
+        //             .ok();
+        //         }
+        //     }
+        // })
+        // .detach();
 
         let loading_view = cx.new(|_cx| LoadingView {
             session_id: resume_session_id,
@@ -1112,7 +1110,7 @@ impl ConnectionView {
     fn handle_load_error(
         &mut self,
         session_id: Option<acp::SessionId>,
-        err: anyhow::Error,
+        err: LoadError,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -1126,15 +1124,10 @@ impl ConnectionView {
                 self.focus_handle.focus(window, cx)
             }
         }
-        let load_error = if let Some(load_err) = err.downcast_ref::<LoadError>() {
-            load_err.clone()
-        } else {
-            LoadError::Other(format!("{:#}", err).into())
-        };
-        self.emit_load_error_telemetry(&load_error);
+        self.emit_load_error_telemetry(&err);
         self.set_server_state(
             ServerState::LoadError {
-                error: load_error,
+                error: err,
                 session_id,
             },
             cx,
