@@ -9624,8 +9624,17 @@ impl Element for EditorElement {
                             let snapshot = editor.snapshot(window, cx);
                             let line_height =
                                 self.style.text.line_height_in_pixels(window.rem_size());
-                            let scroll_height =
+                            let mut scroll_height =
                                 (snapshot.max_point().row().next_row().0 as f32) * line_height;
+                            let horizontal_scrollbar_enabled =
+                                editor.show_scrollbars.horizontal
+                                    && EditorSettings::get_global(cx).scrollbar.axes.horizontal
+                                    && EditorSettings::get_global(cx).scrollbar.show
+                                        != ShowScrollbar::Never
+                                    && !self.style.scrollbar_width.is_zero();
+                            if horizontal_scrollbar_enabled {
+                                scroll_height += self.style.scrollbar_width;
+                            }
                             style.size.height = scroll_height.into();
                         } else {
                             style.size.height = relative(1.).into();
@@ -13581,6 +13590,126 @@ mod tests {
         assert_eq!(
             calculate_wrap_width(SoftWrap::Bounded(200), px(400.0), em_width),
             Some(px(400.0)),
+        );
+    }
+
+    #[gpui::test]
+    async fn test_size_by_content_includes_horizontal_scrollbar_height(cx: &mut TestAppContext) {
+        init_test(cx, |_| {});
+
+        let long_line = "a".repeat(500);
+        let short_text = "short\nline";
+
+        let long_line_window = cx.add_window(|window, cx| {
+            let buffer = MultiBuffer::build_simple(&long_line, cx);
+            let mut editor = Editor::new(
+                EditorMode::Full {
+                    scale_ui_elements_with_buffer_font_size: false,
+                    show_active_line_background: false,
+                    sizing_behavior: SizingBehavior::SizeByContent,
+                },
+                buffer,
+                None,
+                window,
+                cx,
+            );
+            editor.set_soft_wrap_mode(language_settings::SoftWrap::None, cx);
+            editor.set_show_vertical_scrollbar(false, cx);
+            editor
+        });
+
+        let short_text_window = cx.add_window(|window, cx| {
+            let buffer = MultiBuffer::build_simple(short_text, cx);
+            let mut editor = Editor::new(
+                EditorMode::Full {
+                    scale_ui_elements_with_buffer_font_size: false,
+                    show_active_line_background: false,
+                    sizing_behavior: SizingBehavior::SizeByContent,
+                },
+                buffer,
+                None,
+                window,
+                cx,
+            );
+            editor.set_soft_wrap_mode(language_settings::SoftWrap::None, cx);
+            editor.set_show_vertical_scrollbar(false, cx);
+            editor
+        });
+
+        let long_cx = &mut VisualTestContext::from_window(*long_line_window, cx);
+        let long_editor = long_line_window.root(long_cx).unwrap();
+        let long_style = long_cx
+            .update(|_, cx| long_editor.update(cx, |editor, cx| editor.style(cx).clone()));
+
+        let (_, long_state) = long_cx.draw(
+            Default::default(),
+            size(px(200.), px(500.)),
+            |_, _| EditorElement::new(&long_editor, long_style.clone()),
+        );
+
+        let short_cx = &mut VisualTestContext::from_window(*short_text_window, cx);
+        let short_editor = short_text_window.root(short_cx).unwrap();
+        let short_style = short_cx
+            .update(|_, cx| short_editor.update(cx, |editor, cx| editor.style(cx).clone()));
+
+        let (_, short_state) = short_cx.draw(
+            Default::default(),
+            size(px(200.), px(500.)),
+            |_, _| EditorElement::new(&short_editor, short_style.clone()),
+        );
+
+        let long_height = long_state.hitbox.bounds.size.height;
+        let short_height = short_state.hitbox.bounds.size.height;
+        let scrollbar_width = EditorElement::SCROLLBAR_WIDTH;
+        let line_height = long_state.position_map.line_height;
+
+        assert_eq!(
+            long_height,
+            line_height + scrollbar_width,
+            "Single long line editor should have height = line_height + scrollbar_width"
+        );
+
+        assert_eq!(
+            short_height,
+            line_height * 2. + scrollbar_width,
+            "Two line editor should have height = 2 * line_height + scrollbar_width"
+        );
+
+        let no_hscroll_window = cx.add_window(|window, cx| {
+            let buffer = MultiBuffer::build_simple(&long_line, cx);
+            let mut editor = Editor::new(
+                EditorMode::Full {
+                    scale_ui_elements_with_buffer_font_size: false,
+                    show_active_line_background: false,
+                    sizing_behavior: SizingBehavior::SizeByContent,
+                },
+                buffer,
+                None,
+                window,
+                cx,
+            );
+            editor.set_soft_wrap_mode(language_settings::SoftWrap::None, cx);
+            editor.set_show_vertical_scrollbar(false, cx);
+            editor.set_show_horizontal_scrollbar(false, cx);
+            editor
+        });
+
+        let no_hscroll_cx = &mut VisualTestContext::from_window(*no_hscroll_window, cx);
+        let no_hscroll_editor = no_hscroll_window.root(no_hscroll_cx).unwrap();
+        let no_hscroll_style = no_hscroll_cx.update(|_, cx| {
+            no_hscroll_editor.update(cx, |editor, cx| editor.style(cx).clone())
+        });
+
+        let (_, no_hscroll_state) = no_hscroll_cx.draw(
+            Default::default(),
+            size(px(200.), px(500.)),
+            |_, _| EditorElement::new(&no_hscroll_editor, no_hscroll_style.clone()),
+        );
+
+        assert_eq!(
+            no_hscroll_state.hitbox.bounds.size.height,
+            line_height,
+            "Editor with horizontal scrollbar disabled should not include scrollbar height"
         );
     }
 }
