@@ -126,6 +126,24 @@ Images are hosted externally. Reference format:
 - With anchors: `[Custom Models](./llm-providers.md#anthropic-custom-models)`
 - Parent directory: `[Telemetry](../telemetry.md)`
 
+## Voice and Tone
+
+### Core Principles
+
+- **Practical over promotional**: Focus on what users can do, not on selling Zed. Avoid marketing language like "powerful," "revolutionary," or "best-in-class."
+- **Honest about limitations**: When Zed lacks a feature or doesn't match another tool's depth, say so directly. Pair limitations with workarounds or alternative workflows.
+- **Direct and concise**: Use short sentences. Get to the point. Developers are scanning, not reading novels.
+- **Second person**: Address the reader as "you." Avoid "the user" or "one."
+- **Present tense**: "Zed opens the file" not "Zed will open the file."
+
+### What to Avoid
+
+- Superlatives without substance ("incredibly fast," "seamlessly integrated")
+- Hedging language ("simply," "just," "easily")—if something is simple, the instructions will show it
+- Apologetic tone for missing features—state the limitation and move on
+- Comparisons that disparage other tools—be factual, not competitive
+- Lots of use of em or en dashes.
+
 ## Scope
 
 ### In-Scope Documentation
