@@ -357,20 +357,16 @@ async fn run_agent(
         Err(e) => return (Err(e), None),
     };
 
-    let thread_store = cx.new(|cx| ThreadStore::new(cx));
-    let agent = match NativeAgent::new(
-        project.clone(),
-        thread_store,
-        Templates::new(),
-        None,
-        app_state.fs.clone(),
-        cx,
-    )
-    .await
-    {
-        Ok(a) => a,
-        Err(e) => return (Err(e).context("creating agent"), None),
-    };
+    let agent = cx.update(|cx| {
+        let thread_store = cx.new(|cx| ThreadStore::new(cx));
+        NativeAgent::new(
+            thread_store,
+            Templates::new(),
+            None,
+            app_state.fs.clone(),
+            cx,
+        )
+    });
 
     let connection = Rc::new(NativeAgentConnection(agent.clone()));
     let acp_thread = match cx

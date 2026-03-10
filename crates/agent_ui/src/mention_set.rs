@@ -560,7 +560,9 @@ impl MentionSet {
             let agent = agent.downcast::<agent::NativeAgentConnection>().unwrap();
             let summary = agent
                 .0
-                .update(cx, |agent, cx| agent.thread_summary(id, cx))
+                .update(cx, |agent, cx| {
+                    agent.thread_summary(id, project.clone(), cx)
+                })
                 .await?;
             Ok(Mention::Text {
                 content: summary.to_string(),
