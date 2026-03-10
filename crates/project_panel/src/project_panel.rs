@@ -5552,55 +5552,87 @@ impl ProjectPanel {
                         ProjectPanelEntrySpacing::Standard => ListItemSpacing::ExtraDense,
                     })
                     .selectable(false)
-                    .when(
-                        canonical_path.is_some() || diagnostic_count.is_some(),
-                        |this| {
-                            let symlink_element = canonical_path.map(|path| {
-                                div()
-                                    .id("symlink_icon")
-                                    .tooltip(move |_window, cx| {
-                                        Tooltip::with_meta(
-                                            path.to_string(),
-                                            None,
-                                            "Symbolic Link",
-                                            cx,
-                                        )
-                                    })
-                                    .child(
-                                        Icon::new(IconName::ArrowUpRight)
-                                            .size(IconSize::Indicator)
-                                            .color(filename_text_color),
+                    .map(|list_item| {
+                        let is_worktree_root = path.as_std_path().as_os_str().is_empty();
+                        let show_reveal_button =
+                            is_worktree_root && !settings.auto_reveal_entries;
+                        let has_end_slot = canonical_path.is_some()
+                            || diagnostic_count.is_some()
+                            || show_reveal_button;
+                        if !has_end_slot {
+                            return list_item;
+                        }
+                        let symlink_element = canonical_path.map(|path| {
+                            div()
+                                .id("symlink_icon")
+                                .tooltip(move |_window, cx| {
+                                    Tooltip::with_meta(
+                                        path.to_string(),
+                                        None,
+                                        "Symbolic Link",
+                                        cx,
                                     )
-                            });
-                            this.end_slot::<AnyElement>(
-                                h_flex()
-                                    .gap_1()
-                                    .flex_none()
-                                    .pr_3()
-                                    .when_some(diagnostic_count, |this, count| {
-                                        this.when(count.error_count > 0, |this| {
-                                            this.child(
-                                                Label::new(count.capped_error_count())
-                                                    .size(LabelSize::Small)
-                                                    .color(Color::Error),
-                                            )
-                                        })
-                                        .when(
-                                            count.warning_count > 0,
-                                            |this| {
-                                                this.child(
-                                                    Label::new(count.capped_warning_count())
-                                                        .size(LabelSize::Small)
-                                                        .color(Color::Warning),
-                                                )
-                                            },
+                                })
+                                .child(
+                                    Icon::new(IconName::ArrowUpRight)
+                                        .size(IconSize::Indicator)
+                                        .color(filename_text_color),
+                                )
+                        });
+                        list_item.end_slot::<AnyElement>(
+                            h_flex()
+                                .gap_1()
+                                .flex_none()
+                                .when(!show_reveal_button, |this| this.pr_3())
+                                .when_some(diagnostic_count, |this, count| {
+                                    this.when(count.error_count > 0, |this| {
+                                        this.child(
+                                            Label::new(count.capped_error_count())
+                                                .size(LabelSize::Small)
+                                                .color(Color::Error),
                                         )
                                     })
-                                    .when_some(symlink_element, |this, el| this.child(el))
-                                    .into_any_element(),
-                            )
-                        },
-                    )
+                                    .when(
+                                        count.warning_count > 0,
+                                        |this| {
+                                            this.child(
+                                                Label::new(count.capped_warning_count())
+                                                    .size(LabelSize::Small)
+                                                    .color(Color::Warning),
+                                            )
+                                        },
+                                    )
+                                })
+                                .when_some(symlink_element, |this, el| this.child(el))
+                                .when(show_reveal_button, |this| {
+                                    this.child(
+                                        IconButton::new(
+                                            "reveal-active-file",
+                                            IconName::Crosshair,
+                                        )
+                                        .icon_size(IconSize::Small)
+                                        .tooltip(Tooltip::text("Reveal Active File"))
+                                        .on_click(cx.listener(
+                                            |this, _, window, cx| {
+                                                if let Some(entry_id) =
+                                                    this.project.read(cx).active_entry()
+                                                {
+                                                    this.reveal_entry(
+                                                        this.project.clone(),
+                                                        entry_id,
+                                                        false,
+                                                        window,
+                                                        cx,
+                                                    )
+                                                    .log_err();
+                                                }
+                                            },
+                                        )),
+                                    )
+                                })
+                                .into_any_element(),
+                        )
+                    })
                     .child(if let Some(icon) = &icon {
                         if let Some((_, decoration_color)) =
                             entry_diagnostic_aware_icon_decoration_and_color(diagnostic_severity)
