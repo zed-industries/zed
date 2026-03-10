@@ -267,6 +267,12 @@ struct BackgroundScannerState {
     scanning_enabled: bool,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct EventRoot {
+    path: Arc<RelPath>,
+    was_rescanned: bool,
+}
+
 #[derive(Debug, Clone)]
 struct LocalRepositoryEntry {
     work_directory_id: ProjectEntryId,
@@ -3874,7 +3880,7 @@ impl BackgroundScanner {
             state.snapshot.completed_scan_id = state.snapshot.scan_id;
         }
 
-        self.send_status_update(false, SmallVec::new()).await;
+        self.send_status_update(false, SmallVec::new(), &[]).await;
 
         // Process any any FS events that occurred while performing the initial scan.
         // For these events, update events cannot be as precise, because we didn't
@@ -3935,7 +3941,7 @@ impl BackgroundScanner {
                             .await;
                         }
                     }
-                    self.send_status_update(false, request.done).await;
+                    self.send_status_update(false, request.done, &[]).await;
                 }
 
                 paths = fs_events_rx.next().fuse() => {
@@ -4000,19 +4006,18 @@ impl BackgroundScanner {
         )
         .await;
 
-        self.send_status_update(scanning, request.done).await
+        self.send_status_update(scanning, request.done, &[]).await
     }
 
     async fn process_events(&self, events: Vec<PathEvent>) {
-        let mut abs_paths = Vec::with_capacity(events.len());
-        let mut rescan_paths = Vec::new();
+        let mut path_events = Vec::with_capacity(events.len());
         for event in events {
-            if matches!(event.kind, Some(fs::PathEventKind::Rescan)) {
-                rescan_paths.push(event.path.clone());
-            }
-            abs_paths.push(event.path);
+            path_events.push((
+                event.path.clone(),
+                matches!(event.kind, Some(fs::PathEventKind::Rescan)),
+            ));
         }
-        log::trace!("process events: {abs_paths:?}, rescans: {rescan_paths:?}");
+        log::trace!("process events: {path_events:?}");
         let root_path = self.state.lock().await.snapshot.abs_path.clone();
         let root_canonical_path = self.fs.canonicalize(root_path.as_path()).await;
         let root_canonical_path = match &root_canonical_path {
@@ -4056,11 +4061,21 @@ impl BackgroundScanner {
         let skipped_files_in_dot_git = [COMMIT_MESSAGE, INDEX_LOCK];
         let skipped_dirs_in_dot_git = [FSMONITOR_DAEMON, LFS_DIR];
 
-        let mut relative_paths = Vec::with_capacity(abs_paths.len());
+        let mut relative_paths = Vec::with_capacity(path_events.len());
         let mut dot_git_abs_paths = Vec::new();
         let mut work_dirs_needing_exclude_update = Vec::new();
-        abs_paths.sort_unstable();
-        abs_paths.dedup_by(|a, b| a.starts_with(b));
+        path_events.sort_unstable_by(|(left_path, _), (right_path, _)| left_path.cmp(right_path));
+        path_events.dedup_by(|(left_path, left_rescanned), (right_path, right_rescanned)| {
+            if left_path == right_path {
+                *left_rescanned |= *right_rescanned;
+                true
+            } else if left_path.starts_with(right_path) {
+                *right_rescanned |= *left_rescanned;
+                true
+            } else {
+                false
+            }
+        });
         {
             let snapshot = &self.state.lock().await.snapshot;
 
@@ -4076,8 +4091,8 @@ impl BackgroundScanner {
                 }
             }
 
-            for (ix, abs_path) in abs_paths.iter().enumerate() {
-                let abs_path = &SanitizedPath::new(&abs_path);
+            for (ix, (abs_path, was_rescanned)) in path_events.iter().enumerate() {
+                let abs_path = &SanitizedPath::new(abs_path);
 
                 let mut is_git_related = false;
                 let mut dot_git_paths = None;
@@ -4177,11 +4192,14 @@ impl BackgroundScanner {
                     continue;
                 }
 
-                relative_paths.push(relative_path.into_arc());
+                relative_paths.push(EventRoot {
+                    path: relative_path.into_arc(),
+                    was_rescanned: *was_rescanned,
+                });
             }
 
             for range_to_drop in ranges_to_drop.into_iter().rev() {
-                abs_paths.drain(range_to_drop);
+                path_events.drain(range_to_drop);
             }
         }
 
@@ -4205,12 +4223,24 @@ impl BackgroundScanner {
         self.state.lock().await.snapshot.scan_id += 1;
 
         let (scan_job_tx, scan_job_rx) = channel::unbounded();
-        log::debug!("received fs events {:?}", relative_paths);
+        log::debug!(
+            "received fs events {:?}",
+            relative_paths
+                .iter()
+                .map(|event_root| &event_root.path)
+                .collect::<Vec<_>>()
+        );
         self.reload_entries_for_paths(
             &root_path,
             &root_canonical_path,
-            &relative_paths,
-            abs_paths,
+            &relative_paths
+                .iter()
+                .map(|event_root| event_root.path.clone())
+                .collect::<Vec<_>>(),
+            path_events
+                .iter()
+                .map(|(abs_path, _)| abs_path.clone())
+                .collect::<Vec<_>>(),
             Some(scan_job_tx.clone()),
         )
         .await;
@@ -4238,7 +4268,8 @@ impl BackgroundScanner {
                 state.scanned_dirs.remove(&entry.id);
             }
         }
-        self.send_status_update(false, SmallVec::new()).await;
+        self.send_status_update(false, SmallVec::new(), &relative_paths)
+            .await;
     }
 
     async fn update_global_gitignore(&self, abs_path: &Path) {
@@ -4264,7 +4295,7 @@ impl BackgroundScanner {
         )
         .await;
         self.scan_dirs(false, scan_job_rx).await;
-        self.send_status_update(false, SmallVec::new()).await;
+        self.send_status_update(false, SmallVec::new(), &[]).await;
     }
 
     async fn forcibly_load_paths(&self, paths: &[Arc<RelPath>]) -> bool {
@@ -4345,7 +4376,8 @@ impl BackgroundScanner {
                                     ) {
                                         Ok(_) => {
                                             last_progress_update_count += 1;
-                                            self.send_status_update(true, SmallVec::new()).await;
+                                            self.send_status_update(true, SmallVec::new(), &[])
+                                                .await;
                                         }
                                         Err(count) => {
                                             last_progress_update_count = count;
@@ -4374,9 +4406,10 @@ impl BackgroundScanner {
         &self,
         scanning: bool,
         barrier: SmallVec<[barrier::Sender; 1]>,
+        event_roots: &[EventRoot],
     ) -> bool {
         let mut state = self.state.lock().await;
-        if state.changed_paths.is_empty() && scanning {
+        if state.changed_paths.is_empty() && event_roots.is_empty() && scanning {
             return true;
         }
 
@@ -4387,6 +4420,7 @@ impl BackgroundScanner {
             &old_snapshot,
             &new_snapshot,
             &state.changed_paths,
+            event_roots,
         );
         state.changed_paths.clear();
 
@@ -5244,7 +5278,8 @@ fn build_diff(
     phase: BackgroundScannerPhase,
     old_snapshot: &Snapshot,
     new_snapshot: &Snapshot,
-    event_paths: &[Arc<RelPath>],
+    changed_paths: &[Arc<RelPath>],
+    event_roots: &[EventRoot],
 ) -> UpdatedEntriesSet {
     use BackgroundScannerPhase::*;
     use PathChange::{Added, AddedOrUpdated, Loaded, Removed, Updated};
@@ -5252,13 +5287,39 @@ fn build_diff(
     // Identify which paths have changed. Use the known set of changed
     // parent paths to optimize the search.
     let mut changes = Vec::new();
+    let mut merged_event_roots = Vec::with_capacity(changed_paths.len() + event_roots.len());
+    let mut changed_paths = changed_paths.iter().peekable();
+    let mut event_roots = event_roots.iter().peekable();
+    while let (Some(path), Some(event_root)) = (changed_paths.peek(), event_roots.peek()) {
+        match path.cmp(&&event_root.path) {
+            Ordering::Less => {
+                merged_event_roots.push(EventRoot {
+                    path: (*changed_paths.next().expect("peeked changed path")).clone(),
+                    was_rescanned: false,
+                });
+            }
+            Ordering::Equal => {
+                merged_event_roots.push((*event_roots.next().expect("peeked event root")).clone());
+                changed_paths.next();
+            }
+            Ordering::Greater => {
+                merged_event_roots.push((*event_roots.next().expect("peeked event root")).clone());
+            }
+        }
+    }
+    merged_event_roots.extend(changed_paths.map(|path| EventRoot {
+        path: path.clone(),
+        was_rescanned: false,
+    }));
+    merged_event_roots.extend(event_roots.cloned());
+
     let mut old_paths = old_snapshot.entries_by_path.cursor::<PathKey>(());
     let mut new_paths = new_snapshot.entries_by_path.cursor::<PathKey>(());
     let mut last_newly_loaded_dir_path = None;
     old_paths.next();
     new_paths.next();
-    for path in event_paths {
-        let path = PathKey(path.clone());
+    for event_root in merged_event_roots {
+        let path = PathKey(event_root.path);
         if old_paths.item().is_some_and(|e| e.path < path.0) {
             old_paths.seek_forward(&path, Bias::Left);
         }
@@ -5304,6 +5365,8 @@ fn build_diff(
                                 } else {
                                     changes.push((new_entry.path.clone(), new_entry.id, Updated));
                                 }
+                            } else if event_root.was_rescanned {
+                                changes.push((new_entry.path.clone(), new_entry.id, Updated));
                             }
                             old_paths.next();
                             new_paths.next();
