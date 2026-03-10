@@ -441,10 +441,10 @@ impl PendingDiff {
                     async move {
                         let hunks = compute_hunks(&base_snapshot, &snapshot, operations);
                         BufferDiffUpdate::from_hunks(
-                            base_text.clone(),
+                            base_text,
+                            base_snapshot.as_rope(),
                             snapshot,
                             hunks,
-                            // FIXME options
                             Some(DiffOptions::default()),
                         )
                     }
