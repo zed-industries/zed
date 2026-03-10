@@ -856,6 +856,29 @@ impl<'a> MarkdownParser<'a> {
         })
     }
 
+    /// Count the net number of unclosed `<details>` tags in `html`.
+    /// Returns a positive value when there are more opens than closes.
+    fn count_unclosed_details(html: &str) -> i32 {
+        let mut depth = 0i32;
+        let mut remaining = html;
+        while let Some(pos) = remaining.find('<') {
+            remaining = &remaining[pos..];
+            if remaining.starts_with("</details") {
+                let after = &remaining["</details".len()..];
+                if after.is_empty() || after.starts_with(|c: char| c == '>' || c.is_whitespace()) {
+                    depth -= 1;
+                }
+            } else if remaining.starts_with("<details") {
+                let after = &remaining["<details".len()..];
+                if after.is_empty() || after.starts_with(|c: char| c == '>' || c.is_whitespace()) {
+                    depth += 1;
+                }
+            }
+            remaining = &remaining[1..];
+        }
+        depth
+    }
+
     async fn parse_html_block(&mut self) -> Vec<ParsedMarkdownElement> {
         let mut elements = Vec::new();
         let Some((_event, _source_range)) = self.previous() else {
@@ -894,6 +917,23 @@ impl<'a> MarkdownParser<'a> {
             }
         }
 
+        // CommonMark type-6 HTML blocks (which include <details>) are terminated
+        // by blank lines. When a blank line appears inside a <details> block,
+        // pulldown-cmark ends the HTML block early and emits the body as separate
+        // markdown events (Paragraph, List, etc.). Detect this and parse those
+        // events as proper markdown elements rather than feeding raw source to html5ever.
+        if let Some(start) = html_source_range_start {
+            if Self::count_unclosed_details(&html_buffer) > 0 {
+                return self
+                    .parse_details_with_markdown_body(
+                        start,
+                        html_source_range_end,
+                        html_buffer,
+                    )
+                    .await;
+            }
+        }
+
         let bytes = cleanup_html(&html_buffer);
 
         let mut cursor = std::io::Cursor::new(bytes);
@@ -911,6 +951,98 @@ impl<'a> MarkdownParser<'a> {
         }
 
         elements
+    }
+
+    /// Handles `<details>` blocks split across multiple events by blank lines.
+    /// CommonMark type-6 HTML blocks end at blank lines, so pulldown-cmark emits
+    /// the body content as proper markdown events (Paragraph, List, etc.) rather
+    /// than as HTML. This method parses the `<summary>` from the initial HTML chunk,
+    /// then uses `parse_block` for the body, stopping at the closing `</details>`.
+    async fn parse_details_with_markdown_body(
+        &mut self,
+        range_start: usize,
+        initial_range_end: Option<usize>,
+        initial_html: String,
+    ) -> Vec<ParsedMarkdownElement> {
+        // Synthetically close the element so html5ever gets a complete tree from
+        // which we can extract the `open` attribute and `<summary>` content.
+        let mut synthetic_html = initial_html;
+        synthetic_html.push_str("</details>");
+
+        let partial_end = initial_range_end.unwrap_or(range_start);
+        let mut partial_elements = Vec::new();
+        let bytes = cleanup_html(&synthetic_html);
+        let mut io_cursor = std::io::Cursor::new(bytes);
+        if let Ok(dom) = parse_document(RcDom::default(), ParseOpts::default())
+            .from_utf8()
+            .read_from(&mut io_cursor)
+        {
+            self.parse_html_node(
+                range_start..partial_end,
+                &dom.document,
+                &mut partial_elements,
+                &ParseHtmlNodeContext::default(),
+            );
+        }
+
+        let (details_open, summary_content) = partial_elements
+            .into_iter()
+            .find_map(|e| {
+                if let ParsedMarkdownElement::Details(d) = e {
+                    Some((d.open, d.summary))
+                } else {
+                    None
+                }
+            })
+            .unwrap_or((false, None));
+
+        // Parse remaining events as markdown body elements, stopping when we
+        // encounter an HtmlBlock that closes the <details>.
+        let mut body = Vec::new();
+        let mut range_end = partial_end;
+
+        while !self.eof() {
+            // Before calling parse_block, check if the upcoming HtmlBlock is the
+            // closing </details> (delta < 0 means net closing tags in that block).
+            if let Some((Event::Start(Tag::HtmlBlock), _)) = self.current() {
+                let closing_end = self.peek(1).and_then(|(e, r)| {
+                    if let Event::Html(html) = e {
+                        (Self::count_unclosed_details(html.as_ref()) < 0).then_some(r.end)
+                    } else {
+                        None
+                    }
+                });
+
+                if let Some(end) = closing_end {
+                    // Consume Start(HtmlBlock), Html(...), End(HtmlBlock)
+                    while !self.eof() {
+                        let is_end = matches!(
+                            self.current().map(|(e, _)| e),
+                            Some(Event::End(TagEnd::HtmlBlock))
+                        );
+                        self.cursor += 1;
+                        if is_end {
+                            break;
+                        }
+                    }
+                    range_end = end;
+                    break;
+                }
+            }
+
+            if let Some(block_elements) = self.parse_block().await {
+                body.extend(block_elements);
+            } else {
+                self.cursor += 1;
+            }
+        }
+
+        vec![ParsedMarkdownElement::Details(ParsedMarkdownDetails {
+            source_range: range_start..range_end,
+            summary: summary_content,
+            body,
+            open: details_open,
+        })]
     }
 
     fn parse_html_node(
@@ -3495,6 +3627,52 @@ fn main() {
             &details.summary,
             Some(ParsedMarkdownSummaryContent::Phrasing(_))
         ));
+    }
+
+    #[gpui::test]
+    async fn test_html_details_with_blank_lines_inside() {
+        // CommonMark type-6 HTML blocks are terminated by blank lines, so pulldown-cmark
+        // splits the block into multiple events when blank lines appear inside <details>.
+        // Verify the parser reassembles the full block so the body is hidden, not visible.
+        let parsed =
+            parse("<details>\n<summary>Click</summary>\n\nHidden content\n\n</details>").await;
+
+        assert_eq!(parsed.children.len(), 1);
+        let ParsedMarkdownElement::Details(details) = &parsed.children[0] else {
+            panic!("expected Details element, got {:?}", parsed.children[0]);
+        };
+        assert!(!details.open);
+        assert!(matches!(
+            &details.summary,
+            Some(ParsedMarkdownSummaryContent::Phrasing(_))
+        ));
+        assert!(
+            !details.body.is_empty(),
+            "body should contain 'Hidden content'"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_html_details_body_with_markdown_list() {
+        // Body uses markdown list syntax — pulldown-cmark parses it as a proper List
+        // (not plain text), so the rendered body should contain ListItem elements.
+        let parsed = parse(
+            "<details>\n<summary>Items</summary>\n\n- Item 1\n- Item 2\n\n</details>",
+        )
+        .await;
+
+        assert_eq!(parsed.children.len(), 1);
+        let ParsedMarkdownElement::Details(details) = &parsed.children[0] else {
+            panic!("expected Details element, got {:?}", parsed.children[0]);
+        };
+        assert!(
+            details
+                .body
+                .iter()
+                .any(|e| matches!(e, ParsedMarkdownElement::ListItem(_))),
+            "body should contain ListItem elements, got: {:?}",
+            details.body
+        );
     }
 
     impl PartialEq for ParsedMarkdownTable {
