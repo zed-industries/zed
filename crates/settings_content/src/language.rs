@@ -745,6 +745,13 @@ pub struct InlayHintSettingsContent {
     ///
     /// Default: false
     pub show_background: Option<bool>,
+    /// Whether to collapse bracket contents (generics, parameters) in inlay hints.
+    ///
+    /// When enabled, long type annotations like `Map<string, Array<number>>`
+    /// are initially shown collapsed as `Map<…>`. Click the `…` to expand.
+    ///
+    /// Default: false
+    pub collapse_generics: Option<bool>,
     /// Whether or not to debounce inlay hints updates after buffer edits.
     ///
     /// Set to 0 to disable debouncing.

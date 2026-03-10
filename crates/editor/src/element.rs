@@ -735,6 +735,18 @@ impl EditorElement {
             return;
         }
 
+        if click_count == 1
+            && !modifiers.shift
+            && !modifiers.secondary()
+            && text_hitbox.is_hovered(window)
+        {
+            let snapshot = editor.snapshot(window, cx);
+            if editor.try_toggle_collapsed_inlay_hint(&snapshot, point_for_position, cx) {
+                cx.stop_propagation();
+                return;
+            }
+        }
+
         if EditorSettings::get_global(cx)
             .drag_and_drop_selection
             .enabled

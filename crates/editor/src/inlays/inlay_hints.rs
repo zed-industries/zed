@@ -565,6 +565,77 @@ impl Editor {
             .cloned()
     }
 
+    /// Try to handle a click on a collapsed inlay hint region (the `…` character).
+    /// Returns true if the click was handled (i.e., it was on a collapsed region).
+    pub fn try_toggle_collapsed_inlay_hint(
+        &mut self,
+        snapshot: &EditorSnapshot,
+        point_for_position: PointForPosition,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        if point_for_position.column_overshoot_after_line_end != 0 {
+            return false;
+        }
+        let hovered_offset =
+            snapshot.display_point_to_inlay_offset(point_for_position.exact_unclipped, Bias::Left);
+
+        if self.project().is_none() {
+            return false;
+        }
+        let buffer_snapshot = self.buffer().read(cx).snapshot(cx);
+        let previous_valid_anchor = buffer_snapshot.anchor_at(
+            point_for_position.previous_valid.to_point(snapshot),
+            Bias::Left,
+        );
+        let next_valid_anchor = buffer_snapshot.anchor_at(
+            point_for_position.next_valid.to_point(snapshot),
+            Bias::Right,
+        );
+
+        let hovered_hint = Self::visible_inlay_hints(self.display_map.read(cx))
+            .filter(|hint| snapshot.can_resolve(&hint.position))
+            .skip_while(|hint| {
+                hint.position
+                    .cmp(&previous_valid_anchor, &buffer_snapshot)
+                    .is_lt()
+            })
+            .take_while(|hint| {
+                hint.position
+                    .cmp(&next_valid_anchor, &buffer_snapshot)
+                    .is_le()
+            })
+            .max_by_key(|hint| hint.id);
+
+        let Some(hovered_hint) = hovered_hint else {
+            return false;
+        };
+
+        let Some(collapse_state) = self.collapsed_inlay_hints.get(&hovered_hint.id) else {
+            return false;
+        };
+
+        let hint_start = snapshot.anchor_to_inlay_offset(hovered_hint.position);
+        let left_padding: usize = if collapse_state.needs_left_padding { 1 } else { 0 };
+        let offset_in_hint = hovered_offset.0.0.saturating_sub(hint_start.0.0 + left_padding);
+
+        let Some(region_index) = collapse_state.region_at_offset(offset_in_hint) else {
+            return false;
+        };
+
+        let hint_id = hovered_hint.id;
+        let hint_position = hovered_hint.position;
+
+        let collapse_state = self.collapsed_inlay_hints.get_mut(&hint_id).unwrap();
+        collapse_state.toggle_region(region_index);
+        let new_inlay = Inlay::hint_collapsed(hint_id, hint_position, collapse_state);
+
+        self.display_map.update(cx, |display_map, cx| {
+            display_map.splice_inlays(&[hint_id], vec![new_inlay], cx)
+        });
+        cx.notify();
+        true
+    }
+
     pub fn update_inlay_link_and_hover_points(
         &mut self,
         snapshot: &EditorSnapshot,
@@ -671,17 +742,69 @@ impl Editor {
                                 InlayHintLabel::LabelParts(label_parts) => {
                                     let hint_start =
                                         snapshot.anchor_to_inlay_offset(hovered_hint.position);
+
+                                    // When the hint has collapsed regions, map
+                                    // the hovered offset from display space to
+                                    // original text space so that
+                                    // find_hovered_hint_part works correctly.
+                                    let adjusted_offset = if let Some(collapse_state) =
+                                        self.collapsed_inlay_hints.get(&hovered_hint.id)
+                                    {
+                                        let display_offset_in_hint = hovered_offset
+                                            .0
+                                            .0
+                                            .saturating_sub(hint_start.0.0 + actual_left_padding);
+                                        collapse_state
+                                            .display_offset_to_full_offset(display_offset_in_hint)
+                                            .map(|full_offset| {
+                                                InlayOffset(multi_buffer::MultiBufferOffset(
+                                                    hint_start.0.0
+                                                        + actual_left_padding
+                                                        + full_offset,
+                                                ))
+                                            })
+                                    } else {
+                                        Some(hovered_offset)
+                                    };
+
                                     let content_start =
                                         InlayOffset(hint_start.0 + actual_left_padding);
-                                    if let Some((hovered_hint_part, part_range)) =
+                                    if let Some(adjusted_offset) = adjusted_offset
+                                    && let Some((hovered_hint_part, part_range)) =
                                         hover_popover::find_hovered_hint_part(
                                             label_parts,
                                             content_start,
-                                            hovered_offset,
+                                            adjusted_offset,
                                         )
                                     {
                                         let highlight_start = part_range.start - hint_start;
                                         let highlight_end = part_range.end - hint_start;
+
+                                        // Map highlight range from original to
+                                        // display coordinates when collapsed.
+                                        let (highlight_start, highlight_end) =
+                                            if let Some(collapse_state) =
+                                                self.collapsed_inlay_hints.get(&hovered_hint.id)
+                                            {
+                                                let start_in_content =
+                                                    highlight_start.saturating_sub(actual_left_padding);
+                                                let end_in_content =
+                                                    highlight_end.saturating_sub(actual_left_padding);
+                                                match (
+                                                    collapse_state
+                                                        .full_offset_to_display_offset(start_in_content),
+                                                    collapse_state
+                                                        .full_offset_to_display_offset(end_in_content),
+                                                ) {
+                                                    (Some(ds), Some(de)) => {
+                                                        (ds + actual_left_padding, de + actual_left_padding)
+                                                    }
+                                                    _ => (highlight_start, highlight_end),
+                                                }
+                                            } else {
+                                                (highlight_start, highlight_end)
+                                            };
+
                                         let highlight = InlayHighlight {
                                             inlay: hovered_hint.id,
                                             inlay_position: hovered_hint.position,
@@ -897,13 +1020,33 @@ impl Editor {
             .sorted_by(|(_, a), (_, b)| a.position.cmp(&b.position, &buffer_snapshot))
             .collect::<Vec<_>>();
 
-        let hints_to_insert = multi_buffer_snapshot
+        let collapse_generics = new_hints.first().map_or(false, |(_, hint)| {
+            let anchor = multi_buffer_snapshot
+                .text_anchors_to_visible_anchors(std::iter::once(hint.position))
+                .into_iter()
+                .next()
+                .flatten();
+            anchor.map_or(false, |anchor| {
+                inlay_hint_settings(anchor, &multi_buffer_snapshot, cx).collapse_generics
+            })
+        });
+        let hints_to_insert: Vec<Inlay> = multi_buffer_snapshot
             .text_anchors_to_visible_anchors(
                 new_hints.iter().map(|(_, lsp_hint)| lsp_hint.position),
             )
             .into_iter()
             .zip(&new_hints)
-            .filter_map(|(position, (hint_id, hint))| Some(Inlay::hint(*hint_id, position?, &hint)))
+            .filter_map(|(position, (hint_id, hint))| {
+                let position = position?;
+                if collapse_generics {
+                    if let Some(collapse_state) = super::InlayHintCollapseState::detect(hint) {
+                        let inlay = Inlay::hint_collapsed(*hint_id, position, &collapse_state);
+                        self.collapsed_inlay_hints.insert(*hint_id, collapse_state);
+                        return Some(inlay);
+                    }
+                }
+                Some(Inlay::hint(*hint_id, position, hint))
+            })
             .collect();
         let invalidate_hints_for_buffers =
             std::mem::take(&mut inlay_hints.invalidate_hints_for_buffers);
@@ -1036,6 +1179,7 @@ pub mod tests {
                 show_other_hints: Some(allowed_hint_kinds.contains(&None)),
                 show_background: Some(false),
                 toggle_on_modifiers_press: None,
+                ..Default::default()
             })
         });
         let (_, editor, fake_server) = prepare_test_objects(cx, |fake_server, file_with_hints| {
@@ -1230,6 +1374,7 @@ pub mod tests {
                 show_other_hints: Some(true),
                 show_background: Some(false),
                 toggle_on_modifiers_press: None,
+                ..Default::default()
             })
         });
 
@@ -1340,6 +1485,7 @@ pub mod tests {
                 show_other_hints: Some(true),
                 show_background: Some(false),
                 toggle_on_modifiers_press: None,
+                ..Default::default()
             })
         });
 
@@ -1589,6 +1735,7 @@ pub mod tests {
                 show_other_hints: Some(allowed_hint_kinds.contains(&None)),
                 show_background: Some(false),
                 toggle_on_modifiers_press: None,
+                ..Default::default()
             })
         });
 
@@ -1754,6 +1901,7 @@ pub mod tests {
                     show_other_hints: Some(new_allowed_hint_kinds.contains(&None)),
                     show_background: Some(false),
                     toggle_on_modifiers_press: None,
+                    ..Default::default()
                 })
             });
             cx.executor().run_until_parked();
@@ -1801,6 +1949,7 @@ pub mod tests {
                 show_other_hints: Some(another_allowed_hint_kinds.contains(&None)),
                 show_background: Some(false),
                 toggle_on_modifiers_press: None,
+                ..Default::default()
             })
         });
         cx.executor().run_until_parked();
@@ -1874,6 +2023,7 @@ pub mod tests {
                 show_other_hints: Some(final_allowed_hint_kinds.contains(&None)),
                 show_background: Some(false),
                 toggle_on_modifiers_press: None,
+                ..Default::default()
             })
         });
         cx.executor().run_until_parked();
@@ -1948,6 +2098,7 @@ pub mod tests {
                 show_other_hints: Some(true),
                 show_background: Some(false),
                 toggle_on_modifiers_press: None,
+                ..Default::default()
             })
         });
 
@@ -2312,6 +2463,7 @@ pub mod tests {
                 show_other_hints: Some(true),
                 show_background: Some(false),
                 toggle_on_modifiers_press: None,
+                ..Default::default()
             })
         });
 
@@ -2928,6 +3080,7 @@ let c = 3;"#
                 show_other_hints: Some(false),
                 show_background: Some(false),
                 toggle_on_modifiers_press: None,
+                ..Default::default()
             })
         });
 
@@ -3128,6 +3281,7 @@ let c = 3;"#
                 show_other_hints: Some(true),
                 show_background: Some(false),
                 toggle_on_modifiers_press: None,
+                ..Default::default()
             })
         });
         cx.executor().run_until_parked();
@@ -3167,6 +3321,7 @@ let c = 3;"#
                 show_other_hints: Some(true),
                 show_background: Some(false),
                 toggle_on_modifiers_press: None,
+                ..Default::default()
             })
         });
 
@@ -3278,6 +3433,7 @@ let c = 3;"#
                 show_other_hints: Some(true),
                 show_background: Some(false),
                 toggle_on_modifiers_press: None,
+                ..Default::default()
             })
         });
 
@@ -3360,6 +3516,7 @@ let c = 3;"#
                 show_other_hints: Some(true),
                 show_background: Some(false),
                 toggle_on_modifiers_press: None,
+                ..Default::default()
             })
         });
         cx.executor().run_until_parked();
@@ -3426,6 +3583,7 @@ let c = 3;"#
                 show_other_hints: Some(true),
                 show_background: Some(false),
                 toggle_on_modifiers_press: None,
+                ..Default::default()
             })
         });
 
@@ -3652,6 +3810,7 @@ let c = 3;"#
                 show_other_hints: Some(true),
                 show_background: Some(false),
                 toggle_on_modifiers_press: None,
+                ..Default::default()
             })
         });
 
@@ -4597,6 +4756,7 @@ let c = 3;"#
                 show_other_hints: Some(true),
                 show_background: Some(false),
                 toggle_on_modifiers_press: None,
+                ..Default::default()
             })
         });
 

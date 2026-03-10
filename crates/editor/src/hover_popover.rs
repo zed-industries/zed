@@ -1615,6 +1615,7 @@ mod tests {
                 show_other_hints: Some(true),
                 show_background: Some(false),
                 toggle_on_modifiers_press: None,
+                ..Default::default()
             })
         });
 

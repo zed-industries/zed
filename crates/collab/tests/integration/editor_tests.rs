@@ -2230,6 +2230,7 @@ async fn test_inlay_hint_refresh_is_forwarded(
                         show_other_hints: Some(false),
                         show_background: Some(false),
                         toggle_on_modifiers_press: None,
+                        ..Default::default()
                     })
             });
         });
@@ -2248,6 +2249,7 @@ async fn test_inlay_hint_refresh_is_forwarded(
                         show_other_hints: Some(true),
                         show_background: Some(false),
                         toggle_on_modifiers_press: None,
+                        ..Default::default()
                     })
             });
         });

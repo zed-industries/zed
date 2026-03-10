@@ -703,6 +703,10 @@
     //
     // If set to `true`, the background will use the `hint.background` color from the current theme.
     "show_background": false,
+    // Whether to collapse bracket contents (generics, parameters) in inlay hints.
+    // When enabled, long type annotations like `Map<string, Array<number>>`
+    // are initially shown collapsed as `Map<…>`. Click the `…` to expand.
+    "collapse_generics": false,
     // Time to wait after editing the buffer, before requesting the hints,
     // set to 0 to disable debouncing.
     "edit_debounce_ms": 700,
