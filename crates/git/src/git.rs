@@ -40,6 +40,9 @@ actions!(
         /// Restores the selected hunks to their original state.
         #[action(deprecated_aliases = ["editor::RevertSelectedHunks"])]
         Restore,
+        /// Restores the selected hunks to their original state and moves to the
+        /// next one.
+        RestoreAndNext,
         // per-file
         /// Shows git blame information for the current file.
         #[action(deprecated_aliases = ["editor::ToggleGitBlame"])]

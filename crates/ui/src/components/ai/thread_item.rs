@@ -1,9 +1,9 @@
 use crate::{
-    DecoratedIcon, DiffStat, HighlightedLabel, IconDecoration, IconDecorationKind, SpinnerLabel,
-    prelude::*,
+    DecoratedIcon, DiffStat, GradientFade, HighlightedLabel, IconDecoration, IconDecorationKind,
+    SpinnerLabel, prelude::*,
 };
 
-use gpui::{AnyView, ClickEvent, Hsla, SharedString, linear_color_stop, linear_gradient};
+use gpui::{AnyView, ClickEvent, Hsla, SharedString};
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum AgentThreadStatus {
@@ -220,24 +220,12 @@ impl RenderOnce for ThreadItem {
             color.panel_background
         };
 
-        let gradient_overlay = div()
-            .absolute()
-            .top_0()
-            .right(px(-10.0))
-            .w_12()
-            .h_full()
-            .bg(linear_gradient(
-                90.,
-                linear_color_stop(base_bg, 0.6),
-                linear_color_stop(base_bg.opacity(0.0), 0.),
-            ))
-            .group_hover("thread-item", |s| {
-                s.bg(linear_gradient(
-                    90.,
-                    linear_color_stop(color.element_hover, 0.6),
-                    linear_color_stop(color.element_hover.opacity(0.0), 0.),
-                ))
-            });
+        let gradient_overlay =
+            GradientFade::new(base_bg, color.element_hover, color.element_active)
+                .width(px(32.0))
+                .right(px(-10.0))
+                .gradient_stop(0.8)
+                .group_name("thread-item");
 
         v_flex()
             .id(self.id.clone())
