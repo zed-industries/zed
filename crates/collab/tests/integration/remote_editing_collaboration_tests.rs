@@ -519,7 +519,7 @@ async fn test_ssh_collaboration_git_worktrees(
         worktree_directory.join("feature-branch")
     );
 
-    // Host (client A) removes the worktree via SSH
+    // Host (client A) renames the worktree via SSH
     let repo_a = cx_a.update(|cx| {
         project_a
             .read(cx)
@@ -531,7 +531,66 @@ async fn test_ssh_collaboration_git_worktrees(
     });
     cx_a.update(|cx| {
         repo_a.update(cx, |repository, _| {
-            repository.remove_worktree(PathBuf::from("/project/feature-branch"), false)
+            repository.rename_worktree(
+                PathBuf::from("/project/feature-branch"),
+                PathBuf::from("/project/renamed-branch"),
+            )
+        })
+    })
+    .await
+    .unwrap()
+    .unwrap();
+
+    executor.run_until_parked();
+
+    let host_worktrees = cx_a
+        .update(|cx| repo_a.update(cx, |repository, _| repository.worktrees()))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        host_worktrees.len(),
+        2,
+        "Host should still have 2 worktrees after rename"
+    );
+    assert_eq!(
+        host_worktrees[1].path,
+        PathBuf::from("/project/renamed-branch")
+    );
+
+    let server_worktrees = {
+        let server_repo = server_cx.update(|cx| {
+            headless_project.update(cx, |headless_project, cx| {
+                headless_project
+                    .git_store
+                    .read(cx)
+                    .repositories()
+                    .values()
+                    .next()
+                    .unwrap()
+                    .clone()
+            })
+        });
+        server_cx
+            .update(|cx| server_repo.update(cx, |repo, _| repo.worktrees()))
+            .await
+            .unwrap()
+            .unwrap()
+    };
+    assert_eq!(
+        server_worktrees.len(),
+        2,
+        "Server should still have 2 worktrees after rename"
+    );
+    assert_eq!(
+        server_worktrees[1].path,
+        PathBuf::from("/project/renamed-branch")
+    );
+
+    // Host (client A) removes the renamed worktree via SSH
+    cx_a.update(|cx| {
+        repo_a.update(cx, |repository, _| {
+            repository.remove_worktree(PathBuf::from("/project/renamed-branch"), false)
         })
     })
     .await
