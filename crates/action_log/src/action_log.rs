@@ -209,7 +209,7 @@ impl ActionLog {
         cx: &mut Context<Self>,
     ) {
         match event {
-            BufferEvent::Edited => {
+            BufferEvent::Edited { .. } => {
                 let Some(tracked_buffer) = self.tracked_buffers.get_mut(&buffer) else {
                     return;
                 };
