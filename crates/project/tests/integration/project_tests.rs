@@ -5552,7 +5552,7 @@ async fn test_buffer_is_dirty(cx: &mut gpui::TestAppContext) {
         assert_eq!(
             *events.lock(),
             &[
-                language::BufferEvent::Edited,
+                language::BufferEvent::Edited { is_local: true },
                 language::BufferEvent::DirtyChanged
             ]
         );
@@ -5581,9 +5581,9 @@ async fn test_buffer_is_dirty(cx: &mut gpui::TestAppContext) {
         assert_eq!(
             *events.lock(),
             &[
-                language::BufferEvent::Edited,
+                language::BufferEvent::Edited { is_local: true },
                 language::BufferEvent::DirtyChanged,
-                language::BufferEvent::Edited,
+                language::BufferEvent::Edited { is_local: true },
             ],
         );
         events.lock().clear();
@@ -5598,7 +5598,7 @@ async fn test_buffer_is_dirty(cx: &mut gpui::TestAppContext) {
     assert_eq!(
         *events.lock(),
         &[
-            language::BufferEvent::Edited,
+            language::BufferEvent::Edited { is_local: true },
             language::BufferEvent::DirtyChanged
         ]
     );
@@ -5638,7 +5638,7 @@ async fn test_buffer_is_dirty(cx: &mut gpui::TestAppContext) {
     assert_eq!(
         mem::take(&mut *events.lock()),
         &[
-            language::BufferEvent::Edited,
+            language::BufferEvent::Edited { is_local: true },
             language::BufferEvent::DirtyChanged
         ]
     );
@@ -5653,7 +5653,7 @@ async fn test_buffer_is_dirty(cx: &mut gpui::TestAppContext) {
     assert_eq!(
         *events.lock(),
         &[
-            language::BufferEvent::Edited,
+            language::BufferEvent::Edited { is_local: true },
             language::BufferEvent::DirtyChanged
         ]
     );

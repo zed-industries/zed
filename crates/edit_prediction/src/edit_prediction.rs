@@ -1158,7 +1158,7 @@ impl EditPredictionStore {
                 }
             }
             project::Event::DiagnosticsUpdated { .. } => {
-                if cx.has_flag::<EditPredictionJumpsFeatureFlag>() {
+                if cx.has_flag::<EditPredictionJumpsFeatureFlag>() && project.read(cx).is_local() {
                     self.refresh_prediction_from_diagnostics(
                         project,
                         DiagnosticSearchScope::Global,
@@ -1217,7 +1217,7 @@ impl EditPredictionStore {
                         cx.subscribe(buffer, {
                             let project = project.downgrade();
                             move |this, buffer, event, cx| {
-                                if let language::BufferEvent::Edited = event
+                                if let language::BufferEvent::Edited { .. } = event
                                     && let Some(project) = project.upgrade()
                                 {
                                     this.report_changes_for_buffer(&buffer, &project, false, cx);
