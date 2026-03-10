@@ -118,6 +118,7 @@ To disable this behavior use:
 ```json [settings]
   // Control which items are shown/hidden in the title bar
   "title_bar": {
+    "background": "#FF00FF",        // Custom background color (hex format)
     "show_branch_icon": false,      // Show/hide branch icon beside branch switcher
     "show_branch_name": true,       // Show/hide branch name
     "show_project_items": true,     // Show/hide project host and name
@@ -128,6 +129,8 @@ To disable this behavior use:
     "show_menus": false             // Show/hide menus
   },
 ```
+
+The `background` setting can also be used in project-level `.zed/settings.json` files to visually distinguish different projects by giving each a unique title bar color.
 
 ## Workspace
 

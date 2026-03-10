@@ -33,6 +33,7 @@ pub struct PlatformTitleBar {
     system_window_tabs: Entity<SystemWindowTabs>,
     workspace_sidebar_open: bool,
     sidebar_has_notifications: bool,
+    override_background: Option<Hsla>,
 }
 
 impl PlatformTitleBar {
@@ -48,10 +49,31 @@ impl PlatformTitleBar {
             system_window_tabs,
             workspace_sidebar_open: false,
             sidebar_has_notifications: false,
+            override_background: None,
         }
     }
 
+    pub fn set_background_override(&mut self, color: Option<Hsla>) {
+        self.override_background = color;
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    pub fn height(window: &mut Window) -> Pixels {
+        (1.75 * window.rem_size()).max(px(34.))
+    }
+
+    #[cfg(target_os = "windows")]
+    pub fn height(_window: &mut Window) -> Pixels {
+        // todo(windows) instead of hard coded size report the actual size to the Windows platform API
+        px(32.)
+    }
+
+
     pub fn title_bar_color(&self, window: &mut Window, cx: &mut Context<Self>) -> Hsla {
+        if let Some(override_color) = self.override_background {
+            return override_color;
+        }
+
         if cfg!(any(target_os = "linux", target_os = "freebsd")) {
             if window.is_window_active() && !self.should_move {
                 cx.theme().colors().title_bar_background
