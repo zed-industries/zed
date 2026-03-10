@@ -215,6 +215,13 @@ impl MultiWorkspace {
         cx.notify();
     }
 
+    pub fn set_left_dock_expanded_mode(&mut self, agent_mode: bool, cx: &mut Context<Self>) {
+        self.workspace().update(cx, |workspace, cx| {
+            workspace.set_left_dock_expanded_mode(agent_mode, cx);
+        });
+        cx.notify();
+    }
+
     pub fn toggle_sidebar(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if !self.multi_workspace_enabled(cx) || self.is_singleton {
             return;

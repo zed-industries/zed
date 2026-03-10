@@ -319,6 +319,7 @@ fn toggle_agent_mode(
     }
     is_singleton = !is_singleton;
     let agent_mode = !is_singleton;
+    multi_workspace.set_left_dock_expanded_mode(agent_mode, cx);
     let workspace = multi_workspace.workspace();
     workspace.update(cx, |workspace, cx| {
         update_panel_positions(workspace, window, agent_mode, cx);
@@ -763,13 +764,6 @@ fn update_panel_positions(
     agent_mode: bool,
     cx: &mut Context<Workspace>,
 ) {
-    if agent_mode {
-        let agent_panel_view = find_agent_panel_view(workspace, cx);
-        workspace.set_left_item(agent_panel_view, cx);
-    } else {
-        workspace.set_left_item(None, cx);
-    }
-
     let panels_and_positions = workspace.all_panel_ids_and_positions(cx);
     for (panel_id, current_position) in panels_and_positions {
         let panel_handle = workspace

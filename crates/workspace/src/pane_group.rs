@@ -29,8 +29,8 @@ const VERTICAL_MIN_SIZE: f32 = 100.;
 pub struct PaneGroup {
     pub root: Member,
     pub is_center: bool,
-    left_item_flexes: Arc<Mutex<Vec<f32>>>,
-    left_item_bounding_boxes: Arc<Mutex<Vec<Option<Bounds<Pixels>>>>>,
+    root_axis_flexes: Arc<Mutex<Vec<f32>>>,
+    root_axis_bounding_boxes: Arc<Mutex<Vec<Option<Bounds<Pixels>>>>>,
 }
 
 pub struct PaneRenderResult {
@@ -43,8 +43,8 @@ impl PaneGroup {
         Self {
             root,
             is_center: false,
-            left_item_flexes: Arc::new(Mutex::new(Vec::new())),
-            left_item_bounding_boxes: Arc::new(Mutex::new(Vec::new())),
+            root_axis_flexes: Arc::new(Mutex::new(Vec::new())),
+            root_axis_bounding_boxes: Arc::new(Mutex::new(Vec::new())),
         }
     }
 
@@ -52,8 +52,8 @@ impl PaneGroup {
         Self {
             root: Member::Pane(pane),
             is_center: false,
-            left_item_flexes: Arc::new(Mutex::new(Vec::new())),
-            left_item_bounding_boxes: Arc::new(Mutex::new(Vec::new())),
+            root_axis_flexes: Arc::new(Mutex::new(Vec::new())),
+            root_axis_bounding_boxes: Arc::new(Mutex::new(Vec::new())),
         }
     }
 
@@ -266,13 +266,13 @@ impl PaneGroup {
         let child_count = children.len();
 
         {
-            let mut flexes = self.left_item_flexes.lock();
+            let mut flexes = self.root_axis_flexes.lock();
             if flexes.len() != child_count {
                 *flexes = vec![1.0; child_count];
             }
         }
         {
-            let mut bounding_boxes = self.left_item_bounding_boxes.lock();
+            let mut bounding_boxes = self.root_axis_bounding_boxes.lock();
             if bounding_boxes.len() != child_count {
                 *bounding_boxes = vec![None; child_count];
             }
@@ -281,8 +281,8 @@ impl PaneGroup {
         pane_axis(
             Axis::Horizontal,
             usize::MAX / 2,
-            self.left_item_flexes.clone(),
-            self.left_item_bounding_boxes.clone(),
+            self.root_axis_flexes.clone(),
+            self.root_axis_bounding_boxes.clone(),
             render_cx.workspace().clone(),
         )
         .with_is_leaf_pane_mask(is_leaf_pane_mask)

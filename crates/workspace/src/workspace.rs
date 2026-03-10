@@ -1336,7 +1336,7 @@ pub struct Workspace {
     last_open_dock_positions: Vec<DockPosition>,
     removing: bool,
     _panels_task: Option<Task<Result<()>>>,
-    left_item: Option<Arc<dyn PanelHandle>>,
+    left_dock_expanded_mode: bool,
 }
 
 impl EventEmitter<Event> for Workspace {}
@@ -1742,7 +1742,6 @@ impl Workspace {
             scheduled_tasks: Vec::new(),
             last_open_dock_positions: Vec::new(),
             removing: false,
-            left_item: None,
         }
     }
 
@@ -2011,17 +2010,13 @@ impl Workspace {
         &self.left_dock
     }
 
-    pub fn set_left_item(&mut self, view: Option<Arc<dyn PanelHandle>>, cx: &mut Context<Self>) {
-        self.left_item = view;
-        cx.notify();
-    }
-
-    pub fn left_item(&self) -> Option<Arc<dyn PanelHandle>> {
-        self.left_item.clone()
-    }
-
     pub fn bottom_dock(&self) -> &Entity<Dock> {
         &self.bottom_dock
+    }
+
+    pub fn set_left_dock_expanded_mode(&mut self, is_expanded_mode: bool, cx: &mut Context<Self>) {
+        self.left_dock_expanded_mode = is_expanded_mode;
+        cx.notify();
     }
 
     pub fn set_bottom_dock_layout(
@@ -7664,8 +7659,13 @@ impl Render for Workspace {
             (None, None)
         };
         let ui_font = theme::setup_ui_font(window, cx);
-        let left_item = self.left_item.as_ref().map(|v| v.to_any());
-        let render_left_dock = left_item.is_none();
+        let expanded_left_panel = self
+            .left_dock
+            .read(cx)
+            .active_panel()
+            .filter(|_| self.left_dock_expanded_mode)
+            .map(|p| p.to_any());
+        let render_left_dock_with_pixel_width = expanded_left_panel.is_none();
 
         let Self {
             ref mut center,
@@ -7681,7 +7681,7 @@ impl Render for Workspace {
         let active_call = active_call.as_ref().map(|(call, _)| &*call.0);
         let center_element = center.render(
             zoomed.as_ref(),
-            left_item,
+            expanded_left_panel,
             &PaneRenderContext {
                 follower_states,
                 active_call,
@@ -7832,7 +7832,7 @@ impl Render for Workspace {
                                                 .flex_row()
                                                 .flex_1()
                                                 .overflow_hidden()
-                                                .when(render_left_dock, |this| {
+                                                .when(render_left_dock_with_pixel_width, |this| {
                                                     this.children(self.render_dock(
                                                         DockPosition::Left,
                                                         &self.left_dock,
@@ -7890,14 +7890,17 @@ impl Render for Workspace {
                                                         .flex()
                                                         .flex_row()
                                                         .flex_1()
-                                                        .when(render_left_dock, |this| {
-                                                            this.children(self.render_dock(
-                                                                DockPosition::Left,
-                                                                &self.left_dock,
-                                                                window,
-                                                                cx,
-                                                            ))
-                                                        })
+                                                        .when(
+                                                            render_left_dock_with_pixel_width,
+                                                            |this| {
+                                                                this.children(self.render_dock(
+                                                                    DockPosition::Left,
+                                                                    &self.left_dock,
+                                                                    window,
+                                                                    cx,
+                                                                ))
+                                                            },
+                                                        )
                                                         .child(
                                                             div()
                                                                 .flex()
@@ -7945,7 +7948,7 @@ impl Render for Workspace {
                                         .flex()
                                         .flex_row()
                                         .h_full()
-                                        .when(render_left_dock, |this| {
+                                        .when(render_left_dock_with_pixel_width, |this| {
                                             this.children(self.render_dock(
                                                 DockPosition::Left,
                                                 &self.left_dock,
@@ -8011,7 +8014,7 @@ impl Render for Workspace {
                                         .flex()
                                         .flex_row()
                                         .h_full()
-                                        .when(render_left_dock, |this| {
+                                        .when(render_left_dock_with_pixel_width, |this| {
                                             this.children(self.render_dock(
                                                 DockPosition::Left,
                                                 &self.left_dock,
