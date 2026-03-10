@@ -40,6 +40,7 @@ pub mod scroll;
 mod selections_collection;
 pub mod semantic_tokens;
 mod split;
+mod markdown_wysiwyg;
 pub mod split_editor_view;
 pub mod tasks;
 
@@ -1333,6 +1334,7 @@ pub struct Editor {
     inline_value_cache: InlineValueCache,
     number_deleted_lines: bool,
 
+    pub(crate) markdown_wysiwyg_state: markdown_wysiwyg::MarkdownWysiwygState,
     selection_drag_state: SelectionDragState,
     colors: Option<LspColorData>,
     post_scroll_update: Task<()>,
@@ -2608,6 +2610,7 @@ impl Editor {
             bracket_fetched_tree_sitter_chunks: HashMap::default(),
             number_deleted_lines: false,
             refresh_matching_bracket_highlights_task: Task::ready(()),
+            markdown_wysiwyg_state: markdown_wysiwyg::MarkdownWysiwygState::new(),
             refresh_document_symbols_task: Task::ready(()).shared(),
             lsp_document_symbols: HashMap::default(),
             refresh_outline_symbols_at_cursor_at_cursor_task: Task::ready(()),
@@ -2763,6 +2766,7 @@ impl Editor {
             }
             editor.report_editor_event(ReportEditorEvent::EditorOpened, None, cx);
         }
+        markdown_wysiwyg::check_and_activate_wysiwyg(&mut editor, cx);
 
         editor
     }
@@ -3660,6 +3664,7 @@ impl Editor {
 
         cx.emit(EditorEvent::SelectionsChanged { local });
 
+        markdown_wysiwyg::on_selection_changed(self, cx);
         let selections = &self.selections.disjoint_anchors_arc();
         if selections.len() == 1 {
             cx.emit(SearchEvent::ActiveMatchChanged)
@@ -24163,6 +24168,7 @@ impl Editor {
 
                 cx.emit(EditorEvent::BufferEdited);
                 cx.emit(SearchEvent::MatchesInvalidated);
+                markdown_wysiwyg::schedule_wysiwyg_refresh(self, cx);
 
                 let Some(project) = &self.project else { return };
                 let (telemetry, is_via_ssh) = {
