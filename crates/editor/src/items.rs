@@ -71,7 +71,7 @@ fn blob_path_for(abs_path: &Path) -> PathBuf {
     hasher.update(abs_path.as_os_str().as_encoded_bytes());
     let hash = hasher.finalize();
     db::database_dir()
-        .join("undo_history")
+        .join("persist_history")
         .join(format!("{}.bin", hex::encode(hash)))
 }
 
@@ -84,14 +84,14 @@ fn compute_content_hash(rope: &rope::Rope) -> String {
     hex::encode(hasher.finalize())
 }
 
-fn prune_undo_history(workspace_id: WorkspaceId, cx: &App) -> Task<()> {
+fn prune_persist_history(workspace_id: WorkspaceId, cx: &App) -> Task<()> {
     use settings::Settings as _;
     if !PersistentUndoSettings::get_global(cx).enabled {
         return Task::ready(());
     }
 
     cx.background_spawn(async move {
-        let paths = match DB.get_undo_history_paths(workspace_id) {
+        let paths = match DB.get_persist_history_paths(workspace_id) {
             Ok(paths) => paths,
             Err(err) => {
                 log::warn!("Failed to query undo history paths for pruning: {err}");
@@ -101,7 +101,7 @@ fn prune_undo_history(workspace_id: WorkspaceId, cx: &App) -> Task<()> {
 
         for abs_path in paths {
             if smol::fs::metadata(&abs_path).await.is_err() {
-                DB.delete_undo_history(workspace_id, Arc::from(abs_path.as_path()))
+                DB.delete_persist_history(workspace_id, Arc::from(abs_path.as_path()))
                     .await
                     .log_err();
                 let blob_path = blob_path_for(&abs_path);
@@ -1077,7 +1077,7 @@ impl Item for Editor {
         }
 
         if let Some(workspace_id) = workspace.database_id() {
-            self.restore_undo_history(workspace_id, window, cx);
+            self.restore_persist_history(workspace_id, window, cx);
         }
     }
 
@@ -1190,7 +1190,7 @@ impl SerializableItem for Editor {
     ) -> Task<Result<()>> {
         let editor_cleanup =
             workspace::delete_unloaded_items(alive_items, workspace_id, "editors", &DB, cx);
-        let prune = prune_undo_history(workspace_id, cx);
+        let prune = prune_persist_history(workspace_id, cx);
         cx.background_spawn(async move {
             editor_cleanup.await?;
             prune.await;
@@ -1281,7 +1281,7 @@ impl SerializableItem for Editor {
                             let mut editor = Editor::for_buffer(buffer, Some(project), window, cx);
 
                             editor.read_metadata_from_db(item_id, workspace_id, window, cx);
-                            editor.restore_undo_history(workspace_id, window, cx);
+                            editor.restore_persist_history(workspace_id, window, cx);
                             editor
                         })
                     })
@@ -1320,7 +1320,7 @@ impl SerializableItem for Editor {
                                     Editor::for_buffer(buffer, Some(project), window, cx);
 
                                 editor.read_metadata_from_db(item_id, workspace_id, window, cx);
-                                editor.restore_undo_history(workspace_id, window, cx);
+                                editor.restore_persist_history(workspace_id, window, cx);
                                 editor
                             })
                         })
@@ -1381,7 +1381,7 @@ impl SerializableItem for Editor {
                         let mut editor = Editor::for_buffer(buffer, Some(project), window, cx);
 
                         editor.read_metadata_from_db(item_id, workspace_id, window, cx);
-                        editor.restore_undo_history(workspace_id, window, cx);
+                        editor.restore_persist_history(workspace_id, window, cx);
                         editor
                     })
                 })
@@ -1433,7 +1433,7 @@ impl SerializableItem for Editor {
 
         // Write undo history on save (not on every buffer edit)
         if let Some(abs_path_ref) = abs_path.as_ref() {
-            if let Some(task) = self.write_undo_history(
+            if let Some(task) = self.write_persist_history(
                 workspace_id,
                 Arc::from(abs_path_ref.as_path()),
                 cx,
@@ -1569,7 +1569,7 @@ fn clip_ranges<'a>(
 impl EventEmitter<SearchEvent> for Editor {}
 
 impl Editor {
-    fn write_undo_history(
+    fn write_persist_history(
         &self,
         workspace_id: WorkspaceId,
         abs_path: Arc<Path>,
@@ -1628,7 +1628,7 @@ impl Editor {
 
             if let Some(parent) = blob_path.parent() {
                 if let Err(err) = smol::fs::create_dir_all(parent).await {
-                    log::warn!("Failed to create undo_history dir: {err}");
+                    log::warn!("Failed to create persist_history dir: {err}");
                     return;
                 }
             }
@@ -1638,7 +1638,7 @@ impl Editor {
                 return;
             }
 
-            DB.save_undo_history_meta(
+            DB.save_persist_history_meta(
                 workspace_id,
                 abs_path.clone(),
                 content_hash,
@@ -1650,7 +1650,7 @@ impl Editor {
         }))
     }
 
-    fn restore_undo_history(
+    fn restore_persist_history(
         &mut self,
         workspace_id: WorkspaceId,
         window: &mut Window,
@@ -1677,11 +1677,11 @@ impl Editor {
         let blob_path = blob_path_for(&abs_path);
 
         cx.spawn_in(window, async move |this, cx| {
-            let meta = match DB.get_undo_history_meta(workspace_id, &abs_path) {
+            let meta = match DB.get_persist_history_meta(workspace_id, &abs_path) {
                 Ok(Some(meta)) => meta,
                 Ok(None) => return Ok(()),
                 Err(err) => {
-                    log::debug!("Failed to read undo_history_meta for {abs_path:?}: {err}");
+                    log::debug!("Failed to read persist_history_meta for {abs_path:?}: {err}");
                     return Ok(());
                 }
             };
