@@ -21,6 +21,7 @@ use crate::{
 pub mod table_row;
 #[cfg(test)]
 mod tests;
+
 const RESIZE_COLUMN_WIDTH: f32 = 8.0;
 
 /// Represents an unchecked table row, which is a vector of elements.
@@ -109,6 +110,474 @@ impl TableInteractionState {
             view.update(cx, |view, cx| f(view, e, window, cx)).ok();
         }
     }
+}
+
+#[derive(Debug, Copy, Clone, PartialEq)]
+pub enum TableResizeBehavior {
+    None,
+    Resizable,
+    MinSize(f32),
+}
+
+impl TableResizeBehavior {
+    pub fn is_resizable(&self) -> bool {
+        *self != TableResizeBehavior::None
+    }
+
+    pub fn min_size(&self) -> Option<f32> {
+        match self {
+            TableResizeBehavior::None => None,
+            TableResizeBehavior::Resizable => Some(0.05),
+            TableResizeBehavior::MinSize(min_size) => Some(*min_size),
+        }
+    }
+}
+
+pub enum ColumnWidthConfig {
+    /// Static column widths (no resize handles).
+    Static {
+        widths: StaticColumnWidths,
+        /// Controls widths of the whole table.
+        table_width: Option<DefiniteLength>,
+    },
+    /// Redistributable columns — dragging redistributes the fixed available space
+    /// among columns without changing the overall table width.
+    Redistributable {
+        entity: Entity<RedistributableColumnsState>,
+        table_width: Option<DefiniteLength>,
+    },
+}
+
+pub enum StaticColumnWidths {
+    /// All columns share space equally (flex-1 / Length::Auto).
+    Auto,
+    /// Each column has a specific width.
+    Explicit(TableRow<DefiniteLength>),
+}
+
+impl ColumnWidthConfig {
+    /// Auto-width columns, auto-size table.
+    pub fn auto() -> Self {
+        ColumnWidthConfig::Static {
+            widths: StaticColumnWidths::Auto,
+            table_width: None,
+        }
+    }
+
+    /// Auto-width columns, fixed table width.
+    pub fn auto_with_table_width(width: impl Into<DefiniteLength>) -> Self {
+        ColumnWidthConfig::Static {
+            widths: StaticColumnWidths::Auto,
+            table_width: Some(width.into()),
+        }
+    }
+
+    /// Column widths for rendering.
+    pub fn widths_to_render(&self, cx: &App) -> Option<TableRow<Length>> {
+        match self {
+            ColumnWidthConfig::Static {
+                widths: StaticColumnWidths::Auto,
+                ..
+            } => None,
+            ColumnWidthConfig::Static {
+                widths: StaticColumnWidths::Explicit(widths),
+                ..
+            } => Some(widths.map_cloned(Length::Definite)),
+            ColumnWidthConfig::Redistributable { entity, .. } => {
+                let state = entity.read(cx);
+                Some(state.preview_widths.map_cloned(Length::Definite))
+            }
+        }
+    }
+
+    /// Table-level width.
+    pub fn table_width(&self) -> Option<Length> {
+        match self {
+            ColumnWidthConfig::Static { table_width, .. }
+            | ColumnWidthConfig::Redistributable { table_width, .. } => {
+                table_width.map(Length::Definite)
+            }
+        }
+    }
+
+    /// ListHorizontalSizingBehavior for uniform_list.
+    pub fn list_horizontal_sizing(&self) -> ListHorizontalSizingBehavior {
+        match self.table_width() {
+            Some(_) => ListHorizontalSizingBehavior::Unconstrained,
+            None => ListHorizontalSizingBehavior::FitList,
+        }
+    }
+
+    /// Render resize handles overlay if applicable.
+    pub fn render_resize_handles(&self, window: &mut Window, cx: &mut App) -> Option<AnyElement> {
+        match self {
+            ColumnWidthConfig::Redistributable { entity, .. } => {
+                let (column_widths, resize_behavior, initial_widths) = {
+                    let state = entity.read(cx);
+                    (
+                        state.preview_widths.map_cloned(Length::Definite),
+                        state.resize_behavior.clone(),
+                        state.initial_widths.clone(),
+                    )
+                };
+                Some(render_resize_handles(
+                    &column_widths,
+                    &resize_behavior,
+                    &initial_widths,
+                    Some(entity.clone()),
+                    window,
+                    cx,
+                ))
+            }
+            _ => None,
+        }
+    }
+
+    /// Returns the initial sizes for header double-click, if applicable.
+    pub fn header_double_click_info(
+        &self,
+        cx: &App,
+    ) -> Option<(
+        WeakEntity<RedistributableColumnsState>,
+        TableRow<TableResizeBehavior>,
+        TableRow<DefiniteLength>,
+    )> {
+        match self {
+            ColumnWidthConfig::Redistributable { entity, .. } => {
+                let state = entity.read(cx);
+                Some((
+                    entity.downgrade(),
+                    state.resize_behavior.clone(),
+                    state.initial_widths.clone(),
+                ))
+            }
+            _ => None,
+        }
+    }
+}
+
+pub struct RedistributableColumnsState {
+    pub(crate) initial_widths: TableRow<DefiniteLength>,
+    pub(crate) committed_widths: TableRow<DefiniteLength>,
+    pub(crate) preview_widths: TableRow<DefiniteLength>,
+    pub(crate) resize_behavior: TableRow<TableResizeBehavior>,
+    pub(crate) cached_table_width: Pixels,
+}
+
+impl RedistributableColumnsState {
+    pub fn new(
+        cols: usize,
+        initial_widths: UncheckedTableRow<impl Into<DefiniteLength>>,
+        resize_behavior: UncheckedTableRow<TableResizeBehavior>,
+    ) -> Self {
+        let widths: TableRow<DefiniteLength> = initial_widths
+            .into_iter()
+            .map(Into::into)
+            .collect::<Vec<_>>()
+            .into_table_row(cols);
+        Self {
+            initial_widths: widths.clone(),
+            committed_widths: widths.clone(),
+            preview_widths: widths,
+            resize_behavior: resize_behavior.into_table_row(cols),
+            cached_table_width: Default::default(),
+        }
+    }
+
+    pub fn cols(&self) -> usize {
+        self.committed_widths.cols()
+    }
+
+    fn get_fraction(length: &DefiniteLength, bounds_width: Pixels, rem_size: Pixels) -> f32 {
+        match length {
+            DefiniteLength::Absolute(AbsoluteLength::Pixels(pixels)) => *pixels / bounds_width,
+            DefiniteLength::Absolute(AbsoluteLength::Rems(rems_width)) => {
+                rems_width.to_pixels(rem_size) / bounds_width
+            }
+            DefiniteLength::Fraction(fraction) => *fraction,
+        }
+    }
+
+    pub(crate) fn on_double_click(
+        &mut self,
+        double_click_position: usize,
+        initial_sizes: &TableRow<DefiniteLength>,
+        resize_behavior: &TableRow<TableResizeBehavior>,
+        window: &mut Window,
+    ) {
+        let bounds_width = self.cached_table_width;
+        let rem_size = window.rem_size();
+        let initial_sizes =
+            initial_sizes.map_ref(|length| Self::get_fraction(length, bounds_width, rem_size));
+        let widths = self
+            .committed_widths
+            .map_ref(|length| Self::get_fraction(length, bounds_width, rem_size));
+
+        let updated_widths = Self::reset_to_initial_size(
+            double_click_position,
+            widths,
+            initial_sizes,
+            resize_behavior,
+        );
+        self.committed_widths = updated_widths.map(DefiniteLength::Fraction);
+        self.preview_widths = self.committed_widths.clone();
+    }
+
+    pub(crate) fn reset_to_initial_size(
+        col_idx: usize,
+        mut widths: TableRow<f32>,
+        initial_sizes: TableRow<f32>,
+        resize_behavior: &TableRow<TableResizeBehavior>,
+    ) -> TableRow<f32> {
+        let diff = initial_sizes[col_idx] - widths[col_idx];
+
+        let left_diff =
+            initial_sizes[..col_idx].iter().sum::<f32>() - widths[..col_idx].iter().sum::<f32>();
+        let right_diff = initial_sizes[col_idx + 1..].iter().sum::<f32>()
+            - widths[col_idx + 1..].iter().sum::<f32>();
+
+        let go_left_first = if diff < 0.0 {
+            left_diff > right_diff
+        } else {
+            left_diff < right_diff
+        };
+
+        if !go_left_first {
+            let diff_remaining =
+                Self::propagate_resize_diff(diff, col_idx, &mut widths, resize_behavior, 1);
+
+            if diff_remaining != 0.0 && col_idx > 0 {
+                Self::propagate_resize_diff(
+                    diff_remaining,
+                    col_idx,
+                    &mut widths,
+                    resize_behavior,
+                    -1,
+                );
+            }
+        } else {
+            let diff_remaining =
+                Self::propagate_resize_diff(diff, col_idx, &mut widths, resize_behavior, -1);
+
+            if diff_remaining != 0.0 {
+                Self::propagate_resize_diff(
+                    diff_remaining,
+                    col_idx,
+                    &mut widths,
+                    resize_behavior,
+                    1,
+                );
+            }
+        }
+
+        widths
+    }
+
+    pub(crate) fn on_drag_move(
+        &mut self,
+        drag_event: &DragMoveEvent<DraggedColumn>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let drag_position = drag_event.event.position;
+        let bounds = drag_event.bounds;
+
+        let mut col_position = 0.0;
+        let rem_size = window.rem_size();
+        let bounds_width = bounds.right() - bounds.left();
+        let col_idx = drag_event.drag(cx).0;
+
+        let column_handle_width = Self::get_fraction(
+            &DefiniteLength::Absolute(AbsoluteLength::Pixels(px(RESIZE_COLUMN_WIDTH))),
+            bounds_width,
+            rem_size,
+        );
+
+        let mut widths = self
+            .committed_widths
+            .map_ref(|length| Self::get_fraction(length, bounds_width, rem_size));
+
+        for length in widths[0..=col_idx].iter() {
+            col_position += length + column_handle_width;
+        }
+
+        let mut total_length_ratio = col_position;
+        for length in widths[col_idx + 1..].iter() {
+            total_length_ratio += length;
+        }
+        let cols = self.resize_behavior.cols();
+        total_length_ratio += (cols - 1 - col_idx) as f32 * column_handle_width;
+
+        let drag_fraction = (drag_position.x - bounds.left()) / bounds_width;
+        let drag_fraction = drag_fraction * total_length_ratio;
+        let diff = drag_fraction - col_position - column_handle_width / 2.0;
+
+        Self::drag_column_handle(diff, col_idx, &mut widths, &self.resize_behavior.clone());
+
+        self.preview_widths = widths.map(DefiniteLength::Fraction);
+    }
+
+    pub(crate) fn drag_column_handle(
+        diff: f32,
+        col_idx: usize,
+        widths: &mut TableRow<f32>,
+        resize_behavior: &TableRow<TableResizeBehavior>,
+    ) {
+        if diff > 0.0 {
+            Self::propagate_resize_diff(diff, col_idx, widths, resize_behavior, 1);
+        } else {
+            Self::propagate_resize_diff(-diff, col_idx + 1, widths, resize_behavior, -1);
+        }
+    }
+
+    pub(crate) fn propagate_resize_diff(
+        diff: f32,
+        col_idx: usize,
+        widths: &mut TableRow<f32>,
+        resize_behavior: &TableRow<TableResizeBehavior>,
+        direction: i8,
+    ) -> f32 {
+        let mut diff_remaining = diff;
+        if resize_behavior[col_idx].min_size().is_none() {
+            return diff;
+        }
+
+        let step_right;
+        let step_left;
+        if direction < 0 {
+            step_right = 0;
+            step_left = 1;
+        } else {
+            step_right = 1;
+            step_left = 0;
+        }
+        if col_idx == 0 && direction < 0 {
+            return diff;
+        }
+        let mut curr_column = col_idx + step_right - step_left;
+
+        while diff_remaining != 0.0 && curr_column < widths.cols() {
+            let Some(min_size) = resize_behavior[curr_column].min_size() else {
+                if curr_column == 0 {
+                    break;
+                }
+                curr_column -= step_left;
+                curr_column += step_right;
+                continue;
+            };
+
+            let curr_width = widths[curr_column] - diff_remaining;
+            widths[curr_column] = curr_width;
+
+            if min_size > curr_width {
+                diff_remaining = min_size - curr_width;
+                widths[curr_column] = min_size;
+            } else {
+                diff_remaining = 0.0;
+                break;
+            }
+            if curr_column == 0 {
+                break;
+            }
+            curr_column -= step_left;
+            curr_column += step_right;
+        }
+        widths[col_idx] = widths[col_idx] + (diff - diff_remaining);
+
+        diff_remaining
+    }
+}
+
+/// Renders invisible resize handles overlaid on top of table content.
+///
+/// Structure: [spacer] [divider] [spacer] [divider] [spacer]
+fn render_resize_handles(
+    column_widths: &TableRow<Length>,
+    resizable_columns: &TableRow<TableResizeBehavior>,
+    initial_sizes: &TableRow<DefiniteLength>,
+    columns: Option<Entity<RedistributableColumnsState>>,
+    window: &mut Window,
+    cx: &mut App,
+) -> AnyElement {
+    let spacers = column_widths
+        .as_slice()
+        .iter()
+        .map(|width| base_cell_style(Some(*width)).into_any_element());
+
+    let mut column_ix = 0;
+    let resizable_columns_shared = Rc::new(resizable_columns.clone());
+    let initial_sizes_shared = Rc::new(initial_sizes.clone());
+    let mut resizable_columns_iter = resizable_columns.as_slice().iter();
+
+    let dividers = intersperse_with(spacers, || {
+        let resizable_columns = Rc::clone(&resizable_columns_shared);
+        let initial_sizes = Rc::clone(&initial_sizes_shared);
+        window.with_id(column_ix, |window| {
+            let mut resize_divider = div().id(column_ix).relative().top_0().w_px().h_full().bg(cx
+                .theme()
+                .colors()
+                .border
+                .opacity(0.8));
+
+            let mut resize_handle = div()
+                .id("column-resize-handle")
+                .absolute()
+                .left_neg_0p5()
+                .w(px(RESIZE_COLUMN_WIDTH))
+                .h_full();
+
+            if resizable_columns_iter
+                .next()
+                .is_some_and(TableResizeBehavior::is_resizable)
+            {
+                let hovered = window.use_state(cx, |_window, _cx| false);
+
+                resize_divider = resize_divider.when(*hovered.read(cx), |div: Stateful<Div>| {
+                    div.bg(cx.theme().colors().border_focused)
+                });
+
+                resize_handle = resize_handle
+                    .on_hover(move |&was_hovered, _, cx| hovered.write(cx, was_hovered))
+                    .cursor_col_resize()
+                    .when_some(
+                        columns.clone(),
+                        |this: Stateful<Div>, columns: Entity<RedistributableColumnsState>| {
+                            this.on_click(
+                                move |event: &ClickEvent, window: &mut Window, cx: &mut App| {
+                                    if event.click_count() >= 2 {
+                                        columns.update(cx, |columns, _| {
+                                            columns.on_double_click(
+                                                column_ix,
+                                                &initial_sizes,
+                                                &resizable_columns,
+                                                window,
+                                            );
+                                        })
+                                    }
+
+                                    cx.stop_propagation();
+                                },
+                            )
+                        },
+                    )
+                    .on_drag(
+                        DraggedColumn(column_ix),
+                        |_, _offset, _window, cx: &mut App| cx.new(|_cx| gpui::Empty),
+                    )
+            }
+
+            column_ix += 1;
+            resize_divider.child(resize_handle).into_any_element()
+        })
+    });
+
+    h_flex()
+        .id("resize-handles")
+        .absolute()
+        .inset_0()
+        .w_full()
+        .children(dividers)
+        .into_any_element()
 }
 
 /// A table component
@@ -773,472 +1242,4 @@ impl Component for Table {
                 .into_any_element(),
         )
     }
-}
-
-#[derive(Debug, Copy, Clone, PartialEq)]
-pub enum TableResizeBehavior {
-    None,
-    Resizable,
-    MinSize(f32),
-}
-
-impl TableResizeBehavior {
-    pub fn is_resizable(&self) -> bool {
-        *self != TableResizeBehavior::None
-    }
-
-    pub fn min_size(&self) -> Option<f32> {
-        match self {
-            TableResizeBehavior::None => None,
-            TableResizeBehavior::Resizable => Some(0.05),
-            TableResizeBehavior::MinSize(min_size) => Some(*min_size),
-        }
-    }
-}
-
-pub enum ColumnWidthConfig {
-    /// Static column widths (no resize handles).
-    Static {
-        widths: StaticColumnWidths,
-        /// Controls widths of the whole table.
-        table_width: Option<DefiniteLength>,
-    },
-    /// Redistributable columns — dragging redistributes the fixed available space
-    /// among columns without changing the overall table width.
-    Redistributable {
-        entity: Entity<RedistributableColumnsState>,
-        table_width: Option<DefiniteLength>,
-    },
-}
-
-pub enum StaticColumnWidths {
-    /// All columns share space equally (flex-1 / Length::Auto).
-    Auto,
-    /// Each column has a specific width.
-    Explicit(TableRow<DefiniteLength>),
-}
-
-impl ColumnWidthConfig {
-    /// Auto-width columns, auto-size table.
-    pub fn auto() -> Self {
-        ColumnWidthConfig::Static {
-            widths: StaticColumnWidths::Auto,
-            table_width: None,
-        }
-    }
-
-    /// Auto-width columns, fixed table width.
-    pub fn auto_with_table_width(width: impl Into<DefiniteLength>) -> Self {
-        ColumnWidthConfig::Static {
-            widths: StaticColumnWidths::Auto,
-            table_width: Some(width.into()),
-        }
-    }
-
-    /// Column widths for rendering.
-    pub fn widths_to_render(&self, cx: &App) -> Option<TableRow<Length>> {
-        match self {
-            ColumnWidthConfig::Static {
-                widths: StaticColumnWidths::Auto,
-                ..
-            } => None,
-            ColumnWidthConfig::Static {
-                widths: StaticColumnWidths::Explicit(widths),
-                ..
-            } => Some(widths.map_cloned(Length::Definite)),
-            ColumnWidthConfig::Redistributable { entity, .. } => {
-                let state = entity.read(cx);
-                Some(state.preview_widths.map_cloned(Length::Definite))
-            }
-        }
-    }
-
-    /// Table-level width.
-    pub fn table_width(&self) -> Option<Length> {
-        match self {
-            ColumnWidthConfig::Static { table_width, .. }
-            | ColumnWidthConfig::Redistributable { table_width, .. } => {
-                table_width.map(Length::Definite)
-            }
-        }
-    }
-
-    /// ListHorizontalSizingBehavior for uniform_list.
-    pub fn list_horizontal_sizing(&self) -> ListHorizontalSizingBehavior {
-        match self.table_width() {
-            Some(_) => ListHorizontalSizingBehavior::Unconstrained,
-            None => ListHorizontalSizingBehavior::FitList,
-        }
-    }
-
-    /// Render resize handles overlay if applicable.
-    pub fn render_resize_handles(&self, window: &mut Window, cx: &mut App) -> Option<AnyElement> {
-        match self {
-            ColumnWidthConfig::Redistributable { entity, .. } => {
-                let (column_widths, resize_behavior, initial_widths) = {
-                    let state = entity.read(cx);
-                    (
-                        state.preview_widths.map_cloned(Length::Definite),
-                        state.resize_behavior.clone(),
-                        state.initial_widths.clone(),
-                    )
-                };
-                Some(render_resize_handles(
-                    &column_widths,
-                    &resize_behavior,
-                    &initial_widths,
-                    Some(entity.clone()),
-                    window,
-                    cx,
-                ))
-            }
-            _ => None,
-        }
-    }
-
-    /// Returns the initial sizes for header double-click, if applicable.
-    pub fn header_double_click_info(
-        &self,
-        cx: &App,
-    ) -> Option<(
-        WeakEntity<RedistributableColumnsState>,
-        TableRow<TableResizeBehavior>,
-        TableRow<DefiniteLength>,
-    )> {
-        match self {
-            ColumnWidthConfig::Redistributable { entity, .. } => {
-                let state = entity.read(cx);
-                Some((
-                    entity.downgrade(),
-                    state.resize_behavior.clone(),
-                    state.initial_widths.clone(),
-                ))
-            }
-            _ => None,
-        }
-    }
-}
-
-pub struct RedistributableColumnsState {
-    pub(crate) initial_widths: TableRow<DefiniteLength>,
-    pub(crate) committed_widths: TableRow<DefiniteLength>,
-    pub(crate) preview_widths: TableRow<DefiniteLength>,
-    pub(crate) resize_behavior: TableRow<TableResizeBehavior>,
-    pub(crate) cached_table_width: Pixels,
-}
-
-impl RedistributableColumnsState {
-    pub fn new(
-        cols: usize,
-        initial_widths: UncheckedTableRow<impl Into<DefiniteLength>>,
-        resize_behavior: UncheckedTableRow<TableResizeBehavior>,
-    ) -> Self {
-        let widths: TableRow<DefiniteLength> = initial_widths
-            .into_iter()
-            .map(Into::into)
-            .collect::<Vec<_>>()
-            .into_table_row(cols);
-        Self {
-            initial_widths: widths.clone(),
-            committed_widths: widths.clone(),
-            preview_widths: widths,
-            resize_behavior: resize_behavior.into_table_row(cols),
-            cached_table_width: Default::default(),
-        }
-    }
-
-    pub fn cols(&self) -> usize {
-        self.committed_widths.cols()
-    }
-
-    fn get_fraction(length: &DefiniteLength, bounds_width: Pixels, rem_size: Pixels) -> f32 {
-        match length {
-            DefiniteLength::Absolute(AbsoluteLength::Pixels(pixels)) => *pixels / bounds_width,
-            DefiniteLength::Absolute(AbsoluteLength::Rems(rems_width)) => {
-                rems_width.to_pixels(rem_size) / bounds_width
-            }
-            DefiniteLength::Fraction(fraction) => *fraction,
-        }
-    }
-
-    pub(crate) fn on_double_click(
-        &mut self,
-        double_click_position: usize,
-        initial_sizes: &TableRow<DefiniteLength>,
-        resize_behavior: &TableRow<TableResizeBehavior>,
-        window: &mut Window,
-    ) {
-        let bounds_width = self.cached_table_width;
-        let rem_size = window.rem_size();
-        let initial_sizes =
-            initial_sizes.map_ref(|length| Self::get_fraction(length, bounds_width, rem_size));
-        let widths = self
-            .committed_widths
-            .map_ref(|length| Self::get_fraction(length, bounds_width, rem_size));
-
-        let updated_widths = Self::reset_to_initial_size(
-            double_click_position,
-            widths,
-            initial_sizes,
-            resize_behavior,
-        );
-        self.committed_widths = updated_widths.map(DefiniteLength::Fraction);
-        self.preview_widths = self.committed_widths.clone();
-    }
-
-    pub(crate) fn reset_to_initial_size(
-        col_idx: usize,
-        mut widths: TableRow<f32>,
-        initial_sizes: TableRow<f32>,
-        resize_behavior: &TableRow<TableResizeBehavior>,
-    ) -> TableRow<f32> {
-        let diff = initial_sizes[col_idx] - widths[col_idx];
-
-        let left_diff =
-            initial_sizes[..col_idx].iter().sum::<f32>() - widths[..col_idx].iter().sum::<f32>();
-        let right_diff = initial_sizes[col_idx + 1..].iter().sum::<f32>()
-            - widths[col_idx + 1..].iter().sum::<f32>();
-
-        let go_left_first = if diff < 0.0 {
-            left_diff > right_diff
-        } else {
-            left_diff < right_diff
-        };
-
-        if !go_left_first {
-            let diff_remaining =
-                Self::propagate_resize_diff(diff, col_idx, &mut widths, resize_behavior, 1);
-
-            if diff_remaining != 0.0 && col_idx > 0 {
-                Self::propagate_resize_diff(
-                    diff_remaining,
-                    col_idx,
-                    &mut widths,
-                    resize_behavior,
-                    -1,
-                );
-            }
-        } else {
-            let diff_remaining =
-                Self::propagate_resize_diff(diff, col_idx, &mut widths, resize_behavior, -1);
-
-            if diff_remaining != 0.0 {
-                Self::propagate_resize_diff(
-                    diff_remaining,
-                    col_idx,
-                    &mut widths,
-                    resize_behavior,
-                    1,
-                );
-            }
-        }
-
-        widths
-    }
-
-    pub(crate) fn on_drag_move(
-        &mut self,
-        drag_event: &DragMoveEvent<DraggedColumn>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let drag_position = drag_event.event.position;
-        let bounds = drag_event.bounds;
-
-        let mut col_position = 0.0;
-        let rem_size = window.rem_size();
-        let bounds_width = bounds.right() - bounds.left();
-        let col_idx = drag_event.drag(cx).0;
-
-        let column_handle_width = Self::get_fraction(
-            &DefiniteLength::Absolute(AbsoluteLength::Pixels(px(RESIZE_COLUMN_WIDTH))),
-            bounds_width,
-            rem_size,
-        );
-
-        let mut widths = self
-            .committed_widths
-            .map_ref(|length| Self::get_fraction(length, bounds_width, rem_size));
-
-        for length in widths[0..=col_idx].iter() {
-            col_position += length + column_handle_width;
-        }
-
-        let mut total_length_ratio = col_position;
-        for length in widths[col_idx + 1..].iter() {
-            total_length_ratio += length;
-        }
-        let cols = self.resize_behavior.cols();
-        total_length_ratio += (cols - 1 - col_idx) as f32 * column_handle_width;
-
-        let drag_fraction = (drag_position.x - bounds.left()) / bounds_width;
-        let drag_fraction = drag_fraction * total_length_ratio;
-        let diff = drag_fraction - col_position - column_handle_width / 2.0;
-
-        Self::drag_column_handle(diff, col_idx, &mut widths, &self.resize_behavior.clone());
-
-        self.preview_widths = widths.map(DefiniteLength::Fraction);
-    }
-
-    pub(crate) fn drag_column_handle(
-        diff: f32,
-        col_idx: usize,
-        widths: &mut TableRow<f32>,
-        resize_behavior: &TableRow<TableResizeBehavior>,
-    ) {
-        if diff > 0.0 {
-            Self::propagate_resize_diff(diff, col_idx, widths, resize_behavior, 1);
-        } else {
-            Self::propagate_resize_diff(-diff, col_idx + 1, widths, resize_behavior, -1);
-        }
-    }
-
-    pub(crate) fn propagate_resize_diff(
-        diff: f32,
-        col_idx: usize,
-        widths: &mut TableRow<f32>,
-        resize_behavior: &TableRow<TableResizeBehavior>,
-        direction: i8,
-    ) -> f32 {
-        let mut diff_remaining = diff;
-        if resize_behavior[col_idx].min_size().is_none() {
-            return diff;
-        }
-
-        let step_right;
-        let step_left;
-        if direction < 0 {
-            step_right = 0;
-            step_left = 1;
-        } else {
-            step_right = 1;
-            step_left = 0;
-        }
-        if col_idx == 0 && direction < 0 {
-            return diff;
-        }
-        let mut curr_column = col_idx + step_right - step_left;
-
-        while diff_remaining != 0.0 && curr_column < widths.cols() {
-            let Some(min_size) = resize_behavior[curr_column].min_size() else {
-                if curr_column == 0 {
-                    break;
-                }
-                curr_column -= step_left;
-                curr_column += step_right;
-                continue;
-            };
-
-            let curr_width = widths[curr_column] - diff_remaining;
-            widths[curr_column] = curr_width;
-
-            if min_size > curr_width {
-                diff_remaining = min_size - curr_width;
-                widths[curr_column] = min_size;
-            } else {
-                diff_remaining = 0.0;
-                break;
-            }
-            if curr_column == 0 {
-                break;
-            }
-            curr_column -= step_left;
-            curr_column += step_right;
-        }
-        widths[col_idx] = widths[col_idx] + (diff - diff_remaining);
-
-        diff_remaining
-    }
-}
-
-/// Renders invisible resize handles overlaid on top of table content.
-///
-/// Structure: [spacer] [divider] [spacer] [divider] [spacer]
-fn render_resize_handles(
-    column_widths: &TableRow<Length>,
-    resizable_columns: &TableRow<TableResizeBehavior>,
-    initial_sizes: &TableRow<DefiniteLength>,
-    columns: Option<Entity<RedistributableColumnsState>>,
-    window: &mut Window,
-    cx: &mut App,
-) -> AnyElement {
-    let spacers = column_widths
-        .as_slice()
-        .iter()
-        .map(|width| base_cell_style(Some(*width)).into_any_element());
-
-    let mut column_ix = 0;
-    let resizable_columns_shared = Rc::new(resizable_columns.clone());
-    let initial_sizes_shared = Rc::new(initial_sizes.clone());
-    let mut resizable_columns_iter = resizable_columns.as_slice().iter();
-
-    let dividers = intersperse_with(spacers, || {
-        let resizable_columns = Rc::clone(&resizable_columns_shared);
-        let initial_sizes = Rc::clone(&initial_sizes_shared);
-        window.with_id(column_ix, |window| {
-            let mut resize_divider = div().id(column_ix).relative().top_0().w_px().h_full().bg(cx
-                .theme()
-                .colors()
-                .border
-                .opacity(0.8));
-
-            let mut resize_handle = div()
-                .id("column-resize-handle")
-                .absolute()
-                .left_neg_0p5()
-                .w(px(RESIZE_COLUMN_WIDTH))
-                .h_full();
-
-            if resizable_columns_iter
-                .next()
-                .is_some_and(TableResizeBehavior::is_resizable)
-            {
-                let hovered = window.use_state(cx, |_window, _cx| false);
-
-                resize_divider = resize_divider.when(*hovered.read(cx), |div: Stateful<Div>| {
-                    div.bg(cx.theme().colors().border_focused)
-                });
-
-                resize_handle = resize_handle
-                    .on_hover(move |&was_hovered, _, cx| hovered.write(cx, was_hovered))
-                    .cursor_col_resize()
-                    .when_some(
-                        columns.clone(),
-                        |this: Stateful<Div>, columns: Entity<RedistributableColumnsState>| {
-                            this.on_click(
-                                move |event: &ClickEvent, window: &mut Window, cx: &mut App| {
-                                    if event.click_count() >= 2 {
-                                        columns.update(cx, |columns, _| {
-                                            columns.on_double_click(
-                                                column_ix,
-                                                &initial_sizes,
-                                                &resizable_columns,
-                                                window,
-                                            );
-                                        })
-                                    }
-
-                                    cx.stop_propagation();
-                                },
-                            )
-                        },
-                    )
-                    .on_drag(
-                        DraggedColumn(column_ix),
-                        |_, _offset, _window, cx: &mut App| cx.new(|_cx| gpui::Empty),
-                    )
-            }
-
-            column_ix += 1;
-            resize_divider.child(resize_handle).into_any_element()
-        })
-    });
-
-    h_flex()
-        .id("resize-handles")
-        .absolute()
-        .inset_0()
-        .w_full()
-        .children(dividers)
-        .into_any_element()
 }
