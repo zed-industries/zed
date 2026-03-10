@@ -17,7 +17,10 @@ use gpui::{
     http_client::{FakeHttpClient, Response},
 };
 use indoc::indoc;
-use language::{Anchor, Buffer, CursorShape, Operation, Point, Selection, SelectionGoal};
+use language::{
+    Anchor, Buffer, CursorShape, Diagnostic, DiagnosticEntry, DiagnosticSet, DiagnosticSeverity,
+    Operation, Point, Selection, SelectionGoal,
+};
 use lsp::LanguageServerId;
 use parking_lot::Mutex;
 use pretty_assertions::{assert_eq, assert_matches};
@@ -25,7 +28,10 @@ use project::{FakeFs, Project};
 use serde_json::json;
 use settings::SettingsStore;
 use std::{path::Path, sync::Arc, time::Duration};
-use util::path;
+use util::{
+    path,
+    test::{TextRangeMarker, marked_text_ranges_by},
+};
 use uuid::Uuid;
 use zeta_prompt::ZetaPromptInput;
 
@@ -1656,97 +1662,172 @@ async fn test_rejections_flushing(cx: &mut TestAppContext) {
     assert_eq!(reject_request.rejections[1].request_id, "retry-2");
 }
 
-// Skipped until we start including diagnostics in prompt
-// #[gpui::test]
-// async fn test_request_diagnostics(cx: &mut TestAppContext) {
-//     let (ep_store, mut req_rx) = init_test_with_fake_client(cx);
-//     let fs = FakeFs::new(cx.executor());
-//     fs.insert_tree(
-//         "/root",
-//         json!({
-//             "foo.md": "Hello!\nBye"
-//         }),
-//     )
-//     .await;
-//     let project = Project::test(fs, vec![path!("/root").as_ref()], cx).await;
+#[gpui::test]
+fn test_active_buffer_diagnostics_fetching(cx: &mut TestAppContext) {
+    let diagnostic_marker: TextRangeMarker = ('«', '»').into();
+    let search_range_marker: TextRangeMarker = ('[', ']').into();
 
-//     let path_to_buffer_uri = lsp::Uri::from_file_path(path!("/root/foo.md")).unwrap();
-//     let diagnostic = lsp::Diagnostic {
-//         range: lsp::Range::new(lsp::Position::new(1, 1), lsp::Position::new(1, 5)),
-//         severity: Some(lsp::DiagnosticSeverity::ERROR),
-//         message: "\"Hello\" deprecated. Use \"Hi\" instead".to_string(),
-//         ..Default::default()
-//     };
+    let (text, mut ranges) = marked_text_ranges_by(
+        indoc! {r#"
+            fn alpha() {
+                let «first_value» = 1;
+            }
 
-//     project.update(cx, |project, cx| {
-//         project.lsp_store().update(cx, |lsp_store, cx| {
-//             // Create some diagnostics
-//             lsp_store
-//                 .update_diagnostics(
-//                     LanguageServerId(0),
-//                     lsp::PublishDiagnosticsParams {
-//                         uri: path_to_buffer_uri.clone(),
-//                         diagnostics: vec![diagnostic],
-//                         version: None,
-//                     },
-//                     None,
-//                     language::DiagnosticSourceKind::Pushed,
-//                     &[],
-//                     cx,
-//                 )
-//                 .unwrap();
-//         });
-//     });
+            [fn beta() {
+                let «second_value» = 2;
+                let third_value = second_value + missing_symbol;
+            }ˇ]
 
-//     let buffer = project
-//         .update(cx, |project, cx| {
-//             let path = project.find_project_path(path!("root/foo.md"), cx).unwrap();
-//             project.open_buffer(path, cx)
-//         })
-//         .await
-//         .unwrap();
+            fn gamma() {
+                let «fourth_value» = missing_other_symbol;
+            }
+        "#},
+        vec![diagnostic_marker.clone(), search_range_marker.clone()],
+    );
 
-//     let snapshot = buffer.read_with(cx, |buffer, _cx| buffer.snapshot());
-//     let position = snapshot.anchor_before(language::Point::new(0, 0));
+    let diagnostic_ranges = ranges.remove(&diagnostic_marker).unwrap_or_default();
+    let search_ranges = ranges.remove(&search_range_marker).unwrap_or_default();
 
-//     let _prediction_task = ep_store.update(cx, |ep_store, cx| {
-//         ep_store.request_prediction(&project, &buffer, position, cx)
-//     });
+    let buffer = cx.new(|cx| Buffer::local(&text, cx));
 
-//     let (request, _respond_tx) = req_rx.next().await.unwrap();
+    buffer.update(cx, |buffer, cx| {
+        let snapshot = buffer.snapshot();
+        let diagnostics = DiagnosticSet::new(
+            diagnostic_ranges
+                .iter()
+                .enumerate()
+                .map(|(index, range)| DiagnosticEntry {
+                    range: snapshot.offset_to_point_utf16(range.start)
+                        ..snapshot.offset_to_point_utf16(range.end),
+                    diagnostic: Diagnostic {
+                        severity: match index {
+                            0 => DiagnosticSeverity::WARNING,
+                            1 => DiagnosticSeverity::ERROR,
+                            _ => DiagnosticSeverity::HINT,
+                        },
+                        message: match index {
+                            0 => "first warning".to_string(),
+                            1 => "second error".to_string(),
+                            _ => "third hint".to_string(),
+                        },
+                        group_id: index + 1,
+                        is_primary: true,
+                        source_kind: language::DiagnosticSourceKind::Pushed,
+                        ..Diagnostic::default()
+                    },
+                }),
+            &snapshot,
+        );
+        buffer.update_diagnostics(LanguageServerId(0), diagnostics, cx);
+    });
 
-//     assert_eq!(request.diagnostic_groups.len(), 1);
-//     let value = serde_json::from_str::<serde_json::Value>(request.diagnostic_groups[0].0.get())
-//         .unwrap();
-//     // We probably don't need all of this. TODO define a specific diagnostic type in predict_edits_v3
-//     assert_eq!(
-//         value,
-//         json!({
-//             "entries": [{
-//                 "range": {
-//                     "start": 8,
-//                     "end": 10
-//                 },
-//                 "diagnostic": {
-//                     "source": null,
-//                     "code": null,
-//                     "code_description": null,
-//                     "severity": 1,
-//                     "message": "\"Hello\" deprecated. Use \"Hi\" instead",
-//                     "markdown": null,
-//                     "group_id": 0,
-//                     "is_primary": true,
-//                     "is_disk_based": false,
-//                     "is_unnecessary": false,
-//                     "source_kind": "Pushed",
-//                     "data": null,
-//                     "underline": true
-//                 }
-//             }],
-//             "primary_ix": 0
-//         })
-//     );
-// }
+    let snapshot = buffer.read_with(cx, |buffer, _cx| buffer.snapshot());
+    let search_range = snapshot.offset_to_point(search_ranges[0].start)
+        ..snapshot.offset_to_point(search_ranges[0].end);
+
+    let active_buffer_diagnostics = zeta::active_buffer_diagnostics(&snapshot, search_range, 100);
+
+    assert_eq!(
+        active_buffer_diagnostics,
+        vec![zeta_prompt::ActiveBufferDiagnostic {
+            severity: Some(1),
+            message: "second error".to_string(),
+            snippet: text,
+            snippet_buffer_row_range: 5..5,
+            diagnostic_range_in_snippet: 61..73,
+        }]
+    );
+
+    let buffer = cx.new(|cx| {
+        Buffer::local(
+            indoc! {"
+                one
+                two
+                three
+                four
+                five
+            "},
+            cx,
+        )
+    });
+
+    buffer.update(cx, |buffer, cx| {
+        let snapshot = buffer.snapshot();
+        let diagnostics = DiagnosticSet::new(
+            vec![
+                DiagnosticEntry {
+                    range: text::PointUtf16::new(0, 0)..text::PointUtf16::new(0, 3),
+                    diagnostic: Diagnostic {
+                        severity: DiagnosticSeverity::ERROR,
+                        message: "row zero".to_string(),
+                        group_id: 1,
+                        is_primary: true,
+                        source_kind: language::DiagnosticSourceKind::Pushed,
+                        ..Diagnostic::default()
+                    },
+                },
+                DiagnosticEntry {
+                    range: text::PointUtf16::new(2, 0)..text::PointUtf16::new(2, 5),
+                    diagnostic: Diagnostic {
+                        severity: DiagnosticSeverity::WARNING,
+                        message: "row two".to_string(),
+                        group_id: 2,
+                        is_primary: true,
+                        source_kind: language::DiagnosticSourceKind::Pushed,
+                        ..Diagnostic::default()
+                    },
+                },
+                DiagnosticEntry {
+                    range: text::PointUtf16::new(4, 0)..text::PointUtf16::new(4, 4),
+                    diagnostic: Diagnostic {
+                        severity: DiagnosticSeverity::INFORMATION,
+                        message: "row four".to_string(),
+                        group_id: 3,
+                        is_primary: true,
+                        source_kind: language::DiagnosticSourceKind::Pushed,
+                        ..Diagnostic::default()
+                    },
+                },
+            ],
+            &snapshot,
+        );
+        buffer.update_diagnostics(LanguageServerId(0), diagnostics, cx);
+    });
+
+    let snapshot = buffer.read_with(cx, |buffer, _cx| buffer.snapshot());
+
+    let active_buffer_diagnostics =
+        zeta::active_buffer_diagnostics(&snapshot, Point::new(2, 0)..Point::new(4, 0), 100);
+
+    assert_eq!(
+        active_buffer_diagnostics
+            .iter()
+            .map(|diagnostic| (
+                diagnostic.severity,
+                diagnostic.message.clone(),
+                diagnostic.snippet.clone(),
+                diagnostic.snippet_buffer_row_range.clone(),
+                diagnostic.diagnostic_range_in_snippet.clone(),
+            ))
+            .collect::<Vec<_>>(),
+        vec![
+            (
+                Some(2),
+                "row two".to_string(),
+                "one\ntwo\nthree\nfour\nfive\n".to_string(),
+                2..2,
+                8..13,
+            ),
+            (
+                Some(3),
+                "row four".to_string(),
+                "one\ntwo\nthree\nfour\nfive\n".to_string(),
+                4..4,
+                19..23,
+            ),
+        ]
+    );
+}
 
 // Generate a model response that would apply the given diff to the active file.
 fn model_response(request: &PredictEditsV3Request, diff_to_apply: &str) -> PredictEditsV3Response {
@@ -1885,6 +1966,7 @@ async fn test_edit_prediction_basic_interpolation(cx: &mut TestAppContext) {
         inputs: ZetaPromptInput {
             events: Default::default(),
             related_files: Default::default(),
+            active_buffer_diagnostics: vec![],
             cursor_path: Path::new("").into(),
             cursor_excerpt: "".into(),
             cursor_offset_in_excerpt: 0,
