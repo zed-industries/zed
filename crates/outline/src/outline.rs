@@ -1,8 +1,5 @@
 use std::ops::Range;
-use std::{
-    cmp::{self, Reverse},
-    sync::Arc,
-};
+use std::{cmp, sync::Arc};
 
 use editor::scroll::ScrollOffset;
 use editor::{Anchor, AnchorRangeExt, Editor, scroll::Autoscroll};
@@ -187,8 +184,6 @@ struct OutlineViewDelegate {
     selected_match_index: usize,
     prev_scroll_position: Option<Point<ScrollOffset>>,
     matches: Vec<StringMatch>,
-    last_query: String,
-    match_update_count: usize,
 }
 
 enum OutlineRowHighlights {}
@@ -203,13 +198,11 @@ impl OutlineViewDelegate {
     ) -> Self {
         Self {
             outline_view,
-            last_query: Default::default(),
             matches: Default::default(),
             selected_match_index: 0,
             prev_scroll_position: Some(editor.update(cx, |editor, cx| editor.scroll_position(cx))),
             active_editor: editor,
             outline: Arc::new(outline),
-            match_update_count: 0,
         }
     }
 
@@ -282,69 +275,32 @@ impl PickerDelegate for OutlineViewDelegate {
         window: &mut Window,
         cx: &mut Context<Picker<OutlineViewDelegate>>,
     ) -> Task<()> {
-        self.match_update_count = self.match_update_count.wrapping_add(1);
-        let match_update_count = self.match_update_count;
         let is_query_empty = query.is_empty();
         if is_query_empty {
             self.restore_active_editor(window, cx);
-            self.matches = self
-                .outline
-                .items
-                .iter()
-                .enumerate()
-                .map(|(index, _)| StringMatch {
-                    candidate_id: index,
-                    score: Default::default(),
-                    positions: Default::default(),
-                    string: Default::default(),
-                })
-                .collect();
-            let (buffer, cursor_offset) = self.active_editor.update(cx, |editor, cx| {
-                let buffer = editor.buffer().read(cx).snapshot(cx);
-                let cursor_offset = editor
-                    .selections
-                    .newest::<MultiBufferOffset>(&editor.display_snapshot(cx))
-                    .head();
-                (buffer, cursor_offset)
-            });
-
-            let selected_index = self
-                .outline
-                .items
-                .iter()
-                .enumerate()
-                .map(|(ix, item)| {
-                    let range = item.range.to_offset(&buffer);
-                    let distance_to_closest_endpoint = cmp::min(
-                        (range.start.0 as isize - cursor_offset.0 as isize).abs(),
-                        (range.end.0 as isize - cursor_offset.0 as isize).abs(),
-                    );
-                    let depth = if range.contains(&cursor_offset) {
-                        Some(item.depth)
-                    } else {
-                        None
-                    };
-                    (ix, depth, distance_to_closest_endpoint)
-                })
-                .max_by_key(|(ix, depth, distance)| (*depth, Reverse(*distance), Reverse(*ix)))
-                .map(|(ix, _, _)| ix)
-                .unwrap_or(0);
-
-            self.last_query = query;
-            self.set_selected_index(selected_index, !self.last_query.is_empty(), cx);
-            return Task::ready(());
         }
 
         let outline = self.outline.clone();
         cx.spawn_in(window, async move |this, cx| {
-            let matches = outline
-                .search(&query, cx.background_executor().clone())
-                .await;
-            let _ = this.update(cx, |this, cx| {
-                if this.delegate.match_update_count != match_update_count {
-                    return;
-                }
+            let matches = if is_query_empty {
+                outline
+                    .items
+                    .iter()
+                    .enumerate()
+                    .map(|(index, _)| StringMatch {
+                        candidate_id: index,
+                        score: Default::default(),
+                        positions: Default::default(),
+                        string: Default::default(),
+                    })
+                    .collect()
+            } else {
+                outline
+                    .search(&query, cx.background_executor().clone())
+                    .await
+            };
 
+            let _ = this.update(cx, |this, cx| {
                 this.delegate.matches = matches;
                 let (buffer, cursor_offset) =
                     this.delegate.active_editor.update(cx, |editor, cx| {
@@ -362,47 +318,31 @@ impl PickerDelegate for OutlineViewDelegate {
                     .iter()
                     .enumerate()
                     .max_by(|(ix_1, m_1), (ix_2, m_2)| {
+                        let item_1 = &outline.items[m_1.candidate_id];
+                        let item_2 = &outline.items[m_2.candidate_id];
+                        let range_1 = item_1.range.to_offset(&buffer);
+                        let range_2 = item_2.range.to_offset(&buffer);
+                        let depth_1 = range_1.contains(&cursor_offset).then_some(item_1.depth);
+                        let depth_2 = range_2.contains(&cursor_offset).then_some(item_2.depth);
+                        let distance_1 = cmp::min(
+                            (range_1.start.0 as isize - cursor_offset.0 as isize).abs(),
+                            (range_1.end.0 as isize - cursor_offset.0 as isize).abs(),
+                        );
+                        let distance_2 = cmp::min(
+                            (range_2.start.0 as isize - cursor_offset.0 as isize).abs(),
+                            (range_2.end.0 as isize - cursor_offset.0 as isize).abs(),
+                        );
                         OrderedFloat(m_1.score)
                             .cmp(&OrderedFloat(m_2.score))
-                            .then_with(|| {
-                                let item_1 = &this.delegate.outline.items[m_1.candidate_id];
-                                let item_2 = &this.delegate.outline.items[m_2.candidate_id];
-                                let range_1 = item_1.range.to_offset(&buffer);
-                                let range_2 = item_2.range.to_offset(&buffer);
-                                let depth_1 =
-                                    range_1.contains(&cursor_offset).then_some(item_1.depth);
-                                let depth_2 =
-                                    range_2.contains(&cursor_offset).then_some(item_2.depth);
-
-                                depth_1
-                                    .cmp(&depth_2)
-                                    .then_with(|| {
-                                        let distance_1 = cmp::min(
-                                            (range_1.start.0 as isize - cursor_offset.0 as isize)
-                                                .abs(),
-                                            (range_1.end.0 as isize - cursor_offset.0 as isize)
-                                                .abs(),
-                                        );
-                                        let distance_2 = cmp::min(
-                                            (range_2.start.0 as isize - cursor_offset.0 as isize)
-                                                .abs(),
-                                            (range_2.end.0 as isize - cursor_offset.0 as isize)
-                                                .abs(),
-                                        );
-                                        distance_2.cmp(&distance_1)
-                                    })
-                                    .then_with(|| ix_2.cmp(ix_1))
-                            })
+                            .then(depth_1.cmp(&depth_2))
+                            .then(distance_2.cmp(&distance_1))
+                            .then(ix_2.cmp(ix_1))
                     })
                     .map(|(ix, _)| ix)
                     .unwrap_or(0);
 
-                this.delegate.last_query = query.clone();
-                this.delegate.set_selected_index(
-                    selected_index,
-                    !this.delegate.last_query.is_empty(),
-                    cx,
-                );
+                this.delegate
+                    .set_selected_index(selected_index, !is_query_empty, cx);
             });
         })
     }
