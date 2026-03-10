@@ -12,20 +12,23 @@ use gpui::{
 };
 use menu::{Cancel, Confirm, SelectFirst, SelectLast, SelectNext, SelectPrevious};
 use project::Event as ProjectEvent;
+use recent_projects::RecentProjects;
 use settings::Settings;
 use std::collections::{HashMap, HashSet};
 use std::mem;
 use theme::{ActiveTheme, ThemeSettings};
 use ui::utils::TRAFFIC_LIGHT_PADDING;
 use ui::{
-    AgentThreadStatus, GradientFade, HighlightedLabel, IconButtonShape, KeyBinding, ListItem, Tab,
-    ThreadItem, Tooltip, WithScrollbar, prelude::*,
+    AgentThreadStatus, ButtonStyle, GradientFade, HighlightedLabel, IconButtonShape, KeyBinding,
+    ListItem, PopoverMenu, PopoverMenuHandle, Tab, ThreadItem, TintColor, Tooltip, WithScrollbar,
+    prelude::*,
 };
 use util::path_list::PathList;
 use workspace::{
     FocusWorkspaceSidebar, MultiWorkspace, MultiWorkspaceEvent, Sidebar as WorkspaceSidebar,
     SidebarEvent, ToggleWorkspaceSidebar, Workspace,
 };
+use zed_actions::OpenRecent;
 use zed_actions::editor::{MoveDown, MoveUp};
 
 actions!(
@@ -183,6 +186,7 @@ pub struct Sidebar {
     active_entry_index: Option<usize>,
     collapsed_groups: HashSet<PathList>,
     expanded_groups: HashMap<PathList, usize>,
+    recent_projects_popover_handle: PopoverMenuHandle<RecentProjects>,
 }
 
 impl EventEmitter<SidebarEvent> for Sidebar {}
@@ -278,6 +282,7 @@ impl Sidebar {
             active_entry_index: None,
             collapsed_groups: HashSet::new(),
             expanded_groups: HashMap::new(),
+            recent_projects_popover_handle: PopoverMenuHandle::default(),
         }
     }
 
@@ -1174,6 +1179,48 @@ impl Sidebar {
             .into_any_element()
     }
 
+    fn render_recent_projects_button(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let workspace = self
+            .multi_workspace
+            .upgrade()
+            .map(|mw| mw.read(cx).workspace().downgrade());
+
+        let focus_handle = workspace
+            .as_ref()
+            .and_then(|ws| ws.upgrade())
+            .map(|w| w.read(cx).focus_handle(cx))
+            .unwrap_or_else(|| cx.focus_handle());
+
+        let popover_handle = self.recent_projects_popover_handle.clone();
+
+        PopoverMenu::new("sidebar-recent-projects-menu")
+            .with_handle(popover_handle)
+            .menu(move |window, cx| {
+                workspace.as_ref().map(|ws| {
+                    RecentProjects::popover(ws.clone(), false, focus_handle.clone(), window, cx)
+                })
+            })
+            .trigger_with_tooltip(
+                IconButton::new("open-project", IconName::OpenFolder)
+                    .icon_size(IconSize::Small)
+                    .selected_style(ButtonStyle::Tinted(TintColor::Accent)),
+                |_window, cx| {
+                    Tooltip::for_action(
+                        "Recent Projects",
+                        &OpenRecent {
+                            create_new_window: false,
+                        },
+                        cx,
+                    )
+                },
+            )
+            .anchor(gpui::Corner::TopLeft)
+            .offset(gpui::Point {
+                x: px(0.0),
+                y: px(2.0),
+            })
+    }
+
     fn render_filter_input(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let settings = ThemeSettings::get_global(cx);
         let text_style = TextStyle {
@@ -1315,6 +1362,14 @@ impl WorkspaceSidebar for Sidebar {
     fn has_notifications(&self, _cx: &App) -> bool {
         !self.contents.notified_threads.is_empty()
     }
+
+    fn toggle_recent_projects_popover(&self, window: &mut Window, cx: &mut App) {
+        self.recent_projects_popover_handle.toggle(window, cx);
+    }
+
+    fn is_recent_projects_popover_deployed(&self) -> bool {
+        self.recent_projects_popover_handle.is_deployed()
+    }
 }
 
 impl Focusable for Sidebar {
@@ -1412,27 +1467,7 @@ impl Render for Sidebar {
                                 cx.emit(SidebarEvent::Close);
                             }))
                     })
-                    .child(
-                        IconButton::new("open-project", IconName::OpenFolder)
-                            .icon_size(IconSize::Small)
-                            .tooltip(|_window, cx| {
-                                Tooltip::for_action(
-                                    "Open Project",
-                                    &workspace::Open {
-                                        create_new_window: false,
-                                    },
-                                    cx,
-                                )
-                            })
-                            .on_click(|_event, window, cx| {
-                                window.dispatch_action(
-                                    Box::new(workspace::Open {
-                                        create_new_window: false,
-                                    }),
-                                    cx,
-                                );
-                            }),
-                    ),
+                    .child(self.render_recent_projects_button(cx)),
             )
             .child(
                 h_flex()
