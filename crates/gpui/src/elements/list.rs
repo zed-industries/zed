@@ -505,6 +505,18 @@ impl ListState {
     /// Returns the current scroll offset adjusted for the scrollbar
     pub fn scroll_px_offset_for_scrollbar(&self) -> Point<Pixels> {
         let state = &self.0.borrow();
+
+        // When bottom-aligned and pinned to the end, logical_scroll_top() returns
+        // item_ix = items.count, causing the cursor to sum the full content height.
+        // Return max_offset directly instead so the thumb stays at the bottom of the track.
+        if state.logical_scroll_top.is_none() && state.alignment == ListAlignment::Bottom {
+            let bounds = state.last_layout_bounds.unwrap_or_default();
+            let height = state
+                .scrollbar_drag_start_height
+                .unwrap_or_else(|| state.items.summary().height);
+            return Point::new(px(0.), -Pixels::ZERO.max(height - bounds.size.height));
+        }
+
         let logical_scroll_top = state.logical_scroll_top();
 
         let mut cursor = state.items.cursor::<ListItemSummary>(());
@@ -1412,5 +1424,42 @@ mod test {
         let offset = state.logical_scroll_top();
         assert_eq!(offset.item_ix, 2);
         assert_eq!(offset.offset_in_item, px(20.));
+    }
+
+    #[gpui::test]
+    fn test_bottom_aligned_scrollbar_offset_at_end(cx: &mut TestAppContext) {
+        let cx = cx.add_empty_window();
+
+        // 10 items × 50 px = 500 px content, viewport = 100 px → max_offset = 400 px.
+        // Overdraw of 500 px ensures every item is measured in the first paint.
+        let state = ListState::new(10, crate::ListAlignment::Bottom, px(500.));
+
+        struct TestView(ListState);
+        impl Render for TestView {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                list(self.0.clone(), |_, _, _| {
+                    div().h(px(50.)).w_full().into_any()
+                })
+                .w_full()
+                .h_full()
+            }
+        }
+
+        cx.draw(point(px(0.), px(0.)), size(px(100.), px(100.)), |_, cx| {
+            cx.new(|_| TestView(state.clone())).into_any_element()
+        });
+
+        // Bottom-aligned lists start pinned to the end: logical_scroll_top returns
+        // item_ix == item_count, meaning no explicit scroll position has been set.
+        assert_eq!(state.logical_scroll_top().item_ix, 10);
+
+        let max_offset = state.max_offset_for_scrollbar();
+        let scroll_offset = state.scroll_px_offset_for_scrollbar();
+
+        assert_eq!(
+            -scroll_offset.y, max_offset.y,
+            "scrollbar offset ({}) should equal max offset ({}) when list is pinned to bottom",
+            -scroll_offset.y, max_offset.y,
+        );
     }
 }
