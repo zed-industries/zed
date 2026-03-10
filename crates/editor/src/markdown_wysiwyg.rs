@@ -26,7 +26,10 @@ const READABLE_LINE_LENGTH: u32 = 60;
 pub struct MarkdownWysiwygState {
     pub active: bool,
     reparse_task: Task<()>,
+    references_task: Task<()>,
     block_ids: Vec<CustomBlockId>,
+    references_block_ids: Vec<CustomBlockId>,
+    pub cached_references: Vec<String>,
     previous_show_gutter: Option<bool>,
     previous_show_line_numbers: Option<Option<bool>>,
     previous_soft_wrap_override: Option<Option<language::language_settings::SoftWrap>>,
@@ -37,7 +40,10 @@ impl MarkdownWysiwygState {
         Self {
             active: false,
             reparse_task: Task::ready(()),
+            references_task: Task::ready(()),
             block_ids: Vec::new(),
+            references_block_ids: Vec::new(),
+            cached_references: Vec::new(),
             previous_show_gutter: None,
             previous_show_line_numbers: None,
             previous_soft_wrap_override: None,
@@ -506,6 +512,7 @@ impl Editor {
                 Some(language::language_settings::SoftWrap::PreferredLineLength);
             self.markdown_wysiwyg_state.active = true;
             refresh_wysiwyg_decorations(self, cx);
+            fetch_references(self, cx);
         }
     }
 }
@@ -651,7 +658,14 @@ fn apply_highlights(
         cx,
     );
 
+    // Collect diagnostics for the full buffer to detect unresolved links
+    let all_diagnostics: Vec<(Range<usize>, String)> = snapshot
+        .diagnostics_in_range::<MultiBufferOffset>(MultiBufferOffset(0)..MultiBufferOffset(snapshot.len().0))
+        .map(|entry| (entry.range.start.0..entry.range.end.0, entry.diagnostic.message.clone()))
+        .collect();
+
     let mut wikilink_ranges = Vec::new();
+    let mut unresolved_wikilink_ranges = Vec::new();
     for wikilink in &decorations.wikilinks {
         if !marker_overlaps_block(&wikilink.range, &block_ranges)
             && !range_on_cursor_line(&wikilink.range, cursor_line)
@@ -666,7 +680,17 @@ fn apply_highlights(
             };
             let start = snapshot.anchor_before(MultiBufferOffset(display_start));
             let end = snapshot.anchor_after(MultiBufferOffset(content_end));
-            wikilink_ranges.push(start..end);
+
+            // Check if this wikilink has a diagnostic (unresolved link)
+            let has_diagnostic = all_diagnostics.iter().any(|(diag_range, _msg)| {
+                diag_range.start < wikilink.range.end && diag_range.end > wikilink.range.start
+            });
+
+            if has_diagnostic {
+                unresolved_wikilink_ranges.push(start..end);
+            } else {
+                wikilink_ranges.push(start..end);
+            }
         }
     }
 
@@ -698,6 +722,41 @@ fn apply_highlights(
                     a: 0.6,
                 }),
                 wavy: false,
+            }),
+            ..Default::default()
+        },
+        cx,
+    );
+
+    // Unresolved wikilinks get a pastel blue color
+    set_or_clear_highlight(
+        editor,
+        HighlightKey::MarkdownWysiwygUnresolvedLink,
+        unresolved_wikilink_ranges,
+        HighlightStyle {
+            color: Some(Hsla {
+                h: 0.58,
+                s: 0.4,
+                l: 0.65,
+                a: 0.7,
+            }),
+            background_color: Some(Hsla {
+                h: 0.58,
+                s: 0.2,
+                l: 0.3,
+                a: 0.1,
+            }),
+            font_weight: Some(FontWeight::BOLD),
+            font_style: Some(gpui::FontStyle::Normal),
+            underline: Some(gpui::UnderlineStyle {
+                thickness: gpui::px(1.0),
+                color: Some(Hsla {
+                    h: 0.58,
+                    s: 0.4,
+                    l: 0.65,
+                    a: 0.5,
+                }),
+                wavy: true,
             }),
             ..Default::default()
         },
@@ -1072,6 +1131,203 @@ fn apply_blocks(
         let new_ids = editor.insert_blocks(block_properties, None, cx);
         editor.markdown_wysiwyg_state.block_ids = new_ids;
     }
+
+    // Render references section if we have cached references
+    apply_references_block(editor, snapshot, cx);
+}
+
+fn apply_references_block(
+    editor: &mut Editor,
+    snapshot: &MultiBufferSnapshot,
+    cx: &mut Context<Editor>,
+) {
+    // Remove old references blocks
+    let old_ref_ids: HashSet<CustomBlockId> = editor
+        .markdown_wysiwyg_state
+        .references_block_ids
+        .drain(..)
+        .collect();
+    if !old_ref_ids.is_empty() {
+        editor.remove_blocks(old_ref_ids, None, cx);
+    }
+
+    let references = editor.markdown_wysiwyg_state.cached_references.clone();
+    eprintln!("[WYSIWYG-REF] apply_references_block called with {} references: {:?}", references.len(), references);
+    if references.is_empty() {
+        eprintln!("[WYSIWYG-REF] No references, returning early");
+        return;
+    }
+
+    // Place the references block after the last line of the document
+    let buffer_end = snapshot.len();
+    let end_anchor = snapshot.anchor_after(buffer_end);
+
+    let ref_count = references.len();
+    let height = (ref_count as u32) + 2; // +2 for header and divider
+
+    let render: RenderBlock = Arc::new(move |block_context: &mut BlockContext| {
+        let left_margin = block_context.anchor_x;
+        let border_color = Hsla {
+            h: 0.0,
+            s: 0.0,
+            l: 0.5,
+            a: 0.2,
+        };
+
+        let mut container = gpui::div()
+            .pl(left_margin)
+            .pt_4()
+            .flex()
+            .flex_col()
+            .gap_1();
+
+        // Divider line
+        container = container.child(
+            gpui::div()
+                .h(gpui::px(1.0))
+                .bg(border_color)
+                .mb_2(),
+        );
+
+        // Header
+        container = container.child(
+            gpui::div()
+                .text_size(block_context.em_width * 1.1)
+                .font_weight(FontWeight::BOLD)
+                .text_color(Hsla {
+                    h: 0.0,
+                    s: 0.0,
+                    l: 0.6,
+                    a: 1.0,
+                })
+                .mb_1()
+                .child(SharedString::from("Linked Mentions")),
+        );
+
+        // Reference entries
+        for ref_name in &references {
+            container = container.child(
+                gpui::div()
+                    .flex()
+                    .flex_row()
+                    .gap_1()
+                    .child(
+                        gpui::div()
+                            .text_color(Hsla {
+                                h: 0.6,
+                                s: 0.5,
+                                l: 0.6,
+                                a: 1.0,
+                            })
+                            .child(SharedString::from(format!("  {}", ref_name))),
+                    ),
+            );
+        }
+
+        container.into_any_element()
+    });
+
+    let block_properties = vec![BlockProperties {
+        placement: BlockPlacement::Below(end_anchor),
+        height: Some(height),
+        style: BlockStyle::Flex,
+        render,
+        priority: 0,
+    }];
+
+    let new_ids = editor.insert_blocks(block_properties, None, cx);
+    eprintln!("[WYSIWYG-REF] Inserted {} reference blocks", new_ids.len());
+    editor.markdown_wysiwyg_state.references_block_ids = new_ids;
+}
+
+/// Fetches references for the current document from the LSP and caches them.
+/// This is called when WYSIWYG mode is toggled on or when the document changes.
+pub fn fetch_references(editor: &mut Editor, cx: &mut Context<Editor>) {
+    if !editor.markdown_wysiwyg_state.active {
+        return;
+    }
+
+    // Get the current file's absolute path and stem name
+    let multi_buffer = editor.buffer().read(cx);
+    let buffers = multi_buffer.all_buffers();
+    let mut current_file_stem: Option<String> = None;
+    let mut workspace_dir: Option<PathBuf> = None;
+
+    for buffer in buffers {
+        let buffer_read = buffer.read(cx);
+        if let Some(file) = buffer_read.file() {
+            current_file_stem = file.path().file_stem().map(|s| s.to_string());
+            if let Some(local_file) = file.as_local() {
+                let abs = local_file.abs_path(cx);
+                workspace_dir = abs.parent().map(|p| p.to_path_buf());
+            }
+            break;
+        }
+    }
+
+    let file_stem = match current_file_stem {
+        Some(s) => s,
+        None => {
+            eprintln!("[WYSIWYG-REF] No current file stem found");
+            return;
+        }
+    };
+    let dir = match workspace_dir {
+        Some(d) => d,
+        None => {
+            eprintln!("[WYSIWYG-REF] No workspace dir found");
+            return;
+        }
+    };
+    eprintln!("[WYSIWYG-REF] Scanning dir {:?} for backlinks to {:?}", dir, file_stem);
+
+    // Scan all .md files in the workspace directory for wikilinks to this file
+    editor.markdown_wysiwyg_state.references_task = cx.spawn(async move |editor, cx| {
+        let mut backlink_files: Vec<String> = Vec::new();
+
+        // Read all .md files in the directory
+        if let Ok(entries) = std::fs::read_dir(&dir) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.extension().and_then(|e| e.to_str()) != Some("md") {
+                    continue;
+                }
+                // Skip the current file
+                let entry_stem = path.file_stem()
+                    .and_then(|s| s.to_str())
+                    .unwrap_or("")
+                    .to_string();
+                if entry_stem == file_stem {
+                    continue;
+                }
+
+                // Read the file and check for wikilinks to the current file
+                if let Ok(content) = std::fs::read_to_string(&path) {
+                    // Look for [[file_stem]] or [[file_stem|display]] or [[file_stem#section]]
+                    let pattern_simple = format!("[[{}]]", file_stem);
+                    let pattern_pipe = format!("[[{}|", file_stem);
+                    let pattern_hash = format!("[[{}#", file_stem);
+
+                    if content.contains(&pattern_simple)
+                        || content.contains(&pattern_pipe)
+                        || content.contains(&pattern_hash)
+                    {
+                        backlink_files.push(entry_stem);
+                    }
+                }
+            }
+        }
+
+        backlink_files.sort();
+        eprintln!("[WYSIWYG-REF] Found {} backlink files: {:?}", backlink_files.len(), backlink_files);
+
+        editor.update(cx, |editor, cx| {
+            editor.markdown_wysiwyg_state.cached_references = backlink_files;
+            if editor.markdown_wysiwyg_state.active {
+                refresh_wysiwyg_decorations(editor, cx);
+            }
+        }).ok();
+    });
 }
 
 fn clear_wysiwyg_decorations(editor: &mut Editor, cx: &mut Context<Editor>) {
@@ -1082,6 +1338,7 @@ fn clear_wysiwyg_decorations(editor: &mut Editor, cx: &mut Context<Editor>) {
     editor.clear_highlights(HighlightKey::MarkdownWysiwygHeading, cx);
     editor.clear_highlights(HighlightKey::MarkdownWysiwygMarker, cx);
     editor.clear_highlights(HighlightKey::MarkdownWysiwygWikilink, cx);
+    editor.clear_highlights(HighlightKey::MarkdownWysiwygUnresolvedLink, cx);
 
     let type_id = TypeId::of::<WysiwygFoldTag>();
     let snapshot = editor.buffer().read(cx).snapshot(cx);
@@ -1099,6 +1356,16 @@ fn clear_wysiwyg_decorations(editor: &mut Editor, cx: &mut Context<Editor>) {
     if !old_block_ids.is_empty() {
         editor.remove_blocks(old_block_ids, None, cx);
     }
+
+    let old_ref_ids: HashSet<CustomBlockId> = editor
+        .markdown_wysiwyg_state
+        .references_block_ids
+        .drain(..)
+        .collect();
+    if !old_ref_ids.is_empty() {
+        editor.remove_blocks(old_ref_ids, None, cx);
+    }
+    editor.markdown_wysiwyg_state.cached_references.clear();
 }
 
 pub fn on_selection_changed(editor: &mut Editor, cx: &mut Context<Editor>) {
@@ -1106,6 +1373,56 @@ pub fn on_selection_changed(editor: &mut Editor, cx: &mut Context<Editor>) {
         return;
     }
     refresh_wysiwyg_decorations(editor, cx);
+}
+
+/// Checks if the cursor is on a wikilink in WYSIWYG mode, and if so,
+/// triggers go-to-definition. Returns true if a wikilink click was handled.
+pub fn try_handle_wikilink_click(
+    editor: &mut Editor,
+    window: &mut Window,
+    cx: &mut Context<Editor>,
+) -> bool {
+    if !editor.markdown_wysiwyg_state.active {
+        return false;
+    }
+
+    let snapshot = editor.buffer().read(cx).snapshot(cx);
+    let text = snapshot.text();
+    let cursor = cursor_offset(editor, cx);
+
+    // Check if cursor is inside a wikilink
+    let wikilinks = parse_wikilinks(&text);
+    for wikilink in &wikilinks {
+        if cursor >= wikilink.range.start && cursor <= wikilink.range.end {
+            // Cursor is inside a wikilink — trigger go-to-definition
+            // Position cursor at the link content (inside [[ ]])
+            let content_start = wikilink.range.start + 2;
+            let link_end = wikilink.range.end - 2;
+            let inner = &text[content_start..link_end];
+            // If there's a pipe, position at the link part (before pipe)
+            let link_target_end = if let Some(pipe_pos) = inner.find('|') {
+                content_start + pipe_pos
+            } else {
+                link_end
+            };
+            // Move cursor to middle of the link target for go-to-definition
+            let target_pos = (content_start + link_target_end) / 2;
+            let anchor = snapshot.anchor_before(MultiBufferOffset(target_pos));
+
+            // Set the cursor position to be inside the wikilink content
+            use crate::SelectionEffects;
+            editor.change_selections(SelectionEffects::default(), window, cx, |selections| {
+                selections.select_anchor_ranges([anchor..anchor]);
+            });
+
+            // Now trigger go-to-definition
+            use crate::GoToDefinition;
+            let _ = editor.go_to_definition(&GoToDefinition, window, cx);
+            return true;
+        }
+    }
+
+    false
 }
 
 /// Attempts to handle an image paste when WYSIWYG mode is active.
