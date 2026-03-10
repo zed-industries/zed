@@ -84,10 +84,12 @@ use util::rel_path::RelPath;
 use util::{ResultExt, asset_str, maybe};
 use uuid::Uuid;
 use vim_mode_setting::VimModeSetting;
+use workspace::dock::PanelHandle;
 use workspace::notifications::{
     NotificationId, SuppressEvent, dismiss_app_notification, show_app_notification,
 };
 
+use workspace::dock::DockPosition;
 use workspace::{
     AppState, MultiWorkspace, NewFile, NewWindow, OpenLog, Panel, Toast, Workspace,
     WorkspaceSettings, create_and_open_local_file,
@@ -293,11 +295,13 @@ pub fn init(cx: &mut App) {
         let Some(handle) = window.downcast::<MultiWorkspace>() else {
             return;
         };
-        handle
-            .update(cx, |multi_workspace, window, cx| {
-                toggle_agent_mode(multi_workspace, window, cx);
-            })
-            .log_err();
+        cx.defer(move |cx| {
+            handle
+                .update(cx, |multi_workspace, window, cx| {
+                    toggle_agent_mode(multi_workspace, window, cx);
+                })
+                .log_err();
+        });
     });
 }
 
@@ -306,13 +310,19 @@ fn toggle_agent_mode(
     window: &mut Window,
     cx: &mut Context<'_, MultiWorkspace>,
 ) {
-    let is_singleton = multi_workspace.is_singleton();
+    let mut is_singleton = multi_workspace.is_singleton();
     if is_singleton {
         multi_workspace.set_singleton(false, window, cx);
         multi_workspace.open_sidebar(cx);
     } else {
         multi_workspace.set_singleton(true, window, cx);
     }
+    is_singleton = !is_singleton;
+    let agent_mode = !is_singleton;
+    let workspace = multi_workspace.workspace();
+    workspace.update(cx, |workspace, cx| {
+        update_panel_positions(workspace, window, agent_mode, cx);
+    });
 }
 
 fn bind_on_window_closed(cx: &mut App) -> Option<gpui::Subscription> {
@@ -648,6 +658,33 @@ fn show_software_emulation_warning_if_needed(
     }
 }
 
+fn is_agent_mode(cx: &mut AsyncWindowContext) -> bool {
+    cx.window_handle()
+        .downcast::<MultiWorkspace>()
+        .and_then(|handle| {
+            handle
+                .read_with(cx, |multi_workspace, _| !multi_workspace.is_singleton())
+                .ok()
+        })
+        .unwrap_or(false)
+}
+
+fn interpret_panel_dock_position(
+    panel: &dyn PanelHandle,
+    preferred: DockPosition,
+    agent_mode: bool,
+) -> DockPosition {
+    let is_agent_panel = panel.panel_key() == agent_ui::AgentPanel::panel_key();
+    if agent_mode {
+        if is_agent_panel {
+            return DockPosition::Left;
+        } else if preferred == DockPosition::Left {
+            return DockPosition::Right;
+        }
+    }
+    preferred
+}
+
 fn initialize_panels(
     prompt_builder: Arc<PromptBuilder>,
     window: &mut Window,
@@ -666,16 +703,18 @@ fn initialize_panels(
         );
         let debug_panel = DebugPanel::load(workspace_handle.clone(), cx);
 
-        async fn add_panel_when_ready(
-            panel_task: impl Future<Output = anyhow::Result<Entity<impl workspace::Panel>>> + 'static,
+        async fn add_panel_when_ready<T: workspace::Panel>(
+            panel_task: impl Future<Output = anyhow::Result<Entity<T>>> + 'static,
             workspace_handle: WeakEntity<Workspace>,
             mut cx: gpui::AsyncWindowContext,
         ) {
-            if let Some(panel) = panel_task.await.context("failed to load panel").log_err()
-            {
+            if let Some(panel) = panel_task.await.context("failed to load panel").log_err() {
+                let agent_mode = is_agent_mode(&mut cx);
                 workspace_handle
                     .update_in(&mut cx, |workspace, window, cx| {
-                        workspace.add_panel(panel, window, cx);
+                        let preferred = panel.position(window, cx);
+                        let position = interpret_panel_dock_position(&panel, preferred, agent_mode);
+                        workspace.add_panel(panel, position, window, cx);
                     })
                     .log_err();
             }
@@ -689,11 +728,60 @@ fn initialize_panels(
             add_panel_when_ready(channels_panel, workspace_handle.clone(), cx.clone()),
             add_panel_when_ready(notification_panel, workspace_handle.clone(), cx.clone()),
             add_panel_when_ready(debug_panel, workspace_handle.clone(), cx.clone()),
-            initialize_agent_panel(workspace_handle, prompt_builder, cx.clone()).map(|r| r.log_err()),
+            initialize_agent_panel(workspace_handle.clone(), prompt_builder, cx.clone())
+                .map(|r| r.log_err()),
         );
+
+        let mut cx = cx.clone();
+        workspace_handle.update_in(&mut cx, |workspace, window, cx| {
+            observe_settings_for_panel_positions(workspace, window, cx);
+        })?;
 
         anyhow::Ok(())
     })
+}
+
+fn observe_settings_for_panel_positions(
+    _workspace: &mut Workspace,
+    window: &mut Window,
+    cx: &mut Context<Workspace>,
+) {
+    cx.observe_global_in::<settings::SettingsStore>(window, move |workspace, window, cx| {
+        let agent_mode = window
+            .root::<MultiWorkspace>()
+            .flatten()
+            .is_some_and(|handle| !handle.read(cx).is_singleton());
+        update_panel_positions(workspace, window, agent_mode, cx);
+    })
+    .detach();
+}
+
+fn update_panel_positions(
+    workspace: &mut Workspace,
+    window: &mut Window,
+    agent_mode: bool,
+    cx: &mut Context<Workspace>,
+) {
+    let panels_and_positions = workspace.all_panel_ids_and_positions(cx);
+    for (panel_id, current_position) in panels_and_positions {
+        let panel_handle = workspace
+            .dock_at_position(current_position)
+            .read(cx)
+            .panel_for_id(panel_id)
+            .cloned();
+
+        let Some(panel_handle) = panel_handle else {
+            continue;
+        };
+
+        let preferred_position = panel_handle.position(window, cx);
+        let target_position =
+            interpret_panel_dock_position(panel_handle.as_ref(), preferred_position, agent_mode);
+
+        if target_position != current_position {
+            workspace.move_panel_to_dock(panel_id, target_position, window, cx);
+        }
+    }
 }
 
 fn setup_or_teardown_ai_panel<P: Panel>(
@@ -712,15 +800,18 @@ fn setup_or_teardown_ai_panel<P: Panel>(
         || cfg!(test);
     let existing_panel = workspace.panel::<P>(cx);
     match (disable_ai, existing_panel) {
-        (false, None) => cx.spawn_in(window, async move |workspace, cx| {
+        (false, None) => cx.spawn_in(window, async move |workspace, mut cx| {
             let panel = load_panel(workspace.clone(), cx.clone()).await?;
+            let agent_mode = is_agent_mode(&mut cx);
             workspace.update_in(cx, |workspace, window, cx| {
                 let disable_ai = SettingsStore::global(cx)
                     .get::<DisableAiSettings>(None)
                     .disable_ai;
                 let have_panel = workspace.panel::<P>(cx).is_some();
                 if !disable_ai && !have_panel {
-                    workspace.add_panel(panel, window, cx);
+                    let preferred = panel.position(window, cx);
+                    let position = interpret_panel_dock_position(&panel, preferred, agent_mode);
+                    workspace.add_panel(panel, position, window, cx);
                 }
             })
         }),

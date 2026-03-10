@@ -6812,7 +6812,8 @@ outline: struct OutlineEntryExcerpt
         window
             .update(cx, |multi_workspace, window, cx| {
                 multi_workspace.workspace().update(cx, |workspace, cx| {
-                    workspace.add_panel(outline_panel, window, cx);
+                    let position = outline_panel.read(cx).position(window, cx);
+                    workspace.add_panel(outline_panel, position, window, cx);
                 });
             })
             .unwrap();

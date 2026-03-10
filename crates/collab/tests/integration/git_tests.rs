@@ -12,6 +12,7 @@ use project::ProjectPath;
 use serde_json::json;
 
 use util::{path, rel_path::rel_path};
+use workspace::dock::Panel;
 use workspace::{MultiWorkspace, Workspace};
 
 use crate::TestServer;
@@ -371,12 +372,14 @@ async fn test_diff_stat_sync_between_host_and_downstream_client(
 
     let panel_a = workspace_a.update_in(cx_a, GitPanel::new_test);
     workspace_a.update_in(cx_a, |workspace, window, cx| {
-        workspace.add_panel(panel_a.clone(), window, cx);
+        let position = panel_a.read(cx).position(window, cx);
+        workspace.add_panel(panel_a.clone(), position, window, cx);
     });
 
     let panel_b = workspace_b.update_in(cx_b, GitPanel::new_test);
     workspace_b.update_in(cx_b, |workspace, window, cx| {
-        workspace.add_panel(panel_b.clone(), window, cx);
+        let position = panel_b.read(cx).position(window, cx);
+        workspace.add_panel(panel_b.clone(), position, window, cx);
     });
 
     cx_a.run_until_parked();
@@ -488,7 +491,8 @@ async fn test_diff_stat_sync_between_host_and_downstream_client(
     let (workspace_b, cx_b) = client_b.build_workspace(&project_b, cx_b);
     let panel_b = workspace_b.update_in(cx_b, GitPanel::new_test);
     workspace_b.update_in(cx_b, |workspace, window, cx| {
-        workspace.add_panel(panel_b.clone(), window, cx);
+        let position = panel_b.read(cx).position(window, cx);
+        workspace.add_panel(panel_b.clone(), position, window, cx);
     });
     cx_b.run_until_parked();
 

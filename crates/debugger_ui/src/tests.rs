@@ -9,6 +9,7 @@ use settings::SettingsStore;
 use task::SharedTaskContext;
 use terminal_view::terminal_panel::TerminalPanel;
 use workspace::MultiWorkspace;
+use workspace::dock::Panel;
 
 use crate::{debugger_panel::DebugPanel, session::DebugSession};
 
@@ -82,8 +83,10 @@ pub async fn init_test_workspace(
     workspace_handle
         .update(cx, |multi, window, cx| {
             multi.workspace().update(cx, |workspace, cx| {
-                workspace.add_panel(debugger_panel, window, cx);
-                workspace.add_panel(terminal_panel, window, cx);
+                let position = debugger_panel.read(cx).position(window, cx);
+                workspace.add_panel(debugger_panel, position, window, cx);
+                let position = terminal_panel.read(cx).position(window, cx);
+                workspace.add_panel(terminal_panel, position, window, cx);
             });
         })
         .unwrap();

@@ -2780,6 +2780,7 @@ pub(crate) mod tests {
     use std::path::{Path, PathBuf};
     use std::rc::Rc;
     use std::sync::Arc;
+    use workspace::dock::Panel;
     use workspace::{Item, MultiWorkspace};
 
     use crate::agent_panel;
@@ -3459,7 +3460,8 @@ pub(crate) mod tests {
                 cx.new(|cx| TextThreadStore::fake(workspace.project().clone(), cx));
             let panel =
                 cx.new(|cx| crate::AgentPanel::new(workspace, text_thread_store, None, window, cx));
-            workspace.add_panel(panel, window, cx);
+            let position = panel.read(cx).position(window, cx);
+            workspace.add_panel(panel, position, window, cx);
 
             // Open the dock and activate the agent panel so it's visible
             workspace.focus_panel::<crate::AgentPanel>(window, cx);

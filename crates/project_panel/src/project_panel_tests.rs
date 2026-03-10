@@ -11,6 +11,7 @@ use std::path::{Path, PathBuf};
 use util::{path, paths::PathStyle, rel_path::rel_path};
 use workspace::{
     AppState, ItemHandle, MultiWorkspace, Pane, Workspace,
+    dock::DockPosition,
     item::{Item, ProjectItem},
     register_project_item,
 };
@@ -527,7 +528,7 @@ async fn test_editing_files(cx: &mut gpui::TestAppContext) {
     let cx = &mut VisualTestContext::from_window(window.into(), cx);
     let panel = workspace.update_in(cx, |workspace, window, cx| {
         let panel = ProjectPanel::new(workspace, window, cx);
-        workspace.add_panel(panel.clone(), window, cx);
+        workspace.add_panel(panel.clone(), DockPosition::Left, window, cx);
         panel
     });
     cx.run_until_parked();
@@ -960,7 +961,7 @@ async fn test_adding_directories_via_file(cx: &mut gpui::TestAppContext) {
     let cx = &mut VisualTestContext::from_window(window.into(), cx);
     let panel = workspace.update_in(cx, |workspace, window, cx| {
         let panel = ProjectPanel::new(workspace, window, cx);
-        workspace.add_panel(panel.clone(), window, cx);
+        workspace.add_panel(panel.clone(), DockPosition::Left, window, cx);
         panel
     });
     cx.run_until_parked();
@@ -1073,7 +1074,7 @@ async fn test_adding_directory_via_file(cx: &mut gpui::TestAppContext) {
     let cx = &mut VisualTestContext::from_window(window.into(), cx);
     let panel = workspace.update_in(cx, |workspace, window, cx| {
         let panel = ProjectPanel::new(workspace, window, cx);
-        workspace.add_panel(panel.clone(), window, cx);
+        workspace.add_panel(panel.clone(), DockPosition::Left, window, cx);
         panel
     });
     cx.run_until_parked();
@@ -2335,7 +2336,7 @@ async fn test_create_duplicate_items(cx: &mut gpui::TestAppContext) {
     let cx = &mut VisualTestContext::from_window(window.into(), cx);
     let panel = workspace.update_in(cx, |workspace, window, cx| {
         let panel = ProjectPanel::new(workspace, window, cx);
-        workspace.add_panel(panel.clone(), window, cx);
+        workspace.add_panel(panel.clone(), DockPosition::Left, window, cx);
         panel
     });
     cx.run_until_parked();
@@ -2541,7 +2542,7 @@ async fn test_create_duplicate_items_and_check_history(cx: &mut gpui::TestAppCon
     let cx = &mut VisualTestContext::from_window(window.into(), cx);
     let panel = workspace.update_in(cx, |workspace, window, cx| {
         let panel = ProjectPanel::new(workspace, window, cx);
-        workspace.add_panel(panel.clone(), window, cx);
+        workspace.add_panel(panel.clone(), DockPosition::Left, window, cx);
         panel
     });
     cx.run_until_parked();
@@ -2807,7 +2808,7 @@ async fn test_rename_item_and_check_history(cx: &mut gpui::TestAppContext) {
     let cx = &mut VisualTestContext::from_window(window.into(), cx);
     let panel = workspace.update_in(cx, |workspace, window, cx| {
         let panel = ProjectPanel::new(workspace, window, cx);
-        workspace.add_panel(panel.clone(), window, cx);
+        workspace.add_panel(panel.clone(), DockPosition::Left, window, cx);
         panel
     });
     cx.run_until_parked();
@@ -5269,7 +5270,7 @@ async fn test_creating_excluded_entries(cx: &mut gpui::TestAppContext) {
     let cx = &mut VisualTestContext::from_window(window.into(), cx);
     let panel = workspace.update_in(cx, |workspace, window, cx| {
         let panel = ProjectPanel::new(workspace, window, cx);
-        workspace.add_panel(panel.clone(), window, cx);
+        workspace.add_panel(panel.clone(), DockPosition::Left, window, cx);
         panel
     });
     cx.run_until_parked();
@@ -5454,7 +5455,7 @@ async fn test_selection_restored_when_creation_cancelled(cx: &mut gpui::TestAppC
     let cx = &mut VisualTestContext::from_window(window.into(), cx);
     let panel = workspace.update_in(cx, |workspace, window, cx| {
         let panel = ProjectPanel::new(workspace, window, cx);
-        workspace.add_panel(panel.clone(), window, cx);
+        workspace.add_panel(panel.clone(), DockPosition::Left, window, cx);
         panel
     });
     cx.run_until_parked();
@@ -7471,7 +7472,7 @@ async fn test_create_entries_without_selection(cx: &mut gpui::TestAppContext) {
 
     let panel = workspace.update_in(cx, |workspace, window, cx| {
         let panel = ProjectPanel::new(workspace, window, cx);
-        workspace.add_panel(panel.clone(), window, cx);
+        workspace.add_panel(panel.clone(), DockPosition::Left, window, cx);
         panel
     });
     cx.run_until_parked();
@@ -7551,7 +7552,7 @@ async fn test_create_entries_without_selection_hide_root(cx: &mut gpui::TestAppC
 
     let panel = workspace.update_in(cx, |workspace, window, cx| {
         let panel = ProjectPanel::new(workspace, window, cx);
-        workspace.add_panel(panel.clone(), window, cx);
+        workspace.add_panel(panel.clone(), DockPosition::Left, window, cx);
         panel
     });
     cx.run_until_parked();
@@ -7696,7 +7697,7 @@ async fn test_create_entry_with_trailing_dot_windows(cx: &mut gpui::TestAppConte
 
     let panel = workspace.update_in(cx, |workspace, window, cx| {
         let panel = ProjectPanel::new(workspace, window, cx);
-        workspace.add_panel(panel.clone(), window, cx);
+        workspace.add_panel(panel.clone(), DockPosition::Left, window, cx);
         panel
     });
     cx.run_until_parked();
@@ -9305,7 +9306,7 @@ async fn test_preserve_temporary_unfolded_active_index_on_blur_from_context_menu
 
     let panel = workspace.update_in(cx, |workspace, window, cx| {
         let panel = ProjectPanel::new(workspace, window, cx);
-        workspace.add_panel(panel.clone(), window, cx);
+        workspace.add_panel(panel.clone(), DockPosition::Left, window, cx);
         panel
     });
 
@@ -9489,7 +9490,7 @@ async fn run_create_file_in_folded_path_case(
 
     let panel = workspace.update_in(cx, |workspace, window, cx| {
         let panel = ProjectPanel::new(workspace, window, cx);
-        workspace.add_panel(panel.clone(), window, cx);
+        workspace.add_panel(panel.clone(), DockPosition::Left, window, cx);
         panel
     });
 

@@ -83,6 +83,13 @@ pub trait PanelHandle: Send + Sync {
     fn to_any(&self) -> AnyView;
     fn activation_priority(&self, cx: &App) -> u32;
     fn enabled(&self, cx: &App) -> bool;
+    fn add_to_dock(
+        &self,
+        dock: &mut Dock,
+        workspace: WeakEntity<Workspace>,
+        window: &mut Window,
+        cx: &mut Context<Dock>,
+    ) -> usize;
     fn move_to_next_position(&self, window: &mut Window, cx: &mut App) {
         let current_position = self.position(window, cx);
         let next_position = [
@@ -187,6 +194,16 @@ where
     fn enabled(&self, cx: &App) -> bool {
         self.read(cx).enabled(cx)
     }
+
+    fn add_to_dock(
+        &self,
+        dock: &mut Dock,
+        workspace: WeakEntity<Workspace>,
+        window: &mut Window,
+        cx: &mut Context<Dock>,
+    ) -> usize {
+        dock.add_panel(self.clone(), workspace, window, cx)
+    }
 }
 
 impl From<&dyn PanelHandle> for AnyView {
@@ -262,7 +279,7 @@ impl DockPosition {
 
 struct PanelEntry {
     panel: Arc<dyn PanelHandle>,
-    _subscriptions: [Subscription; 3],
+    _subscriptions: [Subscription; 2],
 }
 
 pub struct PanelButtons {
@@ -467,57 +484,6 @@ impl Dock {
     ) -> usize {
         let subscriptions = [
             cx.observe(&panel, |_, _, cx| cx.notify()),
-            cx.observe_global_in::<SettingsStore>(window, {
-                let workspace = workspace.clone();
-                let panel = panel.clone();
-
-                move |this, window, cx| {
-                    let new_position = panel.read(cx).position(window, cx);
-                    if new_position == this.position {
-                        return;
-                    }
-
-                    let Ok(new_dock) = workspace.update(cx, |workspace, cx| {
-                        if panel.is_zoomed(window, cx) {
-                            workspace.zoomed_position = Some(new_position);
-                        }
-                        match new_position {
-                            DockPosition::Left => &workspace.left_dock,
-                            DockPosition::Bottom => &workspace.bottom_dock,
-                            DockPosition::Right => &workspace.right_dock,
-                        }
-                        .clone()
-                    }) else {
-                        return;
-                    };
-
-                    let was_visible = this.is_open()
-                        && this.visible_panel().is_some_and(|active_panel| {
-                            active_panel.panel_id() == Entity::entity_id(&panel)
-                        });
-
-                    this.remove_panel(&panel, window, cx);
-
-                    new_dock.update(cx, |new_dock, cx| {
-                        new_dock.remove_panel(&panel, window, cx);
-                    });
-
-                    new_dock.update(cx, |new_dock, cx| {
-                        let index =
-                            new_dock.add_panel(panel.clone(), workspace.clone(), window, cx);
-                        if was_visible {
-                            new_dock.set_open(true, window, cx);
-                            new_dock.activate_panel(index, window, cx);
-                        }
-                    });
-
-                    workspace
-                        .update(cx, |workspace, cx| {
-                            workspace.serialize_workspace(window, cx);
-                        })
-                        .ok();
-                }
-            }),
             cx.subscribe_in(
                 &panel,
                 window,
@@ -664,6 +630,46 @@ impl Dock {
         } else {
             false
         }
+    }
+
+    pub fn remove_panel_by_id(
+        &mut self,
+        panel_id: EntityId,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        if let Some(panel_ix) = self
+            .panel_entries
+            .iter()
+            .position(|entry| entry.panel.panel_id() == panel_id)
+        {
+            if let Some(active_panel_index) = self.active_panel_index.as_mut() {
+                match panel_ix.cmp(active_panel_index) {
+                    std::cmp::Ordering::Less => {
+                        *active_panel_index -= 1;
+                    }
+                    std::cmp::Ordering::Equal => {
+                        self.active_panel_index = None;
+                        self.set_open(false, window, cx);
+                    }
+                    std::cmp::Ordering::Greater => {}
+                }
+            }
+
+            self.panel_entries.remove(panel_ix);
+            cx.notify();
+
+            true
+        } else {
+            false
+        }
+    }
+
+    pub fn panel_ids(&self) -> Vec<EntityId> {
+        self.panel_entries
+            .iter()
+            .map(|entry| entry.panel.panel_id())
+            .collect()
     }
 
     pub fn panels_len(&self) -> usize {

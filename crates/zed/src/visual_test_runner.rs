@@ -321,7 +321,8 @@ fn run_visual_tests(project_path: PathBuf, update_baseline: bool) -> Result<()> 
 
     workspace_window
         .update(&mut cx, |workspace, window, cx| {
-            workspace.add_panel(panel, window, cx);
+            let position = panel.read(cx).position(window, cx);
+            workspace.add_panel(panel, position, window, cx);
         })
         .log_err();
 

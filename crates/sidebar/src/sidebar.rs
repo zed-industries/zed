@@ -1494,6 +1494,7 @@ mod tests {
     use settings::SettingsStore;
     use std::sync::Arc;
     use util::path_list::PathList;
+    use workspace::dock::Panel;
 
     fn init_test(cx: &mut TestAppContext) {
         cx.update(|cx| {
@@ -2500,7 +2501,8 @@ mod tests {
         workspace.update_in(cx, |workspace, window, cx| {
             let text_thread_store = cx.new(|cx| TextThreadStore::fake(project.clone(), cx));
             let panel = cx.new(|cx| AgentPanel::test_new(workspace, text_thread_store, window, cx));
-            workspace.add_panel(panel.clone(), window, cx);
+            let position = panel.read(cx).position(window, cx);
+            workspace.add_panel(panel.clone(), position, window, cx);
             panel
         })
     }

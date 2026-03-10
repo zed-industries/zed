@@ -42,6 +42,7 @@ use std::{
 };
 use task::TcpArgumentsTemplate;
 use util::{path, rel_path::rel_path};
+use workspace::dock::Panel;
 
 #[gpui::test(iterations = 10)]
 async fn test_sharing_an_ssh_remote_project(
@@ -783,7 +784,8 @@ async fn test_remote_server_debugger(
         .unwrap();
 
     workspace.update_in(cx_a, |workspace, window, cx| {
-        workspace.add_panel(debugger_panel, window, cx);
+        let position = debugger_panel.read(cx).position(window, cx);
+        workspace.add_panel(debugger_panel, position, window, cx);
     });
 
     cx_a.run_until_parked();
@@ -896,7 +898,8 @@ async fn test_slow_adapter_startup_retries(
         .unwrap();
 
     workspace.update_in(cx_a, |workspace, window, cx| {
-        workspace.add_panel(debugger_panel, window, cx);
+        let position = debugger_panel.read(cx).position(window, cx);
+        workspace.add_panel(debugger_panel, position, window, cx);
     });
 
     cx_a.run_until_parked();

@@ -18,8 +18,8 @@ use settings::SettingsStore;
 use text::{Point, ToPoint};
 use util::{path, rel_path::rel_path, test::sample_text};
 use workspace::{
-    CloseWindow, CollaboratorId, MultiWorkspace, ParticipantLocation, SplitDirection, Workspace,
-    item::ItemHandle as _,
+    CloseWindow, CollaboratorId, MultiWorkspace, Panel as _, ParticipantLocation, SplitDirection,
+    Workspace, item::ItemHandle as _,
 };
 
 use super::TestClient;
@@ -534,7 +534,8 @@ async fn test_basic_following(
         // Client B activates a panel, and the previously-opened screen-sharing item gets activated.
         let panel = cx_b.new(|cx| TestPanel::new(DockPosition::Left, 100, cx));
         workspace_b.update_in(cx_b, |workspace, window, cx| {
-            workspace.add_panel(panel, window, cx);
+            let position = panel.read(cx).position(window, cx);
+            workspace.add_panel(panel, position, window, cx);
             workspace.toggle_panel_focus::<TestPanel>(window, cx);
         });
         executor.run_until_parked();

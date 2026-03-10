@@ -2121,6 +2121,7 @@ impl Workspace {
     pub fn add_panel<T: Panel>(
         &mut self,
         panel: Entity<T>,
+        position: DockPosition,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -2128,8 +2129,7 @@ impl Workspace {
         cx.on_focus_in(&focus_handle, window, Self::handle_panel_focused)
             .detach();
 
-        let dock_position = panel.position(window, cx);
-        let dock = self.dock_at_position(dock_position);
+        let dock = self.dock_at_position(position);
         let any_panel = panel.to_any();
 
         dock.update(cx, |dock, cx| {
@@ -2137,6 +2137,79 @@ impl Workspace {
         });
 
         cx.emit(Event::PanelAdded(any_panel));
+    }
+
+    pub fn move_panel_to_dock(
+        &mut self,
+        panel_id: EntityId,
+        new_position: DockPosition,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let current_dock_position = self
+            .all_docks()
+            .iter()
+            .find(|dock| dock.read(cx).panel_for_id(panel_id).is_some())
+            .map(|dock| dock.read(cx).position());
+
+        let Some(current_dock_position) = current_dock_position else {
+            return;
+        };
+
+        if current_dock_position == new_position {
+            return;
+        }
+
+        let current_dock = self.dock_at_position(current_dock_position).clone();
+
+        let was_visible = current_dock.read(cx).is_open()
+            && current_dock
+                .read(cx)
+                .visible_panel()
+                .is_some_and(|active_panel| active_panel.panel_id() == panel_id);
+
+        let panel_handle = current_dock.read(cx).panel_for_id(panel_id).cloned();
+
+        let Some(panel_handle) = panel_handle else {
+            return;
+        };
+
+        if panel_handle.is_zoomed(window, cx) {
+            self.zoomed_position = Some(new_position);
+        }
+
+        current_dock.update(cx, |dock, cx| {
+            dock.remove_panel_by_id(panel_id, window, cx);
+        });
+
+        let new_dock = self.dock_at_position(new_position).clone();
+
+        new_dock.update(cx, |dock, cx| {
+            dock.remove_panel_by_id(panel_id, window, cx);
+        });
+
+        let weak_self = self.weak_self.clone();
+        new_dock.update(cx, |dock, cx| {
+            let index = panel_handle.add_to_dock(dock, weak_self, window, cx);
+            if was_visible {
+                dock.set_open(true, window, cx);
+                dock.activate_panel(index, window, cx);
+            }
+        });
+
+        self.serialize_workspace(window, cx);
+    }
+
+    pub fn all_panel_ids_and_positions(&self, cx: &App) -> Vec<(EntityId, DockPosition)> {
+        let mut result = Vec::new();
+        for dock in self.all_docks() {
+            let dock = dock.read(cx);
+            let position = dock.position();
+            for panel_id in dock.panel_ids() {
+                result.push((panel_id, position));
+            }
+        }
+        result
     }
 
     pub fn remove_panel<T: Panel>(
@@ -10907,7 +10980,8 @@ mod tests {
 
         let panel = workspace.update_in(cx, |workspace, window, cx| {
             let panel = cx.new(|cx| TestPanel::new(DockPosition::Right, 100, cx));
-            workspace.add_panel(panel.clone(), window, cx);
+            let position = panel.read(cx).position(window, cx);
+            workspace.add_panel(panel.clone(), position, window, cx);
 
             workspace
                 .right_dock()
@@ -11057,7 +11131,8 @@ mod tests {
 
         let panel = workspace.update_in(cx, |workspace, window, cx| {
             let panel = cx.new(|cx| TestPanel::new(DockPosition::Right, 100, cx));
-            workspace.add_panel(panel.clone(), window, cx);
+            let position = panel.read(cx).position(window, cx);
+            workspace.add_panel(panel.clone(), position, window, cx);
             panel
         });
 
@@ -11352,10 +11427,12 @@ mod tests {
         // Open two docks (left and right) with one panel each
         let (left_panel, right_panel) = workspace.update_in(cx, |workspace, window, cx| {
             let left_panel = cx.new(|cx| TestPanel::new(DockPosition::Left, 100, cx));
-            workspace.add_panel(left_panel.clone(), window, cx);
+            let position = left_panel.read(cx).position(window, cx);
+            workspace.add_panel(left_panel.clone(), position, window, cx);
 
             let right_panel = cx.new(|cx| TestPanel::new(DockPosition::Right, 101, cx));
-            workspace.add_panel(right_panel.clone(), window, cx);
+            let position = right_panel.read(cx).position(window, cx);
+            workspace.add_panel(right_panel.clone(), position, window, cx);
 
             workspace.toggle_dock(DockPosition::Left, window, cx);
             workspace.toggle_dock(DockPosition::Right, window, cx);
@@ -11784,10 +11861,12 @@ mod tests {
 
         let (panel_1, panel_2) = workspace.update_in(cx, |workspace, window, cx| {
             let panel_1 = cx.new(|cx| TestPanel::new(DockPosition::Left, 100, cx));
-            workspace.add_panel(panel_1.clone(), window, cx);
+            let position = panel_1.read(cx).position(window, cx);
+            workspace.add_panel(panel_1.clone(), position, window, cx);
             workspace.toggle_dock(DockPosition::Left, window, cx);
             let panel_2 = cx.new(|cx| TestPanel::new(DockPosition::Right, 101, cx));
-            workspace.add_panel(panel_2.clone(), window, cx);
+            let position = panel_2.read(cx).position(window, cx);
+            workspace.add_panel(panel_2.clone(), position, window, cx);
             workspace.toggle_dock(DockPosition::Right, window, cx);
 
             let left_dock = workspace.left_dock();
@@ -12695,7 +12774,8 @@ mod tests {
         // focus to the new panel.
         let panel = workspace.update_in(cx, |workspace, window, cx| {
             let panel = cx.new(|cx| TestPanel::new(DockPosition::Right, 100, cx));
-            workspace.add_panel(panel.clone(), window, cx);
+            let position = panel.read(cx).position(window, cx);
+            workspace.add_panel(panel.clone(), position, window, cx);
 
             workspace
                 .right_dock()
@@ -13383,7 +13463,8 @@ mod tests {
         let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
         let panel = workspace.update_in(cx, |workspace, window, cx| {
             let panel = cx.new(|cx| TestPanel::new(DockPosition::Right, 100, cx));
-            workspace.add_panel(panel.clone(), window, cx);
+            let position = panel.read(cx).position(window, cx);
+            workspace.add_panel(panel.clone(), position, window, cx);
 
             workspace
                 .right_dock()
@@ -13468,7 +13549,8 @@ mod tests {
         // Add a panel to workspace A's right dock and open the dock
         let panel = workspace_a.update_in(cx, |workspace, window, cx| {
             let panel = cx.new(|cx| TestPanel::new(DockPosition::Right, 100, cx));
-            workspace.add_panel(panel.clone(), window, cx);
+            let position = panel.read(cx).position(window, cx);
+            workspace.add_panel(panel.clone(), position, window, cx);
             workspace
                 .right_dock()
                 .update(cx, |dock, cx| dock.set_open(true, window, cx));
@@ -13570,7 +13652,8 @@ mod tests {
 
         let panel = workspace.update_in(cx, |workspace, window, cx| {
             let panel = cx.new(|cx| TestPanel::new(DockPosition::Right, 100, cx));
-            workspace.add_panel(panel.clone(), window, cx);
+            let position = panel.read(cx).position(window, cx);
+            workspace.add_panel(panel.clone(), position, window, cx);
             workspace
                 .right_dock()
                 .update(cx, |dock, cx| dock.set_open(true, window, cx));

@@ -4908,7 +4908,8 @@ mod tests {
             let text_thread_store = cx.new(|cx| TextThreadStore::fake(project.clone(), cx));
             let panel =
                 cx.new(|cx| AgentPanel::new(workspace, text_thread_store, None, window, cx));
-            workspace.add_panel(panel, window, cx);
+            let position = panel.read(cx).position(window, cx);
+            workspace.add_panel(panel, position, window, cx);
         });
 
         cx.run_until_parked();
@@ -5132,7 +5133,8 @@ mod tests {
             let text_thread_store = cx.new(|cx| TextThreadStore::fake(project.clone(), cx));
             let panel =
                 cx.new(|cx| AgentPanel::new(workspace, text_thread_store, None, window, cx));
-            workspace.add_panel(panel.clone(), window, cx);
+            let position = panel.read(cx).position(window, cx);
+            workspace.add_panel(panel.clone(), position, window, cx);
             panel
         });
 
@@ -5242,7 +5244,8 @@ mod tests {
             let text_thread_store = cx.new(|cx| TextThreadStore::fake(project.clone(), cx));
             let panel =
                 cx.new(|cx| AgentPanel::new(workspace, text_thread_store, None, window, cx));
-            workspace.add_panel(panel.clone(), window, cx);
+            let position = panel.read(cx).position(window, cx);
+            workspace.add_panel(panel.clone(), position, window, cx);
             panel
         });
 
@@ -5327,7 +5330,8 @@ mod tests {
             let text_thread_store = cx.new(|cx| TextThreadStore::fake(project.clone(), cx));
             let panel =
                 cx.new(|cx| AgentPanel::new(workspace, text_thread_store, None, window, cx));
-            workspace.add_panel(panel.clone(), window, cx);
+            let position = panel.read(cx).position(window, cx);
+            workspace.add_panel(panel.clone(), position, window, cx);
             panel
         });
 

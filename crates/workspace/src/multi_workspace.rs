@@ -146,7 +146,7 @@ impl MultiWorkspace {
             active_workspace_index: 0,
             sidebar: None,
             sidebar_open: false,
-            is_singleton: false,
+            is_singleton: true,
             _sidebar_subscription: None,
             pending_removal_tasks: Vec::new(),
             _serialize_task: None,
@@ -488,11 +488,12 @@ impl MultiWorkspace {
     pub fn add_panel<T: Panel>(
         &mut self,
         panel: Entity<T>,
+        position: DockPosition,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         self.workspace().update(cx, |workspace, cx| {
-            workspace.add_panel(panel, window, cx);
+            workspace.add_panel(panel, position, window, cx);
         });
     }
 
