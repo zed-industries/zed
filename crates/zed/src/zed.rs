@@ -786,24 +786,24 @@ fn update_panel_positions(
     }
 }
 
-fn find_agent_panel_view(workspace: &Workspace, cx: &App) -> Option<Arc<dyn PanelHandle>> {
-    for dock in workspace.all_docks() {
-        let dock = dock.read(cx);
-        for panel_id in dock.panel_ids() {
-            if let Some(panel) = dock.panel_for_id(panel_id) {
-                if panel.panel_key() == agent_ui::AgentPanel::panel_key() {
-                    return Some(panel.clone());
-                }
-            }
-        }
-    }
-    if let Some(left_item) = workspace.left_item() {
-        if left_item.panel_key() == agent_ui::AgentPanel::panel_key() {
-            return Some(left_item.clone());
-        }
-    }
-    None
-}
+// fn find_agent_panel_view(workspace: &Workspace, cx: &App) -> Option<Arc<dyn PanelHandle>> {
+//     for dock in workspace.all_docks() {
+//         let dock = dock.read(cx);
+//         for panel_id in dock.panel_ids() {
+//             if let Some(panel) = dock.panel_for_id(panel_id) {
+//                 if panel.panel_key() == agent_ui::AgentPanel::panel_key() {
+//                     return Some(panel.clone());
+//                 }
+//             }
+//         }
+//     }
+//     if let Some(left_item) = workspace.left_item() {
+//         if left_item.panel_key() == agent_ui::AgentPanel::panel_key() {
+//             return Some(left_item.clone());
+//         }
+//     }
+//     None
+// }
 
 fn setup_or_teardown_ai_panel<P: Panel>(
     workspace: &mut Workspace,

@@ -1742,6 +1742,7 @@ impl Workspace {
             scheduled_tasks: Vec::new(),
             last_open_dock_positions: Vec::new(),
             removing: false,
+            left_dock_expanded_mode: false,
         }
     }
 
