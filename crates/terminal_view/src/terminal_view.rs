@@ -214,7 +214,7 @@ impl TerminalView {
         let working_directory = default_working_directory(workspace, cx);
         TerminalPanel::add_center_terminal(workspace, window, cx, move |project, cx| {
             if local {
-                project.create_local_terminal(cx)
+                project.create_local_terminal(working_directory, cx)
             } else {
                 project.create_terminal_shell(working_directory, cx)
             }

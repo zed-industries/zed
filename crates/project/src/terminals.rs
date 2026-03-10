@@ -298,14 +298,15 @@ impl Project {
     /// In local projects: opens in the project directory (same as regular terminals).
     pub fn create_local_terminal(
         &mut self,
+        preferred_working_directory: Option<PathBuf>,
         cx: &mut Context<Self>,
     ) -> Task<Result<Entity<Terminal>>> {
         let working_directory = if self.remote_client.is_some() {
             // Remote project: don't use remote paths, let shell use Zed's cwd
             None
         } else {
-            // Local project: use project directory like normal terminals
-            self.active_project_directory(cx).map(|p| p.to_path_buf())
+            preferred_working_directory
+                .or_else(|| self.active_project_directory(cx).map(|p| p.to_path_buf()))
         };
         self.create_terminal_shell_internal(working_directory, true, cx)
     }
