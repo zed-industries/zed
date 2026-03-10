@@ -19676,7 +19676,7 @@ async fn test_language_server_restart_due_to_settings_change(cx: &mut TestAppCon
 
 #[gpui::test]
 async fn test_toggle_theme_mode_persists_and_updates_active_theme(cx: &mut TestAppContext) {
-    use theme::{Appearance, GlobalTheme, SystemAppearance, ThemeSettings};
+    use theme::{Appearance, SystemAppearance, ThemeSettings};
     use zed_actions::theme::ToggleMode;
 
     fn set_static_light_theme(settings: &mut SettingsContent) {
@@ -19730,7 +19730,6 @@ async fn test_toggle_theme_mode_persists_and_updates_active_theme(cx: &mut TestA
                 .set_user_settings(&settings_text, cx)
                 .expect("failed to load initial theme settings into the store");
         });
-        GlobalTheme::reload_theme(cx);
     });
     cx.run_until_parked();
 
@@ -19759,7 +19758,34 @@ async fn test_toggle_theme_mode_persists_and_updates_active_theme(cx: &mut TestA
                 .set_user_settings(&settings_text, cx)
                 .expect("failed to reload persisted theme settings");
         });
-        GlobalTheme::reload_theme(cx);
+    });
+    cx.run_until_parked();
+
+    assert_eq!(
+        workspace.update_in(cx, |_workspace, _window, cx| cx.theme().name.to_string()),
+        "One Light",
+    );
+    assert_eq!(
+        workspace.update_in(cx, |_workspace, _window, cx| ThemeSettings::get_global(cx)
+            .theme
+            .mode()),
+        Some(theme::ThemeAppearanceMode::System),
+    );
+
+    workspace.update_in(cx, |_workspace, window, cx| {
+        window.dispatch_action(ToggleMode.boxed_clone(), cx);
+    });
+    cx.executor().advance_clock(Duration::from_millis(200));
+    cx.run_until_parked();
+    let settings_text = SettingsStore::load_settings(&settings_fs)
+        .await
+        .expect("failed to load persisted theme settings");
+    workspace.update_in(cx, |_workspace, _window, cx| {
+        SettingsStore::update_global(cx, |store, cx| {
+            store
+                .set_user_settings(&settings_text, cx)
+                .expect("failed to reload persisted theme settings");
+        });
     });
     cx.run_until_parked();
 

@@ -7160,12 +7160,7 @@ impl Workspace {
         });
     }
 
-    fn toggle_theme_mode(
-        &mut self,
-        _: &ToggleMode,
-        _window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
+    fn toggle_theme_mode(&mut self, _: &ToggleMode, _window: &mut Window, cx: &mut Context<Self>) {
         let current_mode = ThemeSettings::get_global(cx).theme.mode();
         let next_mode = match current_mode {
             Some(theme::ThemeAppearanceMode::Light) => theme::ThemeAppearanceMode::Dark,
