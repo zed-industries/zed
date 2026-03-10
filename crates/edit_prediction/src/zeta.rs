@@ -489,7 +489,7 @@ pub(crate) fn active_buffer_diagnostics(
 ) -> Vec<zeta_prompt::ActiveBufferDiagnostic> {
     snapshot
         .diagnostics_in_range::<Point, Point>(diagnostic_search_range, false)
-        .filter_map(|entry| {
+        .map(|entry| {
             let severity = match entry.diagnostic.severity {
                 DiagnosticSeverity::ERROR => Some(1),
                 DiagnosticSeverity::WARNING => Some(2),
@@ -508,7 +508,7 @@ pub(crate) fn active_buffer_diagnostics(
                 .collect::<String>();
             let snippet_start_offset = snippet_point_range.start.to_offset(snapshot);
             let diagnostic_offset_range = diagnostic_point_range.to_offset(snapshot);
-            Some(zeta_prompt::ActiveBufferDiagnostic {
+            zeta_prompt::ActiveBufferDiagnostic {
                 severity,
                 message: entry.diagnostic.message.clone(),
                 snippet,
@@ -516,7 +516,7 @@ pub(crate) fn active_buffer_diagnostics(
                     ..diagnostic_point_range.end.row,
                 diagnostic_range_in_snippet: diagnostic_offset_range.start - snippet_start_offset
                     ..diagnostic_offset_range.end - snippet_start_offset,
-            })
+            }
         })
         .collect()
 }
