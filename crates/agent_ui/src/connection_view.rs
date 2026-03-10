@@ -67,7 +67,7 @@ use super::entry_view_state::EntryViewState;
 use super::thread_history::ThreadHistory;
 use crate::ModeSelector;
 use crate::ModelSelectorPopover;
-use crate::agent_connection_store::AgentConnectionStore;
+use crate::agent_connection_store::{AgentConnectionStore, ConnectionEntryEvent};
 use crate::agent_diff::AgentDiff;
 use crate::entry_view_state::{EntryViewEvent, ViewEvent};
 use crate::message_editor::{MessageEditor, MessageEditorEvent};
@@ -419,6 +419,7 @@ pub struct ConnectedServerState {
     threads: HashMap<acp::SessionId, Entity<ThreadView>>,
     connection: Rc<dyn AgentConnection>,
     conversation: Entity<Conversation>,
+    _connection_entry_subscription: Subscription,
 }
 
 enum AuthState {
@@ -658,11 +659,23 @@ impl ConnectionView {
             .or_else(|| worktree_roots.first().cloned())
             .unwrap_or_else(|| paths::home_dir().as_path().into());
 
-        let handle = connection_store.update(cx, |store, cx| {
+        let connection_entry = connection_store.update(cx, |store, cx| {
             store.request_connection(connection_key, agent.clone(), cx)
         });
 
-        let connect_result = handle.read(cx).wait_for_connection();
+        let connection_entry_subscription =
+            cx.subscribe(&connection_entry, |this, _entry, event, cx| match event {
+                ConnectionEntryEvent::NewVersionAvailable(version) => {
+                    if let Some(thread) = this.active_thread() {
+                        thread.update(cx, |thread, cx| {
+                            thread.new_server_version_available = Some(version.clone());
+                            cx.notify();
+                        });
+                    }
+                }
+            });
+
+        let connect_result = connection_entry.read(cx).wait_for_connection();
 
         let load_session_id = resume_session_id.clone();
         let load_task = cx.spawn_in(window, async move |this, cx| {
@@ -784,6 +797,7 @@ impl ConnectionView {
                                 active_id: Some(id.clone()),
                                 threads: HashMap::from_iter([(id, current)]),
                                 conversation,
+                                _connection_entry_subscription: connection_entry_subscription,
                             }),
                             cx,
                         );
@@ -800,23 +814,6 @@ impl ConnectionView {
             })
             .log_err();
         });
-
-        // cx.spawn(async move |this, cx| {
-        //     while let Ok(new_version) = new_version_available_rx.recv().await {
-        //         if let Some(new_version) = new_version {
-        //             this.update(cx, |this, cx| {
-        //                 if let Some(thread) = this.active_thread() {
-        //                     thread.update(cx, |thread, _cx| {
-        //                         thread.new_server_version_available = Some(new_version.into());
-        //                     });
-        //                 }
-        //                 cx.notify();
-        //             })
-        //             .ok();
-        //         }
-        //     }
-        // })
-        // .detach();
 
         let loading_view = cx.new(|_cx| LoadingView {
             session_id: resume_session_id,
@@ -1098,6 +1095,7 @@ impl ConnectionView {
                         threads: HashMap::default(),
                         connection,
                         conversation: cx.new(|_cx| Conversation::default()),
+                        _connection_entry_subscription: Subscription::new(|| {}),
                     }),
                     cx,
                 );

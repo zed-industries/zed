@@ -5,7 +5,7 @@ use agent_servers::{AgentServer, AgentServerDelegate};
 use anyhow::Result;
 use collections::HashMap;
 use futures::{FutureExt, future::Shared};
-use gpui::{AppContext, Context, Entity, SharedString, Subscription, Task};
+use gpui::{AppContext, Context, Entity, EventEmitter, SharedString, Subscription, Task};
 use project::{AgentServerStore, AgentServersUpdated, Project};
 use watch::Receiver;
 
@@ -18,7 +18,6 @@ pub enum ConnectionEntry {
     },
     Connected {
         connection: Rc<dyn AgentConnection>,
-        new_version: Option<SharedString>,
     },
     Error {
         error: LoadError,
@@ -29,13 +28,19 @@ impl ConnectionEntry {
     pub fn wait_for_connection(&self) -> Shared<Task<Result<Rc<dyn AgentConnection>, LoadError>>> {
         match self {
             ConnectionEntry::Connecting { connect_task } => connect_task.clone(),
-            ConnectionEntry::Connected { connection, .. } => {
+            ConnectionEntry::Connected { connection } => {
                 Task::ready(Ok(connection.clone())).shared()
             }
             ConnectionEntry::Error { error } => Task::ready(Err(error.clone())).shared(),
         }
     }
 }
+
+pub enum ConnectionEntryEvent {
+    NewVersionAvailable(SharedString),
+}
+
+impl EventEmitter<ConnectionEntryEvent> for ConnectionEntry {}
 
 pub struct AgentConnectionStore {
     project: Entity<Project>,
@@ -76,10 +81,7 @@ impl AgentConnectionStore {
                     Ok(connection) => {
                         entry.update(cx, |entry, cx| {
                             if let ConnectionEntry::Connecting { .. } = entry {
-                                *entry = ConnectionEntry::Connected {
-                                    connection,
-                                    new_version: None,
-                                };
+                                *entry = ConnectionEntry::Connected { connection };
                                 cx.notify();
                             }
                         });
@@ -100,12 +102,13 @@ impl AgentConnectionStore {
                 let entry = entry.clone();
                 async move |_this, cx| {
                     while let Ok(version) = new_version_rx.recv().await {
-                        entry.update(cx, |entry, cx| {
-                            if let ConnectionEntry::Connected { new_version, .. } = entry {
-                                *new_version = version.map(|v| v.into());
-                                cx.notify();
-                            }
-                        });
+                        if let Some(version) = version {
+                            entry.update(cx, |_entry, cx| {
+                                cx.emit(ConnectionEntryEvent::NewVersionAvailable(
+                                    version.clone().into(),
+                                ));
+                            });
+                        }
                     }
                 }
             })
