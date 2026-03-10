@@ -47,11 +47,19 @@ impl AgentServer for NativeAgentServer {
             log::debug!("Creating templates for native agent");
             let templates = Templates::new();
             let prompt_store = prompt_store.await?;
+            let workspace = delegate.workspace().cloned();
 
             log::debug!("Creating native agent entity");
-            let agent =
-                NativeAgent::new(project, thread_store, templates, Some(prompt_store), fs, cx)
-                    .await?;
+            let agent = NativeAgent::new_with_workspace(
+                project,
+                thread_store,
+                templates,
+                Some(prompt_store),
+                fs,
+                workspace,
+                cx,
+            )
+            .await?;
 
             // Create the connection wrapper
             let connection = NativeAgentConnection(agent);

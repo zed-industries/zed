@@ -1,12 +1,13 @@
 use super::tool_permissions::{
-    ResolvedProjectPath, authorize_symlink_access, canonicalize_worktree_roots,
-    resolve_project_path,
+    ResolvedProjectPath, active_worktree_context, authorize_symlink_access,
+    canonicalize_worktree_roots, resolve_project_path,
 };
 use crate::{AgentTool, ToolCallEventStream, ToolInput};
 use agent_client_protocol::ToolKind;
 use anyhow::{Context as _, Result, anyhow};
 use gpui::{App, Entity, SharedString, Task};
 use project::{Project, ProjectPath, WorktreeSettings};
+use prompt_store::ProjectContext;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::Settings;
@@ -43,11 +44,25 @@ pub struct ListDirectoryToolInput {
 
 pub struct ListDirectoryTool {
     project: Entity<Project>,
+    project_context: Option<Entity<ProjectContext>>,
 }
 
 impl ListDirectoryTool {
     pub fn new(project: Entity<Project>) -> Self {
-        Self { project }
+        Self {
+            project,
+            project_context: None,
+        }
+    }
+
+    pub fn new_with_project_context(
+        project: Entity<Project>,
+        project_context: Entity<ProjectContext>,
+    ) -> Self {
+        Self {
+            project,
+            project_context: Some(project_context),
+        }
     }
 
     fn build_directory_output(
@@ -152,10 +167,18 @@ impl AgentTool for ListDirectoryTool {
     ) -> Task<Result<Self::Output, Self::Output>> {
         let project = self.project.clone();
         cx.spawn(async move |cx| {
-            let input = input
+            let mut input = input
                 .recv()
                 .await
                 .map_err(|e| format!("Failed to receive tool input: {e}"))?;
+
+            if matches!(input.path.as_str(), "." | "" | "./" | "*")
+                && let Some(active_worktree) = project.read_with(cx, |project, cx| {
+                    active_worktree_context(project, self.project_context.as_ref(), cx)
+                })
+            {
+                input.path = active_worktree.root_name;
+            }
 
             // Sometimes models will return these even though we tell it to give a path and not a glob.
             // When this happens, just list the root worktree directories.
@@ -272,9 +295,11 @@ mod tests {
     use gpui::{TestAppContext, UpdateGlobal};
     use indoc::indoc;
     use project::{FakeFs, Project};
+    use prompt_store::{ProjectContext, WorktreeContext};
     use serde_json::json;
     use settings::SettingsStore;
     use std::path::PathBuf;
+    use std::sync::Arc;
     use util::path;
 
     fn platform_paths(path_str: &str) -> String {
@@ -426,6 +451,78 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(output, "project/empty_dir is empty.\n");
+    }
+
+    #[gpui::test]
+    async fn test_list_directory_dot_prefers_active_worktree(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/worktree-a"),
+            json!({
+                "a.txt": "A",
+                "nested": {
+                    "one.txt": "1"
+                }
+            }),
+        )
+        .await;
+        fs.insert_tree(
+            path!("/worktree-b"),
+            json!({
+                "b.txt": "B",
+                "nested": {
+                    "two.txt": "2"
+                }
+            }),
+        )
+        .await;
+
+        let project = Project::test(
+            fs.clone(),
+            [path!("/worktree-a").as_ref(), path!("/worktree-b").as_ref()],
+            cx,
+        )
+        .await;
+        let project_context = cx.new(|_cx| {
+            ProjectContext::new(
+                vec![
+                    WorktreeContext {
+                        root_name: "worktree-a".into(),
+                        abs_path: Arc::from(path!("/worktree-a").as_ref()),
+                        is_active: false,
+                        rules_file: None,
+                    },
+                    WorktreeContext {
+                        root_name: "worktree-b".into(),
+                        abs_path: Arc::from(path!("/worktree-b").as_ref()),
+                        is_active: true,
+                        rules_file: None,
+                    },
+                ],
+                vec![],
+            )
+        });
+
+        let tool = Arc::new(ListDirectoryTool::new_with_project_context(
+            project,
+            project_context,
+        ));
+        let output = cx
+            .update(|cx| {
+                tool.clone().run(
+                    ToolInput::resolved(ListDirectoryToolInput { path: ".".into() }),
+                    ToolCallEventStream::test().0,
+                    cx,
+                )
+            })
+            .await
+            .unwrap();
+
+        assert!(output.contains(&platform_paths("worktree-b/nested")));
+        assert!(output.contains(&platform_paths("worktree-b/b.txt")));
+        assert!(!output.contains("worktree-a"));
     }
 
     #[gpui::test]

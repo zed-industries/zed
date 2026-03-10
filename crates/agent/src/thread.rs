@@ -1456,9 +1456,18 @@ impl Thread {
             language_registry,
         ));
         self.add_tool(FetchTool::new(self.project.read(cx).client().http_client()));
-        self.add_tool(FindPathTool::new(self.project.clone()));
-        self.add_tool(GrepTool::new(self.project.clone()));
-        self.add_tool(ListDirectoryTool::new(self.project.clone()));
+        self.add_tool(FindPathTool::new_with_project_context(
+            self.project.clone(),
+            self.project_context.clone(),
+        ));
+        self.add_tool(GrepTool::new_with_project_context(
+            self.project.clone(),
+            self.project_context.clone(),
+        ));
+        self.add_tool(ListDirectoryTool::new_with_project_context(
+            self.project.clone(),
+            self.project_context.clone(),
+        ));
         self.add_tool(MovePathTool::new(self.project.clone()));
         self.add_tool(NowTool);
         self.add_tool(OpenTool::new(self.project.clone()));
@@ -1469,7 +1478,11 @@ impl Thread {
         ));
         self.add_tool(SaveFileTool::new(self.project.clone()));
         self.add_tool(RestoreFileFromDiskTool::new(self.project.clone()));
-        self.add_tool(TerminalTool::new(self.project.clone(), environment.clone()));
+        self.add_tool(TerminalTool::new_with_project_context(
+            self.project.clone(),
+            self.project_context.clone(),
+            environment.clone(),
+        ));
         self.add_tool(WebSearchTool);
 
         if self.depth() < MAX_SUBAGENT_DEPTH {

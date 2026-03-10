@@ -645,6 +645,7 @@ impl ConnectionView {
         let delegate = AgentServerDelegate::new(
             project.read(cx).agent_server_store().clone(),
             project.clone(),
+            Some(self.workspace.clone()),
             Some(status_tx),
             Some(new_version_available_tx),
         );

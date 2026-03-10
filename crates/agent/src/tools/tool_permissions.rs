@@ -6,6 +6,7 @@ use anyhow::{Result, anyhow};
 use fs::Fs;
 use gpui::{App, Entity, Task, WeakEntity};
 use project::{Project, ProjectPath};
+use prompt_store::ProjectContext;
 use settings::Settings;
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
@@ -14,6 +15,12 @@ use std::sync::Arc;
 pub enum SensitiveSettingsKind {
     Local,
     Global,
+}
+
+#[derive(Debug, Clone)]
+pub struct ActiveWorktreeContext {
+    pub root_name: String,
+    pub abs_path: PathBuf,
 }
 
 /// Result of resolving a path within the project with symlink safety checks.
@@ -126,6 +133,23 @@ pub async fn sensitive_settings_kind(path: &Path, fs: &dyn Fs) -> Option<Sensiti
 
 pub async fn is_sensitive_settings_path(path: &Path, fs: &dyn Fs) -> bool {
     sensitive_settings_kind(path, fs).await.is_some()
+}
+
+pub fn active_worktree_context(
+    project: &Project,
+    project_context: Option<&Entity<ProjectContext>>,
+    cx: &App,
+) -> Option<ActiveWorktreeContext> {
+    let active_root_name = project_context?
+        .read(cx)
+        .active_worktree_root_name
+        .clone()?;
+    let worktree = project.worktree_for_root_name(&active_root_name, cx)?;
+
+    Some(ActiveWorktreeContext {
+        root_name: active_root_name,
+        abs_path: worktree.read(cx).abs_path().to_path_buf(),
+    })
 }
 
 /// Resolves a path within the project, checking for symlink escapes.

@@ -220,6 +220,7 @@ dependencies = [
  "uuid",
  "watch",
  "web_search",
+ "workspace",
  "zed_env_vars",
  "zlog",
  "zstd",
@@ -297,6 +298,7 @@ dependencies = [
  "util",
  "uuid",
  "watch",
+ "workspace",
 ]
 
 [[package]]

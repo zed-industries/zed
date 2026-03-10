@@ -553,6 +553,7 @@ impl MentionSet {
             project.clone(),
             None,
             None,
+            None,
         );
         let connection = server.connect(delegate, cx);
         cx.spawn(async move |_, cx| {

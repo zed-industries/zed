@@ -54,6 +54,7 @@ use std::sync::Arc;
 use util::ResultExt;
 use util::path_list::PathList;
 use util::rel_path::RelPath;
+use workspace::Workspace;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ProjectSnapshot {
@@ -245,6 +246,7 @@ pub struct NativeAgent {
     /// Cached model information
     models: LanguageModels,
     project: Entity<Project>,
+    workspace: Option<WeakEntity<Workspace>>,
     prompt_store: Option<Entity<PromptStore>>,
     fs: Arc<dyn Fs>,
     _subscriptions: Vec<Subscription>,
@@ -259,10 +261,24 @@ impl NativeAgent {
         fs: Arc<dyn Fs>,
         cx: &mut AsyncApp,
     ) -> Result<Entity<NativeAgent>> {
+        Self::new_with_workspace(project, thread_store, templates, prompt_store, fs, None, cx).await
+    }
+
+    pub async fn new_with_workspace(
+        project: Entity<Project>,
+        thread_store: Entity<ThreadStore>,
+        templates: Arc<Templates>,
+        prompt_store: Option<Entity<PromptStore>>,
+        fs: Arc<dyn Fs>,
+        workspace: Option<WeakEntity<Workspace>>,
+        cx: &mut AsyncApp,
+    ) -> Result<Entity<NativeAgent>> {
         log::debug!("Creating new NativeAgent");
 
         let project_context = cx
-            .update(|cx| Self::build_project_context(&project, prompt_store.as_ref(), cx))
+            .update(|cx| {
+                Self::build_project_context(&project, prompt_store.as_ref(), workspace.as_ref(), cx)
+            })
             .await;
 
         Ok(cx.new(|cx| {
@@ -288,6 +304,11 @@ impl NativeAgent {
             if let Some(prompt_store) = prompt_store.as_ref() {
                 subscriptions.push(cx.subscribe(prompt_store, Self::handle_prompts_updated_event))
             }
+            if let Some(workspace) = workspace.as_ref().and_then(|workspace| workspace.upgrade()) {
+                subscriptions.push(cx.observe(&workspace, |this, _, _cx| {
+                    this.project_context_needs_refresh.send(()).ok();
+                }));
+            }
 
             let (project_context_needs_refresh_tx, project_context_needs_refresh_rx) =
                 watch::channel(());
@@ -303,6 +324,7 @@ impl NativeAgent {
                 templates,
                 models: LanguageModels::new(cx),
                 project,
+                workspace,
                 prompt_store,
                 fs,
                 _subscriptions: subscriptions,
@@ -427,7 +449,12 @@ impl NativeAgent {
         while needs_refresh.changed().await.is_ok() {
             let project_context = this
                 .update(cx, |this, cx| {
-                    Self::build_project_context(&this.project, this.prompt_store.as_ref(), cx)
+                    Self::build_project_context(
+                        &this.project,
+                        this.prompt_store.as_ref(),
+                        this.workspace.as_ref(),
+                        cx,
+                    )
                 })?
                 .await;
             this.update(cx, |this, cx| {
@@ -441,27 +468,38 @@ impl NativeAgent {
     fn build_project_context(
         project: &Entity<Project>,
         prompt_store: Option<&Entity<PromptStore>>,
+        workspace: Option<&WeakEntity<Workspace>>,
         cx: &mut App,
     ) -> Task<ProjectContext> {
         let worktrees = project.read(cx).visible_worktrees(cx).collect::<Vec<_>>();
-        let active_worktree_id = project
-            .read(cx)
-            .agent_location()
-            .and_then(|location| {
-                location
-                    .buffer
-                    .read_with(cx, |buffer, cx| {
-                        buffer.file().map(|file| file.worktree_id(cx))
-                    })
-                    .ok()
-                    .flatten()
+        let active_worktree_id = workspace
+            .and_then(|workspace| workspace.upgrade())
+            .and_then(|workspace| {
+                workspace
+                    .read(cx)
+                    .effective_active_worktree(cx)
+                    .map(|worktree| worktree.read(cx).id())
             })
             .or_else(|| {
-                if worktrees.len() == 1 {
-                    Some(worktrees[0].read(cx).id())
-                } else {
-                    None
-                }
+                project
+                    .read(cx)
+                    .agent_location()
+                    .and_then(|location| {
+                        location
+                            .buffer
+                            .read_with(cx, |buffer, cx| {
+                                buffer.file().map(|file| file.worktree_id(cx))
+                            })
+                            .ok()
+                            .flatten()
+                    })
+                    .or_else(|| {
+                        if worktrees.len() == 1 {
+                            Some(worktrees[0].read(cx).id())
+                        } else {
+                            None
+                        }
+                    })
             });
         let worktree_tasks = worktrees
             .into_iter()
