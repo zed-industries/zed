@@ -482,7 +482,7 @@ impl WritePipeline {
             .push_char_operations(&char_ops, self.original_snapshot.as_rope());
         self.line_diff.finish(self.original_snapshot.as_rope());
         diff.update(cx, |diff, cx| {
-            diff.update_pending(
+            diff.push_line_operations(
                 self.line_diff.line_operations(),
                 self.original_snapshot.clone(),
                 cx,
@@ -515,7 +515,7 @@ impl WritePipeline {
         self.line_diff
             .push_char_operations(&char_ops, self.original_snapshot.as_rope());
         diff.update(cx, |diff, cx| {
-            diff.update_pending(
+            diff.push_line_operations(
                 self.line_diff.line_operations(),
                 self.original_snapshot.clone(),
                 cx,
@@ -757,12 +757,9 @@ impl EditSession {
         tool.action_log
             .update(cx, |log, cx| log.buffer_read(buffer.clone(), cx));
 
-        let diff = cx.new(|cx| {
-            let mut diff = Diff::new(buffer.clone(), cx);
-            if matches!(mode, StreamingEditFileMode::Write) {
-                diff.disable_auto_update();
-            }
-            diff
+        let diff = cx.new(|cx| match mode {
+            StreamingEditFileMode::Write => Diff::manual(buffer.clone(), cx),
+            StreamingEditFileMode::Edit => Diff::new(buffer.clone(), cx),
         });
         event_stream.update_diff(diff.clone());
         let finalize_diff_guard = util::defer(Box::new({

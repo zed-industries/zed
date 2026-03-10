@@ -1,6 +1,6 @@
 use anyhow::Result;
 use buffer_diff::{BufferDiff, BufferDiffUpdate};
-use gpui::{App, AppContext, AsyncApp, Context, Entity, Subscription, Task};
+use gpui::{App, AppContext, AsyncApp, Context, Entity, Subscription, Task, WeakEntity};
 use itertools::Itertools;
 use language::{
     Anchor, Buffer, Capability, DiffOptions, LanguageRegistry, OffsetRangeExt as _, Point,
@@ -87,18 +87,42 @@ impl Diff {
     }
 
     pub fn new(buffer: Entity<Buffer>, cx: &mut Context<Self>) -> Self {
+        let subscription = cx.observe(&buffer, |this, _, cx| {
+            if let Diff::Pending(diff) = this {
+                diff.auto_update(cx);
+            }
+        });
+        Self::new_inner(
+            buffer,
+            UpdateStrategy::Auto {
+                _subscription: subscription,
+            },
+            cx,
+        )
+    }
+
+    pub fn manual(buffer: Entity<Buffer>, cx: &mut Context<Self>) -> Self {
+        Self::new_inner(
+            buffer,
+            UpdateStrategy::Manual {
+                pending_update: None,
+            },
+            cx,
+        )
+    }
+
+    fn new_inner(
+        buffer: Entity<Buffer>,
+        update_strategy: UpdateStrategy,
+        cx: &mut Context<Self>,
+    ) -> Self {
         let buffer_text_snapshot = buffer.read(cx).text_snapshot();
         let language = buffer.read(cx).language().cloned();
         let language_registry = buffer.read(cx).language_registry();
         let buffer_diff = cx.new(|cx| {
             let mut diff = BufferDiff::new_unchanged(&buffer_text_snapshot, cx);
             diff.language_changed(language.clone(), language_registry.clone(), cx);
-            let secondary_diff = cx.new(|cx| {
-                // For the secondary diff buffer we skip assigning the language as we do not really need to perform any syntax highlighting on
-                // it. As a result, by skipping it we are potentially shaving off a lot of RSS plus we get a snappier feel for large diff
-                // view multibuffers.
-                BufferDiff::new_unchanged(&buffer_text_snapshot, cx)
-            });
+            let secondary_diff = cx.new(|cx| BufferDiff::new_unchanged(&buffer_text_snapshot, cx));
             diff.set_secondary_diff(secondary_diff);
             diff
         });
@@ -113,25 +137,12 @@ impl Diff {
         Self::Pending(PendingDiff {
             multibuffer,
             base_text: Arc::from(buffer_text_snapshot.text().as_str()),
-            _subscription: cx.observe(&buffer, |this, _, cx| {
-                if let Diff::Pending(diff) = this {
-                    diff.update(cx);
-                }
-            }),
             new_buffer: buffer,
             diff: buffer_diff,
             revealed_ranges: Vec::new(),
+            update_strategy,
             update_diff: Task::ready(Ok(())),
-            pending_update: None,
-            is_updating: false,
-            auto_update: false,
         })
-    }
-
-    pub fn disable_auto_update(&mut self) {
-        if let Self::Pending(diff) = self {
-            diff.auto_update = false;
-        }
     }
 
     pub fn reveal_range(&mut self, range: Range<Anchor>, cx: &mut Context<Self>) {
@@ -228,17 +239,25 @@ impl Diff {
         }
     }
 
-    pub fn update_pending(
+    pub fn push_line_operations(
         &mut self,
         operations: Vec<LineOperation>,
-        snapshot: text::BufferSnapshot,
+        base_snapshot: text::BufferSnapshot,
         cx: &mut Context<Diff>,
     ) {
-        match self {
-            Diff::Pending(diff) => diff.update_manually(operations, snapshot, cx),
-            Diff::Finalized(_) => {}
+        if let Diff::Pending(diff) = self {
+            diff.push_line_operations(operations, base_snapshot, cx);
         }
     }
+}
+
+enum UpdateStrategy {
+    Auto {
+        _subscription: Subscription,
+    },
+    Manual {
+        pending_update: Option<PendingUpdate>,
+    },
 }
 
 pub struct PendingDiff {
@@ -247,13 +266,8 @@ pub struct PendingDiff {
     new_buffer: Entity<Buffer>,
     diff: Entity<BufferDiff>,
     revealed_ranges: Vec<Range<Anchor>>,
-    _subscription: Subscription,
-    auto_update: bool,
+    update_strategy: UpdateStrategy,
     update_diff: Task<Result<()>>,
-    // The latest update waiting to be processed. Storing only the latest means
-    // intermediate chunks are coalesced when the worker task can't keep up.
-    pending_update: Option<PendingUpdate>,
-    is_updating: bool,
 }
 
 struct PendingUpdate {
@@ -361,29 +375,56 @@ fn compute_hunks(
     patch
 }
 
+/// Applies a `BufferDiffUpdate` to both the primary and secondary diffs, then
+/// refreshes the visible excerpt ranges in the multibuffer.
+async fn apply_diff_update(
+    update: BufferDiffUpdate,
+    text_snapshot: &text::BufferSnapshot,
+    buffer_diff: &Entity<BufferDiff>,
+    diff: &WeakEntity<Diff>,
+    cx: &mut AsyncApp,
+) -> Result<()> {
+    // FIXME we can get away without having a whole secondary diff here
+    let (task1, task2) = buffer_diff.update(cx, |diff, cx| {
+        let task1 = diff.set_snapshot(update.clone(), text_snapshot, cx);
+        let task2 = diff
+            .secondary_diff()
+            .expect("PendingDiff should always have a secondary diff")
+            .update(cx, |diff, cx| diff.set_snapshot(update, text_snapshot, cx));
+        (task1, task2)
+    });
+    task1.await;
+    task2.await;
+    diff.update(cx, |diff, cx| {
+        if let Diff::Pending(diff) = diff {
+            diff.update_visible_ranges(cx);
+        }
+    })
+}
+
 impl PendingDiff {
-    pub fn update_manually(
+    fn push_line_operations(
         &mut self,
         operations: Vec<LineOperation>,
         base_snapshot: text::BufferSnapshot,
         cx: &mut Context<Diff>,
     ) {
+        let UpdateStrategy::Manual { pending_update } = &mut self.update_strategy else {
+            return;
+        };
+
         let text_snapshot = self.new_buffer.read(cx).text_snapshot();
-        self.pending_update = Some(PendingUpdate {
+        *pending_update = Some(PendingUpdate {
             operations,
             base_snapshot,
             text_snapshot,
         });
-        if !self.is_updating {
+        if self.update_diff.is_ready() {
             self.flush_pending_update(cx);
         }
     }
 
-    pub fn update(&mut self, cx: &mut Context<Diff>) {
-        if !self.auto_update {
-            return;
-        }
-
+    fn auto_update(&mut self, cx: &mut Context<Diff>) {
         let buffer = self.new_buffer.clone();
         let buffer_diff = self.diff.clone();
         let base_text = self.base_text.clone();
@@ -401,36 +442,23 @@ impl PendingDiff {
                     )
                 })
                 .await;
-            // FIXME we can get away without having a whole secondary diff here
-            let (task1, task2) = buffer_diff.update(cx, |diff, cx| {
-                let task1 = diff.set_snapshot(update.clone(), &text_snapshot, cx);
-                let task2 = diff
-                    .secondary_diff()
-                    .unwrap()
-                    .update(cx, |diff, cx| diff.set_snapshot(update, &text_snapshot, cx));
-                (task1, task2)
-            });
-            task1.await;
-            task2.await;
-            diff.update(cx, |diff, cx| {
-                if let Diff::Pending(diff) = diff {
-                    diff.update_visible_ranges(cx);
-                }
-            })
+            apply_diff_update(update, &text_snapshot, &buffer_diff, &diff, cx).await
         });
     }
 
     fn flush_pending_update(&mut self, cx: &mut Context<Diff>) {
+        let UpdateStrategy::Manual { pending_update } = &mut self.update_strategy else {
+            return;
+        };
+
         let Some(PendingUpdate {
             operations,
             base_snapshot,
             text_snapshot,
-        }) = self.pending_update.take()
+        }) = pending_update.take()
         else {
-            self.is_updating = false;
             return;
         };
-        self.is_updating = true;
 
         let buffer_diff = self.diff.clone();
         let base_text = self.base_text.clone();
@@ -451,19 +479,10 @@ impl PendingDiff {
                 })
                 .await;
 
-            let (task1, task2) = buffer_diff.update(cx, |diff, cx| {
-                let task1 = diff.set_snapshot(update.clone(), &text_snapshot, cx);
-                let task2 = diff
-                    .secondary_diff()
-                    .unwrap()
-                    .update(cx, |diff, cx| diff.set_snapshot(update, &text_snapshot, cx));
-                (task1, task2)
-            });
-            task1.await;
-            task2.await;
+            apply_diff_update(update, &text_snapshot, &buffer_diff, &diff, cx).await?;
+
             diff.update(cx, |diff, cx| {
                 if let Diff::Pending(diff) = diff {
-                    diff.update_visible_ranges(cx);
                     // Pick up any update that arrived while this task was running.
                     diff.flush_pending_update(cx);
                 }
