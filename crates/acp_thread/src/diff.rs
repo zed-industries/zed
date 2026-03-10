@@ -384,7 +384,7 @@ async fn apply_diff_update(
     diff: &WeakEntity<Diff>,
     cx: &mut AsyncApp,
 ) -> Result<()> {
-    // FIXME we can get away without having a whole secondary diff here
+    // todo: we can get away without having a whole secondary diff here
     let (task1, task2) = buffer_diff.update(cx, |diff, cx| {
         let task1 = diff.set_snapshot(update.clone(), text_snapshot, cx);
         let task2 = diff

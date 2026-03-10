@@ -51,7 +51,6 @@ pub struct BufferDiffUpdate {
 }
 
 impl BufferDiffUpdate {
-    // FIXME thread through diff options to control word diff
     pub fn from_hunks(
         base_text: Arc<str>,
         base_snapshot: &Rope,
