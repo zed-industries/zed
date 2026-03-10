@@ -115,7 +115,7 @@ fn scroll_editor(
 
     // Capture old scroll position before scrolling
     let snapshot = editor.snapshot(window, cx);
-    let scroll_position = snapshot.scroll_target_or_position();
+    let scroll_position = snapshot.scroll_position();
     let old_top_row = DisplayRow(scroll_position.y as u32);
     let old_top_column = scroll_position.x as u32;
 
@@ -150,7 +150,7 @@ fn scroll_editor(
 
     // Calculate top row after scrolling
     let snapshot = editor.snapshot(window, cx);
-    let scroll_position = snapshot.scroll_target_or_position();
+    let scroll_position = snapshot.scroll_position();
     let top_row = DisplayRow(scroll_position.y as u32);
     let top_column = scroll_position.x as u32;
     let vertical_scroll_margin = EditorSettings::get_global(cx).vertical_scroll_margin;

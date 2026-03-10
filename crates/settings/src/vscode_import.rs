@@ -314,7 +314,6 @@ impl VsCodeSettings {
     fn smooth_scroll_content(&self) -> Option<SmoothScrollContent> {
         skip_default(SmoothScrollContent {
             enabled: self.read_bool("editor.smoothScrolling"),
-            duration: None,
         })
     }
 

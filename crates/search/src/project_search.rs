@@ -1514,7 +1514,7 @@ impl ProjectSearchView {
                     editor.scroll(
                         Point::default(),
                         Some(Axis::Vertical),
-                        ScrollBehavior::Instant,
+                        Some(ScrollBehavior::Instant),
                         window,
                         cx,
                     );
@@ -4507,7 +4507,7 @@ pub mod tests {
                     results_editor.scroll(
                         Point::new(0., f64::MAX),
                         Some(Axis::Vertical),
-                        ScrollBehavior::Instant,
+                        Some(ScrollBehavior::Instant),
                         window,
                         cx,
                     );
