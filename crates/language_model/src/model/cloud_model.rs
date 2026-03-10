@@ -105,6 +105,9 @@ impl Global for GlobalRefreshLlmTokenListener {}
 pub struct RefreshLlmTokenEvent;
 
 pub struct RefreshLlmTokenListener {
+    client: Arc<Client>,
+    user_store: Entity<UserStore>,
+    llm_api_token: LlmApiToken,
     _subscription: Subscription,
 }
 
@@ -120,6 +123,10 @@ impl RefreshLlmTokenListener {
         GlobalRefreshLlmTokenListener::global(cx).0.clone()
     }
 
+    pub fn global_token(cx: &App) -> LlmApiToken {
+        Self::global(cx).read(cx).llm_api_token.clone()
+    }
+
     fn new(client: Arc<Client>, user_store: Entity<UserStore>, cx: &mut Context<Self>) -> Self {
         client.add_message_to_client_handler({
             let this = cx.entity();
@@ -128,21 +135,39 @@ impl RefreshLlmTokenListener {
             }
         });
 
-        let subscription = cx.subscribe(&user_store, |_this, _user_store, event, cx| {
+        let subscription = cx.subscribe(&user_store, |this, _user_store, event, cx| {
             if matches!(event, client::user::Event::OrganizationChanged) {
-                cx.emit(RefreshLlmTokenEvent);
+                this.refresh_and_emit(cx);
             }
         });
 
         Self {
+            client,
+            user_store,
+            llm_api_token: LlmApiToken::default(),
             _subscription: subscription,
         }
+    }
+
+    fn refresh_and_emit(&self, cx: &mut Context<Self>) {
+        let client = self.client.clone();
+        let llm_api_token = self.llm_api_token.clone();
+        let organization_id = self
+            .user_store
+            .read(cx)
+            .current_organization()
+            .map(|o| o.id.clone());
+        cx.spawn(async move |_this, cx| {
+            llm_api_token.refresh(&client, organization_id).await?;
+            _this.update(cx, |_this, cx| cx.emit(RefreshLlmTokenEvent))
+        })
+        .detach_and_log_err(cx);
     }
 
     fn handle_refresh_llm_token(this: Entity<Self>, message: &MessageToClient, cx: &mut App) {
         match message {
             MessageToClient::UserUpdated => {
-                this.update(cx, |_this, cx| cx.emit(RefreshLlmTokenEvent));
+                this.update(cx, |this, cx| this.refresh_and_emit(cx));
             }
         }
     }
