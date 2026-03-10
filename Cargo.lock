@@ -388,6 +388,7 @@ dependencies = [
  "prompt_store",
  "proto",
  "rand 0.9.2",
+ "recent_projects",
  "release_channel",
  "reqwest_client",
  "rope",
@@ -15809,33 +15810,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0fda2ff0d084019ba4d7c6f371c95d8fd75ce3524c3cb8fb653a3023f6323e64"
 
 [[package]]
-name = "sidebar"
-version = "0.1.0"
-dependencies = [
- "acp_thread",
- "agent",
- "agent-client-protocol",
- "agent_ui",
- "assistant_text_thread",
- "chrono",
- "editor",
- "feature_flags",
- "fs",
- "gpui",
- "language_model",
- "menu",
- "project",
- "recent_projects",
- "serde_json",
- "settings",
- "theme",
- "ui",
- "util",
- "workspace",
- "zed_actions",
-]
-
-[[package]]
 name = "signal-hook"
 version = "0.3.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -21888,7 +21862,6 @@ dependencies = [
  "settings_profile_selector",
  "settings_ui",
  "shellexpand 2.1.2",
- "sidebar",
  "smol",
  "snippet_provider",
  "snippets_ui",

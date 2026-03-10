@@ -2653,7 +2653,7 @@ fn run_multi_workspace_sidebar_visual_tests(
     let sidebar = multi_workspace_window
         .update(cx, |_multi_workspace, window, cx| {
             let multi_workspace_handle = cx.entity();
-            cx.new(|cx| sidebar::Sidebar::new(multi_workspace_handle, window, cx))
+            cx.new(|cx| agent_ui::sidebar::Sidebar::new(multi_workspace_handle, window, cx))
         })
         .context("Failed to create sidebar")?;
 
@@ -3185,7 +3185,7 @@ edition = "2021"
     let sidebar = workspace_window
         .update(cx, |_multi_workspace, window, cx| {
             let multi_workspace_handle = cx.entity();
-            cx.new(|cx| sidebar::Sidebar::new(multi_workspace_handle, window, cx))
+            cx.new(|cx| agent_ui::sidebar::Sidebar::new(multi_workspace_handle, window, cx))
         })
         .context("Failed to create sidebar")?;
 

@@ -65,9 +65,10 @@ use extension_host::ExtensionStore;
 use fs::Fs;
 use git::repository::validate_worktree_directory;
 use gpui::{
-    Action, Animation, AnimationExt, AnyElement, App, AsyncWindowContext, ClipboardItem, Corner,
-    DismissEvent, Entity, EventEmitter, ExternalPaths, FocusHandle, Focusable, KeyContext, Pixels,
-    Subscription, Task, UpdateGlobal, WeakEntity, prelude::*, pulsating_between,
+    Action, Animation, AnimationExt, AnyElement, AnyView, App, AsyncWindowContext, ClipboardItem,
+    Corner, DismissEvent, DragMoveEvent, Entity, EventEmitter, ExternalPaths, FocusHandle,
+    Focusable, KeyContext, MouseButton, Pixels, Subscription, Task, UpdateGlobal, WeakEntity,
+    deferred, prelude::*, pulsating_between,
 };
 use language::LanguageRegistry;
 use language_model::{ConfigurationError, LanguageModelRegistry};
@@ -79,13 +80,14 @@ use search::{BufferSearchBar, buffer_search};
 use settings::{Settings, update_settings_file};
 use theme::ThemeSettings;
 use ui::{
-    Button, ButtonLike, Callout, ContextMenu, ContextMenuEntry, DocumentationSide, KeyBinding,
-    PopoverMenu, PopoverMenuHandle, SpinnerLabel, Tab, TintColor, Tooltip, prelude::*,
+    Button, ButtonLike, Callout, ContextMenu, ContextMenuEntry, DocumentationSide, Indicator,
+    KeyBinding, PopoverMenu, PopoverMenuHandle, SpinnerLabel, Tab, TintColor, Tooltip, prelude::*,
     utils::WithRemSize,
 };
 use util::ResultExt as _;
 use workspace::{
-    CollaboratorId, DraggedSelection, DraggedTab, ToggleZoom, ToolbarItemView, Workspace,
+    CollaboratorId, DraggedSelection, DraggedSidebar, DraggedTab, MultiWorkspace,
+    SIDEBAR_RESIZE_HANDLE_SIZE, ToggleWorkspaceSidebar, ToggleZoom, ToolbarItemView, Workspace,
     WorkspaceId,
     dock::{DockPosition, Panel, PanelEvent},
 };
@@ -991,7 +993,6 @@ impl AgentPanel {
         let client = workspace.client().clone();
         let workspace_id = workspace.database_id();
         let workspace = workspace.weak_handle();
-
         let context_server_registry =
             cx.new(|cx| ContextServerRegistry::new(project.read(cx).context_server_store(), cx));
 
@@ -3526,6 +3527,112 @@ impl AgentPanel {
             })
     }
 
+    fn sidebar_info(&self, window: &Window, cx: &App) -> Option<(AnyView, Pixels, bool)> {
+        let multi_workspace_handle = window.window_handle().downcast::<MultiWorkspace>()?;
+        let multi_workspace = multi_workspace_handle.entity(cx).ok()?;
+        let multi_workspace = multi_workspace.read(cx);
+        if !multi_workspace.multi_workspace_enabled(cx) {
+            return None;
+        }
+        let sidebar = multi_workspace.sidebar()?;
+        let is_open = multi_workspace.sidebar_open();
+        let view = sidebar.to_any();
+        let width = sidebar.width(cx);
+        Some((view, width, is_open))
+    }
+
+    fn render_sidebar_toggle(&self, window: &Window, cx: &Context<Self>) -> Option<AnyElement> {
+        let multi_workspace_handle = window.window_handle().downcast::<MultiWorkspace>()?;
+        let multi_workspace = multi_workspace_handle.entity(cx).ok()?;
+        let multi_workspace = multi_workspace.read(cx);
+        if !multi_workspace.multi_workspace_enabled(cx) {
+            return None;
+        }
+        let is_open = multi_workspace.sidebar_open();
+        let has_notifications = multi_workspace.sidebar_has_notifications(cx);
+
+        let icon = if is_open {
+            IconName::WorkspaceNavOpen
+        } else {
+            IconName::WorkspaceNavClosed
+        };
+
+        Some(
+            IconButton::new("toggle-workspace-sidebar", icon)
+                .icon_size(IconSize::Small)
+                .when(has_notifications && !is_open, |button| {
+                    button
+                        .indicator(Indicator::dot().color(Color::Accent))
+                        .indicator_border_color(Some(cx.theme().colors().tab_bar_background))
+                })
+                .tooltip(move |_, cx| {
+                    if is_open {
+                        Tooltip::for_action("Close Threads Sidebar", &ToggleWorkspaceSidebar, cx)
+                    } else {
+                        Tooltip::for_action("Open Threads Sidebar", &ToggleWorkspaceSidebar, cx)
+                    }
+                })
+                .on_click(|_, window, cx| {
+                    window.dispatch_action(ToggleWorkspaceSidebar.boxed_clone(), cx);
+                })
+                .into_any_element(),
+        )
+    }
+
+    fn render_sidebar(&self, window: &Window, cx: &Context<Self>) -> Option<AnyElement> {
+        let (sidebar_view, sidebar_width, is_open) = self.sidebar_info(window, cx)?;
+        if !is_open {
+            return None;
+        }
+
+        let multi_workspace_handle = window.window_handle().downcast::<MultiWorkspace>()?;
+        let weak = multi_workspace_handle.entity(cx).ok()?.downgrade();
+
+        let resize_handle = deferred(
+            div()
+                .id("sidebar-resize-handle")
+                .absolute()
+                .right(-SIDEBAR_RESIZE_HANDLE_SIZE / 2.)
+                .top(px(0.))
+                .h_full()
+                .w(SIDEBAR_RESIZE_HANDLE_SIZE)
+                .cursor_col_resize()
+                .on_drag(DraggedSidebar, |dragged, _, _, cx| {
+                    cx.stop_propagation();
+                    cx.new(|_| dragged.clone())
+                })
+                .on_mouse_down(MouseButton::Left, |_, _, cx| {
+                    cx.stop_propagation();
+                })
+                .on_mouse_up(MouseButton::Left, move |event, _, cx| {
+                    if event.click_count == 2 {
+                        weak.update(cx, |this, cx| {
+                            if let Some(sidebar) = this.sidebar() {
+                                sidebar.set_width(None, cx);
+                            }
+                        })
+                        .ok();
+                        cx.stop_propagation();
+                    }
+                })
+                .occlude(),
+        );
+
+        Some(
+            div()
+                .id("sidebar-container")
+                .relative()
+                .h_full()
+                .w(sidebar_width)
+                .flex_shrink_0()
+                .border_r_1()
+                .border_color(cx.theme().colors().border)
+                .child(sidebar_view)
+                .child(resize_handle)
+                .into_any_element(),
+        )
+    }
+
     fn render_toolbar(&self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let agent_server_store = self.project.read(cx).agent_server_store().clone();
         let focus_handle = self.focus_handle(cx);
@@ -3991,6 +4098,7 @@ impl AgentPanel {
                         .size_full()
                         .gap(DynamicSpacing::Base04.rems(cx))
                         .pl(DynamicSpacing::Base04.rems(cx))
+                        .children(self.render_sidebar_toggle(window, cx))
                         .child(agent_selector_menu)
                         .child(self.render_start_thread_in_selector(cx)),
                 )
@@ -4045,6 +4153,7 @@ impl AgentPanel {
                         .size_full()
                         .gap(DynamicSpacing::Base04.rems(cx))
                         .pl(DynamicSpacing::Base04.rems(cx))
+                        .children(self.render_sidebar_toggle(window, cx))
                         .child(match &self.active_view {
                             ActiveView::History { .. } | ActiveView::Configuration => {
                                 self.render_toolbar_back_button(cx).into_any_element()
@@ -4607,14 +4716,38 @@ impl Render for AgentPanel {
             })
             .children(self.render_trial_end_upsell(window, cx));
 
+        let sidebar = self.render_sidebar(window, cx);
+        let has_sidebar = sidebar.is_some();
+
+        let panel = h_flex()
+            .size_full()
+            .when(has_sidebar, |this| {
+                let multi_workspace_handle = window.window_handle().downcast::<MultiWorkspace>();
+                this.on_drag_move(cx.listener(
+                    move |_this, e: &DragMoveEvent<DraggedSidebar>, _window, cx| {
+                        if let Some(handle) = &multi_workspace_handle {
+                            handle
+                                .update(cx, |multi_workspace, _window, cx| {
+                                    if let Some(sidebar) = multi_workspace.sidebar() {
+                                        sidebar.set_width(Some(e.event.position.x), cx);
+                                    }
+                                })
+                                .ok();
+                        }
+                    },
+                ))
+            })
+            .children(sidebar)
+            .child(content);
+
         match self.active_view.which_font_size_used() {
             WhichFontSize::AgentFont => {
                 WithRemSize::new(ThemeSettings::get_global(cx).agent_ui_font_size(cx))
                     .size_full()
-                    .child(content)
+                    .child(panel)
                     .into_any()
             }
-            _ => content.into_any(),
+            _ => panel.into_any(),
         }
     }
 }

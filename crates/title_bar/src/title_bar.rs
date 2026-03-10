@@ -24,16 +24,13 @@ use auto_update::AutoUpdateStatus;
 use call::ActiveCall;
 use client::{Client, UserStore, zed_urls};
 use cloud_api_types::Plan;
-use feature_flags::{AgentV2FeatureFlag, FeatureFlagAppExt};
 use gpui::{
     Action, AnyElement, App, Context, Corner, Element, Empty, Entity, Focusable,
     InteractiveElement, IntoElement, MouseButton, ParentElement, Render,
     StatefulInteractiveElement, Styled, Subscription, WeakEntity, Window, actions, div,
 };
 use onboarding_banner::OnboardingBanner;
-use project::{
-    DisableAiSettings, Project, git_store::GitStoreEvent, trusted_worktrees::TrustedWorktrees,
-};
+use project::{Project, git_store::GitStoreEvent, trusted_worktrees::TrustedWorktrees};
 use remote::RemoteConnectionOptions;
 use settings::Settings;
 use settings::WorktreeId;
@@ -47,8 +44,7 @@ use ui::{
 use update_version::UpdateVersion;
 use util::ResultExt;
 use workspace::{
-    MultiWorkspace, ToggleWorkspaceSidebar, ToggleWorktreeSecurity, Workspace,
-    notifications::NotifyResultExt,
+    MultiWorkspace, ToggleWorktreeSecurity, Workspace, notifications::NotifyResultExt,
 };
 use zed_actions::OpenRemote;
 
@@ -174,7 +170,6 @@ impl Render for TitleBar {
                     let mut render_project_items = title_bar_settings.show_branch_name
                         || title_bar_settings.show_project_items;
                     title_bar
-                        .children(self.render_workspace_sidebar_toggle(window, cx))
                         .when_some(
                             self.application_menu.clone().filter(|_| !show_menus),
                             |title_bar, menu| {
@@ -681,41 +676,6 @@ impl TitleBar {
                             })
                             .log_err();
                     })
-                })
-                .into_any_element(),
-        )
-    }
-
-    fn render_workspace_sidebar_toggle(
-        &self,
-        _window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> Option<AnyElement> {
-        if !cx.has_flag::<AgentV2FeatureFlag>() || DisableAiSettings::get_global(cx).disable_ai {
-            return None;
-        }
-
-        let is_sidebar_open = self.platform_titlebar.read(cx).is_workspace_sidebar_open();
-
-        if is_sidebar_open {
-            return None;
-        }
-
-        let has_notifications = self.platform_titlebar.read(cx).sidebar_has_notifications();
-
-        Some(
-            IconButton::new("toggle-workspace-sidebar", IconName::WorkspaceNavClosed)
-                .icon_size(IconSize::Small)
-                .when(has_notifications, |button| {
-                    button
-                        .indicator(Indicator::dot().color(Color::Accent))
-                        .indicator_border_color(Some(cx.theme().colors().title_bar_background))
-                })
-                .tooltip(move |_, cx| {
-                    Tooltip::for_action("Open Threads Sidebar", &ToggleWorkspaceSidebar, cx)
-                })
-                .on_click(|_, window, cx| {
-                    window.dispatch_action(ToggleWorkspaceSidebar.boxed_clone(), cx);
                 })
                 .into_any_element(),
         )

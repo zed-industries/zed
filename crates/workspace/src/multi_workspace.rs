@@ -1,9 +1,8 @@
 use anyhow::Result;
 use feature_flags::{AgentV2FeatureFlag, FeatureFlagAppExt};
 use gpui::{
-    AnyView, App, Context, DragMoveEvent, Entity, EntityId, EventEmitter, FocusHandle, Focusable,
-    ManagedView, MouseButton, Pixels, Render, Subscription, Task, Tiling, Window, WindowId,
-    actions, deferred, px,
+    AnyView, App, Context, Entity, EntityId, EventEmitter, FocusHandle, Focusable, ManagedView,
+    Pixels, Render, Subscription, Task, Tiling, Window, WindowId, actions, px,
 };
 use project::{DisableAiSettings, Project};
 use settings::Settings;
@@ -12,7 +11,7 @@ use std::path::PathBuf;
 use ui::prelude::*;
 use util::ResultExt;
 
-const SIDEBAR_RESIZE_HANDLE_SIZE: Pixels = px(6.0);
+pub const SIDEBAR_RESIZE_HANDLE_SIZE: Pixels = px(6.0);
 
 use crate::{
     CloseIntent, CloseWindow, DockPosition, Event as WorkspaceEvent, Item, ModalView, Panel, Toast,
@@ -720,52 +719,8 @@ impl MultiWorkspace {
 impl Render for MultiWorkspace {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let multi_workspace_enabled = self.multi_workspace_enabled(cx);
-
-        let sidebar: Option<AnyElement> = if multi_workspace_enabled && self.sidebar_open {
-            self.sidebar.as_ref().map(|sidebar_handle| {
-                let weak = cx.weak_entity();
-
-                let sidebar_width = sidebar_handle.width(cx);
-                let resize_handle = deferred(
-                    div()
-                        .id("sidebar-resize-handle")
-                        .absolute()
-                        .right(-SIDEBAR_RESIZE_HANDLE_SIZE / 2.)
-                        .top(px(0.))
-                        .h_full()
-                        .w(SIDEBAR_RESIZE_HANDLE_SIZE)
-                        .cursor_col_resize()
-                        .on_drag(DraggedSidebar, |dragged, _, _, cx| {
-                            cx.stop_propagation();
-                            cx.new(|_| dragged.clone())
-                        })
-                        .on_mouse_down(MouseButton::Left, |_, _, cx| {
-                            cx.stop_propagation();
-                        })
-                        .on_mouse_up(MouseButton::Left, move |event, _, cx| {
-                            if event.click_count == 2 {
-                                weak.update(cx, |this, cx| {
-                                    if let Some(sidebar) = this.sidebar.as_mut() {
-                                        sidebar.set_width(None, cx);
-                                    }
-                                })
-                                .ok();
-                                cx.stop_propagation();
-                            }
-                        })
-                        .occlude(),
-                );
-
-                div()
-                    .id("sidebar-container")
-                    .relative()
-                    .h_full()
-                    .w(sidebar_width)
-                    .flex_shrink_0()
-                    .child(sidebar_handle.to_any())
-                    .child(resize_handle)
-                    .into_any_element()
-            })
+        let sidebar_view = if multi_workspace_enabled {
+            self.sidebar.as_ref().map(|s| s.to_any())
         } else {
             None
         };
@@ -811,20 +766,6 @@ impl Render for MultiWorkspace {
                         },
                     ))
                 })
-                .when(
-                    self.sidebar_open() && self.multi_workspace_enabled(cx),
-                    |this| {
-                        this.on_drag_move(cx.listener(
-                            |this: &mut Self, e: &DragMoveEvent<DraggedSidebar>, _window, cx| {
-                                if let Some(sidebar) = &this.sidebar {
-                                    let new_width = e.event.position.x;
-                                    sidebar.set_width(Some(new_width), cx);
-                                }
-                            },
-                        ))
-                        .children(sidebar)
-                    },
-                )
                 .child(
                     div()
                         .flex()
@@ -833,11 +774,15 @@ impl Render for MultiWorkspace {
                         .overflow_hidden()
                         .child(self.workspace().clone()),
                 )
-                .child(self.workspace().read(cx).modal_layer.clone()),
+                .child(self.workspace().read(cx).modal_layer.clone())
+                .children(
+                    sidebar_view
+                        .map(|view| div().absolute().size_0().overflow_hidden().child(view)),
+                ),
             window,
             cx,
             Tiling {
-                left: multi_workspace_enabled && self.sidebar_open,
+                left: false,
                 ..Tiling::default()
             },
         )

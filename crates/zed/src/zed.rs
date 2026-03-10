@@ -13,7 +13,7 @@ pub mod visual_tests;
 #[cfg(target_os = "windows")]
 pub(crate) mod windows_only_instance;
 
-use agent_ui::{AgentDiffToolbar, AgentPanelDelegate};
+use agent_ui::{AgentDiffToolbar, AgentPanelDelegate, sidebar::Sidebar};
 use anyhow::Context as _;
 pub use app_menus::*;
 use assets::Assets;
@@ -68,7 +68,6 @@ use settings::{
     initial_local_debug_tasks_content, initial_project_settings_content, initial_tasks_content,
     update_settings_file,
 };
-use sidebar::Sidebar;
 use std::time::Duration;
 use std::{
     borrow::Cow,

@@ -1,7 +1,7 @@
+use crate::{AgentPanel, AgentPanelEvent, NewThread};
 use acp_thread::ThreadStatus;
 use agent::ThreadStore;
 use agent_client_protocol as acp;
-use agent_ui::{AgentPanel, AgentPanelEvent, NewThread};
 use chrono::Utc;
 use editor::{Editor, EditorElement, EditorStyle};
 use feature_flags::{AgentV2FeatureFlag, FeatureFlagViewExt as _};
@@ -17,18 +17,14 @@ use settings::Settings;
 use std::collections::{HashMap, HashSet};
 use std::mem;
 use theme::{ActiveTheme, ThemeSettings};
-use ui::utils::TRAFFIC_LIGHT_PADDING;
 use ui::{
-    AgentThreadStatus, ButtonStyle, GradientFade, HighlightedLabel, IconButtonShape, KeyBinding,
-    ListItem, PopoverMenu, PopoverMenuHandle, Tab, ThreadItem, TintColor, Tooltip, WithScrollbar,
-    prelude::*,
+    AgentThreadStatus, ButtonStyle, GradientFade, HighlightedLabel, IconButtonShape, ListItem,
+    PopoverMenuHandle, Tab, ThreadItem, Tooltip, WithScrollbar, prelude::*,
 };
 use util::path_list::PathList;
 use workspace::{
-    FocusWorkspaceSidebar, MultiWorkspace, MultiWorkspaceEvent, Sidebar as WorkspaceSidebar,
-    SidebarEvent, ToggleWorkspaceSidebar, Workspace,
+    MultiWorkspace, MultiWorkspaceEvent, Sidebar as WorkspaceSidebar, SidebarEvent, Workspace,
 };
-use zed_actions::OpenRecent;
 use zed_actions::editor::{MoveDown, MoveUp};
 
 actions!(
@@ -1185,48 +1181,6 @@ impl Sidebar {
             .into_any_element()
     }
 
-    fn render_recent_projects_button(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let workspace = self
-            .multi_workspace
-            .upgrade()
-            .map(|mw| mw.read(cx).workspace().downgrade());
-
-        let focus_handle = workspace
-            .as_ref()
-            .and_then(|ws| ws.upgrade())
-            .map(|w| w.read(cx).focus_handle(cx))
-            .unwrap_or_else(|| cx.focus_handle());
-
-        let popover_handle = self.recent_projects_popover_handle.clone();
-
-        PopoverMenu::new("sidebar-recent-projects-menu")
-            .with_handle(popover_handle)
-            .menu(move |window, cx| {
-                workspace.as_ref().map(|ws| {
-                    RecentProjects::popover(ws.clone(), false, focus_handle.clone(), window, cx)
-                })
-            })
-            .trigger_with_tooltip(
-                IconButton::new("open-project", IconName::OpenFolder)
-                    .icon_size(IconSize::Small)
-                    .selected_style(ButtonStyle::Tinted(TintColor::Accent)),
-                |_window, cx| {
-                    Tooltip::for_action(
-                        "Recent Projects",
-                        &OpenRecent {
-                            create_new_window: false,
-                        },
-                        cx,
-                    )
-                },
-            )
-            .anchor(gpui::Corner::TopLeft)
-            .offset(gpui::Point {
-                x: px(0.0),
-                y: px(2.0),
-            })
-    }
-
     fn render_filter_input(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let settings = ThemeSettings::get_global(cx);
         let text_style = TextStyle {
@@ -1386,17 +1340,8 @@ impl Focusable for Sidebar {
 
 impl Render for Sidebar {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let titlebar_height = ui::utils::platform_title_bar_height(window);
         let ui_font = theme::setup_ui_font(window, cx);
-        let is_focused = self.focus_handle.is_focused(window)
-            || self.filter_editor.focus_handle(cx).is_focused(window);
         let has_query = self.has_filter_query(cx);
-
-        let focus_tooltip_label = if is_focused {
-            "Focus Workspace"
-        } else {
-            "Focus Sidebar"
-        };
 
         v_flex()
             .id("workspace-sidebar")
@@ -1413,68 +1358,8 @@ impl Render for Sidebar {
             .on_action(cx.listener(Self::collapse_selected_entry))
             .on_action(cx.listener(Self::cancel))
             .font(ui_font)
-            .h_full()
-            .w(self.width)
+            .size_full()
             .bg(cx.theme().colors().surface_background)
-            .border_r_1()
-            .border_color(cx.theme().colors().border)
-            .child(
-                h_flex()
-                    .flex_none()
-                    .h(titlebar_height)
-                    .w_full()
-                    .mt_px()
-                    .pb_px()
-                    .pr_1()
-                    .when_else(
-                        cfg!(target_os = "macos") && !window.is_fullscreen(),
-                        |this| this.pl(px(TRAFFIC_LIGHT_PADDING)),
-                        |this| this.pl_2(),
-                    )
-                    .justify_between()
-                    .border_b_1()
-                    .border_color(cx.theme().colors().border)
-                    .child({
-                        let focus_handle_toggle = self.focus_handle.clone();
-                        let focus_handle_focus = self.focus_handle.clone();
-                        IconButton::new("close-sidebar", IconName::WorkspaceNavOpen)
-                            .icon_size(IconSize::Small)
-                            .tooltip(Tooltip::element(move |_, cx| {
-                                v_flex()
-                                    .gap_1()
-                                    .child(
-                                        h_flex()
-                                            .gap_2()
-                                            .justify_between()
-                                            .child(Label::new("Close Sidebar"))
-                                            .child(KeyBinding::for_action_in(
-                                                &ToggleWorkspaceSidebar,
-                                                &focus_handle_toggle,
-                                                cx,
-                                            )),
-                                    )
-                                    .child(
-                                        h_flex()
-                                            .pt_1()
-                                            .gap_2()
-                                            .border_t_1()
-                                            .border_color(cx.theme().colors().border_variant)
-                                            .justify_between()
-                                            .child(Label::new(focus_tooltip_label))
-                                            .child(KeyBinding::for_action_in(
-                                                &FocusWorkspaceSidebar,
-                                                &focus_handle_focus,
-                                                cx,
-                                            )),
-                                    )
-                                    .into_any_element()
-                            }))
-                            .on_click(cx.listener(|_this, _, _window, cx| {
-                                cx.emit(SidebarEvent::Close);
-                            }))
-                    })
-                    .child(self.render_recent_projects_button(cx)),
-            )
             .child(
                 h_flex()
                     .flex_none()
@@ -1521,26 +1406,24 @@ impl Render for Sidebar {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_support::{active_session_id, open_thread_with_connection, send_message};
     use acp_thread::StubAgentConnection;
     use agent::ThreadStore;
-    use agent_ui::test_support::{active_session_id, open_thread_with_connection, send_message};
     use assistant_text_thread::TextThreadStore;
     use chrono::DateTime;
     use feature_flags::FeatureFlagAppExt as _;
     use fs::FakeFs;
     use gpui::TestAppContext;
-    use settings::SettingsStore;
     use std::sync::Arc;
     use util::path_list::PathList;
 
     fn init_test(cx: &mut TestAppContext) {
+        crate::test_support::init_test(cx);
         cx.update(|cx| {
-            let settings_store = SettingsStore::test(cx);
-            cx.set_global(settings_store);
-            theme::init(theme::LoadThemes::JustBase, cx);
-            editor::init(cx);
             cx.update_flags(false, vec!["agent-v2".into()]);
             ThreadStore::init_global(cx);
+            language_model::LanguageModelRegistry::test(cx);
+            prompt_store::init(cx);
         });
     }
 
@@ -1589,6 +1472,17 @@ mod tests {
         });
         cx.run_until_parked();
         sidebar
+    }
+
+    fn setup_sidebar_with_agent_panel(
+        multi_workspace: &Entity<MultiWorkspace>,
+        project: &Entity<project::Project>,
+        cx: &mut gpui::VisualTestContext,
+    ) -> (Entity<Sidebar>, Entity<AgentPanel>) {
+        let sidebar = setup_sidebar(multi_workspace, cx);
+        let workspace = multi_workspace.read_with(cx, |mw, _cx| mw.workspace().clone());
+        let panel = add_agent_panel(&workspace, project, cx);
+        (sidebar, panel)
     }
 
     async fn save_n_test_threads(
@@ -2517,24 +2411,6 @@ mod tests {
         );
     }
 
-    async fn init_test_project_with_agent_panel(
-        worktree_path: &str,
-        cx: &mut TestAppContext,
-    ) -> Entity<project::Project> {
-        agent_ui::test_support::init_test(cx);
-        cx.update(|cx| {
-            cx.update_flags(false, vec!["agent-v2".into()]);
-            ThreadStore::init_global(cx);
-            language_model::LanguageModelRegistry::test(cx);
-        });
-
-        let fs = FakeFs::new(cx.executor());
-        fs.insert_tree(worktree_path, serde_json::json!({ "src": {} }))
-            .await;
-        cx.update(|cx| <dyn fs::Fs>::set_global(fs.clone(), cx));
-        project::Project::test(fs, [worktree_path.as_ref()], cx).await
-    }
-
     fn add_agent_panel(
         workspace: &Entity<Workspace>,
         project: &Entity<project::Project>,
@@ -2548,20 +2424,9 @@ mod tests {
         })
     }
 
-    fn setup_sidebar_with_agent_panel(
-        multi_workspace: &Entity<MultiWorkspace>,
-        project: &Entity<project::Project>,
-        cx: &mut gpui::VisualTestContext,
-    ) -> (Entity<Sidebar>, Entity<AgentPanel>) {
-        let sidebar = setup_sidebar(multi_workspace, cx);
-        let workspace = multi_workspace.read_with(cx, |mw, _cx| mw.workspace().clone());
-        let panel = add_agent_panel(&workspace, project, cx);
-        (sidebar, panel)
-    }
-
     #[gpui::test]
     async fn test_parallel_threads_shown_with_live_status(cx: &mut TestAppContext) {
-        let project = init_test_project_with_agent_panel("/my-project", cx).await;
+        let project = init_test_project("/my-project", cx).await;
         let (multi_workspace, cx) =
             cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
         let (sidebar, panel) = setup_sidebar_with_agent_panel(&multi_workspace, &project, cx);
@@ -2607,7 +2472,7 @@ mod tests {
 
     #[gpui::test]
     async fn test_background_thread_completion_triggers_notification(cx: &mut TestAppContext) {
-        let project_a = init_test_project_with_agent_panel("/project-a", cx).await;
+        let project_a = init_test_project("/project-a", cx).await;
         let (multi_workspace, cx) = cx
             .add_window_view(|window, cx| MultiWorkspace::test_new(project_a.clone(), window, cx));
         let (sidebar, panel_a) = setup_sidebar_with_agent_panel(&multi_workspace, &project_a, cx);
@@ -3364,7 +3229,7 @@ mod tests {
 
     #[gpui::test]
     async fn test_thread_title_update_propagates_to_sidebar(cx: &mut TestAppContext) {
-        let project = init_test_project_with_agent_panel("/my-project", cx).await;
+        let project = init_test_project("/my-project", cx).await;
         let (multi_workspace, cx) =
             cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
         let (sidebar, panel) = setup_sidebar_with_agent_panel(&multi_workspace, &project, cx);
@@ -3412,7 +3277,7 @@ mod tests {
 
     #[gpui::test]
     async fn test_focused_thread_tracks_user_intent(cx: &mut TestAppContext) {
-        let project_a = init_test_project_with_agent_panel("/project-a", cx).await;
+        let project_a = init_test_project("/project-a", cx).await;
         let (multi_workspace, cx) = cx
             .add_window_view(|window, cx| MultiWorkspace::test_new(project_a.clone(), window, cx));
         let (sidebar, panel_a) = setup_sidebar_with_agent_panel(&multi_workspace, &project_a, cx);
