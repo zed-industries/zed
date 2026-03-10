@@ -3283,7 +3283,10 @@ impl File {
             worktree,
             path: entry.path.clone(),
             disk_state: if let Some(mtime) = entry.mtime {
-                DiskState::Present { mtime, size: entry.size }
+                DiskState::Present {
+                    mtime,
+                    size: entry.size,
+                }
             } else {
                 DiskState::New
             },
