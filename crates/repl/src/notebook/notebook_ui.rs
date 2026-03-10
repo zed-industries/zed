@@ -42,34 +42,10 @@ use runtimelib::{ExecuteRequest, JupyterMessage, JupyterMessageContent};
 use ui::PopoverMenuHandle;
 use zed_actions::editor::{MoveDown, MoveUp};
 use zed_actions::notebook::{
-    EnterCommandMode, EnterEditMode, NotebookMoveDown, NotebookMoveUp, RunAndAdvance,
+    AddCodeBlock, AddMarkdownBlock, ClearOutputs, EnterCommandMode, EnterEditMode, InterruptKernel,
+    MoveCellDown, MoveCellUp, NotebookMoveDown, NotebookMoveUp, OpenNotebook, RestartKernel, Run,
+    RunAll, RunAndAdvance,
 };
-
-actions!(
-    notebook,
-    [
-        /// Opens a Jupyter notebook file.
-        OpenNotebook,
-        /// Runs all cells in the notebook.
-        RunAll,
-        /// Runs the current cell and stays on it.
-        Run,
-        /// Clears all cell outputs.
-        ClearOutputs,
-        /// Moves the current cell up.
-        MoveCellUp,
-        /// Moves the current cell down.
-        MoveCellDown,
-        /// Adds a new markdown cell.
-        AddMarkdownBlock,
-        /// Adds a new code cell.
-        AddCodeBlock,
-        /// Restarts the kernel.
-        RestartKernel,
-        /// Interrupts the current execution.
-        InterruptKernel,
-    ]
-);
 
 /// Whether the notebook is in command mode (navigating cells) or edit mode (editing a cell).
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -672,11 +648,7 @@ impl NotebookEditor {
         cx.notify();
     }
 
-    fn enter_command_mode(
-        &mut self,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
+    fn enter_command_mode(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.notebook_mode = NotebookMode::Command;
         self.focus_handle.focus(window, cx);
         cx.notify();
@@ -699,7 +671,8 @@ impl NotebookEditor {
         }
         if self.selected_cell_index < count - 1 {
             self.selected_cell_index += 1;
-            self.cell_list.scroll_to_reveal_item(self.selected_cell_index);
+            self.cell_list
+                .scroll_to_reveal_item(self.selected_cell_index);
         }
         self.notebook_mode = NotebookMode::Command;
         self.focus_handle.focus(window, cx);
@@ -1327,9 +1300,9 @@ impl Render for NotebookEditor {
             .on_action(
                 cx.listener(|this, _: &Run, window, cx| this.run_current_cell(&Run, window, cx)),
             )
-            .on_action(cx.listener(|this, action, window, cx| {
-                this.run_and_advance(action, window, cx)
-            }))
+            .on_action(
+                cx.listener(|this, action, window, cx| this.run_and_advance(action, window, cx)),
+            )
             .on_action(cx.listener(|this, _: &RunAll, window, cx| this.run_cells(window, cx)))
             .on_action(
                 cx.listener(|this, _: &MoveCellUp, window, cx| this.move_cell_up(window, cx)),
@@ -1343,24 +1316,20 @@ impl Render for NotebookEditor {
             .on_action(
                 cx.listener(|this, _: &AddCodeBlock, window, cx| this.add_code_block(window, cx)),
             )
-            .on_action(cx.listener(|this, action, window, cx| {
-                this.enter_edit_mode(action, window, cx)
-            }))
+            .on_action(
+                cx.listener(|this, action, window, cx| this.enter_edit_mode(action, window, cx)),
+            )
             .on_action(cx.listener(|this, action, window, cx| {
                 this.handle_enter_command_mode(action, window, cx)
             }))
-            .on_action(cx.listener(|this, action, window, cx| {
-                this.select_next(action, window, cx)
-            }))
-            .on_action(cx.listener(|this, action, window, cx| {
-                this.select_previous(action, window, cx)
-            }))
-            .on_action(cx.listener(|this, action, window, cx| {
-                this.select_first(action, window, cx)
-            }))
-            .on_action(cx.listener(|this, action, window, cx| {
-                this.select_last(action, window, cx)
-            }))
+            .on_action(cx.listener(|this, action, window, cx| this.select_next(action, window, cx)))
+            .on_action(
+                cx.listener(|this, action, window, cx| this.select_previous(action, window, cx)),
+            )
+            .on_action(
+                cx.listener(|this, action, window, cx| this.select_first(action, window, cx)),
+            )
+            .on_action(cx.listener(|this, action, window, cx| this.select_last(action, window, cx)))
             .on_action(cx.listener(|this, _: &MoveUp, window, cx| {
                 this.select_previous(&menu::SelectPrevious, window, cx);
                 if let Some(cell_id) = this.cell_order.get(this.selected_cell_index) {
