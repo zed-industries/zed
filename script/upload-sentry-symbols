@@ -1,0 +1,119 @@
+#!/usr/bin/env bash
+
+set -euxo pipefail
+source script/lib/sentry-upload.sh
+
+# Builds Zed and remote_server binaries and uploads debug symbols to Sentry.
+# Intended for re-uploading symbols for releases where the original upload
+# failed or the files were corrupted.
+#
+# Usage: script/upload-sentry-symbols [--verify]
+#
+# Environment:
+#   SENTRY_AUTH_TOKEN  (required) Sentry authentication token
+#
+# Options:
+#   --verify  After uploading, verify the debug IDs are resolvable on Sentry
+
+verify=false
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        --verify)
+            verify=true
+            shift
+            ;;
+        *)
+            echo "Unknown option: $1" >&2
+            exit 1
+            ;;
+    esac
+done
+
+if [[ -z "${SENTRY_AUTH_TOKEN:-}" ]]; then
+    echo "Error: SENTRY_AUTH_TOKEN is required" >&2
+    exit 1
+fi
+
+if ! command -v sentry-cli >/dev/null 2>&1; then
+    echo "Error: sentry-cli is not installed" >&2
+    echo "Install with: curl -sL https://sentry.io/get-cli | bash" >&2
+    exit 1
+fi
+
+target_dir="${CARGO_TARGET_DIR:-target}"
+version_info=$(rustc --version --verbose)
+host_line=$(echo "$version_info" | grep host)
+target_triple=${host_line#*: }
+
+case "$(uname -s)" in
+    Linux)
+        musl_triple=${target_triple%-gnu}-musl
+        remote_server_triple=${REMOTE_SERVER_TARGET:-"${musl_triple}"}
+
+        echo "==> Building zed and cli (release) for ${target_triple}..."
+        cargo build --release --target "${target_triple}" --package zed --package cli
+
+        echo "==> Building remote_server (release) for ${remote_server_triple}..."
+        export RUSTFLAGS="${RUSTFLAGS:-} -C target-feature=+crt-static"
+        cargo build --release --target "${remote_server_triple}" --package remote_server
+
+        upload_paths=(
+            "${target_dir}/${target_triple}/release/zed"
+            "${target_dir}/${remote_server_triple}/release/remote_server"
+        )
+        ;;
+    Darwin)
+        echo "==> Building zed and cli (release) for ${target_triple}..."
+        cargo build --release --target "${target_triple}" --package zed --package cli
+
+        echo "==> Building remote_server (release) for ${target_triple}..."
+        cargo build --release --target "${target_triple}" --package remote_server
+
+        echo "==> Extracting DWARF debug info..."
+        dsymutil --flat "${target_dir}/${target_triple}/release/zed"
+        dsymutil --flat "${target_dir}/${target_triple}/release/remote_server"
+
+        upload_paths=(
+            "${target_dir}/${target_triple}/release/zed.dwarf"
+            "${target_dir}/${target_triple}/release/remote_server.dwarf"
+        )
+        ;;
+    *)
+        echo "Error: unsupported platform (use upload-sentry-symbols.ps1 on Windows)" >&2
+        exit 1
+        ;;
+esac
+
+echo "==> Debug files to upload:"
+for path in "${upload_paths[@]}"; do
+    ls -lh "$path"
+    sentry-cli debug-files check "$path" || true
+done
+
+echo "==> Uploading debug symbols to Sentry..."
+upload_to_sentry "${upload_paths[@]}"
+
+if [ "$verify" = true ]; then
+    echo "==> Verifying uploaded debug files..."
+    all_found=true
+    for path in "${upload_paths[@]}"; do
+        debug_id=$(sentry-cli debug-files check "$path" 2>/dev/null | grep -oP 'Debug ID:\s*\K\S+' || true)
+        if [ -n "$debug_id" ]; then
+            echo "Checking debug ID: $debug_id"
+            if sentry-cli --org zed-dev --project zed debug-files find "$debug_id" 2>&1 | grep -q "missing"; then
+                echo "WARNING: Debug ID $debug_id still reported as missing" >&2
+                all_found=false
+            else
+                echo "OK: $debug_id found on Sentry"
+            fi
+        else
+            echo "WARNING: Could not extract debug ID from $path" >&2
+        fi
+    done
+    if [ "$all_found" = false ]; then
+        echo "Some debug files could not be verified. They may need time to process." >&2
+        exit 1
+    fi
+fi
+
+echo "==> Done."

@@ -20,6 +20,7 @@ mod extensions;
 mod nix_build;
 mod publish_extension_cli;
 mod release_nightly;
+mod reupload_sentry_symbols;
 mod run_bundling;
 
 mod release;
@@ -143,6 +144,7 @@ pub fn run_workflows(_: GenerateWorkflowArgs) -> Result<()> {
         WorkflowFile::zed(publish_extension_cli::publish_extension_cli),
         WorkflowFile::zed(release::release),
         WorkflowFile::zed(release_nightly::release_nightly),
+        WorkflowFile::zed(reupload_sentry_symbols::reupload_sentry_symbols),
         WorkflowFile::zed(run_agent_evals::run_agent_evals),
         WorkflowFile::zed(run_agent_evals::run_cron_unit_evals),
         WorkflowFile::zed(run_agent_evals::run_unit_evals),

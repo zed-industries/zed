@@ -1,0 +1,179 @@
+# Generated from xtask::workflows::reupload_sentry_symbols
+# Rebuild with `cargo xtask workflows`.
+name: reupload_sentry_symbols
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: '1'
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Git tag to rebuild and upload symbols for (e.g. v0.200.0-pre)
+        required: true
+        type: string
+jobs:
+  upload_linux_x86_64:
+    if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions')
+    runs-on: namespace-profile-32x64-ubuntu-2004
+    env:
+      CARGO_INCREMENTAL: 0
+      ZED_CLIENT_CHECKSUM_SEED: ${{ secrets.ZED_CLIENT_CHECKSUM_SEED }}
+      ZED_MINIDUMP_ENDPOINT: ${{ secrets.ZED_SENTRY_MINIDUMP_ENDPOINT }}
+    steps:
+    - name: steps::checkout_repo
+      uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      with:
+        clean: false
+        ref: ${{ inputs.tag }}
+    - name: steps::setup_sentry
+      uses: matbour/setup-sentry-cli@3e938c54b3018bdd019973689ef984e033b0454b
+      with:
+        token: ${{ secrets.SENTRY_AUTH_TOKEN }}
+    - name: steps::setup_linux
+      run: ./script/linux
+    - name: steps::install_mold
+      run: ./script/install-mold
+    - name: steps::download_wasi_sdk
+      run: ./script/download-wasi-sdk
+    - name: reupload_sentry_symbols::upload_job::upload_symbols_unix
+      run: ./script/upload-sentry-symbols --verify
+    timeout-minutes: 60
+  upload_linux_aarch64:
+    if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions')
+    runs-on: namespace-profile-8x32-ubuntu-2004-arm-m4
+    env:
+      CARGO_INCREMENTAL: 0
+      ZED_CLIENT_CHECKSUM_SEED: ${{ secrets.ZED_CLIENT_CHECKSUM_SEED }}
+      ZED_MINIDUMP_ENDPOINT: ${{ secrets.ZED_SENTRY_MINIDUMP_ENDPOINT }}
+    steps:
+    - name: steps::checkout_repo
+      uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      with:
+        clean: false
+        ref: ${{ inputs.tag }}
+    - name: steps::setup_sentry
+      uses: matbour/setup-sentry-cli@3e938c54b3018bdd019973689ef984e033b0454b
+      with:
+        token: ${{ secrets.SENTRY_AUTH_TOKEN }}
+    - name: steps::setup_linux
+      run: ./script/linux
+    - name: steps::install_mold
+      run: ./script/install-mold
+    - name: steps::download_wasi_sdk
+      run: ./script/download-wasi-sdk
+    - name: reupload_sentry_symbols::upload_job::upload_symbols_unix
+      run: ./script/upload-sentry-symbols --verify
+    timeout-minutes: 60
+  upload_mac_x86_64:
+    if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions')
+    runs-on: namespace-profile-mac-large
+    env:
+      CARGO_INCREMENTAL: 0
+      ZED_CLIENT_CHECKSUM_SEED: ${{ secrets.ZED_CLIENT_CHECKSUM_SEED }}
+      ZED_MINIDUMP_ENDPOINT: ${{ secrets.ZED_SENTRY_MINIDUMP_ENDPOINT }}
+      MACOS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
+      MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+      APPLE_NOTARIZATION_KEY: ${{ secrets.APPLE_NOTARIZATION_KEY }}
+      APPLE_NOTARIZATION_KEY_ID: ${{ secrets.APPLE_NOTARIZATION_KEY_ID }}
+      APPLE_NOTARIZATION_ISSUER_ID: ${{ secrets.APPLE_NOTARIZATION_ISSUER_ID }}
+    steps:
+    - name: steps::checkout_repo
+      uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      with:
+        clean: false
+        ref: ${{ inputs.tag }}
+    - name: steps::setup_sentry
+      uses: matbour/setup-sentry-cli@3e938c54b3018bdd019973689ef984e033b0454b
+      with:
+        token: ${{ secrets.SENTRY_AUTH_TOKEN }}
+    - name: reupload_sentry_symbols::upload_job::upload_symbols_unix
+      run: ./script/upload-sentry-symbols --verify
+    timeout-minutes: 60
+  upload_mac_aarch64:
+    if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions')
+    runs-on: namespace-profile-mac-large
+    env:
+      CARGO_INCREMENTAL: 0
+      ZED_CLIENT_CHECKSUM_SEED: ${{ secrets.ZED_CLIENT_CHECKSUM_SEED }}
+      ZED_MINIDUMP_ENDPOINT: ${{ secrets.ZED_SENTRY_MINIDUMP_ENDPOINT }}
+      MACOS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
+      MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+      APPLE_NOTARIZATION_KEY: ${{ secrets.APPLE_NOTARIZATION_KEY }}
+      APPLE_NOTARIZATION_KEY_ID: ${{ secrets.APPLE_NOTARIZATION_KEY_ID }}
+      APPLE_NOTARIZATION_ISSUER_ID: ${{ secrets.APPLE_NOTARIZATION_ISSUER_ID }}
+    steps:
+    - name: steps::checkout_repo
+      uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      with:
+        clean: false
+        ref: ${{ inputs.tag }}
+    - name: steps::setup_sentry
+      uses: matbour/setup-sentry-cli@3e938c54b3018bdd019973689ef984e033b0454b
+      with:
+        token: ${{ secrets.SENTRY_AUTH_TOKEN }}
+    - name: reupload_sentry_symbols::upload_job::upload_symbols_unix
+      run: ./script/upload-sentry-symbols --verify
+    timeout-minutes: 60
+  upload_windows_x86_64:
+    if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions')
+    runs-on: self-32vcpu-windows-2022
+    env:
+      CARGO_INCREMENTAL: 0
+      ZED_CLIENT_CHECKSUM_SEED: ${{ secrets.ZED_CLIENT_CHECKSUM_SEED }}
+      ZED_MINIDUMP_ENDPOINT: ${{ secrets.ZED_SENTRY_MINIDUMP_ENDPOINT }}
+      AZURE_TENANT_ID: ${{ secrets.AZURE_SIGNING_TENANT_ID }}
+      AZURE_CLIENT_ID: ${{ secrets.AZURE_SIGNING_CLIENT_ID }}
+      AZURE_CLIENT_SECRET: ${{ secrets.AZURE_SIGNING_CLIENT_SECRET }}
+      ACCOUNT_NAME: ${{ vars.AZURE_SIGNING_ACCOUNT_NAME }}
+      CERT_PROFILE_NAME: ${{ vars.AZURE_SIGNING_CERT_PROFILE_NAME }}
+      ENDPOINT: ${{ vars.AZURE_SIGNING_ENDPOINT }}
+      FILE_DIGEST: SHA256
+      TIMESTAMP_DIGEST: SHA256
+      TIMESTAMP_SERVER: http://timestamp.acs.microsoft.com
+    steps:
+    - name: steps::checkout_repo
+      uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      with:
+        clean: false
+        ref: ${{ inputs.tag }}
+    - name: steps::setup_sentry
+      uses: matbour/setup-sentry-cli@3e938c54b3018bdd019973689ef984e033b0454b
+      with:
+        token: ${{ secrets.SENTRY_AUTH_TOKEN }}
+    - name: reupload_sentry_symbols::upload_job::upload_symbols_windows
+      run: ./script/upload-sentry-symbols.ps1 -Verify
+      shell: pwsh
+    timeout-minutes: 60
+  upload_windows_aarch64:
+    if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions')
+    runs-on: self-32vcpu-windows-2022
+    env:
+      CARGO_INCREMENTAL: 0
+      ZED_CLIENT_CHECKSUM_SEED: ${{ secrets.ZED_CLIENT_CHECKSUM_SEED }}
+      ZED_MINIDUMP_ENDPOINT: ${{ secrets.ZED_SENTRY_MINIDUMP_ENDPOINT }}
+      AZURE_TENANT_ID: ${{ secrets.AZURE_SIGNING_TENANT_ID }}
+      AZURE_CLIENT_ID: ${{ secrets.AZURE_SIGNING_CLIENT_ID }}
+      AZURE_CLIENT_SECRET: ${{ secrets.AZURE_SIGNING_CLIENT_SECRET }}
+      ACCOUNT_NAME: ${{ vars.AZURE_SIGNING_ACCOUNT_NAME }}
+      CERT_PROFILE_NAME: ${{ vars.AZURE_SIGNING_CERT_PROFILE_NAME }}
+      ENDPOINT: ${{ vars.AZURE_SIGNING_ENDPOINT }}
+      FILE_DIGEST: SHA256
+      TIMESTAMP_DIGEST: SHA256
+      TIMESTAMP_SERVER: http://timestamp.acs.microsoft.com
+    steps:
+    - name: steps::checkout_repo
+      uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      with:
+        clean: false
+        ref: ${{ inputs.tag }}
+    - name: steps::setup_sentry
+      uses: matbour/setup-sentry-cli@3e938c54b3018bdd019973689ef984e033b0454b
+      with:
+        token: ${{ secrets.SENTRY_AUTH_TOKEN }}
+    - name: reupload_sentry_symbols::upload_job::upload_symbols_windows
+      run: ./script/upload-sentry-symbols.ps1 -Verify
+      shell: pwsh
+    timeout-minutes: 60
+defaults:
+  run:
+    shell: bash -euxo pipefail {0}

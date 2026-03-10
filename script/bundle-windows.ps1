@@ -7,6 +7,7 @@ Param(
 )
 
 . "$PSScriptRoot/lib/workspace.ps1"
+. "$PSScriptRoot/lib/sentry-upload.ps1"
 
 # https://stackoverflow.com/questions/57949031/powershell-script-stops-if-program-fails-like-bash-set-o-errexit
 $ErrorActionPreference = 'Stop'
@@ -164,20 +165,7 @@ function UploadToSentry {
         return
     }
     Write-Output "Uploading zed debug symbols to sentry..."
-    for ($i = 1; $i -le 3; $i++) {
-        try {
-            sentry-cli debug-files upload --include-sources --wait -p zed -o zed-dev $CargoOutDir
-            break
-        }
-        catch {
-            Write-Output "Sentry upload attempt $i failed: $_"
-            if ($i -eq 3) {
-                Write-Output "All sentry upload attempts failed"
-                throw
-            }
-            Start-Sleep -Seconds 2
-        }
-    }
+    Upload-ToSentry -Paths @($CargoOutDir)
 }
 
 function MakeAppx {

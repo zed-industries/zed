@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+
+set -e
+
+if [[ $# -ne 1 ]]; then
+    echo "Usage: $0 <tag>" >&2
+    echo "Example: $0 v0.200.0-pre" >&2
+    exit 1
+fi
+
+tag="$1"
+
+if ! git rev-parse "$tag" >/dev/null 2>&1; then
+    echo "Error: tag '$tag' not found. Try 'git fetch --tags' first." >&2
+    exit 1
+fi
+
+gh workflow run reupload_sentry_symbols.yml -f tag="$tag"
+echo "Triggered reupload_sentry_symbols workflow for $tag"
