@@ -364,7 +364,6 @@ impl AgentServer for CustomAgentServer {
                         })?;
                     anyhow::Ok(agent.get_command(
                         extra_env,
-                        delegate.status_tx,
                         delegate.new_version_available,
                         &mut cx.to_async(),
                     ))

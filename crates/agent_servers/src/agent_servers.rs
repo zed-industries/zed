@@ -9,7 +9,6 @@ use collections::{HashMap, HashSet};
 pub use custom::*;
 use fs::Fs;
 use http_client::read_no_proxy_from_env;
-use project::Project;
 use project::agent_server_store::AgentServerStore;
 
 use acp_thread::AgentConnection;
@@ -22,28 +21,18 @@ pub use acp::AcpConnection;
 
 pub struct AgentServerDelegate {
     store: Entity<AgentServerStore>,
-    project: Entity<Project>,
-    status_tx: Option<watch::Sender<SharedString>>,
     new_version_available: Option<watch::Sender<Option<String>>>,
 }
 
 impl AgentServerDelegate {
     pub fn new(
         store: Entity<AgentServerStore>,
-        project: Entity<Project>,
-        status_tx: Option<watch::Sender<SharedString>>,
         new_version_tx: Option<watch::Sender<Option<String>>>,
     ) -> Self {
         Self {
             store,
-            project,
-            status_tx,
             new_version_available: new_version_tx,
         }
-    }
-
-    pub fn project(&self) -> &Entity<Project> {
-        &self.project
     }
 }
 

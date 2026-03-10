@@ -30,6 +30,7 @@ use zed_actions::agent::{
 };
 
 use crate::ManageProfiles;
+use crate::agent_connection_store::AgentConnectionStore;
 use crate::ui::{AcpOnboardingModal, ClaudeCodeOnboardingModal};
 use crate::{
     AddContextServer, AgentDiffPane, ConnectionView, CopyThreadToClipboard, Follow,
@@ -790,6 +791,7 @@ pub struct AgentPanel {
     thread_store: Entity<ThreadStore>,
     text_thread_store: Entity<assistant_text_thread::TextThreadStore>,
     prompt_store: Option<Entity<PromptStore>>,
+    connection_store: Entity<AgentConnectionStore>,
     context_server_registry: Entity<ContextServerRegistry>,
     configuration: Option<Entity<AgentConfiguration>>,
     configuration_subscription: Option<Subscription>,
@@ -1116,6 +1118,7 @@ impl AgentPanel {
             language_registry,
             text_thread_store,
             prompt_store,
+            connection_store: cx.new(|cx| AgentConnectionStore::new(project.clone(), cx)),
             configuration: None,
             configuration_subscription: None,
             focus_handle: cx.focus_handle(),
@@ -2395,7 +2398,7 @@ impl AgentPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let selected_agent = AgentType::from(ext_agent);
+        let selected_agent = AgentType::from(ext_agent.clone());
         if self.selected_agent != selected_agent {
             self.selected_agent = selected_agent;
             self.serialize(cx);
@@ -2406,9 +2409,13 @@ impl AgentPanel {
             .is_some()
             .then(|| self.thread_store.clone());
 
+        let connection_store = self.connection_store.clone();
+
         let server_view = cx.new(|cx| {
             crate::ConnectionView::new(
                 server,
+                connection_store,
+                ext_agent,
                 resume_session_id,
                 cwd,
                 title,
