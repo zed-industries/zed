@@ -641,7 +641,6 @@ struct RustStyleCompletionProvider {
 impl CompletionProvider for RustStyleCompletionProvider {
     fn completions(
         &self,
-        _excerpt_id: ExcerptId,
         buffer: &Entity<Buffer>,
         position: Anchor,
         _: editor::CompletionContext,

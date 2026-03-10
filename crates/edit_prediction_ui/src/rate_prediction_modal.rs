@@ -1018,7 +1018,6 @@ impl FeedbackCompletionProvider {
 impl editor::CompletionProvider for FeedbackCompletionProvider {
     fn completions(
         &self,
-        _excerpt_id: editor::ExcerptId,
         buffer: &Entity<Buffer>,
         buffer_position: language::Anchor,
         _trigger: editor::CompletionContext,

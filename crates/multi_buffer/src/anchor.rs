@@ -62,7 +62,7 @@ impl From<ExcerptAnchor> for Anchor {
 }
 
 impl ExcerptAnchor {
-    pub(crate) fn text_anchor(&self) -> text::Anchor {
+    pub fn text_anchor(&self) -> text::Anchor {
         self.text_anchor
     }
 
@@ -310,7 +310,7 @@ impl Anchor {
         }
     }
 
-    pub(crate) fn excerpt_anchor(&self) -> Option<ExcerptAnchor> {
+    pub fn excerpt_anchor(&self) -> Option<ExcerptAnchor> {
         match self {
             Anchor::Min | Anchor::Max => None,
             Anchor::Excerpt(excerpt_anchor) => Some(*excerpt_anchor),

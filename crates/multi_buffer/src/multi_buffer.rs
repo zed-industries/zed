@@ -96,8 +96,8 @@ pub struct PathKeyIndex(u64);
 #[deprecated(note = "FIXME")]
 pub struct ExcerptInfo {
     path_key_index: PathKeyIndex,
-    buffer_id: BufferId,
-    range: Range<text::Anchor>,
+    pub buffer_id: BufferId,
+    pub range: Range<text::Anchor>,
 }
 
 impl ExcerptInfo {
@@ -781,6 +781,28 @@ impl<'a> MultiBufferExcerpt2<'a> {
     /// Infallibly retrieve the buffer entity for this excerpt
     pub fn buffer(&self, multibuffer: &MultiBuffer) -> Entity<Buffer> {
         todo!()
+    }
+
+    pub fn range(&self) -> ExcerptRange<text::Anchor> {
+        self.excerpt.range.clone()
+    }
+
+    pub fn path_key(&self) -> &'a PathKey {
+        &self.excerpt.path_key
+    }
+
+    pub fn buffer_id(&self) -> BufferId {
+        self.buffer_snapshot.remote_id()
+    }
+
+    pub fn anchor(&self, text_anchor: text::Anchor) -> Anchor {
+        debug_assert_eq!(self.buffer_id(), text_anchor.buffer_id);
+        ExcerptAnchor {
+            text_anchor,
+            path: self.excerpt.path_key_index,
+            diff_base_anchor: None,
+        }
+        .into()
     }
 }
 
@@ -5358,10 +5380,8 @@ impl MultiBufferSnapshot {
         }
     }
 
-    pub fn excerpts(&self) -> impl Iterator<Item = (&BufferSnapshot, ExcerptInfo)> {
-        self.excerpts
-            .iter()
-            .map(|excerpt| (excerpt.buffer_snapshot(self), excerpt.info()))
+    pub fn excerpts(&self) -> impl Iterator<Item = MultiBufferExcerpt2<'_>> {
+        self.excerpts.iter().map(|excerpt| excerpt.excerpt2(self))
     }
 
     fn cursor<'a, MBD, BD>(&'a self) -> MultiBufferCursor<'a, MBD, BD>
@@ -6290,7 +6310,7 @@ impl MultiBufferSnapshot {
         self.path_keys_by_index.get(&anchor.path).cloned()
     }
 
-    fn path_for_anchor(&self, anchor: ExcerptAnchor) -> PathKey {
+    pub fn path_for_anchor(&self, anchor: ExcerptAnchor) -> PathKey {
         self.try_path_for_anchor(anchor)
             .expect("invalid anchor: path was never added to multibuffer")
     }
@@ -6528,7 +6548,7 @@ impl MultiBufferSnapshot {
     /// If the given multibuffer range is contained in a single excerpt and contains no deleted hunks,
     /// returns the corresponding buffer range.
     ///
-    /// Otherwise, returns None;
+    /// Otherwise, returns None.
     pub fn range_to_buffer_range<T: MultiBufferDimension>(
         &self,
         range: Range<T>,
@@ -6536,11 +6556,17 @@ impl MultiBufferSnapshot {
         todo!()
     }
 
-    pub fn excerpt_for_position(&self, head: Anchor) -> Option<MultiBufferExcerpt2> {
+    /// Returns the excerpt containing the given multibuffer anchor.
+    ///
+    /// Returns None if there are no excerpts.
+    pub fn excerpt_for_position(&self, head: Anchor) -> Option<MultiBufferExcerpt2<'_>> {
         todo!()
     }
 
-    pub fn excerpt_for_range(&self, selection: Range<text::Anchor>) -> _ {
+    pub fn excerpt_for_range(
+        &self,
+        selection: Range<text::Anchor>,
+    ) -> Option<MultiBufferExcerpt2<'_>> {
         todo!()
     }
 }

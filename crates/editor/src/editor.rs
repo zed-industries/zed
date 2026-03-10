@@ -5947,10 +5947,13 @@ impl Editor {
             return;
         }
         let buffer_position = multibuffer_snapshot.anchor_before(position);
-        let Some(buffer) = buffer_position
-            .text_anchor
-            .buffer_id
-            .and_then(|buffer_id| self.buffer.read(cx).buffer(buffer_id))
+        let Some(buffer_position) = buffer_position.excerpt_anchor() else {
+            return;
+        };
+        let Some(buffer) = self
+            .buffer
+            .read(cx)
+            .buffer(buffer_position.text_anchor().buffer_id)
         else {
             return;
         };
@@ -5962,7 +5965,7 @@ impl Editor {
         );
 
         let language = buffer_snapshot
-            .language_at(buffer_position.text_anchor)
+            .language_at(buffer_position.text_anchor())
             .map(|language| language.name());
 
         let language_settings = language_settings(language.clone(), buffer_snapshot.file(), cx);
@@ -6052,29 +6055,26 @@ impl Editor {
             }
         };
 
-        let Anchor {
-            excerpt_id: buffer_excerpt_id,
-            text_anchor: buffer_position,
-            ..
-        } = buffer_position;
-
         let (word_replace_range, word_to_exclude) = if let (word_range, Some(CharKind::Word)) =
-            buffer_snapshot.surrounding_word(buffer_position, None)
+            buffer_snapshot.surrounding_word(buffer_position.text_anchor(), None)
         {
             let word_to_exclude = buffer_snapshot
                 .text_for_range(word_range.clone())
                 .collect::<String>();
             (
                 buffer_snapshot.anchor_before(word_range.start)
-                    ..buffer_snapshot.anchor_after(buffer_position),
+                    ..buffer_snapshot.anchor_after(buffer_position.text_anchor()),
                 Some(word_to_exclude),
             )
         } else {
-            (buffer_position..buffer_position, None)
+            (
+                buffer_position.text_anchor()..buffer_position.text_anchor(),
+                None,
+            )
         };
 
         let show_completion_documentation = buffer_snapshot
-            .settings_at(buffer_position, cx)
+            .settings_at(buffer_position.text_anchor(), cx)
             .show_completion_documentation;
 
         // The document can be large, so stay in reasonable bounds when searching for words,
@@ -6122,9 +6122,8 @@ impl Editor {
             };
 
             provider.completions(
-                buffer_excerpt_id,
                 &buffer,
-                buffer_position,
+                buffer_position.text_anchor(),
                 completion_context,
                 window,
                 cx,
@@ -6172,10 +6171,16 @@ impl Editor {
             && let Some(project) = self.project()
         {
             let char_classifier = buffer_snapshot
-                .char_classifier_at(buffer_position)
+                .char_classifier_at(buffer_position.text_anchor())
                 .scope_context(Some(CharScopeContext::Completion));
             project.update(cx, |project, cx| {
-                snippet_completions(project, &buffer, buffer_position, char_classifier, cx)
+                snippet_completions(
+                    project,
+                    &buffer,
+                    buffer_position.text_anchor(),
+                    char_classifier,
+                    cx,
+                )
             })
         } else {
             Task::ready(Ok(CompletionResponse {
@@ -6287,7 +6292,7 @@ impl Editor {
                     let query = if filter_completions { query } else { None };
                     let matches_task = menu.do_async_filtering(
                         query.unwrap_or_default(),
-                        buffer_position,
+                        buffer_position.text_anchor(),
                         &buffer,
                         cx,
                     );
@@ -26868,7 +26873,6 @@ pub trait SemanticsProvider {
 pub trait CompletionProvider {
     fn completions(
         &self,
-        excerpt_id: ExcerptId,
         buffer: &Entity<Buffer>,
         buffer_position: text::Anchor,
         trigger: CompletionContext,
@@ -27227,7 +27231,6 @@ fn snippet_completions(
 impl CompletionProvider for Entity<Project> {
     fn completions(
         &self,
-        _excerpt_id: ExcerptId,
         buffer: &Entity<Buffer>,
         buffer_position: text::Anchor,
         options: CompletionContext,
@@ -27959,24 +27962,17 @@ pub enum EditorEvent {
         utf16_range_to_replace: Option<Range<isize>>,
         text: Arc<str>,
     },
-    ExcerptsAdded {
+    BufferUpdated {
         buffer: Entity<Buffer>,
-        predecessor: ExcerptId,
-        excerpts: Vec<(ExcerptId, ExcerptRange<language::Anchor>)>,
+        path_key: PathKey,
+        ranges: Vec<ExcerptRange<text::Anchor>>,
     },
-    ExcerptsRemoved {
-        ids: Vec<ExcerptId>,
+    BuffersRemoved {
         removed_buffer_ids: Vec<BufferId>,
     },
     BufferFoldToggled {
         ids: Vec<ExcerptId>,
         folded: bool,
-    },
-    ExcerptsEdited {
-        ids: Vec<ExcerptId>,
-    },
-    ExcerptsExpanded {
-        ids: Vec<ExcerptId>,
     },
     ExpandExcerptsRequested {
         excerpt_ids: Vec<ExcerptId>,

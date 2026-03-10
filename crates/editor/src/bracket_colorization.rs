@@ -9,7 +9,7 @@ use collections::HashMap;
 use gpui::{Context, HighlightStyle};
 use itertools::Itertools;
 use language::language_settings;
-use multi_buffer::{Anchor, ExcerptId};
+use multi_buffer::Anchor;
 use ui::{ActiveTheme, utils::ensure_minimum_contrast};
 
 impl Editor {

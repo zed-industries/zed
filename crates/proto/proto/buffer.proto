@@ -216,6 +216,11 @@ message EditorAnchor {
     Anchor anchor = 2;
 }
 
+message PathKey {
+    optional uint64 sort_prefix = 1;
+    string path = 2;
+}
+
 enum CursorShape {
     CursorBar = 0;
     CursorBlock = 1;

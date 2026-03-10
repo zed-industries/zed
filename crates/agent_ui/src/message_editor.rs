@@ -1643,7 +1643,6 @@ mod tests {
             let buffer = editor.buffer().read(cx).as_singleton().unwrap();
             let completion_provider = editor.completion_provider().unwrap();
             completion_provider.completions(
-                excerpt_id,
                 &buffer,
                 text::Anchor::max_for_buffer(buffer.read(cx).remote_id()),
                 CompletionContext {

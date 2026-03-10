@@ -263,7 +263,6 @@ impl SlashCommandCompletionProvider {
 impl CompletionProvider for SlashCommandCompletionProvider {
     fn completions(
         &self,
-        _excerpt_id: ExcerptId,
         buffer: &Entity<Buffer>,
         buffer_position: Anchor,
         _: editor::CompletionContext,

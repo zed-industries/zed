@@ -526,7 +526,6 @@ struct ConsoleQueryBarCompletionProvider(WeakEntity<Console>);
 impl CompletionProvider for ConsoleQueryBarCompletionProvider {
     fn completions(
         &self,
-        _excerpt_id: ExcerptId,
         buffer: &Entity<Buffer>,
         buffer_position: language::Anchor,
         _trigger: editor::CompletionContext,

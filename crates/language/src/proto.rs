@@ -498,7 +498,7 @@ pub fn deserialize_anchor(anchor: proto::Anchor) -> Option<Anchor> {
         timestamp,
         anchor.offset as u32,
         bias,
-        buffer_id.expect("FIXME rework anchor ser/de"),
+        buffer_id?,
     ))
 }
 

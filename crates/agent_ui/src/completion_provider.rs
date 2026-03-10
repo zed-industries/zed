@@ -1096,7 +1096,6 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
 impl<T: PromptCompletionProviderDelegate> CompletionProvider for PromptCompletionProvider<T> {
     fn completions(
         &self,
-        _excerpt_id: ExcerptId,
         buffer: &Entity<Buffer>,
         buffer_position: Anchor,
         _trigger: CompletionContext,
