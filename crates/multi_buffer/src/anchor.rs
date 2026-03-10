@@ -25,21 +25,24 @@ pub struct ExcerptAnchor {
 /// adjusting to reflect insertions and deletions around them.
 #[derive(Clone, Copy, Eq, PartialEq, Hash)]
 pub enum Anchor {
+    /// An anchor that always resolves to the start of the multibuffer.
     Min,
+    /// An anchor that's attached to a specific excerpted buffer.
     Excerpt(ExcerptAnchor),
+    /// An anchor that always resolves to the end of the multibuffer.
     Max,
 }
 
 // todo!() should this take a lifetime?
 pub(crate) enum AnchorSeekTarget {
     Min,
-    Max,
     Excerpt {
         path_key: PathKey,
         anchor: ExcerptAnchor,
         // None when the buffer no longer exists in the multibuffer
         snapshot: Option<BufferSnapshot>,
     },
+    Max,
 }
 
 impl std::fmt::Debug for Anchor {
@@ -322,6 +325,18 @@ impl Anchor {
             Anchor::Min => Some(AnchorSeekTarget::Min),
             Anchor::Excerpt(excerpt_anchor) => excerpt_anchor.try_seek_target(snapshot),
             Anchor::Max => Some(AnchorSeekTarget::Max),
+        }
+    }
+
+    pub fn to_singleton_anchor(&self, buffer: &BufferSnapshot) -> text::Anchor {
+        match self {
+            Anchor::Min => text::Anchor::min_for_buffer(buffer.remote_id()),
+            Anchor::Excerpt(excerpt_anchor) => {
+                let text_anchor = excerpt_anchor.text_anchor;
+                assert_eq!(text_anchor.buffer_id, buffer.remote_id());
+                text_anchor
+            }
+            Anchor::Max => text::Anchor::max_for_buffer(buffer.remote_id()),
         }
     }
 }

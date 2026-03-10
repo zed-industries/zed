@@ -4,11 +4,9 @@ mod multi_buffer_tests;
 mod path_key;
 mod transaction;
 
-use crate::anchor::ExcerptAnchor;
-
 use self::transaction::History;
 
-pub use anchor::{Anchor, AnchorRangeExt};
+pub use anchor::{Anchor, AnchorRangeExt, ExcerptAnchor};
 
 use anchor::AnchorSeekTarget;
 use anyhow::{Result, anyhow};
@@ -95,6 +93,7 @@ pub struct MultiBuffer {
 pub struct PathKeyIndex(u64);
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[deprecated(note = "FIXME")]
 pub struct ExcerptInfo {
     path_key_index: PathKeyIndex,
     buffer_id: BufferId,
@@ -108,6 +107,10 @@ impl ExcerptInfo {
 
     pub fn start_anchor(&self) -> Anchor {
         Anchor::in_buffer(self.path_key_index, self.range.start)
+    }
+
+    pub fn buffer(&self, multibuffer: &MultiBuffer) -> Entity<Buffer> {
+        todo!()
     }
 }
 
@@ -143,6 +146,7 @@ pub enum Event {
 
 /// A diff hunk, representing a range of consequent lines in a multibuffer.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[deprecated(note = "FIXME")]
 pub struct MultiBufferDiffHunk {
     /// The row range in the multibuffer where this diff hunk appears.
     pub row_range: Range<MultiBufferRow>,
@@ -758,6 +762,32 @@ pub(crate) struct Excerpt {
     /// A summary of the text in the excerpt
     pub(crate) text_summary: TextSummary,
     pub(crate) has_trailing_newline: bool,
+}
+
+pub struct MultiBufferExcerpt2<'a> {
+    excerpt: &'a Excerpt,
+    buffer_snapshot: &'a BufferSnapshot,
+}
+
+impl<'a> MultiBufferExcerpt2<'a> {
+    pub fn buffer_snapshot(&self) -> &'a BufferSnapshot {
+        self.buffer_snapshot
+    }
+
+    pub fn anchor_range(&self, range: Range<text::Anchor>) -> Range<Anchor> {
+        todo!()
+    }
+
+    /// Infallibly retrieve the buffer entity for this excerpt
+    pub fn buffer(&self, multibuffer: &MultiBuffer) -> Entity<Buffer> {
+        todo!()
+    }
+}
+
+impl PartialEq for MultiBufferExcerpt2<'_> {
+    fn eq(&self, other: &Self) -> bool {
+        self.excerpt == other.excerpt
+    }
 }
 
 /// A public view into an `Excerpt` in a [`MultiBuffer`].
@@ -1790,6 +1820,7 @@ impl MultiBuffer {
     }
 
     #[ztracing::instrument(skip_all)]
+    #[deprecated(note = "FIXME")]
     pub fn excerpts_for_buffer(&self, buffer_id: BufferId, cx: &App) -> Vec<ExcerptInfo> {
         let snapshot = self.read(cx);
         snapshot
@@ -1798,6 +1829,7 @@ impl MultiBuffer {
             .collect()
     }
 
+    #[deprecated(note = "FIXME")]
     pub fn excerpt_ranges_for_buffer(&self, buffer_id: BufferId, cx: &App) -> Vec<Range<Point>> {
         let snapshot = self.read(cx);
         let mut excerpts = snapshot
@@ -1833,6 +1865,7 @@ impl MultiBuffer {
         result
     }
 
+    #[deprecated(note = "FIXME")]
     pub fn excerpt_containing(&self, position: impl ToOffset, cx: &App) -> Option<ExcerptInfo> {
         let snapshot = self.read(cx);
         let offset = position.to_offset(&snapshot);
@@ -1843,6 +1876,7 @@ impl MultiBuffer {
         Some(excerpt.info())
     }
 
+    #[deprecated(note = "FIXME")]
     pub fn buffer_for_anchor(&self, anchor: Anchor, cx: &App) -> Option<Entity<Buffer>> {
         match anchor {
             Anchor::Min => Some(self.snapshot(cx).excerpts.first()?.buffer(self)),
@@ -1852,6 +1886,7 @@ impl MultiBuffer {
     }
 
     // If point is at the end of the buffer, the last excerpt is returned
+    #[deprecated(note = "FIXME")]
     pub fn point_to_buffer_offset<T: ToOffset>(
         &self,
         point: T,
@@ -1866,6 +1901,7 @@ impl MultiBuffer {
     }
 
     // If point is at the end of the buffer, the last excerpt is returned
+    #[deprecated(note = "FIXME")]
     pub fn point_to_buffer_point<T: ToPoint>(
         &self,
         point: T,
@@ -1876,6 +1912,7 @@ impl MultiBuffer {
         Some((self.buffers.get(&buffer.remote_id())?.buffer.clone(), point))
     }
 
+    #[deprecated(note = "FIXME")]
     pub fn buffer_point_to_anchor(
         &self,
         // todo(lw): We shouldn't need this?
@@ -1903,6 +1940,7 @@ impl MultiBuffer {
         found
     }
 
+    #[deprecated(note = "FIXME")]
     pub fn buffer_anchor_to_anchor(
         &self,
         // todo(lw): We shouldn't need this?
@@ -1953,6 +1991,7 @@ impl MultiBuffer {
         }
     }
 
+    #[deprecated(note = "FIXME")]
     pub fn text_anchor_for_position<T: ToOffset>(
         &self,
         position: T,
@@ -3662,28 +3701,17 @@ impl MultiBufferSnapshot {
         result
     }
 
-    // todo!() can we make this not RangeBounds
+    #[deprecated(note = "FIXME")]
     pub fn range_to_buffer_ranges<T: ToOffset>(
         &self,
         range: Range<T>,
-    ) -> Vec<(&BufferSnapshot, Range<BufferOffset>)> {
-        self.range_to_buffer_ranges_with_context(range)
-            .into_iter()
-            .map(|(buffer, range, _context)| (buffer, range))
-            .collect()
-    }
-
-    pub fn range_to_buffer_ranges_with_context<T: ToOffset>(
-        &self,
-        range: Range<T>,
-    ) -> Vec<(&BufferSnapshot, Range<BufferOffset>, Range<text::Anchor>)> {
+    ) -> Vec<(MultiBufferExcerpt2<'_>, Range<BufferOffset>)> {
         let mut cursor = self.cursor::<MultiBufferOffset, BufferOffset>();
         let start = range.start.to_offset(self);
         let end = range.end.to_offset(self);
         cursor.seek(&start);
 
-        let mut result: Vec<(&BufferSnapshot, Range<BufferOffset>, Range<text::Anchor>)> =
-            Vec::new();
+        let mut result: Vec<(MultiBufferExcerpt2<'_>, Range<BufferOffset>)> = Vec::new();
         while let Some(region) = cursor.region() {
             if region.range.start >= end {
                 break;
@@ -3700,13 +3728,12 @@ impl MultiBufferSnapshot {
                     .buffer_range
                     .end
                     .min(region.buffer_range.start + end_overshoot);
-                let context = region.excerpt.range.context.clone();
-                if let Some(prev) = result.last_mut().filter(|(prev_buffer, prev_range, _)| {
-                    prev_buffer.remote_id() == region.buffer.remote_id() && prev_range.end == start
+                if let Some(prev) = result.last_mut().filter(|(prev_excerpt, prev_range)| {
+                    prev_excerpt == &region.excerpt.excerpt2(self) && prev_range.end == start
                 }) {
                     prev.1.end = end;
                 } else {
-                    result.push((region.buffer, start..end, context));
+                    result.push((region.excerpt.excerpt2(self), start..end));
                 }
             }
             cursor.next();
@@ -3721,14 +3748,10 @@ impl MultiBufferSnapshot {
 
             let buffer_offset =
                 BufferOffset(excerpt.range.context.start.to_offset(buffer_snapshot));
-            let context = excerpt.range.context.clone();
-            if result
-                .last_mut()
-                .is_none_or(|(prev_buffer, prev_range, _)| {
-                    prev_buffer.remote_id() != excerpt.buffer_id || prev_range.end != buffer_offset
-                })
-            {
-                result.push((buffer_snapshot, buffer_offset..buffer_offset, context));
+            if result.last_mut().is_none_or(|(prev_excerpt, prev_range)| {
+                prev_excerpt != &excerpt.excerpt2(self) || prev_range.end != buffer_offset
+            }) {
+                result.push((excerpt.excerpt2(self), buffer_offset..buffer_offset));
             }
         }
 
@@ -4114,12 +4137,8 @@ impl MultiBufferSnapshot {
         self.singleton
     }
 
-    pub fn as_singleton(&self) -> Option<&BufferSnapshot> {
-        if self.singleton {
-            self.excerpts.first().map(|e| e.buffer_snapshot(self))
-        } else {
-            None
-        }
+    pub fn as_singleton(&self) -> Option<MultiBufferExcerpt2<'_>> {
+        todo!()
     }
 
     pub fn len(&self) -> MultiBufferOffset {
@@ -4372,6 +4391,7 @@ impl MultiBufferSnapshot {
         Some((region.buffer, buffer_offset))
     }
 
+    #[deprecated(note = "FIXME")]
     pub fn point_to_buffer_point(&self, point: Point) -> Option<(&BufferSnapshot, Point)> {
         let mut cursor = self.cursor::<Point, Point>();
         cursor.seek(&point);
@@ -5260,9 +5280,10 @@ impl MultiBufferSnapshot {
     }
 
     /// Wraps the [`text::Anchor`] in a [`crate::Anchor`] if this multi-buffer is a singleton.
+    #[deprecated(note = "FIXME")]
     pub fn as_singleton_anchor(&self, text_anchor: text::Anchor) -> Option<Anchor> {
-        let buffer = self.as_singleton()?;
-        if text_anchor.buffer_id == buffer.remote_id() {
+        let excerpt = self.as_singleton()?;
+        if text_anchor.buffer_id == excerpt.buffer_snapshot().remote_id() {
             // todo!() bit hacky, but always right for singletons
             Some(Anchor::in_buffer(PathKeyIndex(0), text_anchor))
         } else {
@@ -6151,8 +6172,8 @@ impl MultiBufferSnapshot {
     }
 
     pub fn outline(&self, theme: Option<&SyntaxTheme>) -> Option<Outline<Anchor>> {
-        let buffer = self.as_singleton()?;
-        let outline = buffer.outline(theme);
+        let excerpt = self.as_singleton()?;
+        let outline = excerpt.buffer_snapshot().outline(theme);
         Some(Outline::new(
             outline
                 .items
@@ -6160,19 +6181,28 @@ impl MultiBufferSnapshot {
                 .flat_map(|item| {
                     Some(OutlineItem {
                         depth: item.depth,
-                        range: self.anchor_range_in_buffer(buffer.remote_id(), item.range)?,
+                        range: self.anchor_range_in_buffer(
+                            excerpt.buffer_snapshot().remote_id(),
+                            item.range,
+                        )?,
                         source_range_for_text: self.anchor_range_in_buffer(
-                            buffer.remote_id(),
+                            excerpt.buffer_snapshot().remote_id(),
                             item.source_range_for_text,
                         )?,
                         text: item.text,
                         highlight_ranges: item.highlight_ranges,
                         name_ranges: item.name_ranges,
                         body_range: item.body_range.and_then(|body_range| {
-                            self.anchor_range_in_buffer(buffer.remote_id(), body_range)
+                            self.anchor_range_in_buffer(
+                                excerpt.buffer_snapshot().remote_id(),
+                                body_range,
+                            )
                         }),
                         annotation_range: item.annotation_range.and_then(|annotation_range| {
-                            self.anchor_range_in_buffer(buffer.remote_id(), annotation_range)
+                            self.anchor_range_in_buffer(
+                                excerpt.buffer_snapshot().remote_id(),
+                                annotation_range,
+                            )
                         }),
                     })
                 })
@@ -6298,6 +6328,7 @@ impl MultiBufferSnapshot {
     }
 
     /// Returns the excerpt containing range and its offset start within the multibuffer or none if `range` spans multiple excerpts
+    #[deprecated(note = "FIXME")]
     pub fn excerpt_containing<T: ToOffset>(
         &self,
         range: Range<T>,
@@ -6435,8 +6466,9 @@ impl MultiBufferSnapshot {
             .flat_map(|range| {
                 self.range_to_buffer_ranges(range)
                     .into_iter()
-                    .map(|(buffer, range)| {
-                        buffer.anchor_after(range.start)..buffer.anchor_before(range.end)
+                    .map(|(excerpt, range)| {
+                        excerpt.buffer_snapshot().anchor_after(range.start)
+                            ..excerpt.buffer_snapshot().anchor_before(range.end)
                     })
             })
             .collect();
@@ -6491,6 +6523,25 @@ impl MultiBufferSnapshot {
         cursor
             .take_while(move |item| &item.path_key == path_key)
             .map(|excerpt| excerpt.info())
+    }
+
+    /// If the given multibuffer range is contained in a single excerpt and contains no deleted hunks,
+    /// returns the corresponding buffer range.
+    ///
+    /// Otherwise, returns None;
+    pub fn range_to_buffer_range<T: MultiBufferDimension>(
+        &self,
+        range: Range<T>,
+    ) -> Option<(BufferSnapshot, Range<T::TextDimension>)> {
+        todo!()
+    }
+
+    pub fn excerpt_for_position(&self, head: Anchor) -> Option<MultiBufferExcerpt2> {
+        todo!()
+    }
+
+    pub fn excerpt_for_range(&self, selection: Range<text::Anchor>) -> _ {
+        todo!()
     }
 }
 
@@ -7044,6 +7095,11 @@ impl Excerpt {
 
     fn end_anchor(&self) -> ExcerptAnchor {
         ExcerptAnchor::in_buffer(self.path_key_index, self.range.context.end)
+    }
+
+    // FIXME name
+    fn excerpt2<'a>(&'a self, snapshot: &'a MultiBufferSnapshot) -> MultiBufferExcerpt2<'a> {
+        todo!()
     }
 }
 
