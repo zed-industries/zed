@@ -1005,6 +1005,10 @@ impl<'a> MarkdownParser<'a> {
                     if let Some(table) = self.extract_html_table(node, source_range) {
                         elements.push(ParsedMarkdownElement::Table(table));
                     }
+                } else if local_name!("details") == name.local {
+                    if let Some(details) = self.extract_html_details(node, source_range, attrs) {
+                        elements.push(ParsedMarkdownElement::Details(details));
+                    }
                 } else {
                     self.consume_children(source_range, node, elements, context);
                 }
@@ -1452,6 +1456,104 @@ impl<'a> MarkdownParser<'a> {
                 source_range,
             })
         }
+    }
+
+    fn extract_html_details(
+        &self,
+        node: &Rc<markup5ever_rcdom::Node>,
+        source_range: Range<usize>,
+        attrs: &RefCell<Vec<html5ever::Attribute>>,
+    ) -> Option<ParsedMarkdownDetails> {
+        let open = Self::attr_value(attrs, local_name!("open")).is_some();
+        let mut summary = None;
+        let mut body = Vec::new();
+
+        for child in node.children.borrow().iter() {
+            if let markup5ever_rcdom::NodeData::Element { name, .. } = &child.data {
+                if local_name!("summary") == name.local {
+                    if summary.is_none() {
+                        summary =
+                            Some(self.parse_summary_content(source_range.clone(), child));
+                    }
+                    continue;
+                }
+            }
+            self.parse_html_node(
+                source_range.clone(),
+                child,
+                &mut body,
+                &ParseHtmlNodeContext::default(),
+            );
+        }
+
+        Some(ParsedMarkdownDetails {
+            source_range,
+            summary,
+            body,
+            open,
+        })
+    }
+
+    fn parse_summary_content(
+        &self,
+        source_range: Range<usize>,
+        node: &Rc<markup5ever_rcdom::Node>,
+    ) -> ParsedMarkdownSummaryContent {
+        // Per HTML5.2, <summary> contains either phrasing content or exactly one heading.
+        // We check by looking for the first element child.
+        for child in node.children.borrow().iter() {
+            match &child.data {
+                markup5ever_rcdom::NodeData::Element { name, .. } => {
+                    if matches!(
+                        name.local,
+                        local_name!("h1")
+                            | local_name!("h2")
+                            | local_name!("h3")
+                            | local_name!("h4")
+                            | local_name!("h5")
+                            | local_name!("h6")
+                    ) {
+                        let mut paragraph = MarkdownParagraph::new();
+                        self.consume_paragraph(
+                            source_range.clone(),
+                            child,
+                            &mut paragraph,
+                            &mut Vec::new(),
+                            &mut Vec::new(),
+                        );
+                        let level = match name.local {
+                            local_name!("h1") => HeadingLevel::H1,
+                            local_name!("h2") => HeadingLevel::H2,
+                            local_name!("h3") => HeadingLevel::H3,
+                            local_name!("h4") => HeadingLevel::H4,
+                            local_name!("h5") => HeadingLevel::H5,
+                            local_name!("h6") => HeadingLevel::H6,
+                            _ => unreachable!(),
+                        };
+                        return ParsedMarkdownSummaryContent::Heading(ParsedMarkdownHeading {
+                            source_range,
+                            level,
+                            contents: paragraph,
+                        });
+                    }
+                    // First element child is not a heading — fall through to phrasing.
+                    break;
+                }
+                // Skip whitespace text nodes before the first element child.
+                markup5ever_rcdom::NodeData::Text { .. } => continue,
+                _ => break,
+            }
+        }
+
+        let mut paragraph = MarkdownParagraph::new();
+        self.consume_paragraph(
+            source_range,
+            node,
+            &mut paragraph,
+            &mut Vec::new(),
+            &mut Vec::new(),
+        );
+        ParsedMarkdownSummaryContent::Phrasing(paragraph)
     }
 
     fn extract_html_table(
