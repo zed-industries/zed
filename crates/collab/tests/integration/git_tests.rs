@@ -302,6 +302,67 @@ async fn test_remote_git_worktrees(
         worktree_directory.join("bugfix-branch")
     );
     assert_eq!(bugfix_worktree.sha.as_ref(), "fake-sha");
+
+    // Client B (guest) attempts to rename a worktree. This should fail
+    // because worktree renaming is not forwarded through collab
+    let rename_result = cx_b
+        .update(|cx| {
+            repo_b.update(cx, |repository, _| {
+                repository.rename_worktree(
+                    worktree_directory.join("feature-branch"),
+                    worktree_directory.join("renamed-branch"),
+                )
+            })
+        })
+        .await
+        .unwrap();
+    assert!(
+        rename_result.is_err(),
+        "Guest should not be able to rename worktrees via collab"
+    );
+
+    executor.run_until_parked();
+
+    // Verify worktrees are unchanged — still 3
+    let worktrees = cx_b
+        .update(|cx| repo_b.update(cx, |repository, _| repository.worktrees()))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        worktrees.len(),
+        3,
+        "Worktree count should be unchanged after failed rename"
+    );
+
+    // Client B (guest) attempts to remove a worktree. This should fail
+    // because worktree removal is not forwarded through collab
+    let remove_result = cx_b
+        .update(|cx| {
+            repo_b.update(cx, |repository, _| {
+                repository.remove_worktree(worktree_directory.join("feature-branch"), false)
+            })
+        })
+        .await
+        .unwrap();
+    assert!(
+        remove_result.is_err(),
+        "Guest should not be able to remove worktrees via collab"
+    );
+
+    executor.run_until_parked();
+
+    // Verify worktrees are unchanged — still 3
+    let worktrees = cx_b
+        .update(|cx| repo_b.update(cx, |repository, _| repository.worktrees()))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        worktrees.len(),
+        3,
+        "Worktree count should be unchanged after failed removal"
+    );
 }
 
 #[gpui::test]

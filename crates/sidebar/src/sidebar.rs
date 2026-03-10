@@ -63,6 +63,7 @@ impl From<&ActiveThreadInfo> for acp_thread::AgentSessionInfo {
             cwd: None,
             title: Some(info.title.clone()),
             updated_at: Some(Utc::now()),
+            created_at: Some(Utc::now()),
             meta: None,
         }
     }
@@ -512,7 +513,13 @@ impl Sidebar {
                     }
                 }
 
-                threads.sort_by(|a, b| b.session_info.updated_at.cmp(&a.session_info.updated_at));
+                // Sort by created_at (newest first), falling back to updated_at
+                // for threads without a created_at (e.g., ACP sessions).
+                threads.sort_by(|a, b| {
+                    let a_time = a.session_info.created_at.or(a.session_info.updated_at);
+                    let b_time = b.session_info.created_at.or(b.session_info.updated_at);
+                    b_time.cmp(&a_time)
+                });
             }
 
             if !query.is_empty() {
@@ -726,12 +733,9 @@ impl Sidebar {
             } => self.render_new_thread(ix, path_list, workspace, is_selected, cx),
         };
 
-        // add the blue border here, not in the sub methods
-
         if is_group_header_after_first {
             v_flex()
                 .w_full()
-                .pt_2()
                 .border_t_1()
                 .border_color(cx.theme().colors().border_variant)
                 .child(rendered)
@@ -792,13 +796,15 @@ impl Sidebar {
         };
 
         let color = cx.theme().colors();
-        let gradient_overlay = GradientFade::new(
-            color.panel_background,
-            color.element_hover,
-            color.element_active,
-        )
-        .width(px(48.0))
-        .group_name(group_name.clone());
+        let base_bg = if is_active_workspace {
+            color.ghost_element_selected
+        } else {
+            color.panel_background
+        };
+        let gradient_overlay =
+            GradientFade::new(base_bg, color.element_hover, color.element_active)
+                .width(px(48.0))
+                .group_name(group_name.clone());
 
         ListItem::new(id)
             .group_name(group_name)
@@ -1472,9 +1478,9 @@ impl Render for Sidebar {
             .child(
                 h_flex()
                     .flex_none()
-                    .p_2()
+                    .px_2p5()
                     .h(Tab::container_height(cx))
-                    .gap_1p5()
+                    .gap_2()
                     .border_b_1()
                     .border_color(cx.theme().colors().border)
                     .child(
@@ -2017,6 +2023,7 @@ mod tests {
                         cwd: None,
                         title: Some("Completed thread".into()),
                         updated_at: Some(Utc::now()),
+                        created_at: Some(Utc::now()),
                         meta: None,
                     },
                     icon: IconName::ZedAgent,
@@ -2034,6 +2041,7 @@ mod tests {
                         cwd: None,
                         title: Some("Running thread".into()),
                         updated_at: Some(Utc::now()),
+                        created_at: Some(Utc::now()),
                         meta: None,
                     },
                     icon: IconName::ZedAgent,
@@ -2051,6 +2059,7 @@ mod tests {
                         cwd: None,
                         title: Some("Error thread".into()),
                         updated_at: Some(Utc::now()),
+                        created_at: Some(Utc::now()),
                         meta: None,
                     },
                     icon: IconName::ZedAgent,
@@ -2068,6 +2077,7 @@ mod tests {
                         cwd: None,
                         title: Some("Waiting thread".into()),
                         updated_at: Some(Utc::now()),
+                        created_at: Some(Utc::now()),
                         meta: None,
                     },
                     icon: IconName::ZedAgent,
@@ -2085,6 +2095,7 @@ mod tests {
                         cwd: None,
                         title: Some("Notified thread".into()),
                         updated_at: Some(Utc::now()),
+                        created_at: Some(Utc::now()),
                         meta: None,
                     },
                     icon: IconName::ZedAgent,
@@ -3456,6 +3467,7 @@ mod tests {
                     cwd: None,
                     title: Some("Test".into()),
                     updated_at: None,
+                    created_at: None,
                     meta: None,
                 },
                 &workspace_a,
@@ -3511,6 +3523,7 @@ mod tests {
                     cwd: None,
                     title: Some("Thread B".into()),
                     updated_at: None,
+                    created_at: None,
                     meta: None,
                 },
                 &workspace_b,
