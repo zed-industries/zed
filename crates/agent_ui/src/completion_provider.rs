@@ -869,7 +869,7 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
         &self,
         workspace: &Entity<Workspace>,
         cx: &mut App,
-    ) -> Option<Task<BranchDiffMatch>> {
+    ) -> Option<Task<Option<BranchDiffMatch>>> {
         let project = workspace.read(cx).project().clone();
         let repo = project.read(cx).active_repository(cx)?;
 
@@ -880,10 +880,9 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
                 .await
                 .ok()
                 .and_then(|r| r.ok())
-                .flatten()
-                .unwrap_or_else(|| "main".into());
+                .flatten()?;
 
-            BranchDiffMatch { base_ref }
+            Some(BranchDiffMatch { base_ref })
         }))
     }
 
@@ -996,8 +995,9 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
                     matches.extend(entries);
 
                     if let Some(branch_diff_task) = branch_diff_task {
-                        let branch_diff_match = branch_diff_task.await;
-                        matches.push(Match::BranchDiff(branch_diff_match));
+                        if let Some(branch_diff_match) = branch_diff_task.await {
+                            matches.push(Match::BranchDiff(branch_diff_match));
+                        }
                     }
 
                     matches
@@ -1064,8 +1064,9 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
                         .await;
 
                         if !branch_diff_matches.is_empty() {
-                            let branch_diff_match = branch_diff_task.await;
-                            matches.push(Match::BranchDiff(branch_diff_match));
+                            if let Some(branch_diff_match) = branch_diff_task.await {
+                                matches.push(Match::BranchDiff(branch_diff_match));
+                            }
                         }
                     }
 
