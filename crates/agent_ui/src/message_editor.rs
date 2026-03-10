@@ -80,6 +80,7 @@ impl PromptCompletionProviderDelegate for Entity<MessageEditor> {
                 PromptContextType::Diagnostics,
                 PromptContextType::Fetch,
                 PromptContextType::Rules,
+                PromptContextType::BranchDiff,
             ]);
         }
         supported
