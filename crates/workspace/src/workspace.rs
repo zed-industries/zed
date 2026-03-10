@@ -209,6 +209,23 @@ pub trait DebuggerProvider {
     fn active_thread_state(&self, cx: &App) -> Option<ThreadStatus>;
 }
 
+/// The activity status of the agent in a workspace window.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AgentActivityStatus {
+    /// No agent threads are active.
+    Inactive,
+    /// The agent is actively generating or running tools.
+    Working,
+    /// The agent has finished its turn and is idle (may need human attention).
+    Idle,
+    /// The agent is waiting for the user to confirm a tool call.
+    WaitingForConfirmation,
+}
+
+pub trait AgentStatusProvider: Send + Sync {
+    fn agent_activity_status(&self, cx: &App) -> AgentActivityStatus;
+}
+
 /// Opens a file or directory.
 #[derive(Clone, PartialEq, Deserialize, JsonSchema, Action)]
 #[action(namespace = workspace)]
@@ -334,6 +351,10 @@ actions!(
         RestoreBanner,
         /// Toggles expansion of the selected item.
         ToggleExpandItem,
+        /// Renames the current workspace with a custom name.
+        RenameWorkspace,
+        /// Clears the custom workspace name, reverting to the default.
+        ClearWorkspaceName,
     ]
 );
 
@@ -1309,6 +1330,7 @@ pub struct Workspace {
     last_leaders_by_pane: HashMap<WeakEntity<Pane>, CollaboratorId>,
     window_edited: bool,
     last_window_title: Option<String>,
+    custom_name: Option<String>,
     dirty_items: HashMap<EntityId, Subscription>,
     active_call: Option<(GlobalAnyActiveCall, Vec<Subscription>)>,
     leader_updates_tx: mpsc::UnboundedSender<(PeerId, proto::UpdateFollowers)>,
@@ -1329,6 +1351,7 @@ pub struct Workspace {
     on_prompt_for_open_path: Option<PromptForOpenPath>,
     terminal_provider: Option<Box<dyn TerminalProvider>>,
     debugger_provider: Option<Arc<dyn DebuggerProvider>>,
+    agent_status_provider: Option<Arc<dyn AgentStatusProvider>>,
     serializable_items_tx: UnboundedSender<Box<dyn SerializableItemHandle>>,
     _items_serializer: Task<Result<()>>,
     session_id: Option<String>,
@@ -1713,6 +1736,7 @@ impl Workspace {
             dispatching_keystrokes: Default::default(),
             window_edited: false,
             last_window_title: None,
+            custom_name: None,
             dirty_items: Default::default(),
             active_call,
             database_id: workspace_id,
@@ -1734,6 +1758,7 @@ impl Workspace {
             on_prompt_for_open_path: None,
             terminal_provider: None,
             debugger_provider: None,
+            agent_status_provider: None,
             serializable_items_tx,
             _items_serializer,
             session_id: Some(session_id),
@@ -1858,6 +1883,9 @@ impl Workspace {
                         .as_ref()
                         .map(|w| w.centered_layout)
                         .unwrap_or(false);
+                    let custom_name = serialized_workspace
+                        .as_ref()
+                        .and_then(|w| w.custom_name.clone());
 
                     let workspace = window.update(cx, |multi_workspace, window, cx| {
                         let workspace = cx.new(|cx| {
@@ -1870,6 +1898,7 @@ impl Workspace {
                             );
 
                             workspace.centered_layout = centered_layout;
+                            workspace.custom_name = custom_name;
 
                             // Call init callback to add items before window renders
                             if let Some(init) = init {
@@ -1914,6 +1943,9 @@ impl Workspace {
                         .as_ref()
                         .map(|w| w.centered_layout)
                         .unwrap_or(false);
+                    let custom_name = serialized_workspace
+                        .as_ref()
+                        .and_then(|w| w.custom_name.clone());
                     let window = cx.open_window(options, {
                         let app_state = app_state.clone();
                         let project_handle = project_handle.clone();
@@ -1927,6 +1959,7 @@ impl Workspace {
                                     cx,
                                 );
                                 workspace.centered_layout = centered_layout;
+                                workspace.custom_name = custom_name;
 
                                 // Call init callback to add items before window renders
                                 if let Some(init) = init {
@@ -2531,6 +2564,17 @@ impl Workspace {
 
     pub fn debugger_provider(&self) -> Option<Arc<dyn DebuggerProvider>> {
         self.debugger_provider.clone()
+    }
+
+    pub fn set_agent_status_provider(&mut self, provider: impl AgentStatusProvider + 'static) {
+        self.agent_status_provider = Some(Arc::new(provider));
+    }
+
+    pub fn agent_activity_status(&self, cx: &App) -> AgentActivityStatus {
+        self.agent_status_provider
+            .as_ref()
+            .map(|p| p.agent_activity_status(cx))
+            .unwrap_or(AgentActivityStatus::Inactive)
     }
 
     pub fn prompt_for_open_path(
@@ -5276,23 +5320,27 @@ impl Workspace {
         let project = self.project().read(cx);
         let mut title = String::new();
 
-        for (i, worktree) in project.visible_worktrees(cx).enumerate() {
-            let name = {
-                let settings_location = SettingsLocation {
-                    worktree_id: worktree.read(cx).id(),
-                    path: RelPath::empty(),
-                };
+        if let Some(ref custom_name) = self.custom_name {
+            title.push_str(custom_name);
+        } else {
+            for (i, worktree) in project.visible_worktrees(cx).enumerate() {
+                let name = {
+                    let settings_location = SettingsLocation {
+                        worktree_id: worktree.read(cx).id(),
+                        path: RelPath::empty(),
+                    };
 
-                let settings = WorktreeSettings::get(Some(settings_location), cx);
-                match &settings.project_name {
-                    Some(name) => name.as_str(),
-                    None => worktree.read(cx).root_name_str(),
+                    let settings = WorktreeSettings::get(Some(settings_location), cx);
+                    match &settings.project_name {
+                        Some(name) => name.as_str(),
+                        None => worktree.read(cx).root_name_str(),
+                    }
+                };
+                if i > 0 {
+                    title.push_str(", ");
                 }
-            };
-            if i > 0 {
-                title.push_str(", ");
+                title.push_str(name);
             }
-            title.push_str(name);
         }
 
         if title.is_empty() {
@@ -5977,6 +6025,25 @@ impl Workspace {
         self.database_id = Some(id);
     }
 
+    pub fn custom_name(&self) -> Option<&str> {
+        self.custom_name.as_deref()
+    }
+
+    pub fn set_custom_name(
+        &mut self,
+        name: Option<String>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.custom_name = name.clone();
+        self.update_window_title(window, cx);
+        if let Some(database_id) = self.database_id {
+            cx.background_spawn(persistence::DB.set_custom_name(database_id, name))
+                .detach_and_log_err(cx);
+        }
+        cx.notify();
+    }
+
     pub fn session_id(&self) -> Option<String> {
         self.session_id.clone()
     }
@@ -6195,6 +6262,7 @@ impl Workspace {
                     breakpoints,
                     window_id: Some(window.window_handle().window_id().as_u64()),
                     user_toolchains,
+                    custom_name: self.custom_name.clone(),
                 };
 
                 window.spawn(cx, async move |_| {
@@ -8777,6 +8845,7 @@ pub fn open_workspace_by_id(
             .with_context(|| format!("Workspace {workspace_id:?} not found"))?;
 
         let centered_layout = serialized_workspace.centered_layout;
+        let custom_name = serialized_workspace.custom_name.clone();
 
         let (window, workspace) = if let Some(window) = requesting_window {
             let workspace = window.update(cx, |multi_workspace, window, cx| {
@@ -8789,6 +8858,7 @@ pub fn open_workspace_by_id(
                         cx,
                     );
                     workspace.centered_layout = centered_layout;
+                    workspace.custom_name = custom_name.clone();
                     workspace
                 });
                 multi_workspace.add_workspace(workspace.clone(), cx);
@@ -8829,6 +8899,7 @@ pub fn open_workspace_by_id(
                             cx,
                         );
                         workspace.centered_layout = centered_layout;
+                        workspace.custom_name = custom_name.clone();
                         workspace
                     });
                     cx.new(|cx| MultiWorkspace::new(workspace, window, cx))
@@ -9229,6 +9300,7 @@ async fn open_remote_project_inner(
 
             if let Some(ref serialized) = serialized_workspace {
                 workspace.centered_layout = serialized.centered_layout;
+                workspace.custom_name = serialized.custom_name.clone();
             }
 
             workspace

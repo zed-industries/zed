@@ -84,10 +84,74 @@ use ui::{
 };
 use util::ResultExt as _;
 use workspace::{
-    CollaboratorId, DraggedSelection, DraggedTab, ToggleZoom, ToolbarItemView, Workspace,
-    WorkspaceId,
+    AgentActivityStatus, AgentStatusProvider, CollaboratorId, DraggedSelection, DraggedTab,
+    ToggleZoom, ToolbarItemView, Workspace, WorkspaceId,
     dock::{DockPosition, Panel, PanelEvent},
 };
+
+pub struct AgentPanelStatusProvider(pub WeakEntity<AgentPanel>);
+
+impl AgentStatusProvider for AgentPanelStatusProvider {
+    fn agent_activity_status(&self, cx: &App) -> AgentActivityStatus {
+        let Some(panel) = self.0.upgrade() else {
+            return AgentActivityStatus::Inactive;
+        };
+        let panel = panel.read(cx);
+
+        let mut has_generating = false;
+        let mut has_idle_thread = false;
+        let mut has_waiting = false;
+
+        if let Some(thread) = panel.active_agent_thread(cx) {
+            let thread = thread.read(cx);
+            match thread.status() {
+                ThreadStatus::Generating => {
+                    if thread.is_waiting_for_confirmation() {
+                        has_waiting = true;
+                    } else {
+                        has_generating = true;
+                    }
+                }
+                ThreadStatus::Idle => {
+                    if !thread.entries().is_empty() {
+                        has_idle_thread = true;
+                    }
+                }
+            }
+        }
+
+        for server_view in panel.background_threads.values() {
+            let Some(thread_view) = server_view.read(cx).parent_thread(cx) else {
+                continue;
+            };
+            let thread = thread_view.read(cx).thread.read(cx);
+            match thread.status() {
+                ThreadStatus::Generating => {
+                    if thread.is_waiting_for_confirmation() {
+                        has_waiting = true;
+                    } else {
+                        has_generating = true;
+                    }
+                }
+                ThreadStatus::Idle => {
+                    if !thread.entries().is_empty() {
+                        has_idle_thread = true;
+                    }
+                }
+            }
+        }
+
+        if has_waiting {
+            AgentActivityStatus::WaitingForConfirmation
+        } else if has_generating {
+            AgentActivityStatus::Working
+        } else if has_idle_thread {
+            AgentActivityStatus::Idle
+        } else {
+            AgentActivityStatus::Inactive
+        }
+    }
+}
 use zed_actions::{
     DecreaseBufferFontSize, IncreaseBufferFontSize, ResetBufferFontSize,
     agent::{OpenAcpOnboardingModal, OpenSettings, ResetAgentZoom, ResetOnboarding},
@@ -960,6 +1024,10 @@ impl AgentPanel {
                         cx.notify();
                     });
                 }
+
+                workspace.set_agent_status_provider(AgentPanelStatusProvider(
+                    panel.downgrade(),
+                ));
 
                 if let Some(thread_info) = last_active_thread {
                     let agent_type = thread_info.agent_type.clone();
