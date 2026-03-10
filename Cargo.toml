@@ -81,6 +81,7 @@ members = [
     "crates/fs",
     "crates/fs_benchmarks",
     "crates/fuzzy",
+    "crates/fuzzy_nucleo",
     "crates/git",
     "crates/git_graph",
     "crates/git_hosting_providers",
@@ -322,6 +323,7 @@ file_finder = { path = "crates/file_finder" }
 file_icons = { path = "crates/file_icons" }
 fs = { path = "crates/fs" }
 fuzzy = { path = "crates/fuzzy" }
+fuzzy_nucleo = { path = "crates/fuzzy_nucleo" }
 git = { path = "crates/git" }
 git_graph = { path = "crates/git_graph" }
 git_hosting_providers = { path = "crates/git_hosting_providers" }
@@ -597,6 +599,7 @@ naga = { version = "28.0", features = ["wgsl-in"] }
 nanoid = "0.4"
 nbformat = "1.2.0"
 nix = "0.29"
+nucleo = "0.5"
 num-format = "0.4.4"
 objc = "0.2"
 objc2-foundation = { version = "=0.3.1", default-features = false, features = [
