@@ -12,3 +12,23 @@ workspace = true
 [lib]
 path = "src/sandbox.rs"
 doctest = false
+
+[dependencies]
+log.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+settings_content.workspace = true
+
+[target.'cfg(target_os = "macos")'.dependencies]
+uuid.workspace = true
+
+[target.'cfg(unix)'.dependencies]
+libc.workspace = true
+
+[target.'cfg(target_os = "linux")'.dependencies]
+landlock = "0.4"
+uuid.workspace = true
+
+[dev-dependencies]
+settings_content.workspace = true
+tempfile.workspace = true

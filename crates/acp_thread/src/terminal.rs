@@ -256,21 +256,14 @@ pub async fn create_terminal_entity(
         });
         let settings = terminal::terminal_settings::TerminalSettings::get(settings_location, cx);
         settings.sandbox.as_ref().and_then(|sandbox| {
-            if !sandbox.enabled.unwrap_or(false) {
-                return None;
-            }
-            let apply_to = sandbox.apply_to.unwrap_or_default();
-            match apply_to {
-                settings::SandboxApplyTo::Tool | settings::SandboxApplyTo::Both => {}
-                _ => return None,
-            }
             let project_dir = cwd
                 .clone()
                 .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| ".".into()));
-            Some(terminal::terminal_settings::SandboxConfig::from_settings(
+            sandbox::SandboxConfig::resolve_if_enabled(
                 sandbox,
+                settings::SandboxApplyTo::Tool,
                 project_dir,
-            ))
+            )
         })
     });
 

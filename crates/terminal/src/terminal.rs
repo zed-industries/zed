@@ -3,19 +3,11 @@ pub mod mappings;
 pub use alacritty_terminal;
 
 mod pty_info;
-#[cfg(unix)]
-pub mod sandbox_exec;
-#[cfg(target_os = "linux")]
-pub mod sandbox_linux;
-#[cfg(target_os = "macos")]
-pub mod sandbox_macos;
-#[cfg(all(test, unix))]
-mod sandbox_tests;
 mod terminal_hyperlinks;
 pub mod terminal_settings;
 
 #[cfg(unix)]
-pub use sandbox_exec::sandbox_exec_main;
+pub use sandbox::sandbox_exec_main;
 
 use alacritty_terminal::{
     Term,
@@ -426,6 +418,8 @@ impl TerminalBuilder {
             event_loop_task: Task::ready(Ok(())),
             background_executor: background_executor.clone(),
             path_style,
+            #[cfg(unix)]
+            session_tracker: None,
             #[cfg(any(test, feature = "test-support"))]
             input_log: Vec::new(),
         };
@@ -532,40 +526,77 @@ impl TerminalBuilder {
             // supported remoting into windows.
             let shell_kind = shell.shell_kind(cfg!(windows));
 
-            let pty_options = {
-                let alac_shell = shell_params.as_ref().map(|params| {
-                    alacritty_terminal::tty::Shell::new(
-                        params.program.clone(),
-                        params.args.clone().unwrap_or_default(),
-                    )
-                });
+            let alac_shell = shell_params.as_ref().map(|params| {
+                alacritty_terminal::tty::Shell::new(
+                    params.program.clone(),
+                    params.args.clone().unwrap_or_default(),
+                )
+            });
 
-                // When sandbox is enabled, wrap the shell with the Zed binary
-                // invoked as `--sandbox-exec <config> -- <shell> [args...]`.
-                // The Zed binary applies the OS-level sandbox and execs the
-                // real shell, avoiding the need to modify the alacritty fork.
-                #[cfg(unix)]
-                let alac_shell = if let Some(ref sandbox) = sandbox_config {
-                    let exec_config = sandbox_exec::SandboxExecConfig::from_sandbox_config(sandbox);
+            // Always wrap the shell with the Zed binary invoked as
+            // `--sandbox-exec <config> -- <shell> [args...]` on Unix.
+            // This enables process lifetime tracking (via Seatbelt
+            // fingerprinting on macOS, cgroups on Linux) even when no
+            // sandbox restrictions are configured.
+            #[cfg(unix)]
+            let (alac_shell, session_tracker) = {
+                // In test mode, the current exe is the test binary, not Zed,
+                // so the --sandbox-exec wrapper cannot be used.
+                #[cfg(not(any(test, feature = "test-support")))]
+                let session_tracker = match sandbox::SessionTracker::new() {
+                    Ok(tracker) => Some(tracker),
+                    Err(err) => {
+                        log::warn!("Failed to create session tracker: {err}");
+                        None
+                    }
+                };
+                #[cfg(any(test, feature = "test-support"))]
+                let session_tracker: Option<sandbox::SessionTracker> = None;
+
+                let shell = if session_tracker.is_some() || sandbox_config.is_some() {
+                    let mut exec_config = if let Some(ref sandbox) = sandbox_config {
+                        sandbox::SandboxExecConfig::from_sandbox_config(sandbox)
+                    } else {
+                        sandbox::SandboxExecConfig {
+                            project_dir: working_directory
+                                .as_ref()
+                                .map(|p| p.to_string_lossy().into_owned())
+                                .unwrap_or_else(|| ".".to_string()),
+                            executable_paths: Vec::new(),
+                            read_only_paths: Vec::new(),
+                            read_write_paths: Vec::new(),
+                            additional_executable_paths: Vec::new(),
+                            additional_read_only_paths: Vec::new(),
+                            additional_read_write_paths: Vec::new(),
+                            allow_network: true,
+                            allowed_env_vars: Vec::new(),
+                            fingerprint_uuid: None,
+                            tracking_only: true,
+                            cgroup_path: None,
+                        }
+                    };
+
+                    if let Some(ref tracker) = session_tracker {
+                        exec_config.fingerprint_uuid = tracker.fingerprint_uuid();
+                        exec_config.cgroup_path = tracker.cgroup_path();
+                        if sandbox_config.is_none() {
+                            exec_config.tracking_only = true;
+                        }
+                    }
+
                     let config_json = exec_config.to_json();
-
-                    let zed_binary =
-                        std::env::current_exe().unwrap_or_else(|_| PathBuf::from("zed"));
+                    let zed_binary = std::env::current_exe()
+                        .map_err(|e| anyhow::anyhow!("failed to get current exe: {e}"))?;
 
                     let mut args =
                         vec!["--sandbox-exec".to_string(), config_json, "--".to_string()];
 
-                    // Append the real shell command after `--`
                     if let Some(ref params) = shell_params {
                         args.push(params.program.clone());
                         if let Some(ref shell_args) = params.args {
                             args.extend(shell_args.clone());
                         }
                     } else {
-                        // System shell: resolve it and start as login shell
-                        // so profile files (.zprofile, .bash_profile, etc.) are sourced.
-                        // Normally alacritty uses /usr/bin/login for this, but the
-                        // sandbox wrapper bypasses that, so we pass -l explicitly.
                         let system_shell = util::get_default_system_shell();
                         args.push(system_shell);
                         args.push("-l".to_string());
@@ -579,14 +610,16 @@ impl TerminalBuilder {
                     alac_shell
                 };
 
-                alacritty_terminal::tty::Options {
-                    shell: alac_shell,
-                    working_directory: working_directory.clone(),
-                    drain_on_exit: true,
-                    env: env.clone().into_iter().collect(),
-                    #[cfg(windows)]
-                    escape_args: shell_kind.tty_escape_args(),
-                }
+                (shell, session_tracker)
+            };
+
+            let pty_options = alacritty_terminal::tty::Options {
+                shell: alac_shell,
+                working_directory: working_directory.clone(),
+                drain_on_exit: true,
+                env: env.clone().into_iter().collect(),
+                #[cfg(windows)]
+                escape_args: shell_kind.tty_escape_args(),
             };
 
             let default_cursor_style = AlacCursorStyle::from(cursor_shape);
@@ -699,6 +732,8 @@ impl TerminalBuilder {
                 event_loop_task: Task::ready(Ok(())),
                 background_executor,
                 path_style,
+                #[cfg(unix)]
+                session_tracker,
                 #[cfg(any(test, feature = "test-support"))]
                 input_log: Vec::new(),
             };
@@ -925,6 +960,8 @@ pub struct Terminal {
     event_loop_task: Task<Result<(), anyhow::Error>>,
     background_executor: BackgroundExecutor,
     path_style: PathStyle,
+    #[cfg(unix)]
+    session_tracker: Option<sandbox::SessionTracker>,
     #[cfg(any(test, feature = "test-support"))]
     input_log: Vec<Vec<u8>>,
 }
@@ -2457,6 +2494,19 @@ impl Drop for Terminal {
             std::mem::replace(&mut self.terminal_type, TerminalType::DisplayOnly)
         {
             pty_tx.0.send(Msg::Shutdown).ok();
+
+            #[cfg(unix)]
+            {
+                if let Some(tracker) = self.session_tracker.take() {
+                    let process_group_id = info.pid().map(|pid| pid.as_u32() as libc::pid_t);
+                    // Use a dedicated thread for cleanup that outlives the executor,
+                    // ensuring processes are killed even if Zed is exiting.
+                    std::thread::spawn(move || {
+                        tracker.kill_all_processes(process_group_id);
+                    });
+                    return;
+                }
+            }
 
             let timer = self.background_executor.timer(Duration::from_millis(100));
             self.background_executor

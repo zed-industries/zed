@@ -187,6 +187,13 @@ unrelated to ours. The only reliable way to find these escapees is the
 fingerprint probe, which works regardless of process group, session, or parent
 relationship.
 
+**Zombie handling:** After `SIGKILL`, a process becomes a zombie until its
+parent reaps it. If `sandbox_check` still reports the sandbox profile for
+zombies, the loop could spin on unkillable processes. The scan should skip
+processes in the zombie state (detectable via `kinfo_proc.kp_proc.p_stat ==
+SZOMB` from the same `sysctl` call used for enumeration). Zombies are harmless
+— they can't execute code or fork — so skipping them is correct.
+
 **Residual race:** Between discovering a process (step 3) and killing it (step
 4), the process could fork. But the child inherits the fingerprint, so the next
 iteration of the loop finds it. The loop continues until no such children

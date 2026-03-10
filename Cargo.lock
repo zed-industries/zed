@@ -31,6 +31,7 @@ dependencies = [
  "project",
  "prompt_store",
  "rand 0.9.2",
+ "sandbox",
  "serde",
  "serde_json",
  "settings",
@@ -13197,6 +13198,7 @@ dependencies = [
  "release_channel",
  "remote",
  "rpc",
+ "sandbox",
  "schemars",
  "semver",
  "serde",
@@ -15156,6 +15158,16 @@ dependencies = [
 [[package]]
 name = "sandbox"
 version = "0.1.0"
+dependencies = [
+ "landlock",
+ "libc",
+ "log",
+ "serde",
+ "serde_json",
+ "settings_content",
+ "tempfile",
+ "uuid",
+]
 
 [[package]]
 name = "scc"
@@ -17408,13 +17420,13 @@ dependencies = [
  "futures 0.3.31",
  "gpui",
  "itertools 0.14.0",
- "landlock",
  "libc",
  "log",
  "parking_lot",
  "rand 0.9.2",
  "regex",
  "release_channel",
+ "sandbox",
  "schemars",
  "serde",
  "serde_json",

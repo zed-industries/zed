@@ -17,7 +17,7 @@
 //! `std::process::Command::arg()` passes arguments to `execve` without
 //! shell interpretation, so no quoting issues arise.
 
-use crate::terminal_settings::SandboxConfig;
+use crate::{ResolvedSystemPaths, SandboxConfig};
 use std::os::unix::process::CommandExt;
 use std::process::Command;
 
@@ -33,6 +33,15 @@ pub struct SandboxExecConfig {
     pub additional_read_write_paths: Vec<String>,
     pub allow_network: bool,
     pub allowed_env_vars: Vec<String>,
+    /// Optional fingerprint UUID for session tracking (macOS).
+    #[serde(default)]
+    pub fingerprint_uuid: Option<String>,
+    /// Whether this is a tracking-only config (no filesystem restrictions).
+    #[serde(default)]
+    pub tracking_only: bool,
+    /// Optional cgroup path for Linux process tracking.
+    #[serde(default)]
+    pub cgroup_path: Option<String>,
 }
 
 impl SandboxExecConfig {
@@ -75,6 +84,9 @@ impl SandboxExecConfig {
                 .collect(),
             allow_network: config.allow_network,
             allowed_env_vars: config.allowed_env_vars.clone(),
+            fingerprint_uuid: None,
+            tracking_only: false,
+            cgroup_path: None,
         }
     }
 
@@ -82,7 +94,6 @@ impl SandboxExecConfig {
     pub fn to_sandbox_config(&self) -> SandboxConfig {
         use std::path::PathBuf;
 
-        use crate::terminal_settings::ResolvedSystemPaths;
         SandboxConfig {
             project_dir: PathBuf::from(&self.project_dir),
             system_paths: ResolvedSystemPaths {
@@ -112,8 +123,6 @@ impl SandboxExecConfig {
 
     /// Serialize the config to a JSON string for passing via CLI arg.
     pub fn to_json(&self) -> String {
-        // This type is a flat struct of Strings, Vec<String>, and bool — no
-        // cycles or non-serializable types — so serialization cannot fail.
         serde_json::to_string(self).expect("SandboxExecConfig is non-cyclic")
     }
 
@@ -145,9 +154,6 @@ pub fn sandbox_exec_main(config_json: &str, shell_args: &[String]) -> ! {
     sandbox_config.canonicalize_paths();
 
     // Step 1: Collect allowed environment variables.
-    // Rather than mutating the process environment (which requires unsafe),
-    // we collect the allowed vars now and pass them via env_clear().envs()
-    // on the exec Command.
     let zed_vars = [
         "ZED_TERM",
         "TERM_PROGRAM",
@@ -165,23 +171,66 @@ pub fn sandbox_exec_main(config_json: &str, shell_args: &[String]) -> ! {
     // Step 2: Apply the OS-level sandbox.
     #[cfg(target_os = "macos")]
     {
-        if let Err(e) = crate::sandbox_macos::apply_sandbox(&sandbox_config) {
-            eprintln!("zed --sandbox-exec: failed to apply macOS sandbox: {e}");
-            std::process::exit(1);
+        if config.tracking_only {
+            if let Some(ref uuid_str) = config.fingerprint_uuid {
+                let fingerprint =
+                    match crate::sandbox_macos::SessionFingerprint::from_uuid_str(uuid_str) {
+                        Ok(fp) => fp,
+                        Err(e) => {
+                            eprintln!("zed --sandbox-exec: invalid fingerprint UUID: {e}");
+                            std::process::exit(1);
+                        }
+                    };
+                if let Err(e) = crate::sandbox_macos::apply_fingerprint_only(&fingerprint) {
+                    eprintln!("zed --sandbox-exec: failed to apply fingerprint profile: {e}");
+                    std::process::exit(1);
+                }
+            }
+        } else {
+            let result = match config.fingerprint_uuid.as_ref() {
+                Some(uuid_str) => {
+                    match crate::sandbox_macos::SessionFingerprint::from_uuid_str(uuid_str) {
+                        Ok(fingerprint) => crate::sandbox_macos::apply_sandbox_with_fingerprint(
+                            &sandbox_config,
+                            &fingerprint,
+                        ),
+                        Err(e) => {
+                            eprintln!("zed --sandbox-exec: invalid fingerprint UUID: {e}");
+                            std::process::exit(1);
+                        }
+                    }
+                }
+                None => crate::sandbox_macos::apply_sandbox(&sandbox_config),
+            };
+            if let Err(e) = result {
+                eprintln!("zed --sandbox-exec: failed to apply macOS sandbox: {e}");
+                std::process::exit(1);
+            }
         }
     }
 
     #[cfg(target_os = "linux")]
     {
-        if let Err(e) = crate::sandbox_linux::apply_sandbox(&sandbox_config) {
-            eprintln!("zed --sandbox-exec: failed to apply Linux sandbox: {e}");
-            std::process::exit(1);
+        // Move into the session cgroup for process tracking
+        if let Some(ref cgroup_path) = config.cgroup_path {
+            let session = crate::cgroup::CgroupSession::from_path(cgroup_path);
+            let pid = unsafe { libc::getpid() };
+            if let Err(e) = session.add_process(pid) {
+                eprintln!("zed --sandbox-exec: failed to join cgroup: {e}");
+                std::process::exit(1);
+            }
+        }
+
+        // Apply Landlock restrictions (only if not tracking-only)
+        if !config.tracking_only {
+            if let Err(e) = crate::sandbox_linux::apply_sandbox(&sandbox_config) {
+                eprintln!("zed --sandbox-exec: failed to apply Linux sandbox: {e}");
+                std::process::exit(1);
+            }
         }
     }
 
-    // Step 3: Exec the real shell. This replaces the current process.
-    // env_clear() starts with an empty environment, then envs() adds only
-    // the allowed variables. This avoids mutating the process environment.
+    // Step 3: Exec the real shell.
     let program = &shell_args[0];
     let args = &shell_args[1..];
     let err = Command::new(program)
@@ -190,7 +239,6 @@ pub fn sandbox_exec_main(config_json: &str, shell_args: &[String]) -> ! {
         .envs(filtered_env)
         .exec();
 
-    // exec() only returns on error
     eprintln!("zed --sandbox-exec: failed to exec {program}: {err}");
     std::process::exit(1);
 }

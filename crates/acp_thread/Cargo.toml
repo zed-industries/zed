@@ -38,6 +38,7 @@ image = { workspace = true, optional = true }
 portable-pty.workspace = true
 project.workspace = true
 prompt_store.workspace = true
+sandbox.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 settings.workspace = true

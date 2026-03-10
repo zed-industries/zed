@@ -10,7 +10,7 @@ use landlock::{
 use std::io::{Error, Result};
 use std::path::Path;
 
-use crate::terminal_settings::SandboxConfig;
+use crate::SandboxConfig;
 
 const TARGET_ABI: ABI = ABI::V5;
 
@@ -34,7 +34,6 @@ fn add_path_rule(
     match PathFd::new(path) {
         Ok(fd) => ruleset.add_rule(PathBeneath::new(fd, access)),
         Err(e) => {
-            // Path doesn't exist — skip it (e.g., /opt/homebrew on non-Homebrew systems)
             log::debug!(
                 "Landlock: skipping nonexistent path {}: {e}",
                 path.display()
@@ -47,8 +46,6 @@ fn add_path_rule(
 /// Apply a Landlock sandbox to the current process.
 /// Must be called after fork(), before exec().
 pub fn apply_sandbox(config: &SandboxConfig) -> Result<()> {
-    // PR_SET_NO_NEW_PRIVS is required before landlock_restrict_self.
-    // It prevents the process from gaining privileges via setuid binaries.
     let ret = unsafe { libc::prctl(libc::PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) };
     if ret != 0 {
         return Err(Error::last_os_error());
@@ -74,29 +71,24 @@ pub fn apply_sandbox(config: &SandboxConfig) -> Result<()> {
         .create()
         .map_err(|e| Error::other(format!("landlock ruleset init: {e}")))?;
 
-    // System executable paths (read + execute)
     for path in &config.system_paths.executable {
         ruleset = add_path_rule(ruleset, path, fs_read_exec())
             .map_err(|e| Error::other(format!("landlock rule: {e}")))?;
     }
 
-    // System read-only paths
     for path in &config.system_paths.read_only {
         ruleset = add_path_rule(ruleset, path, fs_read())
             .map_err(|e| Error::other(format!("landlock rule: {e}")))?;
     }
 
-    // System read+write paths
     for path in &config.system_paths.read_write {
         ruleset = add_path_rule(ruleset, path, fs_all())
             .map_err(|e| Error::other(format!("landlock rule: {e}")))?;
     }
 
-    // Project directory: full access
     ruleset = add_path_rule(ruleset, &config.project_dir, fs_all())
         .map_err(|e| Error::other(format!("landlock project rule: {e}")))?;
 
-    // User-configured paths
     for path in &config.additional_executable_paths {
         ruleset = add_path_rule(ruleset, path, fs_read_exec())
             .map_err(|e| Error::other(format!("landlock rule: {e}")))?;
@@ -110,7 +102,6 @@ pub fn apply_sandbox(config: &SandboxConfig) -> Result<()> {
             .map_err(|e| Error::other(format!("landlock rule: {e}")))?;
     }
 
-    // Shell config dotfiles: read-only
     if let Ok(home) = std::env::var("HOME") {
         let home = Path::new(&home);
         for dotfile in &[
@@ -138,7 +129,6 @@ pub fn apply_sandbox(config: &SandboxConfig) -> Result<()> {
             ruleset = add_path_rule(ruleset, &config_dir, fs_read())
                 .map_err(|e| Error::other(format!("landlock .config rule: {e}")))?;
         }
-        // /proc/self for bash process substitution
         let proc_self = Path::new("/proc/self");
         if proc_self.exists() {
             ruleset = add_path_rule(ruleset, proc_self, fs_read())

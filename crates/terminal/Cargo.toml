@@ -30,6 +30,7 @@ libc.workspace = true
 log.workspace = true
 regex.workspace = true
 release_channel.workspace = true
+sandbox.workspace = true
 schemars.workspace = true
 serde.workspace = true
 serde_json.workspace = true
@@ -46,9 +47,6 @@ parking_lot.workspace = true
 
 [target.'cfg(windows)'.dependencies]
 windows.workspace = true
-
-[target.'cfg(target_os = "linux")'.dependencies]
-landlock = "0.4"
 
 [dev-dependencies]
 gpui = { workspace = true, features = ["test-support"] }

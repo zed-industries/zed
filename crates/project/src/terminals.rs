@@ -414,25 +414,17 @@ impl Project {
                         if !cx.has_flag::<TerminalSandboxFeatureFlag>() {
                             return None;
                         }
-                        if !sandbox.enabled.unwrap_or(false) {
-                            return None;
-                        }
-                        let apply_to = sandbox.apply_to.unwrap_or_default();
-                        match apply_to {
-                            settings::SandboxApplyTo::Terminal | settings::SandboxApplyTo::Both => {
-                            }
-                            _ => return None,
-                        }
                         let project_dir = local_path
                             .as_ref()
                             .map(|p| p.to_path_buf())
                             .unwrap_or_else(|| {
                                 std::env::current_dir().unwrap_or_else(|_| ".".into())
                             });
-                        Some(terminal::terminal_settings::SandboxConfig::from_settings(
+                        sandbox::SandboxConfig::resolve_if_enabled(
                             sandbox,
+                            settings::SandboxApplyTo::Terminal,
                             project_dir,
-                        ))
+                        )
                     });
 
                     anyhow::Ok(TerminalBuilder::new(

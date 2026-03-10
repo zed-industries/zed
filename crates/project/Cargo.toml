@@ -74,6 +74,7 @@ rand.workspace = true
 regex.workspace = true
 release_channel.workspace = true
 remote.workspace = true
+sandbox.workspace = true
 rpc.workspace = true
 schemars.workspace = true
 semver.workspace = true

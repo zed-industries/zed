@@ -3,9 +3,12 @@
 //! These tests exercise the real kernel sandbox (Seatbelt on macOS, Landlock on
 //! Linux) by spawning child processes and verifying OS enforcement. They do NOT
 //! use mocks.
+//!
+//! These tests use `std::process::Command::output()` rather than `smol::process`
+//! because they need `pre_exec` hooks to apply sandboxes before exec.
+#![allow(clippy::disallowed_methods)]
 
-use crate::sandbox_exec::SandboxExecConfig;
-use crate::terminal_settings::{ResolvedSystemPaths, SandboxConfig};
+use crate::{ResolvedSystemPaths, SandboxConfig, SandboxExecConfig};
 use std::collections::HashSet;
 use std::fs;
 use std::os::unix::process::CommandExt;
@@ -52,20 +55,7 @@ fn test_sandbox_config(project_dir: PathBuf) -> SandboxConfig {
 }
 
 /// Exercises the full `sandbox_exec_main` production codepath in a child
-/// process:
-///
-/// 1. `SandboxConfig` → `SandboxExecConfig` (as `terminal.rs` does)
-/// 2. Serialize to JSON (the CLI argument in production)
-/// 3. Parse JSON back (as `sandbox_exec_main` does)
-/// 4. Convert to `SandboxConfig` (as `sandbox_exec_main` does)
-/// 5. Canonicalize paths (as `sandbox_exec_main` does)
-/// 6. Filter env vars with `env_clear().envs()` (as `sandbox_exec_main` does)
-/// 7. Apply OS sandbox in `pre_exec` (as `sandbox_exec_main` does)
-/// 8. Exec `/bin/sh -c <command>` (as `sandbox_exec_main` does)
-///
-/// `extra_parent_env` injects vars into the parent environment *before*
-/// filtering, so they are subject to the same allowlist. This lets tests
-/// verify that disallowed vars are stripped.
+/// process.
 ///
 /// Returns `(success, stdout, stderr)`.
 fn run_sandboxed_command(
@@ -73,23 +63,13 @@ fn run_sandboxed_command(
     extra_parent_env: &[(&str, &str)],
     shell_command: &str,
 ) -> (bool, String, String) {
-    // Step 1: Convert to the serializable form (as terminal.rs does at spawn time)
     let exec_config = SandboxExecConfig::from_sandbox_config(config);
-
-    // Step 2: Serialize to JSON (this is what gets passed as a CLI arg)
     let config_json = exec_config.to_json();
-
-    // Step 3: Parse it back (as sandbox_exec_main does)
     let parsed = SandboxExecConfig::from_json(&config_json)
         .expect("SandboxExecConfig JSON roundtrip failed");
-
-    // Step 4: Convert back to SandboxConfig (as sandbox_exec_main does)
     let mut sandbox_config = parsed.to_sandbox_config();
-
-    // Step 5: Canonicalize paths (as sandbox_exec_main does)
     sandbox_config.canonicalize_paths();
 
-    // Step 6: Build filtered env (as sandbox_exec_main does)
     let zed_vars = [
         "ZED_TERM",
         "TERM_PROGRAM",
@@ -108,7 +88,6 @@ fn run_sandboxed_command(
         .filter(|(key, _)| allowed.contains(key.as_str()) || zed_vars.contains(&key.as_str()))
         .collect();
 
-    // Step 7+8: Build command with env_clear().envs() and pre_exec sandbox
     let mut cmd = Command::new("/bin/sh");
     cmd.arg("-c").arg(shell_command);
     cmd.current_dir(&sandbox_config.project_dir);
@@ -219,7 +198,7 @@ fn test_sandbox_exec_config_from_json_invalid() {
 
 #[test]
 fn test_sandbox_config_from_settings_defaults() {
-    let settings = settings::SandboxSettingsContent::default();
+    let settings = settings_content::SandboxSettingsContent::default();
     let config = SandboxConfig::from_settings(&settings, PathBuf::from("/projects/test"));
 
     assert_eq!(config.project_dir, PathBuf::from("/projects/test"));
@@ -232,7 +211,6 @@ fn test_sandbox_config_from_settings_defaults() {
     assert!(config.additional_read_only_paths.is_empty());
     assert!(config.additional_read_write_paths.is_empty());
 
-    // System paths should use OS-specific defaults
     assert!(!config.system_paths.executable.is_empty());
     assert!(!config.system_paths.read_only.is_empty());
     assert!(!config.system_paths.read_write.is_empty());
@@ -241,7 +219,7 @@ fn test_sandbox_config_from_settings_defaults() {
 #[test]
 fn test_sandbox_config_tilde_expansion() {
     let home = std::env::var("HOME").expect("HOME not set");
-    let settings = settings::SandboxSettingsContent {
+    let settings = settings_content::SandboxSettingsContent {
         additional_read_only_paths: Some(vec!["~/documents".into(), "/absolute/path".into()]),
         ..Default::default()
     };
@@ -258,7 +236,7 @@ fn test_sandbox_config_tilde_expansion() {
 
 #[test]
 fn test_sandbox_config_custom_allowed_env_vars() {
-    let settings = settings::SandboxSettingsContent {
+    let settings = settings_content::SandboxSettingsContent {
         allowed_env_vars: Some(vec!["CUSTOM_VAR".into()]),
         ..Default::default()
     };
@@ -268,12 +246,91 @@ fn test_sandbox_config_custom_allowed_env_vars() {
 
 #[test]
 fn test_sandbox_config_network_disabled() {
-    let settings = settings::SandboxSettingsContent {
+    let settings = settings_content::SandboxSettingsContent {
         allow_network: Some(false),
         ..Default::default()
     };
     let config = SandboxConfig::from_settings(&settings, PathBuf::from("/tmp/test"));
     assert!(!config.allow_network);
+}
+
+// ---------------------------------------------------------------------------
+// Unit tests: SandboxConfig::resolve_if_enabled
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_resolve_if_enabled_disabled() {
+    let settings = settings_content::SandboxSettingsContent {
+        enabled: Some(false),
+        ..Default::default()
+    };
+    assert!(
+        SandboxConfig::resolve_if_enabled(
+            &settings,
+            settings_content::SandboxApplyTo::Terminal,
+            PathBuf::from("/tmp/test"),
+        )
+        .is_none()
+    );
+}
+
+#[test]
+fn test_resolve_if_enabled_terminal_matches_terminal() {
+    let settings = settings_content::SandboxSettingsContent {
+        enabled: Some(true),
+        apply_to: Some(settings_content::SandboxApplyTo::Terminal),
+        ..Default::default()
+    };
+    assert!(
+        SandboxConfig::resolve_if_enabled(
+            &settings,
+            settings_content::SandboxApplyTo::Terminal,
+            PathBuf::from("/tmp/test"),
+        )
+        .is_some()
+    );
+}
+
+#[test]
+fn test_resolve_if_enabled_terminal_does_not_match_tool() {
+    let settings = settings_content::SandboxSettingsContent {
+        enabled: Some(true),
+        apply_to: Some(settings_content::SandboxApplyTo::Terminal),
+        ..Default::default()
+    };
+    assert!(
+        SandboxConfig::resolve_if_enabled(
+            &settings,
+            settings_content::SandboxApplyTo::Tool,
+            PathBuf::from("/tmp/test"),
+        )
+        .is_none()
+    );
+}
+
+#[test]
+fn test_resolve_if_enabled_both_matches_both_targets() {
+    let settings = settings_content::SandboxSettingsContent {
+        enabled: Some(true),
+        apply_to: Some(settings_content::SandboxApplyTo::Both),
+        ..Default::default()
+    };
+    assert!(
+        SandboxConfig::resolve_if_enabled(
+            &settings,
+            settings_content::SandboxApplyTo::Terminal,
+            PathBuf::from("/tmp/test"),
+        )
+        .is_some()
+    );
+    assert!(
+        SandboxConfig::resolve_if_enabled(
+            &settings,
+            settings_content::SandboxApplyTo::Tool,
+            PathBuf::from("/tmp/test"),
+        )
+        .is_some()
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -312,21 +369,21 @@ mod sbpl_tests {
     #[test]
     fn test_sbpl_profile_has_deny_default() {
         let config = test_sandbox_config(PathBuf::from("/tmp/project"));
-        let profile = generate_sbpl_profile(&config);
+        let profile = generate_sbpl_profile(&config, None);
         assert!(profile.contains("(deny default)"));
     }
 
     #[test]
     fn test_sbpl_profile_has_version() {
         let config = test_sandbox_config(PathBuf::from("/tmp/project"));
-        let profile = generate_sbpl_profile(&config);
+        let profile = generate_sbpl_profile(&config, None);
         assert!(profile.starts_with("(version 1)\n"));
     }
 
     #[test]
     fn test_sbpl_profile_includes_project_dir() {
         let config = test_sandbox_config(PathBuf::from("/tmp/my-project"));
-        let profile = generate_sbpl_profile(&config);
+        let profile = generate_sbpl_profile(&config, None);
         assert!(
             profile.contains("(subpath \"/tmp/my-project\")"),
             "Profile should include project dir as a subpath rule. Profile:\n{profile}"
@@ -336,8 +393,7 @@ mod sbpl_tests {
     #[test]
     fn test_sbpl_profile_includes_system_paths() {
         let config = test_sandbox_config(PathBuf::from("/tmp/project"));
-        let profile = generate_sbpl_profile(&config);
-        // At minimum, /usr/bin should be in the executable paths
+        let profile = generate_sbpl_profile(&config, None);
         assert!(
             profile.contains("(subpath \"/usr/bin\")"),
             "Profile should include /usr/bin. Profile:\n{profile}"
@@ -347,7 +403,7 @@ mod sbpl_tests {
     #[test]
     fn test_sbpl_profile_network_allowed() {
         let config = test_sandbox_config(PathBuf::from("/tmp/project"));
-        let profile = generate_sbpl_profile(&config);
+        let profile = generate_sbpl_profile(&config, None);
         assert!(profile.contains("(allow network-outbound)"));
         assert!(profile.contains("(allow network-inbound)"));
     }
@@ -356,7 +412,7 @@ mod sbpl_tests {
     fn test_sbpl_profile_network_denied() {
         let mut config = test_sandbox_config(PathBuf::from("/tmp/project"));
         config.allow_network = false;
-        let profile = generate_sbpl_profile(&config);
+        let profile = generate_sbpl_profile(&config, None);
         assert!(!profile.contains("(allow network-outbound)"));
         assert!(!profile.contains("(allow network-inbound)"));
     }
@@ -364,8 +420,7 @@ mod sbpl_tests {
     #[test]
     fn test_sbpl_profile_no_unrestricted_process_exec() {
         let config = test_sandbox_config(PathBuf::from("/tmp/project"));
-        let profile = generate_sbpl_profile(&config);
-        // Should NOT have a bare "(allow process-exec)" without a filter
+        let profile = generate_sbpl_profile(&config, None);
         let lines: Vec<&str> = profile.lines().collect();
         for line in &lines {
             if line.contains("process-exec") {
@@ -380,8 +435,7 @@ mod sbpl_tests {
     #[test]
     fn test_sbpl_profile_no_unrestricted_mach_lookup() {
         let config = test_sandbox_config(PathBuf::from("/tmp/project"));
-        let profile = generate_sbpl_profile(&config);
-        // Should NOT have a bare "(allow mach-lookup)" without a filter
+        let profile = generate_sbpl_profile(&config, None);
         let lines: Vec<&str> = profile.lines().collect();
         for line in &lines {
             if line.contains("mach-lookup") {
@@ -400,7 +454,7 @@ mod sbpl_tests {
         config.additional_read_only_paths = vec![PathBuf::from("/opt/data")];
         config.additional_read_write_paths = vec![PathBuf::from("/opt/cache")];
 
-        let profile = generate_sbpl_profile(&config);
+        let profile = generate_sbpl_profile(&config, None);
 
         assert!(
             profile.contains("(subpath \"/opt/tools/bin\")"),
@@ -415,23 +469,37 @@ mod sbpl_tests {
             "Should include additional read-write path"
         );
     }
+
+    #[test]
+    fn test_sbpl_profile_signal_scoped_to_children() {
+        let config = test_sandbox_config(PathBuf::from("/tmp/project"));
+        let profile = generate_sbpl_profile(&config, None);
+        assert!(
+            profile.contains("(allow signal (target children))"),
+            "Signal should be scoped to children. Profile:\n{profile}"
+        );
+        let lines: Vec<&str> = profile.lines().collect();
+        for line in &lines {
+            if line.contains("(allow signal") {
+                assert!(
+                    line.contains("(target children)"),
+                    "Found unscoped signal rule: {line}"
+                );
+            }
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
 // Integration tests: filesystem enforcement
 // ---------------------------------------------------------------------------
 
-/// Create a tempdir and return its canonicalized path.
-/// On macOS, /var/folders -> /private/var/folders, so we must use the
-/// canonical path for both shell commands and sandbox rules to match.
 fn canonical_tempdir() -> (tempfile::TempDir, PathBuf) {
     let dir = tempfile::tempdir().expect("failed to create temp dir");
     let canonical = dir.path().canonicalize().expect("failed to canonicalize");
     (dir, canonical)
 }
 
-/// Creates a directory with a known file for testing.
-/// Returns (dir_path, file_path).
 fn create_test_directory(base: &Path, name: &str, content: &str) -> (PathBuf, PathBuf) {
     let dir = base.join(name);
     fs::create_dir_all(&dir).expect("failed to create test directory");
@@ -447,13 +515,10 @@ fn test_sandbox_blocks_rm_rf() {
     let (project_dir, _) = create_test_directory(&base, "project", "project content");
     let (target_dir, target_file) = create_test_directory(&base, "target", "do not delete me");
 
-    // Sandboxed: rm -rf should be blocked
-    let config = test_sandbox_config(project_dir.clone());
+    let config = test_sandbox_config(project_dir);
     let cmd = format!("rm -rf {}", target_dir.display());
     let (success, _stdout, _stderr) = run_sandboxed_command(&config, &[], &cmd);
 
-    // The rm might "succeed" (exit 0) on some platforms even if individual
-    // deletes fail, or it might fail. Either way, the files should still exist.
     assert!(
         target_dir.exists() && target_file.exists(),
         "Sandboxed rm -rf should not be able to delete target directory. \
@@ -462,7 +527,6 @@ fn test_sandbox_blocks_rm_rf() {
         target_file.exists(),
     );
 
-    // Unsandboxed: rm -rf should succeed
     let (success, _, _) = run_unsandboxed_command(&format!("rm -rf {}", target_dir.display()));
     assert!(success, "Unsandboxed rm -rf should succeed");
     assert!(
@@ -479,6 +543,7 @@ fn test_sandbox_allows_writes_in_project() {
 
     let config = test_sandbox_config(project_dir.clone());
     let output_file = project_dir.join("sandbox_output.txt");
+    #[allow(clippy::redundant_clone)]
     let cmd = format!("echo 'hello from sandbox' > {}", output_file.display());
     let (success, _stdout, stderr) = run_sandboxed_command(&config, &[], &cmd);
 
@@ -503,9 +568,8 @@ fn test_sandbox_blocks_reads_outside_project() {
     let secret_content = "TOP_SECRET_DATA_12345";
     let (_, secret_file) = create_test_directory(&base, "secrets", secret_content);
 
-    let config = test_sandbox_config(project_dir.clone());
+    let config = test_sandbox_config(project_dir);
 
-    // Try to cat the secret file and capture stdout
     let cmd = format!("cat {} 2>/dev/null || true", secret_file.display());
     let (_success, stdout, _stderr) = run_sandboxed_command(&config, &[], &cmd);
 
@@ -526,7 +590,6 @@ fn test_additional_read_write_paths_grant_access() {
 
     let test_file = extra_dir.join("rw_test.txt");
 
-    // First, WITHOUT the extra path — write should fail
     let config_without = test_sandbox_config(project_dir.clone());
     let cmd = format!("echo 'written' > {}", test_file.display());
     let (_success, _stdout, _stderr) = run_sandboxed_command(&config_without, &[], &cmd);
@@ -539,9 +602,8 @@ fn test_additional_read_write_paths_grant_access() {
         "Write to extra dir should be blocked without additional_read_write_paths"
     );
 
-    // Now, WITH the extra path — write should succeed
     let mut config_with = test_sandbox_config(project_dir);
-    config_with.additional_read_write_paths = vec![extra_dir.clone()];
+    config_with.additional_read_write_paths = vec![extra_dir];
     let (success, _stdout, stderr) = run_sandboxed_command(&config_with, &[], &cmd);
     assert!(
         success,
@@ -564,9 +626,8 @@ fn test_additional_read_only_paths_allow_read_block_write() {
         create_test_directory(&base, "readonly_data", known_content);
 
     let mut config = test_sandbox_config(project_dir.clone());
-    config.additional_read_only_paths = vec![readonly_dir.clone()];
+    config.additional_read_only_paths = vec![readonly_dir];
 
-    // Read the file into the project dir — should succeed
     let output_file = project_dir.join("read_output.txt");
     let cmd = format!(
         "cat {} > {}",
@@ -584,7 +645,6 @@ fn test_additional_read_only_paths_allow_read_block_write() {
         "Should have read the known content. Got: {read_content}"
     );
 
-    // Try to overwrite the read-only file — should fail
     let cmd = format!("echo 'overwritten' > {}", readonly_file.display());
     let (_success, _stdout, _stderr) = run_sandboxed_command(&config, &[], &cmd);
     let current_content = fs::read_to_string(&readonly_file).expect("file should still exist");
@@ -606,7 +666,6 @@ fn test_env_var_filtering() {
 
     let config = test_sandbox_config(project_dir);
 
-    // HOME is in the default allowlist; AWS_SECRET is not
     let (success, stdout, stderr) = run_sandboxed_command(
         &config,
         &[("AWS_SECRET", "super_secret_key_12345")],
@@ -614,13 +673,11 @@ fn test_env_var_filtering() {
     );
     assert!(success, "env command should succeed. stderr: {stderr}");
 
-    // HOME should be present (it's in the default allowed list)
     assert!(
         stdout.contains("HOME=/"),
         "HOME should be present in filtered env. stdout: {stdout}"
     );
 
-    // AWS_SECRET should be absent (not in the allowed list)
     assert!(
         !stdout.contains("super_secret_key_12345"),
         "AWS_SECRET should be filtered out. stdout: {stdout}"
@@ -641,11 +698,9 @@ fn test_network_blocking() {
     let mut config = test_sandbox_config(project_dir);
     config.allow_network = false;
 
-    // Try to fetch a URL — should fail due to network being blocked
     let cmd = "curl -s --max-time 5 https://example.com 2>&1 || true";
     let (_success, stdout, _stderr) = run_sandboxed_command(&config, &[], &cmd);
 
-    // The response should NOT contain the expected HTML from example.com
     assert!(
         !stdout.contains("Example Domain"),
         "Network should be blocked. Got stdout: {stdout}"
@@ -673,4 +728,324 @@ fn test_sandbox_basic_echo_succeeds() {
         stdout.contains("sandbox works"),
         "Should see echo output. stdout: {stdout}"
     );
+}
+
+// ---------------------------------------------------------------------------
+// Integration test: additional_executable_paths
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_additional_executable_paths_allow_execution() {
+    let (_base_guard, base) = canonical_tempdir();
+    let project_dir = base.join("project");
+    fs::create_dir_all(&project_dir).expect("failed to create project dir");
+
+    let tools_dir = base.join("tools");
+    fs::create_dir_all(&tools_dir).expect("failed to create tools dir");
+
+    // Create a simple executable script in the tools directory
+    let script_path = tools_dir.join("my_tool");
+    fs::write(&script_path, "#!/bin/sh\necho tool_executed_successfully\n")
+        .expect("failed to write script");
+
+    // Make it executable
+    use std::os::unix::fs::PermissionsExt;
+    fs::set_permissions(&script_path, fs::Permissions::from_mode(0o755))
+        .expect("failed to set permissions");
+
+    // Without additional_executable_paths — execution should fail
+    let config_without = test_sandbox_config(project_dir.clone());
+    let cmd = format!("{} 2>&1 || true", script_path.display());
+    let (_success, stdout_without, _stderr) = run_sandboxed_command(&config_without, &[], &cmd);
+    assert!(
+        !stdout_without.contains("tool_executed_successfully"),
+        "Tool should NOT be executable without additional_executable_paths. stdout: {stdout_without}"
+    );
+
+    // With additional_executable_paths — execution should succeed
+    let mut config_with = test_sandbox_config(project_dir);
+    config_with.additional_executable_paths = vec![tools_dir];
+    let (success, stdout_with, stderr) = run_sandboxed_command(&config_with, &[], &cmd);
+    assert!(
+        success && stdout_with.contains("tool_executed_successfully"),
+        "Tool should be executable with additional_executable_paths. success={success}, stdout: {stdout_with}, stderr: {stderr}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Integration test: canonicalize_paths with symlinks
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_canonicalize_paths_resolves_symlinks() {
+    let (_base_guard, base) = canonical_tempdir();
+    let real_project_dir = base.join("real_project");
+    fs::create_dir_all(&real_project_dir).expect("failed to create project dir");
+
+    // Create a test file in the real project directory
+    let test_file = real_project_dir.join("test.txt");
+    fs::write(&test_file, "symlink_test_content").expect("failed to write test file");
+
+    // Create a symlink to the project directory
+    let symlink_dir = base.join("symlink_project");
+    std::os::unix::fs::symlink(&real_project_dir, &symlink_dir)
+        .expect("failed to create symlink");
+
+    // Use the symlinked path as the project dir — canonicalize_paths should resolve it
+    let config = test_sandbox_config(symlink_dir);
+
+    // Writing should work because canonicalize_paths resolves the symlink to the real path
+    let output_file = real_project_dir.join("output.txt");
+    let cmd = format!("echo 'from_symlinked_project' > {}", output_file.display());
+    let (success, _stdout, stderr) = run_sandboxed_command(&config, &[], &cmd);
+
+    assert!(
+        success,
+        "Writing in symlinked project dir should succeed after canonicalization. stderr: {stderr}"
+    );
+    let content = fs::read_to_string(&output_file).unwrap_or_default();
+    assert!(
+        content.contains("from_symlinked_project"),
+        "Should have written through the canonicalized path. content: {content}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Fingerprint tests (macOS)
+// ---------------------------------------------------------------------------
+
+#[cfg(target_os = "macos")]
+mod fingerprint_tests {
+    use super::*;
+    use crate::sandbox_macos::{
+        SessionFingerprint, apply_fingerprint_only, apply_sandbox_with_fingerprint,
+        generate_fingerprint_only_profile,
+    };
+
+    #[test]
+    fn test_fingerprint_matches_own_process_with_full_sandbox() {
+        let (_base_guard, base) = canonical_tempdir();
+        let project_dir = base.join("project");
+        fs::create_dir_all(&project_dir).expect("failed to create project dir");
+
+        let fingerprint = SessionFingerprint::new().expect("failed to create fingerprint");
+        let config = test_sandbox_config(project_dir);
+
+        // Spawn a child process with the fingerprint-embedded sandbox profile
+        let mut cmd = Command::new("/bin/sh");
+        cmd.arg("-c").arg("sleep 5");
+
+        let sandbox_config = {
+            let exec_config = SandboxExecConfig::from_sandbox_config(&config);
+            let parsed = SandboxExecConfig::from_json(&exec_config.to_json()).unwrap();
+            let mut sc = parsed.to_sandbox_config();
+            sc.canonicalize_paths();
+            sc
+        };
+
+        unsafe {
+            let fp_uuid = fingerprint.uuid_string();
+            cmd.pre_exec(move || {
+                let fp = SessionFingerprint::from_uuid_str(&fp_uuid)
+                    .map_err(|e| std::io::Error::other(e))?;
+                apply_sandbox_with_fingerprint(&sandbox_config, &fp)?;
+                Ok(())
+            });
+        }
+
+        let mut child = cmd.spawn().expect("failed to spawn child");
+        std::thread::sleep(std::time::Duration::from_millis(100));
+
+        // The fingerprint should match the child process
+        let child_pid = child.id() as libc::pid_t;
+        assert!(
+            fingerprint.matches_pid(child_pid),
+            "Fingerprint should match child process with embedded profile"
+        );
+
+        child.kill().ok();
+        child.wait().ok();
+    }
+
+    #[test]
+    fn test_fingerprint_does_not_match_unsandboxed_process() {
+        let fingerprint = SessionFingerprint::new().expect("failed to create fingerprint");
+
+        // Spawn an unsandboxed process
+        let mut child = Command::new("/bin/sh")
+            .arg("-c")
+            .arg("sleep 5")
+            .spawn()
+            .expect("failed to spawn child");
+
+        std::thread::sleep(std::time::Duration::from_millis(100));
+
+        let child_pid = child.id() as libc::pid_t;
+        assert!(
+            !fingerprint.matches_pid(child_pid),
+            "Fingerprint should NOT match unsandboxed process"
+        );
+
+        child.kill().ok();
+        child.wait().ok();
+    }
+
+    #[test]
+    fn test_fingerprint_does_not_match_different_session() {
+        let (_base_guard, base) = canonical_tempdir();
+        let project_dir = base.join("project");
+        fs::create_dir_all(&project_dir).expect("failed to create project dir");
+
+        let fingerprint_a = SessionFingerprint::new().expect("failed to create fingerprint A");
+        let fingerprint_b = SessionFingerprint::new().expect("failed to create fingerprint B");
+
+        // Spawn a process with fingerprint_b's profile
+        let mut cmd = Command::new("/bin/sh");
+        cmd.arg("-c").arg("sleep 5");
+
+        unsafe {
+            let fp_b_uuid = fingerprint_b.uuid_string();
+            cmd.pre_exec(move || {
+                let fp = SessionFingerprint::from_uuid_str(&fp_b_uuid)
+                    .map_err(|e| std::io::Error::other(e))?;
+                apply_fingerprint_only(&fp)?;
+                Ok(())
+            });
+        }
+
+        let mut child = cmd.spawn().expect("failed to spawn child");
+        std::thread::sleep(std::time::Duration::from_millis(100));
+
+        let child_pid = child.id() as libc::pid_t;
+
+        // fingerprint_a should NOT match (wrong session)
+        assert!(
+            !fingerprint_a.matches_pid(child_pid),
+            "Fingerprint A should NOT match process from session B"
+        );
+
+        // fingerprint_b SHOULD match
+        assert!(
+            fingerprint_b.matches_pid(child_pid),
+            "Fingerprint B should match its own process"
+        );
+
+        child.kill().ok();
+        child.wait().ok();
+    }
+
+    #[test]
+    fn test_fingerprint_only_mode_no_restrictions() {
+        let (_base_guard, base) = canonical_tempdir();
+        let project_dir = base.join("project");
+        fs::create_dir_all(&project_dir).expect("failed to create project dir");
+
+        let fingerprint = SessionFingerprint::new().expect("failed to create fingerprint");
+
+        // Create a file OUTSIDE the project dir
+        let external_dir = base.join("external");
+        fs::create_dir_all(&external_dir).expect("failed to create external dir");
+        let external_file = external_dir.join("readable.txt");
+        fs::write(&external_file, "external_content").expect("failed to write");
+
+        // Spawn with fingerprint-only mode (should allow everything)
+        let mut cmd = Command::new("/bin/sh");
+        cmd.arg("-c")
+            .arg(format!("cat {}", external_file.display()));
+
+        unsafe {
+            let fp_uuid = fingerprint.uuid_string();
+            cmd.pre_exec(move || {
+                let fp = SessionFingerprint::from_uuid_str(&fp_uuid)
+                    .map_err(|e| std::io::Error::other(e))?;
+                apply_fingerprint_only(&fp)?;
+                Ok(())
+            });
+        }
+
+        let output = cmd.output().expect("failed to spawn");
+        let stdout = String::from_utf8_lossy(&output.stdout);
+
+        assert!(
+            stdout.contains("external_content"),
+            "Fingerprint-only mode should NOT restrict file access. stdout: {stdout}"
+        );
+    }
+
+    #[test]
+    fn test_fingerprint_only_profile_structure() {
+        let fingerprint = SessionFingerprint::new().expect("failed to create fingerprint");
+        let profile = generate_fingerprint_only_profile(&fingerprint);
+
+        assert!(profile.contains("(allow default)"), "Should allow everything by default");
+        assert!(profile.contains("(deny file-read*"), "Should deny the deny-side path");
+        assert!(profile.contains("(allow file-read*"), "Should allow the allow-side path");
+        assert!(!profile.contains("(deny default)"), "Should NOT have deny default");
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Convergent cleanup tests (macOS)
+// ---------------------------------------------------------------------------
+
+#[cfg(target_os = "macos")]
+mod cleanup_tests {
+    use super::*;
+    use crate::sandbox_macos::SessionFingerprint;
+
+    /// Helper: spawn a child process with the fingerprint-only profile.
+    fn spawn_fingerprinted_process(
+        fingerprint: &SessionFingerprint,
+        command: &str,
+    ) -> std::process::Child {
+        let mut cmd = Command::new("/bin/sh");
+        cmd.arg("-c").arg(command);
+
+        let fp_uuid = fingerprint.uuid_string();
+        unsafe {
+            cmd.pre_exec(move || {
+                let fp = SessionFingerprint::from_uuid_str(&fp_uuid)
+                    .map_err(|e| std::io::Error::other(e))?;
+                crate::sandbox_macos::apply_fingerprint_only(&fp)?;
+                Ok(())
+            });
+        }
+
+        cmd.spawn().expect("failed to spawn fingerprinted child")
+    }
+
+    #[test]
+    fn test_cleanup_kills_simple_child() {
+        let fingerprint = SessionFingerprint::new().expect("failed to create fingerprint");
+        let mut child = spawn_fingerprinted_process(&fingerprint, "sleep 60");
+        std::thread::sleep(std::time::Duration::from_millis(100));
+
+        let child_pid = child.id() as libc::pid_t;
+        assert!(fingerprint.matches_pid(child_pid), "Child should match before cleanup");
+
+        fingerprint.kill_all_processes(None);
+
+        // The child should be dead now
+        let status = child.wait().expect("failed to wait");
+        assert!(!status.success(), "Child should have been killed");
+    }
+
+    #[test]
+    fn test_cleanup_loop_terminates() {
+        let fingerprint = SessionFingerprint::new().expect("failed to create fingerprint");
+        let mut child = spawn_fingerprinted_process(&fingerprint, "sleep 60");
+        std::thread::sleep(std::time::Duration::from_millis(100));
+
+        // kill_all_processes should complete (not hang)
+        let start = std::time::Instant::now();
+        fingerprint.kill_all_processes(None);
+        let elapsed = start.elapsed();
+
+        assert!(
+            elapsed < std::time::Duration::from_secs(5),
+            "Cleanup should complete quickly, took {elapsed:?}"
+        );
+
+        child.wait().ok();
+    }
 }
