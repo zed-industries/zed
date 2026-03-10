@@ -410,6 +410,71 @@ async fn test_renaming_case_only(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_root_rescan_reconciles_stale_state(cx: &mut TestAppContext) {
+    init_test(cx);
+    let fs = FakeFs::new(cx.background_executor.clone());
+    fs.insert_tree(
+        "/root",
+        json!({
+            "old.txt": "",
+        }),
+    )
+    .await;
+
+    let tree = Worktree::local(
+        Path::new("/root"),
+        true,
+        fs.clone(),
+        Default::default(),
+        true,
+        WorktreeId::from_proto(0),
+        &mut cx.to_async(),
+    )
+    .await
+    .unwrap();
+
+    cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
+        .await;
+
+    tree.read_with(cx, |tree, _| {
+        assert_eq!(
+            tree.entries(true, 0)
+                .map(|entry| entry.path.as_ref())
+                .collect::<Vec<_>>(),
+            vec![rel_path(""), rel_path("old.txt")]
+        );
+    });
+
+    fs.pause_events();
+    fs.remove_file(Path::new("/root/old.txt"), RemoveOptions::default())
+        .await
+        .unwrap();
+    fs.insert_file(Path::new("/root/new.txt"), Vec::new()).await;
+    assert_eq!(fs.buffered_event_count(), 2);
+    fs.clear_buffered_events();
+
+    tree.read_with(cx, |tree, _| {
+        assert!(tree.entry_for_path(rel_path("old.txt")).is_some());
+        assert!(tree.entry_for_path(rel_path("new.txt")).is_none());
+    });
+
+    fs.emit_fs_event("/root", Some(fs::PathEventKind::Rescan));
+    fs.unpause_events_and_flush();
+    tree.flush_fs_events(cx).await;
+
+    tree.read_with(cx, |tree, _| {
+        assert!(tree.entry_for_path(rel_path("old.txt")).is_none());
+        assert!(tree.entry_for_path(rel_path("new.txt")).is_some());
+        assert_eq!(
+            tree.entries(true, 0)
+                .map(|entry| entry.path.as_ref())
+                .collect::<Vec<_>>(),
+            vec![rel_path(""), rel_path("new.txt")]
+        );
+    });
+}
+
+#[gpui::test]
 async fn test_open_gitignored_files(cx: &mut TestAppContext) {
     init_test(cx);
     let fs = FakeFs::new(cx.background_executor.clone());

@@ -3887,14 +3887,17 @@ impl BackgroundScanner {
             self.process_events(
                 paths
                     .into_iter()
-                    .filter(|e| e.kind.is_some())
-                    .map(Into::into)
+                    .filter(|event| event.kind.is_some())
                     .collect(),
             )
             .await;
         }
         if let Some(abs_path) = containing_git_repository {
-            self.process_events(vec![abs_path]).await;
+            self.process_events(vec![PathEvent {
+                path: abs_path,
+                kind: Some(fs::PathEventKind::Changed),
+            }])
+            .await;
         }
 
         // Continue processing events until the worktree is dropped.
@@ -3925,7 +3928,11 @@ impl BackgroundScanner {
                         };
 
                         if let Some(abs_path) = self.fs.canonicalize(&abs_path).await.log_err() {
-                            self.process_events(vec![abs_path]).await;
+                            self.process_events(vec![PathEvent {
+                                path: abs_path,
+                                kind: Some(fs::PathEventKind::Changed),
+                            }])
+                            .await;
                         }
                     }
                     self.send_status_update(false, request.done).await;
@@ -3936,7 +3943,7 @@ impl BackgroundScanner {
                     while let Poll::Ready(Some(more_paths)) = futures::poll!(fs_events_rx.next()) {
                         paths.extend(more_paths);
                     }
-                    self.process_events(paths.into_iter().filter(|e| e.kind.is_some()).map(Into::into).collect()).await;
+                    self.process_events(paths.into_iter().filter(|event| event.kind.is_some()).collect()).await;
                 }
 
                 _ = global_gitignore_events.next().fuse() => {
@@ -3996,8 +4003,16 @@ impl BackgroundScanner {
         self.send_status_update(scanning, request.done).await
     }
 
-    async fn process_events(&self, mut abs_paths: Vec<PathBuf>) {
-        log::trace!("process events: {abs_paths:?}");
+    async fn process_events(&self, events: Vec<PathEvent>) {
+        let mut abs_paths = Vec::with_capacity(events.len());
+        let mut rescan_paths = Vec::new();
+        for event in events {
+            if matches!(event.kind, Some(fs::PathEventKind::Rescan)) {
+                rescan_paths.push(event.path.clone());
+            }
+            abs_paths.push(event.path);
+        }
+        log::trace!("process events: {abs_paths:?}, rescans: {rescan_paths:?}");
         let root_path = self.state.lock().await.snapshot.abs_path.clone();
         let root_canonical_path = self.fs.canonicalize(root_path.as_path()).await;
         let root_canonical_path = match &root_canonical_path {

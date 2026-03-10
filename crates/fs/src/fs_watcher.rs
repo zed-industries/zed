@@ -86,10 +86,12 @@ impl Watcher for FsWatcher {
         #[cfg(target_os = "linux")]
         let mode = notify::RecursiveMode::NonRecursive;
 
+        let registration_path = path.clone();
         let registration_id = global({
-            let path = path.clone();
+            let watch_path = path.clone();
+            let callback_path = path.clone();
             |g| {
-                g.add(path, mode, move |event: &notify::Event| {
+                g.add(watch_path, mode, move |event: &notify::Event| {
                     log::trace!("watcher received event: {event:?}");
                     let kind = match event.kind {
                         EventKind::Create(_) => Some(PathEventKind::Created),
@@ -109,6 +111,16 @@ impl Watcher for FsWatcher {
                         })
                         .collect::<Vec<_>>();
 
+                    if event.need_rescan() {
+                        log::warn!(
+                            "filesystem watcher lost sync for {callback_path:?}; scheduling rescan"
+                        );
+                        path_events.push(PathEvent {
+                            path: callback_path.to_path_buf(),
+                            kind: Some(PathEventKind::Rescan),
+                        });
+                    }
+
                     if !path_events.is_empty() {
                         path_events.sort();
                         let mut pending_paths = pending_paths.lock();
@@ -126,7 +138,9 @@ impl Watcher for FsWatcher {
             }
         })??;
 
-        self.registrations.lock().insert(path, registration_id);
+        self.registrations
+            .lock()
+            .insert(registration_path, registration_id);
 
         Ok(())
     }
