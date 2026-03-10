@@ -1,14 +1,15 @@
 use anyhow::{Result, anyhow};
 use gpui::{App, AppContext as _, Task};
 use language::{
-    BufferSnapshot, Point, ToOffset as _, ToPoint as _, language_settings::all_language_settings,
+    BufferSnapshot, OffsetRangeExt as _, Point, ToOffset as _, ToPoint as _,
+    language_settings::all_language_settings,
 };
 use std::{fmt::Write as _, ops::Range, path::Path, sync::Arc, time::Instant};
-use zeta_prompt::{RelatedFile, ZetaPromptInput, filter_redundant_excerpts};
+use zeta_prompt::{RelatedFile, Zeta2PromptInput, filter_redundant_excerpts};
 
 use crate::{
-    DebugEvent, EditPredictionFinishedDebugEvent, EditPredictionId, EditPredictionModelInput,
-    EditPredictionResult, EditPredictionStartedDebugEvent, StoredEvent,
+    DebugEvent, EditPredictionFinishedDebugEvent, EditPredictionId, EditPredictionInputs,
+    EditPredictionModelInput, EditPredictionResult, EditPredictionStartedDebugEvent, StoredEvent,
     cursor_excerpt::fixed_line_window_around_cursor,
     open_ai_compatible::{self, load_open_ai_compatible_api_key_if_needed},
     zeta,
@@ -71,6 +72,7 @@ pub fn request_prediction(
         events,
         stored_events,
         related_files,
+        trigger,
         debug_tx,
         ..
     } = input;
@@ -112,19 +114,22 @@ pub fn request_prediction(
             .ok();
     }
 
-    let window_start_offset = window_range.start.to_offset(&snapshot);
+    let window_offset_range = window_range.to_offset(&snapshot);
+    let window_start_offset = window_offset_range.start;
+    let editable_range = snapshot.anchor_range_inside(window_offset_range);
     let cursor_offset_in_window = position
         .to_offset(&snapshot)
         .saturating_sub(window_start_offset);
-    let zeta_input = ZetaPromptInput {
+    let zeta_input = Zeta2PromptInput {
         events,
-        related_files: filtered_related_files,
+        related_files: Some(filtered_related_files),
+        active_buffer_diagnostics: Vec::new(),
         cursor_path: file_path,
         cursor_excerpt: prompt_input.current_window.clone().into(),
         cursor_offset_in_excerpt: cursor_offset_in_window,
         excerpt_start_row: Some(window_range.start.row),
         excerpt_ranges: Default::default(),
-        experiment: None,
+        syntax_ranges: None,
         in_open_source_repo: false,
         can_collect_data: false,
         repo_url: None,
@@ -184,10 +189,11 @@ pub fn request_prediction(
                 &snapshot,
                 edits.into(),
                 None,
-                buffer_snapshotted_at,
-                response_received_at,
-                zeta_input,
+                Some(editable_range),
+                EditPredictionInputs::V2(zeta_input),
                 None,
+                trigger,
+                response_received_at - buffer_snapshotted_at,
                 cx,
             )
             .await,
@@ -517,11 +523,16 @@ mod tests {
                     old_path: Arc::from(std::path::Path::new("test.txt")),
                     path: Arc::from(std::path::Path::new("test.txt")),
                     diff: String::new(),
+                    old_range: 5..8,
+                    new_range: 5..8,
                     in_open_source_repo: false,
                     predicted: false,
                 }),
                 old_snapshot,
-                edit_range: current_snapshot.anchor_before(5)..current_snapshot.anchor_before(8),
+                new_snapshot_version: current_snapshot.text.version.clone(),
+                total_edit_range: current_snapshot.anchor_before(5)
+                    ..current_snapshot.anchor_before(8),
+                file_context: None,
             };
 
             let original_window =
@@ -550,9 +561,7 @@ mod tests {
     }
 
     #[gpui::test]
-    fn test_original_window_for_current_window_treats_edit_end_as_post_edit_position(
-        cx: &mut App,
-    ) {
+    fn test_original_window_for_current_window_treats_edit_end_as_post_edit_position(cx: &mut App) {
         cx.new(|cx| {
             let mut buffer = Buffer::local("aaaaabbbbb", cx);
             let old_snapshot = buffer.text_snapshot();
@@ -565,11 +574,16 @@ mod tests {
                     old_path: Arc::from(std::path::Path::new("test.txt")),
                     path: Arc::from(std::path::Path::new("test.txt")),
                     diff: String::new(),
+                    old_range: 5..10,
+                    new_range: 5..6,
                     in_open_source_repo: false,
                     predicted: false,
                 }),
                 old_snapshot,
-                edit_range: current_snapshot.anchor_before(5)..current_snapshot.anchor_before(6),
+                new_snapshot_version: current_snapshot.text.version.clone(),
+                total_edit_range: current_snapshot.anchor_before(5)
+                    ..current_snapshot.anchor_before(6),
+                file_context: None,
             };
 
             assert_eq!(
@@ -590,17 +604,23 @@ mod tests {
     fn test_recent_change_block_from_event_formats_original_and_updated_sections(cx: &mut App) {
         cx.new(|cx| {
             let buffer = Buffer::local("fn main() {\n    println!(\"old\");\n}\n", cx);
+            let old_snapshot = buffer.text_snapshot();
+            let anchor = buffer.anchor_before(0);
             let stored_event = StoredEvent {
                 event: Arc::new(zeta_prompt::Event::BufferChange {
                     old_path: Path::new("src/main.rs").into(),
                     path: Path::new("src/main.rs").into(),
                     diff: "@@ -1,3 +1,3 @@\n fn main() {\n-    println!(\"old\");\n+    println!(\"new\");\n }\n"
                         .to_string(),
+                    old_range: 0..0,
+                    new_range: 0..0,
                     in_open_source_repo: false,
                     predicted: false,
                 }),
-                old_snapshot: buffer.text_snapshot(),
-                edit_range: language::Anchor::MIN..language::Anchor::MIN,
+                new_snapshot_version: old_snapshot.version.clone(),
+                old_snapshot,
+                total_edit_range: anchor..anchor,
+                file_context: None,
             };
 
             let block =

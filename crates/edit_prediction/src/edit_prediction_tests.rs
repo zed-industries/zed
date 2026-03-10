@@ -3403,7 +3403,9 @@ async fn make_sweep_prompt_test_ep_store(
                             settings::CustomEditPredictionProviderSettingsContent {
                                 api_url: Some("http://localhost:8080/v1/completions".to_string()),
                                 model: Some("sweep-next-edit-1.5b".to_string()),
-                                prompt_format: Some(settings::EditPredictionPromptFormat::Sweep),
+                                prompt_format: Some(
+                                    settings::EditPredictionPromptFormatContent::Sweep,
+                                ),
                                 max_output_tokens: Some(64),
                             },
                         ),
@@ -3625,7 +3627,7 @@ async fn test_sweep_prompt_request_prediction_diffs_rewritten_window_into_anchor
         .await
         .unwrap()
         .expect("expected a sweep prompt prediction");
-    let prediction = result.prediction.expect("expected prediction edits");
+    let prediction = result.prediction;
 
     let edits = cx.update(|cx| from_completion_edits(&prediction.edits, &buffer, cx));
     assert_eq!(edits, vec![(13..13, " updated".into())]);

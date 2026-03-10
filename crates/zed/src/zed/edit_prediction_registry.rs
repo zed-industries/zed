@@ -319,7 +319,7 @@ mod tests {
     use super::*;
     use editor::MultiBuffer;
     use gpui::{BorrowAppContext, TestAppContext};
-    use settings::{EditPredictionPromptFormat, EditPredictionProvider, SettingsStore};
+    use settings::{EditPredictionPromptFormatContent, EditPredictionProvider, SettingsStore};
     use workspace::AppState;
 
     #[gpui::test]
@@ -327,7 +327,7 @@ mod tests {
         let app_state = cx.update(|cx| {
             let app_state = AppState::test(cx);
             client::init(&app_state.client, cx);
-            language_model::init(app_state.user_store.clone(), app_state.client.clone(), cx);
+            language_model::init(cx);
             app_state
         });
 
@@ -343,7 +343,7 @@ mod tests {
                                         "http://localhost:8080/v1/completions".to_string(),
                                     ),
                                     model: Some("sweep-next-edit-1.5b".to_string()),
-                                    prompt_format: Some(EditPredictionPromptFormat::Sweep),
+                                    prompt_format: Some(EditPredictionPromptFormatContent::Sweep),
                                     ..Default::default()
                                 },
                             ),
