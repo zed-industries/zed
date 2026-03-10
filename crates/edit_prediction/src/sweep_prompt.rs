@@ -118,12 +118,13 @@ pub fn request_prediction(
         .saturating_sub(window_start_offset);
     let zeta_input = ZetaPromptInput {
         events,
-        related_files: filtered_related_files,
+        related_files: Some(filtered_related_files),
         cursor_path: file_path,
         cursor_excerpt: prompt_input.current_window.clone().into(),
         cursor_offset_in_excerpt: cursor_offset_in_window,
         excerpt_start_row: Some(window_range.start.row),
         excerpt_ranges: Default::default(),
+        syntax_ranges: None,
         experiment: None,
         in_open_source_repo: false,
         can_collect_data: false,
@@ -550,9 +551,7 @@ mod tests {
     }
 
     #[gpui::test]
-    fn test_original_window_for_current_window_treats_edit_end_as_post_edit_position(
-        cx: &mut App,
-    ) {
+    fn test_original_window_for_current_window_treats_edit_end_as_post_edit_position(cx: &mut App) {
         cx.new(|cx| {
             let mut buffer = Buffer::local("aaaaabbbbb", cx);
             let old_snapshot = buffer.text_snapshot();

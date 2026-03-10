@@ -27,23 +27,6 @@ pub fn compute_cursor_excerpt(
     )
 }
 
-pub fn editable_and_context_ranges_for_cursor_position(
-    position: Point,
-    snapshot: &BufferSnapshot,
-    editable_region_token_limit: usize,
-    context_token_limit: usize,
-) -> (Range<Point>, Range<Point>) {
-    let editable_range = compute_editable_range(snapshot, position, editable_region_token_limit);
-
-    let context_range = expand_context_syntactically_then_linewise(
-        snapshot,
-        editable_range.clone(),
-        context_token_limit,
-    );
-
-    (editable_range, context_range)
-}
-
 pub fn fixed_line_window_around_cursor(
     snapshot: &BufferSnapshot,
     cursor: Point,
@@ -53,73 +36,6 @@ pub fn fixed_line_window_around_cursor(
     let start_row = cursor.row.saturating_sub(above);
     let end_row = (cursor.row + below).min(snapshot.max_point().row);
     Point::new(start_row, 0)..Point::new(end_row, snapshot.line_len(end_row))
-}
-
-/// Computes the editable range using a three-phase approach:
-/// 1. Expand symmetrically from cursor (75% of budget)
-/// 2. Expand to syntax boundaries
-/// 3. Continue line-wise in the least-expanded direction
-fn compute_editable_range(
-    snapshot: &BufferSnapshot,
-    cursor: Point,
-    token_limit: usize,
-) -> Range<Point> {
-    // Phase 1: Expand symmetrically from cursor using 75% of budget.
-    let initial_budget = (token_limit * 3) / 4;
-    let (mut start_row, mut end_row, mut remaining_tokens) =
-        expand_symmetric_from_cursor(snapshot, cursor.row, initial_budget);
-
-    // Add remaining budget from phase 1.
-    remaining_tokens += token_limit.saturating_sub(initial_budget);
-
-    let original_start = start_row;
-    let original_end = end_row;
-
-    // Phase 2: Expand to syntax boundaries that fit within budget.
-    for (boundary_start, boundary_end) in containing_syntax_boundaries(snapshot, start_row, end_row)
-    {
-        let tokens_for_start = if boundary_start < start_row {
-            estimate_tokens_for_rows(snapshot, boundary_start, start_row)
-        } else {
-            0
-        };
-        let tokens_for_end = if boundary_end > end_row {
-            estimate_tokens_for_rows(snapshot, end_row + 1, boundary_end + 1)
-        } else {
-            0
-        };
-
-        let total_needed = tokens_for_start + tokens_for_end;
-
-        if total_needed <= remaining_tokens {
-            if boundary_start < start_row {
-                start_row = boundary_start;
-            }
-            if boundary_end > end_row {
-                end_row = boundary_end;
-            }
-            remaining_tokens = remaining_tokens.saturating_sub(total_needed);
-        } else {
-            break;
-        }
-    }
-
-    // Phase 3: Continue line-wise in the direction we expanded least during syntax phase.
-    let expanded_up = original_start.saturating_sub(start_row);
-    let expanded_down = end_row.saturating_sub(original_end);
-
-    (start_row, end_row, _) = expand_linewise_biased(
-        snapshot,
-        start_row,
-        end_row,
-        remaining_tokens,
-        expanded_up <= expanded_down, // prefer_up if we expanded less upward
-    );
-
-    let start = Point::new(start_row, 0);
-    let end = Point::new(end_row, snapshot.line_len(end_row));
-    start..end
->>>>>>> 131cec4929 (edit_prediction: Add self-hosted Sweep prompt format)
 }
 
 /// Expands symmetrically from cursor, one line at a time, alternating down then up.
@@ -507,8 +423,7 @@ mod tests {
             let buffer = Buffer::local(&text, cx);
             let snapshot = buffer.snapshot();
 
-            let start_window =
-                fixed_line_window_around_cursor(&snapshot, Point::new(0, 0), 10, 10);
+            let start_window = fixed_line_window_around_cursor(&snapshot, Point::new(0, 0), 10, 10);
             assert_eq!(start_window.start.row, 0);
             assert_eq!(start_window.end.row, 10);
 
@@ -517,8 +432,7 @@ mod tests {
             assert_eq!(middle_window.start.row, 5);
             assert_eq!(middle_window.end.row, 25);
 
-            let end_window =
-                fixed_line_window_around_cursor(&snapshot, Point::new(29, 1), 10, 10);
+            let end_window = fixed_line_window_around_cursor(&snapshot, Point::new(29, 1), 10, 10);
             assert_eq!(end_window.start.row, 19);
             assert_eq!(end_window.end.row, 29);
             assert_eq!(end_window.end.column, snapshot.line_len(29));
