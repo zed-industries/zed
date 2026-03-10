@@ -92,8 +92,8 @@ use gpui::{
     ForegroundExecutor, KeyDownEvent, KeyUpEvent, Keystroke, Modifiers, ModifiersChangedEvent,
     MouseButton, MouseDownEvent, MouseExitEvent, MouseMoveEvent, MouseUpEvent, NavigationDirection,
     Pixels, PlatformDisplay, PlatformInput, PlatformKeyboardLayout, PlatformWindow, Point,
-    ScrollDelta, ScrollWheelEvent, SharedString, Size, TaskTiming, TouchPhase, WindowParams, point,
-    profiler, px, size,
+    RequestFrameOptions, ScrollDelta, ScrollWheelEvent, SharedString, Size, TaskTiming, TouchPhase,
+    WindowButtonLayout, WindowParams, point, profiler, px, size,
 };
 use gpui_wgpu::{CompositorGpuHint, GpuContext};
 use wayland_protocols::wp::linux_dmabuf::zv1::client::{
@@ -557,6 +557,23 @@ impl WaylandClient {
 
                             for window in client.windows.values_mut() {
                                 window.set_appearance(appearance);
+                            }
+                        }
+                    }
+                    XDPEvent::ButtonLayout(layout_str) => {
+                        if let Some(client) = client.0.upgrade() {
+                            let layout = WindowButtonLayout::parse(&layout_str);
+                            let windows = {
+                                let mut client = client.borrow_mut();
+                                client.common.button_layout = layout;
+                                client.windows.values().cloned().collect::<Vec<_>>()
+                            };
+
+                            for window in windows {
+                                window.refresh(RequestFrameOptions {
+                                    require_presentation: false,
+                                    force_render: true,
+                                });
                             }
                         }
                     }
