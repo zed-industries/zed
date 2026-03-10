@@ -916,7 +916,7 @@ fn wait_for_context_server(
                 if server_id == &context_server_id
                     && let Some(tx) = tx.lock().unwrap().take()
                 {
-                    let _ = tx.send(Err("Authentication required".into()));
+                    let _ = tx.send(Ok(()));
                 }
             }
             ContextServerStatus::Starting | ContextServerStatus::Authenticating => {}

@@ -8,7 +8,7 @@ use std::time::Duration;
 use anyhow::{Context as _, Result};
 use collections::{HashMap, HashSet};
 use context_server::oauth::{
-    self, McpOAuthTokenProvider, OAuthClientRegistration, OAuthDiscovery, OAuthSession,
+    self, McpOAuthTokenProvider, OAuthDiscovery, OAuthSession,
 };
 use context_server::transport::{HttpTransport, TransportError};
 use context_server::{ContextServer, ContextServerCommand, ContextServerId};
@@ -1203,42 +1203,19 @@ impl ContextServerStore {
             _ => anyhow::bail!("OAuth authentication only supported for HTTP servers"),
         };
 
-        let cached_dcr_registration = match Self::load_dcr_registration(
-            &credentials_provider,
-            &discovery.auth_server_metadata.issuer,
-            cx,
-        )
-        .await
-        {
-            Ok(registration) => registration,
-            Err(err) => {
-                log::warn!("{} failed to load cached DCR registration: {}", id, err);
-                None
-            }
-        };
-
+        // DCR registrations are not reused across flows because each flow
+        // starts a loopback callback server on a fresh ephemeral port, so the
+        // redirect URI changes every time. Authorization servers that do strict
+        // redirect URI matching (e.g. Notion) reject the token exchange when
+        // the redirect URI doesn't match what was registered with the client.
         let client_registration = oauth::resolve_client_registration(
             &http_client,
             &discovery,
             &redirect_uri,
-            cached_dcr_registration,
+            None,
         )
         .await
         .context("Failed to resolve OAuth client registration")?;
-
-        if matches!(
-            oauth::determine_registration_strategy(&discovery.auth_server_metadata),
-            oauth::ClientRegistrationStrategy::Dcr { .. }
-        ) {
-            Self::store_dcr_registration(
-                &credentials_provider,
-                &discovery.auth_server_metadata.issuer,
-                &client_registration,
-                cx,
-            )
-            .await
-            .context("Failed to persist DCR client registration")?;
-        }
 
         let auth_url = oauth::build_authorization_url(
             &discovery.auth_server_metadata,
@@ -1380,37 +1357,6 @@ impl ContextServerStore {
         oauth::dcr_registration_cache_key(auth_server_issuer)
     }
 
-    /// Persist a DCR client registration in the system keychain so we reuse the
-    /// same client_id across restarts instead of minting a new one each time.
-    async fn store_dcr_registration(
-        credentials_provider: &Arc<dyn CredentialsProvider>,
-        auth_server_issuer: &url::Url,
-        registration: &OAuthClientRegistration,
-        cx: &AsyncApp,
-    ) -> Result<()> {
-        let key = Self::dcr_keychain_key(auth_server_issuer);
-        let json = serde_json::to_string(registration)?;
-        credentials_provider
-            .write_credentials(&key, "mcp-oauth-dcr", json.as_bytes(), cx)
-            .await
-    }
-
-    /// Load a previously cached DCR client registration from the keychain.
-    async fn load_dcr_registration(
-        credentials_provider: &Arc<dyn CredentialsProvider>,
-        auth_server_issuer: &url::Url,
-        cx: &AsyncApp,
-    ) -> Result<Option<OAuthClientRegistration>> {
-        let key = Self::dcr_keychain_key(auth_server_issuer);
-        match credentials_provider.read_credentials(&key, cx).await? {
-            Some((_username, password_bytes)) => {
-                let registration: OAuthClientRegistration =
-                    serde_json::from_slice(&password_bytes)?;
-                Ok(Some(registration))
-            }
-            None => Ok(None),
-        }
-    }
 
     /// Clear the cached DCR client registration from the keychain.
     async fn clear_dcr_registration(
