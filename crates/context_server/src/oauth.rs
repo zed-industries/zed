@@ -154,13 +154,11 @@ pub struct WwwAuthenticate {
 pub fn parse_www_authenticate(header: &str) -> Result<WwwAuthenticate> {
     let header = header.trim();
 
-    // Strip the "Bearer" scheme prefix (case-insensitive).
-    let params_str = header
-        .strip_prefix("Bearer")
-        .or_else(|| header.strip_prefix("bearer"))
-        .or_else(|| header.strip_prefix("BEARER"))
-        .ok_or_else(|| anyhow!("WWW-Authenticate header does not use Bearer scheme"))?
-        .trim();
+    let params_str = if header.len() >= 6 && header[..6].eq_ignore_ascii_case("bearer") {
+        header[6..].trim()
+    } else {
+        bail!("WWW-Authenticate header does not use Bearer scheme");
+    };
 
     if params_str.is_empty() {
         return Ok(WwwAuthenticate {
@@ -610,44 +608,17 @@ pub async fn fetch_auth_server_metadata(
     for url in &candidate_urls {
         match fetch_json::<AuthServerMetadataResponse>(http_client, url).await {
             Ok(response) => {
-                let issuer_url = response
-                    .issuer
-                    .as_deref()
-                    .and_then(|s| Url::parse(s).ok())
-                    .unwrap_or_else(|| issuer.clone());
-
-                let authorization_endpoint = response
-                    .authorization_endpoint
-                    .as_deref()
-                    .map(Url::parse)
-                    .transpose()
-                    .context("invalid authorization_endpoint")?
-                    .ok_or_else(|| anyhow!("missing authorization_endpoint"))?;
-
-                let token_endpoint = response
-                    .token_endpoint
-                    .as_deref()
-                    .map(Url::parse)
-                    .transpose()
-                    .context("invalid token_endpoint")?
-                    .ok_or_else(|| anyhow!("missing token_endpoint"))?;
-
-                let registration_endpoint = response
-                    .registration_endpoint
-                    .as_deref()
-                    .map(Url::parse)
-                    .transpose()
-                    .context("invalid registration_endpoint")?;
-
-                let code_challenge_methods = response.code_challenge_methods_supported;
-
                 return Ok(AuthServerMetadata {
-                    issuer: issuer_url,
-                    authorization_endpoint,
-                    token_endpoint,
-                    registration_endpoint,
+                    issuer: response.issuer.unwrap_or_else(|| issuer.clone()),
+                    authorization_endpoint: response
+                        .authorization_endpoint
+                        .ok_or_else(|| anyhow!("missing authorization_endpoint"))?,
+                    token_endpoint: response
+                        .token_endpoint
+                        .ok_or_else(|| anyhow!("missing token_endpoint"))?,
+                    registration_endpoint: response.registration_endpoint,
                     scopes_supported: response.scopes_supported,
-                    code_challenge_methods_supported: code_challenge_methods,
+                    code_challenge_methods_supported: response.code_challenge_methods_supported,
                     client_id_metadata_document_supported: response
                         .client_id_metadata_document_supported
                         .unwrap_or(false),
@@ -899,6 +870,15 @@ impl OAuthCallback {
     }
 }
 
+/// How long to wait for the browser to complete the OAuth flow before giving
+/// up and releasing the loopback port.
+const CALLBACK_TIMEOUT: Duration = Duration::from_secs(5 * 60);
+
+/// Maximum number of bytes we'll buffer when reading the HTTP request from the
+/// browser. The request line is all we need, but browsers may send large
+/// headers (cookies, etc.), so we allow a generous limit.
+const CALLBACK_MAX_REQUEST_BYTES: usize = 64 * 1024;
+
 /// Start a loopback HTTP server on an ephemeral port to receive the OAuth
 /// authorization callback.
 ///
@@ -909,6 +889,10 @@ impl OAuthCallback {
 /// The server accepts exactly one request on `/callback`, validates that it
 /// contains `code` and `state` query parameters, responds with a minimal
 /// HTML page telling the user they can close the tab, and shuts down.
+///
+/// The callback server shuts down when the returned oneshot receiver is
+/// dropped (e.g. because the authentication task was cancelled), or after a
+/// 5-minute timeout.
 pub async fn start_callback_server() -> Result<(
     String,
     futures::channel::oneshot::Receiver<Result<OAuthCallback>>,
@@ -921,27 +905,74 @@ pub async fn start_callback_server() -> Result<(
 
     let (tx, rx) = futures::channel::oneshot::channel();
 
+    // The `tx.is_canceled()` check lets us shut down when the receiver is
+    // dropped, e.g. because the Authenticating task was cancelled.
     smol::spawn(async move {
-        let result = handle_single_callback(listener).await;
-        // If the receiver was dropped (e.g. flow cancelled), that's fine.
-        let _ = tx.send(result);
+        let timeout = smol::Timer::after(CALLBACK_TIMEOUT);
+        let accept = async {
+            loop {
+                if tx.is_canceled() {
+                    return;
+                }
+                match futures::future::select(
+                    std::pin::pin!(listener.accept()),
+                    std::pin::pin!(smol::Timer::after(Duration::from_millis(500))),
+                )
+                .await
+                {
+                    futures::future::Either::Left((Ok((stream, _addr)), _)) => {
+                        let result = handle_single_callback(stream).await;
+                        let _ = tx.send(result);
+                        return;
+                    }
+                    futures::future::Either::Left((Err(err), _)) => {
+                        let _ = tx.send(Err(err.into()));
+                        return;
+                    }
+                    // Poll timeout: loop back and re-check cancellation.
+                    futures::future::Either::Right(_) => continue,
+                }
+            }
+        };
+
+        futures::future::select(std::pin::pin!(accept), std::pin::pin!(timeout)).await;
     })
     .detach();
 
     Ok((redirect_uri, rx))
 }
 
-async fn handle_single_callback(listener: TcpListener) -> Result<OAuthCallback> {
-    let (mut stream, _addr) = listener
-        .accept()
-        .await
-        .context("Failed to accept connection on OAuth callback server")?;
+/// Read the HTTP request headers from the stream, looping until the full
+/// `\r\n\r\n` terminator is received or the buffer limit is hit.
+async fn read_http_request_head(stream: &mut smol::net::TcpStream) -> Result<String> {
+    let mut buf = Vec::with_capacity(4096);
+    let mut tmp = [0u8; 4096];
 
-    let mut buf = vec![0u8; 4096];
-    let n = smol::io::AsyncReadExt::read(&mut stream, &mut buf)
-        .await
-        .context("Failed to read from OAuth callback connection")?;
-    let request = String::from_utf8_lossy(&buf[..n]);
+    loop {
+        let n = smol::io::AsyncReadExt::read(stream, &mut tmp)
+            .await
+            .context("Failed to read from OAuth callback connection")?;
+        if n == 0 {
+            bail!("connection closed before full HTTP headers were received");
+        }
+        buf.extend_from_slice(&tmp[..n]);
+
+        if buf.windows(4).any(|window| window == b"\r\n\r\n") {
+            break;
+        }
+        if buf.len() >= CALLBACK_MAX_REQUEST_BYTES {
+            bail!(
+                "HTTP request headers exceeded {} bytes",
+                CALLBACK_MAX_REQUEST_BYTES
+            );
+        }
+    }
+
+    String::from_utf8(buf).context("HTTP request headers are not valid UTF-8")
+}
+
+async fn handle_single_callback(mut stream: smol::net::TcpStream) -> Result<OAuthCallback> {
+    let request = read_http_request_head(&mut stream).await?;
 
     // Parse the HTTP request line to extract the path and query string.
     let request_line = request
@@ -1028,13 +1059,13 @@ struct ProtectedResourceMetadataResponse {
 #[derive(Debug, Deserialize)]
 struct AuthServerMetadataResponse {
     #[serde(default)]
-    issuer: Option<String>,
+    issuer: Option<Url>,
     #[serde(default)]
-    authorization_endpoint: Option<String>,
+    authorization_endpoint: Option<Url>,
     #[serde(default)]
-    token_endpoint: Option<String>,
+    token_endpoint: Option<Url>,
     #[serde(default)]
-    registration_endpoint: Option<String>,
+    registration_endpoint: Option<Url>,
     #[serde(default)]
     scopes_supported: Option<Vec<String>>,
     #[serde(default)]
