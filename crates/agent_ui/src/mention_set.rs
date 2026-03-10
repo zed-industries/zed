@@ -619,9 +619,7 @@ impl MentionSet {
 
         let diff_receiver = repo.update(cx, |repo, cx| {
             repo.diff(
-                git::repository::DiffType::MergeBase {
-                    base_ref: base_ref.into(),
-                },
+                git::repository::DiffType::MergeBase { base_ref: base_ref },
                 cx,
             )
         });
