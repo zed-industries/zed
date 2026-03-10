@@ -148,11 +148,7 @@ impl AgentConnectionStore {
         let (new_version_tx, new_version_rx) = watch::channel::<Option<String>>(None);
 
         let agent_server_store = self.project.read(cx).agent_server_store().clone();
-        let delegate = AgentServerDelegate::new(
-            agent_server_store,
-            self.project.clone(),
-            Some(new_version_tx),
-        );
+        let delegate = AgentServerDelegate::new(agent_server_store, Some(new_version_tx));
 
         let connect_task = server.connect(delegate, cx);
         let connect_task = cx.spawn(async move |_this, _cx| match connect_task.await {
