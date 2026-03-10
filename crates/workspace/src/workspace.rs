@@ -2672,6 +2672,16 @@ impl Workspace {
         cx.notify();
     }
 
+    pub fn set_active_worktree_override_and_serialize(
+        &mut self,
+        worktree_id: Option<WorktreeId>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.set_active_worktree_override(worktree_id, cx);
+        self.serialize_workspace(window, cx);
+    }
+
     pub fn clear_active_worktree_override(&mut self, cx: &mut Context<Self>) {
         self.active_worktree_override = None;
         self.pending_active_worktree_override_path = None;

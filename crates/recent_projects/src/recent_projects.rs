@@ -874,7 +874,11 @@ impl PickerDelegate for RecentProjectsDelegate {
                 let worktree_id = folder.worktree_id;
                 if let Some(workspace) = self.workspace.upgrade() {
                     workspace.update(cx, |workspace, cx| {
-                        workspace.set_active_worktree_override(Some(worktree_id), cx);
+                        workspace.set_active_worktree_override_and_serialize(
+                            Some(worktree_id),
+                            window,
+                            cx,
+                        );
                     });
                 }
                 cx.emit(DismissEvent);

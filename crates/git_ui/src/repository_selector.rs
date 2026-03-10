@@ -263,7 +263,11 @@ impl PickerDelegate for RepositorySelectorDelegate {
                     })
                     .map(|worktree| worktree.read(cx).id());
 
-                workspace.set_active_worktree_override(active_worktree_id, cx);
+                workspace.set_active_worktree_override_and_serialize(
+                    active_worktree_id,
+                    window,
+                    cx,
+                );
             })
             .ok();
         self.dismissed(window, cx);
