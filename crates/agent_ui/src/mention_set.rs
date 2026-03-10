@@ -553,19 +553,17 @@ impl MentionSet {
             project.read(cx).fs().clone(),
             thread_store,
         ));
-        let delegate = AgentServerDelegate::new(
-            project.read(cx).agent_server_store().clone(),
-            project.clone(),
-            None,
-            None,
-        );
+        let delegate =
+            AgentServerDelegate::new(project.read(cx).agent_server_store().clone(), None);
         let connection = server.connect(delegate, cx);
         cx.spawn(async move |_, cx| {
             let agent = connection.await?;
             let agent = agent.downcast::<agent::NativeAgentConnection>().unwrap();
             let summary = agent
                 .0
-                .update(cx, |agent, cx| agent.thread_summary(id, cx))
+                .update(cx, |agent, cx| {
+                    agent.thread_summary(id, project.clone(), cx)
+                })
                 .await?;
             Ok(Mention::Text {
                 content: summary.to_string(),

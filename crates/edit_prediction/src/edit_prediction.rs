@@ -1217,7 +1217,7 @@ impl EditPredictionStore {
                         cx.subscribe(buffer, {
                             let project = project.downgrade();
                             move |this, buffer, event, cx| {
-                                if let language::BufferEvent::Edited = event
+                                if let language::BufferEvent::Edited { .. } = event
                                     && let Some(project) = project.upgrade()
                                 {
                                     this.report_changes_for_buffer(&buffer, &project, false, cx);
