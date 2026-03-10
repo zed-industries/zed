@@ -3315,7 +3315,7 @@ impl File {
         } else if proto.is_deleted {
             DiskState::Deleted
         } else if let Some(mtime) = proto.mtime.map(&Into::into) {
-            DiskState::Present { mtime }
+            DiskState::Present { mtime, size: 0 }
         } else {
             DiskState::New
         };
