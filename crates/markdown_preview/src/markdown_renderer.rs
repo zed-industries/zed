@@ -805,9 +805,9 @@ fn render_markdown_details(
     let summary_row = h_flex()
         .id(cx.next_id(&parsed.source_range))
         .gap_1()
-        .items_start()
+        .items_center()
         .cursor_pointer()
-        .child(div().mt(cx.scaled_rems(0.15)).child(chevron))
+        .child(chevron)
         .child(summary_content)
         .when_some(cx.details_toggle_callback.clone(), |this, callback| {
             this.on_click(move |_, window, cx| {
