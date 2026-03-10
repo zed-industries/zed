@@ -2250,7 +2250,7 @@
     "trust_all_worktrees": false,
   },
   // Configuration for persistent undo/redo history.
-  "persistent_undo": {
+  "persist_history": {
     // Whether to persist undo/redo history to disk.
     //
     // When enabled, closing a tab or restarting Zed preserves your undo history

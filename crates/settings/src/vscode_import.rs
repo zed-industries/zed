@@ -203,7 +203,7 @@ impl VsCodeSettings {
             preview_tabs: self.preview_tabs_settings_content(),
             project: self.project_settings_content(),
             project_panel: self.project_panel_settings_content(),
-            persistent_undo: None,
+            persist_history: None,
             proxy: self.read_string("http.proxy"),
             remote: RemoteSettingsContent::default(),
             repl: None,

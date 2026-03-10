@@ -3,7 +3,7 @@ use crate::{
     EditorSettings, ExcerptId, ExcerptRange, FormatTarget, MultiBuffer, MultiBufferSnapshot,
     NavigationData, ReportEditorEvent, SelectionEffects, ToPoint as _,
     display_map::HighlightKey,
-    editor_settings::{PersistentUndoSettings, SeedQuerySetting},
+    editor_settings::{PersistHistorySettings, SeedQuerySetting},
     persistence::{DB, SerializedEditor},
     scroll::{ScrollAnchor, ScrollOffset},
 };
@@ -86,7 +86,7 @@ fn compute_content_hash(rope: &rope::Rope) -> String {
 
 fn prune_persist_history(workspace_id: WorkspaceId, cx: &App) -> Task<()> {
     use settings::Settings as _;
-    if !PersistentUndoSettings::get_global(cx).enabled {
+    if !PersistHistorySettings::get_global(cx).enabled {
         return Task::ready(());
     }
 
@@ -1576,7 +1576,7 @@ impl Editor {
         cx: &App,
     ) -> Option<Task<()>> {
         use settings::Settings as _;
-        if !PersistentUndoSettings::get_global(cx).enabled {
+        if !PersistHistorySettings::get_global(cx).enabled {
             return None;
         }
 
@@ -1591,7 +1591,7 @@ impl Editor {
         let mtime = buffer.saved_mtime()?;
         let (mtime_seconds, mtime_nanos) = mtime.to_seconds_and_nanos_for_persistence()?;
 
-        let max_entries = PersistentUndoSettings::get_global(cx).max_entries as usize;
+        let max_entries = PersistHistorySettings::get_global(cx).max_entries as usize;
         let undo_stack = buffer.undo_stack();
         let redo_stack = buffer.redo_stack();
 
@@ -1657,7 +1657,7 @@ impl Editor {
         cx: &mut Context<Self>,
     ) {
         use settings::Settings as _;
-        if !PersistentUndoSettings::get_global(cx).enabled {
+        if !PersistHistorySettings::get_global(cx).enabled {
             return;
         }
 

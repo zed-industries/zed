@@ -1044,7 +1044,7 @@ impl schemars::JsonSchema for CenteredPaddingSettings {
 
 #[with_fallible_options]
 #[derive(Default, Copy, Clone, PartialEq, Eq, Debug, Serialize, Deserialize, JsonSchema, MergeFrom)]
-pub struct PersistentUndoSettingsContent {
+pub struct PersistHistorySettingsContent {
     /// Whether to persist undo/redo history to disk.
     ///
     /// When enabled, closing a tab or restarting Zed preserves your undo history
