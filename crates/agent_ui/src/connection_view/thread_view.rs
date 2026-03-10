@@ -4870,6 +4870,7 @@ impl ThreadView {
         cx: &Context<Self>,
     ) -> Div {
         v_flex()
+            .group(group.clone())
             .p_1p5()
             .bg(self.tool_card_header_bg(cx))
             .when(is_preview, |this| {
