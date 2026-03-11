@@ -131,22 +131,12 @@ impl From<CheckoutStep> for Step<Use> {
                 FetchDepth::Full => step.add_with(("fetch-depth", 0)),
                 FetchDepth::Custom(depth) => step.add_with(("fetch-depth", depth)),
             })
-            .map(|step| match value.token {
-                Some(token) => step.add_with(("token", token)),
-                None => step,
+            .when_some(value.path, |step, path| step.add_with(("path", path)))
+            .when_some(value.repository, |step, repository| {
+                step.add_with(("repository", repository))
             })
-            .map(|step| match value.path {
-                Some(path) => step.add_with(("path", path)),
-                None => step,
-            })
-            .map(|step| match value.repository {
-                Some(repository) => step.add_with(("repository", repository)),
-                None => step,
-            })
-            .map(|step| match value.ref_ {
-                Some(ref_) => step.add_with(("ref", ref_)),
-                None => step,
-            })
+            .when_some(value.ref_, |step, ref_| step.add_with(("ref", ref_)))
+            .when_some(value.token, |step, token| step.add_with(("token", token)))
     }
 }
 
