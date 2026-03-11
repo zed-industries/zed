@@ -2155,7 +2155,7 @@ pub mod test {
             });
 
             let thread_store = cx.new(|cx| ThreadStore::new(cx));
-            let history = cx.new(|cx| crate::ThreadHistory::new(None, window, cx));
+            let history = cx.new(|cx| crate::ThreadHistory::new(None, cx));
 
             // Add editor to workspace
             workspace.update(cx, |workspace, cx| {
