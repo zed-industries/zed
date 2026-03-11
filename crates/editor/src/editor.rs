@@ -20069,6 +20069,7 @@ impl Editor {
         cx.notify();
 
         self.scrollbar_marker_state.dirty = true;
+        self.colorize_brackets(true, cx);
         self.folds_did_change(cx);
     }
 
@@ -20211,6 +20212,7 @@ impl Editor {
         cx.notify();
         self.scrollbar_marker_state.dirty = true;
         self.active_indent_guides_state.dirty = true;
+        self.colorize_brackets(true, cx);
     }
 
     pub fn update_renderer_widths(
