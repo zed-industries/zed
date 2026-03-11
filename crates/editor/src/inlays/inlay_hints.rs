@@ -292,7 +292,7 @@ impl Editor {
         reason: InlayHintRefreshReason,
         cx: &mut Context<Self>,
     ) {
-        if !self.mode().is_full() || self.inlay_hints.is_none() {
+        if !self.lsp_data_enabled() || self.inlay_hints.is_none() {
             return;
         }
         let Some(semantics_provider) = self.semantics_provider() else {

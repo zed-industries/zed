@@ -7733,7 +7733,7 @@ impl Editor {
 
     #[ztracing::instrument(skip_all)]
     fn refresh_outline_symbols_at_cursor(&mut self, cx: &mut Context<Editor>) {
-        if !self.mode.is_full() {
+        if !self.lsp_data_enabled() {
             return;
         }
         let cursor = self.selections.newest_anchor().head();
@@ -17154,13 +17154,17 @@ impl Editor {
     }
 
     fn refresh_runnables(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Task<()> {
-        if !EditorSettings::get_global(cx).gutter.runnables || !self.enable_runnables {
+        if !self.mode().is_full()
+            || !EditorSettings::get_global(cx).gutter.runnables
+            || !self.enable_runnables
+        {
             self.clear_tasks();
             return Task::ready(());
         }
         let project = self.project().map(Entity::downgrade);
         let task_sources = self.lsp_task_sources(cx);
         let multi_buffer = self.buffer.downgrade();
+        let lsp_data_enabled = self.lsp_data_enabled();
         cx.spawn_in(window, async move |editor, cx| {
             cx.background_executor().timer(UPDATE_DEBOUNCE).await;
             let Some(project) = project.and_then(|p| p.upgrade()) else {
@@ -17176,20 +17180,27 @@ impl Editor {
             if hide_runnables {
                 return;
             }
-            let new_rows =
-                cx.background_spawn({
+            let new_rows = cx
+                .background_spawn({
                     let snapshot = display_snapshot.clone();
                     async move {
-                        Self::fetch_runnable_ranges(&snapshot, Anchor::min()..Anchor::max())
+                        snapshot
+                            .buffer_snapshot()
+                            .runnable_ranges(Anchor::min()..Anchor::max())
+                            .collect()
                     }
                 })
-                    .await;
-            let Ok(lsp_tasks) =
-                cx.update(|_, cx| crate::lsp_tasks(project.clone(), &task_sources, None, cx))
-            else {
-                return;
+                .await;
+            let lsp_tasks = if lsp_data_enabled {
+                let Ok(lsp_tasks) =
+                    cx.update(|_, cx| crate::lsp_tasks(project.clone(), &task_sources, None, cx))
+                else {
+                    return;
+                };
+                lsp_tasks.await
+            } else {
+                Vec::new()
             };
-            let lsp_tasks = lsp_tasks.await;
 
             let Ok(mut lsp_tasks_by_rows) = cx.update(|_, cx| {
                 lsp_tasks
@@ -17269,12 +17280,6 @@ impl Editor {
                 })
                 .ok();
         })
-    }
-    fn fetch_runnable_ranges(
-        snapshot: &DisplaySnapshot,
-        range: Range<Anchor>,
-    ) -> Vec<(Range<MultiBufferOffset>, language::RunnableRange)> {
-        snapshot.buffer_snapshot().runnable_ranges(range).collect()
     }
 
     fn runnable_rows(
@@ -19607,7 +19612,7 @@ impl Editor {
     }
 
     pub fn diagnostics_enabled(&self) -> bool {
-        self.diagnostics_enabled && self.mode.is_full()
+        self.diagnostics_enabled && self.lsp_data_enabled()
     }
 
     pub fn inline_diagnostics_enabled(&self) -> bool {
@@ -19771,10 +19776,7 @@ impl Editor {
         // `ActiveDiagnostic::All` is a special mode where editor's diagnostics are managed by the external view,
         // skip any LSP updates for it.
 
-        if self.active_diagnostics == ActiveDiagnostic::All
-            || !self.mode().is_full()
-            || !self.diagnostics_enabled()
-        {
+        if self.active_diagnostics == ActiveDiagnostic::All || !self.diagnostics_enabled() {
             return None;
         }
         let pull_diagnostics_settings = ProjectSettings::get_global(cx)
@@ -25628,13 +25630,17 @@ impl Editor {
         }
     }
 
+    fn lsp_data_enabled(&self) -> bool {
+        self.enable_lsp_data && self.mode().is_full()
+    }
+
     fn update_lsp_data(
         &mut self,
         for_buffer: Option<BufferId>,
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) {
-        if !self.enable_lsp_data {
+        if !self.lsp_data_enabled() {
             return;
         }
 
@@ -25648,7 +25654,7 @@ impl Editor {
     }
 
     fn register_visible_buffers(&mut self, cx: &mut Context<Self>) {
-        if !self.mode().is_full() {
+        if !self.lsp_data_enabled() {
             return;
         }
         for (_, (visible_buffer, _, _)) in self.visible_excerpts(true, cx) {
@@ -25657,7 +25663,7 @@ impl Editor {
     }
 
     fn register_buffer(&mut self, buffer_id: BufferId, cx: &mut Context<Self>) {
-        if !self.mode().is_full() {
+        if !self.lsp_data_enabled() {
             return;
         }
 
