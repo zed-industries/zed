@@ -5023,7 +5023,37 @@ impl GitPanel {
         let tree_view = GitPanelSettings::get_global(cx).tree_view;
         let path_style = self.project.read(cx).path_style(cx);
         let git_path_style = ProjectSettings::get_global(cx).git.path_style;
-        let display_name = entry.display_name(path_style);
+        let repo_snapshot = repo.snapshot();
+
+        let old_path = if entry.status.is_renamed() {
+            repo_snapshot.renamed_paths.get(&entry.repo_path)
+        } else {
+            None
+        };
+
+        let (file_name, parent_dir) = if let Some(old_path) = old_path {
+            let old_parent = old_path.parent();
+            let new_parent = entry.repo_path.parent();
+            if old_parent == new_parent {
+                let old_name = old_path.file_name().unwrap_or_default();
+                let new_name = entry.repo_path.file_name().unwrap_or_default();
+                (
+                    format!("{} -> {}", old_name, new_name),
+                    old_parent.map(|p| p.display(path_style).to_string()),
+                )
+            } else {
+                (
+                    format!(
+                        "{} -> {}",
+                        old_path.display(path_style),
+                        entry.repo_path.display(path_style)
+                    ),
+                    None,
+                )
+            }
+        } else {
+            (entry.display_name(path_style), entry.parent_dir(path_style))
+        };
 
         let selected = self.selected_entry == Some(ix);
         let marked = self.marked_entries.contains(&ix);
@@ -5034,6 +5064,7 @@ impl GitPanel {
         let is_modified = status.is_modified();
         let is_deleted = status.is_deleted();
         let is_created = status.is_created();
+        let is_renamed = status.is_renamed();
 
         let label_color = if status_style == StatusStyle::LabelColor {
             if has_conflict {
@@ -5045,6 +5076,8 @@ impl GitPanel {
             } else if is_deleted {
                 // We don't want a bunch of red labels in the list
                 Color::Disabled
+            } else if is_renamed || is_modified {
+                Color::VersionControlModified
             } else {
                 Color::VersionControlAdded
             }
@@ -5058,11 +5091,11 @@ impl GitPanel {
             Color::Muted
         };
 
-        let id: ElementId = ElementId::Name(format!("entry_{}_{}", display_name, ix).into());
+        let id: ElementId = ElementId::Name(format!("entry_{}_{}", file_name, ix).into());
         let checkbox_wrapper_id: ElementId =
-            ElementId::Name(format!("entry_{}_{}_checkbox_wrapper", display_name, ix).into());
+            ElementId::Name(format!("entry_{}_{}_checkbox_wrapper", file_name, ix).into());
         let checkbox_id: ElementId =
-            ElementId::Name(format!("entry_{}_{}_checkbox", display_name, ix).into());
+            ElementId::Name(format!("entry_{}_{}_checkbox", file_name, ix).into());
 
         let stage_status = GitPanel::stage_status_for_entry(entry, &repo);
         let mut is_staged: ToggleState = match stage_status {
@@ -5109,15 +5142,15 @@ impl GitPanel {
             .map(|this| {
                 if tree_view {
                     this.pl(px(depth as f32 * TREE_INDENT)).child(
-                        self.entry_label(display_name, label_color)
+                        self.entry_label(file_name, label_color)
                             .when(status.is_deleted(), Label::strikethrough)
                             .truncate(),
                     )
                 } else {
                     this.child(self.path_formatted(
-                        entry.parent_dir(path_style),
+                        parent_dir,
                         path_color,
-                        display_name,
+                        file_name,
                         label_color,
                         path_style,
                         git_path_style,
