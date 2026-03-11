@@ -111,10 +111,14 @@ impl Watcher for FsWatcher {
                         })
                         .collect::<Vec<_>>();
 
-                    if event.need_rescan() {
+                    let is_rescan_event = event.need_rescan();
+                    if is_rescan_event {
                         log::warn!(
                             "filesystem watcher lost sync for {callback_path:?}; scheduling rescan"
                         );
+                        // we only keep the first event per path below, this ensures it will be the rescan event
+                        // we'll remove any existing pending events for the same reason once we have the lock below
+                        path_events.retain(|p| &p.path != callback_path.as_ref());
                         path_events.push(PathEvent {
                             path: callback_path.to_path_buf(),
                             kind: Some(PathEventKind::Rescan),
@@ -126,6 +130,9 @@ impl Watcher for FsWatcher {
                         let mut pending_paths = pending_paths.lock();
                         if pending_paths.is_empty() {
                             tx.try_send(()).ok();
+                        }
+                        if is_rescan_event {
+                            pending_paths.retain(|p| &p.path != callback_path.as_ref());
                         }
                         util::extend_sorted(
                             &mut *pending_paths,
