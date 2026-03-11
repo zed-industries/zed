@@ -23,6 +23,7 @@ mod mode_selector;
 mod model_selector;
 mod model_selector_popover;
 mod profile_selector;
+pub mod sidebar;
 mod slash_command;
 mod slash_command_picker;
 mod terminal_codegen;
