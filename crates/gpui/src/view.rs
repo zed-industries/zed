@@ -25,7 +25,7 @@ struct ViewCacheKey {
     text_style: TextStyle,
 }
 
-/// A dynamically-typed handle to a view, which can be downcast to a [Entity] for a specific type.
+/// A dynamically-typed view handle that can be downcast to a specific `Entity<V>`.
 #[derive(Clone, Debug)]
 pub struct AnyView {
     entity: AnyEntity,
@@ -44,15 +44,13 @@ impl<V: Render> From<Entity<V>> for AnyView {
 }
 
 impl AnyView {
-    /// Indicate that this view should be cached when using it as an element.
-    /// When using this method, the view's previous layout and paint will be recycled from the previous frame if [Context::notify] has not been called since it was rendered.
-    /// The one exception is when [Window::refresh] is called, in which case caching is ignored.
+    /// Enable caching with the given outer layout style.
     pub fn cached(mut self, style: StyleRefinement) -> Self {
         self.cached_style = Some(style.into());
         self
     }
 
-    /// Convert this to a weak handle.
+    /// Downgrade to a weak handle.
     pub fn downgrade(&self) -> AnyWeakView {
         AnyWeakView {
             entity: self.entity.downgrade(),
@@ -60,8 +58,7 @@ impl AnyView {
         }
     }
 
-    /// Convert this to a [Entity] of a specific type.
-    /// If this handle does not contain a view of the specified type, returns itself in an `Err` variant.
+    /// Downcast to a typed `Entity<T>`, returning `Err(self)` on type mismatch.
     pub fn downcast<T: 'static>(self) -> Result<Entity<T>, Self> {
         match self.entity.downcast() {
             Ok(entity) => Ok(entity),
@@ -73,12 +70,12 @@ impl AnyView {
         }
     }
 
-    /// Gets the [TypeId] of the underlying view.
+    /// The [`TypeId`] of the underlying view.
     pub fn entity_type(&self) -> TypeId {
         self.entity.entity_type
     }
 
-    /// Gets the entity id of this handle.
+    /// The [`EntityId`] of this view.
     pub fn entity_id(&self) -> EntityId {
         self.entity.entity_id()
     }
@@ -256,14 +253,14 @@ impl IntoElement for AnyView {
     }
 }
 
-/// A weak, dynamically-typed view handle that does not prevent the view from being released.
+/// A weak, dynamically-typed view handle.
 pub struct AnyWeakView {
     entity: AnyWeakEntity,
     render: fn(&AnyView, &mut Window, &mut App) -> AnyElement,
 }
 
 impl AnyWeakView {
-    /// Convert to a strongly-typed handle if the referenced view has not yet been released.
+    /// Upgrade to a strong `AnyView` handle, if the view is still alive.
     pub fn upgrade(&self) -> Option<AnyView> {
         let entity = self.entity.upgrade()?;
         Some(AnyView {
@@ -310,108 +307,37 @@ mod any_view {
     }
 }
 
-/// A component backed by an entity that participates in GPUI's reactive graph.
+/// A renderable component that participates in GPUI's reactive graph.
 ///
-/// Views combine the ergonomic builder-pattern API of components ([`RenderOnce`](crate::RenderOnce))
-/// with the push-pull reactivity of entities. When a view's entity calls
-/// `cx.notify()`, only this view (and its dirty ancestors/children) need to
-/// re-render.
-///
-/// Unlike [`Render`], which puts the rendering trait on the entity's state type,
-/// `View` goes on the *component* type — the struct that holds both the entity
-/// handle and any display props. This means the consumer controls styling
-/// through the builder pattern, while the entity provides reactive state.
-///
-/// # Example
-///
-/// ```ignore
-/// struct CounterState {
-///     count: usize,
-/// }
-///
-/// struct Counter {
-///     state: Entity<CounterState>,
-///     label: SharedString,
-/// }
-///
-/// impl Counter {
-///     fn new(state: Entity<CounterState>) -> Self {
-///         Self { state, label: "Count".into() }
-///     }
-///
-///     fn label(mut self, label: impl Into<SharedString>) -> Self {
-///         self.label = label.into();
-///         self
-///     }
-/// }
-///
-/// impl View for Counter {
-///     type Entity = CounterState;
-///
-///     fn entity(&self) -> Option<Entity<CounterState>> {
-///         Some(self.state.clone())
-///     }
-///
-///
-///     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
-///         let count = self.state.read(cx).count;
-///         div().child(format!("{}: {}", self.label, count))
-///     }
-/// }
-///
-/// // Usage in a parent's render:
-/// // Counter::new(my_counter_entity).label("Total")
-/// ```
+/// When `entity()` returns `Some`, `cx.notify()` on that entity only
+/// re-renders this view's subtree. Implement this trait directly for
+/// full control, or use [`ComponentView`] / [`EntityView`] for the
+/// common stateless / stateful cases.
 pub trait View: 'static + Sized + Hash {
     /// The entity type that backs this view's state.
     type Entity: 'static;
 
-    /// Returns the entity that backs this view, if any.
-    ///
-    /// When `Some`, the view creates a reactive boundary in the element tree —
-    /// `cx.notify()` on the entity only re-renders this view's subtree.
-    ///
-    /// When `None`, the view behaves like a stateless component with subtree
-    /// isolation via its type name (similar to [`RenderOnce`](crate::RenderOnce)).
+    /// The entity that backs this view, if any. `Some` creates a reactive boundary;
+    /// `None` behaves like a stateless component.
     fn entity(&self) -> Option<Entity<Self::Entity>>;
 
-    /// Render this view into an element tree. Takes ownership of self,
-    /// consuming the component props. The entity state persists across frames.
+    /// Render this view into an element tree, consuming `self`.
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement;
 
-    /// Returns the style to use for caching this view.
-    /// When `Some`, the view element will be cached using the given style for its outer layout.
-    /// The default returns a full-size style refinement (`width: 100%, height: 100%`).
-    /// Return `None` to disable caching.
+    /// Outer layout style for caching. `Some` enables caching; `None` disables it.
+    /// Defaults to full-size (`width: 100%, height: 100%`).
     fn cache_style(&mut self, _window: &mut Window, _cx: &mut App) -> Option<StyleRefinement> {
         Some(StyleRefinement::default().size_full())
     }
 }
 
 /// A stateless component that renders an element tree without an entity.
-///
-/// This is the `View` equivalent of [`RenderOnce`](crate::RenderOnce).
-///
-/// # Example
-///
-/// ```ignore
-/// #[derive(Hash, IntoViewElement)]
-/// struct Greeting {
-///     name: SharedString,
-/// }
-///
-/// impl ComponentView for Greeting {
-///     fn render(self, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
-///         div().child(format!("Hello, {}!", self.name))
-///     }
-/// }
-/// ```
+/// This is the [`View`] equivalent of [`RenderOnce`](crate::RenderOnce).
 pub trait ComponentView: 'static + Sized + Hash {
-    /// Render this component into an element tree. Takes ownership of self,
-    /// consuming the component props.
+    /// Render this component into an element tree, consuming `self`.
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement;
 
-    /// Indicate that this view should be cached
+    /// Outer layout style for caching. Defaults to `None` (no caching).
     fn cache_style(&mut self, _window: &mut Window, _cx: &mut App) -> Option<StyleRefinement> {
         None
     }
@@ -435,13 +361,16 @@ impl<T: ComponentView> View for T {
     }
 }
 
-/// For entities that require only one kind of rendering, this trait provides a simplified interface.
-/// Equivalent to the `Render` trait
+/// A stateful entity that renders an element tree with a reactive boundary.
+/// This is the [`View`]-based replacement for [`Render`].
+///
+/// Gives `Entity<T>` a blanket [`View`] impl. Use `ViewElement::new(entity)`
+/// to convert an `Entity<T>` into a child element.
 pub trait EntityView: 'static + Sized {
-    /// Render this entity into the element tree.
+    /// Render this entity into an element tree.
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement;
-    /// Indicate that this entity should be cached when using it as an element.
-    /// When using this method, the entity's previous layout and paint will be recycled from the previous frame if [Context::notify] has not been called since it was rendered.
+
+    /// Outer layout style for caching. Defaults to `None` (no caching).
     fn cache_style(
         &mut self,
         _window: &mut Window,
@@ -471,23 +400,8 @@ impl<T: EntityView> View for Entity<T> {
     }
 }
 
-/// An element that wraps a [`View`], creating a reactive boundary in the element tree.
-///
-/// This is the stateful counterpart to [`Component`](crate::Component) — where `Component<C>`
-/// wraps a stateless [`RenderOnce`](crate::RenderOnce) type, `ViewElement<V>` wraps a stateful
-/// [`View`] type and hooks its entity into GPUI's push-pull reactive graph.
-///
-/// You don't construct this directly. Instead, implement [`IntoElement`] for your
-/// [`View`] type using [`ViewElement::new`]:
-///
-/// ```ignore
-/// impl IntoElement for Counter {
-///     type Element = ViewElement<Self>;
-///     fn into_element(self) -> Self::Element {
-///         ViewElement::new(self)
-///     }
-/// }
-/// ```
+/// The element type for [`View`] implementations. Wraps a `View` and hooks
+/// it into. Constructed via [`ViewElement::new`].
 #[doc(hidden)]
 pub struct ViewElement<V: View> {
     view: Option<V>,
@@ -499,9 +413,8 @@ pub struct ViewElement<V: View> {
 }
 
 impl<V: View> ViewElement<V> {
-    /// Create a new `ViewElement` wrapping the given [`View`].
-    ///
-    /// Use this in your [`IntoElement`] implementation.
+    /// Wrap a [`View`] as an element.
+    #[track_caller]
     pub fn new(view: V) -> Self {
         use std::hash::Hasher;
         let entity_id = view.entity().map(|e| e.entity_id());
