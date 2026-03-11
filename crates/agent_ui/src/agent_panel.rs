@@ -483,9 +483,17 @@ pub fn init(cx: &mut App) {
                     }
                     if let Some(panel) = workspace.panel::<AgentPanel>(cx) {
                         if let Some(sidebar) = panel.read(cx).sidebar.clone() {
+                            let was_open = sidebar.read(cx).is_open();
                             sidebar.update(cx, |sidebar, cx| {
                                 sidebar.toggle(window, cx);
                             });
+                            // When closing the sidebar, restore focus to the active pane
+                            // to avoid "zombie focus" on the now-hidden sidebar elements
+                            if was_open {
+                                let active_pane = workspace.active_pane().clone();
+                                let pane_focus = active_pane.read(cx).focus_handle(cx);
+                                window.focus(&pane_focus, cx);
+                            }
                         }
                     }
                 })
