@@ -2520,15 +2520,17 @@ impl Buffer {
         self.text.merge_transactions(transaction, destination);
     }
 
-    /// Replaces the buffer's undo and redo stacks with the given history, reconstructing
-    /// the undo map from the provided operations. Used to restore persisted undo history.
+    /// Rebuilds the buffer's CRDT state from persisted base text and operations,
+    /// then restores the undo/redo stacks. Used to restore persisted undo history.
     pub fn restore_history(
         &mut self,
+        base_text: String,
         undo_stack: Vec<Transaction>,
         redo_stack: Vec<Transaction>,
-        undo_operations: Vec<text::UndoOperation>,
+        operations: Vec<text::Operation>,
     ) {
-        self.text.restore_history(undo_stack, redo_stack, undo_operations);
+        self.text
+            .restore_history(base_text, undo_stack, redo_stack, operations);
     }
 
     /// Waits for the buffer to receive operations with the given timestamps.

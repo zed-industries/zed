@@ -1,5 +1,4 @@
 use anyhow::Context as _;
-use collections::HashSet;
 use serde::{Deserialize, Serialize};
 use std::ops::Range;
 use std::sync::Arc;
@@ -206,34 +205,33 @@ pub(crate) struct SerializedUndoHistory {
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
+pub(crate) struct SerializedUndoHistoryV2 {
+    base_text: String,
+    undo_stack: Vec<SerializedHistoryEntry>,
+    redo_stack: Vec<SerializedHistoryEntry>,
+    operations: Vec<SerializedOperation>,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
 pub(crate) enum HistoryBlob {
     V1(SerializedUndoHistory),
+    V2(SerializedUndoHistoryV2),
 }
 
 pub fn encode_history(
+    base_text: &rope::Rope,
     undo_stack: &[HistoryEntry],
     redo_stack: &[HistoryEntry],
     operations: &TreeMap<clock::Lamport, Operation>,
 ) -> anyhow::Result<Vec<u8>> {
-    let referenced_edit_ids: HashSet<clock::Lamport> = undo_stack
-        .iter()
-        .chain(redo_stack.iter())
-        .flat_map(|entry| entry.transaction().edit_ids.iter().copied())
-        .collect();
+    // Include ALL operations, not just those referenced by the kept undo/redo
+    // entries. CRDT edit operations depend on each other (later inserts reference
+    // positions created by earlier ones), so dropping any edit breaks the rebuild.
+    let serialized_ops: Vec<SerializedOperation> =
+        operations.values().map(SerializedOperation::from).collect();
 
-    let serialized_ops: Vec<SerializedOperation> = operations
-        .values()
-        .filter(|op| match op {
-            Operation::Edit(edit) => referenced_edit_ids.contains(&edit.timestamp),
-            Operation::Undo(undo) => undo
-                .counts
-                .keys()
-                .any(|key| referenced_edit_ids.contains(key)),
-        })
-        .map(SerializedOperation::from)
-        .collect();
-
-    let history = SerializedUndoHistory {
+    let history = SerializedUndoHistoryV2 {
+        base_text: base_text.to_string(),
         undo_stack: undo_stack
             .iter()
             .map(SerializedHistoryEntry::from)
@@ -245,17 +243,25 @@ pub fn encode_history(
         operations: serialized_ops,
     };
 
-    let blob = HistoryBlob::V1(history);
+    let blob = HistoryBlob::V2(history);
     postcard::to_allocvec(&blob).context("failed to encode history blob")
 }
 
-pub fn decode_history(
-    bytes: &[u8],
-) -> anyhow::Result<(Vec<Transaction>, Vec<Transaction>, Vec<UndoOperation>)> {
+pub struct DecodedHistory {
+    pub base_text: String,
+    pub undo_stack: Vec<Transaction>,
+    pub redo_stack: Vec<Transaction>,
+    pub operations: Vec<Operation>,
+}
+
+pub fn decode_history(bytes: &[u8]) -> anyhow::Result<DecodedHistory> {
     let blob: HistoryBlob =
         postcard::from_bytes(bytes).context("failed to decode history blob")?;
     match blob {
-        HistoryBlob::V1(history) => {
+        HistoryBlob::V1(_) => {
+            anyhow::bail!("V1 history format is no longer supported");
+        }
+        HistoryBlob::V2(history) => {
             let undo_stack = history
                 .undo_stack
                 .into_iter()
@@ -266,18 +272,17 @@ pub fn decode_history(
                 .into_iter()
                 .map(Transaction::from)
                 .collect();
-            let undo_ops = history
+            let operations = history
                 .operations
                 .into_iter()
-                .filter_map(|op| {
-                    let operation = Operation::from(op);
-                    match operation {
-                        Operation::Undo(undo) => Some(undo),
-                        Operation::Edit(_) => None,
-                    }
-                })
+                .map(Operation::from)
                 .collect();
-            Ok((undo_stack, redo_stack, undo_ops))
+            Ok(DecodedHistory {
+                base_text: history.base_text,
+                undo_stack,
+                redo_stack,
+                operations,
+            })
         }
     }
 }

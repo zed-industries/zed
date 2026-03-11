@@ -1015,18 +1015,19 @@ fn test_history_serialization_round_trip() {
     assert_eq!(buffer.redo_stack().len(), 0);
 
     let bytes = encode_history(
+        buffer.base_text(),
         buffer.undo_stack(),
         buffer.redo_stack(),
         buffer.operations(),
     )
     .unwrap();
 
-    let (undo_transactions, redo_transactions, _undo_ops) = decode_history(&bytes).unwrap();
+    let decoded = decode_history(&bytes).unwrap();
 
-    assert_eq!(undo_transactions.len(), 2);
-    assert_eq!(redo_transactions.len(), 0);
+    assert_eq!(decoded.undo_stack.len(), 2);
+    assert_eq!(decoded.redo_stack.len(), 0);
 
-    for (original, restored) in buffer.undo_stack().iter().zip(undo_transactions.iter()) {
+    for (original, restored) in buffer.undo_stack().iter().zip(decoded.undo_stack.iter()) {
         assert_eq!(original.transaction().id, restored.id);
         assert_eq!(original.transaction().edit_ids, restored.edit_ids);
     }
@@ -1057,40 +1058,55 @@ fn test_history_serialization_with_undo() {
     let original_redo_id = buffer.redo_stack()[0].transaction().id;
 
     let bytes = encode_history(
+        buffer.base_text(),
         buffer.undo_stack(),
         buffer.redo_stack(),
         buffer.operations(),
     )
     .unwrap();
 
-    let (undo_transactions, redo_transactions, undo_ops) = decode_history(&bytes).unwrap();
+    let decoded = decode_history(&bytes).unwrap();
 
-    assert_eq!(undo_transactions.len(), 1);
-    assert_eq!(redo_transactions.len(), 1);
+    assert_eq!(decoded.undo_stack.len(), 1);
+    assert_eq!(decoded.redo_stack.len(), 1);
 
     // Verify that transaction IDs and edit_ids survive the round-trip
-    assert_eq!(undo_transactions[0].id, original_undo_id);
-    assert_eq!(redo_transactions[0].id, original_redo_id);
+    assert_eq!(decoded.undo_stack[0].id, original_undo_id);
+    assert_eq!(decoded.redo_stack[0].id, original_redo_id);
     assert_eq!(
-        undo_transactions[0].edit_ids,
+        decoded.undo_stack[0].edit_ids,
         buffer.undo_stack()[0].transaction().edit_ids
     );
     assert_eq!(
-        redo_transactions[0].edit_ids,
+        decoded.redo_stack[0].edit_ids,
         buffer.redo_stack()[0].transaction().edit_ids
     );
 
-    // Restore history on the buffer that has matching CRDT state.
-    // This simulates loading the buffer from disk and restoring its history.
-    buffer.restore_history(undo_transactions, redo_transactions, undo_ops);
+    // Simulate loading the buffer from disk (fresh buffer with current text)
+    // and restoring its history from the persisted data.
+    let mut restored_buffer =
+        Buffer::new(ReplicaId::LOCAL, BufferId::new(2).unwrap(), "hello world");
+    restored_buffer.restore_history(
+        decoded.base_text,
+        decoded.undo_stack,
+        decoded.redo_stack,
+        decoded.operations,
+    );
 
-    assert_eq!(buffer.undo_stack().len(), 1);
-    assert_eq!(buffer.redo_stack().len(), 1);
-    assert_eq!(buffer.text(), "hello world");
+    assert_eq!(restored_buffer.undo_stack().len(), 1);
+    assert_eq!(restored_buffer.redo_stack().len(), 1);
+    assert_eq!(restored_buffer.text(), "hello world");
 
-    // Redo should work because the buffer's CRDT fragments match the original state.
-    buffer.redo();
-    assert_eq!(buffer.text(), "goodbye world");
+    // Redo should work because the buffer state was rebuilt from base_text + operations.
+    restored_buffer.redo();
+    assert_eq!(restored_buffer.text(), "goodbye world");
+
+    // Undo should also work
+    restored_buffer.undo();
+    assert_eq!(restored_buffer.text(), "hello world");
+
+    restored_buffer.undo();
+    assert_eq!(restored_buffer.text(), "hello");
 }
 
 #[test]
@@ -1101,17 +1117,18 @@ fn test_history_serialization_empty() {
     assert_eq!(buffer.redo_stack().len(), 0);
 
     let bytes = encode_history(
+        buffer.base_text(),
         buffer.undo_stack(),
         buffer.redo_stack(),
         buffer.operations(),
     )
     .unwrap();
 
-    let (undo_transactions, redo_transactions, undo_ops) = decode_history(&bytes).unwrap();
+    let decoded = decode_history(&bytes).unwrap();
 
-    assert_eq!(undo_transactions.len(), 0);
-    assert_eq!(redo_transactions.len(), 0);
-    assert_eq!(undo_ops.len(), 0);
+    assert_eq!(decoded.undo_stack.len(), 0);
+    assert_eq!(decoded.redo_stack.len(), 0);
+    assert_eq!(decoded.operations.len(), 0);
 }
 
 #[test]
@@ -1173,23 +1190,21 @@ fn test_history_serialization_filters_operations() {
     assert_eq!(total_operations, 7, "expected 7 operations in map");
 
     let bytes = encode_history(
+        buffer.base_text(),
         buffer.undo_stack(),
         buffer.redo_stack(),
         buffer.operations(),
     )
     .unwrap();
 
-    let (undo_transactions, redo_transactions, undo_ops) = decode_history(&bytes).unwrap();
+    let decoded = decode_history(&bytes).unwrap();
 
-    assert_eq!(undo_transactions.len(), 1);
-    assert_eq!(redo_transactions.len(), 0);
-    // Only the new edit operation is referenced by the undo stack;
-    // the 3 old edits and 3 old undo operations are not included.
-    assert_eq!(undo_ops.len(), 0);
+    assert_eq!(decoded.undo_stack.len(), 1);
+    assert_eq!(decoded.redo_stack.len(), 0);
 
     // Verify all referenced edit_ids are present by checking the blob decoded correctly
     assert_eq!(
-        undo_transactions[0].edit_ids,
+        decoded.undo_stack[0].edit_ids,
         buffer.undo_stack()[0].transaction().edit_ids
     );
 }

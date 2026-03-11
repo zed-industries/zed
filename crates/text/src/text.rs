@@ -1518,10 +1518,40 @@ impl Buffer {
 
     pub fn restore_history(
         &mut self,
+        base_text: String,
         undo_stack: Vec<Transaction>,
         redo_stack: Vec<Transaction>,
-        undo_operations: Vec<UndoOperation>,
+        operations: Vec<Operation>,
     ) {
+        // Rebuild the buffer from the base text and replay all operations.
+        // This reconstructs the CRDT fragment tree so that undo/redo can
+        // properly toggle fragment visibility.
+        let mut rebuilt = Buffer::new(self.replica_id, self.remote_id, base_text);
+
+        // Sort operations by timestamp to ensure correct replay order
+        let mut sorted_ops = operations;
+        sorted_ops.sort_by_key(|op| op.timestamp());
+
+        rebuilt.apply_ops(sorted_ops);
+
+        // Verify the rebuilt text matches the current buffer text
+        let rebuilt_text = rebuilt.text();
+        let current_text = self.text();
+        if rebuilt_text != current_text {
+            log::warn!(
+                "Restored history text mismatch (rebuilt len={}, current len={}), skipping restore",
+                rebuilt_text.len(),
+                current_text.len()
+            );
+            return;
+        }
+
+        // Replace internal state with the rebuilt buffer's state
+        self.snapshot = rebuilt.snapshot;
+        self.history = rebuilt.history;
+        self.lamport_clock = rebuilt.lamport_clock;
+
+        // Set up the undo/redo stacks from the persisted data
         let now = Instant::now();
         self.history.undo_stack = undo_stack
             .into_iter()
@@ -1541,14 +1571,6 @@ impl Buffer {
                 suppress_grouping: true,
             })
             .collect();
-        for undo in &undo_operations {
-            self.snapshot.undo_map.insert(undo);
-        }
-        for undo in undo_operations {
-            self.history
-                .operations
-                .insert(undo.timestamp, Operation::Undo(undo));
-        }
     }
 
     pub fn start_transaction(&mut self) -> Option<TransactionId> {

@@ -14163,6 +14163,7 @@ impl Editor {
                      If this is occurring, please add details to \
                      https://github.com/zed-industries/zed/issues/22692"
                 );
+                self.move_cursors_to_valid_positions(window, cx);
             }
             self.request_autoscroll(Autoscroll::fit(), cx);
             self.unmark_text(window, cx);
@@ -14193,11 +14194,32 @@ impl Editor {
                      If this is occurring, please add details to \
                      https://github.com/zed-industries/zed/issues/22692"
                 );
+                self.move_cursors_to_valid_positions(window, cx);
             }
             self.request_autoscroll(Autoscroll::fit(), cx);
             self.unmark_text(window, cx);
             self.refresh_edit_prediction(true, false, window, cx);
             cx.emit(EditorEvent::Edited { transaction_id });
+        }
+    }
+
+    fn move_cursors_to_valid_positions(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let snapshot = self.buffer.read(cx).snapshot(cx);
+        let buffer_end = snapshot.len();
+        let ranges: Vec<std::ops::Range<MultiBufferOffset>> = self
+            .selections
+            .disjoint_anchors()
+            .iter()
+            .map(|s| {
+                let start = s.start.to_offset(&snapshot).min(buffer_end);
+                let end = s.end.to_offset(&snapshot).min(buffer_end);
+                start..end
+            })
+            .collect();
+        if !ranges.is_empty() {
+            self.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+                s.select_ranges(ranges);
+            });
         }
     }
 

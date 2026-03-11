@@ -22,7 +22,7 @@ use language::{
     proto::serialize_anchor as serialize_text_anchor,
 };
 use lsp::DiagnosticSeverity;
-use multi_buffer::MultiBufferOffset;
+use multi_buffer::{MultiBufferOffset, ToOffset};
 use project::{
     File, Project, ProjectItem as _, ProjectPath, lsp_store::FormatTrigger,
     project_settings::ProjectSettings, search::SearchQuery,
@@ -1614,6 +1614,7 @@ impl Editor {
         }
 
         let operations = buffer.operations().clone();
+        let base_text = buffer.base_text().clone();
 
         // Compute content hash from buffer text (not dirty, so matches disk)
         let content_hash = compute_content_hash(buffer.as_rope());
@@ -1622,6 +1623,7 @@ impl Editor {
 
         Some(cx.background_spawn(async move {
             let blob = match text::history_serde::encode_history(
+                &base_text,
                 &undo_entries,
                 &redo_entries,
                 &operations,
@@ -1717,20 +1719,74 @@ impl Editor {
                 return Ok(());
             }
 
-            let (undo_stack, redo_stack, undo_operations) =
-                match text::history_serde::decode_history(&blob_bytes) {
-                    Ok(decoded) => decoded,
-                    Err(err) => {
-                        log::warn!("Failed to decode undo history for {abs_path:?}: {err}");
-                        return Ok(());
-                    }
-                };
+            let decoded = match text::history_serde::decode_history(&blob_bytes) {
+                Ok(decoded) => decoded,
+                Err(err) => {
+                    log::warn!("Failed to decode undo history for {abs_path:?}: {err}");
+                    return Ok(());
+                }
+            };
 
-            this.update_in(cx, |editor, _window, cx| {
+            this.update_in(cx, |editor, window, cx| {
                 if let Some(buffer) = editor.buffer().read(cx).as_singleton() {
+                    // Save selection offsets before restoring history, since the
+                    // restore replaces the buffer's CRDT state and invalidates
+                    // all existing anchors.
+                    let selection_offsets: Vec<(MultiBufferOffset, MultiBufferOffset)> = {
+                        let snapshot = editor.buffer().read(cx).snapshot(cx);
+                        editor
+                            .selections
+                            .disjoint_anchors()
+                            .iter()
+                            .map(|s| {
+                                (
+                                    s.start.to_offset(&snapshot),
+                                    s.end.to_offset(&snapshot),
+                                )
+                            })
+                            .collect()
+                    };
+
                     buffer.update(cx, |buffer, _| {
-                        buffer.restore_history(undo_stack, redo_stack, undo_operations);
+                        buffer.restore_history(
+                            decoded.base_text,
+                            decoded.undo_stack,
+                            decoded.redo_stack,
+                            decoded.operations,
+                        );
                     });
+
+                    // Advance the multi_buffer's cached version to match the
+                    // rebuilt buffer, preventing bogus incremental edit computation.
+                    editor.buffer().read(cx).force_resync_buffer(&buffer, cx);
+
+                    // Re-create selections as valid anchors in the new buffer state.
+                    if !selection_offsets.is_empty() {
+                        let ranges: Vec<std::ops::Range<MultiBufferOffset>> = selection_offsets
+                            .into_iter()
+                            .map(|(start, end)| start..end)
+                            .collect();
+                        editor.change_selections(Default::default(), window, cx, |s| {
+                            s.select_ranges(ranges);
+                        });
+                    }
+
+                    let current_selections = editor.selections.disjoint_anchors_arc();
+                    if !current_selections.is_empty() {
+                        let buffer = buffer.read(cx);
+                        for entry in buffer.undo_stack() {
+                            editor.selection_history.insert_transaction(
+                                entry.transaction_id(),
+                                current_selections.clone(),
+                            );
+                        }
+                        for entry in buffer.redo_stack() {
+                            editor.selection_history.insert_transaction(
+                                entry.transaction_id(),
+                                current_selections.clone(),
+                            );
+                        }
+                    }
                 }
             })?;
 
