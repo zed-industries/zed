@@ -173,6 +173,16 @@ impl StepOutput {
         Self { name, step_id }
     }
 
+    pub fn new_unchecked<T>(step: &Step<T>, name: &'static str) -> Self {
+        let step_id = step
+            .value
+            .id
+            .clone()
+            .expect("Steps that produce outputs must have an ID");
+
+        Self { name, step_id }
+    }
+
     pub fn expr(&self) -> String {
         format!("steps.{}.outputs.{}", self.step_id, self.name)
     }
