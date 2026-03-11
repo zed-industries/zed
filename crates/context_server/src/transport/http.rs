@@ -37,7 +37,7 @@ const HEADER_SESSION_ID: &str = "Mcp-Session-Id";
 const EVENT_STREAM_MIME_TYPE: &str = "text/event-stream";
 const JSON_MIME_TYPE: &str = "application/json";
 
-/// HTTP Transport with session management and SSE support.
+/// HTTP Transport with session management and SSE support
 pub struct HttpTransport {
     http_client: Arc<dyn HttpClient>,
     endpoint: String,
