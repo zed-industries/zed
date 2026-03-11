@@ -995,7 +995,14 @@ impl Vim {
         cx: &mut Context<Vim>,
         f: impl Fn(&mut Vim, &A, &mut Window, &mut Context<Vim>) + 'static,
     ) {
-        let subscription = editor.register_action(cx.listener(f));
+        let subscription = editor.register_action(cx.listener(move |vim, action, window, cx| {
+            if !Vim::globals(cx).dot_replaying {
+                if vim.status_label.take().is_some() {
+                    cx.notify();
+                }
+            }
+            f(vim, action, window, cx);
+        }));
         cx.on_release(|_, _| drop(subscription)).detach();
     }
 
@@ -1154,7 +1161,6 @@ impl Vim {
         let last_mode = self.mode;
         let prior_mode = self.last_mode;
         let prior_tx = self.current_tx;
-        self.status_label.take();
         self.last_mode = last_mode;
         self.mode = mode;
         self.operator_stack.clear();

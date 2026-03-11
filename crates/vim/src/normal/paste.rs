@@ -35,12 +35,12 @@ impl Vim {
         let count = Vim::take_count(cx).unwrap_or(1);
         Vim::take_forced_motion(cx);
 
+        let selected_register = self.selected_register.take();
+        let mut register_empty = false;
         self.update_editor(cx, |vim, editor, cx| {
             let text_layout_details = editor.text_layout_details(window, cx);
             editor.transact(window, cx, |editor, window, cx| {
                 editor.set_clip_at_line_ends(false, cx);
-
-                let selected_register = vim.selected_register.take();
 
                 let Some(Register {
                     text,
@@ -50,6 +50,7 @@ impl Vim {
                 })
                 .filter(|reg| !reg.text.is_empty())
                 else {
+                    register_empty = true;
                     return;
                 };
                 let clipboard_selections = clipboard_selections
@@ -238,6 +239,13 @@ impl Vim {
         } else {
             self.switch_mode(Mode::Normal, true, window, cx);
         }
+
+        if register_empty {
+            self.status_label = Some(
+                format!("E353: Nothing in register {}", selected_register.unwrap_or('"')).into(),
+            );
+            cx.notify();
+        }
     }
 
     pub fn replace_with_register_object(
@@ -249,6 +257,7 @@ impl Vim {
     ) {
         self.stop_recording(cx);
         let selected_register = self.selected_register.take();
+        let mut register_empty = false;
         self.update_editor(cx, |_, editor, cx| {
             editor.transact(window, cx, |editor, window, cx| {
                 editor.set_clip_at_line_ends(false, cx);
@@ -262,6 +271,7 @@ impl Vim {
                     globals.read_register(selected_register, Some(editor), cx)
                 })
                 .filter(|reg| !reg.text.is_empty()) else {
+                    register_empty = true;
                     return;
                 };
                 editor.insert(&text, window, cx);
@@ -274,6 +284,12 @@ impl Vim {
                 })
             });
         });
+        if register_empty {
+            self.status_label = Some(
+                format!("E353: Nothing in register {}", selected_register.unwrap_or('"')).into(),
+            );
+            cx.notify();
+        }
     }
 
     pub fn replace_with_register_motion(
@@ -286,6 +302,7 @@ impl Vim {
     ) {
         self.stop_recording(cx);
         let selected_register = self.selected_register.take();
+        let mut register_empty = false;
         self.update_editor(cx, |_, editor, cx| {
             let text_layout_details = editor.text_layout_details(window, cx);
             editor.transact(window, cx, |editor, window, cx| {
@@ -306,6 +323,7 @@ impl Vim {
                     globals.read_register(selected_register, Some(editor), cx)
                 })
                 .filter(|reg| !reg.text.is_empty()) else {
+                    register_empty = true;
                     return;
                 };
                 editor.insert(&text, window, cx);
@@ -318,6 +336,12 @@ impl Vim {
                 })
             });
         });
+        if register_empty {
+            self.status_label = Some(
+                format!("E353: Nothing in register {}", selected_register.unwrap_or('"')).into(),
+            );
+            cx.notify();
+        }
     }
 }
 
