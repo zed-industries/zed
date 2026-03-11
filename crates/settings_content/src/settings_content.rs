@@ -493,10 +493,6 @@ pub struct DebuggerSettingsContent {
     ///
     /// Default: Bottom
     pub dock: Option<DockPosition>,
-    /// Whether the debug panel should be displayed in its own window.
-    ///
-    /// Default: false
-    pub popped_out: Option<bool>,
 }
 
 /// The granularity of one 'step' in the stepping requests `next`, `stepIn`, `stepOut`, and `stepBack`.

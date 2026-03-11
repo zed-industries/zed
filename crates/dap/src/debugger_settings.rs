@@ -31,10 +31,6 @@ pub struct DebuggerSettings {
     ///
     /// Default: Bottom
     pub dock: settings::DockPosition,
-    /// Whether the debug panel should be displayed in its own window.
-    ///
-    /// Default: false
-    pub popped_out: bool,
 }
 
 impl Settings for DebuggerSettings {
@@ -50,7 +46,6 @@ impl Settings for DebuggerSettings {
             log_dap_communications: content.log_dap_communications.unwrap(),
             format_dap_log_messages: content.format_dap_log_messages.unwrap(),
             dock: content.dock.unwrap(),
-            popped_out: content.popped_out.unwrap(),
         }
     }
 }

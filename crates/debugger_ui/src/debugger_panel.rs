@@ -17,9 +17,9 @@ use dap::{client::SessionId, debugger_settings::DebuggerSettings};
 use editor::{Editor, MultiBufferOffset, ToPoint};
 use feature_flags::{FeatureFlag, FeatureFlagAppExt as _};
 use gpui::{
-    Action, App, AsyncWindowContext, ClipboardItem, Context, Corner, DismissEvent, Entity,
-    EntityId, EventEmitter, FocusHandle, Focusable, MouseButton, MouseDownEvent, Point, Render,
-    Subscription, Task, Tiling, TitlebarOptions, WeakEntity, WindowBounds, WindowHandle,
+    Action, AnyWindowHandle, App, AsyncWindowContext, ClipboardItem, Context, Corner, DismissEvent,
+    Entity, EntityId, EventEmitter, FocusHandle, Focusable, MouseButton, MouseDownEvent, Point,
+    Render, Subscription, Task, Tiling, TitlebarOptions, WeakEntity, WindowBounds, WindowHandle,
     WindowOptions, anchored, deferred, point, px,
 };
 
@@ -72,6 +72,7 @@ pub struct DebugPanel {
     is_zoomed: bool,
     _subscriptions: [Subscription; 1],
     breakpoint_list: Entity<BreakpointList>,
+    workspace_window: AnyWindowHandle,
     popped_out_window: Option<WindowHandle<DebuggerWindow>>,
 }
 
@@ -116,6 +117,7 @@ impl DebugPanel {
                 is_zoomed: false,
                 _subscriptions: [focus_subscription],
                 debug_scenario_scheduled_last: true,
+                workspace_window: window.window_handle(),
                 popped_out_window: None,
             }
         })
@@ -220,26 +222,51 @@ impl DebugPanel {
                 .log_err();
 
             if let Some(window_handle) = window_handle {
-                this.update(cx, |panel, cx| {
-                    panel.popped_out_window = Some(window_handle);
-                    settings::update_settings_file(panel.fs.clone(), cx, |settings, _| {
-                        settings.debugger.get_or_insert_default().popped_out = Some(true);
-                    });
-                    cx.notify();
-                })
-                .ok();
+                let Some((workspace_window, workspace)) = this
+                    .update(cx, |panel, cx| {
+                        panel.popped_out_window = Some(window_handle);
+                        cx.notify();
+                        (panel.workspace_window, panel.workspace.clone())
+                    })
+                    .ok()
+                else {
+                    return;
+                };
+
+                workspace_window
+                    .update(cx, |_, window, cx| {
+                        workspace
+                            .update(cx, |workspace, cx| {
+                                workspace.close_panel::<DebugPanel>(window, cx);
+                            })
+                            .ok();
+                    })
+                    .ok();
             }
         });
     }
 
     pub fn pop_in(&mut self, cx: &mut Context<Self>) {
-        if let Some(window) = self.popped_out_window.take() {
-            window
-                .update(cx, |_, window, _| window.remove_window())
-                .ok();
-        }
-        settings::update_settings_file(self.fs.clone(), cx, |settings, _| {
-            settings.debugger.get_or_insert_default().popped_out = Some(false);
+        let popped_out_window = self.popped_out_window.take();
+        // Re-open the dock panel using the stored workspace window handle.
+        let workspace = self.workspace.clone();
+        let workspace_window = self.workspace_window;
+        cx.defer(move |cx| {
+            if let Some(popped_out_window) = popped_out_window {
+                popped_out_window
+                    .update(cx, |_, window, _| window.remove_window())
+                    .log_err();
+            }
+
+            workspace_window
+                .update(cx, |_, window, cx| {
+                    workspace
+                        .update(cx, |workspace, cx| {
+                            workspace.open_panel::<DebugPanel>(window, cx);
+                        })
+                        .log_err();
+                })
+                .log_err();
         });
         cx.notify();
     }
@@ -262,13 +289,6 @@ impl DebugPanel {
                 });
 
                 workspace.set_debugger_provider(DebuggerProvider(debug_panel.clone()));
-
-                if DebuggerSettings::get_global(cx).popped_out {
-                    let panel = debug_panel.downgrade();
-                    cx.defer(move |cx| {
-                        panel.update(cx, |panel, cx| panel.pop_out(cx)).ok();
-                    });
-                }
 
                 debug_panel
             })
@@ -778,16 +798,25 @@ impl DebugPanel {
             )
         };
 
-        let pop_out_button = {
+        let pop_out_or_in_button = {
             let this = this.clone();
             move || {
                 let this = this.clone();
-                IconButton::new("debug-pop-out", IconName::ArrowUpRight)
-                    .icon_size(IconSize::Small)
-                    .on_click(move |_, _, cx| {
-                        this.update(cx, |panel, cx| panel.pop_out(cx)).ok();
-                    })
-                    .tooltip(Tooltip::text("Open in New Window"))
+                if in_popped_out_window {
+                    IconButton::new("debug-pop-in", IconName::Minimize)
+                        .icon_size(IconSize::Small)
+                        .on_click(move |_, _, cx| {
+                            this.update(cx, |panel, cx| panel.pop_in(cx)).ok();
+                        })
+                        .tooltip(Tooltip::text("Return to Dock"))
+                } else {
+                    IconButton::new("debug-pop-out", IconName::ArrowUpRight)
+                        .icon_size(IconSize::Small)
+                        .on_click(move |_, _, cx| {
+                            this.update(cx, |panel, cx| panel.pop_out(cx)).ok();
+                        })
+                        .tooltip(Tooltip::text("Open in New Window"))
+                }
             }
         };
 
@@ -801,6 +830,10 @@ impl DebugPanel {
             div.w_full()
                 .py_1()
                 .px_1p5()
+                .when(
+                    cfg!(target_os = "macos") && in_popped_out_window && !window.is_fullscreen(),
+                    |this| this.pl(px(ui::utils::TRAFFIC_LIGHT_PADDING + 8.0)),
+                )
                 .justify_between()
                 .border_b_1()
                 .border_color(cx.theme().colors().border)
@@ -1060,7 +1093,7 @@ impl DebugPanel {
                                 .child(edit_debug_json_button())
                                 .child(documentation_button())
                                 .child(logs_button())
-                                .child(pop_out_button())
+                                .child(pop_out_or_in_button())
                         }),
                 )
                 .child(
@@ -1114,10 +1147,8 @@ impl DebugPanel {
                                         .child(edit_debug_json_button())
                                         .child(documentation_button())
                                         .child(logs_button())
-                                        .child(pop_out_button())
-                                        .when(!in_popped_out_window, |this| {
-                                            this.child(close_bottom_panel_button)
-                                        })
+                                        .child(pop_out_or_in_button())
+                                        .child(close_bottom_panel_button)
                                 }),
                         ),
                 ),
@@ -1729,7 +1760,11 @@ impl Panel for DebugPanel {
         9
     }
 
-    fn set_active(&mut self, _: bool, _: &mut Window, _: &mut Context<Self>) {}
+    fn set_active(&mut self, active: bool, _: &mut Window, cx: &mut Context<Self>) {
+        if active && self.is_popped_out() {
+            cx.emit(PanelEvent::Close);
+        }
+    }
 
     fn is_zoomed(&self, _window: &Window, _cx: &App) -> bool {
         self.is_zoomed
@@ -1745,41 +1780,12 @@ impl Render for DebugPanel {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let this = cx.weak_entity();
 
-        // When popped out, this entity is rendered by two windows:
-        //   - The dock window: should show a placeholder with a "Return to Dock" button
-        //   - The DebuggerWindow: should show the full debugger UI
-        // We distinguish them by comparing the current window's ID against the stored handle.
+        // When rendering inside the pop-out window, skip dock-panel size constraints.
         let in_popped_out_window = self
             .popped_out_window
             .as_ref()
             .map(|w| w.window_id() == window.window_handle().window_id())
             .unwrap_or(false);
-
-        if self.is_popped_out() && !in_popped_out_window {
-            let this = cx.weak_entity();
-            return v_flex()
-                .size_full()
-                .key_context("DebugPanel")
-                .items_center()
-                .justify_center()
-                .gap_2()
-                .child(
-                    Label::new("Debugger is open in a separate window")
-                        .size(LabelSize::Small)
-                        .color(Color::Muted),
-                )
-                .child(
-                    Button::new("pop-in-debugger", "Return to Dock")
-                        .icon(IconName::Minimize)
-                        .icon_size(IconSize::Small)
-                        .icon_color(Color::Muted)
-                        .icon_position(IconPosition::Start)
-                        .on_click(move |_, _, cx| {
-                            this.update(cx, |panel, cx| panel.pop_in(cx)).ok();
-                        }),
-                )
-                .into_any();
-        }
 
         if self
             .active_session
@@ -2183,16 +2189,41 @@ impl DebuggerWindow {
             None
         };
 
+        // When the pop-out window is closed by the user (e.g. clicking the red X), clear the
+        // stored handle and reopen the panel in the workspace dock.
         let close_subscription = cx.on_release({
             let debug_panel = debug_panel.clone();
             move |_, cx| {
+                let Some((workspace_window, workspace, should_reopen_dock_panel)) = debug_panel
+                    .read_with(cx, |panel, _| {
+                        (
+                            panel.workspace_window,
+                            panel.workspace.clone(),
+                            panel.popped_out_window.is_some(),
+                        )
+                    })
+                    .ok()
+                else {
+                    return;
+                };
                 debug_panel
                     .update(cx, |panel, cx| {
                         panel.popped_out_window = None;
-                        settings::update_settings_file(panel.fs.clone(), cx, |settings, _| {
-                            settings.debugger.get_or_insert_default().popped_out = Some(false);
-                        });
                         cx.notify();
+                    })
+                    .ok();
+
+                if !should_reopen_dock_panel {
+                    return;
+                }
+
+                workspace_window
+                    .update(cx, |_, window, cx| {
+                        workspace
+                            .update(cx, |workspace, cx| {
+                                workspace.open_panel::<DebugPanel>(window, cx);
+                            })
+                            .ok();
                     })
                     .ok();
             }
