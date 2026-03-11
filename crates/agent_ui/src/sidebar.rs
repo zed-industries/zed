@@ -1180,11 +1180,37 @@ impl Sidebar {
 
         let id = SharedString::from(format!("thread-entry-{}", ix));
 
+        let timestamp = thread
+            .session_info
+            .created_at
+            .or(thread.session_info.updated_at)
+            .map(|entry_time| {
+                let now = Utc::now();
+                let duration = now.signed_duration_since(entry_time);
+
+                let minutes = duration.num_minutes();
+                let hours = duration.num_hours();
+                let days = duration.num_days();
+                let weeks = days / 7;
+                let months = days / 30;
+
+                if minutes < 60 {
+                    format!("{}m", minutes.max(1))
+                } else if hours < 24 {
+                    format!("{}h", hours)
+                } else if weeks < 4 {
+                    format!("{}w", weeks.max(1))
+                } else {
+                    format!("{}mo", months.max(1))
+                }
+            });
+
         ThreadItem::new(id, title)
             .icon(thread.icon)
             .when_some(thread.icon_from_external_svg.clone(), |this, svg| {
                 this.custom_icon_from_external_svg(svg)
             })
+            .when_some(timestamp, |this, ts| this.timestamp(ts))
             .highlight_positions(thread.highlight_positions.to_vec())
             .status(thread.status)
             .notified(has_notification)
