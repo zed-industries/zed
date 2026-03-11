@@ -143,6 +143,7 @@ pub struct ThemeSettingsContent {
     /// The buffer's line height.
     pub buffer_line_height: Option<BufferLineHeight>,
     /// The line height for UI elements like the file tree, git panel, and outline panel.
+    /// Works as a multiplier of `ui_font_size`.
     pub ui_line_height: Option<UiLineHeight>,
     /// The OpenType features to enable for rendering in text buffers.
     #[schemars(default = "default_font_features")]
@@ -442,6 +443,7 @@ pub enum BufferLineHeight {
 }
 
 /// The line height for UI elements like the file tree, git panel, and outline panel.
+/// Works as a multiplier of `ui_font_size`.
 #[derive(
     Clone,
     Copy,

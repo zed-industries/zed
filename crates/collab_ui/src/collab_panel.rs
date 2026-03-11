@@ -2897,7 +2897,8 @@ impl CollabPanel {
 
         let width = self.width.unwrap_or(px(240.));
         let root_id = channel.root_id();
-        let ui_line_height = rems(ThemeSettings::get_global(cx).ui_line_height());
+        let theme_settings = ThemeSettings::get_global(cx);
+        let ui_line_height = theme_settings.ui_font_size(cx) * theme_settings.ui_line_height();
 
         div()
             .h(ui_line_height)
@@ -3067,9 +3068,9 @@ fn render_tree_branch(
     window: &mut Window,
     cx: &mut App,
 ) -> impl IntoElement {
-    let rem_size = window.rem_size();
-    let line_height = window.text_style().line_height_in_pixels(rem_size);
-    let width = rem_size * 1.5;
+    let theme_settings = ThemeSettings::get_global(cx);
+    let line_height = theme_settings.ui_font_size(cx) * theme_settings.ui_line_height();
+    let width = window.rem_size() * 1.5;
     let thickness = px(1.);
     let color = cx.theme().colors().text;
 

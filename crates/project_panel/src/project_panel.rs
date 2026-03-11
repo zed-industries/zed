@@ -5089,7 +5089,8 @@ impl ProjectPanel {
         let is_sticky = details.sticky.is_some();
         let sticky_index = details.sticky.as_ref().map(|this| this.sticky_index);
         let settings = ProjectPanelSettings::get_global(cx);
-        let ui_line_height = rems(ThemeSettings::get_global(cx).ui_line_height());
+        let theme_settings = ThemeSettings::get_global(cx);
+        let ui_line_height = theme_settings.ui_font_size(cx) * theme_settings.ui_line_height();
         let show_editor = details.is_editing && !details.is_processing;
 
         let selection = SelectedEntry {

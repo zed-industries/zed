@@ -121,6 +121,7 @@ pub struct ThemeSettings {
     /// The terminal font family can be overridden using it's own setting.
     pub buffer_line_height: BufferLineHeight,
     /// The line height for UI elements like the file tree, git panel, and outline panel.
+    /// Works as a multiplier of `ui_font_size`.
     pub ui_line_height: UiLineHeight,
     /// The current theme selection.
     pub theme: ThemeSelection,
@@ -464,6 +465,7 @@ impl BufferLineHeight {
 }
 
 /// The line height for UI elements like the file tree, git panel, and outline panel.
+/// Works as a multiplier of `ui_font_size`.
 #[derive(Clone, Copy, Debug, PartialEq, Default)]
 pub enum UiLineHeight {
     /// A less dense line height.
@@ -571,7 +573,7 @@ impl ThemeSettings {
         f32::max(self.buffer_line_height.value(), MIN_LINE_HEIGHT)
     }
 
-    /// Returns the UI line height.
+    /// Returns the UI line height as a multiplier of `ui_font_size`.
     pub fn ui_line_height(&self) -> f32 {
         f32::max(self.ui_line_height.value(), MIN_LINE_HEIGHT)
     }

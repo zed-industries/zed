@@ -4877,8 +4877,9 @@ impl GitPanel {
         Label::new(label.into()).color(color)
     }
 
-    fn list_item_height(&self, cx: &App) -> Rems {
-        rems(ThemeSettings::get_global(cx).ui_line_height())
+    fn list_item_height(&self, cx: &App) -> Pixels {
+        let theme_settings = ThemeSettings::get_global(cx);
+        theme_settings.ui_font_size(cx) * theme_settings.ui_line_height()
     }
 
     fn render_list_header(
