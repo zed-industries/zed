@@ -61,6 +61,10 @@ pub struct MultiWorkspace {
 
 impl EventEmitter<MultiWorkspaceEvent> for MultiWorkspace {}
 
+pub fn multi_workspace_enabled(cx: &App) -> bool {
+    cx.has_flag::<AgentV2FeatureFlag>() && !DisableAiSettings::get_global(cx).disable_ai
+}
+
 impl MultiWorkspace {
     pub fn new(workspace: Entity<Workspace>, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let release_subscription = cx.on_release(|this: &mut MultiWorkspace, _cx| {
@@ -85,10 +89,6 @@ impl MultiWorkspace {
             _create_task: None,
             _subscriptions: vec![release_subscription, quit_subscription],
         }
-    }
-
-    pub fn multi_workspace_enabled(&self, cx: &App) -> bool {
-        cx.has_flag::<AgentV2FeatureFlag>() && !DisableAiSettings::get_global(cx).disable_ai
     }
 
     pub fn close_window(&mut self, _: &CloseWindow, window: &mut Window, cx: &mut Context<Self>) {
@@ -139,7 +139,7 @@ impl MultiWorkspace {
     }
 
     pub fn activate(&mut self, workspace: Entity<Workspace>, cx: &mut Context<Self>) {
-        if !self.multi_workspace_enabled(cx) {
+        if !multi_workspace_enabled(cx) {
             self.workspaces[0] = workspace;
             self.active_workspace_index = 0;
             cx.emit(MultiWorkspaceEvent::ActiveWorkspaceChanged);
@@ -381,7 +381,7 @@ impl MultiWorkspace {
     }
 
     pub fn create_workspace(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if !self.multi_workspace_enabled(cx) {
+        if !multi_workspace_enabled(cx) {
             return;
         }
         let app_state = self.workspace().read(cx).app_state().clone();
@@ -490,7 +490,7 @@ impl MultiWorkspace {
     ) -> Task<Result<()>> {
         let workspace = self.workspace().clone();
 
-        if self.multi_workspace_enabled(cx) {
+        if multi_workspace_enabled(cx) {
             workspace.update(cx, |workspace, cx| {
                 workspace.open_workspace_for_paths(true, paths, window, cx)
             })

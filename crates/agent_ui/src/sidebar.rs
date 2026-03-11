@@ -11,17 +11,16 @@ use gpui::{
 };
 use menu::{Cancel, Confirm, SelectFirst, SelectLast, SelectNext, SelectPrevious};
 use project::Event as ProjectEvent;
-use recent_projects::RecentProjects;
 use settings::Settings;
 use std::collections::{HashMap, HashSet};
 use std::mem;
 use theme::{ActiveTheme, ThemeSettings};
 use ui::{
-    AgentThreadStatus, ButtonStyle, GradientFade, HighlightedLabel, IconButtonShape, ListItem,
-    PopoverMenuHandle, Tab, ThreadItem, Tooltip, WithScrollbar, prelude::*,
+    AgentThreadStatus, ButtonStyle, GradientFade, HighlightedLabel, IconButtonShape, ListItem, Tab,
+    ThreadItem, Tooltip, WithScrollbar, prelude::*,
 };
 use util::path_list::PathList;
-use workspace::{MultiWorkspace, MultiWorkspaceEvent, Workspace};
+use workspace::{MultiWorkspace, MultiWorkspaceEvent, Workspace, multi_workspace_enabled};
 use zed_actions::editor::{MoveDown, MoveUp};
 
 actions!(
@@ -181,7 +180,6 @@ pub struct Sidebar {
     active_entry_index: Option<usize>,
     collapsed_groups: HashSet<PathList>,
     expanded_groups: HashMap<PathList, usize>,
-    recent_projects_popover_handle: PopoverMenuHandle<RecentProjects>,
 }
 
 impl Sidebar {
@@ -276,7 +274,6 @@ impl Sidebar {
             active_entry_index: None,
             collapsed_groups: HashSet::new(),
             expanded_groups: HashMap::new(),
-            recent_projects_popover_handle: PopoverMenuHandle::default(),
         }
     }
 
@@ -651,7 +648,7 @@ impl Sidebar {
         let Some(multi_workspace) = self.multi_workspace.upgrade() else {
             return;
         };
-        if !multi_workspace.read(cx).multi_workspace_enabled(cx) {
+        if !multi_workspace_enabled(cx) {
             return;
         }
 
@@ -1359,14 +1356,6 @@ impl Sidebar {
 
     pub fn has_notifications(&self, _cx: &App) -> bool {
         !self.contents.notified_threads.is_empty()
-    }
-
-    pub fn toggle_recent_projects_popover(&self, window: &mut Window, cx: &mut App) {
-        self.recent_projects_popover_handle.toggle(window, cx);
-    }
-
-    pub fn is_recent_projects_popover_deployed(&self) -> bool {
-        self.recent_projects_popover_handle.is_deployed()
     }
 }
 

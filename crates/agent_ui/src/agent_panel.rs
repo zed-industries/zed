@@ -90,6 +90,7 @@ use workspace::{
     MultiWorkspace, SIDEBAR_RESIZE_HANDLE_SIZE, ToggleWorkspaceSidebar, ToggleZoom,
     ToolbarItemView, Workspace, WorkspaceId,
     dock::{DockPosition, Panel, PanelEvent},
+    multi_workspace_enabled,
 };
 use zed_actions::{
     DecreaseBufferFontSize, IncreaseBufferFontSize, ResetBufferFontSize,
@@ -109,6 +110,9 @@ struct SidebarsByWindow(
 impl gpui::Global for SidebarsByWindow {}
 
 pub(crate) fn sidebar_is_open(window: &Window, cx: &App) -> bool {
+    if !multi_workspace_enabled(cx) {
+        return false;
+    }
     let window_id = window.window_handle().window_id();
     cx.try_global::<SidebarsByWindow>()
         .and_then(|sidebars| sidebars.0.get(&window_id)?.upgrade())
@@ -470,6 +474,9 @@ pub fn init(cx: &mut App) {
                     }
                 })
                 .register_action(|workspace, _: &ToggleWorkspaceSidebar, window, cx| {
+                    if !multi_workspace_enabled(cx) {
+                        return;
+                    }
                     if let Some(panel) = workspace.panel::<AgentPanel>(cx) {
                         if let Some(sidebar) = panel.read(cx).sidebar.clone() {
                             sidebar.update(cx, |sidebar, cx| {
@@ -479,6 +486,9 @@ pub fn init(cx: &mut App) {
                     }
                 })
                 .register_action(|workspace, _: &FocusWorkspaceSidebar, window, cx| {
+                    if !multi_workspace_enabled(cx) {
+                        return;
+                    }
                     if let Some(panel) = workspace.panel::<AgentPanel>(cx) {
                         if let Some(sidebar) = panel.read(cx).sidebar.clone() {
                             sidebar.update(cx, |sidebar, cx| {
@@ -3595,10 +3605,8 @@ impl AgentPanel {
             })
     }
 
-    fn sidebar_info(&self, window: &Window, cx: &App) -> Option<(AnyView, Pixels, bool)> {
-        let multi_workspace = window.root::<MultiWorkspace>().flatten()?;
-        let multi_workspace = multi_workspace.read(cx);
-        if !multi_workspace.multi_workspace_enabled(cx) {
+    fn sidebar_info(&self, cx: &App) -> Option<(AnyView, Pixels, bool)> {
+        if !multi_workspace_enabled(cx) {
             return None;
         }
         let sidebar = self.sidebar.as_ref()?;
@@ -3608,10 +3616,8 @@ impl AgentPanel {
         Some((view, width, is_open))
     }
 
-    fn render_sidebar_toggle(&self, window: &Window, cx: &Context<Self>) -> Option<AnyElement> {
-        let multi_workspace = window.root::<MultiWorkspace>().flatten()?;
-        let multi_workspace = multi_workspace.read(cx);
-        if !multi_workspace.multi_workspace_enabled(cx) {
+    fn render_sidebar_toggle(&self, cx: &Context<Self>) -> Option<AnyElement> {
+        if !multi_workspace_enabled(cx) {
             return None;
         }
         let sidebar = self.sidebar.as_ref()?;
@@ -3647,8 +3653,8 @@ impl AgentPanel {
         )
     }
 
-    fn render_sidebar(&self, window: &Window, cx: &Context<Self>) -> Option<AnyElement> {
-        let (sidebar_view, sidebar_width, is_open) = self.sidebar_info(window, cx)?;
+    fn render_sidebar(&self, cx: &Context<Self>) -> Option<AnyElement> {
+        let (sidebar_view, sidebar_width, is_open) = self.sidebar_info(cx)?;
         if !is_open {
             return None;
         }
@@ -4164,7 +4170,7 @@ impl AgentPanel {
                         .size_full()
                         .gap(DynamicSpacing::Base04.rems(cx))
                         .pl(DynamicSpacing::Base04.rems(cx))
-                        .children(self.render_sidebar_toggle(window, cx))
+                        .children(self.render_sidebar_toggle(cx))
                         .child(agent_selector_menu)
                         .child(self.render_start_thread_in_selector(cx)),
                 )
@@ -4219,7 +4225,7 @@ impl AgentPanel {
                         .size_full()
                         .gap(DynamicSpacing::Base04.rems(cx))
                         .pl(DynamicSpacing::Base04.rems(cx))
-                        .children(self.render_sidebar_toggle(window, cx))
+                        .children(self.render_sidebar_toggle(cx))
                         .child(match &self.active_view {
                             ActiveView::History { .. } | ActiveView::Configuration => {
                                 self.render_toolbar_back_button(cx).into_any_element()
@@ -4782,7 +4788,7 @@ impl Render for AgentPanel {
             })
             .children(self.render_trial_end_upsell(window, cx));
 
-        let sidebar = self.render_sidebar(window, cx);
+        let sidebar = self.render_sidebar(cx);
         let has_sidebar = sidebar.is_some();
 
         let panel = h_flex()

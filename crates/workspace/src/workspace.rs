@@ -29,7 +29,7 @@ pub use dock::Panel;
 pub use multi_workspace::{
     DraggedSidebar, FocusWorkspaceSidebar, MultiWorkspace, MultiWorkspaceEvent,
     NewWorkspaceInWindow, NextWorkspaceInWindow, PreviousWorkspaceInWindow,
-    SIDEBAR_RESIZE_HANDLE_SIZE, ToggleWorkspaceSidebar,
+    SIDEBAR_RESIZE_HANDLE_SIZE, ToggleWorkspaceSidebar, multi_workspace_enabled,
 };
 pub use path_list::{PathList, SerializedPathList};
 pub use toast_layer::{ToastAction, ToastLayer, ToastView};
