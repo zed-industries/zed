@@ -17154,7 +17154,10 @@ impl Editor {
     }
 
     fn refresh_runnables(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Task<()> {
-        if !EditorSettings::get_global(cx).gutter.runnables || !self.enable_runnables {
+        if !self.mode().is_full()
+            || !EditorSettings::get_global(cx).gutter.runnables
+            || !self.enable_runnables
+        {
             self.clear_tasks();
             return Task::ready(());
         }
@@ -17177,14 +17180,17 @@ impl Editor {
             if hide_runnables {
                 return;
             }
-            let new_rows =
-                cx.background_spawn({
+            let new_rows = cx
+                .background_spawn({
                     let snapshot = display_snapshot.clone();
                     async move {
-                        Self::fetch_runnable_ranges(&snapshot, Anchor::min()..Anchor::max())
+                        snapshot
+                            .buffer_snapshot()
+                            .runnable_ranges(Anchor::min()..Anchor::max())
+                            .collect()
                     }
                 })
-                    .await;
+                .await;
             let lsp_tasks = if lsp_data_enabled {
                 let Ok(lsp_tasks) =
                     cx.update(|_, cx| crate::lsp_tasks(project.clone(), &task_sources, None, cx))
@@ -17274,12 +17280,6 @@ impl Editor {
                 })
                 .ok();
         })
-    }
-    fn fetch_runnable_ranges(
-        snapshot: &DisplaySnapshot,
-        range: Range<Anchor>,
-    ) -> Vec<(Range<MultiBufferOffset>, language::RunnableRange)> {
-        snapshot.buffer_snapshot().runnable_ranges(range).collect()
     }
 
     fn runnable_rows(
