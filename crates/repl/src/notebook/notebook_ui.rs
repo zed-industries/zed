@@ -252,7 +252,7 @@ impl NotebookEditor {
         };
         editor.launch_kernel(window, cx);
         editor.refresh_language(cx);
-        editor.refresh_kernelspecs(window, cx);
+        editor.refresh_kernelspecs(cx);
 
         cx.subscribe(&notebook_item, |this, _item, _event, cx| {
             this.refresh_language(cx);
@@ -262,7 +262,7 @@ impl NotebookEditor {
         editor
     }
 
-    fn refresh_kernelspecs(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    fn refresh_kernelspecs(&mut self, cx: &mut Context<Self>) {
         let store = ReplStore::global(cx);
         let project = self.project.clone();
         let worktree_id = self.worktree_id;
@@ -271,18 +271,8 @@ impl NotebookEditor {
             store.refresh_python_kernelspecs(worktree_id, &project, cx)
         });
 
-        cx.spawn_in(window, async move |this, cx| {
+        cx.spawn(async move |_this, _cx| {
             refresh_task.await.ok();
-
-            this.update_in(cx, |this, window, cx| {
-                // Only re-launch if the user hasn't explicitly chosen a kernel yet,
-                // so we can upgrade from the initial python3 fallback to the
-                // discovered .venv or recommended kernel.
-                if !this.kernel_explicitly_chosen {
-                    this.launch_kernel(window, cx);
-                }
-            })
-            .ok();
         })
         .detach();
     }
@@ -418,8 +408,7 @@ impl NotebookEditor {
         let working_directory = self
             .project
             .read(cx)
-            .worktrees(cx)
-            .next()
+            .worktree_for_id(self.worktree_id, cx)
             .map(|worktree| worktree.read(cx).abs_path().to_path_buf())
             .unwrap_or_else(std::env::temp_dir);
         let fs = self.project.read(cx).fs().clone();
