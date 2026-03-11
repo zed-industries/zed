@@ -1338,6 +1338,7 @@
       "down": "markdown::ScrollDown",
       "alt-up": "markdown::ScrollUpByItem",
       "alt-down": "markdown::ScrollDownByItem",
+      "cmd-c": "markdown::CopyRichSelection",
     },
   },
   {

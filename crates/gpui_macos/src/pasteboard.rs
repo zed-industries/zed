@@ -10,7 +10,7 @@ use objc::{msg_send, runtime::Object, sel, sel_impl};
 use strum::IntoEnumIterator as _;
 
 use crate::ns_string;
-use gpui::{ClipboardEntry, ClipboardItem, ClipboardString, Image, ImageFormat, hash};
+use gpui::{ClipboardEntry, ClipboardItem, ClipboardString, Image, ImageFormat, RichText, hash};
 
 pub struct Pasteboard {
     inner: id,
@@ -138,6 +138,9 @@ impl Pasteboard {
                     // Writing an empty list of entries just clears the clipboard.
                     self.inner.clearContents();
                 }
+                [ClipboardEntry::RichText(rich_text)] => {
+                    self.write_rich_text(rich_text);
+                }
                 [ClipboardEntry::String(string)] => {
                     self.write_plaintext(string);
                 }
@@ -204,6 +207,30 @@ impl Pasteboard {
                 );
                 self.inner
                     .setData_forType(metadata_bytes, self.metadata_type);
+            }
+        }
+    }
+
+    fn write_rich_text(&self, rich_text: &RichText) {
+        unsafe {
+            self.inner.clearContents();
+
+            let text_bytes = NSData::dataWithBytes_length_(
+                nil,
+                rich_text.plain_text.as_ptr() as *const c_void,
+                rich_text.plain_text.len() as u64,
+            );
+            self.inner
+                .setData_forType(text_bytes, NSPasteboardTypeString);
+
+            if let Some(html) = rich_text.html.as_ref() {
+                let html_type = ns_string("public.html");
+                let html_bytes = NSData::dataWithBytes_length_(
+                    nil,
+                    html.as_ptr() as *const c_void,
+                    html.len() as u64,
+                );
+                self.inner.setData_forType(html_bytes, html_type);
             }
         }
     }

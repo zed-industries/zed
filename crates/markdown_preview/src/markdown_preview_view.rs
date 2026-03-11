@@ -6,11 +6,14 @@ use std::{ops::Range, path::PathBuf};
 use anyhow::Result;
 use editor::scroll::Autoscroll;
 use editor::{Editor, EditorEvent, MultiBufferOffset, SelectionEffects};
+use fs::normalize_path;
 use gpui::{
     App, ClickEvent, Context, Entity, EventEmitter, FocusHandle, Focusable, InteractiveElement,
-    IntoElement, IsZero, ListState, ParentElement, Render, RetainAllImageCache, Styled,
-    Subscription, Task, WeakEntity, Window, list,
+    IntoElement, IsZero, ListState, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
+    ParentElement, Render, RetainAllImageCache, Styled, Subscription, Task, WeakEntity, Window,
+    list,
 };
+use language::CharClassifier;
 use language::LanguageRegistry;
 use settings::Settings;
 use theme::ThemeSettings;
@@ -42,6 +45,8 @@ pub struct MarkdownPreviewView {
     mermaid_state: MermaidState,
     parsing_markdown_task: Option<Task<Result<()>>>,
     mode: MarkdownPreviewMode,
+    preview_text_index: Option<PreviewTextIndex>,
+    preview_selection: Option<PreviewSelection>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -55,6 +60,43 @@ pub enum MarkdownPreviewMode {
 struct EditorState {
     editor: Entity<Editor>,
     _subscription: Subscription,
+}
+
+#[derive(Clone, Debug, Default)]
+struct PreviewTextIndex {
+    text: String,
+    block_ranges: Vec<Range<usize>>,
+    chunk_ranges: Vec<Range<usize>>,
+}
+
+#[derive(Clone, Debug)]
+struct PreviewSelection {
+    start: usize,
+    end: usize,
+    reversed: bool,
+    dragging: bool,
+    dragged: bool,
+    mode: PreviewSelectMode,
+}
+
+#[derive(Clone, Debug)]
+enum PreviewSelectMode {
+    Character,
+    Word(Range<usize>),
+    Chunk(Range<usize>),
+}
+
+impl Default for PreviewSelection {
+    fn default() -> Self {
+        Self {
+            start: 0,
+            end: 0,
+            reversed: false,
+            dragging: false,
+            dragged: false,
+            mode: PreviewSelectMode::Character,
+        }
+    }
 }
 
 impl MarkdownPreviewView {
@@ -126,6 +168,26 @@ impl MarkdownPreviewView {
                 cx.notify();
             }
         });
+
+        workspace.register_action(move |workspace, _: &crate::CopyRichSelection, window, cx| {
+            if let Some(view) = workspace.active_item_as::<MarkdownPreviewView>(cx) {
+                view.update(cx, |this, cx| {
+                    this.copy_rich(window, cx);
+                });
+            }
+        });
+    }
+
+    fn copy_rich(&self, _window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(contents) = &self.contents
+            && let Some(selection) = self.current_selection_range()
+            && let Some(exported) = crate::markdown_to_html::export_selection(contents, selection)
+        {
+            cx.write_to_clipboard(gpui::ClipboardItem::new_rich_text(
+                exported.plain_text,
+                exported.html,
+            ));
+        }
     }
 
     fn find_existing_independent_preview_item_idx(
@@ -219,6 +281,8 @@ impl MarkdownPreviewView {
                 parsing_markdown_task: None,
                 image_cache: RetainAllImageCache::new(cx),
                 mode,
+                preview_text_index: None,
+                preview_selection: None,
             };
 
             this.set_editor(active_editor, window, cx);
@@ -355,6 +419,8 @@ impl MarkdownPreviewView {
             view.update(cx, move |view, cx| {
                 view.mermaid_state.update(&contents, cx);
                 let markdown_blocks_count = contents.children.len();
+                view.preview_text_index = Some(PreviewTextIndex::from_markdown(&contents));
+                view.preview_selection = None;
                 view.contents = Some(contents);
                 let scroll_top = view.list_state.logical_scroll_top();
                 view.list_state.reset(markdown_blocks_count);
@@ -510,6 +576,292 @@ impl MarkdownPreviewView {
         }
         cx.notify();
     }
+
+    fn current_selection_range(&self) -> Option<Range<usize>> {
+        self.preview_selection.as_ref().and_then(|selection| {
+            (selection.end > selection.start).then_some(selection.start..selection.end)
+        })
+    }
+
+    fn should_follow_text_clicks(&self) -> bool {
+        self.preview_selection
+            .as_ref()
+            .is_none_or(|selection| !selection.dragged)
+    }
+
+    fn begin_text_selection(
+        &mut self,
+        index: usize,
+        chunk_range: Range<usize>,
+        event: &MouseDownEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.focus_handle(cx).focus(window, cx);
+
+        let mut selection = PreviewSelection {
+            start: index,
+            end: index,
+            reversed: false,
+            dragging: event.button == MouseButton::Left,
+            dragged: false,
+            mode: PreviewSelectMode::Character,
+        };
+
+        match event.click_count {
+            2 => {
+                if let Some(text_index) = &self.preview_text_index {
+                    let word = surrounding_word_range(&text_index.text, index);
+                    selection.start = word.start;
+                    selection.end = word.end;
+                    selection.mode = PreviewSelectMode::Word(word);
+                }
+            }
+            3.. => {
+                selection.start = chunk_range.start;
+                selection.end = chunk_range.end;
+                selection.mode = PreviewSelectMode::Chunk(chunk_range);
+            }
+            _ => {}
+        }
+
+        self.preview_selection = Some(selection);
+        cx.notify();
+    }
+
+    fn hover_text_selection(
+        &mut self,
+        index: Option<usize>,
+        _event: &MouseMoveEvent,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(index) = index else {
+            return;
+        };
+        let Some(selection) = self.preview_selection.as_mut() else {
+            return;
+        };
+        if !selection.dragging {
+            return;
+        }
+
+        let previous = selection.start..selection.end;
+        selection.dragged |= selection.start != index && selection.end != index;
+        selection.set_head(index, self.preview_text_index.as_ref());
+        if previous != (selection.start..selection.end) {
+            cx.notify();
+        }
+    }
+
+    fn finish_text_selection(
+        &mut self,
+        _event: &MouseUpEvent,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(selection) = self.preview_selection.as_mut()
+            && selection.dragging
+        {
+            selection.dragging = false;
+            cx.notify();
+        }
+    }
+}
+
+impl PreviewSelection {
+    fn tail(&self) -> usize {
+        if self.reversed { self.end } else { self.start }
+    }
+
+    fn set_head(&mut self, head: usize, index: Option<&PreviewTextIndex>) {
+        match &self.mode {
+            PreviewSelectMode::Character => {
+                if head < self.tail() {
+                    if !self.reversed {
+                        self.end = self.start;
+                        self.reversed = true;
+                    }
+                    self.start = head;
+                } else {
+                    if self.reversed {
+                        self.start = self.end;
+                        self.reversed = false;
+                    }
+                    self.end = head;
+                }
+            }
+            PreviewSelectMode::Word(original_range) => {
+                let Some(index) = index else {
+                    return;
+                };
+                let head_range = surrounding_word_range(&index.text, head);
+                if head < original_range.start {
+                    self.start = head_range.start;
+                    self.end = original_range.end;
+                    self.reversed = true;
+                } else if head >= original_range.end {
+                    self.start = original_range.start;
+                    self.end = head_range.end;
+                    self.reversed = false;
+                } else {
+                    self.start = original_range.start;
+                    self.end = original_range.end;
+                    self.reversed = false;
+                }
+            }
+            PreviewSelectMode::Chunk(original_range) => {
+                let Some(index) = index else {
+                    return;
+                };
+                let head_range = index.chunk_range_containing(head).unwrap_or(head..head);
+                if head < original_range.start {
+                    self.start = head_range.start;
+                    self.end = original_range.end;
+                    self.reversed = true;
+                } else if head >= original_range.end {
+                    self.start = original_range.start;
+                    self.end = head_range.end;
+                    self.reversed = false;
+                } else {
+                    self.start = original_range.start;
+                    self.end = original_range.end;
+                    self.reversed = false;
+                }
+            }
+        }
+    }
+}
+
+impl PreviewTextIndex {
+    fn from_markdown(markdown: &ParsedMarkdown) -> Self {
+        let mut this = Self::default();
+        let mut cursor = 0;
+
+        for block in &markdown.children {
+            let start = cursor;
+            collect_selectable_text(block, &mut cursor, &mut this.text, &mut this.chunk_ranges);
+            this.block_ranges.push(start..cursor);
+        }
+
+        this
+    }
+
+    fn chunk_range_containing(&self, index: usize) -> Option<Range<usize>> {
+        self.chunk_ranges
+            .iter()
+            .find(|range| {
+                range.contains(&index)
+                    || (index == range.end
+                        && self
+                            .chunk_ranges
+                            .last()
+                            .is_some_and(|last_range| last_range == *range))
+            })
+            .cloned()
+    }
+}
+
+fn collect_selectable_text(
+    block: &ParsedMarkdownElement,
+    cursor: &mut usize,
+    text: &mut String,
+    chunk_ranges: &mut Vec<Range<usize>>,
+) {
+    use crate::markdown_elements::{MarkdownParagraphChunk, ParsedMarkdownElement};
+
+    let mut push_chunk = |contents: &str| {
+        if contents.is_empty() {
+            return;
+        }
+        let range = *cursor..*cursor + contents.len();
+        *cursor = range.end;
+        text.push_str(contents);
+        chunk_ranges.push(range);
+    };
+
+    match block {
+        ParsedMarkdownElement::Paragraph(chunks) => {
+            for chunk in chunks {
+                if let MarkdownParagraphChunk::Text(parsed) = chunk {
+                    push_chunk(parsed.contents.as_ref());
+                }
+            }
+        }
+        ParsedMarkdownElement::Heading(heading) => {
+            for chunk in &heading.contents {
+                if let MarkdownParagraphChunk::Text(parsed) = chunk {
+                    push_chunk(parsed.contents.as_ref());
+                }
+            }
+        }
+        ParsedMarkdownElement::ListItem(item) => {
+            for block in &item.content {
+                collect_selectable_text(block, cursor, text, chunk_ranges);
+            }
+        }
+        ParsedMarkdownElement::Table(table) => {
+            if let Some(caption) = &table.caption {
+                for chunk in caption {
+                    if let MarkdownParagraphChunk::Text(parsed) = chunk {
+                        push_chunk(parsed.contents.as_ref());
+                    }
+                }
+            }
+            for row in table.header.iter().chain(table.body.iter()) {
+                for column in &row.columns {
+                    for chunk in &column.children {
+                        if let MarkdownParagraphChunk::Text(parsed) = chunk {
+                            push_chunk(parsed.contents.as_ref());
+                        }
+                    }
+                }
+            }
+        }
+        ParsedMarkdownElement::BlockQuote(block_quote) => {
+            for block in &block_quote.children {
+                collect_selectable_text(block, cursor, text, chunk_ranges);
+            }
+        }
+        ParsedMarkdownElement::CodeBlock(code_block) => push_chunk(code_block.contents.as_ref()),
+        ParsedMarkdownElement::HorizontalRule(_) | ParsedMarkdownElement::Image(_) => {}
+    }
+}
+
+fn surrounding_word_range(text: &str, index: usize) -> Range<usize> {
+    if text.is_empty() {
+        return 0..0;
+    }
+
+    let index = index.min(text.len().saturating_sub(1));
+    let classifier = CharClassifier::new(None);
+
+    let mut prev_chars = text[..index].chars().rev().peekable();
+    let mut next_chars = text[index..].chars().peekable();
+    let word_kind = std::cmp::max(
+        prev_chars.peek().map(|&ch| classifier.kind(ch)),
+        next_chars.peek().map(|&ch| classifier.kind(ch)),
+    );
+
+    let mut start = index;
+    for ch in prev_chars {
+        if Some(classifier.kind(ch)) == word_kind {
+            start -= ch.len_utf8();
+        } else {
+            break;
+        }
+    }
+
+    let mut end = index;
+    for ch in next_chars {
+        if Some(classifier.kind(ch)) == word_kind {
+            end += ch.len_utf8();
+        } else {
+            break;
+        }
+    }
+
+    start..end
 }
 
 impl Focusable for MarkdownPreviewView {
@@ -561,6 +913,7 @@ impl Render for MarkdownPreviewView {
             .on_action(cx.listener(MarkdownPreviewView::scroll_down))
             .on_action(cx.listener(MarkdownPreviewView::scroll_up_by_item))
             .on_action(cx.listener(MarkdownPreviewView::scroll_down_by_item))
+            .capture_any_mouse_up(cx.listener(MarkdownPreviewView::finish_text_selection))
             .size_full()
             .bg(cx.theme().colors().editor_background)
             .p_4()
@@ -575,11 +928,80 @@ impl Render for MarkdownPreviewView {
                                 return div().into_any();
                             };
 
+                            let weak_view = cx.weak_entity();
                             let mut render_cx = RenderContext::new(
                                 Some(this.workspace.clone()),
                                 &this.mermaid_state,
                                 window,
                                 cx,
+                            )
+                            .with_text_selection(
+                                this.current_selection_range(),
+                                this.preview_text_index
+                                    .as_ref()
+                                    .and_then(|index| index.block_ranges.get(ix))
+                                    .map(|range: &Range<usize>| range.start)
+                                    .unwrap_or_default(),
+                                {
+                                    let weak_view = weak_view.clone();
+                                    move |index, chunk_range: Range<usize>, event: &MouseDownEvent, window, cx| {
+                                        weak_view
+                                            .update(cx, |this, cx| {
+                                                this.begin_text_selection(index, chunk_range, event, window, cx);
+                                            })
+                                            .ok();
+                                    }
+                                },
+                                {
+                                    let weak_view = weak_view.clone();
+                                    move |index: Option<usize>, event: &MouseMoveEvent, window, cx| {
+                                        weak_view
+                                            .update(cx, |this, cx| {
+                                                this.hover_text_selection(index, event, window, cx);
+                                            })
+                                            .ok();
+                                    }
+                                },
+                                {
+                                    let weak_view = weak_view.clone();
+                                    move |_index, _chunk_range: Range<usize>, event: &MouseUpEvent, window, cx| {
+                                        weak_view
+                                            .update(cx, |this, cx| {
+                                                this.finish_text_selection(event, window, cx);
+                                            })
+                                            .ok();
+                                    }
+                                },
+                                move |link: &crate::markdown_elements::Link, window, cx| {
+                                    weak_view
+                                        .update(cx, |this, cx| {
+                                            if !this.should_follow_text_clicks() {
+                                                return;
+                                            }
+
+                                            match link {
+                                                crate::markdown_elements::Link::Web { url } => cx.open_url(url),
+                                                crate::markdown_elements::Link::Path { path, .. } => {
+                                                    if let Some(workspace) = this.workspace.upgrade() {
+                                                        _ = workspace.update(cx, |workspace, cx| {
+                                                            workspace
+                                                                .open_abs_path(
+                                                                    normalize_path(path.as_path()),
+                                                                    workspace::OpenOptions {
+                                                                        visible: Some(workspace::OpenVisible::None),
+                                                                        ..Default::default()
+                                                                    },
+                                                                    window,
+                                                                    cx,
+                                                                )
+                                                                .detach();
+                                                        });
+                                                    }
+                                                }
+                                            }
+                                        })
+                                        .ok();
+                                },
                             )
                             .with_checkbox_clicked_callback(cx.listener(
                                 move |this, e: &CheckboxClickedEvent, window, cx| {
@@ -624,6 +1046,7 @@ impl Render for MarkdownPreviewView {
                                 .on_click(cx.listener(
                                     move |this, event: &ClickEvent, window, cx| {
                                         if event.click_count() == 2
+                                            && this.current_selection_range().is_none()
                                             && let Some(source_range) = this
                                                 .contents
                                                 .as_ref()

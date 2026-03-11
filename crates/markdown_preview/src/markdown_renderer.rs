@@ -13,8 +13,9 @@ use fs::normalize_path;
 use gpui::{
     AbsoluteLength, Animation, AnimationExt, AnyElement, App, AppContext as _, Context, Div,
     Element, ElementId, Entity, HighlightStyle, Hsla, ImageSource, InteractiveText, IntoElement,
-    Keystroke, Modifiers, ParentElement, Render, RenderImage, Resource, SharedString, Styled,
-    StyledText, Task, TextStyle, WeakEntity, Window, div, img, pulsating_between, rems,
+    Keystroke, Modifiers, MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement, Render,
+    RenderImage, Resource, SharedString, Styled, StyledText, Task, TextStyle, WeakEntity, Window,
+    div, img, pulsating_between, rems,
 };
 use settings::Settings;
 use std::{
@@ -43,6 +44,13 @@ impl CheckboxClickedEvent {
 }
 
 type CheckboxClickedCallback = Arc<Box<dyn Fn(&CheckboxClickedEvent, &mut Window, &mut App)>>;
+type TextMouseDownCallback =
+    Arc<Box<dyn Fn(usize, Range<usize>, &MouseDownEvent, &mut Window, &mut App)>>;
+type TextMouseHoverCallback =
+    Arc<Box<dyn Fn(Option<usize>, &MouseMoveEvent, &mut Window, &mut App)>>;
+type TextMouseUpCallback =
+    Arc<Box<dyn Fn(usize, Range<usize>, &MouseUpEvent, &mut Window, &mut App)>>;
+type LinkClickCallback = Arc<Box<dyn Fn(&Link, &mut Window, &mut App)>>;
 
 type MermaidDiagramCache = HashMap<ParsedMarkdownMermaidDiagramContents, CachedMermaidDiagram>;
 
@@ -189,6 +197,13 @@ pub struct RenderContext<'a> {
     syntax_theme: Arc<SyntaxTheme>,
     indent: usize,
     checkbox_clicked_callback: Option<CheckboxClickedCallback>,
+    text_mouse_down_callback: Option<TextMouseDownCallback>,
+    text_mouse_hover_callback: Option<TextMouseHoverCallback>,
+    text_mouse_up_callback: Option<TextMouseUpCallback>,
+    link_click_callback: Option<LinkClickCallback>,
+    selection_range: Option<Range<usize>>,
+    next_text_offset: usize,
+    selection_background_color: Hsla,
     is_last_child: bool,
     mermaid_state: &'a MermaidState,
 }
@@ -228,6 +243,13 @@ impl<'a> RenderContext<'a> {
             code_block_background_color: theme.colors().surface_background,
             code_span_background_color: theme.colors().editor_document_highlight_read_background,
             checkbox_clicked_callback: None,
+            text_mouse_down_callback: None,
+            text_mouse_hover_callback: None,
+            text_mouse_up_callback: None,
+            link_click_callback: None,
+            selection_range: None,
+            next_text_offset: 0,
+            selection_background_color: theme.colors().element_selection_background,
             is_last_child: false,
             mermaid_state,
         }
@@ -238,6 +260,24 @@ impl<'a> RenderContext<'a> {
         callback: impl Fn(&CheckboxClickedEvent, &mut Window, &mut App) + 'static,
     ) -> Self {
         self.checkbox_clicked_callback = Some(Arc::new(Box::new(callback)));
+        self
+    }
+
+    pub fn with_text_selection(
+        mut self,
+        selection_range: Option<Range<usize>>,
+        next_text_offset: usize,
+        on_mouse_down: impl Fn(usize, Range<usize>, &MouseDownEvent, &mut Window, &mut App) + 'static,
+        on_mouse_hover: impl Fn(Option<usize>, &MouseMoveEvent, &mut Window, &mut App) + 'static,
+        on_mouse_up: impl Fn(usize, Range<usize>, &MouseUpEvent, &mut Window, &mut App) + 'static,
+        on_link_click: impl Fn(&Link, &mut Window, &mut App) + 'static,
+    ) -> Self {
+        self.selection_range = selection_range;
+        self.next_text_offset = next_text_offset;
+        self.text_mouse_down_callback = Some(Arc::new(Box::new(on_mouse_down)));
+        self.text_mouse_hover_callback = Some(Arc::new(Box::new(on_mouse_hover)));
+        self.text_mouse_up_callback = Some(Arc::new(Box::new(on_mouse_up)));
+        self.link_click_callback = Some(Arc::new(Box::new(on_link_click)));
         self
     }
 
@@ -255,6 +295,35 @@ impl<'a> RenderContext<'a> {
             .font_size
             .to_rems(self.window_rem_size)
             .mul(rems)
+    }
+
+    fn next_text_range(&mut self, len: usize) -> Range<usize> {
+        let range = self.next_text_offset..self.next_text_offset + len;
+        self.next_text_offset += len;
+        range
+    }
+
+    fn selection_highlights(
+        &self,
+        text_range: &Range<usize>,
+    ) -> Vec<(Range<usize>, HighlightStyle)> {
+        let Some(selection) = self.selection_range.as_ref() else {
+            return Vec::new();
+        };
+
+        let start = selection.start.max(text_range.start);
+        let end = selection.end.min(text_range.end);
+        if start >= end {
+            return Vec::new();
+        }
+
+        vec![(
+            (start - text_range.start)..(end - text_range.start),
+            HighlightStyle {
+                background_color: Some(self.selection_background_color),
+                ..Default::default()
+            },
+        )]
     }
 
     /// This ensures that children inside of block quotes
@@ -747,18 +816,59 @@ fn render_markdown_code_block(
     parsed: &ParsedMarkdownCodeBlock,
     cx: &mut RenderContext,
 ) -> AnyElement {
-    let body = if let Some(highlights) = parsed.highlights.as_ref() {
-        StyledText::new(parsed.contents.clone()).with_default_highlights(
-            &cx.buffer_text_style,
+    let text_range = cx.next_text_range(parsed.contents.len());
+    let selection_highlights = cx.selection_highlights(&text_range);
+    let syntax_highlights = parsed
+        .highlights
+        .as_ref()
+        .map(|highlights| {
             highlights.iter().filter_map(|(range, highlight_id)| {
                 highlight_id
                     .style(cx.syntax_theme.as_ref())
                     .map(|style| (range.clone(), style))
-            }),
-        )
-    } else {
-        StyledText::new(parsed.contents.clone())
-    };
+            })
+        })
+        .into_iter()
+        .flatten()
+        .collect::<Vec<_>>();
+
+    let body = InteractiveText::new(
+        cx.next_id(&parsed.source_range),
+        StyledText::new(parsed.contents.clone()).with_default_highlights(
+            &cx.buffer_text_style,
+            gpui::combine_highlights(syntax_highlights, selection_highlights),
+        ),
+    )
+    .when_some(cx.text_mouse_down_callback.clone(), |this, callback| {
+        let text_range = text_range.clone();
+        this.on_mouse_down(move |index, event, window, cx| {
+            callback(
+                text_range.start + index,
+                text_range.clone(),
+                &event,
+                window,
+                cx,
+            );
+        })
+    })
+    .when_some(cx.text_mouse_hover_callback.clone(), |this, callback| {
+        let start = text_range.start;
+        this.on_hover(move |index, event, window, cx| {
+            callback(index.map(|index| start + index), &event, window, cx);
+        })
+    })
+    .when_some(cx.text_mouse_up_callback.clone(), |this, callback| {
+        let text_range = text_range.clone();
+        this.on_mouse_up(move |index, event, window, cx| {
+            callback(
+                text_range.start + index,
+                text_range.clone(),
+                &event,
+                window,
+                cx,
+            );
+        })
+    });
 
     let copy_block_button = CopyButton::new("copy-codeblock", parsed.contents.clone())
         .tooltip_label("Copy Codeblock")
@@ -887,11 +997,15 @@ fn render_markdown_text(parsed_new: &MarkdownParagraph, cx: &mut RenderContext) 
     let code_span_bg_color = cx.code_span_background_color;
     let text_style = cx.text_style.clone();
     let link_color = cx.link_color;
+    let link_click_callback = cx.link_click_callback.clone();
 
     for parsed_region in parsed_new {
         match parsed_region {
             MarkdownParagraphChunk::Text(parsed) => {
+                let link_click_callback = link_click_callback.clone();
                 let element_id = cx.next_id(&parsed.source_range);
+                let text_range = cx.next_text_range(parsed.contents.len());
+                let selection_highlights = cx.selection_highlights(&text_range);
 
                 let highlights = gpui::combine_highlights(
                     parsed.highlights.iter().filter_map(|(range, highlight)| {
@@ -920,7 +1034,9 @@ fn render_markdown_text(parsed_new: &MarkdownParagraph, cx: &mut RenderContext) 
                             None
                         }
                     }),
-                );
+                )
+                .collect::<Vec<_>>();
+                let highlights = gpui::combine_highlights(highlights, selection_highlights);
                 let mut links = Vec::new();
                 let mut link_ranges = Vec::new();
                 for (range, region) in parsed.regions.iter() {
@@ -937,6 +1053,36 @@ fn render_markdown_text(parsed_new: &MarkdownParagraph, cx: &mut RenderContext) 
                             StyledText::new(parsed.contents.clone())
                                 .with_default_highlights(&text_style, highlights),
                         )
+                        .when_some(cx.text_mouse_down_callback.clone(), |this, callback| {
+                            let text_range = text_range.clone();
+                            this.on_mouse_down(move |index, event, window, cx| {
+                                callback(
+                                    text_range.start + index,
+                                    text_range.clone(),
+                                    &event,
+                                    window,
+                                    cx,
+                                );
+                            })
+                        })
+                        .when_some(cx.text_mouse_hover_callback.clone(), |this, callback| {
+                            let start = text_range.start;
+                            this.on_hover(move |index, event, window, cx| {
+                                callback(index.map(|index| start + index), &event, window, cx);
+                            })
+                        })
+                        .when_some(cx.text_mouse_up_callback.clone(), |this, callback| {
+                            let text_range = text_range.clone();
+                            this.on_mouse_up(move |index, event, window, cx| {
+                                callback(
+                                    text_range.start + index,
+                                    text_range.clone(),
+                                    &event,
+                                    window,
+                                    cx,
+                                );
+                            })
+                        })
                         .tooltip({
                             let links = links.clone();
                             let link_ranges = link_ranges.clone();
@@ -951,23 +1097,29 @@ fn render_markdown_text(parsed_new: &MarkdownParagraph, cx: &mut RenderContext) 
                         })
                         .on_click(
                             link_ranges,
-                            move |clicked_range_ix, window, cx| match &links[clicked_range_ix] {
-                                Link::Web { url } => cx.open_url(url),
-                                Link::Path { path, .. } => {
-                                    if let Some(workspace) = &workspace {
-                                        _ = workspace.update(cx, |workspace, cx| {
-                                            workspace
-                                                .open_abs_path(
-                                                    normalize_path(path.clone().as_path()),
-                                                    OpenOptions {
-                                                        visible: Some(OpenVisible::None),
-                                                        ..Default::default()
-                                                    },
-                                                    window,
-                                                    cx,
-                                                )
-                                                .detach();
-                                        });
+                            move |clicked_range_ix, window, cx| {
+                                if let Some(callback) = &link_click_callback {
+                                    callback(&links[clicked_range_ix], window, cx);
+                                } else {
+                                    match &links[clicked_range_ix] {
+                                        Link::Web { url } => cx.open_url(url),
+                                        Link::Path { path, .. } => {
+                                            if let Some(workspace) = &workspace {
+                                                _ = workspace.update(cx, |workspace, cx| {
+                                                    workspace
+                                                        .open_abs_path(
+                                                            normalize_path(path.clone().as_path()),
+                                                            OpenOptions {
+                                                                visible: Some(OpenVisible::None),
+                                                                ..Default::default()
+                                                            },
+                                                            window,
+                                                            cx,
+                                                        )
+                                                        .detach();
+                                                });
+                                            }
+                                        }
                                     }
                                 }
                             },
