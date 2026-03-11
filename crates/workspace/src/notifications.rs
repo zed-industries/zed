@@ -657,15 +657,17 @@ impl RenderOnce for NotificationFrame {
                                 IconButton::new(close_id, close_icon)
                                     .tooltip(move |_window, cx| {
                                         if suppress {
-                                            Tooltip::for_action(
-                                                "Suppress.\nClose with click.",
-                                                &SuppressNotification,
+                                            Tooltip::with_meta(
+                                                "Suppress",
+                                                Some(&SuppressNotification),
+                                                "Click to Close",
                                                 cx,
                                             )
                                         } else if show_suppress_button {
-                                            Tooltip::for_action(
-                                                "Close.\nSuppress with shift-click.",
-                                                &menu::Cancel,
+                                            Tooltip::with_meta(
+                                                "Close",
+                                                Some(&menu::Cancel),
+                                                "Shift-click to Suppress",
                                                 cx,
                                             )
                                         } else {

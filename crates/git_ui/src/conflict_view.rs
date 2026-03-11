@@ -15,7 +15,7 @@ use project::{
     git_store::{GitStoreEvent, RepositoryEvent},
 };
 use settings::Settings;
-use std::{ops::Range, sync::Arc};
+use std::{cell::RefCell, ops::Range, rc::Rc, sync::Arc};
 use ui::{ActiveTheme, Divider, Element as _, Styled, Window, prelude::*};
 use util::{ResultExt as _, debug_panic, maybe};
 use workspace::{
@@ -534,7 +534,9 @@ pub(crate) fn register_conflict_notification(
 ) {
     let git_store = workspace.project().read(cx).git_store().clone();
 
-    cx.subscribe(&git_store, |workspace, _git_store, event, cx| {
+    let last_shown_paths: Rc<RefCell<HashSet<String>>> = Rc::new(RefCell::new(HashSet::default()));
+
+    cx.subscribe(&git_store, move |workspace, _git_store, event, cx| {
         let conflicts_changed = matches!(
             event,
             GitStoreEvent::ConflictsUpdated
@@ -546,10 +548,15 @@ pub(crate) fn register_conflict_notification(
 
         let paths = collect_conflicted_file_paths(workspace, cx);
         let notification_id = merge_conflict_notification_id();
+        let current_paths_set: HashSet<String> = paths.iter().cloned().collect();
 
         if paths.is_empty() {
+            last_shown_paths.borrow_mut().clear();
             workspace.dismiss_notification(&notification_id, cx);
-        } else {
+        } else if *last_shown_paths.borrow() != current_paths_set {
+            // Only show the notification if the set of conflicted paths has changed.
+            // This prevents re-showing after the user dismisses it while working on the same conflicts.
+            *last_shown_paths.borrow_mut() = current_paths_set;
             let file_count = paths.len();
             workspace.show_notification(notification_id, cx, |cx| {
                 cx.new(|cx| {
@@ -560,7 +567,7 @@ pub(crate) fn register_conflict_notification(
                     };
 
                     MessageNotification::new(message, cx)
-                        .primary_message("Resolve Conflicts with Agent")
+                        .primary_message("Resolve with Agent")
                         .primary_icon(IconName::ZedAssistant)
                         .primary_icon_color(Color::Muted)
                         .primary_on_click({

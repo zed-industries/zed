@@ -1418,7 +1418,11 @@ impl acp_thread::AgentConnection for NativeAgentConnection {
         true
     }
 
-    fn close_session(&self, session_id: &acp::SessionId, cx: &mut App) -> Task<Result<()>> {
+    fn close_session(
+        self: Rc<Self>,
+        session_id: &acp::SessionId,
+        cx: &mut App,
+    ) -> Task<Result<()>> {
         self.0.update(cx, |agent, _cx| {
             let project_id = agent.sessions.get(session_id).map(|s| s.project_id);
             agent.sessions.remove(session_id);
