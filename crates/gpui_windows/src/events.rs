@@ -493,6 +493,32 @@ impl WindowsWindowInner {
             return Some(1);
         };
         let scale_factor = self.state.scale_factor.get();
+
+        let mut cursor_point = POINT {
+            x: lparam.signed_loword().into(),
+            y: lparam.signed_hiword().into(),
+        };
+        unsafe { ScreenToClient(handle, &mut cursor_point).ok().log_err() };
+        let position = logical_point(cursor_point.x as f32, cursor_point.y as f32, scale_factor);
+
+        // Windows precision trackpads deliver pinch-to-zoom gestures as
+        // Ctrl+WM_MOUSEWHEEL. Intercept these and emit PinchEvent instead.
+        if modifiers.control {
+            let wheel_delta = wparam.signed_hiword() as f32 / WHEEL_DELTA as f32;
+            // Scale sensitivity: convert wheel ticks into a reasonable zoom delta.
+            // A full wheel tick (120 units = 1.0 here) maps to 0.1 zoom delta.
+            let zoom_delta = wheel_delta * 0.1;
+            let input = PlatformInput::Pinch(PinchEvent {
+                position,
+                delta: zoom_delta,
+                modifiers,
+                phase: TouchPhase::Moved,
+            });
+            let handled = !func(input).propagate;
+            self.state.callbacks.input.set(Some(func));
+            return if handled { Some(0) } else { Some(1) };
+        }
+
         let wheel_scroll_amount = match modifiers.shift {
             true => self
                 .system_settings()
@@ -508,13 +534,8 @@ impl WindowsWindowInner {
 
         let wheel_distance =
             (wparam.signed_hiword() as f32 / WHEEL_DELTA as f32) * wheel_scroll_amount as f32;
-        let mut cursor_point = POINT {
-            x: lparam.signed_loword().into(),
-            y: lparam.signed_hiword().into(),
-        };
-        unsafe { ScreenToClient(handle, &mut cursor_point).ok().log_err() };
         let input = PlatformInput::ScrollWheel(ScrollWheelEvent {
-            position: logical_point(cursor_point.x as f32, cursor_point.y as f32, scale_factor),
+            position,
             delta: ScrollDelta::Lines(match modifiers.shift {
                 true => Point {
                     x: wheel_distance,

@@ -658,7 +658,10 @@ impl X11WindowState {
                                 | xinput::XIEventMask::BUTTON_PRESS
                                 | xinput::XIEventMask::BUTTON_RELEASE
                                 | xinput::XIEventMask::ENTER
-                                | xinput::XIEventMask::LEAVE,
+                                | xinput::XIEventMask::LEAVE
+                                | xinput::XIEventMask::GESTURE_PINCH_BEGIN
+                                | xinput::XIEventMask::GESTURE_PINCH_UPDATE
+                                | xinput::XIEventMask::GESTURE_PINCH_END,
                         ],
                     }],
                 ),
