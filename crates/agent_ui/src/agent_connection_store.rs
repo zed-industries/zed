@@ -9,7 +9,7 @@ use gpui::{AppContext, Context, Entity, EventEmitter, SharedString, Subscription
 use project::{AgentServerStore, AgentServersUpdated, Project};
 use watch::Receiver;
 
-use crate::ExternalAgent;
+use crate::{ExternalAgent, ThreadHistory};
 use project::ExternalAgentServerName;
 
 pub enum ConnectionEntry {
@@ -18,6 +18,7 @@ pub enum ConnectionEntry {
     },
     Connected {
         connection: Rc<dyn AgentConnection>,
+        history: Entity<ThreadHistory>,
     },
     Error {
         error: LoadError,
@@ -28,10 +29,17 @@ impl ConnectionEntry {
     pub fn wait_for_connection(&self) -> Shared<Task<Result<Rc<dyn AgentConnection>, LoadError>>> {
         match self {
             ConnectionEntry::Connecting { connect_task } => connect_task.clone(),
-            ConnectionEntry::Connected { connection } => {
+            ConnectionEntry::Connected { connection, .. } => {
                 Task::ready(Ok(connection.clone())).shared()
             }
             ConnectionEntry::Error { error } => Task::ready(Err(error.clone())).shared(),
+        }
+    }
+
+    pub fn history(&self) -> Option<&Entity<ThreadHistory>> {
+        match self {
+            ConnectionEntry::Connected { history, .. } => Some(history),
+            _ => None,
         }
     }
 }
@@ -59,6 +67,10 @@ impl AgentConnectionStore {
         }
     }
 
+    pub fn entry(&self, key: &ExternalAgent) -> Option<&Entity<ConnectionEntry>> {
+        self.entries.get(key)
+    }
+
     pub fn request_connection(
         &mut self,
         key: ExternalAgent,
@@ -82,7 +94,13 @@ impl AgentConnectionStore {
                     Ok(connection) => {
                         entry.update(cx, |entry, cx| {
                             if let ConnectionEntry::Connecting { .. } = entry {
-                                *entry = ConnectionEntry::Connected { connection };
+                                let history = cx
+                                    .new(|cx| ThreadHistory::new(connection.session_list(cx), cx));
+
+                                *entry = ConnectionEntry::Connected {
+                                    connection,
+                                    history,
+                                };
                                 cx.notify();
                             }
                         });
