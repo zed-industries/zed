@@ -234,6 +234,37 @@ pub(crate) unsafe fn platform_input_from_native(
                     _ => None,
                 }
             }
+            NSEventType::NSEventTypeMagnify => window_height.map(|window_height| {
+                let magnification = native_event.magnification() as f32;
+
+                let phase = match native_event.phase() {
+                    NSEventPhase::NSEventPhaseMayBegin | NSEventPhase::NSEventPhaseBegan => {
+                        TouchPhase::Started
+                    }
+                    NSEventPhase::NSEventPhaseEnded => TouchPhase::Ended,
+                    _ => TouchPhase::Moved,
+                };
+
+                // Translate pinch magnification into a scroll delta with the platform
+                // modifier set, so existing Cmd+scroll zoom handlers pick it up.
+                // magnification is typically in the range -0.1..0.1 per event;
+                // scale it to pixel-like values so the 0.01 sensitivity factor
+                // in zoom handlers produces reasonable results.
+                let scaled_delta = magnification * 100.0;
+
+                let mut modifiers = read_modifiers(native_event);
+                modifiers.platform = true;
+
+                PlatformInput::ScrollWheel(ScrollWheelEvent {
+                    position: point(
+                        px(native_event.locationInWindow().x as f32),
+                        window_height - px(native_event.locationInWindow().y as f32),
+                    ),
+                    delta: ScrollDelta::Pixels(point(px(0.0), px(scaled_delta))),
+                    touch_phase: phase,
+                    modifiers,
+                })
+            }),
             NSEventType::NSScrollWheel => window_height.map(|window_height| {
                 let phase = match native_event.phase() {
                     NSEventPhase::NSEventPhaseMayBegin | NSEventPhase::NSEventPhaseBegan => {
