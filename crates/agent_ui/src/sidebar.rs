@@ -231,7 +231,6 @@ impl Sidebar {
             window,
             |this, _multi_workspace, event: &MultiWorkspaceEvent, window, cx| match event {
                 MultiWorkspaceEvent::ActiveWorkspaceChanged => {
-                    this.focused_thread = None;
                     this.update_entries(cx);
                 }
                 MultiWorkspaceEvent::WorkspaceAdded(workspace) => {
@@ -359,31 +358,10 @@ impl Sidebar {
         cx.subscribe_in(
             agent_panel,
             window,
-            |this, agent_panel, event: &AgentPanelEvent, _window, cx| match event {
-                AgentPanelEvent::ActiveViewChanged => {
-                    match agent_panel.read(cx).active_connection_view() {
-                        Some(thread) => {
-                            if let Some(session_id) = thread.read(cx).parent_id(cx) {
-                                this.focused_thread = Some(session_id);
-                            }
-                        }
-                        None => {
-                            this.focused_thread = None;
-                        }
-                    }
-                    this.update_entries(cx);
-                }
-                AgentPanelEvent::ThreadFocused => {
-                    let new_focused = agent_panel
-                        .read(cx)
-                        .active_connection_view()
-                        .and_then(|thread| thread.read(cx).parent_id(cx));
-                    if new_focused.is_some() && new_focused != this.focused_thread {
-                        this.focused_thread = new_focused;
-                        this.update_entries(cx);
-                    }
-                }
-                AgentPanelEvent::BackgroundThreadChanged => {
+            |this, _agent_panel, event: &AgentPanelEvent, _window, cx| match event {
+                AgentPanelEvent::ActiveViewChanged
+                | AgentPanelEvent::ThreadFocused
+                | AgentPanelEvent::BackgroundThreadChanged => {
                     this.update_entries(cx);
                 }
             },
@@ -443,6 +421,12 @@ impl Sidebar {
         let mw = multi_workspace.read(cx);
         let workspaces = mw.workspaces().to_vec();
         let active_workspace = mw.workspaces().get(mw.active_workspace_index()).cloned();
+
+        self.focused_thread = active_workspace
+            .as_ref()
+            .and_then(|ws| ws.read(cx).panel::<AgentPanel>(cx))
+            .and_then(|panel| panel.read(cx).active_connection_view().cloned())
+            .and_then(|cv| cv.read(cx).parent_id(cx));
 
         let thread_store = ThreadStore::try_global(cx);
         let query = self.filter_editor.read(cx).text(cx);
@@ -909,8 +893,6 @@ impl Sidebar {
         let Some(multi_workspace) = self.multi_workspace.upgrade() else {
             return;
         };
-
-        self.focused_thread = None;
 
         multi_workspace.update(cx, |multi_workspace, cx| {
             multi_workspace.activate(workspace.clone(), cx);
@@ -1540,20 +1522,25 @@ mod tests {
         multi_workspace: &Entity<MultiWorkspace>,
         cx: &mut gpui::VisualTestContext,
     ) -> Entity<Sidebar> {
-        let multi_workspace = multi_workspace.clone();
-        let sidebar =
-            cx.update(|window, cx| cx.new(|cx| Sidebar::new(multi_workspace.clone(), window, cx)));
-        cx.run_until_parked();
+        let (sidebar, _panel) = setup_sidebar_with_agent_panel(multi_workspace, cx);
         sidebar
     }
 
     fn setup_sidebar_with_agent_panel(
         multi_workspace: &Entity<MultiWorkspace>,
-        project: &Entity<project::Project>,
         cx: &mut gpui::VisualTestContext,
     ) -> (Entity<Sidebar>, Entity<AgentPanel>) {
         let workspace = multi_workspace.read_with(cx, |mw, _cx| mw.workspace().clone());
-        let panel = add_agent_panel(&workspace, project, cx);
+        let project = workspace.read_with(cx, |ws, _cx| ws.project().clone());
+        let panel = add_agent_panel(&workspace, &project, cx);
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.right_dock().update(cx, |dock, cx| {
+                if let Some(panel_ix) = dock.panel_index_for_type::<AgentPanel>() {
+                    dock.activate_panel(panel_ix, window, cx);
+                }
+                dock.set_open(true, window, cx);
+            });
+        });
         cx.run_until_parked();
         let sidebar = panel.read_with(cx, |panel, _cx| {
             panel
@@ -2252,6 +2239,9 @@ mod tests {
         });
         cx.run_until_parked();
 
+        // Add an agent panel to workspace 1 so the sidebar renders when it's active.
+        setup_sidebar_with_agent_panel(&multi_workspace, cx);
+
         let path_list = PathList::new(&[std::path::PathBuf::from("/my-project")]);
         save_n_test_threads(1, &path_list, cx).await;
         multi_workspace.update_in(cx, |_, _window, cx| cx.notify());
@@ -2502,7 +2492,7 @@ mod tests {
         let project = init_test_project("/my-project", cx).await;
         let (multi_workspace, cx) =
             cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
-        let (sidebar, panel) = setup_sidebar_with_agent_panel(&multi_workspace, &project, cx);
+        let (sidebar, panel) = setup_sidebar_with_agent_panel(&multi_workspace, cx);
 
         let path_list = PathList::new(&[std::path::PathBuf::from("/my-project")]);
 
@@ -2548,7 +2538,7 @@ mod tests {
         let project_a = init_test_project("/project-a", cx).await;
         let (multi_workspace, cx) = cx
             .add_window_view(|window, cx| MultiWorkspace::test_new(project_a.clone(), window, cx));
-        let (sidebar, panel_a) = setup_sidebar_with_agent_panel(&multi_workspace, &project_a, cx);
+        let (sidebar, panel_a) = setup_sidebar_with_agent_panel(&multi_workspace, cx);
 
         let path_list_a = PathList::new(&[std::path::PathBuf::from("/project-a")]);
 
@@ -3305,7 +3295,7 @@ mod tests {
         let project = init_test_project("/my-project", cx).await;
         let (multi_workspace, cx) =
             cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
-        let (sidebar, panel) = setup_sidebar_with_agent_panel(&multi_workspace, &project, cx);
+        let (sidebar, panel) = setup_sidebar_with_agent_panel(&multi_workspace, cx);
 
         let path_list = PathList::new(&[std::path::PathBuf::from("/my-project")]);
 
@@ -3353,7 +3343,7 @@ mod tests {
         let project_a = init_test_project("/project-a", cx).await;
         let (multi_workspace, cx) = cx
             .add_window_view(|window, cx| MultiWorkspace::test_new(project_a.clone(), window, cx));
-        let (sidebar, panel_a) = setup_sidebar_with_agent_panel(&multi_workspace, &project_a, cx);
+        let (sidebar, panel_a) = setup_sidebar_with_agent_panel(&multi_workspace, cx);
 
         let path_list_a = PathList::new(&[std::path::PathBuf::from("/project-a")]);
 
@@ -3382,7 +3372,8 @@ mod tests {
         let workspace_a = multi_workspace.read_with(cx, |mw, _cx| mw.workspaces()[0].clone());
 
         // ── 1. Initial state: no focused thread ──────────────────────────────
-        // Workspace B is active (just added), so its header is the active entry.
+        // Workspace B is active (just added) and has no thread, so its header
+        // is the active entry.
         sidebar.read_with(cx, |sidebar, _cx| {
             assert_eq!(
                 sidebar.focused_thread, None,
@@ -3397,6 +3388,7 @@ mod tests {
             );
         });
 
+        // ── 2. Click thread in workspace A via sidebar ───────────────────────
         sidebar.update_in(cx, |sidebar, window, cx| {
             sidebar.activate_thread(
                 acp_thread::AgentSessionInfo {
@@ -3440,6 +3432,7 @@ mod tests {
             );
         });
 
+        // ── 3. Open thread in workspace B, then click it via sidebar ─────────
         let connection_b = StubAgentConnection::new();
         connection_b.set_next_prompt_updates(vec![acp::SessionUpdate::AgentMessageChunk(
             acp::ContentChunk::new("Thread B".into()),
@@ -3450,6 +3443,16 @@ mod tests {
         let path_list_b = PathList::new(&[std::path::PathBuf::from("/project-b")]);
         save_thread_to_store(&session_id_b, &path_list_b, cx).await;
         cx.run_until_parked();
+
+        // Opening a thread in a non-active workspace should NOT change
+        // focused_thread — it's derived from the active workspace.
+        sidebar.read_with(cx, |sidebar, _cx| {
+            assert_eq!(
+                sidebar.focused_thread.as_ref(),
+                Some(&session_id_a),
+                "Opening a thread in a non-active workspace should not affect focused_thread"
+            );
+        });
 
         // Workspace A is currently active. Click a thread in workspace B,
         // which also triggers a workspace switch.
@@ -3485,25 +3488,30 @@ mod tests {
             );
         });
 
+        // ── 4. Switch workspace → focused_thread reflects new workspace ──────
         multi_workspace.update_in(cx, |mw, window, cx| {
             mw.activate_next_workspace(window, cx);
         });
         cx.run_until_parked();
 
+        // Workspace A is now active. Its agent panel still has session_id_a
+        // loaded, so focused_thread should reflect that.
         sidebar.read_with(cx, |sidebar, _cx| {
             assert_eq!(
-                sidebar.focused_thread, None,
-                "External workspace switch should clear focused_thread"
+                sidebar.focused_thread.as_ref(),
+                Some(&session_id_a),
+                "Switching workspaces should derive focused_thread from the new active workspace"
             );
             let active_entry = sidebar
                 .active_entry_index
                 .and_then(|ix| sidebar.contents.entries.get(ix));
             assert!(
-                matches!(active_entry, Some(ListEntry::ProjectHeader { .. })),
-                "Active entry should be the workspace header after external switch"
+                matches!(active_entry, Some(ListEntry::Thread(thread)) if thread.session_info.session_id == session_id_a),
+                "Active entry should be workspace_a's active thread"
             );
         });
 
+        // ── 5. Opening a thread in a non-active workspace is ignored ──────────
         let connection_b2 = StubAgentConnection::new();
         connection_b2.set_next_prompt_updates(vec![acp::SessionUpdate::AgentMessageChunk(
             acp::ContentChunk::new("New thread".into()),
@@ -3514,69 +3522,48 @@ mod tests {
         save_thread_to_store(&session_id_b2, &path_list_b, cx).await;
         cx.run_until_parked();
 
+        // Workspace A is still active, so focused_thread stays on session_id_a.
         sidebar.read_with(cx, |sidebar, _cx| {
             assert_eq!(
                 sidebar.focused_thread.as_ref(),
-                Some(&session_id_b2),
-                "Opening a thread externally should set focused_thread"
+                Some(&session_id_a),
+                "Opening a thread in a non-active workspace should not affect focused_thread"
             );
         });
 
-        workspace_b.update_in(cx, |workspace, window, cx| {
-            workspace.focus_handle(cx).focus(window, cx);
-        });
-        cx.run_until_parked();
-
-        sidebar.read_with(cx, |sidebar, _cx| {
-            assert_eq!(
-                sidebar.focused_thread.as_ref(),
-                Some(&session_id_b2),
-                "Defocusing the sidebar should not clear focused_thread"
-            );
-        });
-
+        // ── 6. Activating workspace B shows its active thread ────────────────
         sidebar.update_in(cx, |sidebar, window, cx| {
             sidebar.activate_workspace(&workspace_b, window, cx);
         });
         cx.run_until_parked();
 
-        sidebar.read_with(cx, |sidebar, _cx| {
-            assert_eq!(
-                sidebar.focused_thread, None,
-                "Clicking a workspace header should clear focused_thread"
-            );
-            let active_entry = sidebar
-                .active_entry_index
-                .and_then(|ix| sidebar.contents.entries.get(ix));
-            assert!(
-                matches!(active_entry, Some(ListEntry::ProjectHeader { .. })),
-                "Active entry should be the workspace header"
-            );
-        });
-
-        // ── 8. Focusing the agent panel thread restores focused_thread ────
-        // Workspace B still has session_id_b2 loaded in the agent panel.
-        // Clicking into the thread (simulated by focusing its view) should
-        // set focused_thread via the ThreadFocused event.
-        panel_b.update_in(cx, |panel, window, cx| {
-            if let Some(thread_view) = panel.active_connection_view() {
-                thread_view.read(cx).focus_handle(cx).focus(window, cx);
-            }
-        });
-        cx.run_until_parked();
-
+        // Workspace B is now active with session_id_b2 loaded.
         sidebar.read_with(cx, |sidebar, _cx| {
             assert_eq!(
                 sidebar.focused_thread.as_ref(),
                 Some(&session_id_b2),
-                "Focusing the agent panel thread should set focused_thread"
+                "Activating workspace_b should show workspace_b's active thread"
             );
             let active_entry = sidebar
                 .active_entry_index
                 .and_then(|ix| sidebar.contents.entries.get(ix));
             assert!(
                 matches!(active_entry, Some(ListEntry::Thread(thread)) if thread.session_info.session_id == session_id_b2),
-                "Active entry should be the focused thread"
+                "Active entry should be workspace_b's active thread"
+            );
+        });
+
+        // ── 7. Switching back to workspace A reflects its thread ─────────────
+        multi_workspace.update_in(cx, |mw, window, cx| {
+            mw.activate_next_workspace(window, cx);
+        });
+        cx.run_until_parked();
+
+        sidebar.read_with(cx, |sidebar, _cx| {
+            assert_eq!(
+                sidebar.focused_thread.as_ref(),
+                Some(&session_id_a),
+                "Switching back to workspace_a should show its active thread"
             );
         });
     }
