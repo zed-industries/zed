@@ -3782,8 +3782,16 @@ pub(crate) mod tests {
     }
 
     impl Render for ThreadViewItem {
-        fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
-            self.0.clone().into_any_element()
+        fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+            // Render the title editor in the element tree too. In the real app
+            // it is part of the agent panel
+            let title_editor = self
+                .0
+                .read(cx)
+                .active_thread()
+                .map(|t| t.read(cx).title_editor.clone());
+
+            v_flex().children(title_editor).child(self.0.clone())
         }
     }
 
@@ -6060,6 +6068,7 @@ pub(crate) mod tests {
         init_test(cx);
 
         let (thread_view, cx) = setup_thread_view(StubAgentServer::default_response(), cx).await;
+        add_to_workspace(thread_view.clone(), cx);
 
         let active = active_thread(&thread_view, cx);
         let title_editor = cx.read(|cx| active.read(cx).title_editor.clone());
@@ -6069,9 +6078,12 @@ pub(crate) mod tests {
             assert!(!editor.read_only(cx));
         });
 
-        title_editor.update_in(cx, |editor, window, cx| {
-            editor.set_text("My Custom Title", window, cx);
-        });
+        cx.focus(&thread_view);
+        cx.focus(&title_editor);
+
+        cx.dispatch_action(editor::actions::DeleteLine);
+        cx.simulate_input("My Custom Title");
+
         cx.run_until_parked();
 
         title_editor.read_with(cx, |editor, cx| {

@@ -1464,6 +1464,13 @@ impl ThreadView {
 
         match event {
             EditorEvent::BufferEdited => {
+                // We only want to set the title if the user has actively edited
+                // it. If the title editor is not focused, we programmatically
+                // changed the text, so we don't want to set the title again.
+                if !title_editor.read(cx).is_focused(window) {
+                    return;
+                }
+
                 let new_title = title_editor.read(cx).text(cx);
                 thread.update(cx, |thread, cx| {
                     thread
