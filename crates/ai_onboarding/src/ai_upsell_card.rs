@@ -388,6 +388,17 @@ impl Component for AiUpsellCard {
                             }
                             .into_any_element(),
                         ),
+                        single_example(
+                            "Student Plan",
+                            AiUpsellCard {
+                                sign_in_status: SignInStatus::SignedIn,
+                                sign_in: Arc::new(|_, _| {}),
+                                account_too_young: false,
+                                user_plan: Some(Plan::ZedStudent),
+                                tab_index: Some(1),
+                            }
+                            .into_any_element(),
+                        ),
                     ],
                 ))
                 .into_any_element(),
