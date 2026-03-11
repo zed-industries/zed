@@ -13613,11 +13613,19 @@ mod tests {
         cx.run_until_parked();
 
         // Verify the first toggle persisted the expected split theme
-        // configuration plus the explicit system mode marker.
+        // configuration plus the explicit system mode marker, and that
+        // repeated reads through the same test context report the same
+        // active theme.
         let settings_text = SettingsStore::load_settings(&settings_fs).await.unwrap();
         assert!(settings_text.contains(r#""mode": "system""#));
         assert!(settings_text.contains(r#""light": "One Light""#));
         assert!(settings_text.contains(r#""dark": "One Dark""#));
+        let theme_name =
+            workspace.update_in(cx, |_workspace, _window, cx| cx.theme().name.to_string());
+        let repeated_theme_name =
+            workspace.update_in(cx, |_workspace, _window, cx| cx.theme().name.to_string());
+        assert_eq!(theme_name, repeated_theme_name);
+        assert_eq!(theme_name, "One Light");
 
         // Toggle again. This should leave the split light/dark themes in
         // place while clearing the explicit system-mode persistence.
@@ -13628,11 +13636,18 @@ mod tests {
         cx.run_until_parked();
 
         // Verify the system mode entry was removed, while the light/dark
-        // theme selections remain persisted.
+        // theme selections remain persisted, and that the active theme is
+        // stable across repeated reads.
         let settings_text = SettingsStore::load_settings(&settings_fs).await.unwrap();
         assert!(!settings_text.contains(r#""mode": "system""#));
         assert!(settings_text.contains(r#""light": "One Light""#));
         assert!(settings_text.contains(r#""dark": "One Dark""#));
+        let theme_name =
+            workspace.update_in(cx, |_workspace, _window, cx| cx.theme().name.to_string());
+        let repeated_theme_name =
+            workspace.update_in(cx, |_workspace, _window, cx| cx.theme().name.to_string());
+        assert_eq!(theme_name, repeated_theme_name);
+        assert_eq!(theme_name, "One Light");
 
         // Toggle a third time to cover the next transition and confirm
         // the persisted light/dark selections stay stable across repeated
@@ -13644,11 +13659,19 @@ mod tests {
         cx.run_until_parked();
 
         // Verify the persisted settings are still in the split
-        // light/dark form and do not reintroduce the system mode entry.
+        // light/dark form and do not reintroduce the system mode entry,
+        // and that the active theme remains consistent across repeated
+        // reads.
         let settings_text = SettingsStore::load_settings(&settings_fs).await.unwrap();
         assert!(!settings_text.contains(r#""mode": "system""#));
         assert!(settings_text.contains(r#""light": "One Light""#));
         assert!(settings_text.contains(r#""dark": "One Dark""#));
+        let theme_name =
+            workspace.update_in(cx, |_workspace, _window, cx| cx.theme().name.to_string());
+        let repeated_theme_name =
+            workspace.update_in(cx, |_workspace, _window, cx| cx.theme().name.to_string());
+        assert_eq!(theme_name, repeated_theme_name);
+        assert_eq!(theme_name, "One Dark");
     }
 
     fn dirty_project_item(id: u64, path: &str, cx: &mut App) -> Entity<TestProjectItem> {
