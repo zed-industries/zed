@@ -255,6 +255,41 @@ impl LspAdapter for TyLspAdapter {
         ))
     }
 
+    async fn label_for_symbol(
+        &self,
+        symbol: &language::Symbol,
+        language: &Arc<language::Language>,
+    ) -> Option<language::CodeLabel> {
+        let name = &symbol.name;
+        let (text, filter_range, display_range) = match symbol.kind {
+            lsp::SymbolKind::METHOD | lsp::SymbolKind::FUNCTION => {
+                let text = format!("def {}():\n", name);
+                let filter_range = 4..4 + name.len();
+                let display_range = 0..filter_range.end;
+                (text, filter_range, display_range)
+            }
+            lsp::SymbolKind::CLASS => {
+                let text = format!("class {}:", name);
+                let filter_range = 6..6 + name.len();
+                let display_range = 0..filter_range.end;
+                (text, filter_range, display_range)
+            }
+            lsp::SymbolKind::CONSTANT => {
+                let text = format!("{} = 0", name);
+                let filter_range = 0..name.len();
+                let display_range = 0..filter_range.end;
+                (text, filter_range, display_range)
+            }
+            _ => return None,
+        };
+
+        Some(language::CodeLabel::new(
+            text[display_range.clone()].to_string(),
+            filter_range,
+            language.highlight_text(&text.as_str().into(), display_range),
+        ))
+    }
+
     async fn workspace_configuration(
         self: Arc<Self>,
         delegate: &Arc<dyn LspAdapterDelegate>,
