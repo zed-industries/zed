@@ -464,7 +464,7 @@ impl Render for ProfilerWindow {
 
         let scroll_offset = self.scroll_handle.offset();
         let max_offset = self.scroll_handle.max_offset();
-        self.autoscroll = -scroll_offset.y >= (max_offset.height - px(24.));
+        self.autoscroll = -scroll_offset.y >= (max_offset.y - px(24.));
         if self.autoscroll {
             self.scroll_handle.scroll_to_bottom();
         }

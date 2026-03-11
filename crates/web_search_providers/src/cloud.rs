@@ -1,7 +1,8 @@
 use std::sync::Arc;
 
 use anyhow::{Context as _, Result};
-use client::Client;
+use client::{Client, UserStore};
+use cloud_api_types::OrganizationId;
 use cloud_llm_client::{WebSearchBody, WebSearchResponse};
 use futures::AsyncReadExt as _;
 use gpui::{App, AppContext, Context, Entity, Subscription, Task};
@@ -14,8 +15,8 @@ pub struct CloudWebSearchProvider {
 }
 
 impl CloudWebSearchProvider {
-    pub fn new(client: Arc<Client>, cx: &mut App) -> Self {
-        let state = cx.new(|cx| State::new(client, cx));
+    pub fn new(client: Arc<Client>, user_store: Entity<UserStore>, cx: &mut App) -> Self {
+        let state = cx.new(|cx| State::new(client, user_store, cx));
 
         Self { state }
     }
@@ -23,24 +24,31 @@ impl CloudWebSearchProvider {
 
 pub struct State {
     client: Arc<Client>,
+    user_store: Entity<UserStore>,
     llm_api_token: LlmApiToken,
     _llm_token_subscription: Subscription,
 }
 
 impl State {
-    pub fn new(client: Arc<Client>, cx: &mut Context<Self>) -> Self {
+    pub fn new(client: Arc<Client>, user_store: Entity<UserStore>, cx: &mut Context<Self>) -> Self {
         let refresh_llm_token_listener = RefreshLlmTokenListener::global(cx);
 
         Self {
             client,
+            user_store,
             llm_api_token: LlmApiToken::default(),
             _llm_token_subscription: cx.subscribe(
                 &refresh_llm_token_listener,
                 |this, _, _event, cx| {
                     let client = this.client.clone();
                     let llm_api_token = this.llm_api_token.clone();
+                    let organization_id = this
+                        .user_store
+                        .read(cx)
+                        .current_organization()
+                        .map(|o| o.id.clone());
                     cx.spawn(async move |_this, _cx| {
-                        llm_api_token.refresh(&client).await?;
+                        llm_api_token.refresh(&client, organization_id).await?;
                         anyhow::Ok(())
                     })
                     .detach_and_log_err(cx);
@@ -61,21 +69,31 @@ impl WebSearchProvider for CloudWebSearchProvider {
         let state = self.state.read(cx);
         let client = state.client.clone();
         let llm_api_token = state.llm_api_token.clone();
+        let organization_id = state
+            .user_store
+            .read(cx)
+            .current_organization()
+            .map(|o| o.id.clone());
         let body = WebSearchBody { query };
-        cx.background_spawn(async move { perform_web_search(client, llm_api_token, body).await })
+        cx.background_spawn(async move {
+            perform_web_search(client, llm_api_token, organization_id, body).await
+        })
     }
 }
 
 async fn perform_web_search(
     client: Arc<Client>,
     llm_api_token: LlmApiToken,
+    organization_id: Option<OrganizationId>,
     body: WebSearchBody,
 ) -> Result<WebSearchResponse> {
     const MAX_RETRIES: usize = 3;
 
     let http_client = &client.http_client();
     let mut retries_remaining = MAX_RETRIES;
-    let mut token = llm_api_token.acquire(&client).await?;
+    let mut token = llm_api_token
+        .acquire(&client, organization_id.clone())
+        .await?;
 
     loop {
         if retries_remaining == 0 {
@@ -100,7 +118,9 @@ async fn perform_web_search(
             response.body_mut().read_to_string(&mut body).await?;
             return Ok(serde_json::from_str(&body)?);
         } else if response.needs_llm_token_refresh() {
-            token = llm_api_token.refresh(&client).await?;
+            token = llm_api_token
+                .refresh(&client, organization_id.clone())
+                .await?;
             retries_remaining -= 1;
         } else {
             // For now we will only retry if the LLM token is expired,

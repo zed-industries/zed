@@ -274,7 +274,23 @@ impl WslRunningKernel {
                     cd_command, set_env_command, arg_string, arg_string, arg_string, arg_string
                 )
             } else {
-                quote_posix_shell_arguments(&kernel_args)?
+                let args_string = quote_posix_shell_arguments(&resolved_argv)?;
+
+                let cd_command = if let Some(wd) = wsl_working_directory.as_ref() {
+                    let quoted_wd = shlex::try_quote(wd)
+                        .map(|quoted| quoted.into_owned())?;
+                    format!("cd {quoted_wd} && ")
+                } else {
+                    String::new()
+                };
+
+                let env_prefix_inline = if !env_assignments.is_empty() {
+                    format!("env {} ", env_assignments.join(" "))
+                } else {
+                    String::new()
+                };
+
+                format!("{cd_command}exec {env_prefix_inline}{args_string}")
             };
 
             cmd.arg("bash")
@@ -578,8 +594,20 @@ pub async fn wsl_kernel_specifications(
                                 })
                             })
                             .collect::<Vec<_>>();
+                    } else if let Err(e) =
+                        serde_json::from_str::<LocalKernelSpecsResponse>(&json_str)
+                    {
+                        log::error!(
+                            "wsl_kernel_specifications parse error: {} \nJSON: {}",
+                            e,
+                            json_str
+                        );
                     }
+                } else {
+                    log::error!("wsl_kernel_specifications command failed");
                 }
+            } else if let Err(e) = output {
+                log::error!("wsl_kernel_specifications command execution failed: {}", e);
             }
 
             Vec::new()

@@ -1378,12 +1378,9 @@ impl ToolchainLister for PythonToolchainProvider {
 
             match toolchain.environment.kind {
                 Some(PythonEnvironmentKind::Conda) => {
-                    let Some(manager_info) = &toolchain.environment.manager else {
+                    if toolchain.environment.manager.is_none() {
                         return vec![];
                     };
-                    if smol::fs::metadata(&manager_info.executable).await.is_err() {
-                        return vec![];
-                    }
 
                     let manager = match conda_manager {
                         settings::CondaManager::Conda => "conda",
@@ -1849,6 +1846,17 @@ impl LspInstaller for PyLspAdapter {
     ) -> Option<LanguageServerBinary> {
         if let Some(pylsp_bin) = delegate.which(Self::SERVER_NAME.as_ref()).await {
             let env = delegate.shell_env().await;
+            delegate
+                .try_exec(LanguageServerBinary {
+                    path: pylsp_bin.clone(),
+                    arguments: vec!["--version".into()],
+                    env: Some(env.clone()),
+                })
+                .await
+                .inspect_err(|err| {
+                    log::warn!("failed to validate user-installed pylsp at {pylsp_bin:?}: {err:#}")
+                })
+                .ok()?;
             Some(LanguageServerBinary {
                 path: pylsp_bin,
                 env: Some(env),
@@ -1857,7 +1865,21 @@ impl LspInstaller for PyLspAdapter {
         } else {
             let toolchain = toolchain?;
             let pylsp_path = Path::new(toolchain.path.as_ref()).parent()?.join("pylsp");
-            pylsp_path.exists().then(|| LanguageServerBinary {
+            if !pylsp_path.exists() {
+                return None;
+            }
+            delegate
+                .try_exec(LanguageServerBinary {
+                    path: toolchain.path.to_string().into(),
+                    arguments: vec![pylsp_path.clone().into(), "--version".into()],
+                    env: None,
+                })
+                .await
+                .inspect_err(|err| {
+                    log::warn!("failed to validate toolchain pylsp at {pylsp_path:?}: {err:#}")
+                })
+                .ok()?;
+            Some(LanguageServerBinary {
                 path: toolchain.path.to_string().into(),
                 arguments: vec![pylsp_path.into()],
                 env: None,

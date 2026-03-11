@@ -27,9 +27,9 @@ mod workspace_settings;
 pub use crate::notifications::NotificationFrame;
 pub use dock::Panel;
 pub use multi_workspace::{
-    DraggedSidebar, FocusWorkspaceSidebar, MultiWorkspace, NewWorkspaceInWindow,
-    NextWorkspaceInWindow, PreviousWorkspaceInWindow, Sidebar, SidebarEvent, SidebarHandle,
-    ToggleWorkspaceSidebar,
+    DraggedSidebar, FocusWorkspaceSidebar, MultiWorkspace, MultiWorkspaceEvent,
+    NewWorkspaceInWindow, NextWorkspaceInWindow, PreviousWorkspaceInWindow,
+    SIDEBAR_RESIZE_HANDLE_SIZE, ToggleWorkspaceSidebar, multi_workspace_enabled,
 };
 pub use path_list::{PathList, SerializedPathList};
 pub use toast_layer::{ToastAction, ToastLayer, ToastView};
@@ -80,8 +80,8 @@ use persistence::{DB, SerializedWindowBounds, model::SerializedWorkspace};
 pub use persistence::{
     DB as WORKSPACE_DB, WorkspaceDb, delete_unloaded_items,
     model::{
-        DockStructure, ItemId, SerializedMultiWorkspace, SerializedWorkspaceLocation,
-        SessionWorkspace,
+        DockStructure, ItemId, MultiWorkspaceId, SerializedMultiWorkspace,
+        SerializedWorkspaceLocation, SessionWorkspace,
     },
     read_serialized_multi_workspaces,
 };
@@ -209,6 +209,34 @@ pub trait DebuggerProvider {
     fn active_thread_state(&self, cx: &App) -> Option<ThreadStatus>;
 }
 
+/// Opens a file or directory.
+#[derive(Clone, PartialEq, Deserialize, JsonSchema, Action)]
+#[action(namespace = workspace)]
+pub struct Open {
+    /// When true, opens in a new window. When false, adds to the current
+    /// window as a new workspace (multi-workspace).
+    #[serde(default = "Open::default_create_new_window")]
+    pub create_new_window: bool,
+}
+
+impl Open {
+    pub const DEFAULT: Self = Self {
+        create_new_window: true,
+    };
+
+    /// Used by `#[serde(default)]` on the `create_new_window` field so that
+    /// the serde default and `Open::DEFAULT` stay in sync.
+    fn default_create_new_window() -> bool {
+        Self::DEFAULT.create_new_window
+    }
+}
+
+impl Default for Open {
+    fn default() -> Self {
+        Self::DEFAULT
+    }
+}
+
 actions!(
     workspace,
     [
@@ -254,8 +282,6 @@ actions!(
         NewSearch,
         /// Opens a new window.
         NewWindow,
-        /// Opens a file or directory.
-        Open,
         /// Opens multiple files.
         OpenFiles,
         /// Opens the current location in terminal.
@@ -626,7 +652,7 @@ fn prompt_and_open_paths(app_state: Arc<AppState>, options: PathPromptOptions, c
             .update(cx, |multi_workspace, window, cx| {
                 let workspace = multi_workspace.workspace().clone();
                 workspace.update(cx, |workspace, cx| {
-                    prompt_for_open_path_and_open(workspace, app_state, options, window, cx);
+                    prompt_for_open_path_and_open(workspace, app_state, options, true, window, cx);
                 });
             })
             .ok();
@@ -638,7 +664,7 @@ fn prompt_and_open_paths(app_state: Arc<AppState>, options: PathPromptOptions, c
                 window.activate_window();
                 let workspace = multi_workspace.workspace().clone();
                 workspace.update(cx, |workspace, cx| {
-                    prompt_for_open_path_and_open(workspace, app_state, options, window, cx);
+                    prompt_for_open_path_and_open(workspace, app_state, options, true, window, cx);
                 });
             })?;
             anyhow::Ok(())
@@ -651,6 +677,7 @@ pub fn prompt_for_open_path_and_open(
     workspace: &mut Workspace,
     app_state: Arc<AppState>,
     options: PathPromptOptions,
+    create_new_window: bool,
     window: &mut Window,
     cx: &mut Context<Workspace>,
 ) {
@@ -660,10 +687,24 @@ pub fn prompt_for_open_path_and_open(
         window,
         cx,
     );
+    let multi_workspace_handle = window.window_handle().downcast::<MultiWorkspace>();
     cx.spawn_in(window, async move |this, cx| {
         let Some(paths) = paths.await.log_err().flatten() else {
             return;
         };
+        if !create_new_window {
+            if let Some(handle) = multi_workspace_handle {
+                if let Some(task) = handle
+                    .update(cx, |multi_workspace, window, cx| {
+                        multi_workspace.open_project(paths, window, cx)
+                    })
+                    .log_err()
+                {
+                    task.await.log_err();
+                }
+                return;
+            }
+        }
         if let Some(task) = this
             .update_in(cx, |this, window, cx| {
                 this.open_workspace_for_paths(false, paths, window, cx)
@@ -1189,6 +1230,7 @@ pub enum Event {
     ZoomChanged,
     ModalOpened,
     Activate,
+    PanelAdded(AnyView),
 }
 
 #[derive(Debug, Clone)]
@@ -2088,10 +2130,13 @@ impl Workspace {
 
         let dock_position = panel.position(window, cx);
         let dock = self.dock_at_position(dock_position);
+        let any_panel = panel.to_any();
 
         dock.update(cx, |dock, cx| {
             dock.add_panel(panel, self.weak_self.clone(), window, cx)
         });
+
+        cx.emit(Event::PanelAdded(any_panel));
     }
 
     pub fn remove_panel<T: Panel>(
@@ -2107,12 +2152,6 @@ impl Workspace {
 
     pub fn status_bar(&self) -> &Entity<StatusBar> {
         &self.status_bar
-    }
-
-    pub fn set_workspace_sidebar_open(&self, open: bool, cx: &mut App) {
-        self.status_bar.update(cx, |status_bar, cx| {
-            status_bar.set_workspace_sidebar_open(open, cx);
-        });
     }
 
     pub fn status_bar_visible(&self, cx: &App) -> bool {
@@ -7040,7 +7079,17 @@ impl Workspace {
     }
 
     fn resize_left_dock(&mut self, new_size: Pixels, window: &mut Window, cx: &mut App) {
-        let size = new_size.min(self.bounds.right() - RESIZE_HANDLE_SIZE);
+        let workspace_width = self.bounds.size.width;
+        let mut size = new_size.min(workspace_width - RESIZE_HANDLE_SIZE);
+
+        self.right_dock.read_with(cx, |right_dock, cx| {
+            let right_dock_size = right_dock
+                .active_panel_size(window, cx)
+                .unwrap_or(Pixels::ZERO);
+            if right_dock_size + size > workspace_width {
+                size = workspace_width - right_dock_size
+            }
+        });
 
         self.left_dock.update(cx, |left_dock, cx| {
             if WorkspaceSettings::get_global(cx)
@@ -7055,13 +7104,14 @@ impl Workspace {
     }
 
     fn resize_right_dock(&mut self, new_size: Pixels, window: &mut Window, cx: &mut App) {
-        let mut size = new_size.max(self.bounds.left() - RESIZE_HANDLE_SIZE);
+        let workspace_width = self.bounds.size.width;
+        let mut size = new_size.min(workspace_width - RESIZE_HANDLE_SIZE);
         self.left_dock.read_with(cx, |left_dock, cx| {
             let left_dock_size = left_dock
                 .active_panel_size(window, cx)
                 .unwrap_or(Pixels::ZERO);
-            if left_dock_size + size > self.bounds.right() {
-                size = self.bounds.right() - left_dock_size
+            if left_dock_size + size > workspace_width {
+                size = workspace_width - left_dock_size
             }
         });
         self.right_dock.update(cx, |right_dock, cx| {
@@ -7622,6 +7672,7 @@ impl Render for Workspace {
                                             {
                                                 workspace.previous_dock_drag_coordinates =
                                                     Some(e.event.position);
+
                                                 match e.drag(cx).0 {
                                                     DockPosition::Left => {
                                                         workspace.resize_left_dock(
@@ -8127,7 +8178,11 @@ pub async fn restore_multiworkspace(
     app_state: Arc<AppState>,
     cx: &mut AsyncApp,
 ) -> anyhow::Result<MultiWorkspaceRestoreResult> {
-    let SerializedMultiWorkspace { workspaces, state } = multi_workspace;
+    let SerializedMultiWorkspace {
+        workspaces,
+        state,
+        id: window_id,
+    } = multi_workspace;
     let mut group_iter = workspaces.into_iter();
     let first = group_iter
         .next()
@@ -8191,6 +8246,7 @@ pub async fn restore_multiworkspace(
     if let Some(target_id) = state.active_workspace_id {
         window_handle
             .update(cx, |multi_workspace, window, cx| {
+                multi_workspace.set_database_id(window_id);
                 let target_index = multi_workspace
                     .workspaces()
                     .iter()
@@ -8208,14 +8264,6 @@ pub async fn restore_multiworkspace(
                 if !multi_workspace.workspaces().is_empty() {
                     multi_workspace.activate_index(0, window, cx);
                 }
-            })
-            .ok();
-    }
-
-    if state.sidebar_open {
-        window_handle
-            .update(cx, |multi_workspace, _, cx| {
-                multi_workspace.open_sidebar(cx);
             })
             .ok();
     }
@@ -10649,6 +10697,85 @@ mod tests {
         cx.run_until_parked();
         assert!(cx.has_pending_prompt());
         item.read_with(cx, |item, _| assert_eq!(item.save_count, 6));
+    }
+
+    #[gpui::test]
+    async fn test_autosave_on_focus_change_in_multibuffer(cx: &mut gpui::TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
+
+        // Create a multibuffer-like item with two child focus handles,
+        // simulating individual buffer editors within a multibuffer.
+        let item = cx.new(|cx| {
+            TestItem::new(cx)
+                .with_project_items(&[TestProjectItem::new(1, "1.txt", cx)])
+                .with_child_focus_handles(2, cx)
+        });
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.add_item_to_active_pane(Box::new(item.clone()), None, true, window, cx);
+        });
+
+        // Set autosave to OnFocusChange and focus the first child handle,
+        // simulating the user's cursor being inside one of the multibuffer's excerpts.
+        item.update_in(cx, |item, window, cx| {
+            SettingsStore::update_global(cx, |settings, cx| {
+                settings.update_user_settings(cx, |settings| {
+                    settings.workspace.autosave = Some(AutosaveSetting::OnFocusChange);
+                })
+            });
+            item.is_dirty = true;
+            window.focus(&item.child_focus_handles[0], cx);
+        });
+        cx.executor().run_until_parked();
+        item.read_with(cx, |item, _| assert_eq!(item.save_count, 0));
+
+        // Moving focus from one child to another within the same item should
+        // NOT trigger autosave — focus is still within the item's focus hierarchy.
+        item.update_in(cx, |item, window, cx| {
+            window.focus(&item.child_focus_handles[1], cx);
+        });
+        cx.executor().run_until_parked();
+        item.read_with(cx, |item, _| {
+            assert_eq!(
+                item.save_count, 0,
+                "Switching focus between children within the same item should not autosave"
+            );
+        });
+
+        // Blurring the item saves the file. This is the core regression scenario:
+        // with `on_blur`, this would NOT trigger because `on_blur` only fires when
+        // the item's own focus handle is the leaf that lost focus. In a multibuffer,
+        // the leaf is always a child focus handle, so `on_blur` never detected
+        // focus leaving the item.
+        item.update_in(cx, |_, window, _| window.blur());
+        cx.executor().run_until_parked();
+        item.read_with(cx, |item, _| {
+            assert_eq!(
+                item.save_count, 1,
+                "Blurring should trigger autosave when focus was on a child of the item"
+            );
+        });
+
+        // Deactivating the window should also trigger autosave when a child of
+        // the multibuffer item currently owns focus.
+        item.update_in(cx, |item, window, cx| {
+            item.is_dirty = true;
+            window.focus(&item.child_focus_handles[0], cx);
+        });
+        cx.executor().run_until_parked();
+        item.read_with(cx, |item, _| assert_eq!(item.save_count, 1));
+
+        cx.deactivate_window();
+        item.read_with(cx, |item, _| {
+            assert_eq!(
+                item.save_count, 2,
+                "Deactivating window should trigger autosave when focus was on a child"
+            );
+        });
     }
 
     #[gpui::test]
