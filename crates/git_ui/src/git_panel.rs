@@ -653,6 +653,7 @@ pub struct GitPanel {
     local_committer_task: Option<Task<()>>,
     bulk_staging: Option<BulkStaging>,
     stash_entries: GitStash,
+    periodic_scan_task: Option<Task<()>>,
 
     _settings_subscription: Subscription,
 }
@@ -826,6 +827,7 @@ impl GitPanel {
                 entry_count: 0,
                 bulk_staging: None,
                 stash_entries: Default::default(),
+                periodic_scan_task: None,
                 _settings_subscription,
             };
 
@@ -975,6 +977,7 @@ impl GitPanel {
     }
 
     fn close_panel(&mut self, _: &Close, _window: &mut Window, cx: &mut Context<Self>) {
+        self.periodic_scan_task = None;
         cx.emit(PanelEvent::Close);
     }
 
@@ -982,6 +985,47 @@ impl GitPanel {
         if !self.focus_handle.contains_focused(window, cx) {
             cx.emit(Event::Focus);
         }
+
+        // Start periodic repository scanning to detect changes outside the worktree
+        if self.periodic_scan_task.is_none() {
+            self.start_periodic_scan(cx);
+        }
+    }
+
+    fn start_periodic_scan(&mut self, cx: &mut Context<Self>) {
+        let Some(repo) = self.active_repository.clone() else {
+            return;
+        };
+
+        self.periodic_scan_task = Some(cx.spawn(async move |this, cx| {
+            // Scan immediately on focus
+            if let Some(repo) = this
+                .update(cx, |this, _| this.active_repository.clone())
+                .ok()
+                .flatten()
+            {
+                let _ = repo.update(cx, |repo, cx| {
+                    repo.refresh_status(cx);
+                });
+            }
+
+            // Then continue with periodic scans every 3 seconds
+            loop {
+                cx.background_executor().timer(Duration::from_secs(3)).await;
+
+                if let Some(repo) = this
+                    .update(cx, |this, _| this.active_repository.clone())
+                    .ok()
+                    .flatten()
+                {
+                    let _ = repo.update(cx, |repo, cx| {
+                        repo.refresh_status(cx);
+                    });
+                } else {
+                    break;
+                }
+            }
+        }));
     }
 
     fn scroll_to_selected_entry(&mut self, cx: &mut Context<Self>) {

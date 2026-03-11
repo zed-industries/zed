@@ -4252,7 +4252,7 @@ impl Repository {
                 .await??;
 
                 this.update(cx, |this, cx| {
-                    this.paths_changed(paths, None, cx);
+                    this.schedule_scan(None, cx);
                 })?;
 
                 Ok(())
@@ -6216,6 +6216,11 @@ impl Repository {
         }
 
         self.pending_ops = updated;
+    }
+
+    /// Trigger a full repository status refresh.
+    pub fn refresh_status(&mut self, cx: &mut Context<Self>) {
+        self.schedule_scan(None, cx);
     }
 
     fn schedule_scan(
