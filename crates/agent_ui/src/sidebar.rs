@@ -3,6 +3,7 @@ use acp_thread::ThreadStatus;
 use agent::ThreadStore;
 use agent_client_protocol as acp;
 use chrono::Utc;
+use db::kvp::KEY_VALUE_STORE;
 use editor::{Editor, EditorElement, EditorStyle};
 use feature_flags::{AgentV2FeatureFlag, FeatureFlagViewExt as _};
 use gpui::{
@@ -19,6 +20,7 @@ use ui::{
     AgentThreadStatus, ButtonStyle, HighlightedLabel, IconButtonShape, ListItem, Tab, ThreadItem,
     Tooltip, WithScrollbar, prelude::*,
 };
+use util::ResultExt as _;
 use util::path_list::PathList;
 use workspace::{MultiWorkspace, MultiWorkspaceEvent, Workspace, multi_workspace_enabled};
 use zed_actions::editor::{MoveDown, MoveUp};
@@ -37,6 +39,27 @@ const DEFAULT_WIDTH: Pixels = px(320.0);
 const MIN_WIDTH: Pixels = px(200.0);
 const MAX_WIDTH: Pixels = px(800.0);
 const DEFAULT_THREADS_SHOWN: usize = 5;
+const SIDEBAR_STATE_KEY: &str = "sidebar_state";
+
+fn read_sidebar_open_state(multi_workspace_id: u64) -> bool {
+    KEY_VALUE_STORE
+        .scoped(SIDEBAR_STATE_KEY)
+        .read(&multi_workspace_id.to_string())
+        .log_err()
+        .flatten()
+        .and_then(|json| serde_json::from_str::<bool>(&json).ok())
+        .unwrap_or(false)
+}
+
+async fn save_sidebar_open_state(multi_workspace_id: u64, is_open: bool) {
+    if let Ok(json) = serde_json::to_string(&is_open) {
+        KEY_VALUE_STORE
+            .scoped(SIDEBAR_STATE_KEY)
+            .write(multi_workspace_id.to_string(), json)
+            .await
+            .log_err();
+    }
+}
 
 #[derive(Clone, Debug)]
 struct ActiveThreadInfo {
@@ -166,6 +189,7 @@ fn workspace_path_list_and_label(
 
 pub struct Sidebar {
     multi_workspace: WeakEntity<MultiWorkspace>,
+    persistence_key: Option<u64>,
     is_open: bool,
     width: Pixels,
     focus_handle: FocusHandle,
@@ -261,9 +285,15 @@ impl Sidebar {
             this.update_entries(cx);
         });
 
+        let persistence_key = multi_workspace.read(cx).database_id().map(|id| id.0);
+        let is_open = persistence_key
+            .map(read_sidebar_open_state)
+            .unwrap_or(false);
+
         Self {
             multi_workspace: multi_workspace.downgrade(),
-            is_open: false,
+            persistence_key,
+            is_open,
             width: DEFAULT_WIDTH,
             focus_handle,
             filter_editor,
@@ -1303,6 +1333,13 @@ impl Sidebar {
         }
         self.is_open = open;
         cx.notify();
+        if let Some(key) = self.persistence_key {
+            let is_open = self.is_open;
+            cx.background_spawn(async move {
+                save_sidebar_open_state(key, is_open).await;
+            })
+            .detach();
+        }
     }
 
     pub fn toggle(&mut self, window: &mut Window, cx: &mut Context<Self>) {

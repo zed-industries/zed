@@ -130,6 +130,10 @@ fn find_or_create_sidebar_for_window(
         cx.set_global(SidebarsByWindow::default());
     }
 
+    cx.global_mut::<SidebarsByWindow>()
+        .0
+        .retain(|_, weak| weak.upgrade().is_some());
+
     let existing = cx
         .global::<SidebarsByWindow>()
         .0
@@ -3660,13 +3664,19 @@ impl AgentPanel {
             return None;
         }
 
+        let docked_right = agent_panel_dock_position(cx) == DockPosition::Right;
         let sidebar = self.sidebar.as_ref()?.downgrade();
 
         let resize_handle = deferred(
             div()
                 .id("sidebar-resize-handle")
                 .absolute()
-                .right(-SIDEBAR_RESIZE_HANDLE_SIZE / 2.)
+                .when(docked_right, |this| {
+                    this.left(-SIDEBAR_RESIZE_HANDLE_SIZE / 2.)
+                })
+                .when(!docked_right, |this| {
+                    this.right(-SIDEBAR_RESIZE_HANDLE_SIZE / 2.)
+                })
                 .top(px(0.))
                 .h_full()
                 .w(SIDEBAR_RESIZE_HANDLE_SIZE)
@@ -3698,7 +3708,8 @@ impl AgentPanel {
                 .h_full()
                 .w(sidebar_width)
                 .flex_shrink_0()
-                .border_r_1()
+                .when(docked_right, |this| this.border_l_1())
+                .when(!docked_right, |this| this.border_r_1())
                 .border_color(cx.theme().colors().border)
                 .child(sidebar_view)
                 .child(resize_handle)
@@ -3709,6 +3720,7 @@ impl AgentPanel {
     fn render_toolbar(&self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let agent_server_store = self.project.read(cx).agent_server_store().clone();
         let focus_handle = self.focus_handle(cx);
+        let docked_right = agent_panel_dock_position(cx) == DockPosition::Right;
 
         let (selected_agent_custom_icon, selected_agent_label) =
             if let AgentType::Custom { name, .. } = &self.selected_agent {
@@ -4171,7 +4183,9 @@ impl AgentPanel {
                         .size_full()
                         .gap(DynamicSpacing::Base04.rems(cx))
                         .pl(DynamicSpacing::Base04.rems(cx))
-                        .children(self.render_sidebar_toggle(cx))
+                        .when(!docked_right, |this| {
+                            this.children(self.render_sidebar_toggle(cx))
+                        })
                         .child(agent_selector_menu)
                         .child(self.render_start_thread_in_selector(cx)),
                 )
@@ -4187,6 +4201,9 @@ impl AgentPanel {
                                 Corner::TopRight,
                                 cx,
                             ))
+                        })
+                        .when(docked_right, |this| {
+                            this.children(self.render_sidebar_toggle(cx))
                         })
                         .child(self.render_panel_options_menu(window, cx)),
                 )
@@ -4226,7 +4243,9 @@ impl AgentPanel {
                         .size_full()
                         .gap(DynamicSpacing::Base04.rems(cx))
                         .pl(DynamicSpacing::Base04.rems(cx))
-                        .children(self.render_sidebar_toggle(cx))
+                        .when(!docked_right, |this| {
+                            this.children(self.render_sidebar_toggle(cx))
+                        })
                         .child(match &self.active_view {
                             ActiveView::History { .. } | ActiveView::Configuration => {
                                 self.render_toolbar_back_button(cx).into_any_element()
@@ -4248,6 +4267,9 @@ impl AgentPanel {
                                 Corner::TopRight,
                                 cx,
                             ))
+                        })
+                        .when(docked_right, |this| {
+                            this.children(self.render_sidebar_toggle(cx))
                         })
                         .child(self.render_panel_options_menu(window, cx)),
                 )
@@ -4791,6 +4813,7 @@ impl Render for AgentPanel {
 
         let sidebar = self.render_sidebar(cx);
         let has_sidebar = sidebar.is_some();
+        let docked_right = agent_panel_dock_position(cx) == DockPosition::Right;
 
         let panel = h_flex()
             .size_full()
@@ -4798,15 +4821,25 @@ impl Render for AgentPanel {
                 this.on_drag_move(cx.listener(
                     move |this, e: &DragMoveEvent<DraggedSidebar>, _window, cx| {
                         if let Some(sidebar) = &this.sidebar {
+                            let width = if docked_right {
+                                e.bounds.right() - e.event.position.x
+                            } else {
+                                e.event.position.x
+                            };
                             sidebar.update(cx, |sidebar, cx| {
-                                sidebar.set_width(Some(e.event.position.x), cx);
+                                sidebar.set_width(Some(width), cx);
                             });
                         }
                     },
                 ))
             })
-            .children(sidebar)
-            .child(content);
+            .map(|this| {
+                if docked_right {
+                    this.child(content).children(sidebar)
+                } else {
+                    this.children(sidebar).child(content)
+                }
+            });
 
         match self.active_view.which_font_size_used() {
             WhichFontSize::AgentFont => {
