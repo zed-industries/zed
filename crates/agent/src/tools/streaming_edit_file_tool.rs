@@ -3735,6 +3735,106 @@ mod tests {
         );
     }
 
+    #[gpui::test]
+    async fn test_streaming_edit_file_tool_fields_out_of_order_in_write_mode(
+        cx: &mut TestAppContext,
+    ) {
+        let (tool, _project, _action_log, _fs, _thread) =
+            setup_test(cx, json!({"file.txt": "old_content"})).await;
+        let (sender, input) = ToolInput::<StreamingEditFileToolInput>::test();
+        let (event_stream, _receiver) = ToolCallEventStream::test();
+        let task = cx.update(|cx| tool.clone().run(input, event_stream, cx));
+
+        sender.send_partial(json!({
+            "display_description": "Overwrite file",
+            "mode": "write"
+        }));
+        cx.run_until_parked();
+
+        sender.send_partial(json!({
+            "display_description": "Overwrite file",
+            "mode": "write",
+            "content": "new_content"
+        }));
+        cx.run_until_parked();
+
+        sender.send_partial(json!({
+            "display_description": "Overwrite file",
+            "mode": "write",
+            "content": "new_content",
+            "path": "root"
+        }));
+        cx.run_until_parked();
+
+        // Send final.
+        sender.send_final(json!({
+            "display_description": "Overwrite file",
+            "mode": "write",
+            "content": "new_content",
+            "path": "root/file.txt"
+        }));
+
+        let result = task.await;
+        let StreamingEditFileToolOutput::Success { new_text, .. } = result.unwrap() else {
+            panic!("expected success");
+        };
+        assert_eq!(new_text, "new_content");
+    }
+
+    #[gpui::test]
+    async fn test_streaming_edit_file_tool_fields_out_of_order_in_edit_mode(
+        cx: &mut TestAppContext,
+    ) {
+        let (tool, _project, _action_log, _fs, _thread) =
+            setup_test(cx, json!({"file.txt": "old_content"})).await;
+        let (sender, input) = ToolInput::<StreamingEditFileToolInput>::test();
+        let (event_stream, _receiver) = ToolCallEventStream::test();
+        let task = cx.update(|cx| tool.clone().run(input, event_stream, cx));
+
+        sender.send_partial(json!({
+            "display_description": "Overwrite file",
+            "mode": "edit"
+        }));
+        cx.run_until_parked();
+
+        sender.send_partial(json!({
+            "display_description": "Overwrite file",
+            "mode": "edit",
+            "edits": [{"old_text": "content"}]
+        }));
+        cx.run_until_parked();
+
+        sender.send_partial(json!({
+            "display_description": "Overwrite file",
+            "mode": "edit",
+            "edits": [{"old_text": "content", "new_text": "new_content"}]
+        }));
+        cx.run_until_parked();
+
+        sender.send_partial(json!({
+            "display_description": "Overwrite file",
+            "mode": "edit",
+            "edits": [{"old_text": "content", "new_text": "new_content"}],
+            "path": "root"
+        }));
+        cx.run_until_parked();
+
+        // Send final.
+        sender.send_partial(json!({
+            "display_description": "Overwrite file",
+            "mode": "edit",
+            "edits": [{"old_text": "content", "new_text": "new_content"}],
+            "path": "root/file.txt"
+        }));
+        cx.run_until_parked();
+
+        let result = task.await;
+        let StreamingEditFileToolOutput::Success { new_text, .. } = result.unwrap() else {
+            panic!("expected success");
+        };
+        assert_eq!(new_text, "new_content");
+    }
+
     async fn setup_test_with_fs(
         cx: &mut TestAppContext,
         fs: Arc<project::FakeFs>,
