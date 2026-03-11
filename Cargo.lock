@@ -3591,6 +3591,7 @@ dependencies = [
  "smol",
  "tempfile",
  "terminal",
+ "tiny_http",
  "url",
  "util",
 ]

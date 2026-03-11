@@ -25,8 +25,6 @@ use http_client::{AsyncBody, HttpClient, Request};
 use parking_lot::Mutex as SyncMutex;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use smol::io::AsyncWriteExt as _;
-use smol::net::TcpListener;
 
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
@@ -829,24 +827,6 @@ async fn post_token_request(
 }
 
 // -- Loopback HTTP callback server -------------------------------------------
-//
-// FIXME: Everything below is a hand-rolled, single-request HTTP/1.1 server on
-// a bare TCP socket. It exists because we need a loopback redirect URI for the
-// OAuth authorization code flow, and the loopback approach is the most portable
-// (works on all platforms without custom URL scheme registration). The right
-// long-term fix is to switch to `zed://oauth/callback` as the redirect URI,
-// which would eliminate this server entirely, allow DCR registrations to be
-// cached across flows (the redirect URI would be stable), and give a cleaner
-// UX (no leftover browser tab). That requires:
-//   1. A global callback dispatch table keyed by the `state` parameter, since
-//      the URL arrives through the OS event loop rather than a dedicated socket.
-//   2. Implementing `register_url_scheme` on Linux and Windows (currently
-//      unimplemented in gpui).
-//   3. Verifying that MCP-spec-compliant auth servers accept non-HTTP redirect
-//      URIs (RFC 8252 blesses `http://127.0.0.1`, but custom schemes are less
-//      universally supported).
-// Until then, please resist the temptation to grow this into a real HTTP server
-// — it only needs to read one request line and send one canned response.
 
 /// An OAuth authorization callback received via the loopback HTTP server.
 #[derive(Debug)]
@@ -892,11 +872,6 @@ impl OAuthCallback {
 /// up and releasing the loopback port.
 const CALLBACK_TIMEOUT: Duration = Duration::from_secs(5 * 60);
 
-/// Maximum number of bytes we'll buffer when reading the HTTP request from the
-/// browser. The request line is all we need, but browsers may send large
-/// headers (cookies, etc.), so we allow a generous limit.
-const CALLBACK_MAX_REQUEST_BYTES: usize = 64 * 1024;
-
 /// Start a loopback HTTP server on an ephemeral port to receive the OAuth
 /// authorization callback.
 ///
@@ -915,128 +890,87 @@ pub async fn start_callback_server() -> Result<(
     String,
     futures::channel::oneshot::Receiver<Result<OAuthCallback>>,
 )> {
-    let listener = TcpListener::bind("127.0.0.1:0")
-        .await
-        .context("Failed to bind loopback listener for OAuth callback")?;
-    let port = listener.local_addr()?.port();
+    let server = tiny_http::Server::http("127.0.0.1:0")
+        .map_err(|e| anyhow!(e).context("Failed to bind loopback listener for OAuth callback"))?;
+    let port = server.server_addr().port();
     let redirect_uri = format!("http://127.0.0.1:{}/callback", port);
 
     let (tx, rx) = futures::channel::oneshot::channel();
 
-    // The `tx.is_canceled()` check lets us shut down when the receiver is
-    // dropped, e.g. because the Authenticating task was cancelled.
-    smol::spawn(async move {
-        let timeout = smol::Timer::after(CALLBACK_TIMEOUT);
-        let accept = async {
-            loop {
-                if tx.is_canceled() {
+    // `tiny_http` is blocking, so we run it on a background thread.
+    // The `recv_timeout` loop lets us check for cancellation (the receiver
+    // being dropped) and enforce an overall timeout.
+    std::thread::spawn(move || {
+        let deadline = std::time::Instant::now() + CALLBACK_TIMEOUT;
+
+        loop {
+            if tx.is_canceled() {
+                return;
+            }
+            let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+            if remaining.is_zero() {
+                return;
+            }
+
+            let timeout = remaining.min(Duration::from_millis(500));
+            let Some(request) = (match server.recv_timeout(timeout) {
+                Ok(req) => req,
+                Err(_) => {
+                    let _ = tx.send(Err(anyhow!("OAuth callback server I/O error")));
                     return;
                 }
-                match futures::future::select(
-                    std::pin::pin!(listener.accept()),
-                    std::pin::pin!(smol::Timer::after(Duration::from_millis(500))),
-                )
-                .await
-                {
-                    futures::future::Either::Left((Ok((stream, _addr)), _)) => {
-                        let result = handle_single_callback(stream).await;
-                        let _ = tx.send(result);
-                        return;
-                    }
-                    futures::future::Either::Left((Err(err), _)) => {
-                        let _ = tx.send(Err(err.into()));
-                        return;
-                    }
-                    // Poll timeout: loop back and re-check cancellation.
-                    futures::future::Either::Right(_) => continue,
-                }
-            }
-        };
+            }) else {
+                // Timeout with no request — loop back and check cancellation.
+                continue;
+            };
 
-        futures::future::select(std::pin::pin!(accept), std::pin::pin!(timeout)).await;
-    })
-    .detach();
+            let result = handle_callback_request(&request);
+
+            let (status_code, body) = match &result {
+                Ok(_) => (
+                    200,
+                    "<html><body><h1>Authorization successful</h1>\
+                     <p>You can close this tab and return to Zed.</p></body></html>",
+                ),
+                Err(err) => {
+                    log::error!("OAuth callback error: {}", err);
+                    (
+                        400,
+                        "<html><body><h1>Authorization failed</h1>\
+                         <p>Something went wrong. Please try again from Zed.</p></body></html>",
+                    )
+                }
+            };
+
+            let response = tiny_http::Response::from_string(body)
+                .with_status_code(status_code)
+                .with_header(
+                    tiny_http::Header::from_bytes(&b"Content-Type"[..], &b"text/html"[..]).unwrap(),
+                );
+            request.respond(response).log_err();
+
+            let _ = tx.send(result);
+            return;
+        }
+    });
 
     Ok((redirect_uri, rx))
 }
 
-/// Read the HTTP request headers from the stream, looping until the full
-/// `\r\n\r\n` terminator is received or the buffer limit is hit.
-async fn read_http_request_head(stream: &mut smol::net::TcpStream) -> Result<String> {
-    let mut buf = Vec::with_capacity(4096);
-    let mut tmp = [0u8; 4096];
+/// Extract the `code` and `state` query parameters from an OAuth callback
+/// request to `/callback`.
+fn handle_callback_request(request: &tiny_http::Request) -> Result<OAuthCallback> {
+    let url = Url::parse(&format!("http://localhost{}", request.url()))
+        .context("malformed callback request URL")?;
 
-    loop {
-        let n = smol::io::AsyncReadExt::read(stream, &mut tmp)
-            .await
-            .context("Failed to read from OAuth callback connection")?;
-        if n == 0 {
-            bail!("connection closed before full HTTP headers were received");
-        }
-        buf.extend_from_slice(&tmp[..n]);
-
-        if buf.windows(4).any(|window| window == b"\r\n\r\n") {
-            break;
-        }
-        if buf.len() >= CALLBACK_MAX_REQUEST_BYTES {
-            bail!(
-                "HTTP request headers exceeded {} bytes",
-                CALLBACK_MAX_REQUEST_BYTES
-            );
-        }
+    if url.path() != "/callback" {
+        bail!("unexpected path in OAuth callback: {}", url.path());
     }
 
-    String::from_utf8(buf).context("HTTP request headers are not valid UTF-8")
-}
-
-async fn handle_single_callback(mut stream: smol::net::TcpStream) -> Result<OAuthCallback> {
-    let request = read_http_request_head(&mut stream).await?;
-
-    // Parse the HTTP request line to extract the path and query string.
-    let request_line = request
-        .lines()
-        .next()
-        .ok_or_else(|| anyhow!("empty HTTP request on callback server"))?;
-
-    // Expected: "GET /callback?code=...&state=... HTTP/1.1"
-    let path = request_line
-        .split_whitespace()
-        .nth(1)
-        .ok_or_else(|| anyhow!("malformed HTTP request line"))?;
-
-    let result = if let Some(query) = path.strip_prefix("/callback?") {
-        OAuthCallback::parse_query(query)
-    } else if let Some(query) = path.strip_prefix("/callback%3F") {
-        // Some user agents may percent-encode the query separator.
-        OAuthCallback::parse_query(query)
-    } else {
-        Err(anyhow!("unexpected path in OAuth callback: {}", path))
-    };
-
-    let (status, body) = match &result {
-        Ok(_) => (
-            "200 OK",
-            "<html><body><h1>Authorization successful</h1><p>You can close this tab and return to Zed.</p></body></html>",
-        ),
-        Err(err) => {
-            log::error!("OAuth callback error: {}", err);
-            (
-                "400 Bad Request",
-                "<html><body><h1>Authorization failed</h1><p>Something went wrong. Please try again from Zed.</p></body></html>",
-            )
-        }
-    };
-
-    let response = format!(
-        "HTTP/1.1 {}\r\nContent-Type: text/html\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
-        status,
-        body.len(),
-        body,
-    );
-    stream.write_all(response.as_bytes()).await.log_err();
-    stream.flush().await.log_err();
-
-    result
+    let query = url
+        .query()
+        .ok_or_else(|| anyhow!("OAuth callback has no query string"))?;
+    OAuthCallback::parse_query(query)
 }
 
 // -- JSON fetch helper -------------------------------------------------------
