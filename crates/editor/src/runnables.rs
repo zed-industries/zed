@@ -127,12 +127,6 @@ impl Editor {
         let project = self.project().map(Entity::downgrade);
         let lsp_task_sources = self.lsp_task_sources(true, true, cx);
         let multi_buffer = self.buffer.downgrade();
-        dbg!((
-            cx.entity(),
-            self.title(cx),
-            self.enable_runnables,
-            self.lsp_data_enabled(),
-        ));
         self.runnables.runnables_update_task = cx.spawn_in(window, async move |editor, cx| {
             cx.background_executor().timer(UPDATE_DEBOUNCE).await;
             let Some(project) = project.and_then(|p| p.upgrade()) else {
@@ -465,6 +459,95 @@ impl Editor {
             )
     }
 
+    pub fn find_enclosing_node_task(
+        &mut self,
+        cx: &mut Context<Self>,
+    ) -> Option<(Entity<Buffer>, u32, Arc<RunnableTasks>)> {
+        let snapshot = self.buffer.read(cx).snapshot(cx);
+        let offset = self
+            .selections
+            .newest::<MultiBufferOffset>(&self.display_snapshot(cx))
+            .head();
+        let mut excerpt = snapshot.excerpt_containing(offset..offset)?;
+        let offset = excerpt.map_offset_to_buffer(offset);
+        let buffer_id = excerpt.buffer().remote_id();
+
+        let layer = excerpt.buffer().syntax_layer_at(offset)?;
+        let mut cursor = layer.node().walk();
+
+        while cursor.goto_first_child_for_byte(offset.0).is_some() {
+            if cursor.node().end_byte() == offset.0 {
+                cursor.goto_next_sibling();
+            }
+        }
+
+        // Ascend to the smallest ancestor that contains the range and has a task.
+        loop {
+            let node = cursor.node();
+            let node_range = node.byte_range();
+            let symbol_start_row = excerpt.buffer().offset_to_point(node.start_byte()).row;
+
+            // Check if this node contains our offset
+            if node_range.start <= offset.0 && node_range.end >= offset.0 {
+                // If it contains offset, check for task
+                if let Some(tasks) = self
+                    .runnables
+                    .runnables
+                    .get(&buffer_id)
+                    .and_then(|(_, tasks)| tasks.get(&symbol_start_row))
+                {
+                    let buffer = self.buffer.read(cx).buffer(buffer_id)?;
+                    return Some((buffer, symbol_start_row, Arc::new(tasks.to_owned())));
+                }
+            }
+
+            if !cursor.goto_parent() {
+                break;
+            }
+        }
+        None
+    }
+
+    pub fn render_run_indicator(
+        &self,
+        _style: &EditorStyle,
+        is_active: bool,
+        row: DisplayRow,
+        breakpoint: Option<(Anchor, Breakpoint, Option<BreakpointSessionState>)>,
+        cx: &mut Context<Self>,
+    ) -> IconButton {
+        let color = Color::Muted;
+        let position = breakpoint.as_ref().map(|(anchor, _, _)| *anchor);
+
+        IconButton::new(
+            ("run_indicator", row.0 as usize),
+            ui::IconName::PlayOutlined,
+        )
+        .shape(ui::IconButtonShape::Square)
+        .icon_size(IconSize::XSmall)
+        .icon_color(color)
+        .toggle_state(is_active)
+        .on_click(cx.listener(move |editor, e: &ClickEvent, window, cx| {
+            let quick_launch = match e {
+                ClickEvent::Keyboard(_) => true,
+                ClickEvent::Mouse(e) => e.down.button == MouseButton::Left,
+            };
+
+            window.focus(&editor.focus_handle(cx), cx);
+            editor.toggle_code_actions(
+                &ToggleCodeActions {
+                    deployed_from: Some(CodeActionSource::RunMenu(row)),
+                    quick_launch,
+                },
+                window,
+                cx,
+            );
+        }))
+        .on_right_click(cx.listener(move |editor, event: &ClickEvent, window, cx| {
+            editor.set_breakpoint_context_menu(row, position, event.position(), window, cx);
+        }))
+    }
+
     fn insert_runnables(
         &mut self,
         buffer: BufferId,
@@ -606,94 +689,5 @@ impl Editor {
         let buffer = self.buffer.read(cx).buffer(buffer_id)?;
         let tasks = Arc::new(tasks.to_owned());
         Some((buffer, row, tasks))
-    }
-
-    pub fn find_enclosing_node_task(
-        &mut self,
-        cx: &mut Context<Self>,
-    ) -> Option<(Entity<Buffer>, u32, Arc<RunnableTasks>)> {
-        let snapshot = self.buffer.read(cx).snapshot(cx);
-        let offset = self
-            .selections
-            .newest::<MultiBufferOffset>(&self.display_snapshot(cx))
-            .head();
-        let mut excerpt = snapshot.excerpt_containing(offset..offset)?;
-        let offset = excerpt.map_offset_to_buffer(offset);
-        let buffer_id = excerpt.buffer().remote_id();
-
-        let layer = excerpt.buffer().syntax_layer_at(offset)?;
-        let mut cursor = layer.node().walk();
-
-        while cursor.goto_first_child_for_byte(offset.0).is_some() {
-            if cursor.node().end_byte() == offset.0 {
-                cursor.goto_next_sibling();
-            }
-        }
-
-        // Ascend to the smallest ancestor that contains the range and has a task.
-        loop {
-            let node = cursor.node();
-            let node_range = node.byte_range();
-            let symbol_start_row = excerpt.buffer().offset_to_point(node.start_byte()).row;
-
-            // Check if this node contains our offset
-            if node_range.start <= offset.0 && node_range.end >= offset.0 {
-                // If it contains offset, check for task
-                if let Some(tasks) = self
-                    .runnables
-                    .runnables
-                    .get(&buffer_id)
-                    .and_then(|(_, tasks)| tasks.get(&symbol_start_row))
-                {
-                    let buffer = self.buffer.read(cx).buffer(buffer_id)?;
-                    return Some((buffer, symbol_start_row, Arc::new(tasks.to_owned())));
-                }
-            }
-
-            if !cursor.goto_parent() {
-                break;
-            }
-        }
-        None
-    }
-
-    pub fn render_run_indicator(
-        &self,
-        _style: &EditorStyle,
-        is_active: bool,
-        row: DisplayRow,
-        breakpoint: Option<(Anchor, Breakpoint, Option<BreakpointSessionState>)>,
-        cx: &mut Context<Self>,
-    ) -> IconButton {
-        let color = Color::Muted;
-        let position = breakpoint.as_ref().map(|(anchor, _, _)| *anchor);
-
-        IconButton::new(
-            ("run_indicator", row.0 as usize),
-            ui::IconName::PlayOutlined,
-        )
-        .shape(ui::IconButtonShape::Square)
-        .icon_size(IconSize::XSmall)
-        .icon_color(color)
-        .toggle_state(is_active)
-        .on_click(cx.listener(move |editor, e: &ClickEvent, window, cx| {
-            let quick_launch = match e {
-                ClickEvent::Keyboard(_) => true,
-                ClickEvent::Mouse(e) => e.down.button == MouseButton::Left,
-            };
-
-            window.focus(&editor.focus_handle(cx), cx);
-            editor.toggle_code_actions(
-                &ToggleCodeActions {
-                    deployed_from: Some(CodeActionSource::RunMenu(row)),
-                    quick_launch,
-                },
-                window,
-                cx,
-            );
-        }))
-        .on_right_click(cx.listener(move |editor, event: &ClickEvent, window, cx| {
-            editor.set_breakpoint_context_menu(row, position, event.position(), window, cx);
-        }))
     }
 }
