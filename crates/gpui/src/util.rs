@@ -125,11 +125,31 @@ pub(crate) fn atomic_incr_if_not_zero(counter: &AtomicUsize) -> usize {
     }
 }
 
+/// Rounds a device-pixel value to the nearest integer, with .5 ties rounded down.
+#[inline]
+pub(crate) fn round_device_pixels_midpoint_down(value: f32) -> f32 {
+    let floor = value.floor();
+    if value - floor > 0.5 {
+        floor + 1.0
+    } else {
+        floor
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use crate::TestAppContext;
 
     use super::*;
+
+    #[test]
+    fn test_round_device_pixels_midpoint_down() {
+        assert_eq!(round_device_pixels_midpoint_down(0.5), 0.0);
+        assert_eq!(round_device_pixels_midpoint_down(1.5), 1.0);
+        assert_eq!(round_device_pixels_midpoint_down(2.5), 2.0);
+        assert_eq!(round_device_pixels_midpoint_down(1.5001), 2.0);
+        assert_eq!(round_device_pixels_midpoint_down(-1.5), -2.0);
+    }
 
     #[gpui::test]
     async fn test_with_timeout(cx: &mut TestAppContext) {

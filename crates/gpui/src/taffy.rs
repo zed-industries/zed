@@ -1,6 +1,6 @@
 use crate::{
     AbsoluteLength, App, Bounds, DefiniteLength, Edges, Length, Pixels, Point, Size, Style, Window,
-    point, size,
+    point, size, util::round_device_pixels_midpoint_down,
 };
 use collections::{FxHashMap, FxHashSet};
 use stacksafe::{StackSafe, stacksafe};
@@ -369,16 +369,8 @@ impl ToTaffy<taffy::style::Style> for Style {
 
 impl ToTaffy<f32> for AbsoluteLength {
     fn to_taffy(&self, rem_size: Pixels, scale_factor: f32) -> f32 {
-        match self {
-            AbsoluteLength::Pixels(pixels) => {
-                let pixels: f32 = pixels.into();
-                pixels * scale_factor
-            }
-            AbsoluteLength::Rems(rems) => {
-                let pixels: f32 = (*rems * rem_size).into();
-                pixels * scale_factor
-            }
-        }
+        let logical_pixels = self.to_pixels(rem_size).0;
+        round_device_pixels_midpoint_down((logical_pixels * scale_factor).max(0.0))
     }
 }
 
@@ -407,16 +399,7 @@ impl ToTaffy<taffy::style::Dimension> for Length {
 impl ToTaffy<taffy::style::LengthPercentage> for DefiniteLength {
     fn to_taffy(&self, rem_size: Pixels, scale_factor: f32) -> taffy::style::LengthPercentage {
         match self {
-            DefiniteLength::Absolute(length) => match length {
-                AbsoluteLength::Pixels(pixels) => {
-                    let pixels: f32 = pixels.into();
-                    taffy::style::LengthPercentage::length(pixels * scale_factor)
-                }
-                AbsoluteLength::Rems(rems) => {
-                    let pixels: f32 = (*rems * rem_size).into();
-                    taffy::style::LengthPercentage::length(pixels * scale_factor)
-                }
-            },
+            DefiniteLength::Absolute(length) => length.to_taffy(rem_size, scale_factor),
             DefiniteLength::Fraction(fraction) => {
                 taffy::style::LengthPercentage::percent(*fraction)
             }
@@ -427,16 +410,7 @@ impl ToTaffy<taffy::style::LengthPercentage> for DefiniteLength {
 impl ToTaffy<taffy::style::LengthPercentageAuto> for DefiniteLength {
     fn to_taffy(&self, rem_size: Pixels, scale_factor: f32) -> taffy::style::LengthPercentageAuto {
         match self {
-            DefiniteLength::Absolute(length) => match length {
-                AbsoluteLength::Pixels(pixels) => {
-                    let pixels: f32 = pixels.into();
-                    taffy::style::LengthPercentageAuto::length(pixels * scale_factor)
-                }
-                AbsoluteLength::Rems(rems) => {
-                    let pixels: f32 = (*rems * rem_size).into();
-                    taffy::style::LengthPercentageAuto::length(pixels * scale_factor)
-                }
-            },
+            DefiniteLength::Absolute(length) => length.to_taffy(rem_size, scale_factor),
             DefiniteLength::Fraction(fraction) => {
                 taffy::style::LengthPercentageAuto::percent(*fraction)
             }
@@ -447,15 +421,7 @@ impl ToTaffy<taffy::style::LengthPercentageAuto> for DefiniteLength {
 impl ToTaffy<taffy::style::Dimension> for DefiniteLength {
     fn to_taffy(&self, rem_size: Pixels, scale_factor: f32) -> taffy::style::Dimension {
         match self {
-            DefiniteLength::Absolute(length) => match length {
-                AbsoluteLength::Pixels(pixels) => {
-                    let pixels: f32 = pixels.into();
-                    taffy::style::Dimension::length(pixels * scale_factor)
-                }
-                AbsoluteLength::Rems(rems) => {
-                    taffy::style::Dimension::length((*rems * rem_size * scale_factor).into())
-                }
-            },
+            DefiniteLength::Absolute(length) => length.to_taffy(rem_size, scale_factor),
             DefiniteLength::Fraction(fraction) => taffy::style::Dimension::percent(*fraction),
         }
     }
@@ -463,16 +429,19 @@ impl ToTaffy<taffy::style::Dimension> for DefiniteLength {
 
 impl ToTaffy<taffy::style::LengthPercentage> for AbsoluteLength {
     fn to_taffy(&self, rem_size: Pixels, scale_factor: f32) -> taffy::style::LengthPercentage {
-        match self {
-            AbsoluteLength::Pixels(pixels) => {
-                let pixels: f32 = pixels.into();
-                taffy::style::LengthPercentage::length(pixels * scale_factor)
-            }
-            AbsoluteLength::Rems(rems) => {
-                let pixels: f32 = (*rems * rem_size).into();
-                taffy::style::LengthPercentage::length(pixels * scale_factor)
-            }
-        }
+        taffy::style::LengthPercentage::length(self.to_taffy(rem_size, scale_factor))
+    }
+}
+
+impl ToTaffy<taffy::style::LengthPercentageAuto> for AbsoluteLength {
+    fn to_taffy(&self, rem_size: Pixels, scale_factor: f32) -> taffy::style::LengthPercentageAuto {
+        taffy::style::LengthPercentageAuto::length(self.to_taffy(rem_size, scale_factor))
+    }
+}
+
+impl ToTaffy<taffy::style::Dimension> for AbsoluteLength {
+    fn to_taffy(&self, rem_size: Pixels, scale_factor: f32) -> taffy::style::Dimension {
+        taffy::style::Dimension::length(self.to_taffy(rem_size, scale_factor))
     }
 }
 

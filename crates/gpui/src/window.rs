@@ -57,7 +57,7 @@ use uuid::Uuid;
 
 mod prompts;
 
-use crate::util::atomic_incr_if_not_zero;
+use crate::util::{atomic_incr_if_not_zero, round_device_pixels_midpoint_down};
 pub use prompts::*;
 
 /// Default window size used when no explicit size is provided.
@@ -2118,6 +2118,12 @@ impl Window {
         px((value.0 * scale_factor).round() / scale_factor)
     }
 
+    /// Returns the logical length corresponding to one physical device pixel.
+    #[inline]
+    pub fn one_device_pixel(&self) -> Pixels {
+        px(1.0 / self.scale_factor())
+    }
+
     #[inline]
     fn round_point_to_device_pixels(&self, position: Point<Pixels>) -> Point<Pixels> {
         point(
@@ -2145,11 +2151,16 @@ impl Window {
     #[inline]
     fn round_bounds_to_device_pixels(&self, bounds: Bounds<Pixels>) -> Bounds<ScaledPixels> {
         let scale_factor = self.scale_factor();
-        let left = (bounds.left().0 * scale_factor).round();
-        let top = (bounds.top().0 * scale_factor).round();
-        let right = (bounds.right().0 * scale_factor).round();
-        let bottom = (bounds.bottom().0 * scale_factor).round();
-        self.bounds_from_device_edges(left, top, right, bottom)
+        Bounds {
+            origin: point(
+                ScaledPixels((bounds.origin.x.0 * scale_factor).round()),
+                ScaledPixels((bounds.origin.y.0 * scale_factor).round()),
+            ),
+            size: size(
+                self.round_length_to_device_pixels(bounds.size.width),
+                self.round_length_to_device_pixels(bounds.size.height),
+            ),
+        }
     }
 
     #[inline]
@@ -2174,18 +2185,18 @@ impl Window {
 
     #[inline]
     fn round_edges_to_device_pixels(&self, edges: Edges<Pixels>) -> Edges<ScaledPixels> {
-        let scale_factor = self.scale_factor();
         Edges {
-            top: ScaledPixels((edges.top.0 * scale_factor).round()),
-            right: ScaledPixels((edges.right.0 * scale_factor).round()),
-            bottom: ScaledPixels((edges.bottom.0 * scale_factor).round()),
-            left: ScaledPixels((edges.left.0 * scale_factor).round()),
+            top: self.round_nonzero_length_to_device_pixels(edges.top),
+            right: self.round_nonzero_length_to_device_pixels(edges.right),
+            bottom: self.round_nonzero_length_to_device_pixels(edges.bottom),
+            left: self.round_nonzero_length_to_device_pixels(edges.left),
         }
     }
 
     #[inline]
     fn round_length_to_device_pixels(&self, value: Pixels) -> ScaledPixels {
-        ScaledPixels((value.0 * self.scale_factor()).round())
+        let scaled = (value.0 * self.scale_factor()).max(0.0);
+        ScaledPixels(round_device_pixels_midpoint_down(scaled))
     }
 
     #[inline]
