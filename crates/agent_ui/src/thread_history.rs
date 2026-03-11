@@ -1232,6 +1232,7 @@ mod tests {
             cwd: None,
             title: Some(title.to_string().into()),
             updated_at: None,
+            created_at: None,
             meta: None,
         }
     }
@@ -1443,6 +1444,7 @@ mod tests {
             cwd: None,
             title: Some("Original Title".into()),
             updated_at: None,
+            created_at: None,
             meta: None,
         }];
         let session_list = Rc::new(TestSessionList::new(sessions));
@@ -1479,6 +1481,7 @@ mod tests {
             cwd: None,
             title: Some("Original Title".into()),
             updated_at: None,
+            created_at: None,
             meta: None,
         }];
         let session_list = Rc::new(TestSessionList::new(sessions));
@@ -1512,6 +1515,7 @@ mod tests {
             cwd: None,
             title: Some("Original Title".into()),
             updated_at: None,
+            created_at: None,
             meta: None,
         }];
         let session_list = Rc::new(TestSessionList::new(sessions));
@@ -1548,6 +1552,7 @@ mod tests {
             cwd: None,
             title: None,
             updated_at: None,
+            created_at: None,
             meta: None,
         }];
         let session_list = Rc::new(TestSessionList::new(sessions));
@@ -1588,6 +1593,7 @@ mod tests {
             cwd: None,
             title: Some("Server Title".into()),
             updated_at: None,
+            created_at: None,
             meta: None,
         }];
         let session_list = Rc::new(TestSessionList::new(sessions));
@@ -1625,6 +1631,7 @@ mod tests {
             cwd: None,
             title: Some("Original".into()),
             updated_at: None,
+            created_at: None,
             meta: None,
         }];
         let session_list = Rc::new(TestSessionList::new(sessions));

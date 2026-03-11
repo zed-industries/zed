@@ -350,8 +350,34 @@ impl minidumper::ServerHandler for CrashServer {
     }
 }
 
+/// Rust's string-slicing panics embed the user's string content in the message,
+/// e.g. "byte index 4 is out of bounds of `a`". Strip that suffix so we
+/// don't upload arbitrary user text in crash reports.
+fn strip_user_string_from_panic(message: &str) -> String {
+    const STRING_PANIC_PREFIXES: &[&str] = &[
+        // Older rustc (pre-1.95):
+        "byte index ",
+        "begin <= end (",
+        // Newer rustc (1.95+):
+        // https://github.com/rust-lang/rust/pull/145024
+        "start byte index ",
+        "end byte index ",
+        "begin > end (",
+    ];
+
+    if (message.ends_with('`') || message.ends_with("`[...]"))
+        && STRING_PANIC_PREFIXES
+            .iter()
+            .any(|prefix| message.starts_with(prefix))
+        && let Some(open) = message.find('`')
+    {
+        return format!("{} `<redacted>`", &message[..open]);
+    }
+    message.to_owned()
+}
+
 pub fn panic_hook(info: &PanicHookInfo) {
-    let message = info.payload_as_str().unwrap_or("Box<Any>").to_owned();
+    let message = strip_user_string_from_panic(info.payload_as_str().unwrap_or("Box<Any>"));
 
     let span = info
         .location()

@@ -119,6 +119,7 @@ pub enum Event {
     DiffHunksToggled,
     Edited {
         edited_buffer: Option<Entity<Buffer>>,
+        is_local: bool,
     },
     TransactionUndone {
         transaction_id: TransactionId,
@@ -1912,6 +1913,7 @@ impl MultiBuffer {
 
         cx.emit(Event::Edited {
             edited_buffer: None,
+            is_local: true,
         });
         cx.emit(Event::ExcerptsAdded {
             buffer,
@@ -1974,6 +1976,7 @@ impl MultiBuffer {
         }
         cx.emit(Event::Edited {
             edited_buffer: None,
+            is_local: true,
         });
         cx.emit(Event::ExcerptsRemoved {
             ids,
@@ -2330,6 +2333,7 @@ impl MultiBuffer {
         }
         cx.emit(Event::Edited {
             edited_buffer: None,
+            is_local: true,
         });
         cx.emit(Event::ExcerptsRemoved {
             ids,
@@ -2394,8 +2398,9 @@ impl MultiBuffer {
         use language::BufferEvent;
         let buffer_id = buffer.read(cx).remote_id();
         cx.emit(match event {
-            BufferEvent::Edited => Event::Edited {
+            &BufferEvent::Edited { is_local } => Event::Edited {
                 edited_buffer: Some(buffer),
+                is_local,
             },
             BufferEvent::DirtyChanged => Event::DirtyChanged,
             BufferEvent::Saved => Event::Saved,
@@ -2484,6 +2489,7 @@ impl MultiBuffer {
         }
         cx.emit(Event::Edited {
             edited_buffer: None,
+            is_local: true,
         });
     }
 
@@ -2530,6 +2536,7 @@ impl MultiBuffer {
         }
         cx.emit(Event::Edited {
             edited_buffer: None,
+            is_local: true,
         });
     }
 
@@ -2769,6 +2776,7 @@ impl MultiBuffer {
         cx.emit(Event::DiffHunksToggled);
         cx.emit(Event::Edited {
             edited_buffer: None,
+            is_local: true,
         });
     }
 
@@ -2885,6 +2893,7 @@ impl MultiBuffer {
         cx.emit(Event::DiffHunksToggled);
         cx.emit(Event::Edited {
             edited_buffer: None,
+            is_local: true,
         });
     }
 
@@ -2952,6 +2961,7 @@ impl MultiBuffer {
         }
         cx.emit(Event::Edited {
             edited_buffer: None,
+            is_local: true,
         });
         cx.emit(Event::ExcerptsExpanded { ids: vec![id] });
         cx.notify();
@@ -3059,6 +3069,7 @@ impl MultiBuffer {
         }
         cx.emit(Event::Edited {
             edited_buffer: None,
+            is_local: true,
         });
         cx.emit(Event::ExcerptsExpanded { ids });
         cx.notify();
@@ -3702,6 +3713,7 @@ impl MultiBuffer {
         cx.emit(Event::DiffHunksToggled);
         cx.emit(Event::Edited {
             edited_buffer: None,
+            is_local: true,
         });
     }
 }

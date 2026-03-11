@@ -924,8 +924,8 @@
     },
     // Whether to show the addition/deletion change count next to each file in the Git panel.
     //
-    // Default: false
-    "diff_stats": false,
+    // Default: true
+    "diff_stats": true,
     // Whether to open a separate diff tab per file instead of the
     // project-wide diff view.
     //

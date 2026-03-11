@@ -1,4 +1,5 @@
 mod agent_configuration;
+pub(crate) mod agent_connection_store;
 mod agent_diff;
 mod agent_model_selector;
 mod agent_panel;
@@ -22,6 +23,7 @@ mod mode_selector;
 mod model_selector;
 mod model_selector_popover;
 mod profile_selector;
+pub mod sidebar;
 mod slash_command;
 mod slash_command_picker;
 mod terminal_codegen;
@@ -212,7 +214,7 @@ pub struct NewNativeAgentThreadFromSummary {
 }
 
 // TODO unify this with AgentType
-#[derive(Debug, Clone, PartialEq, Serialize, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ExternalAgent {
     NativeAgent,

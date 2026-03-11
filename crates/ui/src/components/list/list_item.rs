@@ -31,6 +31,9 @@ pub struct ListItem {
     /// A slot for content that appears on hover after the children
     /// It will obscure the `end_slot` when visible.
     end_hover_slot: Option<AnyElement>,
+    /// When true, renders a gradient fade overlay before the `end_hover_slot`
+    /// to smoothly truncate overflowing content.
+    end_hover_gradient_overlay: bool,
     toggle: Option<bool>,
     inset: bool,
     on_click: Option<Box<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>>,
@@ -60,6 +63,7 @@ impl ListItem {
             start_slot: None,
             end_slot: None,
             end_hover_slot: None,
+            end_hover_gradient_overlay: false,
             toggle: None,
             inset: false,
             on_click: None,
@@ -163,6 +167,11 @@ impl ListItem {
 
     pub fn end_hover_slot<E: IntoElement>(mut self, end_hover_slot: impl Into<Option<E>>) -> Self {
         self.end_hover_slot = end_hover_slot.into().map(IntoElement::into_any_element);
+        self
+    }
+
+    pub fn end_hover_gradient_overlay(mut self, show: bool) -> Self {
+        self.end_hover_gradient_overlay = show;
         self
     }
 
@@ -362,7 +371,9 @@ impl RenderOnce for ListItem {
                                 .right(DynamicSpacing::Base06.rems(cx))
                                 .top_0()
                                 .visible_on_hover("list_item")
-                                .child(end_hover_gradient_overlay)
+                                .when(self.end_hover_gradient_overlay, |this| {
+                                    this.child(end_hover_gradient_overlay)
+                                })
                                 .child(end_hover_slot),
                         )
                     }),
