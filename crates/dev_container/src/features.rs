@@ -32,7 +32,7 @@ pub(crate) struct OciFeatureRef {
 /// extract option default values after the feature tarball is downloaded.
 ///
 /// See: https://containers.dev/implementors/features/#devcontainer-featurejson-properties
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Eq, PartialEq, Default)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct DevContainerFeatureJson {
     #[serde(rename = "id")]
@@ -46,7 +46,7 @@ pub(crate) struct DevContainerFeatureJson {
 
 /// A single option definition inside `devcontainer-feature.json`.
 /// We only need the `default` field to populate env variables.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Eq, PartialEq)]
 pub(crate) struct FeatureOptionDefinition {
     pub(crate) default: Option<Value>,
 }
@@ -62,7 +62,7 @@ impl FeatureOptionDefinition {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Eq, PartialEq, Default)]
 pub(crate) struct FeatureManifest {
     file_path: PathBuf,
     feature_json: DevContainerFeatureJson,
