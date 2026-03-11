@@ -2594,7 +2594,6 @@ impl Editor {
                     cx.notify();
                 }));
         }
-        editor.refresh_runnables(window, cx);
         editor._subscriptions.extend(project_subscriptions);
 
         editor._subscriptions.push(cx.subscribe_in(
@@ -2624,12 +2623,12 @@ impl Editor {
                                 .update_in(cx, |editor, window, cx| {
                                     editor.register_visible_buffers(cx);
                                     editor.colorize_brackets(false, cx);
+                                    editor.refresh_runnables(window, cx);
                                     editor.refresh_inlay_hints(
                                         InlayHintRefreshReason::NewLinesShown,
                                         cx,
                                     );
                                     if !editor.buffer().read(cx).is_singleton() {
-                                        editor.refresh_runnables(window, cx);
                                         editor.update_lsp_data(None, window, cx);
                                     }
                                 })
@@ -23834,6 +23833,7 @@ impl Editor {
                 cx.emit(EditorEvent::ExcerptsExpanded { ids: ids.clone() })
             }
             multi_buffer::Event::Reparsed(buffer_id) => {
+                self.clear_runnables(Some(*buffer_id));
                 self.refresh_runnables(window, cx);
                 self.refresh_selected_text_highlights(&self.display_snapshot(cx), true, window, cx);
                 self.colorize_brackets(true, cx);

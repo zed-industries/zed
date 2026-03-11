@@ -53,6 +53,12 @@ impl RunnableData {
             .flat_map(|(_, tasks)| tasks.values())
     }
 
+    pub fn has_cached(&self, buffer_id: BufferId, version: &Global) -> bool {
+        self.runnables
+            .get(&buffer_id)
+            .is_some_and(|(cached_version, _)| !version.changed_since(cached_version))
+    }
+
     #[cfg(test)]
     pub fn insert(
         &mut self,
@@ -109,9 +115,17 @@ impl Editor {
             self.clear_runnables(None);
             return;
         }
+        if let Some(buffer) = self.buffer().read(cx).as_singleton() {
+            if self
+                .runnables
+                .has_cached(buffer.read(cx).remote_id(), &buffer.read(cx).version())
+            {
+                return;
+            }
+        }
+
         let project = self.project().map(Entity::downgrade);
-        // TODO kb exclude the buffers that were already queried for
-        let lsp_task_sources = self.lsp_task_sources(true, cx);
+        let lsp_task_sources = self.lsp_task_sources(true, true, cx);
         let multi_buffer = self.buffer.downgrade();
         dbg!((
             cx.entity(),
@@ -140,23 +154,25 @@ impl Editor {
                 lsp_tasks.await
             };
             let new_rows = {
-                let Ok((multi_buffer_snapshot, multi_buffer_query_range)) =
-                    editor.update(cx, |editor, cx| {
+                let Some((multi_buffer_snapshot, multi_buffer_query_range)) = editor
+                    .update(cx, |editor, cx| {
                         let multi_buffer = editor.buffer().read(cx);
                         if multi_buffer.is_singleton() {
-                            (multi_buffer.snapshot(cx), Anchor::min()..Anchor::max())
+                            Some((multi_buffer.snapshot(cx), Anchor::min()..Anchor::max()))
                         } else {
                             let display_snapshot =
                                 editor.display_map.update(cx, |map, cx| map.snapshot(cx));
                             let multi_buffer_query_range =
                                 editor.multi_buffer_visible_range(&display_snapshot, cx);
                             let multi_buffer_snapshot = display_snapshot.buffer();
-                            (
+                            Some((
                                 multi_buffer_snapshot.clone(),
                                 multi_buffer_query_range.to_anchors(&multi_buffer_snapshot),
-                            )
+                            ))
                         }
                     })
+                    .ok()
+                    .flatten()
                 else {
                     return;
                 };
@@ -395,6 +411,7 @@ impl Editor {
     pub fn lsp_task_sources(
         &self,
         visible_only: bool,
+        skip_cached: bool,
         cx: &mut Context<Self>,
     ) -> HashMap<LanguageServerName, Vec<BufferId>> {
         if !self.lsp_data_enabled() {
@@ -424,7 +441,15 @@ impl Editor {
                     .is_none_or(|s| s.enable_lsp_tasks)
                 {
                     let buffer_id = buffer.read(cx).remote_id();
-                    Some((lsp_tasks_source, buffer_id))
+                    if skip_cached
+                        && self
+                            .runnables
+                            .has_cached(buffer_id, &buffer.read(cx).version())
+                    {
+                        None
+                    } else {
+                        Some((lsp_tasks_source, buffer_id))
+                    }
                 } else {
                     None
                 }
