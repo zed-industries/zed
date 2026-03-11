@@ -8,7 +8,9 @@ use gpui::{
 };
 use language::{Buffer, BufferRow, Runnable};
 use lsp::LanguageServerName;
-use multi_buffer::{Anchor, BufferOffset, MultiBufferOffset, MultiBufferRow, ToPoint as _};
+use multi_buffer::{
+    Anchor, BufferOffset, MultiBufferOffset, MultiBufferRow, MultiBufferSnapshot, ToPoint as _,
+};
 use project::{
     Location, Project, TaskSourceKind,
     debugger::breakpoint_store::{Breakpoint, BreakpointSessionState},
@@ -21,9 +23,8 @@ use text::{BufferId, OffsetRangeExt as _, ToOffset as _, ToPoint as _};
 use ui::{Clickable as _, Color, IconButton, IconSize, Toggleable as _};
 
 use crate::{
-    CodeActionSource, Editor, EditorSettings, EditorStyle, SpawnNearestTask, ToggleCodeActions,
-    UPDATE_DEBOUNCE,
-    display_map::{DisplayRow, DisplaySnapshot},
+    CodeActionSource, Editor, EditorSettings, EditorStyle, RangeToAnchorExt, SpawnNearestTask,
+    ToggleCodeActions, UPDATE_DEBOUNCE, display_map::DisplayRow,
 };
 
 pub(super) struct RunnableData {
@@ -109,23 +110,18 @@ impl Editor {
             return;
         }
         let project = self.project().map(Entity::downgrade);
-        let task_sources = self.lsp_task_sources(true, cx);
+        // TODO kb exclude the buffers that were already queried for
+        let lsp_task_sources = self.lsp_task_sources(true, cx);
         let multi_buffer = self.buffer.downgrade();
-        let lsp_data_enabled = self.lsp_data_enabled();
         dbg!((
             cx.entity(),
             self.title(cx),
             self.enable_runnables,
-            lsp_data_enabled
+            self.lsp_data_enabled(),
         ));
         self.runnables.runnables_update_task = cx.spawn_in(window, async move |editor, cx| {
             cx.background_executor().timer(UPDATE_DEBOUNCE).await;
             let Some(project) = project.and_then(|p| p.upgrade()) else {
-                return;
-            };
-            let Ok(display_snapshot) = editor.update(cx, |this, cx| {
-                this.display_map.update(cx, |map, cx| map.snapshot(cx))
-            }) else {
                 return;
             };
 
@@ -133,29 +129,52 @@ impl Editor {
             if hide_runnables {
                 return;
             }
-            let new_rows = cx
-                .background_spawn({
-                    let snapshot = display_snapshot.clone();
-                    async move {
-                        snapshot
-                            .buffer_snapshot()
-                            // TODO kb refresh runnables based on the viewport
-                            .runnable_ranges(Anchor::min()..Anchor::max())
-                            .collect()
-                    }
-                })
-                .await;
-            let lsp_tasks = if lsp_data_enabled {
-                let Ok(lsp_tasks) =
-                    cx.update(|_, cx| crate::lsp_tasks(project.clone(), &task_sources, None, cx))
+            let lsp_tasks = if lsp_task_sources.is_empty() {
+                Vec::new()
+            } else {
+                let Ok(lsp_tasks) = cx
+                    .update(|_, cx| crate::lsp_tasks(project.clone(), &lsp_task_sources, None, cx))
                 else {
                     return;
                 };
                 lsp_tasks.await
-            } else {
-                Vec::new()
+            };
+            let new_rows = {
+                let Ok((multi_buffer_snapshot, multi_buffer_query_range)) =
+                    editor.update(cx, |editor, cx| {
+                        let multi_buffer = editor.buffer().read(cx);
+                        if multi_buffer.is_singleton() {
+                            (multi_buffer.snapshot(cx), Anchor::min()..Anchor::max())
+                        } else {
+                            let display_snapshot =
+                                editor.display_map.update(cx, |map, cx| map.snapshot(cx));
+                            let multi_buffer_query_range =
+                                editor.multi_buffer_visible_range(&display_snapshot, cx);
+                            let multi_buffer_snapshot = display_snapshot.buffer();
+                            (
+                                multi_buffer_snapshot.clone(),
+                                multi_buffer_query_range.to_anchors(&multi_buffer_snapshot),
+                            )
+                        }
+                    })
+                else {
+                    return;
+                };
+                cx.background_spawn({
+                    async move {
+                        multi_buffer_snapshot
+                            .runnable_ranges(multi_buffer_query_range)
+                            .collect()
+                    }
+                })
+                .await
             };
 
+            let Ok(multi_buffer_snapshot) =
+                editor.update(cx, |editor, cx| editor.buffer().read(cx).snapshot(cx))
+            else {
+                return;
+            };
             let Ok(mut lsp_tasks_by_rows) = cx.update(|_, cx| {
                 lsp_tasks
                     .into_iter()
@@ -167,11 +186,10 @@ impl Editor {
                     .fold(HashMap::default(), |mut acc, (kind, location, task)| {
                         let buffer = location.target.buffer;
                         let buffer_snapshot = buffer.read(cx).snapshot();
-                        let offset = display_snapshot.buffer_snapshot().excerpts().find_map(
+                        let offset = multi_buffer_snapshot.excerpts().find_map(
                             |(excerpt_id, snapshot, _)| {
                                 if snapshot.remote_id() == buffer_snapshot.remote_id() {
-                                    display_snapshot
-                                        .buffer_snapshot()
+                                    multi_buffer_snapshot
                                         .anchor_in_excerpt(excerpt_id, location.target.range.start)
                                 } else {
                                     None
@@ -212,7 +230,7 @@ impl Editor {
 
             let rows = Self::runnable_rows(
                 project,
-                display_snapshot,
+                multi_buffer_snapshot,
                 prefer_lsp && !lsp_tasks_by_rows.is_empty(),
                 new_rows,
                 cx.clone(),
@@ -379,6 +397,9 @@ impl Editor {
         visible_only: bool,
         cx: &mut Context<Self>,
     ) -> HashMap<LanguageServerName, Vec<BufferId>> {
+        if !self.lsp_data_enabled() {
+            return HashMap::default();
+        }
         let buffers = if visible_only {
             self.visible_excerpts(true, cx)
                 .into_values()
@@ -435,7 +456,7 @@ impl Editor {
 
     fn runnable_rows(
         project: Entity<Project>,
-        snapshot: DisplaySnapshot,
+        snapshot: MultiBufferSnapshot,
         prefer_lsp: bool,
         runnable_ranges: Vec<(Range<MultiBufferOffset>, language::RunnableRange)>,
         cx: AsyncWindowContext,
@@ -460,9 +481,8 @@ impl Editor {
                     continue;
                 }
 
-                let point = run_range.start.to_point(&snapshot.buffer_snapshot());
+                let point = run_range.start.to_point(&snapshot);
                 let Some(row) = snapshot
-                    .buffer_snapshot()
                     .buffer_line_for_row(MultiBufferRow(point.row))
                     .map(|(_, range)| range.start.row)
                 else {
@@ -475,7 +495,7 @@ impl Editor {
                     (runnable.buffer_id, row),
                     RunnableTasks {
                         templates: tasks,
-                        offset: snapshot.buffer_snapshot().anchor_before(run_range.start),
+                        offset: snapshot.anchor_before(run_range.start),
                         context_range,
                         column: point.column,
                         extra_variables: runnable.extra_captures,

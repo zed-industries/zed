@@ -5754,18 +5754,11 @@ impl Editor {
         let display_snapshot = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         let multi_buffer = self.buffer().read(cx);
         let multi_buffer_snapshot = multi_buffer.snapshot(cx);
-        let multi_buffer_visible_start = self
-            .scroll_manager
-            .native_anchor(&display_snapshot, cx)
-            .anchor
-            .to_point(&multi_buffer_snapshot);
-        let multi_buffer_visible_end = multi_buffer_snapshot.clip_point(
-            multi_buffer_visible_start
-                + Point::new(self.visible_line_count().unwrap_or(0.).ceil() as u32, 0),
-            Bias::Left,
-        );
         multi_buffer_snapshot
-            .range_to_buffer_ranges(multi_buffer_visible_start..=multi_buffer_visible_end)
+            .range_to_buffer_ranges(
+                self.multi_buffer_visible_range(&display_snapshot, cx)
+                    .to_inclusive(),
+            )
             .into_iter()
             .filter(|(_, excerpt_visible_range, _)| !excerpt_visible_range.is_empty())
             .filter_map(|(buffer, excerpt_visible_range, excerpt_id)| {
@@ -7752,24 +7745,13 @@ impl Editor {
             self.debounced_selection_highlight_complete = false;
         }
         if on_buffer_edit || query_changed {
-            let multi_buffer_visible_start = self
-                .scroll_manager
-                .native_anchor(&display_snapshot, cx)
-                .anchor
-                .to_point(&multi_buffer_snapshot);
-            let multi_buffer_visible_end = multi_buffer_snapshot.clip_point(
-                multi_buffer_visible_start
-                    + Point::new(self.visible_line_count().unwrap_or(0.).ceil() as u32, 0),
-                Bias::Left,
-            );
-            let multi_buffer_visible_range = multi_buffer_visible_start..multi_buffer_visible_end;
             self.quick_selection_highlight_task = Some((
                 query_range.clone(),
                 self.update_selection_occurrence_highlights(
                     snapshot.buffer.clone(),
                     query_text.clone(),
                     query_range.clone(),
-                    multi_buffer_visible_range,
+                    self.multi_buffer_visible_range(&display_snapshot, cx),
                     false,
                     window,
                     cx,
@@ -7802,6 +7784,27 @@ impl Editor {
                 ),
             ));
         }
+    }
+
+    pub fn multi_buffer_visible_range(
+        &self,
+        display_snapshot: &DisplaySnapshot,
+        cx: &App,
+    ) -> Range<Point> {
+        let visible_start = self
+            .scroll_manager
+            .native_anchor(display_snapshot, cx)
+            .anchor
+            .to_point(display_snapshot.buffer_snapshot())
+            .to_display_point(display_snapshot);
+
+        let mut target_end = visible_start;
+        *target_end.row_mut() += self.visible_line_count().unwrap_or(0.).ceil() as u32;
+
+        visible_start.to_point(display_snapshot)
+            ..display_snapshot
+                .clip_point(target_end, Bias::Right)
+                .to_point(display_snapshot)
     }
 
     pub fn refresh_edit_prediction(
