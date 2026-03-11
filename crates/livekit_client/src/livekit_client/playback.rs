@@ -22,6 +22,7 @@ use livekit::webrtc::{
 };
 use log::info;
 use parking_lot::Mutex;
+use ringbuffer::{ConstGenericRingBuffer, RingBuffer};
 use rodio::Source;
 use serde::{Deserialize, Serialize};
 use settings::Settings;
@@ -29,7 +30,7 @@ use std::cell::RefCell;
 use std::sync::Weak;
 use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
 use std::time::Duration;
-use std::{borrow::Cow, collections::VecDeque, sync::Arc};
+use std::{borrow::Cow, sync::Arc};
 use util::{ResultExt as _, maybe};
 
 mod source;
@@ -305,6 +306,7 @@ impl AudioStack {
                                         output_config.channels() as u32,
                                         output_config.sample_rate(),
                                     );
+                                    drop(mixer);
                                     buf = sampled.to_vec();
                                     apm.lock()
                                         .process_reverse_stream(
@@ -519,7 +521,7 @@ struct AudioMixerSource {
     ssrc: i32,
     sample_rate: u32,
     num_channels: u32,
-    buffer: Arc<Mutex<VecDeque<Vec<i16>>>>,
+    buffer: Arc<Mutex<ConstGenericRingBuffer<Vec<i16>, 10>>>,
 }
 
 impl AudioMixerSource {
@@ -529,11 +531,9 @@ impl AudioMixerSource {
             self.sample_rate * self.num_channels / 100
         );
 
+        let data = frame.data.into_owned();
         let mut buffer = self.buffer.lock();
-        buffer.push_back(frame.data.to_vec());
-        while buffer.len() > 10 {
-            buffer.pop_front();
-        }
+        buffer.enqueue(data);
     }
 }
 
@@ -548,7 +548,7 @@ impl libwebrtc::native::audio_mixer::AudioMixerSource for AudioMixerSource {
 
     fn get_audio_frame_with_info<'a>(&self, target_sample_rate: u32) -> Option<AudioFrame<'_>> {
         assert_eq!(self.sample_rate, target_sample_rate);
-        let buf = self.buffer.lock().pop_front()?;
+        let buf = self.buffer.lock().dequeue()?;
         Some(AudioFrame {
             data: Cow::Owned(buf),
             sample_rate: self.sample_rate,
