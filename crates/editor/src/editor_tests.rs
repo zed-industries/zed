@@ -65,7 +65,7 @@ use util::{
 };
 use workspace::{
     CloseActiveItem, CloseAllItems, CloseOtherItems, MultiWorkspace, NavigationEntry, OpenOptions,
-    ViewId,
+    ViewId, Workspace,
     item::{FollowEvent, FollowableItem, Item, ItemHandle, SaveOptions},
     register_project_item,
 };
@@ -19675,130 +19675,280 @@ async fn test_language_server_restart_due_to_settings_change(cx: &mut TestAppCon
 }
 
 #[gpui::test]
-async fn test_toggle_theme_mode_persists_and_updates_active_theme(cx: &mut TestAppContext) {
-    use theme::{Appearance, SystemAppearance, ThemeSettings};
-    use zed_actions::theme::ToggleMode;
+async fn test_toggle_theme_mode_updates_settings_file_and_active_theme(
+    cx: &mut TestAppContext,
+) {
+    use gpui::ReadGlobal;
+    use theme::{Appearance, GlobalTheme, SystemAppearance};
 
-    fn set_static_light_theme(settings: &mut SettingsContent) {
-        settings.theme.theme = Some(settings::ThemeSelection::Static(settings::ThemeName(
-            "One Light".into(),
-        )));
+    fn user_theme_mode_in_store(
+        cx: &mut VisualTestContext,
+    ) -> Option<theme::ThemeAppearanceMode> {
+        cx.update(|_window, cx| {
+            SettingsStore::global(cx)
+                .get_content_for_file(settings::SettingsFile::User)
+                .and_then(|content| match content.theme.theme.clone() {
+                    Some(settings::ThemeSelection::Dynamic { mode, .. }) => Some(mode),
+                    _ => None,
+                })
+        })
+    }
+
+    fn active_theme_name(cx: &mut VisualTestContext) -> String {
+        cx.update(|_window, cx| cx.theme().name.to_string())
+    }
+
+    async fn load_settings_text_when_ready(
+        settings_fs: &Arc<dyn fs::Fs>,
+        cx: &mut VisualTestContext,
+    ) -> String {
+        for _ in 0..20 {
+            let settings_text = SettingsStore::load_settings(settings_fs)
+                .await
+                .expect("failed to load settings from test fs");
+            if settings::parse_json_with_comments::<serde_json::Value>(&settings_text).is_ok() {
+                return settings_text;
+            }
+
+            cx.executor().advance_clock(Duration::from_millis(50));
+            cx.run_until_parked();
+        }
+
+        panic!("timed out waiting for valid settings.json content");
+    }
+
+    async fn wait_for_settings_json(
+        settings_fs: &Arc<dyn fs::Fs>,
+        expected_file_theme: &serde_json::Value,
+        expected_file_icon_theme: &serde_json::Value,
+        cx: &mut VisualTestContext,
+    ) -> serde_json::Value {
+        let mut last_seen_theme = serde_json::Value::Null;
+        let mut last_seen_icon_theme = serde_json::Value::Null;
+        for _ in 0..20 {
+            let settings_text = load_settings_text_when_ready(settings_fs, cx).await;
+            let settings_json: serde_json::Value = settings::parse_json_with_comments(&settings_text)
+                .expect("failed to parse toggled settings.json");
+            last_seen_theme = settings_json["theme"].clone();
+            last_seen_icon_theme = settings_json["icon_theme"].clone();
+            if settings_json["theme"] == *expected_file_theme
+                && settings_json["icon_theme"] == *expected_file_icon_theme
+            {
+                return settings_json;
+            }
+
+            cx.executor().advance_clock(Duration::from_millis(50));
+            cx.run_until_parked();
+        }
+
+        panic!(
+            "timed out waiting for expected settings.json content; last seen theme: {last_seen_theme:?}, last seen icon_theme: {last_seen_icon_theme:?}"
+        );
+    }
+
+    async fn sync_user_settings_from_fs(
+        settings_fs: &Arc<dyn fs::Fs>,
+        cx: &mut VisualTestContext,
+    ) {
+        let settings_text = load_settings_text_when_ready(settings_fs, cx).await;
+        cx.update(|_window, cx| {
+            SettingsStore::update_global(cx, |store, cx| {
+                store
+                    .set_user_settings(&settings_text, cx)
+                    .expect("failed to apply settings from test fs");
+            });
+            GlobalTheme::reload_theme(cx);
+        });
+        cx.run_until_parked();
+    }
+
+    fn set_theme_selection(
+        settings: &mut SettingsContent,
+        theme_selection: settings::ThemeSelection,
+    ) {
+        settings.theme.theme = Some(theme_selection);
+        settings.theme.icon_theme = None;
+    }
+
+    fn theme_selection_json(theme_selection: &settings::ThemeSelection) -> serde_json::Value {
+        match theme_selection {
+            settings::ThemeSelection::Static(theme_name) => json!(theme_name.0.as_ref()),
+            settings::ThemeSelection::Dynamic { mode, light, dark } => json!({
+                "mode": match mode {
+                    settings::ThemeAppearanceMode::Light => "light",
+                    settings::ThemeAppearanceMode::Dark => "dark",
+                    settings::ThemeAppearanceMode::System => "system",
+                },
+                "light": light.0.as_ref(),
+                "dark": dark.0.as_ref(),
+            }),
+        }
+    }
+
+    async fn write_user_settings_to_fs(
+        settings_fs: &Arc<dyn fs::Fs>,
+        theme_selection: settings::ThemeSelection,
+        workspace: &Entity<workspace::Workspace>,
+        cx: &mut VisualTestContext,
+    ) {
+        let expected_theme = theme_selection_json(&theme_selection);
+        let theme_selection_for_file = theme_selection.clone();
+        let theme_selection_for_store = theme_selection.clone();
+        workspace.update_in(cx, |_workspace, _window, cx| {
+            settings::update_settings_file(settings_fs.clone(), cx, move |settings, _cx| {
+                set_theme_selection(settings, theme_selection_for_file.clone());
+            });
+        });
+        cx.executor().advance_clock(Duration::from_millis(200));
+        cx.run_until_parked();
+        let _ = wait_for_settings_json(settings_fs, &expected_theme, &serde_json::Value::Null, cx).await;
+        cx.update(|_window, cx| {
+            SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    set_theme_selection(settings, theme_selection_for_store.clone());
+                });
+            });
+            GlobalTheme::reload_theme(cx);
+        });
+        cx.run_until_parked();
+    }
+
+    async fn assert_toggle_case(
+        initial_theme_selection: settings::ThemeSelection,
+        expected_initial_mode: Option<theme::ThemeAppearanceMode>,
+        expected_initial_theme: &str,
+        expected_file_theme: serde_json::Value,
+        expected_file_icon_theme: serde_json::Value,
+        expected_final_mode: Option<theme::ThemeAppearanceMode>,
+        expected_final_theme: &str,
+        settings_fs: &Arc<dyn fs::Fs>,
+        workspace: &Entity<workspace::Workspace>,
+        cx: &mut VisualTestContext,
+    ) {
+        write_user_settings_to_fs(settings_fs, initial_theme_selection, workspace, cx).await;
+
+        assert_eq!(active_theme_name(cx), expected_initial_theme);
+        assert_eq!(user_theme_mode_in_store(cx), expected_initial_mode);
+
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.test_toggle_theme_mode(window, cx);
+        });
+        cx.executor().advance_clock(Duration::from_millis(200));
+        cx.run_until_parked();
+
+        let settings_json = wait_for_settings_json(
+            settings_fs,
+            &expected_file_theme,
+            &expected_file_icon_theme,
+            cx,
+        )
+        .await;
+        assert_eq!(settings_json["theme"], expected_file_theme);
+        assert_eq!(settings_json["icon_theme"], expected_file_icon_theme);
+
+        sync_user_settings_from_fs(settings_fs, cx).await;
+
+        assert_eq!(active_theme_name(cx), expected_final_theme);
+        assert_eq!(user_theme_mode_in_store(cx), expected_final_mode);
     }
 
     init_test(cx, |_| {});
     cx.update(|cx| {
         theme::init(theme::LoadThemes::All(Box::new(assets::Assets)), cx);
     });
-
     let fs = FakeFs::new(cx.executor());
     let settings_fs: Arc<dyn fs::Fs> = fs.clone();
-    fs.insert_tree(path!("/root"), json!({ "file.rs": "fn main() {}\n" }))
-        .await;
-    let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
-    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
-    let workspace = window
-        .read_with(cx, |multi_workspace, _| multi_workspace.workspace().clone())
-        .expect("workspace should exist");
-    let cx = &mut VisualTestContext::from_window(*window, cx);
+    let project = Project::test(settings_fs.clone(), [], cx).await;
+    let (workspace, cx) =
+        cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
 
-    workspace
-        .update_in(cx, |workspace, window, cx| {
-            workspace.open_abs_path(
-                PathBuf::from(path!("/root/file.rs")),
-                OpenOptions::default(),
-                window,
-                cx,
-            )
-        })
-        .await
-        .expect("failed to open editor");
-
-    workspace.update_in(cx, |_workspace, _window, cx| {
+    cx.update(|_window, cx| {
         *SystemAppearance::global_mut(cx) = SystemAppearance(Appearance::Light);
-        settings::update_settings_file(settings_fs.clone(), cx, |settings, _cx| {
-            set_static_light_theme(settings);
-        });
     });
-    cx.executor().advance_clock(Duration::from_millis(200));
-    cx.run_until_parked();
-    let settings_text = SettingsStore::load_settings(&settings_fs)
-        .await
-        .expect("failed to load initial theme settings");
-    workspace.update_in(cx, |_workspace, _window, cx| {
-        SettingsStore::update_global(cx, |store, cx| {
-            store
-                .set_user_settings(&settings_text, cx)
-                .expect("failed to load initial theme settings into the store");
-        });
-    });
-    cx.run_until_parked();
 
-    assert_eq!(
-        workspace.update_in(cx, |_workspace, _window, cx| cx.theme().name.to_string()),
-        "One Light",
-    );
-    assert_eq!(
-        workspace.update_in(cx, |_workspace, _window, cx| ThemeSettings::get_global(cx)
-            .theme
-            .mode()),
+    assert_toggle_case(
+        settings::ThemeSelection::Static(settings::ThemeName("One Light".into())),
         None,
-    );
-
-    workspace.update_in(cx, |_workspace, window, cx| {
-        window.dispatch_action(ToggleMode.boxed_clone(), cx);
-    });
-    cx.executor().advance_clock(Duration::from_millis(200));
-    cx.run_until_parked();
-    let settings_text = SettingsStore::load_settings(&settings_fs)
-        .await
-        .expect("failed to load persisted theme settings");
-    workspace.update_in(cx, |_workspace, _window, cx| {
-        SettingsStore::update_global(cx, |store, cx| {
-            store
-                .set_user_settings(&settings_text, cx)
-                .expect("failed to reload persisted theme settings");
-        });
-    });
-    cx.run_until_parked();
-
-    assert_eq!(
-        workspace.update_in(cx, |_workspace, _window, cx| cx.theme().name.to_string()),
         "One Light",
-    );
-    assert_eq!(
-        workspace.update_in(cx, |_workspace, _window, cx| ThemeSettings::get_global(cx)
-            .theme
-            .mode()),
+        json!({
+            "mode": "system",
+            "light": "One Light",
+            "dark": "One Dark"
+        }),
+        json!("Zed (Default)"),
         Some(theme::ThemeAppearanceMode::System),
-    );
+        "One Light",
+        &settings_fs,
+        &workspace,
+        cx,
+    )
+    .await;
 
-    workspace.update_in(cx, |_workspace, window, cx| {
-        window.dispatch_action(ToggleMode.boxed_clone(), cx);
-    });
-    cx.executor().advance_clock(Duration::from_millis(200));
-    cx.run_until_parked();
-    let settings_text = SettingsStore::load_settings(&settings_fs)
-        .await
-        .expect("failed to load persisted theme settings");
-    workspace.update_in(cx, |_workspace, _window, cx| {
-        SettingsStore::update_global(cx, |store, cx| {
-            store
-                .set_user_settings(&settings_text, cx)
-                .expect("failed to reload persisted theme settings");
-        });
-    });
-    cx.run_until_parked();
-
-    assert_eq!(
-        workspace.update_in(cx, |_workspace, _window, cx| cx.theme().name.to_string()),
-        "One Dark",
-    );
-    assert_eq!(
-        workspace.update_in(cx, |_workspace, _window, cx| ThemeSettings::get_global(cx)
-            .theme
-            .mode()),
+    assert_toggle_case(
+        settings::ThemeSelection::Dynamic {
+            mode: settings::ThemeAppearanceMode::Light,
+            light: settings::ThemeName("One Light".into()),
+            dark: settings::ThemeName("One Dark".into()),
+        },
+        Some(theme::ThemeAppearanceMode::Light),
+        "One Light",
+        json!({
+            "mode": "dark",
+            "light": "One Light",
+            "dark": "One Dark"
+        }),
+        json!("Zed (Default)"),
         Some(theme::ThemeAppearanceMode::Dark),
-    );
+        "One Dark",
+        &settings_fs,
+        &workspace,
+        cx,
+    )
+    .await;
+
+    assert_toggle_case(
+        settings::ThemeSelection::Dynamic {
+            mode: settings::ThemeAppearanceMode::Dark,
+            light: settings::ThemeName("One Light".into()),
+            dark: settings::ThemeName("One Dark".into()),
+        },
+        Some(theme::ThemeAppearanceMode::Dark),
+        "One Dark",
+        json!({
+            "mode": "light",
+            "light": "One Light",
+            "dark": "One Dark"
+        }),
+        json!("Zed (Default)"),
+        Some(theme::ThemeAppearanceMode::Light),
+        "One Light",
+        &settings_fs,
+        &workspace,
+        cx,
+    )
+    .await;
+
+    assert_toggle_case(
+        settings::ThemeSelection::Dynamic {
+            mode: settings::ThemeAppearanceMode::System,
+            light: settings::ThemeName("One Light".into()),
+            dark: settings::ThemeName("One Dark".into()),
+        },
+        Some(theme::ThemeAppearanceMode::System),
+        "One Light",
+        json!({
+            "mode": "dark",
+            "light": "One Light",
+            "dark": "One Dark"
+        }),
+        json!("Zed (Default)"),
+        Some(theme::ThemeAppearanceMode::Dark),
+        "One Dark",
+        &settings_fs,
+        &workspace,
+        cx,
+    )
+    .await;
 }
 
 #[gpui::test]
