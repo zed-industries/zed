@@ -1,5 +1,3 @@
-use std::sync::{Arc, Mutex};
-
 use anyhow::{Context as _, Result};
 use collections::HashMap;
 use context_server::{ContextServerCommand, ContextServerId};
@@ -11,6 +9,7 @@ use gpui::{
 use language::{Language, LanguageRegistry};
 use markdown::{Markdown, MarkdownElement, MarkdownStyle};
 use notifications::status_toast::{StatusToast, ToastIcon};
+use parking_lot::Mutex;
 use project::{
     context_server_store::{
         ContextServerStatus, ContextServerStore, registry::ContextServerDescriptorRegistry,
@@ -20,6 +19,7 @@ use project::{
 };
 use serde::Deserialize;
 use settings::{Settings as _, update_settings_file};
+use std::sync::Arc;
 use theme::ThemeSettings;
 use ui::{
     CommonAnimationExt, KeyBinding, Modal, ModalFooter, ModalHeader, Section, Tooltip,
@@ -893,28 +893,28 @@ fn wait_for_context_server(
         match status {
             ContextServerStatus::Running => {
                 if server_id == &context_server_id
-                    && let Some(tx) = tx.lock().unwrap().take()
+                    && let Some(tx) = tx.lock().take()
                 {
                     let _ = tx.send(Ok(()));
                 }
             }
             ContextServerStatus::Stopped => {
                 if server_id == &context_server_id
-                    && let Some(tx) = tx.lock().unwrap().take()
+                    && let Some(tx) = tx.lock().take()
                 {
                     let _ = tx.send(Err("Context server stopped running".into()));
                 }
             }
             ContextServerStatus::Error(error) => {
                 if server_id == &context_server_id
-                    && let Some(tx) = tx.lock().unwrap().take()
+                    && let Some(tx) = tx.lock().take()
                 {
                     let _ = tx.send(Err(error.clone()));
                 }
             }
             ContextServerStatus::AuthRequired => {
                 if server_id == &context_server_id
-                    && let Some(tx) = tx.lock().unwrap().take()
+                    && let Some(tx) = tx.lock().take()
                 {
                     let _ = tx.send(Ok(()));
                 }
