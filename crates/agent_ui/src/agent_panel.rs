@@ -48,7 +48,7 @@ use crate::{
     NewNativeAgentThreadFromSummary,
 };
 use crate::{
-    ExpandMessageEditor, ThreadHistory, ThreadHistoryEvent,
+    ExpandMessageEditor, ThreadHistory, ThreadHistoryView, ThreadHistoryViewEvent,
     text_thread_history::{TextThreadHistory, TextThreadHistoryEvent},
 };
 use agent_settings::AgentSettings;
@@ -481,9 +481,17 @@ pub fn init(cx: &mut App) {
                     }
                     if let Some(panel) = workspace.panel::<AgentPanel>(cx) {
                         if let Some(sidebar) = panel.read(cx).sidebar.clone() {
+                            let was_open = sidebar.read(cx).is_open();
                             sidebar.update(cx, |sidebar, cx| {
                                 sidebar.toggle(window, cx);
                             });
+                            // When closing the sidebar, restore focus to the active pane
+                            // to avoid "zombie focus" on the now-hidden sidebar elements
+                            if was_open {
+                                let active_pane = workspace.active_pane().clone();
+                                let pane_focus = active_pane.read(cx).focus_handle(cx);
+                                window.focus(&pane_focus, cx);
+                            }
                         }
                         // Explicitly notify the panel so the dock picks up
                         // the change to `has_main_element` via its observer.
@@ -867,6 +875,7 @@ pub struct AgentPanel {
     fs: Arc<dyn Fs>,
     language_registry: Arc<LanguageRegistry>,
     acp_history: Entity<ThreadHistory>,
+    acp_history_view: Entity<ThreadHistoryView>,
     text_thread_history: Entity<TextThreadHistory>,
     thread_store: Entity<ThreadStore>,
     text_thread_store: Entity<assistant_text_thread::TextThreadStore>,
@@ -1077,14 +1086,15 @@ impl AgentPanel {
             cx.new(|cx| ContextServerRegistry::new(project.read(cx).context_server_store(), cx));
 
         let thread_store = ThreadStore::global(cx);
-        let acp_history = cx.new(|cx| ThreadHistory::new(None, window, cx));
+        let acp_history = cx.new(|cx| ThreadHistory::new(None, cx));
+        let acp_history_view = cx.new(|cx| ThreadHistoryView::new(acp_history.clone(), window, cx));
         let text_thread_history =
             cx.new(|cx| TextThreadHistory::new(text_thread_store.clone(), window, cx));
         cx.subscribe_in(
-            &acp_history,
+            &acp_history_view,
             window,
             |this, _, event, window, cx| match event {
-                ThreadHistoryEvent::Open(thread) => {
+                ThreadHistoryViewEvent::Open(thread) => {
                     this.load_agent_thread(
                         thread.session_id.clone(),
                         thread.cwd.clone(),
@@ -1218,6 +1228,7 @@ impl AgentPanel {
             pending_serialization: None,
             onboarding,
             acp_history,
+            acp_history_view,
             text_thread_history,
             thread_store,
             selected_agent: AgentType::default(),
@@ -3058,7 +3069,7 @@ impl Focusable for AgentPanel {
             ActiveView::Uninitialized => self.focus_handle.clone(),
             ActiveView::AgentThread { server_view, .. } => server_view.focus_handle(cx),
             ActiveView::History { kind } => match kind {
-                HistoryKind::AgentThreads => self.acp_history.focus_handle(cx),
+                HistoryKind::AgentThreads => self.acp_history_view.focus_handle(cx),
                 HistoryKind::TextThreads => self.text_thread_history.focus_handle(cx),
             },
             ActiveView::TextThread {
@@ -3644,7 +3655,7 @@ impl AgentPanel {
             })
     }
 
-    fn render_sidebar_toggle(&self, cx: &Context<Self>) -> Option<AnyElement> {
+    fn render_sidebar_toggle(&self, docked_right: bool, cx: &Context<Self>) -> Option<AnyElement> {
         if !multi_workspace_enabled(cx) {
             return None;
         }
@@ -3655,20 +3666,41 @@ impl AgentPanel {
         }
         let has_notifications = sidebar_read.has_notifications(cx);
 
+        let icon = if docked_right {
+            IconName::ThreadsSidebarRightClosed
+        } else {
+            IconName::ThreadsSidebarLeftClosed
+        };
+
         Some(
-            IconButton::new("toggle-workspace-sidebar", IconName::WorkspaceNavClosed)
-                .icon_size(IconSize::Small)
-                .when(has_notifications, |button| {
-                    button
-                        .indicator(Indicator::dot().color(Color::Accent))
-                        .indicator_border_color(Some(cx.theme().colors().tab_bar_background))
+            h_flex()
+                .h_full()
+                .px_1()
+                .map(|this| {
+                    if docked_right {
+                        this.border_l_1()
+                    } else {
+                        this.border_r_1()
+                    }
                 })
-                .tooltip(move |_, cx| {
-                    Tooltip::for_action("Open Threads Sidebar", &ToggleWorkspaceSidebar, cx)
-                })
-                .on_click(|_, window, cx| {
-                    window.dispatch_action(ToggleWorkspaceSidebar.boxed_clone(), cx);
-                })
+                .border_color(cx.theme().colors().border_variant)
+                .child(
+                    IconButton::new("toggle-workspace-sidebar", icon)
+                        .icon_size(IconSize::Small)
+                        .when(has_notifications, |button| {
+                            button
+                                .indicator(Indicator::dot().color(Color::Accent))
+                                .indicator_border_color(Some(
+                                    cx.theme().colors().tab_bar_background,
+                                ))
+                        })
+                        .tooltip(move |_, cx| {
+                            Tooltip::for_action("Open Threads Sidebar", &ToggleWorkspaceSidebar, cx)
+                        })
+                        .on_click(|_, window, cx| {
+                            window.dispatch_action(ToggleWorkspaceSidebar.boxed_clone(), cx);
+                        }),
+                )
                 .into_any_element(),
         )
     }
@@ -4060,7 +4092,27 @@ impl AgentPanel {
             ActiveView::History { .. } | ActiveView::Configuration
         );
 
-        let use_v2_empty_toolbar = has_v2_flag && is_empty_state && !is_in_history_or_config;
+        let is_text_thread = matches!(&self.active_view, ActiveView::TextThread { .. });
+
+        let use_v2_empty_toolbar =
+            has_v2_flag && is_empty_state && !is_in_history_or_config && !is_text_thread;
+
+        let is_sidebar_open = self
+            .sidebar
+            .as_ref()
+            .map(|s| s.read(cx).is_open())
+            .unwrap_or(false);
+
+        let base_container = h_flex()
+            .id("agent-panel-toolbar")
+            .h(Tab::container_height(cx))
+            .max_w_full()
+            .flex_none()
+            .justify_between()
+            .gap_2()
+            .bg(cx.theme().colors().tab_bar_background)
+            .border_b_1()
+            .border_color(cx.theme().colors().border);
 
         if use_v2_empty_toolbar {
             let (chevron_icon, icon_color, label_color) =
@@ -4120,34 +4172,26 @@ impl AgentPanel {
                     y: px(1.0),
                 });
 
-            h_flex()
-                .id("agent-panel-toolbar")
-                .h(Tab::container_height(cx))
-                .max_w_full()
-                .flex_none()
-                .justify_between()
-                .gap_2()
-                .bg(cx.theme().colors().tab_bar_background)
-                .border_b_1()
-                .border_color(cx.theme().colors().border)
+            base_container
                 .child(
                     h_flex()
                         .size_full()
-                        .gap(DynamicSpacing::Base04.rems(cx))
-                        .pl(DynamicSpacing::Base04.rems(cx))
+                        .gap_1()
+                        .when(is_sidebar_open || docked_right, |this| this.pl_1())
                         .when(!docked_right, |this| {
-                            this.children(self.render_sidebar_toggle(cx))
+                            this.children(self.render_sidebar_toggle(false, cx))
                         })
                         .child(agent_selector_menu)
                         .child(self.render_start_thread_in_selector(cx)),
                 )
                 .child(
                     h_flex()
+                        .h_full()
                         .flex_none()
-                        .gap(DynamicSpacing::Base02.rems(cx))
-                        .pl(DynamicSpacing::Base04.rems(cx))
-                        .pr(DynamicSpacing::Base06.rems(cx))
-                        .when(show_history_menu, |this| {
+                        .gap_1()
+                        .pl_1()
+                        .pr_1()
+                        .when(show_history_menu && !has_v2_flag, |this| {
                             this.child(self.render_recent_entries_menu(
                                 IconName::MenuAltTemp,
                                 Corner::TopRight,
@@ -4156,7 +4200,7 @@ impl AgentPanel {
                         })
                         .child(self.render_panel_options_menu(window, cx))
                         .when(docked_right, |this| {
-                            this.children(self.render_sidebar_toggle(cx))
+                            this.children(self.render_sidebar_toggle(true, cx))
                         }),
                 )
                 .into_any_element()
@@ -4180,23 +4224,19 @@ impl AgentPanel {
                 .with_handle(self.new_thread_menu_handle.clone())
                 .menu(move |window, cx| new_thread_menu_builder(window, cx));
 
-            h_flex()
-                .id("agent-panel-toolbar")
-                .h(Tab::container_height(cx))
-                .max_w_full()
-                .flex_none()
-                .justify_between()
-                .gap_2()
-                .bg(cx.theme().colors().tab_bar_background)
-                .border_b_1()
-                .border_color(cx.theme().colors().border)
+            base_container
                 .child(
                     h_flex()
                         .size_full()
-                        .gap(DynamicSpacing::Base04.rems(cx))
-                        .pl(DynamicSpacing::Base04.rems(cx))
+                        .map(|this| {
+                            if is_sidebar_open || docked_right {
+                                this.pl_1().gap_1()
+                            } else {
+                                this.pl_0().gap_0p5()
+                            }
+                        })
                         .when(!docked_right, |this| {
-                            this.children(self.render_sidebar_toggle(cx))
+                            this.children(self.render_sidebar_toggle(false, cx))
                         })
                         .child(match &self.active_view {
                             ActiveView::History { .. } | ActiveView::Configuration => {
@@ -4208,12 +4248,13 @@ impl AgentPanel {
                 )
                 .child(
                     h_flex()
+                        .h_full()
                         .flex_none()
-                        .gap(DynamicSpacing::Base02.rems(cx))
-                        .pl(DynamicSpacing::Base04.rems(cx))
-                        .pr(DynamicSpacing::Base06.rems(cx))
+                        .gap_1()
+                        .pl_1()
+                        .pr_1()
                         .child(new_thread_menu)
-                        .when(show_history_menu, |this| {
+                        .when(show_history_menu && !has_v2_flag, |this| {
                             this.child(self.render_recent_entries_menu(
                                 IconName::MenuAltTemp,
                                 Corner::TopRight,
@@ -4222,7 +4263,7 @@ impl AgentPanel {
                         })
                         .child(self.render_panel_options_menu(window, cx))
                         .when(docked_right, |this| {
-                            this.children(self.render_sidebar_toggle(cx))
+                            this.children(self.render_sidebar_toggle(true, cx))
                         }),
                 )
                 .into_any_element()
@@ -4724,7 +4765,7 @@ impl AgentPanel {
                         .child(server_view.clone())
                         .child(self.render_drag_target(cx)),
                     ActiveView::History { kind } => match kind {
-                        HistoryKind::AgentThreads => parent.child(self.acp_history.clone()),
+                        HistoryKind::AgentThreads => parent.child(self.acp_history_view.clone()),
                         HistoryKind::TextThreads => parent.child(self.text_thread_history.clone()),
                     },
                     ActiveView::TextThread {
