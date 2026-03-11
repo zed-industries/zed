@@ -87,8 +87,8 @@ use ui::{
 use util::ResultExt as _;
 use workspace::{
     CollaboratorId, DraggedSelection, DraggedSidebar, DraggedTab, FocusWorkspaceSidebar,
-    MultiWorkspace, MultiWorkspaceId, SIDEBAR_RESIZE_HANDLE_SIZE, ToggleWorkspaceSidebar,
-    ToggleZoom, ToolbarItemView, Workspace, WorkspaceId,
+    MultiWorkspace, SIDEBAR_RESIZE_HANDLE_SIZE, ToggleWorkspaceSidebar, ToggleZoom,
+    ToolbarItemView, Workspace, WorkspaceId,
     dock::{DockPosition, Panel, PanelEvent},
     multi_workspace_enabled,
 };
@@ -941,7 +941,6 @@ impl AgentPanel {
 
     pub fn load(
         workspace: WeakEntity<Workspace>,
-        multi_workspace_id: Option<MultiWorkspaceId>,
         prompt_builder: Arc<PromptBuilder>,
         mut cx: AsyncWindowContext,
     ) -> Task<Result<Entity<Self>>> {
@@ -3627,29 +3626,21 @@ impl AgentPanel {
         }
         let sidebar = self.sidebar.as_ref()?;
         let sidebar_read = sidebar.read(cx);
-        let is_open = sidebar_read.is_open();
+        if sidebar_read.is_open() {
+            return None;
+        }
         let has_notifications = sidebar_read.has_notifications(cx);
 
-        let icon = if is_open {
-            IconName::WorkspaceNavOpen
-        } else {
-            IconName::WorkspaceNavClosed
-        };
-
         Some(
-            IconButton::new("toggle-workspace-sidebar", icon)
+            IconButton::new("toggle-workspace-sidebar", IconName::WorkspaceNavClosed)
                 .icon_size(IconSize::Small)
-                .when(has_notifications && !is_open, |button| {
+                .when(has_notifications, |button| {
                     button
                         .indicator(Indicator::dot().color(Color::Accent))
                         .indicator_border_color(Some(cx.theme().colors().tab_bar_background))
                 })
                 .tooltip(move |_, cx| {
-                    if is_open {
-                        Tooltip::for_action("Close Threads Sidebar", &ToggleWorkspaceSidebar, cx)
-                    } else {
-                        Tooltip::for_action("Open Threads Sidebar", &ToggleWorkspaceSidebar, cx)
-                    }
+                    Tooltip::for_action("Open Threads Sidebar", &ToggleWorkspaceSidebar, cx)
                 })
                 .on_click(|_, window, cx| {
                     window.dispatch_action(ToggleWorkspaceSidebar.boxed_clone(), cx);
@@ -4202,10 +4193,10 @@ impl AgentPanel {
                                 cx,
                             ))
                         })
+                        .child(self.render_panel_options_menu(window, cx))
                         .when(docked_right, |this| {
                             this.children(self.render_sidebar_toggle(cx))
-                        })
-                        .child(self.render_panel_options_menu(window, cx)),
+                        }),
                 )
                 .into_any_element()
         } else {
@@ -4268,10 +4259,10 @@ impl AgentPanel {
                                 cx,
                             ))
                         })
+                        .child(self.render_panel_options_menu(window, cx))
                         .when(docked_right, |this| {
                             this.children(self.render_sidebar_toggle(cx))
-                        })
-                        .child(self.render_panel_options_menu(window, cx)),
+                        }),
                 )
                 .into_any_element()
         }
@@ -5231,25 +5222,15 @@ mod tests {
         let prompt_builder = Arc::new(prompt_store::PromptBuilder::new(None).unwrap());
 
         let async_cx = cx.update(|window, cx| window.to_async(cx));
-        let loaded_a = AgentPanel::load(
-            workspace_a.downgrade(),
-            None,
-            prompt_builder.clone(),
-            async_cx,
-        )
-        .await
-        .expect("panel A load should succeed");
+        let loaded_a = AgentPanel::load(workspace_a.downgrade(), prompt_builder.clone(), async_cx)
+            .await
+            .expect("panel A load should succeed");
         cx.run_until_parked();
 
         let async_cx = cx.update(|window, cx| window.to_async(cx));
-        let loaded_b = AgentPanel::load(
-            workspace_b.downgrade(),
-            None,
-            prompt_builder.clone(),
-            async_cx,
-        )
-        .await
-        .expect("panel B load should succeed");
+        let loaded_b = AgentPanel::load(workspace_b.downgrade(), prompt_builder.clone(), async_cx)
+            .await
+            .expect("panel B load should succeed");
         cx.run_until_parked();
 
         // Workspace A should restore its thread, width, and agent type
@@ -5969,14 +5950,10 @@ mod tests {
         // Load a fresh panel from the serialized data.
         let prompt_builder = Arc::new(prompt_store::PromptBuilder::new(None).unwrap());
         let async_cx = cx.update(|window, cx| window.to_async(cx));
-        let loaded_panel = AgentPanel::load(
-            workspace.downgrade(),
-            None,
-            prompt_builder.clone(),
-            async_cx,
-        )
-        .await
-        .expect("panel load should succeed");
+        let loaded_panel =
+            AgentPanel::load(workspace.downgrade(), prompt_builder.clone(), async_cx)
+                .await
+                .expect("panel load should succeed");
         cx.run_until_parked();
 
         loaded_panel.read_with(cx, |panel, _cx| {

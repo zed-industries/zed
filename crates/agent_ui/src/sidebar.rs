@@ -2,13 +2,15 @@ use crate::{AgentPanel, AgentPanelEvent, NewThread};
 use acp_thread::ThreadStatus;
 use agent::ThreadStore;
 use agent_client_protocol as acp;
+use agent_settings::AgentSettings;
 use chrono::Utc;
 use db::kvp::KEY_VALUE_STORE;
 use editor::{Editor, EditorElement, EditorStyle};
 use feature_flags::{AgentV2FeatureFlag, FeatureFlagViewExt as _};
 use gpui::{
-    AnyElement, App, Context, Entity, FocusHandle, Focusable, FontStyle, ListState, Pixels, Render,
-    SharedString, TextStyle, WeakEntity, Window, actions, list, prelude::*, px, relative, rems,
+    Action as _, AnyElement, App, Context, Entity, FocusHandle, Focusable, FontStyle, ListState,
+    Pixels, Render, SharedString, TextStyle, WeakEntity, Window, actions, list, prelude::*, px,
+    relative, rems,
 };
 use menu::{Cancel, Confirm, SelectFirst, SelectLast, SelectNext, SelectPrevious};
 use project::Event as ProjectEvent;
@@ -22,7 +24,9 @@ use ui::{
 };
 use util::ResultExt as _;
 use util::path_list::PathList;
-use workspace::{MultiWorkspace, MultiWorkspaceEvent, Workspace, multi_workspace_enabled};
+use workspace::{
+    MultiWorkspace, MultiWorkspaceEvent, ToggleWorkspaceSidebar, Workspace, multi_workspace_enabled,
+};
 use zed_actions::editor::{MoveDown, MoveUp};
 
 actions!(
@@ -1413,7 +1417,24 @@ impl Render for Sidebar {
             .font(ui_font)
             .size_full()
             .bg(cx.theme().colors().surface_background)
-            .child(
+            .child({
+                let docked_right =
+                    AgentSettings::get_global(cx).dock == settings::DockPosition::Right;
+                let render_close_button = || {
+                    IconButton::new("sidebar-close-toggle", IconName::WorkspaceNavOpen)
+                        .icon_size(IconSize::Small)
+                        .tooltip(move |_, cx| {
+                            Tooltip::for_action(
+                                "Close Threads Sidebar",
+                                &ToggleWorkspaceSidebar,
+                                cx,
+                            )
+                        })
+                        .on_click(|_, window, cx| {
+                            window.dispatch_action(ToggleWorkspaceSidebar.boxed_clone(), cx);
+                        })
+                };
+
                 h_flex()
                     .flex_none()
                     .px_2p5()
@@ -1421,6 +1442,7 @@ impl Render for Sidebar {
                     .gap_2()
                     .border_b_1()
                     .border_color(cx.theme().colors().border)
+                    .when(!docked_right, |this| this.child(render_close_button()))
                     .child(
                         Icon::new(IconName::MagnifyingGlass)
                             .size(IconSize::Small)
@@ -1437,8 +1459,9 @@ impl Render for Sidebar {
                                     this.update_entries(cx);
                                 })),
                         )
-                    }),
-            )
+                    })
+                    .when(docked_right, |this| this.child(render_close_button()))
+            })
             .child(
                 v_flex()
                     .flex_1()
