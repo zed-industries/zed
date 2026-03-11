@@ -165,8 +165,6 @@ pub(crate) fn compare_versions() -> (Step<Run>, StepOutput, StepOutput) {
         if [[ "$GITHUB_EVENT_NAME" == "pull_request" ]]; then
             PR_FORK_POINT="$(git merge-base origin/main HEAD)"
             git checkout "$PR_FORK_POINT"
-        elif BRANCH_PARENT_SHA="$(git merge-base origin/main origin/zed-zippy-autobump)"; then
-            git checkout "$BRANCH_PARENT_SHA"
         else
             git checkout "$(git log -1 --format=%H)"~1
         fi
@@ -199,7 +197,8 @@ fn bump_extension_version(
 ) -> NamedJob {
     let (generate_token, generated_token) =
         generate_token(&app_id.to_string(), &app_secret.to_string(), None);
-    let (bump_version, _new_version, title, body) = bump_version(current_version, bump_type);
+    let (bump_version, _new_version, title, body, branch_name) =
+        bump_version(current_version, bump_type);
 
     let job = steps::dependant_job(dependencies)
         .defaults(extension_job_defaults())
@@ -218,6 +217,7 @@ fn bump_extension_version(
             title,
             body,
             generated_token,
+            branch_name,
         ));
 
     named::job(job)
@@ -276,7 +276,7 @@ fn install_bump_2_version() -> Step<Run> {
 fn bump_version(
     current_version: &JobOutput,
     bump_type: &WorkflowInput,
-) -> (Step<Run>, StepOutput, StepOutput, StepOutput) {
+) -> (Step<Run>, StepOutput, StepOutput, StepOutput, StepOutput) {
     let step = named::bash(formatdoc! {r#"
         BUMP_FILES=("extension.toml")
         if [[ -f "Cargo.toml" ]]; then
@@ -300,9 +300,11 @@ fn bump_version(
         if [[ "$WORKING_DIR" == "." || -z "$WORKING_DIR" ]]; then
             echo "title=Bump version to ${{NEW_VERSION}}" >> "$GITHUB_OUTPUT"
             echo "body=This PR bumps the version of this extension to v${{NEW_VERSION}}" >> "$GITHUB_OUTPUT"
+            echo "branch_name=zed-zippy-autobump" >> "$GITHUB_OUTPUT"
         else
             echo "title=${{EXTENSION_ID}}: Bump to v${{NEW_VERSION}}" >> "$GITHUB_OUTPUT"
             echo "body=This PR bumps the version of the ${{EXTENSION_NAME}} extension to v${{NEW_VERSION}}" >> "$GITHUB_OUTPUT"
+            echo "branch_name=zed-zippy-${{EXTENSION_ID}}-autobump" >> "$GITHUB_OUTPUT"
         fi
 
         echo "new_version=${{NEW_VERSION}}" >> "$GITHUB_OUTPUT"
@@ -316,20 +318,22 @@ fn bump_version(
     let new_version = StepOutput::new(&step, "new_version");
     let title = StepOutput::new(&step, "title");
     let body = StepOutput::new(&step, "body");
-    (step, new_version, title, body)
+    let branch_name = StepOutput::new(&step, "branch_name");
+    (step, new_version, title, body, branch_name)
 }
 
 fn create_pull_request(
     title: StepOutput,
     body: StepOutput,
     generated_token: StepOutput,
+    branch_name: StepOutput,
 ) -> Step<Use> {
     named::uses("peter-evans", "create-pull-request", "v7").with(
         Input::default()
             .add("title", title.to_string())
             .add("body", body.to_string())
             .add("commit-message", title.to_string())
-            .add("branch", "zed-zippy-autobump")
+            .add("branch", branch_name.to_string())
             .add(
                 "committer",
                 "zed-zippy[bot] <234243425+zed-zippy[bot]@users.noreply.github.com>",

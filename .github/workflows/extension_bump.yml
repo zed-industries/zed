@@ -46,8 +46,6 @@ jobs:
         if [[ "$GITHUB_EVENT_NAME" == "pull_request" ]]; then
             PR_FORK_POINT="$(git merge-base origin/main HEAD)"
             git checkout "$PR_FORK_POINT"
-        elif BRANCH_PARENT_SHA="$(git merge-base origin/main origin/zed-zippy-autobump)"; then
-            git checkout "$BRANCH_PARENT_SHA"
         else
             git checkout "$(git log -1 --format=%H)"~1
         fi
@@ -112,9 +110,11 @@ jobs:
         if [[ "$WORKING_DIR" == "." || -z "$WORKING_DIR" ]]; then
             echo "title=Bump version to ${NEW_VERSION}" >> "$GITHUB_OUTPUT"
             echo "body=This PR bumps the version of this extension to v${NEW_VERSION}" >> "$GITHUB_OUTPUT"
+            echo "branch_name=zed-zippy-autobump" >> "$GITHUB_OUTPUT"
         else
             echo "title=${EXTENSION_ID}: Bump to v${NEW_VERSION}" >> "$GITHUB_OUTPUT"
             echo "body=This PR bumps the version of the ${EXTENSION_NAME} extension to v${NEW_VERSION}" >> "$GITHUB_OUTPUT"
+            echo "branch_name=zed-zippy-${EXTENSION_ID}-autobump" >> "$GITHUB_OUTPUT"
         fi
 
         echo "new_version=${NEW_VERSION}" >> "$GITHUB_OUTPUT"
@@ -128,7 +128,7 @@ jobs:
         title: ${{ steps.bump-version.outputs.title }}
         body: ${{ steps.bump-version.outputs.body }}
         commit-message: ${{ steps.bump-version.outputs.title }}
-        branch: zed-zippy-autobump
+        branch: ${{ steps.bump-version.outputs.branch_name }}
         committer: zed-zippy[bot] <234243425+zed-zippy[bot]@users.noreply.github.com>
         base: main
         delete-branch: true
