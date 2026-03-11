@@ -23,6 +23,7 @@ use futures::AsyncReadExt as _;
 use futures::channel::mpsc;
 use http_client::{AsyncBody, HttpClient, Request};
 use parking_lot::Mutex as SyncMutex;
+use rand::Rng as _;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
@@ -427,7 +428,8 @@ pub struct PkceChallenge {
 /// The verifier is 43 base64url characters derived from 32 random bytes.
 /// The challenge is `BASE64URL(SHA256(verifier))`.
 pub fn generate_pkce_challenge() -> PkceChallenge {
-    let random_bytes: Vec<u8> = (0..32).map(|_| rand::random::<u8>()).collect();
+    let mut random_bytes = [0u8; 32];
+    rand::rng().fill(&mut random_bytes);
     let engine = base64::engine::general_purpose::URL_SAFE_NO_PAD;
     let verifier = engine.encode(&random_bytes);
 

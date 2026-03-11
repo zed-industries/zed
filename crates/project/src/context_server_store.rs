@@ -16,6 +16,7 @@ use futures::{FutureExt as _, StreamExt as _, future::join_all};
 use gpui::{App, AsyncApp, Context, Entity, EventEmitter, Subscription, Task, WeakEntity, actions};
 use http_client::HttpClient;
 use itertools::Itertools;
+use rand::Rng as _;
 use registry::ContextServerDescriptorRegistry;
 use remote::RemoteClient;
 use rpc::{AnyProtoClient, TypedEnvelope, proto};
@@ -1179,16 +1180,13 @@ impl ContextServerStore {
         let resource = oauth::canonical_server_uri(&discovery.resource_metadata.resource);
         let pkce = oauth::generate_pkce_challenge();
 
-        let state_param: String = (0..32)
-            .map(|_| rand::random::<u8>())
-            .collect::<Vec<_>>()
-            .iter()
-            .map(|b| format!("{:02x}", b))
-            .collect();
+        let mut state_bytes = [0u8; 32];
+        rand::rng().fill(&mut state_bytes);
+        let state_param: String = state_bytes.iter().map(|b| format!("{:02x}", b)).collect();
 
         // Start a loopback HTTP server on an ephemeral port. The redirect URI
         // includes this port so the browser sends the callback directly to our
-        // process, avoiding the zed:// custom scheme routing problem.
+        // process.
         let (redirect_uri, callback_rx) = oauth::start_callback_server()
             .await
             .context("Failed to start OAuth callback server")?;
@@ -1200,11 +1198,6 @@ impl ContextServerStore {
             _ => anyhow::bail!("OAuth authentication only supported for HTTP servers"),
         };
 
-        // DCR registrations are not reused across flows because each flow
-        // starts a loopback callback server on a fresh ephemeral port, so the
-        // redirect URI changes every time. Authorization servers that do strict
-        // redirect URI matching (e.g. Notion) reject the token exchange when
-        // the redirect URI doesn't match what was registered with the client.
         let client_registration =
             oauth::resolve_client_registration(&http_client, &discovery, &redirect_uri, None)
                 .await
