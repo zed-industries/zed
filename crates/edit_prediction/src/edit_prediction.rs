@@ -252,21 +252,24 @@ pub struct StoredEvent {
 impl StoredEvent {
     fn can_merge(
         &self,
-        next_old_event: &&&StoredEvent,
-        next_new_snapshot: &TextBufferSnapshot,
+        next_old_event: &StoredEvent,
+        latest_snapshot: &TextBufferSnapshot,
         latest_edit_range: &Range<Anchor>,
     ) -> bool {
         // Events must be for the same buffer and be contiguous across included snapshots to be mergeable.
         if self.old_snapshot.remote_id() != next_old_event.old_snapshot.remote_id() {
             return false;
         }
-        if next_old_event.old_snapshot.remote_id() != next_new_snapshot.remote_id() {
+        if self.old_snapshot.remote_id() != latest_snapshot.remote_id() {
             return false;
         }
         if self.new_snapshot_version != next_old_event.old_snapshot.version {
             return false;
         }
-        if next_old_event.new_snapshot_version != next_new_snapshot.version {
+        if !latest_snapshot
+            .version
+            .observed_all(&next_old_event.new_snapshot_version)
+        {
             return false;
         }
 
@@ -291,9 +294,9 @@ impl StoredEvent {
             return false;
         }
 
-        let left_range = self.total_edit_range.to_point(&next_old_event.old_snapshot);
-        let right_range = next_old_event.total_edit_range.to_point(next_new_snapshot);
-        let latest_range = latest_edit_range.to_point(next_new_snapshot);
+        let left_range = self.total_edit_range.to_point(latest_snapshot);
+        let right_range = next_old_event.total_edit_range.to_point(latest_snapshot);
+        let latest_range = latest_edit_range.to_point(latest_snapshot);
 
         // Events near to the latest edit are not merged if their sources differ.
         if lines_between_ranges(&left_range, &latest_range)
@@ -1473,7 +1476,7 @@ impl EditPredictionStore {
             }
         }
 
-        merge_trailing_events_if_needed(events, &old_snapshot, &edit_range);
+        merge_trailing_events_if_needed(events, &old_snapshot, &new_snapshot, &edit_range);
 
         project_state.last_event = Some(LastEvent {
             old_file,
@@ -2841,6 +2844,7 @@ fn collaborator_edit_overlaps_locality_region(
 
 fn merge_trailing_events_if_needed(
     events: &mut VecDeque<StoredEvent>,
+    end_snapshot: &TextBufferSnapshot,
     latest_snapshot: &TextBufferSnapshot,
     latest_edit_range: &Range<Anchor>,
 ) {
@@ -2848,23 +2852,24 @@ fn merge_trailing_events_if_needed(
         if last_event.old_snapshot.remote_id() != latest_snapshot.remote_id() {
             return;
         }
-        if last_event.new_snapshot_version != latest_snapshot.version {
+        if !latest_snapshot
+            .version
+            .observed_all(&last_event.new_snapshot_version)
+        {
             return;
         }
     }
 
     let mut next_old_event = None;
-    let mut next_new_snapshot = latest_snapshot;
     let mut mergeable_count = 0;
     for old_event in events.iter().rev() {
-        if let Some(next_old_event) = &next_old_event
-            && !old_event.can_merge(&next_old_event, next_new_snapshot, latest_edit_range)
+        if let Some(next_old_event) = next_old_event
+            && !old_event.can_merge(next_old_event, latest_snapshot, latest_edit_range)
         {
             break;
         }
         mergeable_count += 1;
         next_old_event = Some(old_event);
-        next_new_snapshot = &old_event.old_snapshot;
     }
 
     if mergeable_count <= 1 {
@@ -2874,12 +2879,12 @@ fn merge_trailing_events_if_needed(
     let mut events_to_merge = events.range(events.len() - mergeable_count..).peekable();
     let oldest_event = events_to_merge.peek().unwrap();
     let oldest_snapshot = oldest_event.old_snapshot.clone();
-    let newest_snapshot = latest_snapshot;
+    let newest_snapshot = end_snapshot;
     let mut merged_edit_range = oldest_event.total_edit_range.clone();
 
     for event in events.range(events.len() - mergeable_count + 1..) {
         merged_edit_range =
-            merge_anchor_ranges(&merged_edit_range, &event.total_edit_range, newest_snapshot);
+            merge_anchor_ranges(&merged_edit_range, &event.total_edit_range, latest_snapshot);
     }
 
     if let Some((diff, edit_range)) = compute_diff_between_snapshots_in_range(
