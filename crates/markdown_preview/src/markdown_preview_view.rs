@@ -824,7 +824,9 @@ fn collect_selectable_text(
             }
         }
         ParsedMarkdownElement::CodeBlock(code_block) => push_chunk(code_block.contents.as_ref()),
-        ParsedMarkdownElement::HorizontalRule(_) | ParsedMarkdownElement::Image(_) => {}
+        ParsedMarkdownElement::HorizontalRule(_)
+        | ParsedMarkdownElement::Image(_)
+        | ParsedMarkdownElement::MermaidDiagram(_) => {}
     }
 }
 

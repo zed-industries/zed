@@ -418,7 +418,9 @@ fn append_selectable_text(
             ParsedMarkdownElement::CodeBlock(code_block) => {
                 out.push_str(code_block.contents.as_ref())
             }
-            ParsedMarkdownElement::HorizontalRule(_) | ParsedMarkdownElement::Image(_) => {}
+            ParsedMarkdownElement::HorizontalRule(_)
+            | ParsedMarkdownElement::Image(_)
+            | ParsedMarkdownElement::MermaidDiagram(_) => {}
         }
     }
 }
@@ -476,7 +478,9 @@ fn selectable_block_len(block: &crate::markdown_elements::ParsedMarkdownElement)
             block_quote.children.iter().map(selectable_block_len).sum()
         }
         ParsedMarkdownElement::CodeBlock(code_block) => code_block.contents.len(),
-        ParsedMarkdownElement::HorizontalRule(_) | ParsedMarkdownElement::Image(_) => 0,
+        ParsedMarkdownElement::HorizontalRule(_)
+        | ParsedMarkdownElement::Image(_)
+        | ParsedMarkdownElement::MermaidDiagram(_) => 0,
     }
 }
 
@@ -605,7 +609,9 @@ fn export_block(
             html.push_str("</code></pre>");
             Some(BlockSelection { plain_text, html })
         }
-        ParsedMarkdownElement::HorizontalRule(_) | ParsedMarkdownElement::Image(_) => None,
+        ParsedMarkdownElement::HorizontalRule(_)
+        | ParsedMarkdownElement::Image(_)
+        | ParsedMarkdownElement::MermaidDiagram(_) => None,
     }
 }
 
