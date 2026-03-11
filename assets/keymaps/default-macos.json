@@ -1523,7 +1523,7 @@
   {
     "context": "NotebookEditor",
     "bindings": {
-      "shift-enter": "notebook::Run",
+      "shift-enter": "notebook::RunAndAdvance",
       "cmd-enter": "notebook::Run",
       "cmd-shift-enter": "notebook::RunAll",
       "alt-up": "notebook::MoveCellUp",
@@ -1538,7 +1538,7 @@
     "context": "NotebookEditor > Editor",
     "bindings": {
       "enter": "editor::Newline",
-      "shift-enter": "notebook::Run",
+      "shift-enter": "notebook::RunAndAdvance",
       "cmd-enter": "notebook::Run",
       "cmd-shift-enter": "notebook::RunAll",
       "alt-up": "notebook::MoveCellUp",
