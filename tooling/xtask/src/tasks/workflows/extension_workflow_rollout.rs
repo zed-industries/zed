@@ -231,9 +231,9 @@ fn rollout_workflows_to_extension(
             cd - > /dev/null
 
             if [ "$MATRIX_REPO" = "workflows" ]; then
-                cp workflow-files/extensions/workflows/*.yml extension/.github/workflows/
+                cp workflow-files/*.yml extension/.github/workflows/
             else
-                cp workflow-files/extensions/workflows/shared/*.yml extension/.github/workflows/
+                cp workflow-files/shared/*.yml extension/.github/workflows/
             fi
         "#})
         .add_env(("REMOVED_CI", removed_ci))
