@@ -1462,6 +1462,7 @@ impl EditorElement {
         if text_hovered {
             editor.update_hovered_link(
                 point_for_position,
+                Some(event.position),
                 &position_map.snapshot,
                 modifiers,
                 window,
@@ -1473,12 +1474,13 @@ impl EditorElement {
                     .snapshot
                     .buffer_snapshot()
                     .anchor_before(point.to_offset(&position_map.snapshot, Bias::Left));
-                hover_at(editor, Some(anchor), window, cx);
+                hover_at(editor, Some(anchor), Some(event.position), window, cx);
                 Self::update_visible_cursor(editor, point, position_map, window, cx);
             } else {
                 editor.update_inlay_link_and_hover_points(
                     &position_map.snapshot,
                     point_for_position,
+                    Some(event.position),
                     modifiers.secondary(),
                     modifiers.shift,
                     window,
@@ -1487,7 +1489,7 @@ impl EditorElement {
             }
         } else {
             editor.hide_hovered_link(cx);
-            hover_at(editor, None, window, cx);
+            hover_at(editor, None, Some(event.position), window, cx);
         }
     }
 
