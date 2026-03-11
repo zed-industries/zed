@@ -1490,18 +1490,22 @@ mod foo «1{
                 cx,
             );
         });
-
-        // trigger re-colorization after fold
-        cx.update_editor(|editor, _window, cx| {
-            editor.colorize_brackets(true, cx);
-        });
         cx.executor().advance_clock(Duration::from_millis(100));
         cx.executor().run_until_parked();
 
-        let markup_after = bracket_colors_markup(&mut cx);
-        assert!(
-            markup_after.contains("small_function«"),
-            "small_function brackets should be colored when visible on screen after folding.\nMarkup:\n{markup_after}"
+        assert_eq!(
+            indoc! {r#"
+⋯1»
+
+fn small_function«1()1» «1{
+    let x = «2(1, «3(2, 3)3»)2»;
+}1»
+
+1 hsla(207.80, 16.20%, 69.19%, 1.00)
+2 hsla(29.00, 54.00%, 65.88%, 1.00)
+3 hsla(286.00, 51.00%, 75.25%, 1.00)
+"#,},
+            bracket_colors_markup(&mut cx),
         );
     }
 
