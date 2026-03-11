@@ -5,7 +5,6 @@ use anyhow::{Context as _, Result, anyhow};
 use cli::{CliRequest, CliResponse, ipc::IpcSender};
 use cli::{IpcHandshake, ipc};
 use client::{ZedLink, parse_zed_link};
-
 use db::kvp::KeyValueStore;
 use editor::Editor;
 use fs::Fs;
