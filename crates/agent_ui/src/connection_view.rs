@@ -1498,14 +1498,12 @@ impl ConnectionView {
         let auth_method = connection.auth_methods().iter().find(|m| m.id() == &method);
 
         if let Some(terminal_auth) = auth_method
-            .and_then(|a| {
-                if let acp::AuthMethod::Agent(a) = a {
-                    Some(a)
-                } else {
-                    None
-                }
+            .and_then(|a| match a {
+                acp::AuthMethod::EnvVar(env_var) => env_var.meta.as_ref(),
+                acp::AuthMethod::Terminal(terminal) => terminal.meta.as_ref(),
+                acp::AuthMethod::Agent(agent) => agent.meta.as_ref(),
+                _ => None,
             })
-            .and_then(|a| a.meta.as_ref())
             .and_then(|m| m.get("terminal-auth"))
         {
             // Extract terminal auth details from meta
