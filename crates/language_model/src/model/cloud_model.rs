@@ -140,7 +140,7 @@ impl RefreshLlmTokenListener {
 
         let subscription = cx.subscribe(&user_store, |this, _user_store, event, cx| {
             if matches!(event, client::user::Event::OrganizationChanged) {
-                this.refresh_and_emit(cx);
+                this.refresh(cx);
             }
         });
 
@@ -152,7 +152,7 @@ impl RefreshLlmTokenListener {
         }
     }
 
-    fn refresh_and_emit(&self, cx: &mut Context<Self>) {
+    fn refresh(&self, cx: &mut Context<Self>) {
         let client = self.client.clone();
         let llm_api_token = self.llm_api_token.clone();
         let organization_id = self
@@ -160,9 +160,9 @@ impl RefreshLlmTokenListener {
             .read(cx)
             .current_organization()
             .map(|o| o.id.clone());
-        cx.spawn(async move |_this, cx| {
+        cx.spawn(async move |this, cx| {
             llm_api_token.refresh(&client, organization_id).await?;
-            _this.update(cx, |_this, cx| cx.emit(RefreshLlmTokenEvent))
+            this.update(cx, |_this, cx| cx.emit(RefreshLlmTokenEvent))
         })
         .detach_and_log_err(cx);
     }
@@ -170,7 +170,7 @@ impl RefreshLlmTokenListener {
     fn handle_refresh_llm_token(this: Entity<Self>, message: &MessageToClient, cx: &mut App) {
         match message {
             MessageToClient::UserUpdated => {
-                this.update(cx, |this, cx| this.refresh_and_emit(cx));
+                this.update(cx, |this, cx| this.refresh(cx));
             }
         }
     }
