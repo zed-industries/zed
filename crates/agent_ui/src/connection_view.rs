@@ -463,7 +463,7 @@ impl ConnectedServerState {
         let tasks = self
             .threads
             .keys()
-            .map(|id| self.connection.close_session(id, cx));
+            .map(|id| self.connection.clone().close_session(id, cx));
         let task = futures::future::join_all(tasks);
         cx.background_spawn(async move {
             task.await;
@@ -1431,7 +1431,7 @@ impl ConnectionView {
                     .connection()
                     .auth_methods()
                     .iter()
-                    .any(|method| method.id.0.as_ref() == "claude-login")
+                    .any(|method| method.id().0.as_ref() == "claude-login")
                 {
                     available_commands.push(acp::AvailableCommand::new("login", "Authenticate"));
                     available_commands.push(acp::AvailableCommand::new("logout", "Authenticate"));
@@ -1495,10 +1495,15 @@ impl ConnectionView {
         let agent_telemetry_id = connection.telemetry_id();
 
         // Check for the experimental "terminal-auth" _meta field
-        let auth_method = connection.auth_methods().iter().find(|m| m.id == method);
+        let auth_method = connection.auth_methods().iter().find(|m| m.id() == &method);
 
         if let Some(terminal_auth) = auth_method
-            .and_then(|a| a.meta.as_ref())
+            .and_then(|a| match a {
+                acp::AuthMethod::EnvVar(env_var) => env_var.meta.as_ref(),
+                acp::AuthMethod::Terminal(terminal) => terminal.meta.as_ref(),
+                acp::AuthMethod::Agent(agent) => agent.meta.as_ref(),
+                _ => None,
+            })
             .and_then(|m| m.get("terminal-auth"))
         {
             // Extract terminal auth details from meta
@@ -1882,7 +1887,7 @@ impl ConnectionView {
                     .enumerate()
                     .rev()
                     .map(|(ix, method)| {
-                        let (method_id, name) = (method.id.0.clone(), method.name.clone());
+                        let (method_id, name) = (method.id().0.clone(), method.name().to_string());
                         let agent_telemetry_id = connection.telemetry_id();
 
                         Button::new(method_id.clone(), name)
@@ -1894,8 +1899,8 @@ impl ConnectionView {
                                     this.style(ButtonStyle::Outlined)
                                 }
                             })
-                            .when_some(method.description.clone(), |this, description| {
-                                this.tooltip(Tooltip::text(description))
+                            .when_some(method.description(), |this, description| {
+                                this.tooltip(Tooltip::text(description.to_string()))
                             })
                             .on_click({
                                 cx.listener(move |this, _, window, cx| {
@@ -4074,7 +4079,10 @@ pub(crate) mod tests {
         fn new() -> Self {
             Self {
                 authenticated: Arc::new(Mutex::new(false)),
-                auth_method: acp::AuthMethod::new(Self::AUTH_METHOD_ID, "Test Login"),
+                auth_method: acp::AuthMethod::Agent(acp::AuthMethodAgent::new(
+                    Self::AUTH_METHOD_ID,
+                    "Test Login",
+                )),
             }
         }
     }
@@ -4127,7 +4135,7 @@ pub(crate) mod tests {
             method_id: acp::AuthMethodId,
             _cx: &mut App,
         ) -> Task<gpui::Result<()>> {
-            if method_id == self.auth_method.id {
+            if &method_id == self.auth_method.id() {
                 *self.authenticated.lock() = true;
                 Task::ready(Ok(()))
             } else {
