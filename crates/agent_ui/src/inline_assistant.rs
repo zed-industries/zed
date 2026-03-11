@@ -266,7 +266,7 @@ impl InlineAssistant {
             return;
         };
 
-        let configuration_error = || {
+        let configuration_error = |cx| {
             let model_registry = LanguageModelRegistry::read_global(cx);
             model_registry.configuration_error(model_registry.inline_assistant_model(), cx)
         };
@@ -278,7 +278,8 @@ impl InlineAssistant {
 
         let prompt_store = agent_panel.prompt_store().as_ref().cloned();
         let thread_store = agent_panel.thread_store().clone();
-        let history = agent_panel.history().downgrade();
+        //FIXME
+        let history = cx.new(|cx| ThreadHistory::new(None, cx)).downgrade();
 
         let handle_assist =
             |window: &mut Window, cx: &mut Context<Workspace>| match inline_assist_target {
@@ -314,7 +315,7 @@ impl InlineAssistant {
                 }
             };
 
-        if let Some(error) = configuration_error() {
+        if let Some(error) = configuration_error(cx) {
             if let ConfigurationError::ProviderNotAuthenticated(provider) = error {
                 cx.spawn(async move |_, cx| {
                     cx.update(|cx| provider.authenticate(cx)).await?;
@@ -322,7 +323,7 @@ impl InlineAssistant {
                 })
                 .detach_and_log_err(cx);
 
-                if configuration_error().is_none() {
+                if configuration_error(cx).is_none() {
                     handle_assist(window, cx);
                 }
             } else {
@@ -1969,7 +1970,11 @@ impl CodeActionProvider for AssistantCodeActionProvider {
                     .panel::<AgentPanel>(cx)
                     .context("missing agent panel")?
                     .read(cx);
-                anyhow::Ok((panel.thread_store().clone(), panel.history().downgrade()))
+                anyhow::Ok((
+                    panel.thread_store().clone(),
+                    //FIXME
+                    cx.new(|cx| ThreadHistory::new(None, cx)).downgrade(),
+                ))
             })??;
             let editor = editor.upgrade().context("editor was released")?;
             let range = editor

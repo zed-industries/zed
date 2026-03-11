@@ -777,14 +777,6 @@ impl ConnectionView {
                         }
 
                         let id = current.read(cx).thread.read(cx).session_id().clone();
-                        let session_list = if connection.supports_session_history() {
-                            connection.session_list(cx)
-                        } else {
-                            None
-                        };
-                        this.history.update(cx, |history, cx| {
-                            history.set_session_list(session_list, cx);
-                        });
                         this.set_server_state(
                             ServerState::Connected(ConnectedServerState {
                                 connection,
@@ -2608,6 +2600,10 @@ impl ConnectionView {
                 cx,
             );
         })
+    }
+
+    pub fn history(&self) -> &Entity<ThreadHistory> {
+        &self.history
     }
 
     pub fn delete_history_entry(&mut self, session_id: &acp::SessionId, cx: &mut Context<Self>) {
