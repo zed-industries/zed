@@ -223,8 +223,8 @@ impl PaneGroup {
     pub fn render(
         &self,
         zoomed: Option<&AnyWeakView>,
-        left_content: Option<AnyView>,
-        right_content: Option<AnyView>,
+        left_content: Option<AnyElement>,
+        right_content: Option<AnyElement>,
         render_cx: &dyn PaneLeaderDecorator,
         window: &mut Window,
         cx: &mut App,
@@ -546,8 +546,8 @@ impl Member {
         &self,
         basis: usize,
         zoomed: Option<&AnyWeakView>,
-        left_content: Option<AnyView>,
-        right_content: Option<AnyView>,
+        left_content: Option<AnyElement>,
+        right_content: Option<AnyElement>,
         pane_group_state: Option<PaneGroupState>,
         render_cx: &dyn PaneLeaderDecorator,
         window: &mut Window,
@@ -1086,8 +1086,8 @@ impl PaneAxis {
         basis: usize,
         zoomed: Option<&AnyWeakView>,
         pane_group_state: Option<PaneGroupState>,
-        left_content: Option<AnyView>,
-        right_content: Option<AnyView>,
+        left_content: Option<AnyElement>,
+        right_content: Option<AnyElement>,
         render_cx: &dyn PaneLeaderDecorator,
         window: &mut Window,
         cx: &mut App,
@@ -1098,7 +1098,6 @@ impl PaneAxis {
         let mut is_leaf_pane = vec![false; self.members.len()];
 
         let rendered_children = left_content
-            .map(|view| view.into_any_element())
             .into_iter()
             .chain(self.members.iter().enumerate().map(|(ix, member)| {
                 match member {
@@ -1129,7 +1128,7 @@ impl PaneAxis {
                 }
                 result.element.into_any_element()
             }))
-            .chain(right_content.map(|view| view.into_any_element()))
+            .chain(right_content)
             .collect::<Vec<_>>();
 
         let element = pane_axis(

@@ -96,7 +96,7 @@ pub trait PanelHandle: Send + Sync {
     fn to_any(&self) -> AnyView;
     fn activation_priority(&self, cx: &App) -> u32;
     fn enabled(&self, cx: &App) -> bool;
-    fn flex_content(&self, window: &Window, cx: &mut App) -> Option<AnyView>;
+    fn flex_content(&self, window: &mut Window, cx: &mut App) -> Option<AnyElement>;
     fn has_flex_content(&self, window: &Window, cx: &App) -> bool;
     fn has_panel_content(&self, window: &Window, cx: &App) -> bool;
     fn move_to_next_position(&self, window: &mut Window, cx: &mut App) {
@@ -204,11 +204,14 @@ where
         self.read(cx).enabled(cx)
     }
 
-    fn flex_content(&self, window: &Window, cx: &mut App) -> Option<AnyView> {
+    fn flex_content(&self, window: &mut Window, cx: &mut App) -> Option<AnyElement> {
         if !self.read(cx).has_flex_content(window, cx) {
             return None;
         }
-        Some(cx.new(|_| PanelCenterView(self.clone())).into())
+        Some(
+            self.update(cx, |this, cx| this.render_flex_content(window, cx))
+                .unwrap_or_else(|| gpui::Empty.into_any_element()),
+        )
     }
 
     fn has_flex_content(&self, window: &Window, cx: &App) -> bool {
@@ -217,17 +220,6 @@ where
 
     fn has_panel_content(&self, window: &Window, cx: &App) -> bool {
         self.read(cx).has_panel_content(window, cx)
-    }
-}
-
-struct PanelCenterView<T: Panel>(Entity<T>);
-
-impl<T: Panel> Render for PanelCenterView<T> {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        self.0.update(cx, |this, cx| {
-            this.render_flex_content(window, cx)
-                .unwrap_or_else(|| gpui::Empty.into_any_element())
-        })
     }
 }
 
@@ -730,11 +722,6 @@ impl Dock {
     pub fn visible_panel(&self) -> Option<&Arc<dyn PanelHandle>> {
         let entry = self.visible_entry()?;
         Some(&entry.panel)
-    }
-
-    pub fn visible_panel_flex_element(&self, window: &Window, cx: &mut App) -> Option<AnyView> {
-        let entry = self.visible_entry()?;
-        entry.panel.flex_content(window, cx)
     }
 
     pub fn active_panel(&self) -> Option<&Arc<dyn PanelHandle>> {

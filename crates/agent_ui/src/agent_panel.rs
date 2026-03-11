@@ -3706,11 +3706,7 @@ impl AgentPanel {
             let is_agent_selected = move |agent_type: AgentType| selected_agent == agent_type;
 
             let workspace = self.workspace.clone();
-            let is_via_collab = workspace
-                .update(cx, |workspace, cx| {
-                    workspace.project().read(cx).is_via_collab()
-                })
-                .unwrap_or_default();
+            let is_via_collab = self.project.read(cx).is_via_collab();
 
             let focus_handle = focus_handle.clone();
             let agent_server_store = agent_server_store;
