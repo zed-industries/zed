@@ -701,8 +701,17 @@ struct PaneAxisStateEntry {
 impl PaneGroupState {
     fn total_flex(&self) -> f32 {
         let state = self.0.borrow();
-        state.left_entry.as_ref().map_or(0., |e| e.flex)
-            + state.right_entry.as_ref().map_or(0., |e| e.flex)
+        let left = state
+            .left_entry
+            .as_ref()
+            .filter(|_| state.left_entry_is_active)
+            .map_or(0., |e| e.flex);
+        let right = state
+            .right_entry
+            .as_ref()
+            .filter(|_| state.right_entry_is_active)
+            .map_or(0., |e| e.flex);
+        left + right
     }
 
     fn reset_flexes(&self) {
@@ -1376,7 +1385,7 @@ pub mod element {
                 Axis::Horizontal => px(HORIZONTAL_MIN_SIZE),
                 Axis::Vertical => px(VERTICAL_MIN_SIZE),
             };
-            debug_assert!(flex_values_in_bounds(&entries));
+            check_flex_values_in_bounds(&entries);
 
             // Math to convert a flex value to a pixel value
             let size = move |ix: usize, state: &[&mut PaneAxisStateEntry]| {
@@ -1546,7 +1555,7 @@ pub mod element {
 
             let len = self.children.len();
             debug_assert!(entries.len() == len);
-            debug_assert!(flex_values_in_bounds(&entries));
+            check_flex_values_in_bounds(&entries);
 
             let total_flex = len as f32;
 
@@ -1759,7 +1768,13 @@ pub mod element {
         }
     }
 
-    fn flex_values_in_bounds(inner: &[&mut PaneAxisStateEntry]) -> bool {
-        (inner.iter().map(|e| e.flex).sum::<f32>() - inner.len() as f32).abs() < 0.001
+    fn check_flex_values_in_bounds(inner: &[&mut PaneAxisStateEntry]) {
+        #[cfg(debug_assertions)]
+        if (inner.iter().map(|e| e.flex).sum::<f32>() - inner.len() as f32).abs() >= 0.001 {
+            panic!(
+                "flex values out of bounds: {:?}",
+                inner.iter().map(|e| e.flex).collect::<Vec<_>>()
+            );
+        }
     }
 }
