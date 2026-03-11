@@ -227,6 +227,12 @@ impl RenderOnce for ThreadItem {
                 .gradient_stop(0.8)
                 .group_name("thread-item");
 
+        let has_diff_stats = self.added.is_some() || self.removed.is_some();
+        let added_count = self.added.unwrap_or(0);
+        let removed_count = self.removed.unwrap_or(0);
+        let diff_stat_id = self.id.clone();
+        let has_worktree = self.worktree.is_some();
+
         v_flex()
             .id(self.id.clone())
             .group("thread-item")
@@ -235,7 +241,7 @@ impl RenderOnce for ThreadItem {
             .cursor_pointer()
             .w_full()
             .map(|this| {
-                if self.worktree.is_some() {
+                if has_worktree || has_diff_stats {
                     this.p_2()
                 } else {
                     this.px_2().py_1()
@@ -300,33 +306,22 @@ impl RenderOnce for ThreadItem {
                         .gap_1p5()
                         .child(icon_container()) // Icon Spacing
                         .child(worktree_label)
-                        // TODO: Uncomment the elements below when we're ready to expose this data
-                        // .child(dot_separator())
-                        // .child(
-                        //     Label::new(self.timestamp)
-                        //         .size(LabelSize::Small)
-                        //         .color(Color::Muted),
-                        // )
-                        // .child(
-                        //     Label::new("•")
-                        //         .size(LabelSize::Small)
-                        //         .color(Color::Muted)
-                        //         .alpha(0.5),
-                        // )
-                        // .when(has_no_changes, |this| {
-                        //     this.child(
-                        //         Label::new("No Changes")
-                        //             .size(LabelSize::Small)
-                        //             .color(Color::Muted),
-                        //     )
-                        // })
-                        .when(self.added.is_some() || self.removed.is_some(), |this| {
+                        .when(has_diff_stats, |this| {
                             this.child(DiffStat::new(
-                                self.id,
-                                self.added.unwrap_or(0),
-                                self.removed.unwrap_or(0),
+                                diff_stat_id.clone(),
+                                added_count,
+                                removed_count,
                             ))
                         }),
+                )
+            })
+            .when(!has_worktree && has_diff_stats, |this| {
+                this.child(
+                    h_flex()
+                        .min_w_0()
+                        .gap_1p5()
+                        .child(icon_container()) // Icon Spacing
+                        .child(DiffStat::new(diff_stat_id, added_count, removed_count)),
                 )
             })
             .when_some(self.on_click, |this, on_click| this.on_click(on_click))

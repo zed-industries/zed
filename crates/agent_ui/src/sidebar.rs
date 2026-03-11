@@ -1,5 +1,6 @@
 use crate::{AgentPanel, AgentPanelEvent, NewThread};
 use acp_thread::ThreadStatus;
+use action_log::DiffStats;
 use agent::ThreadStore;
 use agent_client_protocol as acp;
 use agent_settings::AgentSettings;
@@ -73,6 +74,7 @@ struct ActiveThreadInfo {
     icon: IconName,
     icon_from_external_svg: Option<SharedString>,
     is_background: bool,
+    diff_stats: DiffStats,
 }
 
 impl From<&ActiveThreadInfo> for acp_thread::AgentSessionInfo {
@@ -98,6 +100,7 @@ struct ThreadEntry {
     is_live: bool,
     is_background: bool,
     highlight_positions: Vec<usize>,
+    diff_stats: DiffStats,
 }
 
 #[derive(Clone)]
@@ -402,6 +405,8 @@ impl Sidebar {
                     }
                 };
 
+                let diff_stats = thread.action_log().read(cx).diff_stats(cx);
+
                 ActiveThreadInfo {
                     session_id,
                     title,
@@ -409,6 +414,7 @@ impl Sidebar {
                     icon,
                     icon_from_external_svg,
                     is_background,
+                    diff_stats,
                 }
             })
             .collect()
@@ -472,6 +478,7 @@ impl Sidebar {
                             is_live: false,
                             is_background: false,
                             highlight_positions: Vec::new(),
+                            diff_stats: DiffStats::default(),
                         });
                     }
                 }
@@ -497,6 +504,7 @@ impl Sidebar {
                         thread.icon_from_external_svg = info.icon_from_external_svg.clone();
                         thread.is_live = true;
                         thread.is_background = info.is_background;
+                        thread.diff_stats = info.diff_stats;
                     }
                 }
 
@@ -1171,6 +1179,12 @@ impl Sidebar {
             .highlight_positions(thread.highlight_positions.to_vec())
             .status(thread.status)
             .notified(has_notification)
+            .when(thread.diff_stats.lines_added > 0, |this| {
+                this.added(thread.diff_stats.lines_added as usize)
+            })
+            .when(thread.diff_stats.lines_removed > 0, |this| {
+                this.removed(thread.diff_stats.lines_removed as usize)
+            })
             .selected(self.focused_thread.as_ref() == Some(&session_info.session_id))
             .focused(is_selected)
             .on_click(cx.listener(move |this, _, window, cx| {
@@ -1987,6 +2001,7 @@ mod tests {
                     is_live: false,
                     is_background: false,
                     highlight_positions: Vec::new(),
+                    diff_stats: DiffStats::default(),
                 }),
                 // Active thread with Running status
                 ListEntry::Thread(ThreadEntry {
@@ -2005,6 +2020,7 @@ mod tests {
                     is_live: true,
                     is_background: false,
                     highlight_positions: Vec::new(),
+                    diff_stats: DiffStats::default(),
                 }),
                 // Active thread with Error status
                 ListEntry::Thread(ThreadEntry {
@@ -2023,6 +2039,7 @@ mod tests {
                     is_live: true,
                     is_background: false,
                     highlight_positions: Vec::new(),
+                    diff_stats: DiffStats::default(),
                 }),
                 // Thread with WaitingForConfirmation status, not active
                 ListEntry::Thread(ThreadEntry {
@@ -2041,6 +2058,7 @@ mod tests {
                     is_live: false,
                     is_background: false,
                     highlight_positions: Vec::new(),
+                    diff_stats: DiffStats::default(),
                 }),
                 // Background thread that completed (should show notification)
                 ListEntry::Thread(ThreadEntry {
@@ -2059,6 +2077,7 @@ mod tests {
                     is_live: true,
                     is_background: true,
                     highlight_positions: Vec::new(),
+                    diff_stats: DiffStats::default(),
                 }),
                 // View More entry
                 ListEntry::ViewMore {
