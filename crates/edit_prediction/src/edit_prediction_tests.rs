@@ -21,6 +21,7 @@ use language::{
     Anchor, Buffer, CursorShape, Diagnostic, DiagnosticEntry, DiagnosticSet, DiagnosticSeverity,
     Operation, Point, Selection, SelectionGoal,
 };
+use language_model::RefreshLlmTokenListener;
 use lsp::LanguageServerId;
 use parking_lot::Mutex;
 use pretty_assertions::{assert_eq, assert_matches};

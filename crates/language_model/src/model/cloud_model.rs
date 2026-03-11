@@ -30,6 +30,13 @@ impl fmt::Display for PaymentRequiredError {
 pub struct LlmApiToken(Arc<RwLock<Option<String>>>);
 
 impl LlmApiToken {
+    pub fn global(cx: &App) -> Self {
+        RefreshLlmTokenListener::global(cx)
+            .read(cx)
+            .llm_api_token
+            .clone()
+    }
+
     pub async fn acquire(
         &self,
         client: &Arc<Client>,
@@ -121,10 +128,6 @@ impl RefreshLlmTokenListener {
 
     pub fn global(cx: &App) -> Entity<Self> {
         GlobalRefreshLlmTokenListener::global(cx).0.clone()
-    }
-
-    pub fn global_token(cx: &App) -> LlmApiToken {
-        Self::global(cx).read(cx).llm_api_token.clone()
     }
 
     fn new(client: Arc<Client>, user_store: Entity<UserStore>, cx: &mut Context<Self>) -> Self {

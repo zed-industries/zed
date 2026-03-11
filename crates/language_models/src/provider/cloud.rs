@@ -109,7 +109,7 @@ impl State {
         cx: &mut Context<Self>,
     ) -> Self {
         let refresh_llm_token_listener = RefreshLlmTokenListener::global(cx);
-        let llm_api_token = RefreshLlmTokenListener::global_token(cx);
+        let llm_api_token = LlmApiToken::global(cx);
         Self {
             client: client.clone(),
             llm_api_token,
