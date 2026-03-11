@@ -4335,6 +4335,16 @@ impl Render for Pane {
                                 cx.emit(project::Event::RevealInProjectPanel(entry_id))
                             })
                             .ok();
+                    } else {
+                        let project = pane.project.clone();
+                        cx.spawn(async move |_, cx| {
+                            let _ = cx.update(|cx| {
+                                let _ = project.update(cx, |_, cx| {
+                                    cx.emit(project::Event::ActivateProjectPanel)
+                                });
+                            });
+                        })
+                        .detach();
                     }
                 }),
             )
