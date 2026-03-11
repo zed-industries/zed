@@ -6701,8 +6701,7 @@ impl Editor {
         let buffer_id = buffer.read(cx).remote_id();
         let tasks = self
             .runnables
-            .runnables
-            .get(&(buffer_id, buffer_row))
+            .runnables((buffer_id, buffer_row))
             .map(|t| Arc::new(t.to_owned()));
 
         if !self.focus_handle.is_focused(window) {

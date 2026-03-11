@@ -38,7 +38,18 @@ impl RunnableData {
         }
     }
 
-    pub fn runnables(&self) -> &
+    pub fn runnables(&self, for_buffer: (BufferId, BufferRow)) -> Option<&RunnableTasks> {
+        self.runnables.get(&for_buffer)
+    }
+
+    pub fn all_runnables(&self) -> impl Iterator<Item = &RunnableTasks> {
+        self.runnables.values()
+    }
+
+    #[cfg(test)]
+    pub fn insert(&mut self, for_buffer: (BufferId, BufferRow), tasks: RunnableTasks) {
+        self.runnables.insert(for_buffer, tasks);
+    }
 }
 
 #[derive(Clone, Debug)]

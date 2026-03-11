@@ -3276,9 +3276,8 @@ impl EditorElement {
 
             editor
                 .runnables
-                .runnables
-                .iter()
-                .filter_map(|(_, tasks)| {
+                .all_runnables()
+                .filter_map(|tasks| {
                     let multibuffer_point = tasks.offset.to_point(&snapshot.buffer_snapshot());
                     if multibuffer_point < offset_range_start
                         || multibuffer_point > offset_range_end
