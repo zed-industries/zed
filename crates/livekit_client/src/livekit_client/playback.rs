@@ -29,7 +29,7 @@ use std::cell::RefCell;
 use std::sync::Weak;
 use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
 use std::time::Duration;
-use std::{borrow::Cow, collections::VecDeque, sync::Arc};
+use std::{borrow::Cow, collections::VecDeque, sync::Arc, thread};
 use util::{ResultExt as _, maybe};
 
 mod source;
@@ -139,10 +139,8 @@ impl AudioStack {
         let task = Arc::new(self.executor.spawn({
             let apm = self.apm.clone();
             let mixer = self.mixer.clone();
-            let executor = self.executor.clone();
             async move {
                 Self::play_output(
-                    executor,
                     apm,
                     mixer,
                     LEGACY_SAMPLE_RATE.get(),
@@ -227,10 +225,8 @@ impl AudioStack {
             let input_audio_device =
                 AudioSettings::try_read_global(cx, |settings| settings.input_audio_device.clone())
                     .flatten();
-            let executor = self.executor.clone();
             self.executor.spawn(async move {
                 Self::capture_input(
-                    executor,
                     apm,
                     frame_tx,
                     LEGACY_SAMPLE_RATE.get(),
@@ -254,7 +250,6 @@ impl AudioStack {
     }
 
     async fn play_output(
-        executor: BackgroundExecutor,
         apm: Arc<Mutex<apm::AudioProcessingModule>>,
         mixer: Arc<Mutex<audio_mixer::AudioMixer>>,
         sample_rate: u32,
@@ -276,8 +271,9 @@ impl AudioStack {
             let mut resampler = audio_resampler::AudioResampler::default();
             let mut buf = Vec::new();
 
-            executor
-                .spawn_with_priority(Priority::RealtimeAudio, async move {
+            thread::Builder::new()
+                .name("AudioPlayback".to_owned())
+                .spawn(move || {
                     let output_stream = output_device.build_output_stream(
                         &output_config.config(),
                         {
@@ -328,7 +324,7 @@ impl AudioStack {
                     // Block forever to keep the output stream alive
                     end_on_drop_rx.recv().ok();
                 })
-                .detach();
+                .unwrap();
 
             device_change_listener.next().await;
             drop(end_on_drop_tx)
@@ -336,7 +332,6 @@ impl AudioStack {
     }
 
     async fn capture_input(
-        executor: BackgroundExecutor,
         apm: Arc<Mutex<apm::AudioProcessingModule>>,
         frame_tx: UnboundedSender<AudioFrame<'static>>,
         sample_rate: u32,
@@ -351,8 +346,9 @@ impl AudioStack {
             let frame_tx = frame_tx.clone();
             let mut resampler = audio_resampler::AudioResampler::default();
 
-            executor
-                .spawn_with_priority(Priority::RealtimeAudio, async move {
+            thread::Builder::new()
+                .name("AudioCapture".to_owned())
+                .spawn(move || {
                     maybe!({
                         if let Some(desc) = device.description().ok() {
                             log::info!("Using microphone: {}", desc.name())
@@ -424,7 +420,7 @@ impl AudioStack {
                     })
                     .log_err();
                 })
-                .detach();
+                .unwrap();
 
             device_change_listener.next().await;
             drop(end_on_drop_tx)
