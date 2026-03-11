@@ -75,6 +75,7 @@ pub mod zeta;
 #[cfg(test)]
 mod edit_prediction_tests;
 
+use crate::cursor_excerpt::expand_context_syntactically_then_linewise;
 use crate::example_spec::ExampleSpec;
 use crate::license_detection::LicenseDetectionWatcher;
 use crate::mercury::Mercury;
@@ -101,6 +102,7 @@ actions!(
 /// Maximum number of events to track.
 const EVENT_COUNT_MAX: usize = 6;
 const CHANGE_GROUPING_LINE_SPAN: u32 = 8;
+const COLLABORATOR_EDIT_LOCALITY_CONTEXT_TOKENS: usize = 512;
 const LAST_CHANGE_GROUPING_TIME: Duration = Duration::from_secs(1);
 const ZED_PREDICT_DATA_COLLECTION_CHOICE: &str = "zed_predict_data_collection_choice";
 const REJECT_REQUEST_DEBOUNCE: Duration = Duration::from_secs(15);
@@ -1217,10 +1219,12 @@ impl EditPredictionStore {
                         cx.subscribe(buffer, {
                             let project = project.downgrade();
                             move |this, buffer, event, cx| {
-                                if let language::BufferEvent::Edited { .. } = event
+                                if let language::BufferEvent::Edited { is_local } = event
                                     && let Some(project) = project.upgrade()
                                 {
-                                    this.report_changes_for_buffer(&buffer, &project, false, cx);
+                                    this.report_changes_for_buffer(
+                                        &buffer, &project, false, *is_local, cx,
+                                    );
                                 }
                             }
                         }),
@@ -1242,6 +1246,7 @@ impl EditPredictionStore {
         buffer: &Entity<Buffer>,
         project: &Entity<Project>,
         is_predicted: bool,
+        is_local: bool,
         cx: &mut Context<Self>,
     ) {
         let project_state = self.get_or_init_project(project, cx);
@@ -1286,28 +1291,44 @@ impl EditPredictionStore {
             }
         }
 
-        let action_type = match (total_deleted, total_inserted, num_edits) {
-            (0, ins, n) if ins == n => UserActionType::InsertChar,
-            (0, _, _) => UserActionType::InsertSelection,
-            (del, 0, n) if del == n => UserActionType::DeleteChar,
-            (_, 0, _) => UserActionType::DeleteSelection,
-            (_, ins, n) if ins == n => UserActionType::InsertChar,
-            (_, _, _) => UserActionType::InsertSelection,
-        };
+        let include_in_history = is_local
+            || collaborator_edit_overlaps_locality_region(
+                project_state,
+                project,
+                buffer,
+                &buf.snapshot(),
+                &edit_range,
+                cx,
+            );
 
-        if let Some(offset) = last_offset {
-            let point = new_snapshot.offset_to_point(offset);
-            let timestamp_epoch_ms = SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .map(|d| d.as_millis() as u64)
-                .unwrap_or(0);
-            project_state.record_user_action(UserActionRecord {
-                action_type,
-                buffer_id: buffer.entity_id(),
-                line_number: point.row,
-                offset,
-                timestamp_epoch_ms,
-            });
+        if is_local {
+            let action_type = match (total_deleted, total_inserted, num_edits) {
+                (0, ins, n) if ins == n => UserActionType::InsertChar,
+                (0, _, _) => UserActionType::InsertSelection,
+                (del, 0, n) if del == n => UserActionType::DeleteChar,
+                (_, 0, _) => UserActionType::DeleteSelection,
+                (_, ins, n) if ins == n => UserActionType::InsertChar,
+                (_, _, _) => UserActionType::InsertSelection,
+            };
+
+            if let Some(offset) = last_offset {
+                let point = new_snapshot.offset_to_point(offset);
+                let timestamp_epoch_ms = SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .map(|d| d.as_millis() as u64)
+                    .unwrap_or(0);
+                project_state.record_user_action(UserActionRecord {
+                    action_type,
+                    buffer_id: buffer.entity_id(),
+                    line_number: point.row,
+                    offset,
+                    timestamp_epoch_ms,
+                });
+            }
+        }
+
+        if !include_in_history {
+            return;
         }
 
         let events = &mut project_state.events;
@@ -1420,7 +1441,13 @@ impl EditPredictionStore {
             return;
         };
 
-        self.report_changes_for_buffer(&current_prediction.prediction.buffer, project, true, cx);
+        self.report_changes_for_buffer(
+            &current_prediction.prediction.buffer,
+            project,
+            true,
+            true,
+            cx,
+        );
 
         // can't hold &mut project_state ref across report_changes_for_buffer_call
         let Some(project_state) = self.projects.get_mut(&project.entity_id()) else {
@@ -2687,6 +2714,32 @@ impl EditPredictionStore {
 
         cx.notify();
     }
+}
+
+fn collaborator_edit_overlaps_locality_region(
+    project_state: &ProjectState,
+    project: &Entity<Project>,
+    buffer: &Entity<Buffer>,
+    snapshot: &BufferSnapshot,
+    edit_range: &Range<Anchor>,
+    cx: &App,
+) -> bool {
+    let Some((active_buffer, Some(position))) = project_state.active_buffer(project, cx) else {
+        return false;
+    };
+
+    if active_buffer.entity_id() != buffer.entity_id() {
+        return false;
+    }
+
+    let locality_point_range = expand_context_syntactically_then_linewise(
+        snapshot,
+        (position..position).to_point(snapshot),
+        COLLABORATOR_EDIT_LOCALITY_CONTEXT_TOKENS,
+    );
+    let locality_anchor_range = snapshot.anchor_range_around(locality_point_range);
+
+    edit_range.overlaps(&locality_anchor_range, snapshot)
 }
 
 fn merge_trailing_events_if_needed(

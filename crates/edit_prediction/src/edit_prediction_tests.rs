@@ -2,6 +2,7 @@ use super::*;
 use crate::{compute_diff_between_snapshots, udiff::apply_diff_to_string};
 use client::{UserStore, test::FakeServer};
 use clock::FakeSystemClock;
+use clock::ReplicaId;
 use cloud_api_types::{CreateLlmTokenResponse, LlmToken};
 use cloud_llm_client::{
     EditPredictionRejectReason, EditPredictionRejection, RejectEditPredictionsBody,
@@ -18,8 +19,8 @@ use gpui::{
 };
 use indoc::indoc;
 use language::{
-    Anchor, Buffer, CursorShape, Diagnostic, DiagnosticEntry, DiagnosticSet, DiagnosticSeverity,
-    Operation, Point, Selection, SelectionGoal,
+    Anchor, Buffer, Capability, CursorShape, Diagnostic, DiagnosticEntry, DiagnosticSet,
+    DiagnosticSeverity, Operation, Point, Selection, SelectionGoal,
 };
 use lsp::LanguageServerId;
 use parking_lot::Mutex;
@@ -27,7 +28,7 @@ use pretty_assertions::{assert_eq, assert_matches};
 use project::{FakeFs, Project};
 use serde_json::json;
 use settings::SettingsStore;
-use std::{path::Path, sync::Arc, time::Duration};
+use std::{ops::Range, path::Path, sync::Arc, time::Duration};
 use util::{
     path,
     test::{TextRangeMarker, marked_text_ranges_by},
@@ -597,6 +598,236 @@ fn render_events_with_predicted(events: &[StoredEvent]) -> Vec<String> {
         .collect()
 }
 
+fn make_collaborator_replica(
+    buffer: &Entity<Buffer>,
+    cx: &mut TestAppContext,
+) -> (Entity<Buffer>, clock::Global) {
+    let (state, version) =
+        buffer.read_with(cx, |buffer, _cx| (buffer.to_proto(_cx), buffer.version()));
+    let collaborator = cx.new(|_cx| {
+        Buffer::from_proto(ReplicaId::new(1), Capability::ReadWrite, state, None).unwrap()
+    });
+    (collaborator, version)
+}
+
+async fn apply_collaborator_edit(
+    collaborator: &Entity<Buffer>,
+    buffer: &Entity<Buffer>,
+    since_version: &mut clock::Global,
+    edit_range: Range<usize>,
+    new_text: &str,
+    cx: &mut TestAppContext,
+) {
+    collaborator.update(cx, |collaborator, cx| {
+        collaborator.edit([(edit_range, new_text)], None, cx);
+    });
+
+    let serialize_task = collaborator.read_with(cx, |collaborator, cx| {
+        collaborator.serialize_ops(Some(since_version.clone()), cx)
+    });
+    let ops = serialize_task.await;
+    *since_version = collaborator.read_with(cx, |collaborator, _cx| collaborator.version());
+
+    buffer.update(cx, |buffer, cx| {
+        buffer.apply_ops(
+            ops.into_iter()
+                .map(|op| language::proto::deserialize_operation(op).unwrap()),
+            cx,
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_nearby_collaborator_edits_are_kept_in_history(cx: &mut TestAppContext) {
+    let (ep_store, _requests) = init_test_with_fake_client(cx);
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        "/root",
+        json!({
+            "foo.rs": "line 0\nline 1\nline 2\nline 3\nline 4\nline 5\nline 6\nline 7\nline 8\nline 9\nline 10\nline 11\nline 12\nline 13\nline 14\n"
+        }),
+    )
+    .await;
+    let project = Project::test(fs, vec![path!("/root").as_ref()], cx).await;
+
+    let buffer = project
+        .update(cx, |project, cx| {
+            let path = project.find_project_path(path!("root/foo.rs"), cx).unwrap();
+            project.set_active_path(Some(path.clone()), cx);
+            project.open_buffer(path, cx)
+        })
+        .await
+        .unwrap();
+
+    let cursor = buffer.read_with(cx, |buffer, _cx| buffer.anchor_before(Point::new(1, 0)));
+
+    ep_store.update(cx, |ep_store, cx| {
+        ep_store.register_buffer(&buffer, &project, cx);
+        let _ = ep_store.prediction_at(&buffer, Some(cursor), &project, cx);
+    });
+
+    buffer.update(cx, |buffer, cx| {
+        buffer.edit(vec![(0..6, "LOCAL ZERO")], None, cx);
+    });
+
+    let (collaborator, mut collaborator_version) = make_collaborator_replica(&buffer, cx);
+
+    let line_one_start = buffer.read_with(cx, |buffer, _cx| Point::new(1, 0).to_offset(buffer));
+
+    apply_collaborator_edit(
+        &collaborator,
+        &buffer,
+        &mut collaborator_version,
+        line_one_start..line_one_start,
+        "REMOTE ONE ",
+        cx,
+    )
+    .await;
+
+    let events = ep_store.update(cx, |ep_store, cx| {
+        ep_store.edit_history_for_project(&project, cx)
+    });
+
+    assert_eq!(events.len(), 1);
+    let rendered = render_events_with_predicted(&events);
+    assert!(
+        rendered[0].contains("LOCAL ZERO"),
+        "expected local edit to remain in history, got: {}",
+        rendered[0]
+    );
+    assert!(
+        rendered[0].contains("REMOTE ONE"),
+        "expected nearby collaborator edit to remain in history, got: {}",
+        rendered[0]
+    );
+}
+
+#[gpui::test]
+async fn test_distant_collaborator_edits_are_omitted_from_history(cx: &mut TestAppContext) {
+    let (ep_store, _requests) = init_test_with_fake_client(cx);
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        "/root",
+        json!({
+            "foo.rs": (0..1000)
+                .map(|i| format!("line {i}\n"))
+                .collect::<String>()
+        }),
+    )
+    .await;
+    let project = Project::test(fs, vec![path!("/root").as_ref()], cx).await;
+
+    let buffer = project
+        .update(cx, |project, cx| {
+            let path = project.find_project_path(path!("root/foo.rs"), cx).unwrap();
+            project.set_active_path(Some(path.clone()), cx);
+            project.open_buffer(path, cx)
+        })
+        .await
+        .unwrap();
+
+    let cursor = buffer.read_with(cx, |buffer, _cx| buffer.anchor_before(Point::new(1, 0)));
+
+    ep_store.update(cx, |ep_store, cx| {
+        ep_store.register_buffer(&buffer, &project, cx);
+        let _ = ep_store.prediction_at(&buffer, Some(cursor), &project, cx);
+    });
+
+    buffer.update(cx, |buffer, cx| {
+        buffer.edit(vec![(0..6, "LOCAL ZERO")], None, cx);
+    });
+
+    let (collaborator, mut collaborator_version) = make_collaborator_replica(&buffer, cx);
+
+    let far_line_start = buffer.read_with(cx, |buffer, _cx| Point::new(900, 0).to_offset(buffer));
+
+    apply_collaborator_edit(
+        &collaborator,
+        &buffer,
+        &mut collaborator_version,
+        far_line_start..far_line_start + 7,
+        "REMOTE FAR",
+        cx,
+    )
+    .await;
+
+    let events = ep_store.update(cx, |ep_store, cx| {
+        ep_store.edit_history_for_project(&project, cx)
+    });
+
+    assert_eq!(
+        render_events_with_predicted(&events),
+        vec![indoc! {"
+            manual
+            @@ -1,4 +1,4 @@
+            -line 0
+            +LOCAL ZERO
+             line 1
+             line 2
+             line 3
+        "}]
+    );
+}
+
+#[gpui::test]
+async fn test_irrelevant_collaborator_edits_in_different_files_are_omitted_from_history(
+    cx: &mut TestAppContext,
+) {
+    let (ep_store, _requests) = init_test_with_fake_client(cx);
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        "/root",
+        json!({
+            "foo.rs": "line 0\nline 1\nline 2\nline 3\n",
+            "bar.rs": "line 0\nline 1\nline 2\nline 3\n"
+        }),
+    )
+    .await;
+    let project = Project::test(fs, vec![path!("/root").as_ref()], cx).await;
+
+    let foo_buffer = project
+        .update(cx, |project, cx| {
+            let path = project.find_project_path(path!("root/foo.rs"), cx).unwrap();
+            project.set_active_path(Some(path.clone()), cx);
+            project.open_buffer(path, cx)
+        })
+        .await
+        .unwrap();
+    let bar_buffer = project
+        .update(cx, |project, cx| {
+            let path = project.find_project_path(path!("root/bar.rs"), cx).unwrap();
+            project.open_buffer(path, cx)
+        })
+        .await
+        .unwrap();
+
+    let foo_cursor = foo_buffer.read_with(cx, |buffer, _cx| buffer.anchor_before(Point::new(1, 0)));
+
+    ep_store.update(cx, |ep_store, cx| {
+        ep_store.register_buffer(&foo_buffer, &project, cx);
+        ep_store.register_buffer(&bar_buffer, &project, cx);
+        let _ = ep_store.prediction_at(&foo_buffer, Some(foo_cursor), &project, cx);
+    });
+
+    let (bar_collaborator, mut bar_version) = make_collaborator_replica(&bar_buffer, cx);
+
+    apply_collaborator_edit(
+        &bar_collaborator,
+        &bar_buffer,
+        &mut bar_version,
+        0..6,
+        "REMOTE BAR",
+        cx,
+    )
+    .await;
+
+    let events = ep_store.update(cx, |ep_store, cx| {
+        ep_store.edit_history_for_project(&project, cx)
+    });
+
+    assert!(events.is_empty());
+}
+
 #[gpui::test]
 async fn test_predicted_flag_coalescing(cx: &mut TestAppContext) {
     let (ep_store, _requests) = init_test_with_fake_client(cx);
@@ -679,7 +910,7 @@ async fn test_predicted_flag_coalescing(cx: &mut TestAppContext) {
             let end = Point::new(2, 6).to_offset(buffer);
             buffer.edit(vec![(offset..end, "LINE TWO")], None, cx);
         });
-        ep_store.report_changes_for_buffer(&buffer, &project, true, cx);
+        ep_store.report_changes_for_buffer(&buffer, &project, true, true, cx);
     });
 
     let events = ep_store.update(cx, |ep_store, cx| {
@@ -721,7 +952,7 @@ async fn test_predicted_flag_coalescing(cx: &mut TestAppContext) {
             let end = Point::new(3, 6).to_offset(buffer);
             buffer.edit(vec![(offset..end, "LINE THREE")], None, cx);
         });
-        ep_store.report_changes_for_buffer(&buffer, &project, true, cx);
+        ep_store.report_changes_for_buffer(&buffer, &project, true, true, cx);
     });
 
     let events = ep_store.update(cx, |ep_store, cx| {
