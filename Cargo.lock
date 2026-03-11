@@ -6846,7 +6846,6 @@ name = "fuzzy_nucleo"
 version = "0.1.0"
 dependencies = [
  "gpui",
- "log",
  "nucleo",
  "util",
 ]
