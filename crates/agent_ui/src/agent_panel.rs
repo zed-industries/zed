@@ -3674,7 +3674,6 @@ impl AgentPanel {
                             Tooltip::for_action("Open Threads Sidebar", &ToggleWorkspaceSidebar, cx)
                         })
                         .on_click(|_, window, cx| {
-                            dbg!("render_sidebar_toggle on_click triggered");
                             window.dispatch_action(ToggleWorkspaceSidebar.boxed_clone(), cx);
                         }),
                 )
