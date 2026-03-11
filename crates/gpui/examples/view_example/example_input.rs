@@ -9,12 +9,11 @@ use std::time::Duration;
 
 use gpui::{
     Animation, AnimationExt as _, App, BoxShadow, CursorStyle, Entity, Hsla, IntoViewElement,
-    Pixels, SharedString, StyleRefinement, Window, bounce, div, ease_in_out, hsla, point,
-    prelude::*, px, white,
+    Pixels, SharedString, StyleRefinement, ViewElement, Window, bounce, div, ease_in_out, hsla,
+    point, prelude::*, px, white,
 };
 
 use crate::example_editor::ExampleEditor;
-use crate::example_editor::ExampleEditorView;
 use crate::{Backspace, Delete, End, Enter, Home, Left, Right};
 
 struct FlashState {
@@ -55,7 +54,7 @@ impl gpui::View for ExampleInput {
         Some(self.editor.clone())
     }
 
-    fn style(&self) -> Option<StyleRefinement> {
+    fn cache_style(&mut self, _window: &mut Window, _cx: &mut App) -> Option<StyleRefinement> {
         let mut style = StyleRefinement::default();
         if let Some(w) = self.width {
             style.size.width = Some(w.into());
@@ -154,7 +153,7 @@ impl gpui::View for ExampleInput {
             .line_height(px(20.))
             .text_size(px(14.))
             .text_color(text_color)
-            .child(ExampleEditorView::new(editor).text_color(text_color));
+            .child(ViewElement::new(editor));
 
         if count > 0 {
             base.with_animation(

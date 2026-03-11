@@ -2,17 +2,14 @@
 //! blink state, and keyboard handling.
 //!
 //! Also contains `ExampleEditorText`, the low-level custom `Element` that shapes text
-//! and paints the cursor, and `ExampleEditorView`, a cached `View` wrapper that
-//! automatically pairs an `ExampleEditor` entity with its `ExampleEditorText` element.
-
-use std::hash::Hash;
+//! and paints the cursor.
 use std::ops::Range;
 use std::time::Duration;
 
 use gpui::{
     App, Bounds, Context, ElementInputHandler, Entity, EntityInputHandler, FocusHandle, Focusable,
-    Hsla, IntoViewElement, LayoutId, PaintQuad, Pixels, ShapedLine, SharedString, Task, TextRun,
-    UTF16Selection, Window, fill, hsla, point, prelude::*, px, relative, size,
+    LayoutId, PaintQuad, Pixels, ShapedLine, SharedString, Task, TextRun, UTF16Selection, Window,
+    fill, hsla, point, prelude::*, px, relative, size,
 };
 use unicode_segmentation::*;
 
@@ -263,7 +260,6 @@ impl EntityInputHandler for ExampleEditor {
 
 struct ExampleEditorText {
     editor: Entity<ExampleEditor>,
-    text_color: Hsla,
 }
 
 struct ExampleEditorTextPrepaintState {
@@ -272,8 +268,8 @@ struct ExampleEditorTextPrepaintState {
 }
 
 impl ExampleEditorText {
-    pub fn new(editor: Entity<ExampleEditor>, text_color: Hsla) -> Self {
-        Self { editor, text_color }
+    pub fn new(editor: Entity<ExampleEditor>) -> Self {
+        Self { editor }
     }
 }
 
@@ -328,6 +324,7 @@ impl Element for ExampleEditorText {
         let is_focused = editor.focus_handle.is_focused(window);
 
         let style = window.text_style();
+        let text_color = style.color;
         let font_size = style.font_size.to_pixels(window.rem_size());
         let line_height = window.line_height();
 
@@ -356,7 +353,7 @@ impl Element for ExampleEditorText {
                     let run = TextRun {
                         len: text.len(),
                         font: style.font(),
-                        color: self.text_color,
+                        color: text_color,
                         background_color: None,
                         underline: None,
                         strikethrough: None,
@@ -381,7 +378,7 @@ impl Element for ExampleEditorText {
                     ),
                     size(px(1.5), line_height),
                 ),
-                self.text_color,
+                text_color,
             ))
         } else if is_focused && cursor_visible && is_placeholder {
             Some(fill(
@@ -389,7 +386,7 @@ impl Element for ExampleEditorText {
                     point(bounds.left(), bounds.top()),
                     size(px(1.5), line_height),
                 ),
-                self.text_color,
+                text_color,
             ))
         } else {
             None
@@ -447,41 +444,12 @@ fn cursor_line_and_offset(content: &str, cursor: usize) -> (usize, usize) {
     (line_index, cursor - line_start)
 }
 
-// ---------------------------------------------------------------------------
-// ExampleEditorView — a cached View that pairs an ExampleEditor entity with ExampleEditorText
-// ---------------------------------------------------------------------------
-
-/// A simple cached view that renders an `ExampleEditor` entity via the `ExampleEditorText`
-/// custom element. Use this when you want a bare editor display with automatic
-/// caching and no extra chrome.
-#[derive(IntoViewElement, Hash)]
-pub struct ExampleEditorView {
-    editor: Entity<ExampleEditor>,
-    text_color: Hsla,
-}
-
-impl ExampleEditorView {
-    pub fn new(editor: Entity<ExampleEditor>) -> Self {
-        Self {
-            editor,
-            text_color: hsla(0., 0., 0.1, 1.),
-        }
-    }
-
-    pub fn text_color(mut self, color: Hsla) -> Self {
-        self.text_color = color;
-        self
-    }
-}
-
-impl gpui::View for ExampleEditorView {
-    type Entity = ExampleEditor;
-
-    fn entity(&self) -> Option<Entity<ExampleEditor>> {
-        Some(self.editor.clone())
-    }
-
-    fn render(self, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
-        ExampleEditorText::new(self.editor, self.text_color)
+impl gpui::EntityView for ExampleEditor {
+    fn render(
+        &mut self,
+        _window: &mut Window,
+        cx: &mut Context<ExampleEditor>,
+    ) -> impl IntoElement {
+        ExampleEditorText::new(cx.entity().clone())
     }
 }

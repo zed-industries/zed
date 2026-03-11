@@ -383,17 +383,14 @@ pub trait View: 'static + Sized + Hash {
     /// When `Some`, the view element will be cached using the given style for its outer layout.
     /// The default returns a full-size style refinement (`width: 100%, height: 100%`).
     /// Return `None` to disable caching.
-    fn style(&self) -> Option<StyleRefinement> {
+    fn cache_style(&mut self, _window: &mut Window, _cx: &mut App) -> Option<StyleRefinement> {
         Some(StyleRefinement::default().size_full())
     }
 }
 
 /// A stateless component that renders an element tree without an entity.
 ///
-/// This is the `View` equivalent of [`RenderOnce`](crate::RenderOnce). Types that
-/// implement `ComponentView` get a blanket implementation of [`View`] with
-/// `entity()` returning `None` and `style()` returning `None` — meaning no
-/// reactive boundary, no caching, just subtree isolation via the type name.
+/// This is the `View` equivalent of [`RenderOnce`](crate::RenderOnce).
 ///
 /// # Example
 ///
@@ -413,6 +410,11 @@ pub trait ComponentView: 'static + Sized + Hash {
     /// Render this component into an element tree. Takes ownership of self,
     /// consuming the component props.
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement;
+
+    /// Indicate that this view should be cached
+    fn cache_style(&mut self, _window: &mut Window, _cx: &mut App) -> Option<StyleRefinement> {
+        None
+    }
 }
 
 impl<T: ComponentView> View for T {
@@ -422,12 +424,50 @@ impl<T: ComponentView> View for T {
         None
     }
 
+    #[inline]
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         ComponentView::render(self, window, cx)
     }
 
-    fn style(&self) -> Option<StyleRefinement> {
+    #[inline]
+    fn cache_style(&mut self, window: &mut Window, cx: &mut App) -> Option<StyleRefinement> {
+        ComponentView::cache_style(self, window, cx)
+    }
+}
+
+/// For entities that require only one kind of rendering, this trait provides a simplified interface.
+/// Equivalent to the `Render` trait
+pub trait EntityView: 'static + Sized {
+    /// Render this entity into the element tree.
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement;
+    /// Indicate that this entity should be cached when using it as an element.
+    /// When using this method, the entity's previous layout and paint will be recycled from the previous frame if [Context::notify] has not been called since it was rendered.
+    fn cache_style(
+        &mut self,
+        _window: &mut Window,
+        _cx: &mut Context<Self>,
+    ) -> Option<StyleRefinement> {
         None
+    }
+}
+
+impl<T: EntityView> View for Entity<T> {
+    type Entity = T;
+
+    fn entity(&self) -> Option<Entity<Self::Entity>> {
+        Some(self.clone())
+    }
+
+    #[inline]
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+        self.update(cx, |this, cx| {
+            EntityView::render(this, window, cx).into_any_element()
+        })
+    }
+
+    #[inline]
+    fn cache_style(&mut self, window: &mut Window, cx: &mut App) -> Option<StyleRefinement> {
+        self.update(cx, |this, cx| EntityView::cache_style(this, window, cx))
     }
 }
 
@@ -462,18 +502,16 @@ impl<V: View> ViewElement<V> {
     /// Create a new `ViewElement` wrapping the given [`View`].
     ///
     /// Use this in your [`IntoElement`] implementation.
-    #[track_caller]
     pub fn new(view: V) -> Self {
         use std::hash::Hasher;
         let entity_id = view.entity().map(|e| e.entity_id());
-        let cached_style = view.style();
         let mut hasher = std::collections::hash_map::DefaultHasher::new();
         view.hash(&mut hasher);
         let props_hash = hasher.finish();
         ViewElement {
             entity_id,
             props_hash,
-            cached_style,
+            cached_style: None,
             view: Some(view),
             #[cfg(debug_assertions)]
             source: core::panic::Location::caller(),
@@ -526,6 +564,12 @@ impl<V: View> Element for ViewElement<V> {
         window: &mut Window,
         cx: &mut App,
     ) -> (LayoutId, Self::RequestLayoutState) {
+        if self.cached_style.is_none() {
+            if let Some(view) = self.view.as_mut() {
+                self.cached_style = view.cache_style(window, cx);
+            }
+        }
+
         if let Some(entity_id) = self.entity_id {
             // Stateful path: create a reactive boundary.
             window.with_rendered_view(entity_id, |window| {

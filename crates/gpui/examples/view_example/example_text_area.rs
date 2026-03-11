@@ -5,12 +5,11 @@
 //! components with different props and layouts.
 
 use gpui::{
-    App, BoxShadow, CursorStyle, Entity, Hsla, IntoViewElement, StyleRefinement, Window, div, hsla,
-    point, prelude::*, px, white,
+    App, BoxShadow, CursorStyle, Entity, Hsla, IntoViewElement, StyleRefinement, ViewElement,
+    Window, div, hsla, point, prelude::*, px, white,
 };
 
 use crate::example_editor::ExampleEditor;
-use crate::example_editor::ExampleEditorView;
 use crate::{Backspace, Delete, End, Enter, Home, Left, Right};
 
 #[derive(Hash, IntoViewElement)]
@@ -42,7 +41,7 @@ impl gpui::View for ExampleTextArea {
         Some(self.editor.clone())
     }
 
-    fn style(&self) -> Option<StyleRefinement> {
+    fn cache_style(&mut self, _window: &mut Window, _cx: &mut App) -> Option<StyleRefinement> {
         let row_height = px(20.);
         let box_height = row_height * self.rows as f32 + px(16.);
         let mut style = StyleRefinement::default();
@@ -129,6 +128,6 @@ impl gpui::View for ExampleTextArea {
             .line_height(row_height)
             .text_size(px(14.))
             .text_color(text_color)
-            .child(ExampleEditorView::new(editor).text_color(text_color))
+            .child(ViewElement::new(editor))
     }
 }
