@@ -695,13 +695,6 @@ impl ContextServerStore {
 
                                 let http_client = cx.update(|cx| cx.http_client());
 
-                                let credentials_provider =
-                                    cx.update(|cx| <dyn CredentialsProvider>::global(cx));
-
-                                let invalid_client = www_authenticate
-                                    .error
-                                    .is_some_and(|e| e.indicates_invalid_client());
-
                                 match context_server::oauth::discover(
                                     &http_client,
                                     &server_url,
@@ -710,22 +703,6 @@ impl ContextServerStore {
                                 .await
                                 {
                                     Ok(discovery) => {
-                                        if invalid_client {
-                                            if let Err(err) = Self::clear_dcr_registration(
-                                                &credentials_provider,
-                                                &discovery.auth_server_metadata.issuer,
-                                                &cx,
-                                            )
-                                            .await
-                                            {
-                                                log::warn!(
-                                                    "{} failed to clear cached DCR registration: {}",
-                                                    id,
-                                                    err,
-                                                );
-                                            }
-                                        }
-
                                         log::info!(
                                             "{} requires OAuth authorization (auth server: {})",
                                             id,
@@ -1199,7 +1176,7 @@ impl ContextServerStore {
         };
 
         let client_registration =
-            oauth::resolve_client_registration(&http_client, &discovery, &redirect_uri, None)
+            oauth::resolve_client_registration(&http_client, &discovery, &redirect_uri)
                 .await
                 .context("Failed to resolve OAuth client registration")?;
 
@@ -1337,20 +1314,6 @@ impl ContextServerStore {
 
     fn keychain_key(server_url: &url::Url) -> String {
         format!("mcp-oauth:{}", oauth::canonical_server_uri(server_url))
-    }
-
-    fn dcr_keychain_key(auth_server_issuer: &url::Url) -> String {
-        oauth::dcr_registration_cache_key(auth_server_issuer)
-    }
-
-    /// Clear the cached DCR client registration from the keychain.
-    async fn clear_dcr_registration(
-        credentials_provider: &Arc<dyn CredentialsProvider>,
-        auth_server_issuer: &url::Url,
-        cx: &AsyncApp,
-    ) -> Result<()> {
-        let key = Self::dcr_keychain_key(auth_server_issuer);
-        credentials_provider.delete_credentials(&key, cx).await
     }
 
     /// Log out of an OAuth-authenticated MCP server: clear the stored OAuth

@@ -116,16 +116,6 @@ impl BearerError {
             _ => BearerError::Other,
         }
     }
-
-    /// Returns true if the error indicates the OAuth client registration may
-    /// be invalid and should be discarded to force re-registration.
-    ///
-    /// `invalid_token` is not treated as an invalid client signal here. That
-    /// error usually means the access token is expired, revoked, or malformed,
-    /// which is exactly the case where a refresh attempt should still happen.
-    pub fn indicates_invalid_client(&self) -> bool {
-        matches!(self, BearerError::Other)
-    }
 }
 
 /// Fields extracted from a `WWW-Authenticate: Bearer` header.
@@ -349,17 +339,6 @@ pub fn canonical_server_uri(server_url: &Url) -> String {
         uri.push_str(path.trim_end_matches('/'));
     }
     uri
-}
-
-/// Build the key used to cache DCR registrations for an authorization server.
-///
-/// DCR registrations are scoped to the authorization server, not the protected
-/// resource URL, so this key is derived from the auth server issuer.
-pub fn dcr_registration_cache_key(auth_server_issuer: &Url) -> String {
-    format!(
-        "mcp-oauth-dcr-client:{}",
-        canonical_server_uri(auth_server_issuer)
-    )
 }
 
 // -- Scope selection ---------------------------------------------------------
@@ -681,14 +660,13 @@ pub async fn discover(
 
 /// Resolve the OAuth client registration for an authorization flow.
 ///
-/// CIMD uses the static client metadata document directly. DCR reuses a cached
-/// registration when available, otherwise it registers with the actual
-/// redirect URI that will be used for the browser callback.
+/// CIMD uses the static client metadata document directly. For DCR, a fresh
+/// registration is performed each time because the loopback redirect URI
+/// includes an ephemeral port that changes every flow.
 pub async fn resolve_client_registration(
     http_client: &Arc<dyn HttpClient>,
     discovery: &OAuthDiscovery,
     redirect_uri: &str,
-    cached_dcr_registration: Option<OAuthClientRegistration>,
 ) -> Result<OAuthClientRegistration> {
     match determine_registration_strategy(&discovery.auth_server_metadata) {
         ClientRegistrationStrategy::Cimd { client_id } => Ok(OAuthClientRegistration {
@@ -697,17 +675,7 @@ pub async fn resolve_client_registration(
         }),
         ClientRegistrationStrategy::Dcr {
             registration_endpoint,
-        } => {
-            if let Some(cached) = cached_dcr_registration {
-                log::info!(
-                    "using cached DCR registration (client_id={})",
-                    cached.client_id
-                );
-                Ok(cached)
-            } else {
-                perform_dcr(http_client, &registration_endpoint, redirect_uri).await
-            }
-        }
+        } => perform_dcr(http_client, &registration_endpoint, redirect_uri).await,
         ClientRegistrationStrategy::Unavailable => {
             bail!("authorization server supports neither CIMD nor DCR")
         }
@@ -1204,7 +1172,6 @@ mod tests {
             r#"Bearer error="invalid_token", error_description="The access token expired""#;
         let result = parse_www_authenticate(header).unwrap();
         assert_eq!(result.error, Some(BearerError::InvalidToken));
-        assert!(!result.error.unwrap().indicates_invalid_client());
     }
 
     #[test]
@@ -1212,7 +1179,6 @@ mod tests {
         let header = r#"Bearer error="invalid_request""#;
         let result = parse_www_authenticate(header).unwrap();
         assert_eq!(result.error, Some(BearerError::InvalidRequest));
-        assert!(!result.error.unwrap().indicates_invalid_client());
     }
 
     #[test]
@@ -1220,15 +1186,6 @@ mod tests {
         let header = r#"Bearer error="some_future_error""#;
         let result = parse_www_authenticate(header).unwrap();
         assert_eq!(result.error, Some(BearerError::Other));
-        assert!(result.error.unwrap().indicates_invalid_client());
-    }
-
-    #[test]
-    fn test_bearer_error_indicates_invalid_client() {
-        assert!(!BearerError::InvalidRequest.indicates_invalid_client());
-        assert!(!BearerError::InvalidToken.indicates_invalid_client());
-        assert!(!BearerError::InsufficientScope.indicates_invalid_client());
-        assert!(BearerError::Other.indicates_invalid_client());
     }
 
     #[test]
@@ -1350,15 +1307,6 @@ mod tests {
         assert_eq!(
             canonical_server_uri(&url),
             "https://mcp.example.com/Server/MCP"
-        );
-    }
-
-    #[test]
-    fn test_dcr_registration_cache_key_uses_auth_server_issuer() {
-        let issuer = Url::parse("https://Auth.Example.COM/tenant/").unwrap();
-        assert_eq!(
-            dcr_registration_cache_key(&issuer),
-            "mcp-oauth-dcr-client:https://auth.example.com/tenant"
         );
     }
 
@@ -1882,14 +1830,10 @@ mod tests {
             };
 
             let discovery = discover(&client, &server_url, &www_auth).await.unwrap();
-            let registration = resolve_client_registration(
-                &client,
-                &discovery,
-                "http://127.0.0.1:12345/callback",
-                None,
-            )
-            .await
-            .unwrap();
+            let registration =
+                resolve_client_registration(&client, &discovery, "http://127.0.0.1:12345/callback")
+                    .await
+                    .unwrap();
 
             assert_eq!(registration.client_id, CIMD_URL);
             assert_eq!(registration.client_secret, None);
@@ -1946,14 +1890,10 @@ mod tests {
             };
 
             let discovery = discover(&client, &server_url, &www_auth).await.unwrap();
-            let registration = resolve_client_registration(
-                &client,
-                &discovery,
-                "http://127.0.0.1:9999/callback",
-                None,
-            )
-            .await
-            .unwrap();
+            let registration =
+                resolve_client_registration(&client, &discovery, "http://127.0.0.1:9999/callback")
+                    .await
+                    .unwrap();
 
             assert_eq!(registration.client_id, "dcr-minted-id-123");
             assert_eq!(
@@ -1961,136 +1901,6 @@ mod tests {
                 Some("dcr-secret-456")
             );
             assert_eq!(discovery.scopes, vec!["files:read"]);
-        });
-    }
-
-    #[test]
-    fn test_resolve_client_registration_uses_cached_dcr_registration() {
-        smol::block_on(async {
-            // The registration endpoint should never be called when a cached
-            // registration is provided.
-            let client = make_fake_http_client(|req| {
-                Box::pin(async move {
-                    let uri = req.uri().to_string();
-                    if uri.contains("oauth-protected-resource") {
-                        json_response(
-                            200,
-                            r#"{
-                                "resource": "https://mcp.example.com",
-                                "authorization_servers": ["https://auth.example.com"]
-                            }"#,
-                        )
-                    } else if uri.contains("oauth-authorization-server") {
-                        json_response(
-                            200,
-                            r#"{
-                                "issuer": "https://auth.example.com",
-                                "authorization_endpoint": "https://auth.example.com/authorize",
-                                "token_endpoint": "https://auth.example.com/token",
-                                "registration_endpoint": "https://auth.example.com/register",
-                                "code_challenge_methods_supported": ["S256"],
-                                "client_id_metadata_document_supported": false
-                            }"#,
-                        )
-                    } else if uri.contains("/register") {
-                        panic!(
-                            "registration endpoint should not be called when cached DCR registration is provided"
-                        );
-                    } else {
-                        json_response(404, "{}")
-                    }
-                })
-            });
-
-            let server_url = Url::parse("https://mcp.example.com").unwrap();
-            let www_auth = WwwAuthenticate {
-                resource_metadata: None,
-                scope: Some(vec!["files:read".into()]),
-                error: None,
-                error_description: None,
-            };
-
-            let cached = OAuthClientRegistration {
-                client_id: "cached-client-id".into(),
-                client_secret: Some("cached-secret".into()),
-            };
-
-            let discovery = discover(&client, &server_url, &www_auth).await.unwrap();
-            let registration = resolve_client_registration(
-                &client,
-                &discovery,
-                "http://127.0.0.1:9999/callback",
-                Some(cached),
-            )
-            .await
-            .unwrap();
-
-            assert_eq!(registration.client_id, "cached-client-id");
-            assert_eq!(registration.client_secret.as_deref(), Some("cached-secret"));
-        });
-    }
-
-    #[test]
-    fn test_resolve_client_registration_ignores_cached_dcr_when_cimd_available() {
-        smol::block_on(async {
-            // When the auth server supports CIMD, the cached DCR registration
-            // should be ignored in favor of CIMD.
-            let client = make_fake_http_client(|req| {
-                Box::pin(async move {
-                    let uri = req.uri().to_string();
-                    if uri.contains("oauth-protected-resource") {
-                        json_response(
-                            200,
-                            r#"{
-                                "resource": "https://mcp.example.com",
-                                "authorization_servers": ["https://auth.example.com"],
-                                "scopes_supported": ["mcp:read"]
-                            }"#,
-                        )
-                    } else if uri.contains("oauth-authorization-server") {
-                        json_response(
-                            200,
-                            r#"{
-                                "issuer": "https://auth.example.com",
-                                "authorization_endpoint": "https://auth.example.com/authorize",
-                                "token_endpoint": "https://auth.example.com/token",
-                                "registration_endpoint": "https://auth.example.com/register",
-                                "code_challenge_methods_supported": ["S256"],
-                                "client_id_metadata_document_supported": true
-                            }"#,
-                        )
-                    } else {
-                        json_response(404, "{}")
-                    }
-                })
-            });
-
-            let server_url = Url::parse("https://mcp.example.com").unwrap();
-            let www_auth = WwwAuthenticate {
-                resource_metadata: None,
-                scope: None,
-                error: None,
-                error_description: None,
-            };
-
-            let cached = OAuthClientRegistration {
-                client_id: "stale-dcr-id".into(),
-                client_secret: Some("stale-secret".into()),
-            };
-
-            let discovery = discover(&client, &server_url, &www_auth).await.unwrap();
-            let registration = resolve_client_registration(
-                &client,
-                &discovery,
-                "http://127.0.0.1:9999/callback",
-                Some(cached),
-            )
-            .await
-            .unwrap();
-
-            // CIMD takes priority — the cached DCR registration is not used.
-            assert_eq!(registration.client_id, CIMD_URL);
-            assert_eq!(registration.client_secret, None);
         });
     }
 
