@@ -19675,7 +19675,6 @@ async fn test_language_server_restart_due_to_settings_change(cx: &mut TestAppCon
 }
 
 #[gpui::test]
-#[gpui::test]
 async fn test_completions_with_additional_edits(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 

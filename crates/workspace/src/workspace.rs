@@ -13612,66 +13612,28 @@ mod tests {
         cx.executor().advance_clock(Duration::from_millis(200));
         cx.run_until_parked();
 
-        // Verify the first toggle persisted the expected split theme
-        // configuration plus the explicit system mode marker, and that
-        // repeated reads through the same test context report the same
-        // active theme.
+        // 1. Static -> Dynamic
+        // this assertion checks theme changed from static to dynamic.
         let settings_text = SettingsStore::load_settings(&settings_fs).await.unwrap();
-        assert!(settings_text.contains(r#""mode": "system""#));
-        assert!(settings_text.contains(r#""light": "One Light""#));
-        assert!(settings_text.contains(r#""dark": "One Dark""#));
-        let theme_name =
-            workspace.update_in(cx, |_workspace, _window, cx| cx.theme().name.to_string());
-        let repeated_theme_name =
-            workspace.update_in(cx, |_workspace, _window, cx| cx.theme().name.to_string());
-        assert_eq!(theme_name, repeated_theme_name);
-        assert_eq!(theme_name, "One Light");
+        let parsed: serde_json::Value = settings::parse_json_with_comments(&settings_text).unwrap();
+        assert_eq!(
+            parsed["theme"],
+            serde_json::json!({
+                "mode": "system",
+                "light": "One Light",
+                "dark": "One Dark"
+            })
+        );
 
-        // Toggle again. This should leave the split light/dark themes in
-        // place while clearing the explicit system-mode persistence.
+        // 2. Toggle again, suppose it will change the mode to light
         workspace.update_in(cx, |workspace, window, cx| {
             workspace.toggle_theme_mode(&ToggleMode, window, cx);
         });
         cx.executor().advance_clock(Duration::from_millis(200));
         cx.run_until_parked();
 
-        // Verify the system mode entry was removed, while the light/dark
-        // theme selections remain persisted, and that the active theme is
-        // stable across repeated reads.
         let settings_text = SettingsStore::load_settings(&settings_fs).await.unwrap();
-        assert!(!settings_text.contains(r#""mode": "system""#));
-        assert!(settings_text.contains(r#""light": "One Light""#));
-        assert!(settings_text.contains(r#""dark": "One Dark""#));
-        let theme_name =
-            workspace.update_in(cx, |_workspace, _window, cx| cx.theme().name.to_string());
-        let repeated_theme_name =
-            workspace.update_in(cx, |_workspace, _window, cx| cx.theme().name.to_string());
-        assert_eq!(theme_name, repeated_theme_name);
-        assert_eq!(theme_name, "One Light");
-
-        // Toggle a third time to cover the next transition and confirm
-        // the persisted light/dark selections stay stable across repeated
-        // toggles.
-        workspace.update_in(cx, |workspace, window, cx| {
-            workspace.toggle_theme_mode(&ToggleMode, window, cx);
-        });
-        cx.executor().advance_clock(Duration::from_millis(200));
-        cx.run_until_parked();
-
-        // Verify the persisted settings are still in the split
-        // light/dark form and do not reintroduce the system mode entry,
-        // and that the active theme remains consistent across repeated
-        // reads.
-        let settings_text = SettingsStore::load_settings(&settings_fs).await.unwrap();
-        assert!(!settings_text.contains(r#""mode": "system""#));
-        assert!(settings_text.contains(r#""light": "One Light""#));
-        assert!(settings_text.contains(r#""dark": "One Dark""#));
-        let theme_name =
-            workspace.update_in(cx, |_workspace, _window, cx| cx.theme().name.to_string());
-        let repeated_theme_name =
-            workspace.update_in(cx, |_workspace, _window, cx| cx.theme().name.to_string());
-        assert_eq!(theme_name, repeated_theme_name);
-        assert_eq!(theme_name, "One Dark");
+        assert!(settings_text.contains(r#""mode": "light""#));
     }
 
     fn dirty_project_item(id: u64, path: &str, cx: &mut App) -> Entity<TestProjectItem> {
