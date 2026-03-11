@@ -1491,9 +1491,8 @@ mod tests {
     use std::num::NonZeroU32;
 
     use crate::{
-        ClosePosition, ItemSettingsContent, ThemeAppearanceMode, ThemeSelection,
-        VsCodeSettingsSource, default_settings, settings_content::LanguageSettingsContent,
-        test_settings,
+        ClosePosition, ItemSettingsContent, VsCodeSettingsSource, default_settings,
+        settings_content::LanguageSettingsContent, test_settings,
     };
 
     use super::*;
