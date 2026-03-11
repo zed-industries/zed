@@ -48,6 +48,7 @@ pub struct ListItem {
     rounded: bool,
     overflow_x: bool,
     focused: Option<bool>,
+    docked_right: bool,
 }
 
 impl ListItem {
@@ -78,6 +79,7 @@ impl ListItem {
             rounded: false,
             overflow_x: false,
             focused: None,
+            docked_right: false,
         }
     }
 
@@ -194,6 +196,11 @@ impl ListItem {
         self.focused = Some(focused);
         self
     }
+
+    pub fn docked_right(mut self, docked_right: bool) -> Self {
+        self.docked_right = docked_right;
+        self
+    }
 }
 
 impl Disableable for ListItem {
@@ -247,6 +254,7 @@ impl RenderOnce for ListItem {
                 this.when_some(self.focused, |this, focused| {
                     if focused {
                         this.border_1()
+                            .when(self.docked_right, |this| this.border_r_2())
                             .border_color(cx.theme().colors().border_focused)
                     } else {
                         this.border_1()
