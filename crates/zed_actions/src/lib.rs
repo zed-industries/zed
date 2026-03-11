@@ -674,7 +674,11 @@ pub mod debug_panel {
             /// Toggles the debug panel.
             Toggle,
             /// Toggles focus on the debug panel.
-            ToggleFocus
+            ToggleFocus,
+            /// Pops the debug panel out into its own window.
+            PopOut,
+            /// Returns the debug panel from its own window back into the dock.
+            PopIn,
         ]
     );
 }

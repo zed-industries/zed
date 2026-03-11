@@ -18,15 +18,18 @@ use editor::{Editor, MultiBufferOffset, ToPoint};
 use feature_flags::{FeatureFlag, FeatureFlagAppExt as _};
 use gpui::{
     Action, App, AsyncWindowContext, ClipboardItem, Context, Corner, DismissEvent, Entity,
-    EntityId, EventEmitter, FocusHandle, Focusable, MouseButton, MouseDownEvent, Point,
-    Subscription, Task, WeakEntity, anchored, deferred,
+    EntityId, EventEmitter, FocusHandle, Focusable, MouseButton, MouseDownEvent, Point, Render,
+    Subscription, Task, Tiling, TitlebarOptions, WeakEntity, WindowBounds, WindowHandle,
+    WindowOptions, anchored, deferred, point, px,
 };
 
 use itertools::Itertools as _;
 use language::Buffer;
+use platform_title_bar::PlatformTitleBar;
 use project::debugger::session::{Session, SessionQuirks, SessionState, SessionStateEvent};
 use project::{DebugScenarioContext, Fs, ProjectPath, TaskSourceKind, WorktreeId};
 use project::{Project, debugger::session::ThreadStatus};
+use release_channel::ReleaseChannel;
 use rpc::proto::{self};
 use settings::Settings;
 use std::sync::{Arc, LazyLock};
@@ -38,11 +41,10 @@ use ui::{
 use util::redact::redact_command;
 use util::rel_path::RelPath;
 use util::{ResultExt, debug_panic, maybe};
-use workspace::SplitDirection;
-use workspace::item::SaveOptions;
 use workspace::{
-    Item, Pane, Workspace,
+    Item, Pane, SplitDirection, Workspace, WorkspaceSettings, client_side_decorations,
     dock::{DockPosition, Panel, PanelEvent},
+    item::SaveOptions,
 };
 use zed_actions::debug_panel::ToggleFocus;
 
@@ -70,6 +72,7 @@ pub struct DebugPanel {
     is_zoomed: bool,
     _subscriptions: [Subscription; 1],
     breakpoint_list: Entity<BreakpointList>,
+    popped_out_window: Option<WindowHandle<DebuggerWindow>>,
 }
 
 impl DebugPanel {
@@ -113,6 +116,7 @@ impl DebugPanel {
                 is_zoomed: false,
                 _subscriptions: [focus_subscription],
                 debug_scenario_scheduled_last: true,
+                popped_out_window: None,
             }
         })
     }
@@ -150,6 +154,96 @@ impl DebugPanel {
         &self.project
     }
 
+    pub fn is_popped_out(&self) -> bool {
+        self.popped_out_window.is_some()
+    }
+
+    pub fn pop_out(&mut self, cx: &mut Context<Self>) {
+        if self.popped_out_window.is_some() {
+            if let Some(window) = self.popped_out_window.as_ref() {
+                window
+                    .update(cx, |_, window, _| window.activate_window())
+                    .ok();
+            }
+            return;
+        }
+
+        let this = cx.weak_entity();
+        let app_id = ReleaseChannel::global(cx).app_id().to_owned();
+        let window_decorations = match std::env::var("ZED_WINDOW_DECORATIONS") {
+            Ok(val) if val == "server" => gpui::WindowDecorations::Server,
+            Ok(val) if val == "client" => gpui::WindowDecorations::Client,
+            _ => match WorkspaceSettings::get_global(cx).window_decorations {
+                settings::WindowDecorations::Server => gpui::WindowDecorations::Server,
+                settings::WindowDecorations::Client => gpui::WindowDecorations::Client,
+            },
+        };
+
+        // Defer window creation to avoid a double-lease panic: cx.open_window() causes
+        // the new window to render immediately, which would try to render DebugPanel
+        // while it is already mutably borrowed by this on_click handler.
+        // We call cx.open_window() directly on &mut App (before this.update()) so that
+        // DebugPanel is not leased when the new window's first render runs.
+        cx.defer(move |cx| {
+            let window_background = cx.theme().window_background_appearance();
+            let window_bounds = WindowBounds::centered(
+                gpui::Size {
+                    width: px(900.0),
+                    height: px(600.0),
+                },
+                cx,
+            );
+
+            let window_handle = cx
+                .open_window(
+                    WindowOptions {
+                        titlebar: Some(TitlebarOptions {
+                            title: Some("Debugger".into()),
+                            appears_transparent: true,
+                            traffic_light_position: Some(point(px(12.0), px(12.0))),
+                        }),
+                        focus: true,
+                        show: true,
+                        is_movable: true,
+                        kind: gpui::WindowKind::Normal,
+                        window_background,
+                        app_id: Some(app_id),
+                        window_decorations: Some(window_decorations),
+                        window_bounds: Some(window_bounds),
+                        ..Default::default()
+                    },
+                    |window, cx| {
+                        let this = this.clone();
+                        cx.new(|cx| DebuggerWindow::new(this, window, cx))
+                    },
+                )
+                .log_err();
+
+            if let Some(window_handle) = window_handle {
+                this.update(cx, |panel, cx| {
+                    panel.popped_out_window = Some(window_handle);
+                    settings::update_settings_file(panel.fs.clone(), cx, |settings, _| {
+                        settings.debugger.get_or_insert_default().popped_out = Some(true);
+                    });
+                    cx.notify();
+                })
+                .ok();
+            }
+        });
+    }
+
+    pub fn pop_in(&mut self, cx: &mut Context<Self>) {
+        if let Some(window) = self.popped_out_window.take() {
+            window
+                .update(cx, |_, window, _| window.remove_window())
+                .ok();
+        }
+        settings::update_settings_file(self.fs.clone(), cx, |settings, _| {
+            settings.debugger.get_or_insert_default().popped_out = Some(false);
+        });
+        cx.notify();
+    }
+
     pub fn load(
         workspace: WeakEntity<Workspace>,
         cx: &mut AsyncWindowContext,
@@ -168,6 +262,13 @@ impl DebugPanel {
                 });
 
                 workspace.set_debugger_provider(DebuggerProvider(debug_panel.clone()));
+
+                if DebuggerSettings::get_global(cx).popped_out {
+                    let panel = debug_panel.downgrade();
+                    cx.defer(move |cx| {
+                        panel.update(cx, |panel, cx| panel.pop_out(cx)).ok();
+                    });
+                }
 
                 debug_panel
             })
@@ -615,6 +716,12 @@ impl DebugPanel {
         let focus_handle = self.focus_handle.clone();
         let is_side = self.position(window, cx).axis() == gpui::Axis::Horizontal;
         let div = if is_side { v_flex() } else { h_flex() };
+        let this = cx.weak_entity();
+        let in_popped_out_window = self
+            .popped_out_window
+            .as_ref()
+            .map(|w| w.window_id() == window.window_handle().window_id())
+            .unwrap_or(false);
 
         let new_session_button = || {
             IconButton::new("debug-new-session", IconName::Plus)
@@ -669,6 +776,19 @@ impl DebugPanel {
                     })
                     .tooltip(Tooltip::text("Close Panel")),
             )
+        };
+
+        let pop_out_button = {
+            let this = this.clone();
+            move || {
+                let this = this.clone();
+                IconButton::new("debug-pop-out", IconName::ArrowUpRight)
+                    .icon_size(IconSize::Small)
+                    .on_click(move |_, _, cx| {
+                        this.update(cx, |panel, cx| panel.pop_out(cx)).ok();
+                    })
+                    .tooltip(Tooltip::text("Open in New Window"))
+            }
         };
 
         let thread_status = active_session
@@ -940,6 +1060,7 @@ impl DebugPanel {
                                 .child(edit_debug_json_button())
                                 .child(documentation_button())
                                 .child(logs_button())
+                                .child(pop_out_button())
                         }),
                 )
                 .child(
@@ -993,7 +1114,10 @@ impl DebugPanel {
                                         .child(edit_debug_json_button())
                                         .child(documentation_button())
                                         .child(logs_button())
-                                        .child(close_bottom_panel_button)
+                                        .child(pop_out_button())
+                                        .when(!in_popped_out_window, |this| {
+                                            this.child(close_bottom_panel_button)
+                                        })
                                 }),
                         ),
                 ),
@@ -1621,6 +1745,42 @@ impl Render for DebugPanel {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let this = cx.weak_entity();
 
+        // When popped out, this entity is rendered by two windows:
+        //   - The dock window: should show a placeholder with a "Return to Dock" button
+        //   - The DebuggerWindow: should show the full debugger UI
+        // We distinguish them by comparing the current window's ID against the stored handle.
+        let in_popped_out_window = self
+            .popped_out_window
+            .as_ref()
+            .map(|w| w.window_id() == window.window_handle().window_id())
+            .unwrap_or(false);
+
+        if self.is_popped_out() && !in_popped_out_window {
+            let this = cx.weak_entity();
+            return v_flex()
+                .size_full()
+                .key_context("DebugPanel")
+                .items_center()
+                .justify_center()
+                .gap_2()
+                .child(
+                    Label::new("Debugger is open in a separate window")
+                        .size(LabelSize::Small)
+                        .color(Color::Muted),
+                )
+                .child(
+                    Button::new("pop-in-debugger", "Return to Dock")
+                        .icon(IconName::Minimize)
+                        .icon_size(IconSize::Small)
+                        .icon_color(Color::Muted)
+                        .icon_position(IconPosition::Start)
+                        .on_click(move |_, _, cx| {
+                            this.update(cx, |panel, cx| panel.pop_in(cx)).ok();
+                        }),
+                )
+                .into_any();
+        }
+
         if self
             .active_session
             .as_ref()
@@ -1632,7 +1792,8 @@ impl Render for DebugPanel {
         }
 
         v_flex()
-            .when(!self.is_zoomed, |this| {
+            // Skip dock-panel size constraints when rendering inside the pop-out window.
+            .when(!self.is_zoomed && !in_popped_out_window, |this| {
                 this.when_else(
                     self.position(window, cx) == DockPosition::Bottom,
                     |this| this.max_h(self.size),
@@ -2001,5 +2162,81 @@ impl workspace::DebuggerProvider for DebuggerProvider {
         let session = self.0.read(cx).active_session()?;
         let thread = session.read(cx).running_state().read(cx).thread_id()?;
         session.read(cx).session(cx).read(cx).thread_state(thread)
+    }
+}
+
+pub struct DebuggerWindow {
+    debug_panel: WeakEntity<DebugPanel>,
+    title_bar: Option<Entity<PlatformTitleBar>>,
+    _close_subscription: Subscription,
+}
+
+impl DebuggerWindow {
+    fn new(
+        debug_panel: WeakEntity<DebugPanel>,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let title_bar = if !cfg!(target_os = "macos") {
+            Some(cx.new(|cx| PlatformTitleBar::new("debugger-window-title-bar", cx)))
+        } else {
+            None
+        };
+
+        let close_subscription = cx.on_release({
+            let debug_panel = debug_panel.clone();
+            move |_, cx| {
+                debug_panel
+                    .update(cx, |panel, cx| {
+                        panel.popped_out_window = None;
+                        settings::update_settings_file(panel.fs.clone(), cx, |settings, _| {
+                            settings.debugger.get_or_insert_default().popped_out = Some(false);
+                        });
+                        cx.notify();
+                    })
+                    .ok();
+            }
+        });
+
+        Self {
+            debug_panel,
+            title_bar,
+            _close_subscription: close_subscription,
+        }
+    }
+}
+
+impl Render for DebuggerWindow {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let Some(debug_panel) = self.debug_panel.upgrade() else {
+            return div().into_any();
+        };
+
+        let ui_font = theme::setup_ui_font(window, cx);
+        let theme = cx.theme().clone();
+
+        client_side_decorations(
+            v_flex()
+                .id("debugger-window")
+                .key_context("DebugPanel")
+                .size_full()
+                .overflow_hidden()
+                .font(ui_font)
+                .text_color(theme.colors().text)
+                .bg(theme.colors().background)
+                .children(self.title_bar.clone())
+                .child(
+                    h_flex()
+                        .flex_1()
+                        .when(!cfg!(target_os = "macos"), |this| {
+                            this.border_t_1().border_color(cx.theme().colors().border)
+                        })
+                        .child(debug_panel),
+                ),
+            window,
+            cx,
+            Tiling::default(),
+        )
+        .into_any()
     }
 }

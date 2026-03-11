@@ -13,7 +13,7 @@ use tasks_ui::{Spawn, TaskOverrides};
 use ui::{FluentBuilder, InteractiveElement};
 use util::maybe;
 use workspace::{ShutdownDebugAdapters, Workspace};
-use zed_actions::debug_panel::{Toggle, ToggleFocus};
+use zed_actions::debug_panel::{PopIn, PopOut, Toggle, ToggleFocus};
 
 pub mod attach_modal;
 pub mod debugger_panel;
@@ -119,6 +119,18 @@ pub fn init(cx: &mut App) {
                 if !workspace.toggle_panel_focus::<DebugPanel>(window, cx) {
                     workspace.close_panel::<DebugPanel>(window, cx);
                 }
+            })
+            .register_action(|workspace, _: &PopOut, _window, cx| {
+                let Some(debug_panel) = workspace.panel::<DebugPanel>(cx) else {
+                    return;
+                };
+                debug_panel.update(cx, |panel, cx| panel.pop_out(cx));
+            })
+            .register_action(|workspace, _: &PopIn, _window, cx| {
+                let Some(debug_panel) = workspace.panel::<DebugPanel>(cx) else {
+                    return;
+                };
+                debug_panel.update(cx, |panel, cx| panel.pop_in(cx));
             })
             .register_action(|workspace: &mut Workspace, _: &Start, window, cx| {
                 NewProcessModal::show(workspace, window, NewProcessMode::Debug, None, cx);
