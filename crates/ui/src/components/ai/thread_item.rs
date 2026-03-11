@@ -1,6 +1,6 @@
 use crate::{
     CommonAnimationExt, DecoratedIcon, DiffStat, GradientFade, HighlightedLabel, IconDecoration,
-    IconDecorationKind, SpinnerLabel, prelude::*,
+    IconDecorationKind, prelude::*,
 };
 
 use gpui::{AnyView, ClickEvent, Hsla, SharedString};
