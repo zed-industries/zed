@@ -1,6 +1,6 @@
 use crate::{
-    DecoratedIcon, DiffStat, GradientFade, HighlightedLabel, IconDecoration, IconDecorationKind,
-    SpinnerLabel, prelude::*,
+    CommonAnimationExt, DecoratedIcon, DiffStat, GradientFade, HighlightedLabel, IconDecoration,
+    IconDecorationKind, prelude::*,
 };
 
 use gpui::{AnyView, ClickEvent, Hsla, SharedString};
@@ -26,6 +26,7 @@ pub struct ThreadItem {
     selected: bool,
     focused: bool,
     hovered: bool,
+    docked_right: bool,
     added: Option<usize>,
     removed: Option<usize>,
     worktree: Option<SharedString>,
@@ -50,6 +51,7 @@ impl ThreadItem {
             selected: false,
             focused: false,
             hovered: false,
+            docked_right: false,
             added: None,
             removed: None,
             worktree: None,
@@ -107,6 +109,11 @@ impl ThreadItem {
         self
     }
 
+    pub fn docked_right(mut self, docked_right: bool) -> Self {
+        self.docked_right = docked_right;
+        self
+    }
+
     pub fn worktree(mut self, worktree: impl Into<SharedString>) -> Self {
         self.worktree = Some(worktree.into());
         self
@@ -154,12 +161,12 @@ impl ThreadItem {
 impl RenderOnce for ThreadItem {
     fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
         let color = cx.theme().colors();
-        // let dot_separator = || {
-        //     Label::new("•")
-        //         .size(LabelSize::Small)
-        //         .color(Color::Muted)
-        //         .alpha(0.5)
-        // };
+        let dot_separator = || {
+            Label::new("•")
+                .size(LabelSize::Small)
+                .color(Color::Muted)
+                .alpha(0.5)
+        };
 
         let icon_container = || h_flex().size_4().flex_none().justify_center();
         let agent_icon = if let Some(custom_svg) = self.custom_icon_from_external_svg {
@@ -194,17 +201,23 @@ impl RenderOnce for ThreadItem {
             None
         };
 
-        let icon = if let Some(decoration) = decoration {
-            icon_container().child(DecoratedIcon::new(agent_icon, Some(decoration)))
-        } else {
-            icon_container().child(agent_icon)
-        };
-
         let is_running = matches!(
             self.status,
             AgentThreadStatus::Running | AgentThreadStatus::WaitingForConfirmation
         );
-        let running_or_action = is_running || (self.hovered && self.action_slot.is_some());
+
+        let icon = if is_running {
+            icon_container().child(
+                Icon::new(IconName::LoadCircle)
+                    .size(IconSize::Small)
+                    .color(Color::Muted)
+                    .with_rotate_animation(2),
+            )
+        } else if let Some(decoration) = decoration {
+            icon_container().child(DecoratedIcon::new(agent_icon, Some(decoration)))
+        } else {
+            icon_container().child(agent_icon)
+        };
 
         let title = self.title;
         let highlight_positions = self.highlight_positions;
@@ -244,13 +257,16 @@ impl RenderOnce for ThreadItem {
                 if has_worktree || has_diff_stats {
                     this.p_2()
                 } else {
-                    this.px_2().py_1()
+                    this.p_1()
                 }
             })
             .when(self.selected, |s| s.bg(color.element_active))
             .border_1()
             .border_color(gpui::transparent_black())
-            .when(self.focused, |s| s.border_color(color.panel_focused_border))
+            .when(self.focused, |s| {
+                s.when(self.docked_right, |s| s.border_r_2())
+                    .border_color(color.border_focused)
+            })
             .hover(|s| s.bg(color.element_hover))
             .on_hover(self.on_hover)
             .child(
@@ -270,20 +286,8 @@ impl RenderOnce for ThreadItem {
                             .when_some(self.tooltip, |this, tooltip| this.tooltip(tooltip)),
                     )
                     .child(gradient_overlay)
-                    .when(running_or_action, |this| {
-                        this.child(
-                            h_flex()
-                                .gap_1()
-                                .when(is_running, |this| {
-                                    this.child(
-                                        icon_container()
-                                            .child(SpinnerLabel::new().color(Color::Accent)),
-                                    )
-                                })
-                                .when(self.hovered, |this| {
-                                    this.when_some(self.action_slot, |this, slot| this.child(slot))
-                                }),
-                        )
+                    .when(self.hovered, |this| {
+                        this.when_some(self.action_slot, |this, slot| this.child(slot))
                     }),
             )
             .when_some(self.worktree, |this, worktree| {
@@ -306,6 +310,7 @@ impl RenderOnce for ThreadItem {
                         .gap_1p5()
                         .child(icon_container()) // Icon Spacing
                         .child(worktree_label)
+                        .child(dot_separator())
                         .when(has_diff_stats, |this| {
                             this.child(DiffStat::new(
                                 diff_stat_id.clone(),
