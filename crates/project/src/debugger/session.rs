@@ -2201,6 +2201,7 @@ impl Session {
                 } else {
                     cx.emit(SessionStateEvent::Restart);
                 }
+                session.restart_task = None;
             });
         }));
     }
