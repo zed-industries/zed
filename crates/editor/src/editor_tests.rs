@@ -24405,7 +24405,9 @@ async fn test_find_enclosing_node_with_task(cx: &mut TestAppContext) {
     editor.update_in(cx, |editor, window, cx| {
         let snapshot = editor.buffer().read(cx).snapshot(cx);
         editor.runnables.insert(
-            (buffer.read(cx).remote_id(), 3),
+            buffer.read(cx).remote_id(),
+            3,
+            buffer.read(cx).version(),
             RunnableTasks {
                 templates: Vec::new(),
                 offset: snapshot.anchor_before(MultiBufferOffset(43)),
@@ -24415,7 +24417,9 @@ async fn test_find_enclosing_node_with_task(cx: &mut TestAppContext) {
             },
         );
         editor.runnables.insert(
-            (buffer.read(cx).remote_id(), 8),
+            buffer.read(cx).remote_id(),
+            8,
+            buffer.read(cx).version(),
             RunnableTasks {
                 templates: Vec::new(),
                 offset: snapshot.anchor_before(MultiBufferOffset(86)),

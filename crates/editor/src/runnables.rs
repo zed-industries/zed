@@ -1,5 +1,6 @@
 use std::{collections::BTreeMap, mem, ops::Range, sync::Arc};
 
+use clock::Global;
 use collections::HashMap;
 use gpui::{
     App, AppContext as _, AsyncWindowContext, ClickEvent, Context, Entity, Focusable as _,
@@ -26,29 +27,44 @@ use crate::{
 };
 
 pub(super) struct RunnableData {
-    runnables: BTreeMap<(BufferId, BufferRow), RunnableTasks>,
+    runnables: HashMap<BufferId, (Global, BTreeMap<BufferRow, RunnableTasks>)>,
     runnables_update_task: Task<()>,
 }
 
 impl RunnableData {
     pub fn new() -> Self {
         Self {
-            runnables: BTreeMap::default(),
+            runnables: HashMap::default(),
             runnables_update_task: Task::ready(()),
         }
     }
 
-    pub fn runnables(&self, for_buffer: (BufferId, BufferRow)) -> Option<&RunnableTasks> {
-        self.runnables.get(&for_buffer)
+    pub fn runnables(
+        &self,
+        (buffer_id, buffer_row): (BufferId, BufferRow),
+    ) -> Option<&RunnableTasks> {
+        self.runnables.get(&buffer_id)?.1.get(&buffer_row)
     }
 
     pub fn all_runnables(&self) -> impl Iterator<Item = &RunnableTasks> {
-        self.runnables.values()
+        self.runnables
+            .values()
+            .flat_map(|(_, tasks)| tasks.values())
     }
 
     #[cfg(test)]
-    pub fn insert(&mut self, for_buffer: (BufferId, BufferRow), tasks: RunnableTasks) {
-        self.runnables.insert(for_buffer, tasks);
+    pub fn insert(
+        &mut self,
+        buffer_id: BufferId,
+        buffer_row: BufferRow,
+        version: Global,
+        tasks: RunnableTasks,
+    ) {
+        self.runnables
+            .entry(buffer_id)
+            .or_insert_with(|| (version, BTreeMap::default()))
+            .1
+            .insert(buffer_row, tasks);
     }
 }
 
@@ -203,18 +219,32 @@ impl Editor {
             )
             .await;
             editor
-                .update(cx, |editor, _| {
-                    // TODO kb invalidate instead
-                    editor.clear_runnables(None);
-                    for (key, mut value) in rows {
-                        if let Some(lsp_tasks) = lsp_tasks_by_rows.remove(&key) {
-                            value.templates.extend(lsp_tasks.templates);
-                        }
+                .update(cx, |editor, cx| {
+                    for ((buffer_id, row), mut new_tasks) in rows {
+                        let Some(buffer) = editor.buffer().read(cx).buffer(buffer_id) else {
+                            continue;
+                        };
 
-                        editor.insert_runnables(key, value);
+                        if let Some(lsp_tasks) = lsp_tasks_by_rows.remove(&(buffer_id, row)) {
+                            new_tasks.templates.extend(lsp_tasks.templates);
+                        }
+                        editor.insert_runnables(
+                            buffer_id,
+                            buffer.read(cx).version(),
+                            row,
+                            new_tasks,
+                        );
                     }
-                    for (key, value) in lsp_tasks_by_rows {
-                        editor.insert_runnables(key, value);
+                    for ((buffer_id, row), new_tasks) in lsp_tasks_by_rows {
+                        let Some(buffer) = editor.buffer().read(cx).buffer(buffer_id) else {
+                            continue;
+                        };
+                        editor.insert_runnables(
+                            buffer_id,
+                            buffer.read(cx).version(),
+                            row,
+                            new_tasks,
+                        );
                     }
                 })
                 .ok();
@@ -269,9 +299,7 @@ impl Editor {
 
     pub fn clear_runnables(&mut self, for_buffer: Option<BufferId>) {
         if let Some(buffer_id) = for_buffer {
-            self.runnables
-                .runnables
-                .retain(|(task_buffer_id, _), _| task_buffer_id != &buffer_id);
+            self.runnables.runnables.remove(&buffer_id);
         } else {
             self.runnables.runnables.clear();
         }
@@ -319,7 +347,9 @@ impl Editor {
             for (_, tasks) in self
                 .runnables
                 .runnables
-                .range((buffer_id, 0)..(buffer_id, starting_point.row + 1))
+                .get(&buffer_id)
+                .into_iter()
+                .flat_map(|(_, tasks)| tasks.range(0..starting_point.row + 1))
             {
                 if !tasks
                     .context_range
@@ -389,12 +419,17 @@ impl Editor {
             )
     }
 
-    fn insert_runnables(&mut self, key: (BufferId, BufferRow), value: RunnableTasks) {
-        if self.runnables.runnables.insert(key, value).is_some() {
-            // This case should hopefully be rare, but just in case...
-            log::error!(
-                "multiple different run targets found on a single line, only the last target will be rendered"
-            )
+    fn insert_runnables(
+        &mut self,
+        buffer: BufferId,
+        version: Global,
+        row: BufferRow,
+        new_tasks: RunnableTasks,
+    ) {
+        let (old_version, tasks) = self.runnables.runnables.entry(buffer).or_default();
+        if !old_version.changed_since(&version) {
+            *old_version = version;
+            tasks.insert(row, new_tasks);
         }
     }
 
@@ -518,11 +553,14 @@ impl Editor {
             .runnables
             .runnables
             .iter()
+            .flat_map(|(buffer_id, (_, tasks))| {
+                tasks.iter().map(|(row, tasks)| ((*buffer_id, *row), tasks))
+            })
             .min_by_key(|((_, row), _)| cursor_row.abs_diff(*row))?;
 
-        let buffer = self.buffer.read(cx).buffer(*buffer_id)?;
+        let buffer = self.buffer.read(cx).buffer(buffer_id)?;
         let tasks = Arc::new(tasks.to_owned());
-        Some((buffer, *row, tasks))
+        Some((buffer, row, tasks))
     }
 
     pub fn find_enclosing_node_task(
@@ -556,7 +594,12 @@ impl Editor {
             // Check if this node contains our offset
             if node_range.start <= offset.0 && node_range.end >= offset.0 {
                 // If it contains offset, check for task
-                if let Some(tasks) = self.runnables.runnables.get(&(buffer_id, symbol_start_row)) {
+                if let Some(tasks) = self
+                    .runnables
+                    .runnables
+                    .get(&buffer_id)
+                    .and_then(|(_, tasks)| tasks.get(&symbol_start_row))
+                {
                     let buffer = self.buffer.read(cx).buffer(buffer_id)?;
                     return Some((buffer, symbol_start_row, Arc::new(tasks.to_owned())));
                 }
