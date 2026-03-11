@@ -774,7 +774,13 @@ impl<'a> MultiBufferExcerpt2<'a> {
         self.buffer_snapshot
     }
 
+    /// Does not clip
     pub fn anchor_range(&self, range: Range<text::Anchor>) -> Range<Anchor> {
+        todo!()
+    }
+
+    /// Does not clip
+    pub fn anchor_range_checked(&self, range: Range<text::Anchor>) -> Option<Range<Anchor>> {
         todo!()
     }
 
@@ -6553,6 +6559,15 @@ impl MultiBufferSnapshot {
         &self,
         range: Range<T>,
     ) -> Option<(BufferSnapshot, Range<T::TextDimension>)> {
+        todo!()
+    }
+
+    /// If the two endpoints of the range lie in (possibly different) excerpts for the same buffer, return the corresponding
+    /// buffer range.
+    pub fn anchor_range_to_buffer_anchor_range(
+        &self,
+        range: Range<Anchor>,
+    ) -> Option<(&BufferSnapshot, Range<text::Anchor>)> {
         todo!()
     }
 

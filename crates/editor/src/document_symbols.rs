@@ -74,14 +74,11 @@ impl Editor {
         multi_buffer_snapshot: &MultiBufferSnapshot,
         cx: &Context<Self>,
     ) -> Option<(BufferId, Vec<OutlineItem<Anchor>>)> {
-        let excerpt = multi_buffer_snapshot.excerpt_containing(cursor..cursor)?;
-        let excerpt_id = excerpt.id();
-        let buffer_id = excerpt.buffer_id();
-        let buffer = self.buffer.read(cx).buffer(buffer_id)?;
-        let buffer_snapshot = buffer.read(cx).snapshot();
-        let cursor_text_anchor = cursor.text_anchor;
-
-        let all_items = self.lsp_document_symbols.get(&buffer_id)?;
+        let excerpt = multi_buffer_snapshot.excerpt_for_position(cursor)?;
+        let cursor_text_anchor = cursor
+            .to_excerpt_anchor(multi_buffer_snapshot)?
+            .text_anchor();
+        let all_items = self.lsp_document_symbols.get(&excerpt.buffer_id())?;
         if all_items.is_empty() {
             return None;
         }
@@ -91,32 +88,29 @@ impl Editor {
             .filter(|item| {
                 item.range
                     .start
-                    .cmp(&cursor_text_anchor, &buffer_snapshot)
+                    .cmp(&cursor_text_anchor, excerpt.buffer_snapshot())
                     .is_le()
                     && item
                         .range
                         .end
-                        .cmp(&cursor_text_anchor, &buffer_snapshot)
+                        .cmp(&cursor_text_anchor, excerpt.buffer_snapshot())
                         .is_ge()
             })
             .map(|item| OutlineItem {
                 depth: item.depth,
-                range: Anchor::range_in_buffer(excerpt_id, item.range.clone()),
-                source_range_for_text: Anchor::range_in_buffer(
-                    excerpt_id,
-                    item.source_range_for_text.clone(),
-                ),
+                range: excerpt.anchor_range(item.range.clone()),
+                source_range_for_text: excerpt.anchor_range(item.range.clone()),
                 text: item.text.clone(),
                 highlight_ranges: item.highlight_ranges.clone(),
                 name_ranges: item.name_ranges.clone(),
                 body_range: item
                     .body_range
                     .as_ref()
-                    .map(|r| Anchor::range_in_buffer(excerpt_id, r.clone())),
+                    .map(|r| excerpt.anchor_range(r.clone())),
                 annotation_range: item
                     .annotation_range
                     .as_ref()
-                    .map(|r| Anchor::range_in_buffer(excerpt_id, r.clone())),
+                    .map(|r| excerpt.anchor_range(r.clone())),
             })
             .collect::<Vec<_>>();
 
@@ -127,7 +121,7 @@ impl Editor {
             retain
         });
 
-        Some((buffer_id, symbols))
+        Some((excerpt.buffer_id(), symbols))
     }
 
     /// Fetches document symbols from the LSP for buffers that have the setting
@@ -149,7 +143,7 @@ impl Editor {
         let buffers_to_query = self
             .visible_excerpts(true, cx)
             .into_iter()
-            .filter_map(|(_, (buffer, _, _))| {
+            .filter_map(|(buffer, _, _)| {
                 let id = buffer.read(cx).remote_id();
                 if for_buffer.is_none_or(|target| target == id)
                     && lsp_symbols_enabled(buffer.read(cx), cx)

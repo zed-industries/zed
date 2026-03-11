@@ -24881,7 +24881,8 @@ async fn assert_highlighted_edits(
         .into_iter()
         .map(|(range, edit)| {
             (
-                snapshot.anchor_after(range.start)..snapshot.anchor_before(range.end),
+                snapshot.anchor_after(range.start).excerpt_anchor().unwrap()
+                    ..snapshot.anchor_before(range.end).excerpt_anchor().unwrap(),
                 edit,
             )
         })
@@ -24890,7 +24891,12 @@ async fn assert_highlighted_edits(
     let text_anchor_edits = edits
         .clone()
         .into_iter()
-        .map(|(range, edit)| (range.start.text_anchor..range.end.text_anchor, edit.into()))
+        .map(|(range, edit)| {
+            (
+                range.start.text_anchor()..range.end.text_anchor(),
+                edit.into(),
+            )
+        })
         .collect::<Vec<_>>();
 
     let edit_preview = window
@@ -24907,7 +24913,7 @@ async fn assert_highlighted_edits(
 
     cx.update(|_window, cx| {
         let highlighted_edits = edit_prediction_edit_text(
-            snapshot.as_singleton().unwrap().2,
+            snapshot.as_singleton().unwrap().buffer_snapshot(),
             &edits,
             &edit_preview,
             include_deletions,

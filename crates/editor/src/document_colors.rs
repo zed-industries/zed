@@ -161,8 +161,8 @@ impl Editor {
 
         let buffers_to_query = self
             .visible_excerpts(true, cx)
-            .into_values()
-            .map(|(buffer, ..)| buffer)
+            .into_iter()
+            .map(|(buffer, _, _)| buffer)
             .chain(buffer_id.and_then(|buffer_id| self.buffer.read(cx).buffer(buffer_id)))
             .filter(|editor_buffer| {
                 let editor_buffer_id = editor_buffer.read(cx).remote_id();
@@ -200,33 +200,24 @@ impl Editor {
             if all_colors.is_empty() {
                 return;
             }
-            let Ok((multi_buffer_snapshot, editor_excerpts)) = editor.update(cx, |editor, cx| {
-                let multi_buffer_snapshot = editor.buffer().read(cx).snapshot(cx);
-                let editor_excerpts = multi_buffer_snapshot.excerpts().fold(
-                    HashMap::default(),
-                    |mut acc, (excerpt_id, buffer_snapshot, excerpt_range)| {
-                        let excerpt_data = acc
-                            .entry(buffer_snapshot.remote_id())
-                            .or_insert_with(Vec::new);
-                        let excerpt_point_range =
-                            excerpt_range.context.to_point_utf16(buffer_snapshot);
-                        excerpt_data.push((
-                            excerpt_id,
-                            buffer_snapshot.clone(),
-                            excerpt_point_range,
-                        ));
-                        acc
-                    },
-                );
-                (multi_buffer_snapshot, editor_excerpts)
-            }) else {
+            let Some(multi_buffer_snapshot) = editor
+                .update(cx, |editor, cx| editor.buffer.read(cx).snapshot(cx))
+                .ok()
+            else {
                 return;
             };
+            let editor_excerpts = multi_buffer_snapshot
+                .excerpts()
+                .chunk_by(|excerpt| excerpt.buffer_id());
+            let mut editor_excerpts = editor_excerpts
+                .into_iter()
+                .map(|(buffer_id, excerpts)| (buffer_id, excerpts.into_iter().collect::<Vec<_>>()))
+                .collect::<HashMap<_, _>>();
 
             let mut new_editor_colors: HashMap<BufferId, Vec<(Range<Anchor>, DocumentColor)>> =
                 HashMap::default();
             for (buffer_id, colors) in all_colors {
-                let Some(excerpts) = editor_excerpts.get(&buffer_id) else {
+                let Some(excerpts) = editor_excerpts.remove(&buffer_id) else {
                     continue;
                 };
                 match colors {
@@ -241,20 +232,15 @@ impl Editor {
                                 let color_start = point_from_lsp(color.lsp_range.start);
                                 let color_end = point_from_lsp(color.lsp_range.end);
 
-                                for (excerpt_id, buffer_snapshot, excerpt_range) in excerpts {
-                                    if !excerpt_range.contains(&color_start.0)
-                                        || !excerpt_range.contains(&color_end.0)
-                                    {
-                                        continue;
-                                    }
+                                for excerpt in &excerpts {
+                                    let buffer_snapshot = excerpt.buffer_snapshot();
                                     let start = buffer_snapshot.anchor_before(
                                         buffer_snapshot.clip_point_utf16(color_start, Bias::Left),
                                     );
                                     let end = buffer_snapshot.anchor_after(
                                         buffer_snapshot.clip_point_utf16(color_end, Bias::Right),
                                     );
-                                    let Some(range) = multi_buffer_snapshot
-                                        .anchor_range_in_buffer(*excerpt_id, start..end)
+                                    let Some(range) = excerpt.anchor_range_checked(start..end)
                                     else {
                                         continue;
                                     };

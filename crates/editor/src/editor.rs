@@ -639,7 +639,7 @@ pub(crate) enum EditDisplayMode {
 
 enum EditPrediction {
     Edit {
-        edits: Vec<(Range<Anchor>, Arc<str>)>,
+        edits: Vec<(Range<ExcerptAnchor>, Arc<str>)>,
         /// Predicted cursor position as (anchor, offset_from_anchor).
         /// The anchor is in multibuffer coordinates; after applying edits,
         /// resolve the anchor and add the offset to get the final cursor position.
@@ -4546,38 +4546,31 @@ impl Editor {
     // FIXME
     fn linked_editing_ranges_for(
         &self,
-        selection: Range<text::Anchor>,
+        query_range: Range<text::Anchor>,
         cx: &App,
     ) -> Option<HashMap<Entity<Buffer>, Vec<Range<text::Anchor>>>> {
+        use text::ToOffset as TO;
+
         if self.linked_edit_ranges.is_empty() {
             return None;
         }
-        let buffer_snapshot = self.buffer.read(cx).snapshot(cx);
-        let excerpt = buffer_snapshot.excerpt_for_range(selection)?;
+        if query_range.start.buffer_id != query_range.end.buffer_id {
+            return None;
+        };
+        let multibuffer_snapshot = self.buffer.read(cx).snapshot(cx);
+        let buffer = self.buffer.read(cx).buffer(query_range.end.buffer_id)?;
+        let buffer_snapshot = buffer.read(cx).snapshot();
         let (base_range, linked_ranges) = self.linked_edit_ranges.get(
-            excerpt.buffer_id(),
-            selection,
-            excerpt.buffer_snapshot(),
+            buffer_snapshot.remote_id(),
+            query_range.clone(),
+            &buffer_snapshot,
         )?;
-        let buffer_snapshot = excerpt.buffer_snapshot();
-        // let ((base_range, linked_ranges), buffer_snapshot, buffer) =
-        //     selection.end.buffer_id.and_then(|end_buffer_id| {
-        //         if selection.start.buffer_id != Some(end_buffer_id) {
-        //             return None;
-        //         }
-        //         let buffer = self.buffer.read(cx).buffer(end_buffer_id)?;
-        //         let snapshot = buffer.read(cx).snapshot();
-        //         self.linked_edit_ranges
-        //             .get(end_buffer_id, selection.start..selection.end, &snapshot)
-        //             .map(|ranges| (ranges, snapshot, buffer))
-        //     })?;
-        use text::ToOffset as TO;
         // find offset from the start of current range to current cursor position
         let start_byte_offset = TO::to_offset(&base_range.start, &buffer_snapshot);
 
-        let start_offset = TO::to_offset(&selection.start, &buffer_snapshot);
+        let start_offset = TO::to_offset(&query_range.start, &buffer_snapshot);
         let start_difference = start_offset - start_byte_offset;
-        let end_offset = TO::to_offset(&selection.end, &buffer_snapshot);
+        let end_offset = TO::to_offset(&query_range.end, &buffer_snapshot);
         let end_difference = end_offset - start_byte_offset;
 
         // Current range has associated linked ranges.
@@ -4590,13 +4583,19 @@ impl Editor {
                 continue;
             }
             if self.selections.disjoint_anchor_ranges().any(|s| {
-                if s.start.text_anchor.buffer_id != selection.start.buffer_id
-                    || s.end.text_anchor.buffer_id != selection.end.buffer_id
+                let Some(selection_start) = s.start.to_excerpt_anchor(&multibuffer_snapshot) else {
+                    return false;
+                };
+                let Some(selection_end) = s.end.to_excerpt_anchor(&multibuffer_snapshot) else {
+                    return false;
+                };
+                if selection_start.text_anchor().buffer_id != query_range.start.buffer_id
+                    || selection_end.text_anchor().buffer_id != query_range.end.buffer_id
                 {
                     return false;
                 }
-                TO::to_offset(&s.start.text_anchor, &buffer_snapshot) <= end_offset
-                    && TO::to_offset(&s.end.text_anchor, &buffer_snapshot) >= start_offset
+                TO::to_offset(&selection_start.text_anchor(), &buffer_snapshot) <= end_offset
+                    && TO::to_offset(&selection_end.text_anchor(), &buffer_snapshot) >= start_offset
             }) {
                 continue;
             }
@@ -5528,12 +5527,23 @@ impl Editor {
     /// Collects linked edits for the current selections, pairing each linked
     /// range with `text`.
     pub fn linked_edits_for_selections(&self, text: Arc<str>, cx: &App) -> LinkedEdits {
+        let multibuffer_snapshot = self.buffer().read(cx).snapshot(cx);
         let mut linked_edits = LinkedEdits::new();
         if !self.linked_edit_ranges.is_empty() {
             for selection in self.selections.disjoint_anchors() {
-                let start = selection.start.text_anchor;
-                let end = selection.end.text_anchor;
-                linked_edits.push(self, start..end, text.clone(), cx);
+                // todo!() a way to get these selections as excerpt anchor directly?
+                let Some(start) = selection.start.to_excerpt_anchor(&multibuffer_snapshot) else {
+                    continue;
+                };
+                let Some(end) = selection.end.to_excerpt_anchor(&multibuffer_snapshot) else {
+                    continue;
+                };
+                linked_edits.push(
+                    self,
+                    start.text_anchor()..end.text_anchor(),
+                    text.clone(),
+                    cx,
+                );
             }
         }
         linked_edits
@@ -6021,7 +6031,7 @@ impl Editor {
             if filter_completions {
                 menu.filter(
                     query.clone().unwrap_or_default(),
-                    buffer_position.text_anchor,
+                    buffer_position.text_anchor(),
                     &buffer,
                     provider.clone(),
                     window,
@@ -6080,7 +6090,8 @@ impl Editor {
         // The document can be large, so stay in reasonable bounds when searching for words,
         // otherwise completion pop-up might be slow to appear.
         const WORD_LOOKUP_ROWS: u32 = 5_000;
-        let buffer_row = text::ToPoint::to_point(&buffer_position, &buffer_snapshot).row;
+        let buffer_row =
+            text::ToPoint::to_point(&buffer_position.text_anchor(), &buffer_snapshot).row;
         let min_word_search = buffer_snapshot.clip_point(
             Point::new(buffer_row.saturating_sub(WORD_LOOKUP_ROWS), 0),
             Bias::Left,
@@ -9248,11 +9259,8 @@ impl Editor {
         cx: &mut Context<Self>,
     ) -> Option<(Entity<Buffer>, u32, Arc<RunnableTasks>)> {
         let snapshot = self.buffer.read(cx).snapshot(cx);
-        let offset = self
-            .selections
-            .newest::<MultiBufferOffset>(&self.display_snapshot(cx))
-            .head();
-        let mut excerpt = snapshot.excerpt_containing(offset..offset)?;
+        let position = self.selections.newest_anchor(&self.display_snapshot(cx));
+        let excerpt = snapshot.excerpt_for_position(position)?;
         let offset = excerpt.map_offset_to_buffer(offset);
         let buffer_id = excerpt.buffer().remote_id();
 
@@ -9748,7 +9756,7 @@ impl Editor {
         newest_selection_head: Option<DisplayPoint>,
         editor_width: Pixels,
         style: &EditorStyle,
-        edits: &Vec<(Range<Anchor>, Arc<str>)>,
+        edits: &Vec<(Range<ExcerptAnchor>, Arc<str>)>,
         edit_preview: &Option<language::EditPreview>,
         snapshot: &language::BufferSnapshot,
         window: &mut Window,
@@ -9759,12 +9767,14 @@ impl Editor {
             .unwrap()
             .0
             .start
+            .into()
             .to_display_point(editor_snapshot);
         let edit_end = edits
             .last()
             .unwrap()
             .0
             .end
+            .into()
             .to_display_point(editor_snapshot);
 
         let is_visible = visible_row_range.contains(&edit_start.row())
@@ -10496,21 +10506,15 @@ impl Editor {
         selection: Range<Anchor>,
         cx: &mut Context<Self>,
     ) {
-        let Some((_, buffer, _)) = self
-            .buffer()
-            .read(cx)
-            .excerpt_containing(selection.start, cx)
+        let buffer_snapshot = self.buffer.read(cx).snapshot(cx);
+        let Some((buffer_snapshot, range)) =
+            buffer_snapshot.anchor_range_to_buffer_anchor_range(selection.clone())
         else {
             return;
         };
-        let Some((_, end_buffer, _)) = self.buffer().read(cx).excerpt_containing(selection.end, cx)
-        else {
+        let Some(buffer) = self.buffer.read(cx).buffer(buffer_snapshot.remote_id()) else {
             return;
         };
-        if buffer != end_buffer {
-            log::error!("expected anchor range to have matching buffer IDs");
-            return;
-        }
 
         let id = post_inc(&mut self.next_completion_id);
         let snippet_sort_order = EditorSettings::get_global(cx).snippet_sort_order;
@@ -10521,7 +10525,8 @@ impl Editor {
                 id,
                 true,
                 choices,
-                selection,
+                selection.start,
+                range,
                 buffer,
                 old_menu.map(|menu| menu.primary_scroll_handle()),
                 snippet_sort_order,
@@ -20477,7 +20482,7 @@ impl Editor {
         });
 
         cx.emit(EditorEvent::BufferFoldToggled {
-            ids: all_folded_excerpt_ids,
+            ids: ids_to_fold,
             folded: true,
         });
         cx.notify();
@@ -20487,12 +20492,11 @@ impl Editor {
         if self.buffer().read(cx).is_singleton() || !self.is_buffer_folded(buffer_id, cx) {
             return;
         }
-        let unfolded_excerpts = self.buffer().read(cx).excerpts_for_buffer(buffer_id, cx);
         self.display_map.update(cx, |display_map, cx| {
             display_map.unfold_buffers([buffer_id], cx);
         });
         cx.emit(EditorEvent::BufferFoldToggled {
-            ids: unfolded_excerpts.iter().map(|&(id, _)| id).collect(),
+            ids: vec![buffer_id],
             folded: false,
         });
         cx.notify();
@@ -24016,7 +24020,7 @@ impl Editor {
 
             for (buffer_id, inline_value) in inline_values
                 .into_iter()
-                .filter_map(|hint| Some((hint.position.buffer_id?, hint)))
+                .map(|hint| (hint.position.buffer_id, hint))
             {
                 buffer_inline_values
                     .entry(buffer_id)
@@ -24029,8 +24033,8 @@ impl Editor {
                     let snapshot = editor.buffer.read(cx).snapshot(cx);
                     let mut new_inlays = Vec::default();
 
-                    for (excerpt_id, buffer_snapshot, _) in snapshot.excerpts() {
-                        let buffer_id = buffer_snapshot.remote_id();
+                    for excerpt in snapshot.excerpts() {
+                        let buffer_id = excerpt.buffer_id();
                         buffer_inline_values
                             .get(&buffer_id)
                             .into_iter()
@@ -24038,7 +24042,7 @@ impl Editor {
                             .for_each(|hint| {
                                 let inlay = Inlay::debugger(
                                     post_inc(&mut editor.next_inlay_id),
-                                    Anchor::text(excerpt_id, hint.position),
+                                    excerpt.anchor(hint.position),
                                     hint.text(),
                                 );
                                 if !inlay.text().chars().contains(&'\n') {
@@ -24160,8 +24164,7 @@ impl Editor {
                     });
                 }
                 jsx_tag_auto_close::refresh_enabled_in_any_buffer(self, multibuffer, cx);
-                cx.emit(EditorEvent::ExcerptsRemoved {
-                    ids: ids.clone(),
+                cx.emit(EditorEvent::BuffersRemoved {
                     removed_buffer_ids: removed_buffer_ids.clone(),
                 });
             }
@@ -26940,7 +26943,6 @@ pub trait CodeActionProvider {
         &self,
         buffer_handle: Entity<Buffer>,
         action: CodeAction,
-        excerpt_id: ExcerptId,
         push_to_history: bool,
         window: &mut Window,
         cx: &mut App,
@@ -26983,7 +26985,6 @@ impl CodeActionProvider for Entity<Project> {
         &self,
         buffer_handle: Entity<Buffer>,
         action: CodeAction,
-        _excerpt_id: ExcerptId,
         push_to_history: bool,
         _window: &mut Window,
         cx: &mut App,
@@ -27971,7 +27972,7 @@ pub enum EditorEvent {
         removed_buffer_ids: Vec<BufferId>,
     },
     BufferFoldToggled {
-        ids: Vec<ExcerptId>,
+        ids: Vec<BufferId>,
         folded: bool,
     },
     ExpandExcerptsRequested {
@@ -28546,20 +28547,23 @@ impl InvalidationRegion for SnippetState {
 
 fn edit_prediction_edit_text(
     current_snapshot: &BufferSnapshot,
-    edits: &[(Range<Anchor>, impl AsRef<str>)],
+    edits: &[(Range<ExcerptAnchor>, impl AsRef<str>)],
     edit_preview: &EditPreview,
     include_deletions: bool,
     cx: &App,
 ) -> HighlightedText {
     let edits = edits
         .iter()
-        .map(|(anchor, text)| (anchor.start.text_anchor..anchor.end.text_anchor, text))
+        .map(|(anchor, text)| (anchor.start.text_anchor()..anchor.end.text_anchor(), text))
         .collect::<Vec<_>>();
 
     edit_preview.highlight_edits(current_snapshot, &edits, include_deletions, cx)
 }
 
-fn edit_prediction_fallback_text(edits: &[(Range<Anchor>, Arc<str>)], cx: &App) -> HighlightedText {
+fn edit_prediction_fallback_text(
+    edits: &[(Range<ExcerptAnchor>, Arc<str>)],
+    cx: &App,
+) -> HighlightedText {
     // Fallback for providers that don't provide edit_preview (like Copilot/Supermaven)
     // Just show the raw edit text with basic styling
     let mut text = String::new();

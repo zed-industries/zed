@@ -3,7 +3,7 @@ use edit_prediction_types::{
 };
 use gpui::{Entity, KeyBinding, Modifiers, prelude::*};
 use indoc::indoc;
-use multi_buffer::{Anchor, MultiBufferSnapshot, ToPoint};
+use multi_buffer::{Anchor, ExcerptAnchor, MultiBufferSnapshot, ToPoint};
 use std::{ops::Range, sync::Arc};
 use text::{Point, ToOffset};
 use ui::prelude::*;
@@ -418,7 +418,7 @@ async fn test_edit_prediction_preview_cleanup_on_toggle_off(cx: &mut gpui::TestA
 
 fn assert_editor_active_edit_completion(
     cx: &mut EditorTestContext,
-    assert: impl FnOnce(MultiBufferSnapshot, &Vec<(Range<Anchor>, Arc<str>)>),
+    assert: impl FnOnce(MultiBufferSnapshot, &Vec<(Range<ExcerptAnchor>, Arc<str>)>),
 ) {
     cx.editor(|editor, _, cx| {
         let completion_state = editor

@@ -393,7 +393,7 @@ impl CompletionBuilder {
         kind: Option<CompletionItemKind>,
     ) -> Completion {
         Completion {
-            replace_range: Anchor::min_max_range_for_buffer(BufferId::new(1)),
+            replace_range: Anchor::min_max_range_for_buffer(BufferId::new(1).unwrap()),
             new_text: label.to_string(),
             label: CodeLabel::plain(label.to_string(), filter_text),
             documentation: None,

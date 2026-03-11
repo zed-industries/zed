@@ -339,6 +339,13 @@ impl Anchor {
             Anchor::Max => text::Anchor::max_for_buffer(buffer.remote_id()),
         }
     }
+
+    pub fn to_excerpt_anchor(
+        &self,
+        buffer_snapshot: &MultiBufferSnapshot,
+    ) -> Option<ExcerptAnchor> {
+        todo!()
+    }
 }
 
 impl ToOffset for Anchor {
