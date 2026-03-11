@@ -75,7 +75,7 @@ pub use toolchain::{
     LanguageToolchainStore, LocalLanguageToolchainStore, Toolchain, ToolchainList, ToolchainLister,
     ToolchainMetadata, ToolchainScope,
 };
-use tree_sitter::{self, Query, QueryCursor, WasmStore, wasmtime};
+use tree_sitter::{self, CaptureQuantifier, Query, QueryCursor, WasmStore, wasmtime};
 use util::rel_path::RelPath;
 use util::serde::default_true;
 
@@ -1383,6 +1383,7 @@ pub struct Grammar {
 pub struct HighlightsConfig {
     pub query: Query,
     pub identifier_capture_indices: Vec<u32>,
+    pub(crate) block_nested_captures: Vec<bool>,
 }
 
 struct IndentConfig {
@@ -1650,6 +1651,7 @@ impl Language {
     pub fn with_highlights_query(mut self, source: &str) -> Result<Self> {
         let grammar = self.grammar_mut()?;
         let query = Query::new(&grammar.ts_language, source)?;
+        let block_nested_captures = highlight_block_nested_captures(&query);
 
         let mut identifier_capture_indices = Vec::new();
         for name in [
@@ -1670,6 +1672,7 @@ impl Language {
         grammar.highlights_config = Some(HighlightsConfig {
             query,
             identifier_capture_indices,
+            block_nested_captures,
         });
 
         Ok(self)
@@ -2750,6 +2753,32 @@ fn populate_capture_indices(
         );
     }
     success
+}
+
+fn highlight_block_nested_captures(query: &Query) -> Vec<bool> {
+    let mut block_nested_captures = vec![false; query.capture_names().len()];
+
+    for pattern_index in 0..query.pattern_count() {
+        let block_nested = query
+            .property_settings(pattern_index)
+            .iter()
+            .any(|setting| setting.key.as_ref() == "highlight.block-nested");
+        if !block_nested {
+            continue;
+        }
+
+        for (capture_index, quantifier) in
+            query.capture_quantifiers(pattern_index).iter().enumerate()
+        {
+            if *quantifier == CaptureQuantifier::Zero {
+                continue;
+            }
+
+            block_nested_captures[capture_index] = true;
+        }
+    }
+
+    block_nested_captures
 }
 
 pub fn point_to_lsp(point: PointUtf16) -> lsp::Position {

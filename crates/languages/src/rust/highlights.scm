@@ -258,3 +258,16 @@ operator: "/" @operator
         "::"
         (#match? @none "^[a-z\\d_]*$"))
     ]))
+
+((token_tree
+   [
+     "@"
+     ":"
+   ]
+   .
+   [
+     (string_literal)
+     (raw_string_literal)
+     (char_literal)
+   ] @string.macro)
+  (#set! highlight.block-nested))

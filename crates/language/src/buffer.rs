@@ -539,8 +539,51 @@ struct IndentSuggestion {
 struct BufferChunkHighlights<'a> {
     captures: SyntaxMapCaptures<'a>,
     next_capture: Option<SyntaxMapCapture<'a>>,
-    stack: Vec<(usize, HighlightId)>,
+    stack: Vec<HighlightStackEntry>,
     highlight_maps: Vec<HighlightMap>,
+    block_nested_captures: Vec<Vec<bool>>,
+}
+
+#[derive(Clone)]
+struct HighlightStackEntry {
+    end_offset: usize,
+    highlight_id: HighlightId,
+    block_nested: bool,
+}
+
+impl BufferChunkHighlights<'_> {
+    fn blocks_nested_captures(&self, grammar_index: usize, capture_index: u32) -> bool {
+        self.block_nested_captures
+            .get(grammar_index)
+            .and_then(|captures| captures.get(capture_index as usize))
+            .copied()
+            .unwrap_or(false)
+    }
+}
+
+fn build_buffer_chunk_highlights<'a>(
+    captures: SyntaxMapCaptures<'a>,
+    highlight_maps: Vec<HighlightMap>,
+) -> BufferChunkHighlights<'a> {
+    let block_nested_captures = captures
+        .grammars()
+        .iter()
+        .map(|grammar| {
+            grammar
+                .highlights_config
+                .as_ref()
+                .map(|config| config.block_nested_captures.clone())
+                .unwrap_or_default()
+        })
+        .collect();
+
+    BufferChunkHighlights {
+        captures,
+        next_capture: None,
+        stack: Default::default(),
+        highlight_maps,
+        block_nested_captures,
+    }
 }
 
 /// An iterator that yields chunks of a buffer's text, along with their
@@ -5474,12 +5517,7 @@ impl<'a> BufferChunks<'a> {
     ) -> Self {
         let mut highlights = None;
         if let Some((captures, highlight_maps)) = syntax {
-            highlights = Some(BufferChunkHighlights {
-                captures,
-                next_capture: None,
-                stack: Default::default(),
-                highlight_maps,
-            })
+            highlights = Some(build_buffer_chunk_highlights(captures, highlight_maps))
         }
 
         let diagnostic_endpoints = diagnostics.then(|| Vec::new().into_iter().peekable());
@@ -5511,27 +5549,25 @@ impl<'a> BufferChunks<'a> {
                 // Reuse existing highlights stack, as the new range is a subrange of the old one.
                 highlights
                     .stack
-                    .retain(|(end_offset, _)| *end_offset > range.start);
+                    .retain(|entry| entry.end_offset > range.start);
                 if let Some(capture) = &highlights.next_capture
                     && range.start >= capture.node.start_byte()
                 {
                     let next_capture_end = capture.node.end_byte();
                     if range.start < next_capture_end {
-                        highlights.stack.push((
-                            next_capture_end,
-                            highlights.highlight_maps[capture.grammar_index].get(capture.index),
-                        ));
+                        highlights.stack.push(HighlightStackEntry {
+                            end_offset: next_capture_end,
+                            highlight_id: highlights.highlight_maps[capture.grammar_index]
+                                .get(capture.index),
+                            block_nested: highlights
+                                .blocks_nested_captures(capture.grammar_index, capture.index),
+                        });
                     }
                     highlights.next_capture.take();
                 }
             } else if let Some(snapshot) = self.buffer_snapshot {
                 let (captures, highlight_maps) = snapshot.get_highlights(self.range.clone());
-                *highlights = BufferChunkHighlights {
-                    captures,
-                    next_capture: None,
-                    stack: Default::default(),
-                    highlight_maps,
-                };
+                *highlights = build_buffer_chunk_highlights(captures, highlight_maps);
             } else {
                 // We cannot obtain new highlights for a language-aware buffer iterator, as we don't have a buffer snapshot.
                 // Seeking such BufferChunks is not supported.
@@ -5636,8 +5672,8 @@ impl<'a> Iterator for BufferChunks<'a> {
         let mut next_diagnostic_endpoint = usize::MAX;
 
         if let Some(highlights) = self.highlights.as_mut() {
-            while let Some((parent_capture_end, _)) = highlights.stack.last() {
-                if *parent_capture_end <= self.range.start {
+            while let Some(parent_capture) = highlights.stack.last() {
+                if parent_capture.end_offset <= self.range.start {
                     highlights.stack.pop();
                 } else {
                     break;
@@ -5653,11 +5689,24 @@ impl<'a> Iterator for BufferChunks<'a> {
                     next_capture_start = capture.node.start_byte();
                     break;
                 } else {
+                    if highlights
+                        .stack
+                        .last()
+                        .is_some_and(|parent_capture| parent_capture.block_nested)
+                    {
+                        highlights.next_capture = highlights.captures.next();
+                        continue;
+                    }
+
                     let highlight_id =
                         highlights.highlight_maps[capture.grammar_index].get(capture.index);
-                    highlights
-                        .stack
-                        .push((capture.node.end_byte(), highlight_id));
+                    highlights.stack.push(HighlightStackEntry {
+                        end_offset: capture.node.end_byte(),
+                        highlight_id,
+                        block_nested: highlights
+                            .blocks_nested_captures(capture.grammar_index, capture.index),
+                    });
+
                     highlights.next_capture = highlights.captures.next();
                 }
             }
@@ -5691,10 +5740,10 @@ impl<'a> Iterator for BufferChunks<'a> {
                 .min(next_diagnostic_endpoint);
             let mut highlight_id = None;
             if let Some(highlights) = self.highlights.as_ref()
-                && let Some((parent_capture_end, parent_highlight_id)) = highlights.stack.last()
+                && let Some(parent_capture) = highlights.stack.last()
             {
-                chunk_end = chunk_end.min(*parent_capture_end);
-                highlight_id = Some(*parent_highlight_id);
+                chunk_end = chunk_end.min(parent_capture.end_offset);
+                highlight_id = Some(parent_capture.highlight_id);
             }
             let bit_start = chunk_start - self.chunks.offset();
             let bit_end = chunk_end - self.chunks.offset();
