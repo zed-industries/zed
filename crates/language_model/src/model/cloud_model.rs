@@ -109,7 +109,7 @@ struct GlobalRefreshLlmTokenListener(Entity<RefreshLlmTokenListener>);
 
 impl Global for GlobalRefreshLlmTokenListener {}
 
-pub struct RefreshLlmTokenEvent;
+pub struct LlmTokenRefreshedEvent;
 
 pub struct RefreshLlmTokenListener {
     client: Arc<Client>,
@@ -118,7 +118,7 @@ pub struct RefreshLlmTokenListener {
     _subscription: Subscription,
 }
 
-impl EventEmitter<RefreshLlmTokenEvent> for RefreshLlmTokenListener {}
+impl EventEmitter<LlmTokenRefreshedEvent> for RefreshLlmTokenListener {}
 
 impl RefreshLlmTokenListener {
     pub fn register(client: Arc<Client>, user_store: Entity<UserStore>, cx: &mut App) {
@@ -162,7 +162,7 @@ impl RefreshLlmTokenListener {
             .map(|o| o.id.clone());
         cx.spawn(async move |this, cx| {
             llm_api_token.refresh(&client, organization_id).await?;
-            this.update(cx, |_this, cx| cx.emit(RefreshLlmTokenEvent))
+            this.update(cx, |_this, cx| cx.emit(LlmTokenRefreshedEvent))
         })
         .detach_and_log_err(cx);
     }
