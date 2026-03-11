@@ -20,11 +20,11 @@ const WORKFLOW_ARTIFACT_NAME: &str = "extension-workflow-files";
 
 pub(crate) fn extension_workflow_rollout() -> Workflow {
     let filter_repos_input =
-        WorkflowInput::string("filter-repos", None).description(
+        WorkflowInput::string("filter-repos", Some(String::new())).description(
             "Comma-separated list of repository names to rollout to. Leave empty for all repos.",
         );
     let extra_context_input =
-        WorkflowInput::string("change-description", None).description(
+        WorkflowInput::string("change-description", Some(String::new())).description(
             "Description for the changes to be expected with this rollout",
         );
 
@@ -190,6 +190,7 @@ fn rollout_workflows_to_extension(
             .with_custom_name("checkout_extension_repo")
             .with_token(token)
             .with_repository("zed-extensions/${{ matrix.repo }}")
+            .with_path("extension")
     }
 
     fn download_workflow_files() -> Step<Use> {
@@ -202,9 +203,9 @@ fn rollout_workflows_to_extension(
         .add_with(("path", "workflow-files"))
     }
 
-    fn sync_workflow_files( removed_ci: JobOutput, removed_shared: JobOutput) -> Step<Run> {
+    fn sync_workflow_files(removed_ci: JobOutput, removed_shared: JobOutput) -> Step<Run> {
         named::bash(indoc! {r#"
-            mkdir -p .github/workflows
+            mkdir -p extension/.github/workflows
 
             if [ "$MATRIX_REPO" = "workflows" ]; then
                 REMOVED_FILES="$REMOVED_CI"
@@ -212,7 +213,7 @@ fn rollout_workflows_to_extension(
                 REMOVED_FILES="$REMOVED_SHARED"
             fi
 
-            cd .github/workflows
+            cd extension/.github/workflows
 
             if [ -n "$REMOVED_FILES" ]; then
                 for file in $REMOVED_FILES; do
@@ -225,9 +226,9 @@ fn rollout_workflows_to_extension(
             cd - > /dev/null
 
             if [ "$MATRIX_REPO" = "workflows" ]; then
-                cp workflow-files/extensions/workflows/*.yml .github/workflows/
+                cp workflow-files/extensions/workflows/*.yml extension/.github/workflows/
             else
-                cp workflow-files/extensions/workflows/shared/*.yml .github/workflows/
+                cp workflow-files/extensions/workflows/shared/*.yml extension/.github/workflows/
             fi
         "#})
         .add_env(("REMOVED_CI", removed_ci))
@@ -262,6 +263,7 @@ fn rollout_workflows_to_extension(
         };
 
         named::uses("peter-evans", "create-pull-request", "v7")
+            .add_with(("path", "extension"))
             .add_with(("title", title.clone()))
             .add_with(("body", body))
             .add_with(("commit-message", title))
@@ -287,6 +289,7 @@ fn rollout_workflows_to_extension(
                 gh pr merge "$PR_NUMBER" --auto --squash
             fi
         "#})
+        .working_directory("extension")
         .add_env(("GH_TOKEN", token.to_string()))
         .add_env((
             "PR_NUMBER",

@@ -8,12 +8,12 @@ on:
     inputs:
       filter-repos:
         description: Comma-separated list of repository names to rollout to. Leave empty for all repos.
-        required: true
         type: string
+        default: ''
       change-description:
         description: Description for the changes to be expected with this rollout
-        required: true
         type: string
+        default: ''
 jobs:
   fetch_extension_repos:
     if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions') && github.ref == 'refs/heads/main'
@@ -128,6 +128,7 @@ jobs:
       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
       with:
         clean: false
+        path: extension
         repository: zed-extensions/${{ matrix.repo }}
         token: ${{ steps.generate-token.outputs.token }}
     - name: extension_workflow_rollout::rollout_workflows_to_extension::download_workflow_files
@@ -137,7 +138,7 @@ jobs:
         path: workflow-files
     - name: extension_workflow_rollout::rollout_workflows_to_extension::sync_workflow_files
       run: |
-        mkdir -p .github/workflows
+        mkdir -p extension/.github/workflows
 
         if [ "$MATRIX_REPO" = "workflows" ]; then
             REMOVED_FILES="$REMOVED_CI"
@@ -145,7 +146,7 @@ jobs:
             REMOVED_FILES="$REMOVED_SHARED"
         fi
 
-        cd .github/workflows
+        cd extension/.github/workflows
 
         if [ -n "$REMOVED_FILES" ]; then
             for file in $REMOVED_FILES; do
@@ -158,9 +159,9 @@ jobs:
         cd - > /dev/null
 
         if [ "$MATRIX_REPO" = "workflows" ]; then
-            cp workflow-files/extensions/workflows/*.yml .github/workflows/
+            cp workflow-files/extensions/workflows/*.yml extension/.github/workflows/
         else
-            cp workflow-files/extensions/workflows/shared/*.yml .github/workflows/
+            cp workflow-files/extensions/workflows/shared/*.yml extension/.github/workflows/
         fi
       env:
         REMOVED_CI: ${{ needs.fetch_extension_repos.outputs.removed_ci }}
@@ -174,6 +175,7 @@ jobs:
       name: extension_workflow_rollout::rollout_workflows_to_extension::create_pull_request
       uses: peter-evans/create-pull-request@v7
       with:
+        path: extension
         title: Update CI workflows to `${{ steps.short-sha.outputs.sha_short }}`
         body: |
           This PR updates the CI workflow files from the main Zed repository
@@ -196,6 +198,7 @@ jobs:
       env:
         GH_TOKEN: ${{ steps.generate-token.outputs.token }}
         PR_NUMBER: ${{ steps.create-pr.outputs.pull-request-number }}
+      working-directory: extension
     timeout-minutes: 10
   create_rollout_tag:
     needs:
