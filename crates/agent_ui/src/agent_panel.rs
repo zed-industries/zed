@@ -9,7 +9,7 @@ use std::{
     time::Duration,
 };
 
-use acp_thread::{AcpThread, MentionUri, ThreadStatus};
+use acp_thread::{AcpThread, AgentSessionInfo, MentionUri, ThreadStatus};
 use agent::{ContextServerRegistry, SharedThread, ThreadStore};
 use agent_client_protocol as acp;
 use agent_servers::AgentServer;
@@ -227,27 +227,26 @@ pub fn init(cx: &mut App) {
                 })
                 .register_action(|workspace, _: &OpenHistory, window, cx| {
                     if let Some(panel) = workspace.panel::<AgentPanel>(cx) {
-                        workspace.focus_panel::<AgentPanel>(window, cx);
                         panel.update(cx, |panel, cx| panel.open_history(window, cx));
+                        workspace.focus_panel::<AgentPanel>(window, cx);
                     }
                 })
                 .register_action(|workspace, _: &OpenSettings, window, cx| {
                     if let Some(panel) = workspace.panel::<AgentPanel>(cx) {
-                        workspace.focus_panel::<AgentPanel>(window, cx);
                         panel.update(cx, |panel, cx| panel.open_configuration(window, cx));
+                        workspace.focus_panel::<AgentPanel>(window, cx);
                     }
                 })
                 .register_action(|workspace, _: &NewTextThread, window, cx| {
                     if let Some(panel) = workspace.panel::<AgentPanel>(cx) {
-                        workspace.focus_panel::<AgentPanel>(window, cx);
                         panel.update(cx, |panel, cx| {
                             panel.new_text_thread(window, cx);
                         });
+                        workspace.focus_panel::<AgentPanel>(window, cx);
                     }
                 })
                 .register_action(|workspace, action: &NewExternalAgentThread, window, cx| {
                     if let Some(panel) = workspace.panel::<AgentPanel>(cx) {
-                        workspace.focus_panel::<AgentPanel>(window, cx);
                         panel.update(cx, |panel, cx| {
                             panel.external_thread(
                                 action.agent.clone(),
@@ -260,6 +259,7 @@ pub fn init(cx: &mut App) {
                                 cx,
                             )
                         });
+                        workspace.focus_panel::<AgentPanel>(window, cx);
                     }
                 })
                 .register_action(|workspace, action: &OpenRulesLibrary, window, cx| {
@@ -365,10 +365,10 @@ pub fn init(cx: &mut App) {
                 })
                 .register_action(|workspace, _: &LoadThreadFromClipboard, window, cx| {
                     if let Some(panel) = workspace.panel::<AgentPanel>(cx) {
-                        workspace.focus_panel::<AgentPanel>(window, cx);
                         panel.update(cx, |panel, cx| {
                             panel.load_thread_from_clipboard(window, cx);
                         });
+                        workspace.focus_panel::<AgentPanel>(window, cx);
                     }
                 })
                 .register_action(|workspace, action: &ReviewBranchDiff, window, cx| {
@@ -636,6 +636,20 @@ enum ActiveView {
     Configuration,
 }
 
+/// Tracks the panel's thread initialization lifecycle.
+///
+/// Combines what were previously two separate fields (`pending_thread_restore`
+/// and `creating_thread`) into a single state machine, preventing invalid
+/// combinations and ensuring the state is always reset on error paths.
+enum ThreadInitState {
+    /// No pending initialization work.
+    Idle,
+    /// Thread restore is deferred until the panel becomes active.
+    PendingRestore(AgentSessionInfo),
+    /// An external agent thread is being created asynchronously.
+    Creating,
+}
+
 enum WhichFontSize {
     AgentFont,
     BufferFont,
@@ -897,6 +911,7 @@ pub struct AgentPanel {
     on_boarding_upsell_dismissed: AtomicBool,
     _active_view_observation: Option<Subscription>,
     pub(crate) sidebar: Option<Entity<crate::sidebar::Sidebar>>,
+    thread_init_state: ThreadInitState,
 }
 
 impl AgentPanel {
@@ -909,20 +924,34 @@ impl AgentPanel {
         let selected_agent = self.selected_agent.clone();
         let start_thread_in = Some(self.start_thread_in);
 
-        let last_active_thread = self.active_agent_thread(cx).map(|thread| {
-            let thread = thread.read(cx);
-            let title = thread.title();
-            SerializedActiveThread {
-                session_id: thread.session_id().0.to_string(),
-                agent_type: self.selected_agent.clone(),
-                title: if title.as_ref() != DEFAULT_THREAD_TITLE {
-                    Some(title.to_string())
+        let last_active_thread = self
+            .active_agent_thread(cx)
+            .map(|thread| {
+                let thread = thread.read(cx);
+                let title = thread.title();
+                SerializedActiveThread {
+                    session_id: thread.session_id().0.to_string(),
+                    agent_type: self.selected_agent.clone(),
+                    title: if title.as_ref() != DEFAULT_THREAD_TITLE {
+                        Some(title.to_string())
+                    } else {
+                        None
+                    },
+                    cwd: None,
+                }
+            })
+            .or_else(|| {
+                if let ThreadInitState::PendingRestore(info) = &self.thread_init_state {
+                    Some(SerializedActiveThread {
+                        session_id: info.session_id.0.to_string(),
+                        agent_type: self.selected_agent.clone(),
+                        title: info.title.as_ref().map(|t: &SharedString| t.to_string()),
+                        cwd: info.cwd.clone(),
+                    })
                 } else {
                     None
-                },
-                cwd: None,
-            }
-        });
+                }
+            });
 
         self.pending_serialization = Some(cx.background_spawn(async move {
             save_serialized_panel(
@@ -1042,9 +1071,17 @@ impl AgentPanel {
 
                 if let Some(thread_info) = last_active_thread {
                     let agent_type = thread_info.agent_type.clone();
-                    panel.update(cx, |panel, cx| {
+                    let session_info = AgentSessionInfo {
+                        session_id: acp::SessionId::new(thread_info.session_id),
+                        cwd: thread_info.cwd,
+                        title: thread_info.title.map(SharedString::from),
+                        updated_at: None,
+                        created_at: None,
+                        meta: None,
+                    };
+                    panel.update(cx, |panel, _cx| {
                         panel.selected_agent = agent_type;
-                        panel.load_agent_thread_inner(thread_info.session_id.into(), thread_info.cwd, thread_info.title.map(SharedString::from), false, window, cx);
+                        panel.thread_init_state = ThreadInitState::PendingRestore(session_info);
                     });
                 }
                 panel
@@ -1226,6 +1263,7 @@ impl AgentPanel {
             on_boarding_upsell_dismissed: AtomicBool::new(OnboardingUpsell::dismissed()),
             _active_view_observation: None,
             sidebar: None,
+            thread_init_state: ThreadInitState::Idle,
         };
 
         // Initial sync of agent servers from extensions
@@ -1366,6 +1404,7 @@ impl AgentPanel {
     }
 
     fn new_text_thread(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.thread_init_state = ThreadInitState::Idle;
         telemetry::event!("Agent Thread Started", agent = "zed-text");
 
         let context = self
@@ -1419,6 +1458,8 @@ impl AgentPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.thread_init_state = ThreadInitState::Creating;
+
         let workspace = self.workspace.clone();
         let project = self.project.clone();
         let fs = self.fs.clone();
@@ -1482,7 +1523,7 @@ impl AgentPanel {
                 };
 
                 let server = ext_agent.server(fs, thread_store);
-                this.update_in(cx, |agent_panel, window, cx| {
+                let result = this.update_in(cx, |agent_panel, window, cx| {
                     agent_panel.create_external_thread(
                         server,
                         resume_session_id,
@@ -1496,8 +1537,16 @@ impl AgentPanel {
                         window,
                         cx,
                     );
-                })?;
+                });
 
+                if result.is_err() {
+                    this.update(cx, |agent_panel, _cx| {
+                        agent_panel.thread_init_state = ThreadInitState::Idle;
+                    })
+                    .ok();
+                }
+
+                result?;
                 anyhow::Ok(())
             })
             .detach_and_log_err(cx);
@@ -1869,6 +1918,7 @@ impl AgentPanel {
     }
 
     fn load_thread_from_clipboard(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.thread_init_state = ThreadInitState::Idle;
         let Some(clipboard) = cx.read_from_clipboard() else {
             Self::show_deferred_toast(&self.workspace, "No clipboard content available", cx);
             return;
@@ -2375,6 +2425,7 @@ impl AgentPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.thread_init_state = ThreadInitState::Idle;
         match agent {
             AgentType::TextThread => {
                 window.dispatch_action(NewTextThread.boxed_clone(), cx);
@@ -2481,6 +2532,7 @@ impl AgentPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.thread_init_state = ThreadInitState::Idle;
         let selected_agent = AgentType::from(ext_agent.clone());
         if self.selected_agent != selected_agent {
             self.selected_agent = selected_agent;
@@ -3129,8 +3181,31 @@ impl Panel for AgentPanel {
                 Some(WorktreeCreationStatus::Creating)
             )
         {
-            let selected_agent = self.selected_agent.clone();
-            self.new_agent_thread_inner(selected_agent, false, window, cx);
+            match &self.thread_init_state {
+                ThreadInitState::PendingRestore(_) => {
+                    let ThreadInitState::PendingRestore(session_info) =
+                        std::mem::replace(&mut self.thread_init_state, ThreadInitState::Idle)
+                    else {
+                        unreachable!()
+                    };
+                    self.load_agent_thread_inner(
+                        session_info.session_id,
+                        session_info.cwd,
+                        session_info.title,
+                        false,
+                        window,
+                        cx,
+                    );
+                }
+                ThreadInitState::Idle => {
+                    let selected_agent = self.selected_agent.clone();
+                    self.new_agent_thread_inner(selected_agent, false, window, cx);
+                }
+                ThreadInitState::Creating => {
+                    // An external thread is already being created asynchronously;
+                    // nothing to do — the spawn will set the view when it completes.
+                }
+            }
         }
     }
 
@@ -5233,7 +5308,7 @@ mod tests {
             .expect("panel B load should succeed");
         cx.run_until_parked();
 
-        // Workspace A should restore its thread, width, and agent type
+        // Workspace A should restore width and agent type, but defer thread
         loaded_a.read_with(cx, |panel, _cx| {
             assert_eq!(
                 panel.width,
@@ -5245,8 +5320,25 @@ mod tests {
                 "workspace A agent type should be restored"
             );
             assert!(
+                matches!(panel.thread_init_state, ThreadInitState::PendingRestore(_)),
+                "workspace A should have a pending thread restore"
+            );
+            assert!(
+                panel.active_connection_view().is_none(),
+                "workspace A should not have an active thread before activation"
+            );
+        });
+
+        // Simulate panel activation (user opens the panel)
+        loaded_a.update_in(cx, |panel, window, cx| {
+            panel.set_active(true, window, cx);
+        });
+        cx.run_until_parked();
+
+        loaded_a.read_with(cx, |panel, _cx| {
+            assert!(
                 panel.active_connection_view().is_some(),
-                "workspace A should have its active thread restored"
+                "workspace A should have its active thread restored after activation"
             );
         });
 
@@ -5302,11 +5394,23 @@ mod tests {
 
         let cx = &mut VisualTestContext::from_window(multi_workspace.into(), cx);
 
-        workspace_a.update_in(cx, |workspace, window, cx| {
+        let panel = workspace_a.update_in(cx, |workspace, window, cx| {
             let text_thread_store = cx.new(|cx| TextThreadStore::fake(project.clone(), cx));
             let panel =
                 cx.new(|cx| AgentPanel::new(workspace, text_thread_store, None, window, cx));
-            workspace.add_panel(panel, window, cx);
+            workspace.add_panel(panel.clone(), window, cx);
+            panel
+        });
+
+        panel.update(cx, |panel, _cx| {
+            panel.thread_init_state = ThreadInitState::PendingRestore(AgentSessionInfo {
+                session_id: acp::SessionId::new("pending-session"),
+                cwd: None,
+                title: Some(SharedString::from("Restored thread")),
+                updated_at: None,
+                created_at: None,
+                meta: None,
+            });
         });
 
         cx.run_until_parked();
@@ -5316,6 +5420,246 @@ mod tests {
         });
 
         cx.run_until_parked();
+
+        panel.read_with(cx, |panel, _cx| {
+            assert!(
+                matches!(panel.active_view, ActiveView::TextThread { .. }),
+                "new text thread action should activate text thread view"
+            );
+            assert!(
+                matches!(panel.thread_init_state, ThreadInitState::Idle),
+                "new text thread action should clear pending restore"
+            );
+            assert!(
+                panel.active_connection_view().is_none(),
+                "new text thread action should not restore an external thread"
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_new_external_agent_thread_action_handler(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+
+        cx.update(|cx| {
+            cx.update_flags(true, vec!["agent-v2".to_string()]);
+            agent::ThreadStore::init_global(cx);
+            language_model::LanguageModelRegistry::test(cx);
+            let slash_command_registry =
+                assistant_slash_command::SlashCommandRegistry::default_global(cx);
+            slash_command_registry
+                .register_command(assistant_slash_commands::DefaultSlashCommand, false);
+            <dyn fs::Fs>::set_global(fs.clone(), cx);
+        });
+
+        let project = Project::test(fs.clone(), [], cx).await;
+
+        let multi_workspace =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+
+        let workspace_a = multi_workspace
+            .read_with(cx, |multi_workspace, _cx| {
+                multi_workspace.workspace().clone()
+            })
+            .unwrap();
+
+        let cx = &mut VisualTestContext::from_window(multi_workspace.into(), cx);
+
+        let panel = workspace_a.update_in(cx, |workspace, window, cx| {
+            let text_thread_store = cx.new(|cx| TextThreadStore::fake(project.clone(), cx));
+            let panel =
+                cx.new(|cx| AgentPanel::new(workspace, text_thread_store, None, window, cx));
+            workspace.add_panel(panel.clone(), window, cx);
+            panel
+        });
+
+        panel.update(cx, |panel, _cx| {
+            panel.thread_init_state = ThreadInitState::PendingRestore(AgentSessionInfo {
+                session_id: acp::SessionId::new("pending-session"),
+                cwd: None,
+                title: Some(SharedString::from("Restored thread")),
+                updated_at: None,
+                created_at: None,
+                meta: None,
+            });
+        });
+
+        cx.run_until_parked();
+
+        workspace_a.update_in(cx, |_, window, cx| {
+            window.dispatch_action(
+                NewExternalAgentThread {
+                    agent: Some(ExternalAgent::NativeAgent),
+                }
+                .boxed_clone(),
+                cx,
+            );
+        });
+
+        cx.run_until_parked();
+
+        panel.read_with(cx, |panel, _cx| {
+            assert!(
+                matches!(panel.active_view, ActiveView::AgentThread { .. }),
+                "new external thread action should activate external thread view"
+            );
+            assert!(
+                matches!(panel.thread_init_state, ThreadInitState::Idle),
+                "new external thread action should clear pending restore"
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_open_history_bypasses_pending_restore(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+
+        cx.update(|cx| {
+            cx.update_flags(true, vec!["agent-v2".to_string()]);
+            agent::ThreadStore::init_global(cx);
+            language_model::LanguageModelRegistry::test(cx);
+            let slash_command_registry =
+                assistant_slash_command::SlashCommandRegistry::default_global(cx);
+            slash_command_registry
+                .register_command(assistant_slash_commands::DefaultSlashCommand, false);
+            <dyn fs::Fs>::set_global(fs.clone(), cx);
+        });
+
+        let project = Project::test(fs.clone(), [], cx).await;
+
+        let multi_workspace =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+
+        let workspace_a = multi_workspace
+            .read_with(cx, |multi_workspace, _cx| {
+                multi_workspace.workspace().clone()
+            })
+            .unwrap();
+
+        let cx = &mut VisualTestContext::from_window(multi_workspace.into(), cx);
+
+        let panel = workspace_a.update_in(cx, |workspace, window, cx| {
+            let text_thread_store = cx.new(|cx| TextThreadStore::fake(project.clone(), cx));
+            let panel =
+                cx.new(|cx| AgentPanel::new(workspace, text_thread_store, None, window, cx));
+            workspace.add_panel(panel.clone(), window, cx);
+            panel
+        });
+
+        panel.update(cx, |panel, _cx| {
+            panel.thread_init_state = ThreadInitState::PendingRestore(AgentSessionInfo {
+                session_id: acp::SessionId::new("pending-session"),
+                cwd: None,
+                title: Some(SharedString::from("Restored thread")),
+                updated_at: None,
+                created_at: None,
+                meta: None,
+            });
+        });
+
+        cx.run_until_parked();
+
+        workspace_a.update_in(cx, |_, window, cx| {
+            window.dispatch_action(OpenHistory.boxed_clone(), cx);
+        });
+
+        cx.run_until_parked();
+
+        panel.read_with(cx, |panel, _cx| {
+            assert!(
+                matches!(panel.active_view, ActiveView::History { .. }),
+                "open history should show history view"
+            );
+            assert!(
+                matches!(panel.thread_init_state, ThreadInitState::PendingRestore(_)),
+                "open history should preserve pending restore for serialization"
+            );
+            assert!(
+                panel.active_connection_view().is_none(),
+                "open history should not restore an external thread"
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_set_active_skips_restore_for_non_thread_views(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+
+        cx.update(|cx| {
+            cx.update_flags(true, vec!["agent-v2".to_string()]);
+            agent::ThreadStore::init_global(cx);
+            language_model::LanguageModelRegistry::test(cx);
+            let slash_command_registry =
+                assistant_slash_command::SlashCommandRegistry::default_global(cx);
+            slash_command_registry
+                .register_command(assistant_slash_commands::DefaultSlashCommand, false);
+            <dyn fs::Fs>::set_global(fs.clone(), cx);
+        });
+
+        let project = Project::test(fs.clone(), [], cx).await;
+
+        let multi_workspace =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+
+        let workspace_a = multi_workspace
+            .read_with(cx, |multi_workspace, _cx| {
+                multi_workspace.workspace().clone()
+            })
+            .unwrap();
+
+        let cx = &mut VisualTestContext::from_window(multi_workspace.into(), cx);
+
+        let panel = workspace_a.update_in(cx, |workspace, window, cx| {
+            let text_thread_store = cx.new(|cx| TextThreadStore::fake(project.clone(), cx));
+            let panel =
+                cx.new(|cx| AgentPanel::new(workspace, text_thread_store, None, window, cx));
+            workspace.add_panel(panel.clone(), window, cx);
+            panel
+        });
+
+        // Simulate what the reordered OpenSettings handler does:
+        // open_configuration sets active_view to Configuration before focus_panel
+        // calls set_active(true). Since active_view is no longer Uninitialized,
+        // set_active should skip the restore/new-thread branch.
+        panel.update_in(cx, |panel, window, cx| {
+            panel.thread_init_state = ThreadInitState::PendingRestore(AgentSessionInfo {
+                session_id: acp::SessionId::new("pending-session"),
+                cwd: None,
+                title: Some(SharedString::from("Restored thread")),
+                updated_at: None,
+                created_at: None,
+                meta: None,
+            });
+            panel.set_active_view(ActiveView::Configuration, true, window, cx);
+        });
+
+        // Now simulate focus_panel triggering set_active(true)
+        panel.update_in(cx, |panel, window, cx| {
+            panel.set_active(true, window, cx);
+        });
+
+        cx.run_until_parked();
+
+        panel.read_with(cx, |panel, _cx| {
+            assert!(
+                matches!(panel.active_view, ActiveView::Configuration),
+                "active view should remain Configuration"
+            );
+            assert!(
+                matches!(panel.thread_init_state, ThreadInitState::PendingRestore(_)),
+                "set_active should preserve pending restore when view is not Uninitialized"
+            );
+            assert!(
+                panel.active_connection_view().is_none(),
+                "set_active should not restore an external thread for non-thread views"
+            );
+        });
     }
 
     /// Extracts the text from a Text content block, panicking if it's not Text.

@@ -923,7 +923,7 @@ fn handle_open_request(request: OpenRequest, app_state: Arc<AppState>, cx: &mut 
 
                     multi_workspace.update(cx, |multi_workspace, window, cx| {
                         multi_workspace.workspace().update(cx, |workspace, cx| {
-                            if let Some(panel) = workspace.focus_panel::<AgentPanel>(window, cx) {
+                            if let Some(panel) = workspace.panel::<AgentPanel>(cx) {
                                 panel.update(cx, |panel, cx| {
                                     panel.new_agent_thread_with_external_source_prompt(
                                         external_source_prompt,
@@ -932,6 +932,7 @@ fn handle_open_request(request: OpenRequest, app_state: Arc<AppState>, cx: &mut 
                                     );
                                 });
                             }
+                            workspace.focus_panel::<AgentPanel>(window, cx);
                         });
                     })
                 })
