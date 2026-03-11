@@ -372,6 +372,10 @@ impl Component for ZedAiOnboarding {
                         "Business Plan",
                         onboarding(SignInStatus::SignedIn, Some(Plan::ZedBusiness), false),
                     ),
+                    single_example(
+                        "Student Plan",
+                        onboarding(SignInStatus::SignedIn, Some(Plan::ZedStudent), false),
+                    ),
                 ])
                 .into_any_element(),
         )
