@@ -6,6 +6,7 @@ use std::{
     sync::Arc,
 };
 
+use accesskit::TreeUpdate;
 use collections::{FxHashSet, HashMap};
 use futures::channel::oneshot::Receiver;
 
@@ -119,6 +120,8 @@ pub struct WaylandWindowState {
     in_progress_window_controls: Option<WindowControls>,
     window_controls: WindowControls,
     client_inset: Option<Pixels>,
+    // todo! document initialization reqs
+    accesskit: Option<accesskit_unix::Adapter>,
 }
 
 pub enum WaylandSurfaceState {
@@ -390,6 +393,7 @@ impl WaylandWindowState {
             in_progress_window_controls: None,
             window_controls: WindowControls::default(),
             client_inset: None,
+            accesskit: None,
         })
     }
 
@@ -1016,6 +1020,10 @@ impl WaylandWindowStatePtr {
             fun(focus);
             self.callbacks.borrow_mut().active_status_change = Some(fun);
         }
+        let mut state = self.state.borrow_mut();
+        if let Some(accesskit) = &mut state.accesskit {
+            accesskit.update_window_focus_state(focus);
+        }
     }
 
     pub fn set_hovered(&self, focus: bool) {
@@ -1464,6 +1472,34 @@ impl PlatformWindow for WaylandWindow {
 
     fn gpu_specs(&self) -> Option<GpuSpecs> {
         self.borrow().renderer.gpu_specs().into()
+    }
+
+    fn a11y_init(&self, callbacks: gpui::A11yCallbacks) {
+        let mut state = self.0.state.borrow_mut();
+
+        if state.accesskit.is_some() {
+            panic!("cannot initialize accesskit twice");
+        }
+
+        state.accesskit = Some(accesskit_unix::Adapter::new(
+            callbacks.activation,
+            callbacks.action,
+            callbacks.deactivation,
+        ));
+    }
+
+    fn a11y_tree_update(&mut self, tree_update: TreeUpdate) {
+        let mut state = self.0.state.borrow_mut();
+
+        let Some(adapter) = &mut state.accesskit else {
+            panic!("cannot update accesskit tree - not initialized");
+        };
+        
+        adapter.update_if_active(|| tree_update);
+    }
+    
+    fn a11y_update_window_bounds(&self) {
+        // no-op - wayland does not let us get bounds for our window
     }
 }
 

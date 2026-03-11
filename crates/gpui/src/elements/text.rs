@@ -5,6 +5,7 @@ use crate::{
     TextRun, TextStyle, TooltipId, TruncateFrom, WhiteSpace, Window, WrappedLine,
     WrappedLineLayout, register_tooltip_mouse_handlers, set_tooltip_on_window,
 };
+use accesskit::{Node, Role};
 use anyhow::Context as _;
 use gpui_util::ResultExt;
 use itertools::Itertools;
@@ -736,6 +737,14 @@ impl Element for InteractiveText {
 
     fn source_location(&self) -> Option<&'static core::panic::Location<'static>> {
         None
+    }
+
+    fn a11y_role(&self) -> Option<Role> {
+        Some(Role::Label)
+    }
+
+    fn write_a11y_info(&self, node: &mut Node) {
+        node.set_label(self.text.text.as_ref());
     }
 
     fn request_layout(

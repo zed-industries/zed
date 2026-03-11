@@ -51,6 +51,12 @@
           # we'll just put it on `$PATH`:
           nodejs_22
           zig
+          
+          # A11y testing script `script/a11y-inspector`
+          gobject-introspection # shell hook that populates GI_TYPELIB_PATH
+          at-spi2-core          # provides Atspi-2.0.typelib and DBus-1.0.typelib
+          (python3.withPackages (ps: [ps.pyatspi ps.pygobject3]))
+          accerciser
         ];
 
         env =

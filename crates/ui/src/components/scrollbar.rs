@@ -1470,6 +1470,14 @@ impl<T: ScrollableHandle> Element for ScrollbarElement<T> {
             });
         })
     }
+
+    fn a11y_role(&self) -> Option<gpui::Role> {
+        Some(gpui::Role::ScrollBar)
+    }
+
+    fn write_a11y_info(&self, node: &mut accesskit::Node) {
+        node.set_orientation(gpui::Orientation::Vertical);
+    }
 }
 
 impl<T: ScrollableHandle> IntoElement for ScrollbarElement<T> {

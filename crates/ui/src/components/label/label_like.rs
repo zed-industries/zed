@@ -263,7 +263,6 @@ impl RenderOnce for LabelLike {
             .children(self.children)
     }
 }
-
 impl Component for LabelLike {
     fn scope() -> ComponentScope {
         ComponentScope::Typography

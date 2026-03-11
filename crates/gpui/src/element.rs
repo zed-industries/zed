@@ -36,10 +36,12 @@ use crate::{
     InspectorElementId, LayoutId, Pixels, Point, SharedString, Size, Style, Window,
     util::FluentBuilder, window::with_element_arena,
 };
+use accesskit::{Node, Role};
 use derive_more::{Deref, DerefMut};
 use std::{
     any::{Any, type_name},
     fmt::{self, Debug, Display},
+    hash::Hash,
     mem, panic,
     sync::Arc,
 };
@@ -107,6 +109,14 @@ pub trait Element: 'static + IntoElement {
     fn into_any(self) -> AnyElement {
         AnyElement::new(self)
     }
+
+    /// todo! document and maybe hide accesskit types from public API
+    fn a11y_role(&self) -> Option<Role> {
+        None
+    }
+    
+    /// todo! document and maybe hide accesskit types from public API
+    fn write_a11y_info(&self, _node: &mut Node) {}
 }
 
 /// Implemented by any type that can be converted into an element.
@@ -290,6 +300,16 @@ impl<C: RenderOnce> IntoElement for Component<C> {
 #[derive(Deref, DerefMut, Clone, Default, Debug, Eq, PartialEq, Hash)]
 pub struct GlobalElementId(pub(crate) Arc<[ElementId]>);
 
+impl GlobalElementId {
+    /// Accesskit needs node IDs to be stable across frames.
+    pub(crate) fn accesskit_node_id(&self) -> accesskit::NodeId {
+        use std::hash::Hasher;
+        let mut hasher = std::hash::DefaultHasher::default();
+        self.hash(&mut hasher);
+        hasher.finish().into()
+    }
+}
+
 impl Display for GlobalElementId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         for (i, element_id) in self.0.iter().enumerate() {
@@ -410,6 +430,25 @@ impl<E: Element> Drawable<E> {
         }
     }
 
+    fn push_a11y_node(&self, global_id: &GlobalElementId, window: &mut Window) -> bool {
+        if let Some(role) = self.element.a11y_role() {
+            let global_id = global_id.accesskit_node_id();
+
+            let mut node = accesskit::Node::new(role);
+
+            if let Some((_parent_id, parent_node)) = window.a11y_nodes.peek_mut() {
+                parent_node.push_child(global_id);
+            }
+
+            self.element.write_a11y_info(&mut node);
+
+            window.a11y_nodes.push(global_id, node);
+            true
+        } else {
+            false
+        }
+    }
+
     pub(crate) fn prepaint(&mut self, window: &mut Window, cx: &mut App) {
         match mem::take(&mut self.phase) {
             ElementDrawPhase::RequestLayout {
@@ -430,6 +469,12 @@ impl<E: Element> Drawable<E> {
                     debug_assert_eq!(&*global_id.as_ref().unwrap().0, &*window.element_id_stack);
                 }
 
+                let a11y_node_pushed = if let Some(global_id) = &global_id {
+                    self.push_a11y_node(global_id, window)
+                } else {
+                    false
+                };
+
                 let bounds = window.layout_bounds(layout_id);
                 let node_id = window.next_frame.dispatch_tree.push_node();
                 let prepaint = self.element.prepaint(
@@ -444,6 +489,9 @@ impl<E: Element> Drawable<E> {
 
                 if global_id.is_some() {
                     window.element_id_stack.pop();
+                }
+                if a11y_node_pushed {
+                    window.a11y_nodes.pop();
                 }
 
                 self.phase = ElementDrawPhase::Prepaint {

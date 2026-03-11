@@ -219,6 +219,7 @@ zed_actions.workspace = true
 zed_env_vars.workspace = true
 zlog.workspace = true
 zlog_settings.workspace = true
+accesskit_unix = "0.20.0"
 
 [target.'cfg(target_os = "windows")'.dependencies]
 etw_tracing.workspace = true

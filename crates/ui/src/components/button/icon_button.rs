@@ -94,6 +94,11 @@ impl IconButton {
 
         self
     }
+
+    pub fn aria_expanded(mut self, expanded: bool) -> Self {
+        self.base = self.base.aria_expanded(expanded);
+        self
+    }
 }
 
 impl Disableable for IconButton {

@@ -14,6 +14,7 @@ pub struct Modal {
     footer: Option<ModalFooter>,
     container_id: ElementId,
     container_scroll_handler: Option<ScrollHandle>,
+    aria_label: Option<SharedString>,
 }
 
 impl Modal {
@@ -28,10 +29,12 @@ impl Modal {
             footer: None,
             container_id,
             container_scroll_handler: scroll_handle,
+            aria_label: None,
         }
     }
 
     pub fn header(mut self, header: ModalHeader) -> Self {
+        self.aria_label = header.headline.clone();
         self.header = header;
         self
     }
@@ -67,6 +70,8 @@ impl RenderOnce for Modal {
     fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
         v_flex()
             .id(self.id.clone())
+            .role(Role::Dialog)
+            .when_some(self.aria_label, |this, label| this.aria_label(label))
             .size_full()
             .flex_1()
             .overflow_hidden()

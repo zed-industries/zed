@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use component::{Component, ComponentScope, example_group_with_title, single_example};
-use gpui::{AnyElement, AnyView, ClickEvent, MouseButton, MouseDownEvent, Pixels, px};
+use gpui::{AnyElement, AnyView, ClickEvent, MouseButton, MouseDownEvent, Pixels, Role, px};
 use smallvec::SmallVec;
 
 use crate::{Disclosure, GradientFade, prelude::*};
@@ -48,6 +48,8 @@ pub struct ListItem {
     rounded: bool,
     overflow_x: bool,
     focused: Option<bool>,
+    override_role: Option<Role>,
+    a11y_label: Option<SharedString>,
 }
 
 impl ListItem {
@@ -78,6 +80,8 @@ impl ListItem {
             rounded: false,
             overflow_x: false,
             focused: None,
+            override_role: None,
+            a11y_label: None,
         }
     }
 
@@ -194,6 +198,16 @@ impl ListItem {
         self.focused = Some(focused);
         self
     }
+
+    pub fn role(mut self, role: Role) -> Self {
+        self.override_role = Some(role);
+        self
+    }
+
+    pub fn aria_label(mut self, label: impl Into<SharedString>) -> Self {
+        self.a11y_label = Some(label.into());
+        self
+    }
 }
 
 impl Disableable for ListItem {
@@ -235,6 +249,8 @@ impl RenderOnce for ListItem {
 
         h_flex()
             .id(self.id)
+            .role(self.override_role.unwrap_or(Role::ListItem))
+            .when_some(self.a11y_label, |this, label| this.aria_label(label))
             .when_some(self.group_name, |this, group| this.group(group))
             .w_full()
             .relative()

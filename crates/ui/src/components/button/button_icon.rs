@@ -97,7 +97,7 @@ impl RenderOnce for ButtonIcon {
             .selected_icon
             .filter(|_| self.selected)
             .unwrap_or(self.icon);
-
+        
         let icon_color = if self.disabled {
             Color::Disabled
         } else if self.selected_style.is_some() && self.selected {

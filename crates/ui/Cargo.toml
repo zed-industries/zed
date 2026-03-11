@@ -13,6 +13,7 @@ name = "ui"
 path = "src/ui.rs"
 
 [dependencies]
+accesskit.workspace = true
 chrono.workspace = true
 component.workspace = true
 documented.workspace = true

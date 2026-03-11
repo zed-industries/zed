@@ -1,4 +1,4 @@
-use gpui::{IntoElement, Window, prelude::*};
+use gpui::{IntoElement, Role, Window, prelude::*};
 
 use crate::{ButtonLike, prelude::*};
 
@@ -53,6 +53,7 @@ impl RenderOnce for ButtonLink {
         let id = format!("{}-{}", self.label, self.link);
 
         ButtonLike::new(id)
+            .role(Role::Link)
             .size(ButtonSize::None)
             .child(
                 h_flex()

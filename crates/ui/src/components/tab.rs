@@ -1,6 +1,6 @@
 use std::cmp::Ordering;
 
-use gpui::{AnyElement, IntoElement, Stateful};
+use gpui::{AnyElement, IntoElement, Role, Stateful};
 use smallvec::SmallVec;
 
 use crate::prelude::*;
@@ -142,6 +142,8 @@ impl RenderOnce for Tab {
         };
 
         self.div
+            .role(Role::Tab)
+            .aria_selected(self.selected)
             .h(Tab::container_height(cx))
             .bg(tab_bg)
             .border_color(cx.theme().colors().border)

@@ -1,5 +1,5 @@
 use component::{Component, ComponentScope, example_group_with_title, single_example};
-use gpui::AnyElement;
+use gpui::{AnyElement, ElementId, Role};
 use smallvec::SmallVec;
 
 use crate::{Label, ListHeader, ListItem, prelude::*};
@@ -11,6 +11,7 @@ pub enum EmptyMessage {
 
 #[derive(IntoElement, RegisterComponent)]
 pub struct List {
+    id: Option<ElementId>,
     /// Message to display when the list is empty
     /// Defaults to "No items"
     empty_message: EmptyMessage,
@@ -28,11 +29,17 @@ impl Default for List {
 impl List {
     pub fn new() -> Self {
         Self {
+            id: None,
             empty_message: EmptyMessage::Text("No items".into()),
             header: None,
             toggle: None,
             children: SmallVec::new(),
         }
+    }
+
+    pub fn id(mut self, id: impl Into<ElementId>) -> Self {
+        self.id = Some(id.into());
+        self
     }
 
     pub fn empty_message(mut self, message: impl Into<EmptyMessage>) -> Self {
@@ -77,7 +84,7 @@ impl From<AnyElement> for EmptyMessage {
 
 impl RenderOnce for List {
     fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
-        v_flex()
+        let styled = v_flex()
             .w_full()
             .py(DynamicSpacing::Base04.rems(cx))
             .children(self.header)
@@ -90,7 +97,13 @@ impl RenderOnce for List {
                     }
                     EmptyMessage::Element(element) => this.child(element),
                 },
-            })
+            });
+
+        if let Some(id) = self.id {
+            styled.id(id).role(Role::List).into_any_element()
+        } else {
+            styled.into_any_element()
+        }
     }
 }
 
@@ -114,7 +127,7 @@ impl Component for List {
                     vec![
                         single_example(
                             "Simple List",
-                            List::new()
+                            List::new().id("simple-list")
                                 .child(ListItem::new("item1").child(Label::new("Item 1")))
                                 .child(ListItem::new("item2").child(Label::new("Item 2")))
                                 .child(ListItem::new("item3").child(Label::new("Item 3")))
@@ -122,7 +135,7 @@ impl Component for List {
                         ),
                         single_example(
                             "With Header",
-                            List::new()
+                            List::new().id("header-list")
                                 .header(ListHeader::new("Section Header"))
                                 .child(ListItem::new("item1").child(Label::new("Item 1")))
                                 .child(ListItem::new("item2").child(Label::new("Item 2")))
@@ -130,7 +143,7 @@ impl Component for List {
                         ),
                         single_example(
                             "Empty List",
-                            List::new()
+                            List::new().id("empty-list")
                                 .empty_message("No items to display")
                                 .into_any_element(),
                         ),

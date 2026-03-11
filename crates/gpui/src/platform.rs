@@ -36,6 +36,7 @@ use crate::{
     ShapedGlyph, ShapedRun, SharedString, Size, SvgRenderer, SystemWindowTab, Task,
     ThreadTaskTimings, Window, WindowControlArea, hash, point, px, size,
 };
+use accesskit::{ActionRequest, TreeUpdate};
 use anyhow::Result;
 use async_task::Runnable;
 use futures::channel::oneshot;
@@ -492,6 +493,21 @@ pub trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     fn sprite_atlas(&self) -> Arc<dyn PlatformAtlas>;
     fn is_subpixel_rendering_supported(&self) -> bool;
 
+    /// Initialize accesskit adapter.
+    ///
+    /// Implementations must panic if called more than once.
+    fn a11y_init(&self, callbacks: A11yCallbacks);
+
+    /// Provide a [`accesskit::TreeUpdate`] to the underlying adapter, notifying
+    /// accessibility tools that the state of the UI has changed.
+    ///
+    /// Implementations may assume that [`PlatformWindow::a11y_init`] has been
+    /// called.
+    fn a11y_tree_update(&mut self, tree_update: TreeUpdate);
+
+    /// Inform the accesskit adapter of the bounds of the window.
+    fn a11y_update_window_bounds(&self);
+
     // macOS specific methods
     fn get_title(&self) -> String {
         String::new()
@@ -553,6 +569,41 @@ pub trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     fn render_to_image(&self, _scene: &Scene) -> Result<RgbaImage> {
         anyhow::bail!("render_to_image not implemented for this platform")
     }
+}
+
+/// Trivial implementor of [`accesskit::ActivationHandler`]
+pub struct TrivialActivationHandler(pub Box<dyn Fn() -> Option<TreeUpdate> + Send + 'static>);
+/// Trivial implementor of [`accesskit::ActionHandler`]
+pub struct TrivialActionHandler(pub Box<dyn Fn(ActionRequest) + Send + 'static>);
+/// Trivial implementor of [`accesskit::DeactivationHandler`]
+pub struct TrivialDeactivationHandler(pub Box<dyn Fn() + Send + 'static>);
+
+impl accesskit::ActivationHandler for TrivialActivationHandler {
+    fn request_initial_tree(&mut self) -> Option<TreeUpdate> {
+        (self.0)()
+    }
+}
+
+impl accesskit::ActionHandler for TrivialActionHandler {
+    fn do_action(&mut self, request: ActionRequest) {
+        (self.0)(request)
+    }
+}
+
+impl accesskit::DeactivationHandler for TrivialDeactivationHandler {
+    fn deactivate_accessibility(&mut self) {
+        (self.0)()
+    }
+}
+
+/// Callbacks required by accesskit adapters
+pub struct A11yCallbacks {
+    /// See [`accesskit::ActivationHandler`]
+    pub activation: TrivialActivationHandler,
+    /// See [`accesskit::ActionHandler`]
+    pub action: TrivialActionHandler,
+    /// See [`accesskit::DeactivationHandler`]
+    pub deactivation: TrivialDeactivationHandler,
 }
 
 /// Type alias for runnables with metadata.

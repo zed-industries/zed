@@ -96,6 +96,7 @@ impl RenderOnce for Disclosure {
         .icon_size(IconSize::Small)
         .disabled(self.disabled)
         .toggle_state(self.selected)
+        .aria_expanded(self.is_open)
         .when_some(self.visible_on_hover.clone(), |this, group_name| {
             this.visible_on_hover(group_name)
         })

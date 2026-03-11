@@ -303,6 +303,18 @@ impl PlatformWindow for TestWindow {
     fn gpu_specs(&self) -> Option<GpuSpecs> {
         None
     }
+
+    fn a11y_init(&self, _callbacks: crate::A11yCallbacks) {
+        todo!()
+    }
+
+    fn a11y_tree_update(&mut self, _tree_update: accesskit::TreeUpdate) {
+        todo!()
+    }
+
+    fn a11y_update_window_bounds(&self) {
+        todo!()
+    }
 }
 
 pub(crate) struct TestAtlasState {

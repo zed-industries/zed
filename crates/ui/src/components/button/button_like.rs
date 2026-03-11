@@ -1,7 +1,7 @@
 use documented::Documented;
 use gpui::{
     AnyElement, AnyView, ClickEvent, CursorStyle, DefiniteLength, FocusHandle, Hsla, MouseButton,
-    MouseClickEvent, MouseDownEvent, MouseUpEvent, Rems, StyleRefinement, relative,
+    MouseClickEvent, MouseDownEvent, MouseUpEvent, Rems, Role, StyleRefinement, relative,
     transparent_black,
 };
 use smallvec::SmallVec;
@@ -466,6 +466,9 @@ pub struct ButtonLike {
     on_right_click: Option<Box<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>>,
     children: SmallVec<[AnyElement; 2]>,
     focus_handle: Option<FocusHandle>,
+    override_role: Option<Role>,
+    aria_label: Option<SharedString>,
+    aria_expanded: Option<bool>,
 }
 
 impl ButtonLike {
@@ -490,6 +493,9 @@ impl ButtonLike {
             layer: None,
             tab_index: None,
             focus_handle: None,
+            override_role: None,
+            aria_label: None,
+            aria_expanded: None,
         }
     }
 
@@ -503,6 +509,33 @@ impl ButtonLike {
 
     pub fn new_rounded_all(id: impl Into<ElementId>) -> Self {
         Self::new(id).rounding(ButtonLikeRounding::ALL)
+    }
+
+    /// Override the default accessible role for this element.
+    /// 
+    /// Defaults to [`Role::Button`]. 
+    /// 
+    /// Panics if called on a node without an id. See
+    /// [`InteractiveElement::role`] for more information.
+    pub fn role(mut self, role: Role) -> Self {
+        self.override_role = Some(role);
+        self
+    }
+
+    /// Set the accessible label for this element. 
+    /// 
+    /// See [`InteractiveElement::aria_label`]
+    pub fn aria_label(mut self, label: impl Into<SharedString>) -> Self {
+        self.aria_label = Some(label.into());
+        self
+    }
+
+    /// Set the accessible expanded state for this element.
+    ///
+    /// See [`InteractiveElement::aria_expanded`]
+    pub fn aria_expanded(mut self, expanded: bool) -> Self {
+        self.aria_expanded = Some(expanded);
+        self
     }
 
     pub fn opacity(mut self, opacity: f32) -> Self {
@@ -646,6 +679,11 @@ impl RenderOnce for ButtonLike {
         self.base
             .h_flex()
             .id(self.id.clone())
+            .role(self.override_role.unwrap_or(Role::Button))
+            .when_some(self.aria_label, |this, label| this.aria_label(label))
+            .when_some(self.aria_expanded, |this, expanded| {
+                this.aria_expanded(expanded)
+            })
             .when_some(self.tab_index, |this, tab_index| this.tab_index(tab_index))
             .when_some(self.focus_handle, |this, focus_handle| {
                 this.track_focus(&focus_handle)
