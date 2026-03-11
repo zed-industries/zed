@@ -4009,14 +4009,7 @@ impl BackgroundScanner {
         self.send_status_update(scanning, request.done, &[]).await
     }
 
-    async fn process_events(&self, events: Vec<PathEvent>) {
-        let mut path_events = Vec::with_capacity(events.len());
-        for event in events {
-            path_events.push((
-                event.path.clone(),
-                matches!(event.kind, Some(fs::PathEventKind::Rescan)),
-            ));
-        }
+    async fn process_events(&self, mut events: Vec<PathEvent>) {
         let root_path = self.state.lock().await.snapshot.abs_path.clone();
         let root_canonical_path = self.fs.canonicalize(root_path.as_path()).await;
         let root_canonical_path = match &root_canonical_path {
@@ -4060,16 +4053,20 @@ impl BackgroundScanner {
         let skipped_files_in_dot_git = [COMMIT_MESSAGE, INDEX_LOCK];
         let skipped_dirs_in_dot_git = [FSMONITOR_DAEMON, LFS_DIR];
 
-        let mut relative_paths = Vec::with_capacity(path_events.len());
+        let mut relative_paths = Vec::with_capacity(events.len());
         let mut dot_git_abs_paths = Vec::new();
         let mut work_dirs_needing_exclude_update = Vec::new();
-        path_events.sort_unstable_by(|(left_path, _), (right_path, _)| left_path.cmp(right_path));
-        path_events.dedup_by(|(left_path, left_rescanned), (right_path, right_rescanned)| {
-            if left_path == right_path {
-                *left_rescanned |= *right_rescanned;
+        events.sort_unstable_by(|left, right| left.path.cmp(&right.path));
+        events.dedup_by(|left, right| {
+            if left.path == right.path {
+                if matches!(left.kind, Some(fs::PathEventKind::Rescan)) {
+                    right.kind = left.kind;
+                }
                 true
-            } else if left_path.starts_with(right_path) {
-                *right_rescanned |= *left_rescanned;
+            } else if left.path.starts_with(&right.path) {
+                if matches!(left.kind, Some(fs::PathEventKind::Rescan)) {
+                    right.kind = left.kind;
+                }
                 true
             } else {
                 false
@@ -4090,8 +4087,8 @@ impl BackgroundScanner {
                 }
             }
 
-            for (ix, (abs_path, was_rescanned)) in path_events.iter().enumerate() {
-                let abs_path = &SanitizedPath::new(abs_path);
+            for (ix, event) in events.iter().enumerate() {
+                let abs_path = &SanitizedPath::new(&event.path);
 
                 let mut is_git_related = false;
                 let mut dot_git_paths = None;
@@ -4193,12 +4190,12 @@ impl BackgroundScanner {
 
                 relative_paths.push(EventRoot {
                     path: relative_path.into_arc(),
-                    was_rescanned: *was_rescanned,
+                    was_rescanned: matches!(event.kind, Some(fs::PathEventKind::Rescan)),
                 });
             }
 
             for range_to_drop in ranges_to_drop.into_iter().rev() {
-                path_events.drain(range_to_drop);
+                events.drain(range_to_drop);
             }
         }
 
@@ -4236,9 +4233,9 @@ impl BackgroundScanner {
                 .iter()
                 .map(|event_root| event_root.path.clone())
                 .collect::<Vec<_>>(),
-            path_events
-                .iter()
-                .map(|(abs_path, _)| abs_path.clone())
+            events
+                .into_iter()
+                .map(|event| event.path)
                 .collect::<Vec<_>>(),
             Some(scan_job_tx.clone()),
         )
@@ -4416,7 +4413,12 @@ impl BackgroundScanner {
 
         let new_snapshot = state.snapshot.clone();
         let old_snapshot = mem::replace(&mut state.prev_snapshot, new_snapshot.snapshot.clone());
-        let changes = build_diff(self.phase, &old_snapshot, &new_snapshot, &merged_event_roots);
+        let changes = build_diff(
+            self.phase,
+            &old_snapshot,
+            &new_snapshot,
+            &merged_event_roots,
+        );
         state.changed_paths.clear();
 
         self.status_updates_tx
