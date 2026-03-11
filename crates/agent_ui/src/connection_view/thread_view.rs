@@ -7409,7 +7409,7 @@ impl ThreadView {
                                     // TODO: Add keyboard navigation.
                                     let is_hovered =
                                         self.hovered_recent_history_item == Some(index);
-                                    crate::thread_history::HistoryEntryElement::new(
+                                    crate::thread_history_view::HistoryEntryElement::new(
                                         entry,
                                         self.server_view.clone(),
                                     )

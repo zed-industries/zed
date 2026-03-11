@@ -48,7 +48,7 @@ use crate::{
     NewNativeAgentThreadFromSummary,
 };
 use crate::{
-    ExpandMessageEditor, ThreadHistory, ThreadHistoryEvent,
+    ExpandMessageEditor, ThreadHistory, ThreadHistoryView, ThreadHistoryViewEvent,
     text_thread_history::{TextThreadHistory, TextThreadHistoryEvent},
 };
 use agent_settings::AgentSettings;
@@ -863,6 +863,7 @@ pub struct AgentPanel {
     fs: Arc<dyn Fs>,
     language_registry: Arc<LanguageRegistry>,
     acp_history: Entity<ThreadHistory>,
+    acp_history_view: Entity<ThreadHistoryView>,
     text_thread_history: Entity<TextThreadHistory>,
     thread_store: Entity<ThreadStore>,
     text_thread_store: Entity<assistant_text_thread::TextThreadStore>,
@@ -1072,14 +1073,15 @@ impl AgentPanel {
             cx.new(|cx| ContextServerRegistry::new(project.read(cx).context_server_store(), cx));
 
         let thread_store = ThreadStore::global(cx);
-        let acp_history = cx.new(|cx| ThreadHistory::new(None, window, cx));
+        let acp_history = cx.new(|cx| ThreadHistory::new(None, cx));
+        let acp_history_view = cx.new(|cx| ThreadHistoryView::new(acp_history.clone(), window, cx));
         let text_thread_history =
             cx.new(|cx| TextThreadHistory::new(text_thread_store.clone(), window, cx));
         cx.subscribe_in(
-            &acp_history,
+            &acp_history_view,
             window,
             |this, _, event, window, cx| match event {
-                ThreadHistoryEvent::Open(thread) => {
+                ThreadHistoryViewEvent::Open(thread) => {
                     this.load_agent_thread(
                         thread.session_id.clone(),
                         thread.cwd.clone(),
@@ -1213,6 +1215,7 @@ impl AgentPanel {
             pending_serialization: None,
             onboarding,
             acp_history,
+            acp_history_view,
             text_thread_history,
             thread_store,
             selected_agent: AgentType::default(),
@@ -3046,7 +3049,7 @@ impl Focusable for AgentPanel {
             ActiveView::Uninitialized => self.focus_handle.clone(),
             ActiveView::AgentThread { server_view, .. } => server_view.focus_handle(cx),
             ActiveView::History { kind } => match kind {
-                HistoryKind::AgentThreads => self.acp_history.focus_handle(cx),
+                HistoryKind::AgentThreads => self.acp_history_view.focus_handle(cx),
                 HistoryKind::TextThreads => self.text_thread_history.focus_handle(cx),
             },
             ActiveView::TextThread {
@@ -4763,7 +4766,7 @@ impl Render for AgentPanel {
                         .child(server_view.clone())
                         .child(self.render_drag_target(cx)),
                     ActiveView::History { kind } => match kind {
-                        HistoryKind::AgentThreads => parent.child(self.acp_history.clone()),
+                        HistoryKind::AgentThreads => parent.child(self.acp_history_view.clone()),
                         HistoryKind::TextThreads => parent.child(self.text_thread_history.clone()),
                     },
                     ActiveView::TextThread {
