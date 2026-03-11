@@ -3,7 +3,7 @@ use cloud_api_types::{SubmitAgentThreadFeedbackBody, SubmitAgentThreadFeedbackCo
 use editor::actions::OpenExcerpts;
 
 use crate::StartThreadIn;
-use gpui::{Corner, List};
+use gpui::{Corner, DismissEvent, List, anchored, deferred, px};
 use language_model::{LanguageModelEffortLevel, Speed};
 use settings::update_settings_file;
 use ui::{ButtonLike, SplitButton, SplitButtonStyle, Tab};
@@ -222,6 +222,8 @@ pub struct ThreadView {
     pub message_editor: Entity<MessageEditor>,
     pub add_context_menu_handle: PopoverMenuHandle<ContextMenu>,
     pub thinking_effort_menu_handle: PopoverMenuHandle<ContextMenu>,
+    message_context_menu: Option<(Entity<ContextMenu>, gpui::Point<gpui::Pixels>)>,
+    _message_context_menu_subscription: Option<Subscription>,
     pub project: WeakEntity<Project>,
     pub recent_history_entries: Vec<AgentSessionInfo>,
     pub hovered_recent_history_item: Option<usize>,
@@ -451,6 +453,8 @@ impl ThreadView {
             message_editor,
             add_context_menu_handle: PopoverMenuHandle::default(),
             thinking_effort_menu_handle: PopoverMenuHandle::default(),
+            message_context_menu: None,
+            _message_context_menu_subscription: None,
             project,
             recent_history_entries,
             hovered_recent_history_item: None,
@@ -4650,103 +4654,138 @@ impl ThreadView {
         message_body: AnyElement,
         cx: &Context<Self>,
     ) -> AnyElement {
+        div()
+            .child(message_body)
+            .on_mouse_down(
+                gpui::MouseButton::Right,
+                cx.listener(move |this, event: &gpui::MouseDownEvent, window, cx| {
+                    this.show_message_context_menu(entry_ix, event.position, window, cx);
+                }),
+            )
+            .into_any_element()
+    }
+
+    fn show_message_context_menu(
+        &mut self,
+        entry_ix: usize,
+        position: gpui::Point<gpui::Pixels>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let focus = window.focused(cx);
         let entity = cx.entity();
         let workspace = self.workspace.clone();
+        let is_at_top = self.list_state.logical_scroll_top().item_ix == 0;
 
-        right_click_menu(format!("agent_context_menu-{}", entry_ix))
-            .trigger(move |_, _, _| message_body)
-            .menu(move |window, cx| {
-                let focus = window.focused(cx);
-                let entity = entity.clone();
-                let workspace = workspace.clone();
-
-                ContextMenu::build(window, cx, move |menu, _, cx| {
-                    let this = entity.read(cx);
-                    let is_at_top = this.list_state.logical_scroll_top().item_ix == 0;
-
-                    let has_selection = this
-                        .thread
-                        .read(cx)
-                        .entries()
-                        .get(entry_ix)
-                        .and_then(|entry| match &entry {
-                            AgentThreadEntry::AssistantMessage(msg) => Some(&msg.chunks),
-                            _ => None,
-                        })
-                        .map(|chunks| {
-                            chunks.iter().any(|chunk| {
-                                let md = match chunk {
-                                    AssistantMessageChunk::Message { block } => block.markdown(),
-                                    AssistantMessageChunk::Thought { block } => block.markdown(),
-                                };
-                                md.map_or(false, |m| m.read(cx).selected_text().is_some())
-                            })
-                        })
-                        .unwrap_or(false);
-
-                    let copy_this_agent_response =
-                        ContextMenuEntry::new("Copy This Agent Response").handler({
-                            let entity = entity.clone();
-                            move |_, cx| {
-                                entity.update(cx, |this, cx| {
-                                    let entries = this.thread.read(cx).entries();
-                                    if let Some(text) =
-                                        Self::get_agent_message_content(entries, entry_ix, cx)
-                                    {
-                                        cx.write_to_clipboard(ClipboardItem::new_string(text));
-                                    }
-                                });
-                            }
-                        });
-
-                    let scroll_item = if is_at_top {
-                        ContextMenuEntry::new("Scroll to Bottom").handler({
-                            let entity = entity.clone();
-                            move |_, cx| {
-                                entity.update(cx, |this, cx| {
-                                    this.scroll_to_bottom(cx);
-                                });
-                            }
-                        })
-                    } else {
-                        ContextMenuEntry::new("Scroll to Top").handler({
-                            let entity = entity.clone();
-                            move |_, cx| {
-                                entity.update(cx, |this, cx| {
-                                    this.scroll_to_top(cx);
-                                });
-                            }
-                        })
+        let has_selection = self
+            .thread
+            .read(cx)
+            .entries()
+            .get(entry_ix)
+            .and_then(|entry| match &entry {
+                AgentThreadEntry::AssistantMessage(msg) => Some(&msg.chunks),
+                _ => None,
+            })
+            .map(|chunks| {
+                chunks.iter().any(|chunk| {
+                    let md = match chunk {
+                        AssistantMessageChunk::Message { block } => block.markdown(),
+                        AssistantMessageChunk::Thought { block } => block.markdown(),
                     };
-
-                    let open_thread_as_markdown = ContextMenuEntry::new("Open Thread as Markdown")
-                        .handler({
-                            let entity = entity.clone();
-                            let workspace = workspace.clone();
-                            move |window, cx| {
-                                if let Some(workspace) = workspace.upgrade() {
-                                    entity
-                                        .update(cx, |this, cx| {
-                                            this.open_thread_as_markdown(workspace, window, cx)
-                                        })
-                                        .detach_and_log_err(cx);
-                                }
-                            }
-                        });
-
-                    menu.when_some(focus, |menu, focus| menu.context(focus))
-                        .action_disabled_when(
-                            !has_selection,
-                            "Copy Selection",
-                            Box::new(markdown::CopyAsMarkdown),
-                        )
-                        .item(copy_this_agent_response)
-                        .separator()
-                        .item(scroll_item)
-                        .item(open_thread_as_markdown)
+                    md.map_or(false, |m| m.read(cx).selected_text().is_some())
                 })
             })
-            .into_any_element()
+            .unwrap_or(false);
+
+        let menu = ContextMenu::build(window, cx, move |menu, _, _cx| {
+            let copy_this_agent_response =
+                ContextMenuEntry::new("Copy This Agent Response").handler({
+                    let entity = entity.clone();
+                    move |_, cx| {
+                        entity.update(cx, |this, cx| {
+                            let entries = this.thread.read(cx).entries();
+                            if let Some(text) =
+                                Self::get_agent_message_content(entries, entry_ix, cx)
+                            {
+                                cx.write_to_clipboard(ClipboardItem::new_string(text));
+                            }
+                        });
+                    }
+                });
+
+            let scroll_item = if is_at_top {
+                ContextMenuEntry::new("Scroll to Bottom").handler({
+                    let entity = entity.clone();
+                    move |_, cx| {
+                        entity.update(cx, |this, cx| {
+                            this.scroll_to_bottom(cx);
+                        });
+                    }
+                })
+            } else {
+                ContextMenuEntry::new("Scroll to Top").handler({
+                    let entity = entity.clone();
+                    move |_, cx| {
+                        entity.update(cx, |this, cx| {
+                            this.scroll_to_top(cx);
+                        });
+                    }
+                })
+            };
+
+            let open_thread_as_markdown = ContextMenuEntry::new("Open Thread as Markdown")
+                .handler({
+                    let entity = entity.clone();
+                    let workspace = workspace.clone();
+                    move |window, cx| {
+                        if let Some(workspace) = workspace.upgrade() {
+                            entity
+                                .update(cx, |this, cx| {
+                                    this.open_thread_as_markdown(workspace, window, cx)
+                                })
+                                .detach_and_log_err(cx);
+                        }
+                    }
+                });
+
+            menu.when_some(focus, |menu, focus| menu.context(focus))
+                .action_disabled_when(
+                    !has_selection,
+                    "Copy Selection",
+                    Box::new(markdown::CopyAsMarkdown),
+                )
+                .item(copy_this_agent_response)
+                .separator()
+                .item(scroll_item)
+                .item(open_thread_as_markdown)
+        });
+
+        let focus_handle = menu.focus_handle(cx);
+        self._message_context_menu_subscription =
+            Some(cx.subscribe(&menu, |this, _, _: &DismissEvent, cx| {
+                this.message_context_menu = None;
+                this._message_context_menu_subscription = None;
+                cx.notify();
+            }));
+        self.message_context_menu = Some((menu, position));
+
+        window.prevent_default();
+        cx.notify();
+        window.focus(&focus_handle, cx);
+    }
+
+    fn render_message_context_menu_overlay(&self) -> Option<impl IntoElement> {
+        let (menu, position) = self.message_context_menu.as_ref()?;
+        Some(
+            deferred(
+                anchored()
+                    .snap_to_window_with_margin(px(8.))
+                    .anchor(Corner::TopLeft)
+                    .position(*position)
+                    .child(div().occlude().child(menu.clone())),
+            )
+            .with_priority(1),
+        )
     }
 
     fn get_agent_message_content(
@@ -7834,6 +7873,7 @@ impl Render for ThreadView {
             .size_full()
             .children(self.render_subagent_titlebar(cx))
             .child(conversation)
+            .children(self.render_message_context_menu_overlay())
             .children(self.render_activity_bar(window, cx))
             .when(self.show_external_source_prompt_warning, |this| {
                 this.child(self.render_external_source_prompt_warning(cx))
