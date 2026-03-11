@@ -93,6 +93,7 @@ impl EditPredictionDelegate for ZedEditPredictionDelegate {
 
     fn toggle_data_collection(&mut self, cx: &mut App) {
         let fs = <dyn Fs>::global(cx);
+        let is_currently_enabled = self.store.read(cx).is_data_collection_enabled(cx);
         update_settings_file(fs, cx, move |settings, _| {
             let edit_predictions = settings
                 .project
@@ -100,8 +101,7 @@ impl EditPredictionDelegate for ZedEditPredictionDelegate {
                 .edit_predictions
                 .get_or_insert_default();
 
-            let current = edit_predictions.allow_data_collection.unwrap_or(false);
-            edit_predictions.allow_data_collection = Some(!current);
+            edit_predictions.allow_data_collection = Some(!is_currently_enabled);
         });
     }
 
