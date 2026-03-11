@@ -19,18 +19,20 @@ const ROLLOUT_TAG_NAME: &str = "extension-workflows";
 const WORKFLOW_ARTIFACT_NAME: &str = "extension-workflow-files";
 
 pub(crate) fn extension_workflow_rollout() -> Workflow {
-    let filter_repos_input =
-        WorkflowInput::string("filter-repos", Some(String::new())).description(
+    let filter_repos_input = WorkflowInput::string("filter-repos", Some(String::new()))
+        .description(
             "Comma-separated list of repository names to rollout to. Leave empty for all repos.",
         );
-    let extra_context_input =
-        WorkflowInput::string("change-description", Some(String::new())).description(
-            "Description for the changes to be expected with this rollout",
-        );
+    let extra_context_input = WorkflowInput::string("change-description", Some(String::new()))
+        .description("Description for the changes to be expected with this rollout");
 
     let (fetch_repos, removed_ci, removed_shared) = fetch_extension_repos(&filter_repos_input);
-    let rollout_workflows =
-        rollout_workflows_to_extension(&fetch_repos, removed_ci, removed_shared, &extra_context_input);
+    let rollout_workflows = rollout_workflows_to_extension(
+        &fetch_repos,
+        removed_ci,
+        removed_shared,
+        &extra_context_input,
+    );
     let create_tag = create_rollout_tag(&rollout_workflows, &filter_repos_input);
 
     named::workflow()
@@ -174,7 +176,10 @@ fn fetch_extension_repos(filter_repos_input: &WorkflowInput) -> (NamedJob, JobOu
         .add_step(upload_workflow_files());
 
     let job = named::job(job);
-    let (removed_ci, removed_shared) = (removed_ci.as_job_output(&job), removed_shared.as_job_output(&job));
+    let (removed_ci, removed_shared) = (
+        removed_ci.as_job_output(&job),
+        removed_shared.as_job_output(&job),
+    );
 
     (job, removed_ci, removed_shared)
 }
@@ -337,10 +342,7 @@ fn rollout_workflows_to_extension(
     named::job(job)
 }
 
-fn create_rollout_tag(
-    rollout_job: &NamedJob,
-    filter_repos_input: &WorkflowInput,
-) -> NamedJob {
+fn create_rollout_tag(rollout_job: &NamedJob, filter_repos_input: &WorkflowInput) -> NamedJob {
     fn checkout_zed_repo(token: &StepOutput) -> CheckoutStep {
         steps::checkout_repo().with_full_history().with_token(token)
     }
