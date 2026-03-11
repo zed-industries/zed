@@ -103,8 +103,8 @@ use {
     feature_flags::FeatureFlagAppExt as _,
     git_ui::project_diff::ProjectDiff,
     gpui::{
-        App, AppContext as _, Bounds, KeyBinding, Modifiers, SharedString, VisualTestAppContext,
-        WindowBounds, WindowHandle, WindowOptions, point, px, size,
+        Action as _, App, AppContext as _, Bounds, KeyBinding, Modifiers, SharedString,
+        VisualTestAppContext, WindowBounds, WindowHandle, WindowOptions, point, px, size,
     },
     image::RgbaImage,
     project_panel::ProjectPanel,

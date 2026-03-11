@@ -341,7 +341,7 @@ pub fn read_serialized_multi_workspaces(
                 .map(read_multi_workspace_state)
                 .unwrap_or_default();
             model::SerializedMultiWorkspace {
-                id: window_id.map(|id| model::MultiWorkspaceId(id.as_u64().into())),
+                id: window_id.map(|id| model::MultiWorkspaceId(id.as_u64())),
                 workspaces: group,
                 state,
             }
