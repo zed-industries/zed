@@ -4,6 +4,7 @@ mod plan;
 mod timestamp;
 pub mod websocket_protocol;
 
+use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
@@ -21,6 +22,8 @@ pub struct GetAuthenticatedUserResponse {
     pub feature_flags: Vec<String>,
     #[serde(default)]
     pub organizations: Vec<Organization>,
+    #[serde(default)]
+    pub plans_by_organization: BTreeMap<OrganizationId, KnownOrUnknown<Plan, String>>,
     pub plan: PlanInfo,
 }
 
@@ -35,7 +38,7 @@ pub struct AuthenticatedUser {
     pub accepted_tos_at: Option<Timestamp>,
 }
 
-#[derive(Debug, PartialEq, Eq, Hash, Clone, Serialize, Deserialize)]
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Serialize, Deserialize)]
 pub struct OrganizationId(pub Arc<str>);
 
 #[derive(Debug, PartialEq, Serialize, Deserialize)]
