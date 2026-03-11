@@ -1171,9 +1171,10 @@ impl ProjectSearchView {
             return None;
         }
 
-        workspace
-            .effective_active_worktree(cx)
-            .map(|worktree| worktree.read(cx).abs_path().to_string_lossy().to_string())
+        workspace.effective_active_worktree(cx).map(|worktree| {
+            let root_name = worktree.read(cx).root_name_str().replace(',', r"\,");
+            format!("{root_name}/**")
+        })
     }
 
     fn prompt_to_save_if_dirty_then_search(
@@ -3815,7 +3816,7 @@ pub mod tests {
             .update(cx, |_, _, cx| {
                 search_view.update(cx, |search_view, cx| {
                     search_view.included_files_editor.update(cx, |editor, cx| {
-                        assert_eq!(editor.display_text(cx), "/dir-b");
+                        assert_eq!(editor.display_text(cx), "dir-b/**");
                     });
                     assert!(search_view.filters_enabled);
                 });
