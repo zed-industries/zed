@@ -1,0 +1,92 @@
+# Labels pull requests by author: 'bot' for bot accounts, 'staff' for
+# staff team members, 'first contribution' for first-time external contributors.
+name: PR Labeler
+
+on:
+  pull_request_target:
+    types: [opened]
+
+permissions:
+  contents: read
+
+jobs:
+  check-authorship-and-label:
+    if: github.repository == 'zed-industries/zed'
+    runs-on: namespace-profile-2x4-ubuntu-2404
+    timeout-minutes: 5
+    steps:
+      - id: get-app-token
+        uses: actions/create-github-app-token@bef1eaf1c0ac2b148ee2a0a74c65fbe6db0631f1 # v2.1.4
+        with:
+          app-id: ${{ secrets.ZED_COMMUNITY_BOT_APP_ID }}
+          private-key: ${{ secrets.ZED_COMMUNITY_BOT_PRIVATE_KEY }}
+          owner: zed-industries
+
+      - id: apply-authorship-label
+        uses: actions/github-script@60a0d83039c74a4aee543508d2ffcb1c3799cdea # v7.0.1
+        with:
+          github-token: ${{ steps.get-app-token.outputs.token }}
+          script: |
+            const BOT_LABEL = 'bot';
+            const STAFF_LABEL = 'staff';
+            const FIRST_CONTRIBUTION_LABEL = 'first contribution';
+            const STAFF_TEAM_SLUG = 'staff';
+
+            const pr = context.payload.pull_request;
+            const author = pr.user.login;
+
+            if (pr.user.type === 'Bot') {
+              await github.rest.issues.addLabels({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: pr.number,
+                labels: [BOT_LABEL]
+              });
+              console.log(`PR #${pr.number} by ${author}: labeled '${BOT_LABEL}' (user type: '${pr.user.type}')`);
+              return;
+            }
+
+            let isStaff = false;
+            try {
+              const response = await github.rest.teams.getMembershipForUserInOrg({
+                org: 'zed-industries',
+                team_slug: STAFF_TEAM_SLUG,
+                username: author
+              });
+              isStaff = response.data.state === 'active';
+            } catch (error) {
+              if (error.status !== 404) {
+                throw error;
+              }
+            }
+
+            if (isStaff) {
+              await github.rest.issues.addLabels({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: pr.number,
+                labels: [STAFF_LABEL]
+              });
+              console.log(`PR #${pr.number} by ${author}: labeled '${STAFF_LABEL}' (staff team member)`);
+              return;
+            }
+
+            // We use inverted logic here due to a suspected GitHub bug where first-time contributors
+            // get 'NONE' instead of 'FIRST_TIME_CONTRIBUTOR' or 'FIRST_TIMER'.
+            // https://github.com/orgs/community/discussions/78038
+            // This will break if GitHub ever adds new associations.
+            const association = pr.author_association;
+            const knownAssociations = ['CONTRIBUTOR', 'COLLABORATOR', 'MEMBER', 'OWNER', 'MANNEQUIN'];
+
+            if (knownAssociations.includes(association)) {
+              console.log(`PR #${pr.number} by ${author}: not a first-time contributor (association: '${association}')`);
+              return;
+            }
+
+            await github.rest.issues.addLabels({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: pr.number,
+              labels: [FIRST_CONTRIBUTION_LABEL]
+            });
+            console.log(`PR #${pr.number} by ${author}: labeled '${FIRST_CONTRIBUTION_LABEL}' (association: '${association}')`);

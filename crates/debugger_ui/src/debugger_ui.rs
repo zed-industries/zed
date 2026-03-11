@@ -4,31 +4,28 @@ use debugger_panel::DebugPanel;
 use editor::{Editor, MultiBufferOffsetUtf16};
 use gpui::{Action, App, DispatchPhase, EntityInputHandler, actions};
 use new_process_modal::{NewProcessModal, NewProcessMode};
-use onboarding_modal::DebuggerOnboardingModal;
 use project::debugger::{self, breakpoint_store::SourceBreakpoint, session::ThreadStatus};
 use schemars::JsonSchema;
 use serde::Deserialize;
 use session::DebugSession;
-use stack_trace_view::StackTraceView;
+
 use tasks_ui::{Spawn, TaskOverrides};
 use ui::{FluentBuilder, InteractiveElement};
 use util::maybe;
-use workspace::{ItemHandle, ShutdownDebugAdapters, Workspace};
-use zed_actions::ToggleFocus;
-use zed_actions::debugger::OpenOnboardingModal;
+use workspace::{ShutdownDebugAdapters, Workspace};
+use zed_actions::debug_panel::{Toggle, ToggleFocus};
 
 pub mod attach_modal;
 pub mod debugger_panel;
 mod dropdown_menus;
 mod new_process_modal;
-mod onboarding_modal;
 mod persistence;
 pub(crate) mod session;
-mod stack_trace_view;
 
 #[cfg(any(test, feature = "test-support"))]
 pub mod tests;
 
+// Let's see the diff-test in action.
 actions!(
     debugger,
     [
@@ -72,8 +69,6 @@ actions!(
         FocusLoadedSources,
         /// Focuses on the terminal panel.
         FocusTerminal,
-        /// Shows the stack trace for the current thread.
-        ShowStackTrace,
         /// Toggles the thread picker dropdown.
         ToggleThreadPicker,
         /// Toggles the session picker dropdown.
@@ -120,6 +115,11 @@ pub fn init(cx: &mut App) {
             .register_action(|workspace, _: &ToggleFocus, window, cx| {
                 workspace.toggle_panel_focus::<DebugPanel>(window, cx);
             })
+            .register_action(|workspace, _: &Toggle, window, cx| {
+                if !workspace.toggle_panel_focus::<DebugPanel>(window, cx) {
+                    workspace.close_panel::<DebugPanel>(window, cx);
+                }
+            })
             .register_action(|workspace: &mut Workspace, _: &Start, window, cx| {
                 NewProcessModal::show(workspace, window, NewProcessMode::Debug, None, cx);
             })
@@ -141,9 +141,6 @@ pub fn init(cx: &mut App) {
                     })
                 },
             )
-            .register_action(|workspace, _: &OpenOnboardingModal, window, cx| {
-                DebuggerOnboardingModal::toggle(workspace, window, cx)
-            })
             .register_action_renderer(|div, workspace, _, cx| {
                 let Some(debug_panel) = workspace.panel::<DebugPanel>(cx) else {
                     return div;
@@ -207,39 +204,6 @@ pub fn init(cx: &mut App) {
                                 .ok();
                         }
                     })
-                    .on_action(cx.listener(
-                        |workspace, _: &ShowStackTrace, window, cx| {
-                            let Some(debug_panel) = workspace.panel::<DebugPanel>(cx) else {
-                                return;
-                            };
-
-                            if let Some(existing) = workspace.item_of_type::<StackTraceView>(cx) {
-                                let is_active = workspace
-                                    .active_item(cx)
-                                    .is_some_and(|item| item.item_id() == existing.item_id());
-                                workspace.activate_item(&existing, true, !is_active, window, cx);
-                            } else {
-                                let Some(active_session) = debug_panel.read(cx).active_session()
-                                else {
-                                    return;
-                                };
-
-                                let project = workspace.project();
-
-                                let stack_trace_view = active_session.update(cx, |session, cx| {
-                                    session.stack_trace_view(project, window, cx).clone()
-                                });
-
-                                workspace.add_item_to_active_pane(
-                                    Box::new(stack_trace_view),
-                                    None,
-                                    true,
-                                    window,
-                                    cx,
-                                );
-                            }
-                        },
-                    ))
                 })
                 .when(supports_detach, |div| {
                     let active_item = active_item.clone();

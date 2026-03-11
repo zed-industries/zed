@@ -1,18 +1,22 @@
 use crate::{
     DebugEvent, EditPredictionFinishedDebugEvent, EditPredictionId, EditPredictionModelInput,
     EditPredictionStartedDebugEvent, open_ai_response::text_from_response,
-    prediction::EditPredictionResult, zeta1::compute_edits,
+    prediction::EditPredictionResult, zeta::compute_edits,
 };
 use anyhow::{Context as _, Result};
+use cloud_llm_client::EditPredictionRejectReason;
 use futures::AsyncReadExt as _;
 use gpui::{
     App, AppContext as _, Entity, Global, SharedString, Task,
-    http_client::{self, AsyncBody, Method},
+    http_client::{self, AsyncBody, HttpClient, Method},
 };
 use language::{OffsetRangeExt as _, ToOffset, ToPoint as _};
 use language_model::{ApiKeyState, EnvVar, env_var};
+use release_channel::AppVersion;
+use serde::Serialize;
 use std::{mem, ops::Range, path::Path, sync::Arc, time::Instant};
-use zeta_prompt::ZetaPromptInput;
+
+use zeta_prompt::{ExcerptRanges, ZetaPromptInput};
 
 const MERCURY_API_URL: &str = "https://api.inceptionlabs.ai/v1/edit/completions";
 const MAX_REWRITE_TOKENS: usize = 150;
@@ -68,7 +72,7 @@ impl Mercury {
                     MAX_REWRITE_TOKENS,
                 );
 
-            let related_files = crate::filter_redundant_excerpts(
+            let related_files = zeta_prompt::filter_redundant_excerpts(
                 related_files,
                 full_path.as_ref(),
                 context_range.start.row..context_range.end.row,
@@ -78,6 +82,12 @@ impl Mercury {
             let context_start_row = context_range.start.row;
 
             let editable_offset_range = editable_range.to_offset(&snapshot);
+
+            let editable_range_in_excerpt = (editable_offset_range.start
+                - context_offset_range.start)
+                ..(editable_offset_range.end - context_offset_range.start);
+            let context_range_in_excerpt =
+                0..(context_offset_range.end - context_offset_range.start);
 
             let inputs = zeta_prompt::ZetaPromptInput {
                 events,
@@ -89,10 +99,20 @@ impl Mercury {
                     .text_for_range(context_range)
                     .collect::<String>()
                     .into(),
-                editable_range_in_excerpt: (editable_offset_range.start
-                    - context_offset_range.start)
-                    ..(editable_offset_range.end - context_offset_range.start),
+                experiment: None,
                 excerpt_start_row: Some(context_start_row),
+                excerpt_ranges: ExcerptRanges {
+                    editable_150: editable_range_in_excerpt.clone(),
+                    editable_180: editable_range_in_excerpt.clone(),
+                    editable_350: editable_range_in_excerpt.clone(),
+                    editable_150_context_350: context_range_in_excerpt.clone(),
+                    editable_180_context_350: context_range_in_excerpt.clone(),
+                    editable_350_context_150: context_range_in_excerpt.clone(),
+                    ..Default::default()
+                },
+                in_open_source_repo: false,
+                can_collect_data: false,
+                repo_url: None,
             };
 
             let prompt = build_prompt(&inputs);
@@ -210,6 +230,7 @@ impl Mercury {
                     buffer_snapshotted_at,
                     response_received_at,
                     inputs,
+                    None,
                     cx,
                 )
                 .await,
@@ -264,19 +285,18 @@ fn build_prompt(inputs: &ZetaPromptInput) -> String {
             prompt.push_str(inputs.cursor_path.as_os_str().to_string_lossy().as_ref());
             prompt.push('\n');
 
-            prompt.push_str(&inputs.cursor_excerpt[0..inputs.editable_range_in_excerpt.start]);
+            let editable_range = &inputs.excerpt_ranges.editable_350;
+            prompt.push_str(&inputs.cursor_excerpt[0..editable_range.start]);
             push_delimited(prompt, CODE_TO_EDIT_START..CODE_TO_EDIT_END, |prompt| {
                 prompt.push_str(
-                    &inputs.cursor_excerpt
-                        [inputs.editable_range_in_excerpt.start..inputs.cursor_offset_in_excerpt],
+                    &inputs.cursor_excerpt[editable_range.start..inputs.cursor_offset_in_excerpt],
                 );
                 prompt.push_str(CURSOR_TAG);
                 prompt.push_str(
-                    &inputs.cursor_excerpt
-                        [inputs.cursor_offset_in_excerpt..inputs.editable_range_in_excerpt.end],
+                    &inputs.cursor_excerpt[inputs.cursor_offset_in_excerpt..editable_range.end],
                 );
             });
-            prompt.push_str(&inputs.cursor_excerpt[inputs.editable_range_in_excerpt.end..]);
+            prompt.push_str(&inputs.cursor_excerpt[editable_range.end..]);
         },
     );
 
@@ -323,4 +343,86 @@ pub fn load_mercury_api_token(cx: &mut App) -> Task<Result<(), language_model::A
     mercury_api_token(cx).update(cx, |key_state, cx| {
         key_state.load_if_needed(MERCURY_CREDENTIALS_URL, |s| s, cx)
     })
+}
+
+const FEEDBACK_API_URL: &str = "https://api-feedback.inceptionlabs.ai/feedback";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+enum MercuryUserAction {
+    Accept,
+    Reject,
+    Ignore,
+}
+
+#[derive(Serialize)]
+struct FeedbackRequest {
+    request_id: SharedString,
+    provider_name: &'static str,
+    user_action: MercuryUserAction,
+    provider_version: String,
+}
+
+pub(crate) fn edit_prediction_accepted(
+    prediction_id: EditPredictionId,
+    http_client: Arc<dyn HttpClient>,
+    cx: &App,
+) {
+    send_feedback(prediction_id, MercuryUserAction::Accept, http_client, cx);
+}
+
+pub(crate) fn edit_prediction_rejected(
+    prediction_id: EditPredictionId,
+    was_shown: bool,
+    reason: EditPredictionRejectReason,
+    http_client: Arc<dyn HttpClient>,
+    cx: &App,
+) {
+    if !was_shown {
+        return;
+    }
+    let action = match reason {
+        EditPredictionRejectReason::Rejected => MercuryUserAction::Reject,
+        EditPredictionRejectReason::Discarded => MercuryUserAction::Ignore,
+        _ => return,
+    };
+    send_feedback(prediction_id, action, http_client, cx);
+}
+
+fn send_feedback(
+    prediction_id: EditPredictionId,
+    action: MercuryUserAction,
+    http_client: Arc<dyn HttpClient>,
+    cx: &App,
+) {
+    let request_id = prediction_id.0;
+    let app_version = AppVersion::global(cx);
+    cx.background_spawn(async move {
+        let body = FeedbackRequest {
+            request_id,
+            provider_name: "zed",
+            user_action: action,
+            provider_version: app_version.to_string(),
+        };
+
+        let request = http_client::Request::builder()
+            .uri(FEEDBACK_API_URL)
+            .method(Method::POST)
+            .header("Content-Type", "application/json")
+            .body(AsyncBody::from(serde_json::to_vec(&body)?))?;
+
+        let response = http_client.send(request).await?;
+        if !response.status().is_success() {
+            anyhow::bail!("Feedback API returned status: {}", response.status());
+        }
+
+        log::debug!(
+            "Mercury feedback sent: request_id={}, action={:?}",
+            body.request_id,
+            body.user_action
+        );
+
+        anyhow::Ok(())
+    })
+    .detach_and_log_err(cx);
 }

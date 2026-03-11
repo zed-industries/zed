@@ -11,6 +11,7 @@ use gpui::{
     App, AppContext as _, Entity, Global, SharedString, Task,
     http_client::{self, AsyncBody, Method},
 };
+use language::language_settings::all_language_settings;
 use language::{Anchor, Buffer, BufferSnapshot, Point, ToOffset as _};
 use language_model::{ApiKeyState, EnvVar, env_var};
 use lsp::DiagnosticSeverity;
@@ -44,6 +45,10 @@ impl SweepAi {
         inputs: EditPredictionModelInput,
         cx: &mut App,
     ) -> Task<Result<Option<EditPredictionResult>>> {
+        let privacy_mode_enabled = all_language_settings(None, cx)
+            .edit_predictions
+            .sweep
+            .privacy_mode;
         let debug_info = self.debug_info.clone();
         self.api_token.update(cx, |key_state, cx| {
             _ = key_state.load_if_needed(SWEEP_CREDENTIALS_URL, |s| s, cx);
@@ -197,8 +202,7 @@ impl SweepAi {
                 retrieval_chunks,
                 recent_user_actions,
                 use_bytes: true,
-                // TODO
-                privacy_mode_enabled: false,
+                privacy_mode_enabled,
             };
 
             let mut buf: Vec<u8> = Vec::new();
@@ -211,10 +215,21 @@ impl SweepAi {
                 related_files: inputs.related_files.clone(),
                 cursor_path: full_path.clone(),
                 cursor_excerpt: request_body.file_contents.clone().into(),
-                // we actually don't know
-                editable_range_in_excerpt: 0..inputs.snapshot.len(),
                 cursor_offset_in_excerpt: request_body.cursor_position,
                 excerpt_start_row: Some(0),
+                excerpt_ranges: zeta_prompt::ExcerptRanges {
+                    editable_150: 0..inputs.snapshot.len(),
+                    editable_180: 0..inputs.snapshot.len(),
+                    editable_350: 0..inputs.snapshot.len(),
+                    editable_150_context_350: 0..inputs.snapshot.len(),
+                    editable_180_context_350: 0..inputs.snapshot.len(),
+                    editable_350_context_150: 0..inputs.snapshot.len(),
+                    ..Default::default()
+                },
+                experiment: None,
+                in_open_source_repo: false,
+                can_collect_data: false,
+                repo_url: None,
             };
 
             send_started_event(
@@ -295,6 +310,7 @@ impl SweepAi {
                     buffer_snapshotted_at,
                     response_received_at,
                     inputs,
+                    None,
                     cx,
                 )
                 .await,

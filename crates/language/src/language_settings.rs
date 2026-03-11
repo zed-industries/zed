@@ -9,12 +9,13 @@ use ec4rs::{
 use globset::{Glob, GlobMatcher, GlobSet, GlobSetBuilder};
 use gpui::{App, Modifiers, SharedString};
 use itertools::{Either, Itertools};
-use settings::IntoGpui;
+use settings::{DocumentFoldingRanges, DocumentSymbols, IntoGpui, SemanticTokens};
 
 pub use settings::{
-    CompletionSettingsContent, EditPredictionProvider, EditPredictionsMode, FormatOnSave,
-    Formatter, FormatterList, InlayHintKind, LanguageSettingsContent, LspInsertMode,
-    RewrapBehavior, ShowWhitespaceSetting, SoftWrap, WordsCompletionMode,
+    AutoIndentMode, CompletionSettingsContent, EditPredictionPromptFormat, EditPredictionProvider,
+    EditPredictionsMode, FormatOnSave, Formatter, FormatterList, InlayHintKind,
+    LanguageSettingsContent, LspInsertMode, RewrapBehavior, ShowWhitespaceSetting, SoftWrap,
+    WordsCompletionMode,
 };
 use settings::{RegisterSetting, Settings, SettingsLocation, SettingsStore};
 use shellexpand;
@@ -106,6 +107,13 @@ pub struct LanguageSettings {
     /// - `"!<language_server_id>"` - A language server ID prefixed with a `!` will be disabled.
     /// - `"..."` - A placeholder to refer to the **rest** of the registered language servers for this language.
     pub language_servers: Vec<String>,
+    /// Controls how semantic tokens from language servers are used for syntax highlighting.
+    pub semantic_tokens: SemanticTokens,
+    /// Controls whether folding ranges from language servers are used instead of
+    /// tree-sitter and indent-based folding.
+    pub document_folding_ranges: DocumentFoldingRanges,
+    /// Controls the source of document symbols used for outlines and breadcrumbs.
+    pub document_symbols: DocumentSymbols,
     /// Controls where the `editor::Rewrap` action is allowed for this language.
     ///
     /// Note: This setting has no effect in Vim mode, as rewrap is already
@@ -136,8 +144,8 @@ pub struct LanguageSettings {
     /// Whether to use additional LSP queries to format (and amend) the code after
     /// every "trigger" symbol input, defined by LSP server capabilities.
     pub use_on_type_format: bool,
-    /// Whether indentation should be adjusted based on the context whilst typing.
-    pub auto_indent: bool,
+    /// Controls automatic indentation behavior when typing.
+    pub auto_indent: AutoIndentMode,
     /// Whether indentation of pasted content should be adjusted based on the context.
     pub auto_indent_on_paste: bool,
     /// Controls how the editor handles the autoclosed characters.
@@ -219,6 +227,22 @@ pub struct IndentGuideSettings {
     ///
     /// Default: Disabled
     pub background_coloring: settings::IndentGuideBackgroundColoring,
+}
+
+impl IndentGuideSettings {
+    /// Returns the clamped line width in pixels for an indent guide based on
+    /// whether it is active, or `None` when line coloring is disabled.
+    pub fn visible_line_width(&self, active: bool) -> Option<u32> {
+        if self.coloring == settings::IndentGuideColoring::Disabled {
+            return None;
+        }
+        let width = if active {
+            self.active_line_width
+        } else {
+            self.line_width
+        };
+        Some(width.clamp(1, 10))
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -372,8 +396,7 @@ impl InlayHintSettings {
     }
 }
 
-/// The settings for edit predictions, such as [GitHub Copilot](https://github.com/features/copilot)
-/// or [Supermaven](https://supermaven.com).
+/// The settings for edit predictions, such as [GitHub Copilot](https://github.com/features/copilot).
 #[derive(Clone, Debug, Default)]
 pub struct EditPredictionSettings {
     /// The provider that supplies edit predictions.
@@ -388,11 +411,15 @@ pub struct EditPredictionSettings {
     pub copilot: CopilotSettings,
     /// Settings specific to Codestral.
     pub codestral: CodestralSettings,
+    /// Settings specific to Sweep.
+    pub sweep: SweepSettings,
+    /// Settings specific to Ollama.
+    pub ollama: Option<OpenAiCompatibleEditPredictionSettings>,
+    pub open_ai_compatible_api: Option<OpenAiCompatibleEditPredictionSettings>,
     /// Whether edit predictions are enabled in the assistant panel.
     /// This setting has no effect if globally disabled.
     pub enabled_in_text_threads: bool,
     pub examples_dir: Option<Arc<Path>>,
-    pub example_capture_rate: Option<u16>,
 }
 
 impl EditPredictionSettings {
@@ -435,6 +462,28 @@ pub struct CodestralSettings {
     pub max_tokens: Option<u32>,
     /// Custom API URL to use for Codestral.
     pub api_url: Option<String>,
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct SweepSettings {
+    /// When enabled, Sweep will not store edit prediction inputs or outputs.
+    /// When disabled, Sweep may collect data including buffer contents,
+    /// diagnostics, file paths, repository names, and generated predictions
+    /// to improve the service.
+    pub privacy_mode: bool,
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct OpenAiCompatibleEditPredictionSettings {
+    /// Model to use for completions.
+    pub model: String,
+    /// Maximum tokens to generate.
+    pub max_output_tokens: u32,
+    /// Custom API URL to use for Ollama.
+    pub api_url: Arc<str>,
+    /// The prompt format to use for completions. When `None`, the format
+    /// will be derived from the model name at request time.
+    pub prompt_format: EditPredictionPromptFormat,
 }
 
 impl AllLanguageSettings {
@@ -567,6 +616,9 @@ impl settings::Settings for AllLanguageSettings {
                 jsx_tag_auto_close: settings.jsx_tag_auto_close.unwrap().enabled.unwrap(),
                 enable_language_server: settings.enable_language_server.unwrap(),
                 language_servers: settings.language_servers.unwrap(),
+                semantic_tokens: settings.semantic_tokens.unwrap(),
+                document_folding_ranges: settings.document_folding_ranges.unwrap(),
+                document_symbols: settings.document_symbols.unwrap(),
                 allow_rewrap: settings.allow_rewrap.unwrap(),
                 show_edit_predictions: settings.show_edit_predictions.unwrap(),
                 edit_predictions_disabled_in: settings.edit_predictions_disabled_in.unwrap(),
@@ -634,9 +686,9 @@ impl settings::Settings for AllLanguageSettings {
         }
 
         let edit_prediction_provider = all_languages
-            .features
+            .edit_predictions
             .as_ref()
-            .and_then(|f| f.edit_prediction_provider);
+            .and_then(|ep| ep.provider);
 
         let edit_predictions = all_languages.edit_predictions.clone().unwrap();
         let edit_predictions_mode = edit_predictions.mode.unwrap();
@@ -662,6 +714,36 @@ impl settings::Settings for AllLanguageSettings {
             max_tokens: codestral.max_tokens,
             api_url: codestral.api_url,
         };
+
+        let sweep = edit_predictions.sweep.unwrap();
+        let sweep_settings = SweepSettings {
+            privacy_mode: sweep.privacy_mode.unwrap(),
+        };
+        let ollama = edit_predictions.ollama.unwrap();
+        let ollama_settings = ollama
+            .model
+            .filter(|model| !model.0.is_empty())
+            .map(|model| OpenAiCompatibleEditPredictionSettings {
+                model: model.0,
+                max_output_tokens: ollama.max_output_tokens.unwrap(),
+                api_url: ollama.api_url.unwrap().into(),
+                prompt_format: ollama.prompt_format.unwrap(),
+            });
+        let openai_compatible_settings = edit_predictions.open_ai_compatible_api.unwrap();
+        let openai_compatible_settings = openai_compatible_settings
+            .model
+            .filter(|model| !model.is_empty())
+            .zip(
+                openai_compatible_settings
+                    .api_url
+                    .filter(|api_url| !api_url.is_empty()),
+            )
+            .map(|(model, api_url)| OpenAiCompatibleEditPredictionSettings {
+                model,
+                max_output_tokens: openai_compatible_settings.max_output_tokens.unwrap(),
+                api_url: api_url.into(),
+                prompt_format: openai_compatible_settings.prompt_format.unwrap(),
+            });
 
         let enabled_in_text_threads = edit_predictions.enabled_in_text_threads.unwrap();
 
@@ -700,9 +782,11 @@ impl settings::Settings for AllLanguageSettings {
                 mode: edit_predictions_mode,
                 copilot: copilot_settings,
                 codestral: codestral_settings,
+                sweep: sweep_settings,
+                ollama: ollama_settings,
+                open_ai_compatible_api: openai_compatible_settings,
                 enabled_in_text_threads,
                 examples_dir: edit_predictions.examples_dir,
-                example_capture_rate: edit_predictions.example_capture_rate,
             },
             defaults: default_language_settings,
             languages,

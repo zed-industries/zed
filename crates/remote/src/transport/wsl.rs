@@ -11,16 +11,17 @@ use gpui::{App, AppContext as _, AsyncApp, Task};
 use release_channel::{AppVersion, ReleaseChannel};
 use rpc::proto::Envelope;
 use semver::Version;
-use smol::{fs, process};
+use smol::fs;
 use std::{
     ffi::OsStr,
     fmt::Write as _,
     path::{Path, PathBuf},
-    process::Stdio,
     sync::Arc,
     time::Instant,
 };
+
 use util::{
+    command::Stdio,
     paths::{PathStyle, RemotePathBuf},
     rel_path::RelPath,
     shell::{Shell, ShellKind},
@@ -131,11 +132,17 @@ impl WslRemoteConnection {
     }
 
     async fn detect_has_wsl_interop(&self) -> Result<bool> {
-        Ok(self
+        let interop = match self
             .run_wsl_command_with_output("cat", &["/proc/sys/fs/binfmt_misc/WSLInterop"])
             .await
-            .inspect_err(|err| log::error!("Failed to detect wsl interop: {err}"))?
-            .contains("enabled"))
+        {
+            Ok(interop) => interop,
+            Err(err) => self
+                .run_wsl_command_with_output("cat", &["/proc/sys/fs/binfmt_misc/WSLInterop-late"])
+                .await
+                .inspect_err(|err2| log::error!("Failed to detect wsl interop: {err}; {err2}"))?,
+        };
+        Ok(interop.contains("enabled"))
     }
 
     async fn windows_path_to_wsl_path(&self, source: &Path) -> Result<String> {
@@ -362,7 +369,7 @@ impl RemoteConnection for WslRemoteConnection {
         }
 
         let proxy_process =
-            match wsl_command_impl(&self.connection_options, "env", &proxy_args, false)
+            match wsl_command_impl(&self.connection_options, "env", &proxy_args, true)
                 .kill_on_drop(true)
                 .spawn()
             {
@@ -443,13 +450,10 @@ impl RemoteConnection for WslRemoteConnection {
 
         let mut exec = String::from("exec env ");
 
-        for (k, v) in env.iter() {
-            write!(
-                exec,
-                "{}={} ",
-                k,
-                shell_kind.try_quote(v).context("shell quoting")?
-            )?;
+        for (key, value) in env.iter() {
+            let assignment = format!("{key}={value}");
+            let assignment = shell_kind.try_quote(&assignment).context("shell quoting")?;
+            write!(exec, "{assignment} ")?;
         }
 
         if let Some(program) = program {
@@ -595,7 +599,9 @@ pub fn wsl_path_to_windows_path(
     }
 }
 
-fn run_wsl_command_impl(mut command: process::Command) -> impl Future<Output = Result<String>> {
+fn run_wsl_command_impl(
+    mut command: util::command::Command,
+) -> impl Future<Output = Result<String>> {
     async move {
         let output = command
             .output()
@@ -622,8 +628,8 @@ fn wsl_command_impl(
     program: &str,
     args: &[impl AsRef<OsStr>],
     exec: bool,
-) -> process::Command {
-    let mut command = util::command::new_smol_command("wsl.exe");
+) -> util::command::Command {
+    let mut command = util::command::new_command("wsl.exe");
 
     if let Some(user) = &options.user {
         command.arg("--user").arg(user);

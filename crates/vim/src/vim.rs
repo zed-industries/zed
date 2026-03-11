@@ -978,6 +978,7 @@ impl Vim {
         editor.set_clip_at_line_ends(false, cx);
         editor.set_collapse_matches(false);
         editor.set_input_enabled(true);
+        editor.set_expects_character_input(true);
         editor.set_autoindent(true);
         editor.selections.set_line_mode(false);
         editor.unregister_addon::<VimAddon>();
@@ -1003,12 +1004,12 @@ impl Vim {
         self.editor.upgrade()
     }
 
-    pub fn workspace(&self, window: &mut Window) -> Option<Entity<Workspace>> {
-        window.root::<Workspace>().flatten()
+    pub fn workspace(&self, window: &Window, cx: &App) -> Option<Entity<Workspace>> {
+        Workspace::for_window(window, cx)
     }
 
-    pub fn pane(&self, window: &mut Window, cx: &mut Context<Self>) -> Option<Entity<Pane>> {
-        self.workspace(window)
+    pub fn pane(&self, window: &Window, cx: &Context<Self>) -> Option<Entity<Pane>> {
+        self.workspace(window, cx)
             .map(|workspace| workspace.read(cx).focused_pane(window, cx))
     }
 
@@ -1204,7 +1205,7 @@ impl Vim {
         self.update_editor(cx, |vim, editor, cx| {
             if last_mode != Mode::VisualBlock && last_mode.is_visual() && mode == Mode::VisualBlock
             {
-                vim.visual_block_motion(true, editor, window, cx, |_, point, goal| {
+                vim.visual_block_motion(true, editor, window, cx, &mut |_, point, goal| {
                     Some((point, goal))
                 })
             }
@@ -1262,7 +1263,7 @@ impl Vim {
                     vim.extended_pending_selection_id = s.pending_anchor().map(|p| p.id)
                 }
 
-                s.move_with(|map, selection| {
+                s.move_with(&mut |map, selection| {
                     if last_mode.is_visual() && !mode.is_visual() {
                         let mut point = selection.head();
                         if !selection.reversed && !selection.is_empty() {
@@ -1344,6 +1345,15 @@ impl Vim {
                 }
             },
         }
+    }
+
+    fn expects_character_input(&self) -> bool {
+        if let Some(operator) = self.operator_stack.last() {
+            if operator.is_waiting(self.mode) {
+                return true;
+            }
+        }
+        self.editor_input_enabled()
     }
 
     pub fn editor_input_enabled(&self) -> bool {
@@ -1469,7 +1479,7 @@ impl Vim {
                 self.update_editor(cx, |_, editor, cx| {
                     editor.set_clip_at_line_ends(false, cx);
                     editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
-                        s.move_with(|_, selection| {
+                        s.move_with(&mut |_, selection| {
                             selection.collapse_to(selection.start, selection.goal)
                         })
                     });
@@ -1750,7 +1760,7 @@ impl Vim {
                     editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
                         match original_mode {
                             Some(Mode::VisualLine) => {
-                                s.move_with(|map, selection| {
+                                s.move_with(&mut |map, selection| {
                                     selection.collapse_to(
                                         map.prev_line_boundary(selection.start.to_point(map)).1,
                                         SelectionGoal::None,
@@ -1763,7 +1773,7 @@ impl Vim {
                                 s.select_anchors(vec![first]);
                             }
                             _ => {
-                                s.move_with(|map, selection| {
+                                s.move_with(&mut |map, selection| {
                                     selection.collapse_to(
                                         map.clip_at_line_end(selection.start),
                                         selection.goal,
@@ -1778,7 +1788,7 @@ impl Vim {
             Mode::Normal => {
                 self.update_editor(cx, |_, editor, cx| {
                     editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
-                        s.move_with(|map, selection| {
+                        s.move_with(&mut |map, selection| {
                             selection
                                 .collapse_to(map.clip_at_line_end(selection.end), selection.goal)
                         })
@@ -1947,7 +1957,7 @@ impl Vim {
                 Mode::HelixNormal | Mode::HelixSelect => {
                     self.update_editor(cx, |_, editor, cx| {
                         editor.change_selections(Default::default(), window, cx, |s| {
-                            s.move_with(|map, selection| {
+                            s.move_with(&mut |map, selection| {
                                 if selection.is_empty() {
                                     selection.end = movement::right(map, selection.start);
                                 }
@@ -2058,6 +2068,7 @@ impl Vim {
             clip_at_line_ends: self.clip_at_line_ends(),
             collapse_matches: !HelixModeSetting::get_global(cx).0,
             input_enabled: self.editor_input_enabled(),
+            expects_character_input: self.expects_character_input(),
             autoindent: self.should_autoindent(),
             cursor_offset_on_selection: self.mode.is_visual(),
             line_mode: matches!(self.mode, Mode::VisualLine),
@@ -2075,6 +2086,7 @@ impl Vim {
         editor.set_clip_at_line_ends(state.clip_at_line_ends, cx);
         editor.set_collapse_matches(state.collapse_matches);
         editor.set_input_enabled(state.input_enabled);
+        editor.set_expects_character_input(state.expects_character_input);
         editor.set_autoindent(state.autoindent);
         editor.set_cursor_offset_on_selection(state.cursor_offset_on_selection);
         editor.selections.set_line_mode(state.line_mode);
@@ -2087,6 +2099,7 @@ struct VimEditorSettingsState {
     clip_at_line_ends: bool,
     collapse_matches: bool,
     input_enabled: bool,
+    expects_character_input: bool,
     autoindent: bool,
     cursor_offset_on_selection: bool,
     line_mode: bool,

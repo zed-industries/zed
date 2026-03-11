@@ -27,6 +27,7 @@ extension.workspace = true
 fs.workspace = true
 futures.workspace = true
 gpui.workspace = true
+gpui_platform.workspace = true
 gpui_tokio.workspace = true
 indoc.workspace = true
 language.workspace = true
@@ -50,6 +51,7 @@ settings.workspace = true
 shellexpand.workspace = true
 smol.workspace = true
 sqlez.workspace = true
+strum.workspace = true
 sqlez_macros.workspace = true
 terminal_view.workspace = true
 util.workspace = true
@@ -63,6 +65,7 @@ similar = "2.7.0"
 flate2 = "1.1.8"
 toml.workspace = true
 rust-embed = { workspace = true, features = ["debug-embed"] }
+gaoya = "0.2.0"
 
 # Wasmtime is included as a dependency in order to enable the same
 # features that are enabled in Zed.

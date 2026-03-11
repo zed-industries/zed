@@ -5,7 +5,7 @@ use project::Fs;
 use python::PyprojectTomlManifestProvider;
 use rust::CargoManifestProvider;
 use rust_embed::RustEmbed;
-use settings::SettingsStore;
+use settings::{SemanticTokenRules, SettingsStore};
 use smol::stream::StreamExt;
 use std::{str, sync::Arc};
 use util::{ResultExt, asset_str};
@@ -141,6 +141,7 @@ pub fn init(languages: Arc<LanguageRegistry>, fs: Arc<dyn Fs>, node: NodeRuntime
             name: "go",
             adapters: vec![go_lsp_adapter.clone()],
             context: Some(go_context_provider.clone()),
+            semantic_token_rules: Some(go::semantic_token_rules()),
             ..Default::default()
         },
         LanguageInfo {
@@ -179,16 +180,24 @@ pub fn init(languages: Arc<LanguageRegistry>, fs: Arc<dyn Fs>, node: NodeRuntime
         },
         LanguageInfo {
             name: "python",
-            adapters: vec![basedpyright_lsp_adapter, ruff_lsp_adapter],
+            adapters: vec![
+                basedpyright_lsp_adapter,
+                ruff_lsp_adapter,
+                ty_lsp_adapter,
+                py_lsp_adapter,
+                python_lsp_adapter,
+            ],
             context: Some(python_context_provider),
             toolchain: Some(python_toolchain_provider),
             manifest_name: Some(SharedString::new_static("pyproject.toml").into()),
+            ..Default::default()
         },
         LanguageInfo {
             name: "rust",
             adapters: vec![rust_lsp_adapter],
             context: Some(rust_context_provider),
             manifest_name: Some(SharedString::new_static("Cargo.toml").into()),
+            semantic_token_rules: Some(rust::semantic_token_rules()),
             ..Default::default()
         },
         LanguageInfo {
@@ -242,6 +251,8 @@ pub fn init(languages: Arc<LanguageRegistry>, fs: Arc<dyn Fs>, node: NodeRuntime
             registration.context,
             registration.toolchain,
             registration.manifest_name,
+            registration.semantic_token_rules,
+            cx,
         );
     }
 
@@ -277,9 +288,6 @@ pub fn init(languages: Arc<LanguageRegistry>, fs: Arc<dyn Fs>, node: NodeRuntime
         typescript_lsp_adapter,
     );
 
-    languages.register_available_lsp_adapter(python_lsp_adapter.name(), python_lsp_adapter);
-    languages.register_available_lsp_adapter(py_lsp_adapter.name(), py_lsp_adapter);
-    languages.register_available_lsp_adapter(ty_lsp_adapter.name(), ty_lsp_adapter);
     // Register Tailwind for the existing languages that should have it by default.
     //
     // This can be driven by the `language_servers` setting once we have a way for
@@ -349,6 +357,7 @@ struct LanguageInfo {
     context: Option<Arc<dyn ContextProvider>>,
     toolchain: Option<Arc<dyn ToolchainLister>>,
     manifest_name: Option<ManifestName>,
+    semantic_token_rules: Option<SemanticTokenRules>,
 }
 
 fn register_language(
@@ -358,8 +367,15 @@ fn register_language(
     context: Option<Arc<dyn ContextProvider>>,
     toolchain: Option<Arc<dyn ToolchainLister>>,
     manifest_name: Option<ManifestName>,
+    semantic_token_rules: Option<SemanticTokenRules>,
+    cx: &mut App,
 ) {
     let config = load_config(name);
+    if let Some(rules) = &semantic_token_rules {
+        SettingsStore::update_global(cx, |store, cx| {
+            store.set_language_semantic_token_rules(config.name.0.clone(), rules.clone(), cx);
+        });
+    }
     for adapter in adapters {
         languages.register_lsp_adapter(config.name.clone(), adapter);
     }

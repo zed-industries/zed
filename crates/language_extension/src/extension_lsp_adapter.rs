@@ -309,6 +309,7 @@ impl LspAdapter for ExtensionLspAdapter {
     async fn initialization_options(
         self: Arc<Self>,
         delegate: &Arc<dyn LspAdapterDelegate>,
+        _: &mut AsyncApp,
     ) -> Result<Option<serde_json::Value>> {
         let delegate = Arc::new(WorktreeDelegateAdapter(delegate.clone())) as _;
         let json_options = self
@@ -347,6 +348,44 @@ impl LspAdapter for ExtensionLspAdapter {
         } else {
             serde_json::json!({})
         })
+    }
+
+    async fn initialization_options_schema(
+        self: Arc<Self>,
+        delegate: &Arc<dyn LspAdapterDelegate>,
+        _cached_binary: OwnedMutexGuard<Option<(bool, LanguageServerBinary)>>,
+        _cx: &mut AsyncApp,
+    ) -> Option<serde_json::Value> {
+        let delegate = Arc::new(WorktreeDelegateAdapter(delegate.clone())) as _;
+        let json_schema: Option<String> = self
+            .extension
+            .language_server_initialization_options_schema(
+                self.language_server_id.clone(),
+                delegate,
+            )
+            .await
+            .ok()
+            .flatten();
+        json_schema.and_then(|s| serde_json::from_str(&s).ok())
+    }
+
+    async fn settings_schema(
+        self: Arc<Self>,
+        delegate: &Arc<dyn LspAdapterDelegate>,
+        _cached_binary: OwnedMutexGuard<Option<(bool, LanguageServerBinary)>>,
+        _cx: &mut AsyncApp,
+    ) -> Option<serde_json::Value> {
+        let delegate = Arc::new(WorktreeDelegateAdapter(delegate.clone())) as _;
+        let json_schema: Option<String> = self
+            .extension
+            .language_server_workspace_configuration_schema(
+                self.language_server_id.clone(),
+                delegate,
+            )
+            .await
+            .ok()
+            .flatten();
+        json_schema.and_then(|s| serde_json::from_str(&s).ok())
     }
 
     async fn additional_initialization_options(
@@ -421,16 +460,23 @@ impl LspAdapter for ExtensionLspAdapter {
 
     async fn labels_for_symbols(
         self: Arc<Self>,
-        symbols: &[(String, lsp::SymbolKind)],
+        symbols: &[language::Symbol],
         language: &Arc<Language>,
     ) -> Result<Vec<Option<CodeLabel>>> {
         let symbols = symbols
             .iter()
             .cloned()
-            .map(|(name, kind)| extension::Symbol {
-                name,
-                kind: lsp_symbol_kind_to_extension(kind),
-            })
+            .map(
+                |language::Symbol {
+                     name,
+                     kind,
+                     container_name,
+                 }| extension::Symbol {
+                    name,
+                    kind: lsp_symbol_kind_to_extension(kind),
+                    container_name,
+                },
+            )
             .collect::<Vec<_>>();
 
         let labels = self

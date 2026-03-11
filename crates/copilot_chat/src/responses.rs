@@ -1,8 +1,9 @@
 use std::sync::Arc;
 
+use super::{ChatLocation, copilot_request_headers};
 use anyhow::{Result, anyhow};
 use futures::{AsyncBufReadExt, AsyncReadExt, StreamExt, io::BufReader, stream::BoxStream};
-use http_client::{AsyncBody, HttpClient, Method, Request as HttpRequest};
+use http_client::{AsyncBody, HttpClient, HttpRequestExt, Method, Request as HttpRequest};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 pub use settings::OpenAiReasoningEffort as ReasoningEffort;
@@ -23,6 +24,7 @@ pub struct Request {
     pub reasoning: Option<ReasoningConfig>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub include: Option<Vec<ResponseIncludable>>,
+    pub store: bool,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -275,10 +277,11 @@ pub enum ResponseOutputContent {
 
 pub async fn stream_response(
     client: Arc<dyn HttpClient>,
-    api_key: String,
+    oauth_token: String,
     api_url: String,
     request: Request,
     is_user_initiated: bool,
+    location: ChatLocation,
 ) -> Result<BoxStream<'static, Result<StreamEvent>>> {
     let is_vision_request = request.input.iter().any(|item| match item {
         ResponseInputItem::Message {
@@ -290,28 +293,15 @@ pub async fn stream_response(
         _ => false,
     });
 
-    let request_initiator = if is_user_initiated { "user" } else { "agent" };
-
-    let request_builder = HttpRequest::builder()
-        .method(Method::POST)
-        .uri(&api_url)
-        .header(
-            "Editor-Version",
-            format!(
-                "Zed/{}",
-                option_env!("CARGO_PKG_VERSION").unwrap_or("unknown")
-            ),
-        )
-        .header("Authorization", format!("Bearer {}", api_key))
-        .header("Content-Type", "application/json")
-        .header("Copilot-Integration-Id", "vscode-chat")
-        .header("X-Initiator", request_initiator);
-
-    let request_builder = if is_vision_request {
-        request_builder.header("Copilot-Vision-Request", "true")
-    } else {
-        request_builder
-    };
+    let request_builder = copilot_request_headers(
+        HttpRequest::builder().method(Method::POST).uri(&api_url),
+        &oauth_token,
+        Some(is_user_initiated),
+        Some(location),
+    )
+    .when(is_vision_request, |builder| {
+        builder.header("Copilot-Vision-Request", "true")
+    });
 
     let is_streaming = request.stream;
     let json = serde_json::to_string(&request)?;

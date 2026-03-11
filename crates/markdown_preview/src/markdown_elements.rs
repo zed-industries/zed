@@ -14,6 +14,7 @@ pub enum ParsedMarkdownElement {
     Table(ParsedMarkdownTable),
     BlockQuote(ParsedMarkdownBlockQuote),
     CodeBlock(ParsedMarkdownCodeBlock),
+    MermaidDiagram(ParsedMarkdownMermaidDiagram),
     /// A paragraph of text and other inline elements.
     Paragraph(MarkdownParagraph),
     HorizontalRule(Range<usize>),
@@ -28,6 +29,7 @@ impl ParsedMarkdownElement {
             Self::Table(table) => table.source_range.clone(),
             Self::BlockQuote(block_quote) => block_quote.source_range.clone(),
             Self::CodeBlock(code_block) => code_block.source_range.clone(),
+            Self::MermaidDiagram(mermaid) => mermaid.source_range.clone(),
             Self::Paragraph(text) => match text.get(0)? {
                 MarkdownParagraphChunk::Text(t) => t.source_range.clone(),
                 MarkdownParagraphChunk::Image(image) => image.source_range.clone(),
@@ -84,6 +86,19 @@ pub struct ParsedMarkdownCodeBlock {
     pub language: Option<String>,
     pub contents: SharedString,
     pub highlights: Option<Vec<(Range<usize>, HighlightId)>>,
+}
+
+#[derive(Debug)]
+#[cfg_attr(test, derive(PartialEq))]
+pub struct ParsedMarkdownMermaidDiagram {
+    pub source_range: Range<usize>,
+    pub contents: ParsedMarkdownMermaidDiagramContents,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct ParsedMarkdownMermaidDiagramContents {
+    pub contents: SharedString,
+    pub scale: u32,
 }
 
 #[derive(Debug)]

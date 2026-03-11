@@ -28,12 +28,13 @@ use open_ai::{
 };
 use settings::{OpenAiAvailableModel as AvailableModel, Settings, SettingsStore};
 use std::pin::Pin;
-use std::str::FromStr as _;
 use std::sync::{Arc, LazyLock};
 use strum::IntoEnumIterator;
 use ui::{ButtonLink, ConfiguredApiCard, List, ListBulletItem, prelude::*};
 use ui_input::InputField;
 use util::ResultExt;
+
+use crate::provider::util::parse_tool_arguments;
 
 const PROVIDER_ID: LanguageModelProviderId = language_model::OPEN_AI_PROVIDER_ID;
 const PROVIDER_NAME: LanguageModelProviderName = language_model::OPEN_AI_PROVIDER_NAME;
@@ -299,10 +300,7 @@ impl LanguageModel for OpenAiLanguageModel {
     fn supports_images(&self) -> bool {
         use open_ai::Model;
         match &self.model {
-            Model::FourOmni
-            | Model::FourOmniMini
-            | Model::FourPointOne
-            | Model::FourPointOneMini
+            Model::FourOmniMini
             | Model::FourPointOneNano
             | Model::Five
             | Model::FiveCodex
@@ -311,9 +309,11 @@ impl LanguageModel for OpenAiLanguageModel {
             | Model::FivePointOne
             | Model::FivePointTwo
             | Model::FivePointTwoCodex
+            | Model::FivePointThreeCodex
+            | Model::FivePointFour
+            | Model::FivePointFourPro
             | Model::O1
-            | Model::O3
-            | Model::O4Mini => true,
+            | Model::O3 => true,
             Model::ThreePointFiveTurbo
             | Model::Four
             | Model::FourTurbo
@@ -328,6 +328,14 @@ impl LanguageModel for OpenAiLanguageModel {
             LanguageModelToolChoice::Any => true,
             LanguageModelToolChoice::None => true,
         }
+    }
+
+    fn supports_streaming_tools(&self) -> bool {
+        true
+    }
+
+    fn supports_thinking(&self) -> bool {
+        self.model.reasoning_effort().is_some()
     }
 
     fn supports_split_token_display(&self) -> bool {
@@ -552,6 +560,8 @@ pub fn into_open_ai_response(
         stop: _,
         temperature,
         thinking_allowed: _,
+        thinking_effort: _,
+        speed: _,
     } = request;
 
     let mut input_items = Vec::new();
@@ -820,6 +830,23 @@ impl OpenAiEventMapper {
                             entry.arguments.push_str(&arguments);
                         }
                     }
+
+                    if !entry.id.is_empty() && !entry.name.is_empty() {
+                        if let Ok(input) = serde_json::from_str::<serde_json::Value>(
+                            &partial_json_fixer::fix_json(&entry.arguments),
+                        ) {
+                            events.push(Ok(LanguageModelCompletionEvent::ToolUse(
+                                LanguageModelToolUse {
+                                    id: entry.id.clone().into(),
+                                    name: entry.name.as_str().into(),
+                                    is_input_complete: false,
+                                    input,
+                                    raw_input: entry.arguments.clone(),
+                                    thought_signature: None,
+                                },
+                            )));
+                        }
+                    }
                 }
             }
         }
@@ -830,7 +857,7 @@ impl OpenAiEventMapper {
             }
             Some("tool_calls") => {
                 events.extend(self.tool_calls_by_index.drain().map(|(_, tool_call)| {
-                    match serde_json::Value::from_str(&tool_call.arguments) {
+                    match parse_tool_arguments(&tool_call.arguments) {
                         Ok(input) => Ok(LanguageModelCompletionEvent::ToolUse(
                             LanguageModelToolUse {
                                 id: tool_call.id.clone().into(),
@@ -950,6 +977,20 @@ impl OpenAiResponseEventMapper {
             ResponsesStreamEvent::FunctionCallArgumentsDelta { item_id, delta, .. } => {
                 if let Some(entry) = self.function_calls_by_item.get_mut(&item_id) {
                     entry.arguments.push_str(&delta);
+                    if let Ok(input) = serde_json::from_str::<serde_json::Value>(
+                        &partial_json_fixer::fix_json(&entry.arguments),
+                    ) {
+                        return vec![Ok(LanguageModelCompletionEvent::ToolUse(
+                            LanguageModelToolUse {
+                                id: LanguageModelToolUseId::from(entry.call_id.clone()),
+                                name: entry.name.clone(),
+                                is_input_complete: false,
+                                input,
+                                raw_input: entry.arguments.clone(),
+                                thought_signature: None,
+                            },
+                        ))];
+                    }
                 }
                 Vec::new()
             }
@@ -962,7 +1003,7 @@ impl OpenAiResponseEventMapper {
                     }
                     let raw_input = entry.arguments.clone();
                     self.pending_stop_reason = Some(StopReason::ToolUse);
-                    match serde_json::from_str::<serde_json::Value>(&entry.arguments) {
+                    match parse_tool_arguments(&entry.arguments) {
                         Ok(input) => {
                             vec![Ok(LanguageModelCompletionEvent::ToolUse(
                                 LanguageModelToolUse {
@@ -1030,9 +1071,9 @@ impl OpenAiResponseEventMapper {
             }
             ResponsesStreamEvent::Error { error }
             | ResponsesStreamEvent::GenericError { error } => {
-                vec![Err(LanguageModelCompletionError::Other(anyhow!(format!(
-                    "{error:?}"
-                ))))]
+                vec![Err(LanguageModelCompletionError::Other(anyhow!(
+                    error.message
+                )))]
             }
             ResponsesStreamEvent::OutputTextDone { .. } => Vec::new(),
             ResponsesStreamEvent::OutputItemDone { .. }
@@ -1086,29 +1127,27 @@ impl OpenAiResponseEventMapper {
                 };
                 let name: Arc<str> = Arc::from(function_call.name.clone().unwrap_or_default());
                 let arguments = &function_call.arguments;
-                if !arguments.is_empty() {
-                    self.pending_stop_reason = Some(StopReason::ToolUse);
-                    match serde_json::from_str::<serde_json::Value>(arguments) {
-                        Ok(input) => {
-                            events.push(Ok(LanguageModelCompletionEvent::ToolUse(
-                                LanguageModelToolUse {
-                                    id: LanguageModelToolUseId::from(call_id.clone()),
-                                    name: name.clone(),
-                                    is_input_complete: true,
-                                    input,
-                                    raw_input: arguments.clone(),
-                                    thought_signature: None,
-                                },
-                            )));
-                        }
-                        Err(error) => {
-                            events.push(Ok(LanguageModelCompletionEvent::ToolUseJsonParseError {
+                self.pending_stop_reason = Some(StopReason::ToolUse);
+                match parse_tool_arguments(arguments) {
+                    Ok(input) => {
+                        events.push(Ok(LanguageModelCompletionEvent::ToolUse(
+                            LanguageModelToolUse {
                                 id: LanguageModelToolUseId::from(call_id.clone()),
-                                tool_name: name.clone(),
-                                raw_input: Arc::<str>::from(arguments.clone()),
-                                json_parse_error: error.to_string(),
-                            }));
-                        }
+                                name: name.clone(),
+                                is_input_complete: true,
+                                input,
+                                raw_input: arguments.clone(),
+                                thought_signature: None,
+                            },
+                        )));
+                    }
+                    Err(error) => {
+                        events.push(Ok(LanguageModelCompletionEvent::ToolUseJsonParseError {
+                            id: LanguageModelToolUseId::from(call_id.clone()),
+                            tool_name: name.clone(),
+                            raw_input: Arc::<str>::from(arguments.clone()),
+                            json_parse_error: error.to_string(),
+                        }));
                     }
                 }
             }
@@ -1155,7 +1194,7 @@ pub fn count_open_ai_tokens(
         match model {
             Model::Custom { max_tokens, .. } => {
                 let model = if max_tokens >= 100_000 {
-                    // If the max tokens is 100k or more, it is likely the o200k_base tokenizer from gpt4o
+                    // If the max tokens is 100k or more, it likely uses the o200k_base tokenizer
                     "gpt-4o"
                 } else {
                     // Otherwise fallback to gpt-4, since only cl100k_base and o200k_base are
@@ -1171,23 +1210,22 @@ pub fn count_open_ai_tokens(
             Model::ThreePointFiveTurbo
             | Model::Four
             | Model::FourTurbo
-            | Model::FourOmni
             | Model::FourOmniMini
-            | Model::FourPointOne
-            | Model::FourPointOneMini
             | Model::FourPointOneNano
             | Model::O1
             | Model::O3
             | Model::O3Mini
-            | Model::O4Mini
             | Model::Five
             | Model::FiveCodex
             | Model::FiveMini
             | Model::FiveNano => tiktoken_rs::num_tokens_from_messages(model.id(), &messages),
-            // GPT-5.1, 5.2, and 5.2-codex don't have dedicated tiktoken support; use gpt-5 tokenizer
-            Model::FivePointOne | Model::FivePointTwo | Model::FivePointTwoCodex => {
-                tiktoken_rs::num_tokens_from_messages("gpt-5", &messages)
-            }
+            // GPT-5.1, 5.2, 5.2-codex, 5.3-codex, 5.4, and 5.4-pro don't have dedicated tiktoken support; use gpt-5 tokenizer
+            Model::FivePointOne
+            | Model::FivePointTwo
+            | Model::FivePointTwoCodex
+            | Model::FivePointThreeCodex
+            | Model::FivePointFour
+            | Model::FivePointFourPro => tiktoken_rs::num_tokens_from_messages("gpt-5", &messages),
         }
         .map(|tokens| tokens as u64)
     })
@@ -1434,6 +1472,8 @@ mod tests {
             stop: vec![],
             temperature: None,
             thinking_allowed: true,
+            thinking_effort: None,
+            speed: None,
         };
 
         // Validate that all models are supported by tiktoken-rs
@@ -1565,11 +1605,14 @@ mod tests {
                 name: "get_weather".into(),
                 description: "Fetches the weather".into(),
                 input_schema: json!({ "type": "object" }),
+                use_input_streaming: false,
             }],
             tool_choice: Some(LanguageModelToolChoice::Any),
             stop: vec!["<STOP>".into()],
             temperature: None,
             thinking_allowed: false,
+            thinking_effort: None,
+            speed: None,
         };
 
         let response = into_open_ai_response(
@@ -1664,19 +1707,30 @@ mod tests {
         ];
 
         let mapped = map_response_events(events);
+        assert_eq!(mapped.len(), 3);
+        // First event is the partial tool use (from FunctionCallArgumentsDelta)
         assert!(matches!(
             mapped[0],
+            LanguageModelCompletionEvent::ToolUse(LanguageModelToolUse {
+                is_input_complete: false,
+                ..
+            })
+        ));
+        // Second event is the complete tool use (from FunctionCallArgumentsDone)
+        assert!(matches!(
+            mapped[1],
             LanguageModelCompletionEvent::ToolUse(LanguageModelToolUse {
                 ref id,
                 ref name,
                 ref raw_input,
+                is_input_complete: true,
                 ..
             }) if id.to_string() == "call_123"
                 && name.as_ref() == "get_weather"
                 && raw_input == "{\"city\":\"Boston\"}"
         ));
         assert!(matches!(
-            mapped[1],
+            mapped[2],
             LanguageModelCompletionEvent::Stop(StopReason::ToolUse)
         ));
     }
@@ -1872,13 +1926,27 @@ mod tests {
         ];
 
         let mapped = map_response_events(events);
+        assert_eq!(mapped.len(), 3);
+        // First event is the partial tool use (from FunctionCallArgumentsDelta)
         assert!(matches!(
             mapped[0],
-            LanguageModelCompletionEvent::ToolUse(LanguageModelToolUse { ref raw_input, .. })
+            LanguageModelCompletionEvent::ToolUse(LanguageModelToolUse {
+                is_input_complete: false,
+                ..
+            })
+        ));
+        // Second event is the complete tool use (from the Incomplete response output)
+        assert!(matches!(
+            mapped[1],
+            LanguageModelCompletionEvent::ToolUse(LanguageModelToolUse {
+                ref raw_input,
+                is_input_complete: true,
+                ..
+            })
             if raw_input == "{\"city\":\"Boston\"}"
         ));
         assert!(matches!(
-            mapped[1],
+            mapped[2],
             LanguageModelCompletionEvent::Stop(StopReason::MaxTokens)
         ));
     }
@@ -1923,6 +1991,127 @@ mod tests {
         assert!(matches!(
             mapped[1],
             LanguageModelCompletionEvent::Stop(StopReason::MaxTokens)
+        ));
+    }
+
+    #[test]
+    fn responses_stream_handles_empty_tool_arguments() {
+        // Test that tools with no arguments (empty string) are handled correctly
+        let events = vec![
+            ResponsesStreamEvent::OutputItemAdded {
+                output_index: 0,
+                sequence_number: None,
+                item: response_item_function_call("item_fn", Some("")),
+            },
+            ResponsesStreamEvent::FunctionCallArgumentsDone {
+                item_id: "item_fn".into(),
+                output_index: 0,
+                arguments: "".into(),
+                sequence_number: None,
+            },
+            ResponsesStreamEvent::Completed {
+                response: ResponseSummary::default(),
+            },
+        ];
+
+        let mapped = map_response_events(events);
+        assert_eq!(mapped.len(), 2);
+
+        // Should produce a ToolUse event with an empty object
+        assert!(matches!(
+            &mapped[0],
+            LanguageModelCompletionEvent::ToolUse(LanguageModelToolUse {
+                id,
+                name,
+                raw_input,
+                input,
+                ..
+            }) if id.to_string() == "call_123"
+                && name.as_ref() == "get_weather"
+                && raw_input == ""
+                && input.is_object()
+                && input.as_object().unwrap().is_empty()
+        ));
+
+        assert!(matches!(
+            mapped[1],
+            LanguageModelCompletionEvent::Stop(StopReason::ToolUse)
+        ));
+    }
+
+    #[test]
+    fn responses_stream_emits_partial_tool_use_events() {
+        let events = vec![
+            ResponsesStreamEvent::OutputItemAdded {
+                output_index: 0,
+                sequence_number: None,
+                item: ResponseOutputItem::FunctionCall(ResponseFunctionToolCall {
+                    id: Some("item_fn".to_string()),
+                    status: Some("in_progress".to_string()),
+                    name: Some("get_weather".to_string()),
+                    call_id: Some("call_abc".to_string()),
+                    arguments: String::new(),
+                }),
+            },
+            ResponsesStreamEvent::FunctionCallArgumentsDelta {
+                item_id: "item_fn".into(),
+                output_index: 0,
+                delta: "{\"city\":\"Bos".into(),
+                sequence_number: None,
+            },
+            ResponsesStreamEvent::FunctionCallArgumentsDelta {
+                item_id: "item_fn".into(),
+                output_index: 0,
+                delta: "ton\"}".into(),
+                sequence_number: None,
+            },
+            ResponsesStreamEvent::FunctionCallArgumentsDone {
+                item_id: "item_fn".into(),
+                output_index: 0,
+                arguments: "{\"city\":\"Boston\"}".into(),
+                sequence_number: None,
+            },
+            ResponsesStreamEvent::Completed {
+                response: ResponseSummary::default(),
+            },
+        ];
+
+        let mapped = map_response_events(events);
+        // Two partial events + one complete event + Stop
+        assert!(mapped.len() >= 3);
+
+        // The last complete ToolUse event should have is_input_complete: true
+        let complete_tool_use = mapped.iter().find(|e| {
+            matches!(
+                e,
+                LanguageModelCompletionEvent::ToolUse(LanguageModelToolUse {
+                    is_input_complete: true,
+                    ..
+                })
+            )
+        });
+        assert!(
+            complete_tool_use.is_some(),
+            "should have a complete tool use event"
+        );
+
+        // All ToolUse events before the final one should have is_input_complete: false
+        let tool_uses: Vec<_> = mapped
+            .iter()
+            .filter(|e| matches!(e, LanguageModelCompletionEvent::ToolUse(_)))
+            .collect();
+        assert!(
+            tool_uses.len() >= 2,
+            "should have at least one partial and one complete event"
+        );
+
+        let last = tool_uses.last().unwrap();
+        assert!(matches!(
+            last,
+            LanguageModelCompletionEvent::ToolUse(LanguageModelToolUse {
+                is_input_complete: true,
+                ..
+            })
         ));
     }
 }

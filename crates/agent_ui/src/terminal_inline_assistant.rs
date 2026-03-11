@@ -1,5 +1,5 @@
 use crate::{
-    acp::AcpThreadHistory,
+    ThreadHistory,
     context::load_context,
     inline_prompt_editor::{
         CodegenStatus, PromptEditor, PromptEditorEvent, TerminalInlineAssistId,
@@ -64,7 +64,7 @@ impl TerminalInlineAssistant {
         project: WeakEntity<Project>,
         thread_store: Entity<ThreadStore>,
         prompt_store: Option<Entity<PromptStore>>,
-        history: WeakEntity<AcpThreadHistory>,
+        history: WeakEntity<ThreadHistory>,
         initial_prompt: Option<String>,
         window: &mut Window,
         cx: &mut App,
@@ -275,6 +275,8 @@ impl TerminalInlineAssistant {
                 stop: Vec::new(),
                 temperature,
                 thinking_allowed: false,
+                thinking_effort: None,
+                speed: None,
             }
         }))
     }

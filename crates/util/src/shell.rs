@@ -256,16 +256,29 @@ impl ShellKind {
         Self::new(&get_system_shell(), cfg!(windows))
     }
 
-    /// Returns whether this shell uses POSIX-like command chaining syntax (`&&`, `||`, `;`, `|`).
+    /// Returns whether this shell's command chaining syntax can be parsed by brush-parser.
     ///
     /// This is used to determine if we can safely parse shell commands to extract sub-commands
     /// for security purposes (e.g., preventing shell injection in "always allow" patterns).
     ///
-    /// **Compatible shells:** Posix (sh, bash, dash, zsh), Fish 3.0+, PowerShell 7+/Pwsh,
-    /// Cmd, Xonsh, Csh, Tcsh
+    /// The brush-parser handles `;` (sequential execution) and `|` (piping), which are
+    /// supported by all common shells. It also handles `&&` and `||` for conditional
+    /// execution, `$()` and backticks for command substitution, and process substitution.
     ///
-    /// **Incompatible shells:** Nushell (uses `and`/`or` keywords), Elvish (uses `and`/`or`
-    /// keywords), Rc (Plan 9 shell - no `&&`/`||` operators)
+    /// # Shell Notes
+    ///
+    /// - **Nushell**: Uses `;` for sequential execution. The `and`/`or` keywords are boolean
+    ///   operators on values (e.g., `$true and $false`), not command chaining operators.
+    /// - **Elvish**: Uses `;` to separate pipelines, which brush-parser handles. Elvish does
+    ///   not have `&&` or `||` operators. Its `and`/`or` are special commands that operate
+    ///   on values, not command chaining (e.g., `and $true $false`).
+    /// - **Rc (Plan 9)**: Uses `;` for sequential execution and `|` for piping. Does not
+    ///   have `&&`/`||` operators for conditional chaining.
+    /// All current shell variants are listed here because brush-parser can handle
+    /// their syntax. If a new `ShellKind` variant is added, evaluate whether
+    /// brush-parser can safely parse its command chaining syntax before including
+    /// it. Omitting a variant will cause `tool_permissions::from_input` to deny
+    /// terminal commands that have `always_allow` patterns configured.
     pub fn supports_posix_chaining(&self) -> bool {
         matches!(
             self,
@@ -277,6 +290,9 @@ impl ShellKind {
                 | ShellKind::Xonsh
                 | ShellKind::Csh
                 | ShellKind::Tcsh
+                | ShellKind::Nushell
+                | ShellKind::Elvish
+                | ShellKind::Rc
         )
     }
 
@@ -995,5 +1011,41 @@ mod tests {
                 .into_owned(),
             "uname".to_string()
         );
+    }
+
+    #[test]
+    fn test_try_quote_single_quote_paths() {
+        let path_with_quote = r"C:\Temp\O'Brien\repo";
+        let shlex_shells = [
+            ShellKind::Posix,
+            ShellKind::Fish,
+            ShellKind::Csh,
+            ShellKind::Tcsh,
+            ShellKind::Rc,
+            ShellKind::Xonsh,
+            ShellKind::Elvish,
+            ShellKind::Nushell,
+        ];
+
+        for shell_kind in shlex_shells {
+            let quoted = shell_kind.try_quote(path_with_quote).unwrap().into_owned();
+            assert_ne!(quoted, path_with_quote);
+            assert_eq!(
+                shlex::split(&quoted),
+                Some(vec![path_with_quote.to_string()])
+            );
+
+            if shell_kind == ShellKind::Nushell {
+                let prefixed = shell_kind.prepend_command_prefix(&quoted);
+                assert!(prefixed.starts_with('^'));
+            }
+        }
+
+        for shell_kind in [ShellKind::PowerShell, ShellKind::Pwsh] {
+            let quoted = shell_kind.try_quote(path_with_quote).unwrap().into_owned();
+            assert!(quoted.starts_with('\''));
+            assert!(quoted.ends_with('\''));
+            assert!(quoted.contains("O''Brien"));
+        }
     }
 }

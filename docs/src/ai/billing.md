@@ -1,12 +1,19 @@
+---
+title: Billing - Zed AI
+description: Manage Zed AI billing, payment methods, invoices, threshold billing, and sales tax information.
+---
+
 # Billing
+
+This page covers billing for Zed's [subscription plans](./subscription.md). For details on what's included in each plan and how token usage works, see [Plans and Usage](./plans-and-usage.md).
 
 We use Stripe as our payments provider, and Orb for invoicing and metering. All Pro plans require payment via credit card or other supported payment method.
 For invoice-based billing, a Business plan is required. Contact [sales@zed.dev](mailto:sales@zed.dev) for more information.
 
 ## Billing Information {#settings}
 
-You can access billing information and settings at [dashboard.zed.dev/account](https://dashboard.zed.dev/account).
-Most of the page embeds information from our invoicing/metering partner, Orb (we're planning on a more native experience soon!).
+Access billing information and settings at [dashboard.zed.dev/account](https://dashboard.zed.dev/account).
+This page embeds data from Orb, our invoicing and metering partner.
 
 ## Billing Cycles {#billing-cycles}
 
@@ -36,7 +43,7 @@ If you require historical Stripe invoices, email [billing-support@zed.dev](mailt
 
 Email [billing-support@zed.dev](mailto:billing-support@zed.dev) for help updating payment methods, names, addresses, and tax information.
 
-> We'll be updating our account page shortly to allow for self-service updates. Stay tuned!
+> Self-service billing updates will be available in a future release.
 
 Please note that changes to billing information will **only** affect future invoices — **we cannot modify historical invoices**.
 

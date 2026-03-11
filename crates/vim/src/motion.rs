@@ -899,10 +899,9 @@ impl Motion {
     pub fn infallible(&self) -> bool {
         use Motion::*;
         match self {
-            StartOfDocument | EndOfDocument | CurrentLine => true,
+            StartOfDocument | EndOfDocument | CurrentLine | EndOfLine { .. } => true,
             Down { .. }
             | Up { .. }
-            | EndOfLine { .. }
             | MiddleOfLine { .. }
             | Matching { .. }
             | UnmatchedForward { .. }
@@ -1039,12 +1038,9 @@ impl Motion {
             ),
             SentenceBackward => (sentence_backwards(map, point, times), SelectionGoal::None),
             SentenceForward => (sentence_forwards(map, point, times), SelectionGoal::None),
-            StartOfParagraph => (
-                movement::start_of_paragraph(map, point, times),
-                SelectionGoal::None,
-            ),
+            StartOfParagraph => (start_of_paragraph(map, point, times), SelectionGoal::None),
             EndOfParagraph => (
-                map.clip_at_line_end(movement::end_of_paragraph(map, point, times)),
+                map.clip_at_line_end(end_of_paragraph(map, point, times)),
                 SelectionGoal::None,
             ),
             CurrentLine => (next_line_end(map, point, times), SelectionGoal::None),
@@ -1695,18 +1691,19 @@ pub(crate) fn next_word_start(
         .ignore_punctuation(ignore_punctuation);
     for _ in 0..times {
         let mut crossed_newline = false;
-        let new_point = movement::find_boundary(map, point, FindRange::MultiLine, |left, right| {
-            let left_kind = classifier.kind(left);
-            let right_kind = classifier.kind(right);
-            let at_newline = right == '\n';
+        let new_point =
+            movement::find_boundary(map, point, FindRange::MultiLine, &mut |left, right| {
+                let left_kind = classifier.kind(left);
+                let right_kind = classifier.kind(right);
+                let at_newline = right == '\n';
 
-            let found = (left_kind != right_kind && right_kind != CharKind::Whitespace)
-                || at_newline && crossed_newline
-                || at_newline && left == '\n'; // Prevents skipping repeated empty lines
+                let found = (left_kind != right_kind && right_kind != CharKind::Whitespace)
+                    || at_newline && crossed_newline
+                    || at_newline && left == '\n'; // Prevents skipping repeated empty lines
 
-            crossed_newline |= at_newline;
-            found
-        });
+                crossed_newline |= at_newline;
+                found
+            });
         if point == new_point {
             break;
         }
@@ -1721,7 +1718,7 @@ fn next_end_impl(
     times: usize,
     allow_cross_newline: bool,
     always_advance: bool,
-    mut is_boundary: impl FnMut(char, char) -> bool,
+    is_boundary: &mut dyn FnMut(char, char) -> bool,
 ) -> DisplayPoint {
     for _ in 0..times {
         let mut need_next_char = false;
@@ -1734,7 +1731,7 @@ fn next_end_impl(
             map,
             new_point,
             FindRange::MultiLine,
-            |left, right| {
+            &mut |left, right| {
                 let at_newline = right == '\n';
 
                 if !allow_cross_newline && at_newline {
@@ -1778,7 +1775,7 @@ pub(crate) fn next_word_end(
         times,
         allow_cross_newline,
         always_advance,
-        |left, right| {
+        &mut |left, right| {
             let left_kind = classifier.kind(left);
             let right_kind = classifier.kind(right);
             left_kind != right_kind && left_kind != CharKind::Whitespace
@@ -1804,11 +1801,11 @@ pub(crate) fn next_subword_end(
         times,
         allow_cross_newline,
         true,
-        |left, right| {
+        &mut |left, right| {
             let left_kind = classifier.kind(left);
             let right_kind = classifier.kind(right);
-            let is_stopping_punct = |c: char| ".\"'{}[]()<>".contains(c);
-            let found_subword_end = is_subword_end(left, right, "_-");
+            let is_stopping_punct = |c: char| ".$=\"'{}[]()<>".contains(c);
+            let found_subword_end = is_subword_end(left, right, "$_-");
             let is_word_end = (left_kind != right_kind)
                 && (!left.is_ascii_punctuation() || is_stopping_punct(left));
 
@@ -1834,7 +1831,7 @@ fn previous_word_start(
             map,
             point,
             FindRange::MultiLine,
-            |left, right| {
+            &mut |left, right| {
                 let left_kind = classifier.kind(left);
                 let right_kind = classifier.kind(right);
 
@@ -1871,7 +1868,7 @@ fn previous_word_end(
             &map.buffer_snapshot(),
             point,
             FindRange::MultiLine,
-            |left, right| {
+            &mut |left, right| {
                 let left_kind = classifier.kind(left);
                 let right_kind = classifier.kind(right);
                 match (left_kind, right_kind) {
@@ -1918,21 +1915,22 @@ fn next_subword_start(
         .ignore_punctuation(ignore_punctuation);
     for _ in 0..times {
         let mut crossed_newline = false;
-        let new_point = movement::find_boundary(map, point, FindRange::MultiLine, |left, right| {
-            let left_kind = classifier.kind(left);
-            let right_kind = classifier.kind(right);
-            let at_newline = right == '\n';
-            let is_stopping_punct = |c: char| "\"'{}[]()<>".contains(c);
-            let found_subword_start = is_subword_start(left, right, "._-");
-            let is_word_start = (left_kind != right_kind)
-                && (!right.is_ascii_punctuation() || is_stopping_punct(right));
-            let found = (!right.is_whitespace() && (is_word_start || found_subword_start))
-                || at_newline && crossed_newline
-                || at_newline && left == '\n'; // Prevents skipping repeated empty lines
+        let new_point =
+            movement::find_boundary(map, point, FindRange::MultiLine, &mut |left, right| {
+                let left_kind = classifier.kind(left);
+                let right_kind = classifier.kind(right);
+                let at_newline = right == '\n';
+                let is_stopping_punct = |c: char| "$=\"'{}[]()<>".contains(c);
+                let found_subword_start = is_subword_start(left, right, ".$_-");
+                let is_word_start = (left_kind != right_kind)
+                    && (!right.is_ascii_punctuation() || is_stopping_punct(right));
+                let found = (!right.is_whitespace() && (is_word_start || found_subword_start))
+                    || at_newline && crossed_newline
+                    || at_newline && left == '\n'; // Prevents skipping repeated empty lines
 
-            crossed_newline |= at_newline;
-            found
-        });
+                crossed_newline |= at_newline;
+                found
+            });
         if point == new_point {
             break;
         }
@@ -1959,15 +1957,15 @@ fn previous_subword_start(
             map,
             point,
             FindRange::MultiLine,
-            |left, right| {
+            &mut |left, right| {
                 let left_kind = classifier.kind(left);
                 let right_kind = classifier.kind(right);
                 let at_newline = right == '\n';
 
-                let is_stopping_punct = |c: char| ".\"'{}[]()<>".contains(c);
+                let is_stopping_punct = |c: char| ".$=\"'{}[]()<>".contains(c);
                 let is_word_start = (left_kind != right_kind)
                     && (is_stopping_punct(right) || !right.is_ascii_punctuation());
-                let found_subword_start = is_subword_start(left, right, "._-");
+                let found_subword_start = is_subword_start(left, right, ".$_-");
 
                 let found = (!right.is_whitespace() && (is_word_start || found_subword_start))
                     || at_newline && crossed_newline
@@ -2008,12 +2006,12 @@ fn previous_subword_end(
             &map.buffer_snapshot(),
             point,
             FindRange::MultiLine,
-            |left, right| {
+            &mut |left, right| {
                 let left_kind = classifier.kind(left);
                 let right_kind = classifier.kind(right);
 
-                let is_stopping_punct = |c: char| ".;\"'{}[]()<>".contains(c);
-                let found_subword_end = is_subword_end(left, right, "_-");
+                let is_stopping_punct = |c: char| ".$;=\"'{}[]()<>".contains(c);
+                let found_subword_end = is_subword_end(left, right, "$_-");
 
                 if found_subword_end {
                     return true;
@@ -2234,6 +2232,68 @@ pub(crate) fn sentence_forwards(
         }
 
         was_newline = ch == '\n' && chars.peek().is_some_and(|(c, _)| *c == '\n');
+    }
+
+    map.max_point()
+}
+
+/// Returns a position of the start of the current paragraph for vim motions,
+/// where a paragraph is defined as a run of non-empty lines. Lines containing
+/// only whitespace are not considered empty and do not act as paragraph
+/// boundaries.
+pub(crate) fn start_of_paragraph(
+    map: &DisplaySnapshot,
+    display_point: DisplayPoint,
+    mut count: usize,
+) -> DisplayPoint {
+    let point = display_point.to_point(map);
+    if point.row == 0 {
+        return DisplayPoint::zero();
+    }
+
+    let mut found_non_empty_line = false;
+    for row in (0..point.row + 1).rev() {
+        let empty = map.buffer_snapshot().line_len(MultiBufferRow(row)) == 0;
+        if found_non_empty_line && empty {
+            if count <= 1 {
+                return Point::new(row, 0).to_display_point(map);
+            }
+            count -= 1;
+            found_non_empty_line = false;
+        }
+
+        found_non_empty_line |= !empty;
+    }
+
+    DisplayPoint::zero()
+}
+
+/// Returns a position of the end of the current paragraph for vim motions,
+/// where a paragraph is defined as a run of non-empty lines. Lines containing
+/// only whitespace are not considered empty and do not act as paragraph
+/// boundaries.
+pub(crate) fn end_of_paragraph(
+    map: &DisplaySnapshot,
+    display_point: DisplayPoint,
+    mut count: usize,
+) -> DisplayPoint {
+    let point = display_point.to_point(map);
+    if point.row == map.buffer_snapshot().max_row().0 {
+        return map.max_point();
+    }
+
+    let mut found_non_empty_line = false;
+    for row in point.row..=map.buffer_snapshot().max_row().0 {
+        let empty = map.buffer_snapshot().line_len(MultiBufferRow(row)) == 0;
+        if found_non_empty_line && empty {
+            if count <= 1 {
+                return Point::new(row, 0).to_display_point(map);
+            }
+            count -= 1;
+            found_non_empty_line = false;
+        }
+
+        found_non_empty_line |= !empty;
     }
 
     map.max_point()
@@ -2696,7 +2756,7 @@ fn find_forward(
 
     for _ in 0..times {
         found = false;
-        let new_to = find_boundary(map, to, mode, |_, right| {
+        let new_to = find_boundary(map, to, mode, &mut |_, right| {
             found = is_character_match(target, right, smartcase);
             found
         });
@@ -2734,7 +2794,7 @@ fn find_backward(
     let mut to = from;
 
     for _ in 0..times {
-        let new_to = find_preceding_boundary_display_point(map, to, mode, |_, right| {
+        let new_to = find_preceding_boundary_display_point(map, to, mode, &mut |_, right| {
             is_character_match(target, right, smartcase)
         });
         if to == new_to {
@@ -2786,7 +2846,7 @@ fn sneak(
             map,
             movement::right(map, to),
             FindRange::MultiLine,
-            |left, right| {
+            &mut |left, right| {
                 found = is_character_match(first_target, left, smartcase)
                     && is_character_match(second_target, right, smartcase);
                 found
@@ -2818,12 +2878,16 @@ fn sneak_backward(
 
     for _ in 0..times {
         found = false;
-        let new_to =
-            find_preceding_boundary_display_point(map, to, FindRange::MultiLine, |left, right| {
+        let new_to = find_preceding_boundary_display_point(
+            map,
+            to,
+            FindRange::MultiLine,
+            &mut |left, right| {
                 found = is_character_match(first_target, left, smartcase)
                     && is_character_match(second_target, right, smartcase);
                 found
-            });
+            },
+        );
         if to == new_to {
             break;
         }
@@ -2962,20 +3026,22 @@ fn method_motion(
     direction: Direction,
     is_start: bool,
 ) -> DisplayPoint {
-    let Some((_, _, buffer)) = map.buffer_snapshot().as_singleton() else {
+    let snapshot = map.buffer_snapshot();
+    if snapshot.as_singleton().is_none() {
         return display_point;
-    };
+    }
 
     for _ in 0..times {
-        let point = map.display_point_to_point(display_point, Bias::Left);
-        let offset = point.to_offset(&map.buffer_snapshot()).0;
+        let offset = map
+            .display_point_to_point(display_point, Bias::Left)
+            .to_offset(&snapshot);
         let range = if direction == Direction::Prev {
-            0..offset
+            MultiBufferOffset(0)..offset
         } else {
-            offset..buffer.len()
+            offset..snapshot.len()
         };
 
-        let possibilities = buffer
+        let possibilities = snapshot
             .text_object_ranges(range, language::TreeSitterOptions::max_start_depth(4))
             .filter_map(|(range, object)| {
                 if !matches!(object, language::TextObject::AroundFunction) {
@@ -2985,7 +3051,7 @@ fn method_motion(
                 let relevant = if is_start { range.start } else { range.end };
                 if direction == Direction::Prev && relevant < offset {
                     Some(relevant)
-                } else if direction == Direction::Next && relevant > offset + 1 {
+                } else if direction == Direction::Next && relevant > offset + 1usize {
                     Some(relevant)
                 } else {
                     None
@@ -2997,7 +3063,7 @@ fn method_motion(
         } else {
             possibilities.min().unwrap_or(offset)
         };
-        let new_point = map.clip_point(MultiBufferOffset(dest).to_display_point(map), Bias::Left);
+        let new_point = map.clip_point(dest.to_display_point(map), Bias::Left);
         if new_point == display_point {
             break;
         }
@@ -3012,20 +3078,22 @@ fn comment_motion(
     times: usize,
     direction: Direction,
 ) -> DisplayPoint {
-    let Some((_, _, buffer)) = map.buffer_snapshot().as_singleton() else {
+    let snapshot = map.buffer_snapshot();
+    if snapshot.as_singleton().is_none() {
         return display_point;
-    };
+    }
 
     for _ in 0..times {
-        let point = map.display_point_to_point(display_point, Bias::Left);
-        let offset = point.to_offset(&map.buffer_snapshot()).0;
+        let offset = map
+            .display_point_to_point(display_point, Bias::Left)
+            .to_offset(&snapshot);
         let range = if direction == Direction::Prev {
-            0..offset
+            MultiBufferOffset(0)..offset
         } else {
-            offset..buffer.len()
+            offset..snapshot.len()
         };
 
-        let possibilities = buffer
+        let possibilities = snapshot
             .text_object_ranges(range, language::TreeSitterOptions::max_start_depth(6))
             .filter_map(|(range, object)| {
                 if !matches!(object, language::TextObject::AroundComment) {
@@ -3039,7 +3107,7 @@ fn comment_motion(
                 };
                 if direction == Direction::Prev && relevant < offset {
                     Some(relevant)
-                } else if direction == Direction::Next && relevant > offset + 1 {
+                } else if direction == Direction::Next && relevant > offset + 1usize {
                     Some(relevant)
                 } else {
                     None
@@ -3051,7 +3119,7 @@ fn comment_motion(
         } else {
             possibilities.min().unwrap_or(offset)
         };
-        let new_point = map.clip_point(MultiBufferOffset(dest).to_display_point(map), Bias::Left);
+        let new_point = map.clip_point(dest.to_display_point(map), Bias::Left);
         if new_point == display_point {
             break;
         }
@@ -3895,6 +3963,29 @@ mod test {
         cx.shared_state().await.assert_eq(indoc! {"
             The quˇick brown fox
             jumps over the
+            lazy dog
+            "});
+
+        // Test that, when the cursor is moved to the end of the line using `l`,
+        // if `$` is used, the cursor stays at the end of the line when moving
+        // to a longer line, ensuring that the selection goal was correctly
+        // updated.
+        cx.set_shared_state(indoc! {"
+            The quick brown fox
+            jumps over the
+            lazy dˇog
+            "})
+            .await;
+        cx.simulate_shared_keystrokes("l").await;
+        cx.shared_state().await.assert_eq(indoc! {"
+            The quick brown fox
+            jumps over the
+            lazy doˇg
+            "});
+        cx.simulate_shared_keystrokes("$ k").await;
+        cx.shared_state().await.assert_eq(indoc! {"
+            The quick brown fox
+            jumps over thˇe
             lazy dog
             "});
     }
@@ -4851,6 +4942,22 @@ mod test {
         cx.set_state("ˇfoo;bar", Mode::Normal);
         cx.simulate_keystrokes("w");
         cx.assert_state("foo;ˇbar", Mode::Normal);
+
+        cx.set_state("ˇ<?php\n\n$someVariable = 2;", Mode::Normal);
+        cx.simulate_keystrokes("w");
+        cx.assert_state("<?ˇphp\n\n$someVariable = 2;", Mode::Normal);
+        cx.simulate_keystrokes("w");
+        cx.assert_state("<?php\nˇ\n$someVariable = 2;", Mode::Normal);
+        cx.simulate_keystrokes("w");
+        cx.assert_state("<?php\n\nˇ$someVariable = 2;", Mode::Normal);
+        cx.simulate_keystrokes("w");
+        cx.assert_state("<?php\n\n$ˇsomeVariable = 2;", Mode::Normal);
+        cx.simulate_keystrokes("w");
+        cx.assert_state("<?php\n\n$someˇVariable = 2;", Mode::Normal);
+        cx.simulate_keystrokes("w");
+        cx.assert_state("<?php\n\n$someVariable ˇ= 2;", Mode::Normal);
+        cx.simulate_keystrokes("w");
+        cx.assert_state("<?php\n\n$someVariable = ˇ2;", Mode::Normal);
     }
 
     #[gpui::test]
@@ -4965,6 +5072,24 @@ mod test {
         cx.assert_state("foo;ˇbar", Mode::Normal);
         cx.simulate_keystrokes("b");
         cx.assert_state("ˇfoo;bar", Mode::Normal);
+
+        cx.set_state("<?php\n\n$someVariable = 2ˇ;", Mode::Normal);
+        cx.simulate_keystrokes("b");
+        cx.assert_state("<?php\n\n$someVariable = ˇ2;", Mode::Normal);
+        cx.simulate_keystrokes("b");
+        cx.assert_state("<?php\n\n$someVariable ˇ= 2;", Mode::Normal);
+        cx.simulate_keystrokes("b");
+        cx.assert_state("<?php\n\n$someˇVariable = 2;", Mode::Normal);
+        cx.simulate_keystrokes("b");
+        cx.assert_state("<?php\n\n$ˇsomeVariable = 2;", Mode::Normal);
+        cx.simulate_keystrokes("b");
+        cx.assert_state("<?php\n\nˇ$someVariable = 2;", Mode::Normal);
+        cx.simulate_keystrokes("b");
+        cx.assert_state("<?php\nˇ\n$someVariable = 2;", Mode::Normal);
+        cx.simulate_keystrokes("b");
+        cx.assert_state("<?ˇphp\n\n$someVariable = 2;", Mode::Normal);
+        cx.simulate_keystrokes("b");
+        cx.assert_state("ˇ<?php\n\n$someVariable = 2;", Mode::Normal);
     }
 
     #[gpui::test]
@@ -5014,5 +5139,201 @@ mod test {
         cx.assert_state("fooˇ;bar", Mode::Normal);
         cx.simulate_keystrokes("g e");
         cx.assert_state("foˇo;bar", Mode::Normal);
+    }
+
+    #[gpui::test]
+    async fn test_method_motion_with_expanded_diff_hunks(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+
+        let diff_base = indoc! {r#"
+            fn first() {
+                println!("first");
+                println!("removed line");
+            }
+
+            fn second() {
+                println!("second");
+            }
+
+            fn third() {
+                println!("third");
+            }
+        "#};
+
+        let current_text = indoc! {r#"
+            fn first() {
+                println!("first");
+            }
+
+            fn second() {
+                println!("second");
+            }
+
+            fn third() {
+                println!("third");
+            }
+        "#};
+
+        cx.set_state(&format!("ˇ{}", current_text), Mode::Normal);
+        cx.set_head_text(diff_base);
+        cx.update_editor(|editor, window, cx| {
+            editor.expand_all_diff_hunks(&editor::actions::ExpandAllDiffHunks, window, cx);
+        });
+
+        // When diff hunks are expanded, the deleted line from the diff base
+        // appears in the MultiBuffer. The method motion should correctly
+        // navigate to the second function even with this extra content.
+        cx.simulate_keystrokes("] m");
+        cx.assert_editor_state(indoc! {r#"
+            fn first() {
+                println!("first");
+                println!("removed line");
+            }
+
+            ˇfn second() {
+                println!("second");
+            }
+
+            fn third() {
+                println!("third");
+            }
+        "#});
+
+        cx.simulate_keystrokes("] m");
+        cx.assert_editor_state(indoc! {r#"
+            fn first() {
+                println!("first");
+                println!("removed line");
+            }
+
+            fn second() {
+                println!("second");
+            }
+
+            ˇfn third() {
+                println!("third");
+            }
+        "#});
+
+        cx.simulate_keystrokes("[ m");
+        cx.assert_editor_state(indoc! {r#"
+            fn first() {
+                println!("first");
+                println!("removed line");
+            }
+
+            ˇfn second() {
+                println!("second");
+            }
+
+            fn third() {
+                println!("third");
+            }
+        "#});
+
+        cx.simulate_keystrokes("[ m");
+        cx.assert_editor_state(indoc! {r#"
+            ˇfn first() {
+                println!("first");
+                println!("removed line");
+            }
+
+            fn second() {
+                println!("second");
+            }
+
+            fn third() {
+                println!("third");
+            }
+        "#});
+    }
+
+    #[gpui::test]
+    async fn test_comment_motion_with_expanded_diff_hunks(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+
+        let diff_base = indoc! {r#"
+            // first comment
+            fn first() {
+                // removed comment
+                println!("first");
+            }
+
+            // second comment
+            fn second() { println!("second"); }
+        "#};
+
+        let current_text = indoc! {r#"
+            // first comment
+            fn first() {
+                println!("first");
+            }
+
+            // second comment
+            fn second() { println!("second"); }
+        "#};
+
+        cx.set_state(&format!("ˇ{}", current_text), Mode::Normal);
+        cx.set_head_text(diff_base);
+        cx.update_editor(|editor, window, cx| {
+            editor.expand_all_diff_hunks(&editor::actions::ExpandAllDiffHunks, window, cx);
+        });
+
+        // The first `] /` (vim::NextComment) should go to the end of the first
+        // comment.
+        cx.simulate_keystrokes("] /");
+        cx.assert_editor_state(indoc! {r#"
+            // first commenˇt
+            fn first() {
+                // removed comment
+                println!("first");
+            }
+
+            // second comment
+            fn second() { println!("second"); }
+        "#});
+
+        // The next `] /` (vim::NextComment) should go to the end of the second
+        // comment, skipping over the removed comment, since it's not in the
+        // actual buffer.
+        cx.simulate_keystrokes("] /");
+        cx.assert_editor_state(indoc! {r#"
+            // first comment
+            fn first() {
+                // removed comment
+                println!("first");
+            }
+
+            // second commenˇt
+            fn second() { println!("second"); }
+        "#});
+
+        // Going back to previous comment with `[ /` (vim::PreviousComment)
+        // should go back to the start of the second comment.
+        cx.simulate_keystrokes("[ /");
+        cx.assert_editor_state(indoc! {r#"
+            // first comment
+            fn first() {
+                // removed comment
+                println!("first");
+            }
+
+            ˇ// second comment
+            fn second() { println!("second"); }
+        "#});
+
+        // Going back again with `[ /` (vim::PreviousComment) should finally put
+        // the cursor at the start of the first comment.
+        cx.simulate_keystrokes("[ /");
+        cx.assert_editor_state(indoc! {r#"
+            ˇ// first comment
+            fn first() {
+                // removed comment
+                println!("first");
+            }
+
+            // second comment
+            fn second() { println!("second"); }
+        "#});
     }
 }

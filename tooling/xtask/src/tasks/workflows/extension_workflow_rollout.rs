@@ -5,10 +5,11 @@ use indoc::formatdoc;
 use indoc::indoc;
 use serde_json::json;
 
+use crate::tasks::workflows::steps::CheckoutStep;
 use crate::tasks::workflows::{
     extension_bump::{RepositoryTarget, generate_token},
     runners,
-    steps::{self, NamedJob, named},
+    steps::{self, DEFAULT_REPOSITORY_OWNER_GUARD, NamedJob, named},
     vars::{self, StepOutput},
 };
 
@@ -58,6 +59,9 @@ fn fetch_extension_repos() -> NamedJob {
     let (get_org_repositories, list_repos_output) = get_repositories();
 
     let job = Job::default()
+        .cond(Expression::new(format!(
+            "{DEFAULT_REPOSITORY_OWNER_GUARD} && github.ref == 'refs/heads/main'"
+        )))
         .runs_on(runners::LINUX_SMALL)
         .timeout_minutes(5u32)
         .outputs([("repos".to_owned(), list_repos_output.to_string())])
@@ -67,17 +71,19 @@ fn fetch_extension_repos() -> NamedJob {
 }
 
 fn rollout_workflows_to_extension(fetch_repos_job: &NamedJob) -> NamedJob {
-    fn checkout_zed_repo() -> Step<Use> {
+    fn checkout_zed_repo() -> CheckoutStep {
         steps::checkout_repo()
-            .name("checkout_zed_repo")
-            .add_with(("path", "zed"))
-            .add_with(("fetch-depth", "0"))
+            .with_full_history()
+            .with_path("zed")
+            .with_custom_name("checkout_zed_repo")
     }
 
-    fn checkout_extension_repo(token: &StepOutput) -> Step<Use> {
-        steps::checkout_repo_with_token(token)
-            .add_with(("repository", "zed-extensions/${{ matrix.repo }}"))
-            .add_with(("path", "extension"))
+    fn checkout_extension_repo(token: &StepOutput) -> CheckoutStep {
+        steps::checkout_repo()
+            .with_custom_name("checkout_extension_repo")
+            .with_token(token)
+            .with_repository("zed-extensions/${{ matrix.repo }}")
+            .with_path("extension")
     }
 
     fn get_previous_tag_commit() -> (Step<Run>, StepOutput) {
@@ -99,10 +105,8 @@ fn rollout_workflows_to_extension(fetch_repos_job: &NamedJob) -> NamedJob {
     }
 
     fn get_removed_files(prev_commit: &StepOutput) -> (Step<Run>, StepOutput) {
-        let step = named::bash(formatdoc! {r#"
-            PREV_COMMIT="{prev_commit}"
-
-            if [ "${{{{ matrix.repo }}}}" = "workflows" ]; then
+        let step = named::bash(indoc::indoc! {r#"
+            if [ "$MATRIX_REPO" = "workflows" ]; then
                 WORKFLOW_DIR="extensions/workflows"
             else
                 WORKFLOW_DIR="extensions/workflows/shared"
@@ -113,8 +117,8 @@ fn rollout_workflows_to_extension(fetch_repos_job: &NamedJob) -> NamedJob {
             # Get deleted files (status D) and renamed files (status R - old name needs removal)
             # Using -M to detect renames, then extracting files that are gone from their original location
             REMOVED_FILES=$(git diff --name-status -M "$PREV_COMMIT" HEAD -- "$WORKFLOW_DIR" | \
-                awk '/^D/ {{ print $2 }} /^R/ {{ print $2 }}' | \
-                xargs -I{{}} basename {{}} 2>/dev/null | \
+                awk '/^D/ { print $2 } /^R/ { print $2 }' | \
+                xargs -I{} basename {} 2>/dev/null | \
                 tr '\n' ' ' || echo "")
 
             REMOVED_FILES=$(echo "$REMOVED_FILES" | xargs)
@@ -123,7 +127,9 @@ fn rollout_workflows_to_extension(fetch_repos_job: &NamedJob) -> NamedJob {
             echo "removed_files=$REMOVED_FILES" >> "$GITHUB_OUTPUT"
         "#})
         .id("calc-changes")
-        .working_directory("zed");
+        .working_directory("zed")
+        .add_env(("PREV_COMMIT", prev_commit.to_string()))
+        .add_env(("MATRIX_REPO", "${{ matrix.repo }}"));
 
         let removed_files = StepOutput::new(&step, "removed_files");
 
@@ -131,9 +137,7 @@ fn rollout_workflows_to_extension(fetch_repos_job: &NamedJob) -> NamedJob {
     }
 
     fn sync_workflow_files(removed_files: &StepOutput) -> Step<Run> {
-        named::bash(formatdoc! {r#"
-            REMOVED_FILES="{removed_files}"
-
+        named::bash(indoc::indoc! {r#"
             mkdir -p extension/.github/workflows
             cd extension/.github/workflows
 
@@ -147,17 +151,19 @@ fn rollout_workflows_to_extension(fetch_repos_job: &NamedJob) -> NamedJob {
 
             cd - > /dev/null
 
-            if [ "${{{{ matrix.repo }}}}" = "workflows" ]; then
+            if [ "$MATRIX_REPO" = "workflows" ]; then
                 cp zed/extensions/workflows/*.yml extension/.github/workflows/
             else
                 cp zed/extensions/workflows/shared/*.yml extension/.github/workflows/
             fi
         "#})
+        .add_env(("REMOVED_FILES", removed_files.to_string()))
+        .add_env(("MATRIX_REPO", "${{ matrix.repo }}"))
     }
 
     fn get_short_sha() -> (Step<Run>, StepOutput) {
         let step = named::bash(indoc::indoc! {r#"
-            echo "sha_short=$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
+            echo "sha_short=$(git rev-parse --short=7 HEAD)" >> "$GITHUB_OUTPUT"
         "#})
         .id("short-sha")
         .working_directory("zed");
@@ -168,7 +174,7 @@ fn rollout_workflows_to_extension(fetch_repos_job: &NamedJob) -> NamedJob {
     }
 
     fn create_pull_request(token: &StepOutput, short_sha: &StepOutput) -> Step<Use> {
-        let title = format!("Update CI workflows to `zed@{}`", short_sha);
+        let title = format!("Update CI workflows to `{short_sha}`");
 
         named::uses("peter-evans", "create-pull-request", "v7")
             .add_with(("path", "extension"))
@@ -199,13 +205,16 @@ fn rollout_workflows_to_extension(fetch_repos_job: &NamedJob) -> NamedJob {
 
     fn enable_auto_merge(token: &StepOutput) -> Step<gh_workflow::Run> {
         named::bash(indoc::indoc! {r#"
-            PR_NUMBER="${{ steps.create-pr.outputs.pull-request-number }}"
             if [ -n "$PR_NUMBER" ]; then
                 cd extension
                 gh pr merge "$PR_NUMBER" --auto --squash
             fi
         "#})
         .add_env(("GH_TOKEN", token.to_string()))
+        .add_env((
+            "PR_NUMBER",
+            "${{ steps.create-pr.outputs.pull-request-number }}",
+        ))
     }
 
     let (authenticate, token) = generate_token(
@@ -234,7 +243,7 @@ fn rollout_workflows_to_extension(fetch_repos_job: &NamedJob) -> NamedJob {
         .strategy(
             Strategy::default()
                 .fail_fast(false)
-                .max_parallel(5u32)
+                .max_parallel(10u32)
                 .matrix(json!({
                     "repo": format!("${{{{ fromJson(needs.{}.outputs.repos) }}}}", fetch_repos_job.name)
                 })),
@@ -253,8 +262,8 @@ fn rollout_workflows_to_extension(fetch_repos_job: &NamedJob) -> NamedJob {
 }
 
 fn create_rollout_tag(rollout_job: &NamedJob) -> NamedJob {
-    fn checkout_zed_repo(token: &StepOutput) -> Step<Use> {
-        steps::checkout_repo_with_token(token).add_with(("fetch-depth", "0"))
+    fn checkout_zed_repo(token: &StepOutput) -> CheckoutStep {
+        steps::checkout_repo().with_full_history().with_token(token)
     }
 
     fn update_rollout_tag() -> Step<Run> {

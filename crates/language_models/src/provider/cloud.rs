@@ -3,15 +3,17 @@ use anthropic::AnthropicModelMode;
 use anyhow::{Context as _, Result, anyhow};
 use chrono::{DateTime, Utc};
 use client::{Client, UserStore, zed_urls};
-use cloud_api_types::Plan;
+use cloud_api_types::{OrganizationId, Plan};
 use cloud_llm_client::{
-    CLIENT_SUPPORTS_STATUS_MESSAGES_HEADER_NAME, CLIENT_SUPPORTS_X_AI_HEADER_NAME, CompletionBody,
-    CompletionEvent, CountTokensBody, CountTokensResponse, ListModelsResponse,
+    CLIENT_SUPPORTS_STATUS_MESSAGES_HEADER_NAME, CLIENT_SUPPORTS_STATUS_STREAM_ENDED_HEADER_NAME,
+    CLIENT_SUPPORTS_X_AI_HEADER_NAME, CompletionBody, CompletionEvent, CompletionRequestStatus,
+    CountTokensBody, CountTokensResponse, ListModelsResponse,
     SERVER_SUPPORTS_STATUS_MESSAGES_HEADER_NAME, ZED_VERSION_HEADER_NAME,
 };
-use feature_flags::{CloudThinkingToggleFeatureFlag, FeatureFlagAppExt as _};
 use futures::{
-    AsyncBufReadExt, FutureExt, Stream, StreamExt, future::BoxFuture, stream::BoxStream,
+    AsyncBufReadExt, FutureExt, Stream, StreamExt,
+    future::BoxFuture,
+    stream::{self, BoxStream},
 };
 use google_ai::GoogleModelMode;
 use gpui::{AnyElement, AnyView, App, AsyncApp, Context, Entity, Subscription, Task};
@@ -19,11 +21,11 @@ use http_client::http::{HeaderMap, HeaderValue};
 use http_client::{AsyncBody, HttpClient, HttpRequestExt, Method, Response, StatusCode};
 use language_model::{
     AuthenticateError, IconOrSvg, LanguageModel, LanguageModelCacheConfiguration,
-    LanguageModelCompletionError, LanguageModelCompletionEvent, LanguageModelId, LanguageModelName,
-    LanguageModelProvider, LanguageModelProviderId, LanguageModelProviderName,
-    LanguageModelProviderState, LanguageModelRequest, LanguageModelToolChoice,
-    LanguageModelToolSchemaFormat, LlmApiToken, NeedsLlmTokenRefresh, PaymentRequiredError,
-    RateLimiter, RefreshLlmTokenListener,
+    LanguageModelCompletionError, LanguageModelCompletionEvent, LanguageModelEffortLevel,
+    LanguageModelId, LanguageModelName, LanguageModelProvider, LanguageModelProviderId,
+    LanguageModelProviderName, LanguageModelProviderState, LanguageModelRequest,
+    LanguageModelToolChoice, LanguageModelToolSchemaFormat, LlmApiToken, NeedsLlmTokenRefresh,
+    PaymentRequiredError, RateLimiter, RefreshLlmTokenListener,
 };
 use release_channel::AppVersion;
 use schemars::JsonSchema;
@@ -33,12 +35,14 @@ use settings::SettingsStore;
 pub use settings::ZedDotDevAvailableModel as AvailableModel;
 pub use settings::ZedDotDevAvailableProvider as AvailableProvider;
 use smol::io::{AsyncReadExt, BufReader};
+use std::collections::VecDeque;
 use std::pin::Pin;
+use std::str::FromStr;
 use std::sync::Arc;
+use std::task::Poll;
 use std::time::Duration;
 use thiserror::Error;
 use ui::{TintColor, prelude::*};
-use util::{ResultExt as _, maybe};
 
 use crate::provider::anthropic::{
     AnthropicEventMapper, count_anthropic_tokens_with_tiktoken, into_anthropic,
@@ -92,7 +96,7 @@ pub struct State {
     default_model: Option<Arc<cloud_llm_client::LanguageModel>>,
     default_fast_model: Option<Arc<cloud_llm_client::LanguageModel>>,
     recommended_models: Vec<Arc<cloud_llm_client::LanguageModel>>,
-    _fetch_models_task: Task<()>,
+    _user_store_subscription: Subscription,
     _settings_subscription: Subscription,
     _llm_token_subscription: Subscription,
 }
@@ -105,34 +109,41 @@ impl State {
         cx: &mut Context<Self>,
     ) -> Self {
         let refresh_llm_token_listener = RefreshLlmTokenListener::global(cx);
-        let mut current_user = user_store.read(cx).watch_current_user();
         Self {
             client: client.clone(),
             llm_api_token: LlmApiToken::default(),
-            user_store,
+            user_store: user_store.clone(),
             status,
             models: Vec::new(),
             default_model: None,
             default_fast_model: None,
             recommended_models: Vec::new(),
-            _fetch_models_task: cx.spawn(async move |this, cx| {
-                maybe!(async move {
-                    let (client, llm_api_token) = this
-                        .read_with(cx, |this, _cx| (client.clone(), this.llm_api_token.clone()))?;
+            _user_store_subscription: cx.subscribe(
+                &user_store,
+                move |this, _user_store, event, cx| match event {
+                    client::user::Event::PrivateUserInfoUpdated => {
+                        let status = *client.status().borrow();
+                        if status.is_signed_out() {
+                            return;
+                        }
 
-                    while current_user.borrow().is_none() {
-                        current_user.next().await;
+                        let client = this.client.clone();
+                        let llm_api_token = this.llm_api_token.clone();
+                        let organization_id = this
+                            .user_store
+                            .read(cx)
+                            .current_organization()
+                            .map(|organization| organization.id.clone());
+                        cx.spawn(async move |this, cx| {
+                            let response =
+                                Self::fetch_models(client, llm_api_token, organization_id).await?;
+                            this.update(cx, |this, cx| this.update_models(response, cx))
+                        })
+                        .detach_and_log_err(cx);
                     }
-
-                    let response =
-                        Self::fetch_models(client.clone(), llm_api_token.clone()).await?;
-                    this.update(cx, |this, cx| this.update_models(response, cx))?;
-                    anyhow::Ok(())
-                })
-                .await
-                .context("failed to fetch Zed models")
-                .log_err();
-            }),
+                    _ => {}
+                },
+            ),
             _settings_subscription: cx.observe_global::<SettingsStore>(|_, cx| {
                 cx.notify();
             }),
@@ -141,9 +152,17 @@ impl State {
                 move |this, _listener, _event, cx| {
                     let client = this.client.clone();
                     let llm_api_token = this.llm_api_token.clone();
+                    let organization_id = this
+                        .user_store
+                        .read(cx)
+                        .current_organization()
+                        .map(|o| o.id.clone());
                     cx.spawn(async move |this, cx| {
-                        llm_api_token.refresh(&client).await?;
-                        let response = Self::fetch_models(client, llm_api_token).await?;
+                        llm_api_token
+                            .refresh(&client, organization_id.clone())
+                            .await?;
+                        let response =
+                            Self::fetch_models(client, llm_api_token, organization_id).await?;
                         this.update(cx, |this, cx| {
                             this.update_models(response, cx);
                         })
@@ -167,26 +186,10 @@ impl State {
     }
 
     fn update_models(&mut self, response: ListModelsResponse, cx: &mut Context<Self>) {
-        let is_thinking_toggle_enabled = cx.has_flag::<CloudThinkingToggleFeatureFlag>();
-
         let mut models = Vec::new();
 
         for model in response.models {
             models.push(Arc::new(model.clone()));
-
-            if !is_thinking_toggle_enabled {
-                // Right now we represent thinking variants of models as separate models on the client,
-                // so we need to insert variants for any model that supports thinking.
-                if model.supports_thinking {
-                    models.push(Arc::new(cloud_llm_client::LanguageModel {
-                        id: cloud_llm_client::LanguageModelId(
-                            format!("{}-thinking", model.id).into(),
-                        ),
-                        display_name: format!("{} Thinking", model.display_name),
-                        ..model
-                    }));
-                }
-            }
         }
 
         self.default_model = models
@@ -220,9 +223,10 @@ impl State {
     async fn fetch_models(
         client: Arc<Client>,
         llm_api_token: LlmApiToken,
+        organization_id: Option<OrganizationId>,
     ) -> Result<ListModelsResponse> {
         let http_client = &client.http_client();
-        let token = llm_api_token.acquire(&client).await?;
+        let token = llm_api_token.acquire(&client, organization_id).await?;
 
         let request = http_client::Request::builder()
             .method(Method::GET)
@@ -284,11 +288,13 @@ impl CloudLanguageModelProvider {
         &self,
         model: Arc<cloud_llm_client::LanguageModel>,
         llm_api_token: LlmApiToken,
+        user_store: Entity<UserStore>,
     ) -> Arc<dyn LanguageModel> {
         Arc::new(CloudLanguageModel {
             id: LanguageModelId(SharedString::from(model.id.0.clone())),
             model,
             llm_api_token,
+            user_store,
             client: self.client.clone(),
             request_limiter: RateLimiter::new(4),
         })
@@ -317,36 +323,46 @@ impl LanguageModelProvider for CloudLanguageModelProvider {
     }
 
     fn default_model(&self, cx: &App) -> Option<Arc<dyn LanguageModel>> {
-        let default_model = self.state.read(cx).default_model.clone()?;
-        let llm_api_token = self.state.read(cx).llm_api_token.clone();
-        Some(self.create_language_model(default_model, llm_api_token))
+        let state = self.state.read(cx);
+        let default_model = state.default_model.clone()?;
+        let llm_api_token = state.llm_api_token.clone();
+        let user_store = state.user_store.clone();
+        Some(self.create_language_model(default_model, llm_api_token, user_store))
     }
 
     fn default_fast_model(&self, cx: &App) -> Option<Arc<dyn LanguageModel>> {
-        let default_fast_model = self.state.read(cx).default_fast_model.clone()?;
-        let llm_api_token = self.state.read(cx).llm_api_token.clone();
-        Some(self.create_language_model(default_fast_model, llm_api_token))
+        let state = self.state.read(cx);
+        let default_fast_model = state.default_fast_model.clone()?;
+        let llm_api_token = state.llm_api_token.clone();
+        let user_store = state.user_store.clone();
+        Some(self.create_language_model(default_fast_model, llm_api_token, user_store))
     }
 
     fn recommended_models(&self, cx: &App) -> Vec<Arc<dyn LanguageModel>> {
-        let llm_api_token = self.state.read(cx).llm_api_token.clone();
-        self.state
-            .read(cx)
+        let state = self.state.read(cx);
+        let llm_api_token = state.llm_api_token.clone();
+        let user_store = state.user_store.clone();
+        state
             .recommended_models
             .iter()
             .cloned()
-            .map(|model| self.create_language_model(model, llm_api_token.clone()))
+            .map(|model| {
+                self.create_language_model(model, llm_api_token.clone(), user_store.clone())
+            })
             .collect()
     }
 
     fn provided_models(&self, cx: &App) -> Vec<Arc<dyn LanguageModel>> {
-        let llm_api_token = self.state.read(cx).llm_api_token.clone();
-        self.state
-            .read(cx)
+        let state = self.state.read(cx);
+        let llm_api_token = state.llm_api_token.clone();
+        let user_store = state.user_store.clone();
+        state
             .models
             .iter()
             .cloned()
-            .map(|model| self.create_language_model(model, llm_api_token.clone()))
+            .map(|model| {
+                self.create_language_model(model, llm_api_token.clone(), user_store.clone())
+            })
             .collect()
     }
 
@@ -378,6 +394,7 @@ pub struct CloudLanguageModel {
     id: LanguageModelId,
     model: Arc<cloud_llm_client::LanguageModel>,
     llm_api_token: LlmApiToken,
+    user_store: Entity<UserStore>,
     client: Arc<Client>,
     request_limiter: RateLimiter,
 }
@@ -391,12 +408,15 @@ impl CloudLanguageModel {
     async fn perform_llm_completion(
         client: Arc<Client>,
         llm_api_token: LlmApiToken,
+        organization_id: Option<OrganizationId>,
         app_version: Option<Version>,
         body: CompletionBody,
     ) -> Result<PerformLlmCompletionResponse> {
         let http_client = &client.http_client();
 
-        let mut token = llm_api_token.acquire(&client).await?;
+        let mut token = llm_api_token
+            .acquire(&client, organization_id.clone())
+            .await?;
         let mut refreshed_token = false;
 
         loop {
@@ -409,6 +429,7 @@ impl CloudLanguageModel {
                 .header("Content-Type", "application/json")
                 .header("Authorization", format!("Bearer {token}"))
                 .header(CLIENT_SUPPORTS_STATUS_MESSAGES_HEADER_NAME, "true")
+                .header(CLIENT_SUPPORTS_STATUS_STREAM_ENDED_HEADER_NAME, "true")
                 .body(serde_json::to_string(&body)?.into())?;
 
             let mut response = http_client.send(request).await?;
@@ -426,7 +447,9 @@ impl CloudLanguageModel {
             }
 
             if !refreshed_token && response.needs_llm_token_refresh() {
-                token = llm_api_token.refresh(&client).await?;
+                token = llm_api_token
+                    .refresh(&client, organization_id.clone())
+                    .await?;
                 refreshed_token = true;
                 continue;
             }
@@ -565,6 +588,10 @@ impl LanguageModel for CloudLanguageModel {
         }
     }
 
+    fn is_latest(&self) -> bool {
+        self.model.is_latest
+    }
+
     fn supports_tools(&self) -> bool {
         self.model.supports_tools
     }
@@ -575,6 +602,22 @@ impl LanguageModel for CloudLanguageModel {
 
     fn supports_thinking(&self) -> bool {
         self.model.supports_thinking
+    }
+
+    fn supports_fast_mode(&self) -> bool {
+        self.model.supports_fast_mode
+    }
+
+    fn supported_effort_levels(&self) -> Vec<LanguageModelEffortLevel> {
+        self.model
+            .supported_effort_levels
+            .iter()
+            .map(|effort_level| LanguageModelEffortLevel {
+                name: effort_level.name.clone().into(),
+                value: effort_level.value.clone().into(),
+                is_default: effort_level.is_default.unwrap_or(false),
+            })
+            .collect()
     }
 
     fn supports_streaming_tools(&self) -> bool {
@@ -660,12 +703,17 @@ impl LanguageModel for CloudLanguageModel {
             cloud_llm_client::LanguageModelProvider::Google => {
                 let client = self.client.clone();
                 let llm_api_token = self.llm_api_token.clone();
+                let organization_id = self
+                    .user_store
+                    .read(cx)
+                    .current_organization()
+                    .map(|o| o.id.clone());
                 let model_id = self.model.id.to_string();
                 let generate_content_request =
                     into_google(request, model_id.clone(), GoogleModelMode::Default);
                 async move {
                     let http_client = &client.http_client();
-                    let token = llm_api_token.acquire(&client).await?;
+                    let token = llm_api_token.acquire(&client, organization_id).await?;
 
                     let request_body = CountTokensBody {
                         provider: cloud_llm_client::LanguageModelProvider::Google,
@@ -726,18 +774,24 @@ impl LanguageModel for CloudLanguageModel {
         let prompt_id = request.prompt_id.clone();
         let intent = request.intent;
         let app_version = Some(cx.update(|cx| AppVersion::global(cx)));
+        let user_store = self.user_store.clone();
+        let organization_id = cx.update(|cx| {
+            user_store
+                .read(cx)
+                .current_organization()
+                .map(|o| o.id.clone())
+        });
         let thinking_allowed = request.thinking_allowed;
-        let is_thinking_toggle_enabled =
-            cx.update(|cx| cx.has_flag::<CloudThinkingToggleFeatureFlag>());
-        let enable_thinking = if is_thinking_toggle_enabled {
-            thinking_allowed && self.model.supports_thinking
-        } else {
-            thinking_allowed && self.model.id.0.ends_with("-thinking")
-        };
+        let enable_thinking = thinking_allowed && self.model.supports_thinking;
         let provider_name = provider_name(&self.model.provider);
         match self.model.provider {
             cloud_llm_client::LanguageModelProvider::Anthropic => {
-                let request = into_anthropic(
+                let effort = request
+                    .thinking_effort
+                    .as_ref()
+                    .and_then(|effort| anthropic::Effort::from_str(effort).ok());
+
+                let mut request = into_anthropic(
                     request,
                     self.model.id.to_string(),
                     1.0,
@@ -750,8 +804,15 @@ impl LanguageModel for CloudLanguageModel {
                         AnthropicModelMode::Default
                     },
                 );
+
+                if enable_thinking && effort.is_some() {
+                    request.thinking = Some(anthropic::Thinking::Adaptive);
+                    request.output_config = Some(anthropic::OutputConfig { effort });
+                }
+
                 let client = self.client.clone();
                 let llm_api_token = self.llm_api_token.clone();
+                let organization_id = organization_id.clone();
                 let future = self.request_limiter.stream(async move {
                     let PerformLlmCompletionResponse {
                         response,
@@ -759,6 +820,7 @@ impl LanguageModel for CloudLanguageModel {
                     } = Self::perform_llm_completion(
                         client.clone(),
                         llm_api_token,
+                        organization_id,
                         app_version,
                         CompletionBody {
                             thread_id,
@@ -788,8 +850,13 @@ impl LanguageModel for CloudLanguageModel {
             cloud_llm_client::LanguageModelProvider::OpenAi => {
                 let client = self.client.clone();
                 let llm_api_token = self.llm_api_token.clone();
+                let organization_id = organization_id.clone();
+                let effort = request
+                    .thinking_effort
+                    .as_ref()
+                    .and_then(|effort| open_ai::ReasoningEffort::from_str(effort).ok());
 
-                let request = into_open_ai_response(
+                let mut request = into_open_ai_response(
                     request,
                     &self.model.id.0,
                     self.model.supports_parallel_tool_calls,
@@ -797,6 +864,11 @@ impl LanguageModel for CloudLanguageModel {
                     None,
                     None,
                 );
+
+                if enable_thinking && let Some(effort) = effort {
+                    request.reasoning = Some(open_ai::responses::ReasoningConfig { effort });
+                }
+
                 let future = self.request_limiter.stream(async move {
                     let PerformLlmCompletionResponse {
                         response,
@@ -804,6 +876,7 @@ impl LanguageModel for CloudLanguageModel {
                     } = Self::perform_llm_completion(
                         client.clone(),
                         llm_api_token,
+                        organization_id,
                         app_version,
                         CompletionBody {
                             thread_id,
@@ -837,6 +910,7 @@ impl LanguageModel for CloudLanguageModel {
                     None,
                 );
                 let llm_api_token = self.llm_api_token.clone();
+                let organization_id = organization_id.clone();
                 let future = self.request_limiter.stream(async move {
                     let PerformLlmCompletionResponse {
                         response,
@@ -844,6 +918,7 @@ impl LanguageModel for CloudLanguageModel {
                     } = Self::perform_llm_completion(
                         client.clone(),
                         llm_api_token,
+                        organization_id,
                         app_version,
                         CompletionBody {
                             thread_id,
@@ -878,6 +953,7 @@ impl LanguageModel for CloudLanguageModel {
                     } = Self::perform_llm_completion(
                         client.clone(),
                         llm_api_token,
+                        organization_id,
                         app_version,
                         CompletionBody {
                             thread_id,
@@ -916,24 +992,62 @@ where
         + 'static,
 {
     let provider = provider.clone();
-    stream
-        .flat_map(move |event| {
-            futures::stream::iter(match event {
-                Err(error) => {
-                    vec![Err(LanguageModelCompletionError::from(error))]
+    let mut stream = stream.fuse();
+
+    let mut saw_stream_ended = false;
+
+    let mut done = false;
+    let mut pending = VecDeque::new();
+
+    stream::poll_fn(move |cx| {
+        loop {
+            if let Some(item) = pending.pop_front() {
+                return Poll::Ready(Some(item));
+            }
+
+            if done {
+                return Poll::Ready(None);
+            }
+
+            match stream.poll_next_unpin(cx) {
+                Poll::Ready(Some(event)) => {
+                    let items = match event {
+                        Err(error) => {
+                            vec![Err(LanguageModelCompletionError::from(error))]
+                        }
+                        Ok(CompletionEvent::Status(CompletionRequestStatus::StreamEnded)) => {
+                            saw_stream_ended = true;
+                            vec![]
+                        }
+                        Ok(CompletionEvent::Status(status)) => {
+                            LanguageModelCompletionEvent::from_completion_request_status(
+                                status,
+                                provider.clone(),
+                            )
+                            .transpose()
+                            .map(|event| vec![event])
+                            .unwrap_or_default()
+                        }
+                        Ok(CompletionEvent::Event(event)) => map_callback(event),
+                    };
+                    pending.extend(items);
                 }
-                Ok(CompletionEvent::Status(event)) => {
-                    vec![
-                        LanguageModelCompletionEvent::from_completion_request_status(
-                            event,
-                            provider.clone(),
-                        ),
-                    ]
+                Poll::Ready(None) => {
+                    done = true;
+
+                    if !saw_stream_ended {
+                        return Poll::Ready(Some(Err(
+                            LanguageModelCompletionError::StreamEndedUnexpectedly {
+                                provider: provider.clone(),
+                            },
+                        )));
+                    }
                 }
-                Ok(CompletionEvent::Event(event)) => map_callback(event),
-            })
-        })
-        .boxed()
+                Poll::Pending => return Poll::Pending,
+            }
+        }
+    })
+    .boxed()
 }
 
 fn provider_name(provider: &cloud_llm_client::LanguageModelProvider) -> LanguageModelProviderName {
