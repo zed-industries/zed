@@ -515,7 +515,7 @@ impl MarksState {
         cx: &mut Context<Self>,
     ) {
         let on_change = cx.subscribe(buffer_handle, move |this, buffer, event, cx| match event {
-            BufferEvent::Edited => {
+            BufferEvent::Edited { .. } => {
                 if let Some(path) = this.path_for_buffer(&buffer, cx) {
                     this.serialize_buffer_marks(path, &buffer, cx);
                 }

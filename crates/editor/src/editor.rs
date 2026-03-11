@@ -209,6 +209,7 @@ use theme::{
 use ui::{
     Avatar, ButtonSize, ButtonStyle, ContextMenu, Disclosure, IconButton, IconButtonShape,
     IconName, IconSize, Indicator, Key, Tooltip, h_flex, prelude::*, scrollbars::ScrollbarAutoHide,
+    utils::WithRemSize,
 };
 use ui_input::ErasedEditor;
 use util::{RangeExt, ResultExt, TryFutureExt, maybe, post_inc};
@@ -7500,7 +7501,8 @@ impl Editor {
                     let mut read_ranges = Vec::new();
                     for highlight in highlights {
                         let buffer_id = cursor_buffer.read(cx).remote_id();
-                        for (excerpt_id, excerpt_range) in buffer.excerpts_for_buffer(buffer_id, cx)
+                        for (excerpt_id, _, excerpt_range) in
+                            buffer.excerpts_for_buffer(buffer_id, cx)
                         {
                             let start = highlight
                                 .range
@@ -20539,7 +20541,7 @@ impl Editor {
         let mut all_folded_excerpt_ids = Vec::new();
         for buffer_id in &ids_to_fold {
             let folded_excerpts = self.buffer().read(cx).excerpts_for_buffer(*buffer_id, cx);
-            all_folded_excerpt_ids.extend(folded_excerpts.into_iter().map(|(id, _)| id));
+            all_folded_excerpt_ids.extend(folded_excerpts.into_iter().map(|(id, _, _)| id));
         }
 
         self.display_map.update(cx, |display_map, cx| {
@@ -20569,7 +20571,7 @@ impl Editor {
             display_map.unfold_buffers([buffer_id], cx);
         });
         cx.emit(EditorEvent::BufferFoldToggled {
-            ids: unfolded_excerpts.iter().map(|&(id, _)| id).collect(),
+            ids: unfolded_excerpts.iter().map(|&(id, _, _)| id).collect(),
             folded: false,
         });
         cx.notify();
@@ -22941,7 +22943,7 @@ impl Editor {
                 .snapshot();
 
             let mut handled = false;
-            for (id, ExcerptRange { context, .. }) in
+            for (id, _, ExcerptRange { context, .. }) in
                 self.buffer.read(cx).excerpts_for_buffer(buffer_id, cx)
             {
                 if context.start.cmp(&position, &snapshot).is_ge()
@@ -24127,7 +24129,10 @@ impl Editor {
         cx: &mut Context<Self>,
     ) {
         match event {
-            multi_buffer::Event::Edited { edited_buffer } => {
+            multi_buffer::Event::Edited {
+                edited_buffer,
+                is_local,
+            } => {
                 self.scrollbar_marker_state.dirty = true;
                 self.active_indent_guides_state.dirty = true;
                 self.refresh_active_diagnostics(cx);
@@ -24137,7 +24142,7 @@ impl Editor {
                 self.refresh_matching_bracket_highlights(&snapshot, cx);
                 self.refresh_outline_symbols_at_cursor(cx);
                 self.refresh_sticky_headers(&snapshot, cx);
-                if self.has_active_edit_prediction() {
+                if *is_local && self.has_active_edit_prediction() {
                     self.update_visible_edit_prediction(window, cx);
                 }
 
@@ -29060,12 +29065,41 @@ impl BreakpointPromptEditor {
             },
         )
     }
+
+    fn render_close_button(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let focus_handle = self.prompt.focus_handle(cx);
+        IconButton::new("cancel", IconName::Close)
+            .icon_color(Color::Muted)
+            .shape(IconButtonShape::Square)
+            .tooltip(move |_window, cx| {
+                Tooltip::for_action_in("Cancel", &menu::Cancel, &focus_handle, cx)
+            })
+            .on_click(cx.listener(|this, _, window, cx| {
+                this.cancel(&menu::Cancel, window, cx);
+            }))
+    }
+
+    fn render_confirm_button(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let focus_handle = self.prompt.focus_handle(cx);
+        IconButton::new("confirm", IconName::Return)
+            .icon_color(Color::Muted)
+            .shape(IconButtonShape::Square)
+            .tooltip(move |_window, cx| {
+                Tooltip::for_action_in("Confirm", &menu::Confirm, &focus_handle, cx)
+            })
+            .on_click(cx.listener(|this, _, window, cx| {
+                this.confirm(&menu::Confirm, window, cx);
+            }))
+    }
 }
 
 impl Render for BreakpointPromptEditor {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let ui_font_size = ThemeSettings::get_global(cx).ui_font_size(cx);
         let editor_margins = *self.editor_margins.lock();
         let gutter_dimensions = editor_margins.gutter;
+        let left_gutter_width = gutter_dimensions.full_width() + (gutter_dimensions.margin / 2.0);
+        let right_padding = editor_margins.right + px(9.);
         h_flex()
             .key_context("Editor")
             .bg(cx.theme().colors().editor_background)
@@ -29073,10 +29107,34 @@ impl Render for BreakpointPromptEditor {
             .border_color(cx.theme().status().info_border)
             .size_full()
             .py(window.line_height() / 2.5)
+            .pr(right_padding)
             .on_action(cx.listener(Self::confirm))
             .on_action(cx.listener(Self::cancel))
-            .child(h_flex().w(gutter_dimensions.full_width() + (gutter_dimensions.margin / 2.0)))
-            .child(div().flex_1().child(self.render_prompt_editor(cx)))
+            .child(
+                WithRemSize::new(ui_font_size)
+                    .h_full()
+                    .w(left_gutter_width)
+                    .flex()
+                    .flex_row()
+                    .flex_shrink_0()
+                    .items_center()
+                    .justify_center()
+                    .gap_1()
+                    .child(self.render_close_button(cx)),
+            )
+            .child(
+                h_flex()
+                    .w_full()
+                    .justify_between()
+                    .child(div().flex_1().child(self.render_prompt_editor(cx)))
+                    .child(
+                        WithRemSize::new(ui_font_size)
+                            .flex()
+                            .flex_row()
+                            .items_center()
+                            .child(self.render_confirm_button(cx)),
+                    ),
+            )
     }
 }
 

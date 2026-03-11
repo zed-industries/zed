@@ -1,13 +1,10 @@
 use std::sync::Arc;
 
 use component::{Component, ComponentScope, example_group_with_title, single_example};
-use gpui::{
-    AnyElement, AnyView, ClickEvent, MouseButton, MouseDownEvent, Pixels, linear_color_stop,
-    linear_gradient, px,
-};
+use gpui::{AnyElement, AnyView, ClickEvent, MouseButton, MouseDownEvent, Pixels, px};
 use smallvec::SmallVec;
 
-use crate::{Disclosure, prelude::*};
+use crate::{Disclosure, GradientFade, prelude::*};
 
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy, Default)]
 pub enum ListItemSpacing {
@@ -34,6 +31,9 @@ pub struct ListItem {
     /// A slot for content that appears on hover after the children
     /// It will obscure the `end_slot` when visible.
     end_hover_slot: Option<AnyElement>,
+    /// When true, renders a gradient fade overlay before the `end_hover_slot`
+    /// to smoothly truncate overflowing content.
+    end_hover_gradient_overlay: bool,
     toggle: Option<bool>,
     inset: bool,
     on_click: Option<Box<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>>,
@@ -63,6 +63,7 @@ impl ListItem {
             start_slot: None,
             end_slot: None,
             end_hover_slot: None,
+            end_hover_gradient_overlay: false,
             toggle: None,
             inset: false,
             on_click: None,
@@ -169,6 +170,11 @@ impl ListItem {
         self
     }
 
+    pub fn end_hover_gradient_overlay(mut self, show: bool) -> Self {
+        self.end_hover_gradient_overlay = show;
+        self
+    }
+
     pub fn outlined(mut self) -> Self {
         self.outlined = true;
         self
@@ -220,34 +226,12 @@ impl RenderOnce for ListItem {
             color.panel_background
         };
 
-        let end_hover_gradient_overlay = div()
-            .id("gradient_overlay")
-            .absolute()
-            .top_0()
-            .right_0()
-            .w_24()
-            .h_full()
-            .bg(linear_gradient(
-                90.,
-                linear_color_stop(base_bg, 0.6),
-                linear_color_stop(base_bg.opacity(0.0), 0.),
-            ))
-            .when_some(self.group_name.clone(), |s, group_name| {
-                s.group_hover(group_name.clone(), |s| {
-                    s.bg(linear_gradient(
-                        90.,
-                        linear_color_stop(color.element_hover, 0.6),
-                        linear_color_stop(color.element_hover.opacity(0.0), 0.),
-                    ))
-                })
-                .group_active(group_name, |s| {
-                    s.bg(linear_gradient(
-                        90.,
-                        linear_color_stop(color.element_active, 0.6),
-                        linear_color_stop(color.element_active.opacity(0.0), 0.),
-                    ))
-                })
-            });
+        let end_hover_gradient_overlay =
+            GradientFade::new(base_bg, color.element_hover, color.element_active)
+                .width(px(96.0))
+                .when_some(self.group_name.clone(), |fade, group| {
+                    fade.group_name(group)
+                });
 
         h_flex()
             .id(self.id)
@@ -387,7 +371,9 @@ impl RenderOnce for ListItem {
                                 .right(DynamicSpacing::Base06.rems(cx))
                                 .top_0()
                                 .visible_on_hover("list_item")
-                                .child(end_hover_gradient_overlay)
+                                .when(self.end_hover_gradient_overlay, |this| {
+                                    this.child(end_hover_gradient_overlay)
+                                })
                                 .child(end_hover_slot),
                         )
                     }),

@@ -242,6 +242,7 @@ pub struct AgentSessionInfo {
     pub cwd: Option<PathBuf>,
     pub title: Option<SharedString>,
     pub updated_at: Option<DateTime<Utc>>,
+    pub created_at: Option<DateTime<Utc>>,
     pub meta: Option<acp::Meta>,
 }
 
@@ -252,6 +253,7 @@ impl AgentSessionInfo {
             cwd: None,
             title: None,
             updated_at: None,
+            created_at: None,
             meta: None,
         }
     }

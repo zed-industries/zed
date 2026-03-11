@@ -3183,16 +3183,8 @@ async fn test_agent_connection(cx: &mut TestAppContext) {
     let thread_store = cx.new(|cx| ThreadStore::new(cx));
 
     // Create agent and connection
-    let agent = NativeAgent::new(
-        project.clone(),
-        thread_store,
-        templates.clone(),
-        None,
-        fake_fs.clone(),
-        &mut cx.to_async(),
-    )
-    .await
-    .unwrap();
+    let agent = cx
+        .update(|cx| NativeAgent::new(thread_store, templates.clone(), None, fake_fs.clone(), cx));
     let connection = NativeAgentConnection(agent.clone());
 
     // Create a thread using new_thread
@@ -4390,16 +4382,9 @@ async fn test_subagent_tool_call_end_to_end(cx: &mut TestAppContext) {
     .await;
     let project = Project::test(fs.clone(), [path!("/a").as_ref()], cx).await;
     let thread_store = cx.new(|cx| ThreadStore::new(cx));
-    let agent = NativeAgent::new(
-        project.clone(),
-        thread_store.clone(),
-        Templates::new(),
-        None,
-        fs.clone(),
-        &mut cx.to_async(),
-    )
-    .await
-    .unwrap();
+    let agent = cx.update(|cx| {
+        NativeAgent::new(thread_store.clone(), Templates::new(), None, fs.clone(), cx)
+    });
     let connection = Rc::new(NativeAgentConnection(agent.clone()));
 
     let acp_thread = cx
@@ -4532,16 +4517,9 @@ async fn test_subagent_tool_output_does_not_include_thinking(cx: &mut TestAppCon
     .await;
     let project = Project::test(fs.clone(), [path!("/a").as_ref()], cx).await;
     let thread_store = cx.new(|cx| ThreadStore::new(cx));
-    let agent = NativeAgent::new(
-        project.clone(),
-        thread_store.clone(),
-        Templates::new(),
-        None,
-        fs.clone(),
-        &mut cx.to_async(),
-    )
-    .await
-    .unwrap();
+    let agent = cx.update(|cx| {
+        NativeAgent::new(thread_store.clone(), Templates::new(), None, fs.clone(), cx)
+    });
     let connection = Rc::new(NativeAgentConnection(agent.clone()));
 
     let acp_thread = cx
@@ -4687,16 +4665,9 @@ async fn test_subagent_tool_call_cancellation_during_task_prompt(cx: &mut TestAp
     .await;
     let project = Project::test(fs.clone(), [path!("/a").as_ref()], cx).await;
     let thread_store = cx.new(|cx| ThreadStore::new(cx));
-    let agent = NativeAgent::new(
-        project.clone(),
-        thread_store.clone(),
-        Templates::new(),
-        None,
-        fs.clone(),
-        &mut cx.to_async(),
-    )
-    .await
-    .unwrap();
+    let agent = cx.update(|cx| {
+        NativeAgent::new(thread_store.clone(), Templates::new(), None, fs.clone(), cx)
+    });
     let connection = Rc::new(NativeAgentConnection(agent.clone()));
 
     let acp_thread = cx
@@ -4824,16 +4795,9 @@ async fn test_subagent_tool_resume_session(cx: &mut TestAppContext) {
     .await;
     let project = Project::test(fs.clone(), [path!("/a").as_ref()], cx).await;
     let thread_store = cx.new(|cx| ThreadStore::new(cx));
-    let agent = NativeAgent::new(
-        project.clone(),
-        thread_store.clone(),
-        Templates::new(),
-        None,
-        fs.clone(),
-        &mut cx.to_async(),
-    )
-    .await
-    .unwrap();
+    let agent = cx.update(|cx| {
+        NativeAgent::new(thread_store.clone(), Templates::new(), None, fs.clone(), cx)
+    });
     let connection = Rc::new(NativeAgentConnection(agent.clone()));
 
     let acp_thread = cx
@@ -5249,16 +5213,9 @@ async fn test_subagent_context_window_warning(cx: &mut TestAppContext) {
     .await;
     let project = Project::test(fs.clone(), [path!("/a").as_ref()], cx).await;
     let thread_store = cx.new(|cx| ThreadStore::new(cx));
-    let agent = NativeAgent::new(
-        project.clone(),
-        thread_store.clone(),
-        Templates::new(),
-        None,
-        fs.clone(),
-        &mut cx.to_async(),
-    )
-    .await
-    .unwrap();
+    let agent = cx.update(|cx| {
+        NativeAgent::new(thread_store.clone(), Templates::new(), None, fs.clone(), cx)
+    });
     let connection = Rc::new(NativeAgentConnection(agent.clone()));
 
     let acp_thread = cx
@@ -5382,16 +5339,9 @@ async fn test_subagent_no_context_window_warning_when_already_at_warning(cx: &mu
     .await;
     let project = Project::test(fs.clone(), [path!("/a").as_ref()], cx).await;
     let thread_store = cx.new(|cx| ThreadStore::new(cx));
-    let agent = NativeAgent::new(
-        project.clone(),
-        thread_store.clone(),
-        Templates::new(),
-        None,
-        fs.clone(),
-        &mut cx.to_async(),
-    )
-    .await
-    .unwrap();
+    let agent = cx.update(|cx| {
+        NativeAgent::new(thread_store.clone(), Templates::new(), None, fs.clone(), cx)
+    });
     let connection = Rc::new(NativeAgentConnection(agent.clone()));
 
     let acp_thread = cx
@@ -5563,16 +5513,9 @@ async fn test_subagent_error_propagation(cx: &mut TestAppContext) {
     .await;
     let project = Project::test(fs.clone(), [path!("/a").as_ref()], cx).await;
     let thread_store = cx.new(|cx| ThreadStore::new(cx));
-    let agent = NativeAgent::new(
-        project.clone(),
-        thread_store.clone(),
-        Templates::new(),
-        None,
-        fs.clone(),
-        &mut cx.to_async(),
-    )
-    .await
-    .unwrap();
+    let agent = cx.update(|cx| {
+        NativeAgent::new(thread_store.clone(), Templates::new(), None, fs.clone(), cx)
+    });
     let connection = Rc::new(NativeAgentConnection(agent.clone()));
 
     let acp_thread = cx
