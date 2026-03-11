@@ -250,10 +250,6 @@ impl Vim {
         Vim::take_forced_motion(cx);
         let count = Vim::take_count(cx);
 
-        if self.selected_register.is_none() {
-            self.selected_register = cx.global::<VimGlobals>().recorded_register;
-        }
-
         let Some((mut actions, selection, mode)) = Vim::update_globals(cx, |globals, _| {
             let actions = globals.recorded_actions.clone();
             if actions.is_empty() {
@@ -295,6 +291,22 @@ impl Vim {
         }) else {
             return;
         };
+
+        // Dot repeat always uses the recorded register, ignoring any "X. override —
+        // the register is an inherent part of the recorded action. For numbered
+        // registers, neovim increments on each dot repeat so "1p . . uses
+        // registers 2, 3, etc.
+        let recorded_reg = cx.global::<VimGlobals>().recorded_register;
+        if let Some(reg) = recorded_reg.filter(|r| *r >= '1' && *r <= '9') {
+            let next = ((reg as u8 + 1) as char).min('9');
+            self.selected_register = Some(next);
+            Vim::update_globals(cx, |globals, _| {
+                globals.recorded_register = Some(next);
+            });
+        } else {
+            self.selected_register = recorded_reg;
+        }
+
         if mode != Some(self.mode) {
             if let Some(mode) = mode {
                 self.switch_mode(mode, false, window, cx)
@@ -406,7 +418,7 @@ mod test {
     use gpui::EntityInputHandler;
 
     use crate::{
-        Vim, VimGlobals,
+        VimGlobals,
         state::Mode,
         test::{NeovimBackedTestContext, VimTestContext},
     };
@@ -446,85 +458,111 @@ mod test {
     }
 
     #[gpui::test]
-    async fn test_dot_repeat_paste(cx: &mut gpui::TestAppContext) {
-        let mut cx = VimTestContext::new(cx, true).await;
-
-        cx.set_state("ˇhello\n", Mode::Normal);
-        cx.simulate_keystrokes("y y p");
-        cx.assert_state("hello\nˇhello\n", Mode::Normal);
-        cx.simulate_keystrokes(".");
-        cx.assert_state("hello\nhello\nˇhello\n", Mode::Normal);
-    }
-
-    #[gpui::test]
     async fn test_dot_repeat_registers(cx: &mut gpui::TestAppContext) {
-        let mut cx = VimTestContext::new(cx, true).await;
+        let mut cx = NeovimBackedTestContext::new(cx).await;
 
-        // test that dot repeat respects the blackhole register
-        cx.set_state(
-            indoc! {"
-            ˇtocopytext
-            1
-            2
-            3
-        "},
-            Mode::Normal,
-        );
-        cx.simulate_keystrokes("y y j \" _ d d . p");
-        cx.assert_state(
-            indoc! {"
-            tocopytext
-            3
-            ˇtocopytext
-        "},
-            Mode::Normal,
-        );
+        // basic paste repeat uses the unnamed register
+        cx.set_shared_state("ˇhello\n").await;
+        cx.simulate_shared_keystrokes("y y p").await;
+        cx.shared_state().await.assert_matches();
+        cx.simulate_shared_keystrokes(".").await;
+        cx.shared_state().await.assert_matches();
 
-        // test that dot repeat respects a named register
-        cx.set_state(
-            indoc! {"
+        // "_ (blackhole) is recorded and replayed — . does not paste the yanked text
+        cx.set_shared_state(indoc! {"
             ˇtocopytext
             1
             2
             3
-        "},
-            Mode::Normal,
-        );
-        cx.simulate_keystrokes("y y j \" 1 y y j j \" 1 p .");
-        cx.assert_state(
-            indoc! {"
-            tocopytext
+        "})
+            .await;
+        cx.simulate_shared_keystrokes("y y j \" _ d d . p").await;
+        cx.shared_state().await.assert_matches();
+
+        // the recorded register is replayed, not whatever is in the unnamed register
+        cx.set_shared_state(indoc! {"
+            ˇtocopytext
             1
             2
             3
-            1
+        "})
+            .await;
+        cx.simulate_shared_keystrokes("y y j \" 1 y y j j \" 1 p .")
+            .await;
+        cx.shared_state().await.assert_matches();
+
+        // "X. ignores the override and always uses the recorded register — both dd
+        // calls go into register a, so register b is empty and "bp pastes nothing
+        cx.set_shared_state(indoc! {"
+            ˇone
+            two
+            three
+        "})
+            .await;
+        cx.simulate_shared_keystrokes("\" a d d \" b .").await;
+        cx.shared_state().await.assert_matches();
+        cx.simulate_shared_keystrokes("\" a p \" b p").await;
+        cx.shared_state().await.assert_matches();
+
+        // same rule holds for paste: "b. still pastes from the recorded register a
+        cx.set_shared_state(indoc! {"
+            ˇline one
+            line two
+        "})
+            .await;
+        cx.simulate_shared_keystrokes("\" a y y j \" a p . \" b .")
+            .await;
+        cx.shared_state().await.assert_matches();
+
+        // numbered registers cycle on each dot repeat: "1p . . uses registers 2, 3, …
+        cx.set_shared_state(indoc! {"
             ˇ1
-        "},
-            Mode::Normal,
-        );
-
-        // test that providing a register to . overrides the recorded register
-        cx.set_state(
-            indoc! {"
-            ˇtocopytext
-            1
             2
             3
-        "},
-            Mode::Normal,
-        );
-        cx.simulate_keystrokes("y y j \" a d d j \" b .");
-        cx.assert_state("tocopytext\n2\nˇ", Mode::Normal);
-        // register a should still have 1
-        // register b should have 3
-        cx.update(|_, cx| {
-            Vim::update_globals(cx, |globals, cx| {
-                let reg_a = globals.read_register(Some('a'), None, cx).unwrap();
-                assert_eq!(reg_a.text, "1\n");
-                let reg_b = globals.read_register(Some('b'), None, cx).unwrap();
-                assert_eq!(reg_b.text, "3\n");
-            });
-        });
+            4
+            5
+            6
+            7
+            8
+            9
+        "})
+            .await;
+        cx.simulate_shared_keystrokes("d d . . . . . . . .").await;
+        cx.shared_state().await.assert_matches();
+        cx.simulate_shared_keystrokes("\" 1 p . . . . . . . . .")
+            .await;
+        cx.shared_state().await.assert_matches();
+
+        // cycling caps at register 9 — no overflow past '9'
+        cx.set_shared_state(indoc! {"
+            ˇa
+            b
+            c
+        "})
+            .await;
+        cx.simulate_shared_keystrokes("\" 9 y y \" 9 p . .").await;
+        cx.shared_state().await.assert_matches();
+
+        // unnamed register repeat: dd records None, so . pastes the same deleted text
+        cx.set_shared_state(indoc! {"
+            ˇone
+            two
+            three
+        "})
+            .await;
+        cx.simulate_shared_keystrokes("d d p .").await;
+        cx.shared_state().await.assert_matches();
+
+        // after "1p cycles to 2, a fresh "ap resets recorded_register to a,
+        // so the next . uses a (not 3)
+        cx.set_shared_state(indoc! {"
+            ˇone
+            two
+            three
+        "})
+            .await;
+        cx.simulate_shared_keystrokes("\" a y y j \" 1 y y k \" 1 p . \" a p .").await;
+        cx.shared_state().await.assert_matches();
     }
 
     #[gpui::test]
