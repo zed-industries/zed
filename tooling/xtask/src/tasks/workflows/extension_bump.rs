@@ -298,13 +298,17 @@ fn bump_version(
         EXTENSION_NAME="$(sed -n 's/^name = "\(.*\)"/\1/p' < extension.toml | head -1 | tr -d '[:space:]')"
 
         if [[ "$WORKING_DIR" == "." || -z "$WORKING_DIR" ]]; then
-            echo "title=Bump version to ${{NEW_VERSION}}" >> "$GITHUB_OUTPUT"
-            echo "body=This PR bumps the version of this extension to v${{NEW_VERSION}}" >> "$GITHUB_OUTPUT"
-            echo "branch_name=zed-zippy-autobump" >> "$GITHUB_OUTPUT"
+            {{
+                echo "title=Bump version to ${{NEW_VERSION}}";
+                echo "body=This PR bumps the version of this extension to v${{NEW_VERSION}}";
+                echo "branch_name=zed-zippy-autobump";
+            }} >> "$GITHUB_OUTPUT"
         else
-            echo "title=${{EXTENSION_ID}}: Bump to v${{NEW_VERSION}}" >> "$GITHUB_OUTPUT"
-            echo "body=This PR bumps the version of the ${{EXTENSION_NAME}} extension to v${{NEW_VERSION}}" >> "$GITHUB_OUTPUT"
-            echo "branch_name=zed-zippy-${{EXTENSION_ID}}-autobump" >> "$GITHUB_OUTPUT"
+            {{
+                echo "title=${{EXTENSION_ID}}: Bump to v${{NEW_VERSION}}";
+                echo "body=This PR bumps the version of the ${{EXTENSION_NAME}} extension to v${{NEW_VERSION}}";
+                echo "branch_name=zed-zippy-${{EXTENSION_ID}}-autobump";
+            }} >> "$GITHUB_OUTPUT"
         fi
 
         echo "new_version=${{NEW_VERSION}}" >> "$GITHUB_OUTPUT"
