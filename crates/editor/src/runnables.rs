@@ -27,6 +27,7 @@ use crate::{
     ToggleCodeActions, UPDATE_DEBOUNCE, display_map::DisplayRow,
 };
 
+#[derive(Debug)]
 pub(super) struct RunnableData {
     runnables: HashMap<BufferId, (Global, BTreeMap<BufferRow, RunnableTasks>)>,
     runnables_update_task: Task<()>,
@@ -689,5 +690,226 @@ impl Editor {
         let buffer = self.buffer.read(cx).buffer(buffer_id)?;
         let tasks = Arc::new(tasks.to_owned());
         Some((buffer, row, tasks))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{sync::Arc, time::Duration};
+
+    use gpui::{AppContext as _, Task, TestAppContext};
+    use indoc::indoc;
+    use language::ContextProvider;
+    use languages::rust_lang;
+    use multi_buffer::{MultiBuffer, PathKey};
+    use project::{FakeFs, Project};
+    use serde_json::json;
+    use task::{TaskTemplate, TaskTemplates};
+    use text::Point;
+    use util::path;
+
+    use crate::{
+        Editor, UPDATE_DEBOUNCE, editor_tests::init_test, scroll::scroll_amount::ScrollAmount,
+    };
+
+    struct TestRustContextProvider;
+
+    impl ContextProvider for TestRustContextProvider {
+        fn associated_tasks(
+            &self,
+            _: Option<Arc<dyn language::File>>,
+            _: &gpui::App,
+        ) -> Task<Option<TaskTemplates>> {
+            Task::ready(Some(TaskTemplates(vec![
+                TaskTemplate {
+                    label: "Run main".into(),
+                    command: "cargo".into(),
+                    args: vec!["run".into()],
+                    tags: vec!["rust-main".into()],
+                    ..TaskTemplate::default()
+                },
+                TaskTemplate {
+                    label: "Run test".into(),
+                    command: "cargo".into(),
+                    args: vec!["test".into()],
+                    tags: vec!["rust-test".into()],
+                    ..TaskTemplate::default()
+                },
+            ])))
+        }
+    }
+
+    fn rust_lang_with_task_context() -> Arc<language::Language> {
+        Arc::new(
+            Arc::try_unwrap(rust_lang())
+                .unwrap()
+                .with_context_provider(Some(Arc::new(TestRustContextProvider))),
+        )
+    }
+
+    fn collect_runnable_labels(
+        editor: &Editor,
+    ) -> Vec<(text::BufferId, language::BufferRow, Vec<String>)> {
+        let mut result = editor
+            .runnables
+            .runnables
+            .iter()
+            .flat_map(|(buffer_id, (_, tasks))| {
+                tasks.iter().map(move |(row, runnable_tasks)| {
+                    let mut labels: Vec<String> = runnable_tasks
+                        .templates
+                        .iter()
+                        .map(|(_, template)| template.label.clone())
+                        .collect();
+                    labels.sort();
+                    (*buffer_id, *row, labels)
+                })
+            })
+            .collect::<Vec<_>>();
+        result.sort_by_key(|(id, row, _)| (*id, *row));
+        result
+    }
+
+    #[gpui::test]
+    async fn test_multi_buffer_runnables_on_scroll(cx: &mut TestAppContext) {
+        init_test(cx, |_| {});
+
+        let padding_lines = 50;
+        let mut first_rs = String::from("fn main() {\n    println!(\"hello\");\n}\n");
+        for _ in 0..padding_lines {
+            first_rs.push_str("//\n");
+        }
+        let test_one_row = 3 + padding_lines as u32 + 1;
+        first_rs.push_str("#[test]\nfn test_one() {\n    assert!(true);\n}\n");
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/project"),
+            json!({
+                "first.rs": first_rs,
+                "second.rs": indoc! {"
+                    #[test]
+                    fn test_two() {
+                        assert!(true);
+                    }
+
+                    #[test]
+                    fn test_three() {
+                        assert!(true);
+                    }
+                "},
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs, [path!("/project").as_ref()], cx).await;
+        let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+        language_registry.add(rust_lang_with_task_context());
+
+        let buffer_1 = project
+            .update(cx, |project, cx| {
+                project.open_local_buffer(path!("/project/first.rs"), cx)
+            })
+            .await
+            .unwrap();
+        let buffer_2 = project
+            .update(cx, |project, cx| {
+                project.open_local_buffer(path!("/project/second.rs"), cx)
+            })
+            .await
+            .unwrap();
+
+        let buffer_1_id = buffer_1.read_with(cx, |buffer, _| buffer.remote_id());
+        let buffer_2_id = buffer_2.read_with(cx, |buffer, _| buffer.remote_id());
+
+        let multi_buffer = cx.new(|cx| {
+            let mut multi_buffer = MultiBuffer::new(language::Capability::ReadWrite);
+            let end = buffer_1.read(cx).max_point();
+            multi_buffer.set_excerpts_for_path(
+                PathKey::sorted(0),
+                buffer_1.clone(),
+                [Point::new(0, 0)..end],
+                0,
+                cx,
+            );
+            multi_buffer.set_excerpts_for_path(
+                PathKey::sorted(1),
+                buffer_2.clone(),
+                [Point::new(0, 0)..Point::new(8, 1)],
+                0,
+                cx,
+            );
+            multi_buffer
+        });
+
+        let editor = cx.add_window(|window, cx| {
+            Editor::for_multibuffer(multi_buffer, Some(project.clone()), window, cx)
+        });
+        cx.executor().advance_clock(Duration::from_millis(500));
+        cx.executor().run_until_parked();
+
+        // Clear stale data from startup events, then refresh.
+        // first.rs is long enough that second.rs is below the ~47-line viewport.
+        editor
+            .update(cx, |editor, window, cx| {
+                editor.clear_runnables(None);
+                editor.refresh_runnables(window, cx);
+            })
+            .unwrap();
+        cx.executor().advance_clock(UPDATE_DEBOUNCE);
+        cx.executor().run_until_parked();
+        assert_eq!(
+            editor
+                .update(cx, |editor, _, _| collect_runnable_labels(editor))
+                .unwrap(),
+            vec![(buffer_1_id, 0, vec!["Run main".to_string()])],
+            "Only fn main from first.rs should be visible before scrolling"
+        );
+
+        // Scroll down to bring second.rs excerpts into view.
+        editor
+            .update(cx, |editor, window, cx| {
+                editor.scroll_screen(&ScrollAmount::Page(1.0), window, cx);
+            })
+            .unwrap();
+        cx.executor().advance_clock(Duration::from_millis(200));
+        cx.executor().run_until_parked();
+
+        let after_scroll = editor
+            .update(cx, |editor, _, _| collect_runnable_labels(editor))
+            .unwrap();
+        assert_eq!(
+            after_scroll,
+            vec![
+                (buffer_1_id, 0, vec!["Run main".to_string()]),
+                (buffer_1_id, test_one_row, vec!["Run test".to_string()]),
+                (buffer_2_id, 1, vec!["Run test".to_string()]),
+                (buffer_2_id, 6, vec!["Run test".to_string()]),
+            ],
+            "Tree-sitter should detect both #[test] fns in second.rs after scroll"
+        );
+
+        // Edit second.rs to invalidate its cache; first.rs data should persist.
+        buffer_2.update(cx, |buffer, cx| {
+            buffer.edit([(0..0, "// added comment\n")], None, cx);
+        });
+        editor
+            .update(cx, |editor, window, cx| {
+                editor.scroll_screen(&ScrollAmount::Page(-1.0), window, cx);
+            })
+            .unwrap();
+        cx.executor().advance_clock(Duration::from_millis(200));
+        cx.executor().run_until_parked();
+
+        assert_eq!(
+            editor
+                .update(cx, |editor, _, _| collect_runnable_labels(editor))
+                .unwrap(),
+            vec![
+                (buffer_1_id, 0, vec!["Run main".to_string()]),
+                (buffer_1_id, test_one_row, vec!["Run test".to_string()]),
+            ],
+            "first.rs runnables should survive an edit to second.rs"
+        );
     }
 }
