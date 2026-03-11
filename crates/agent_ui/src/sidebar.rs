@@ -1361,7 +1361,6 @@ impl Sidebar {
                         Tooltip::for_action("Close Threads Sidebar", &ToggleWorkspaceSidebar, cx)
                     })
                     .on_click(|_, window, cx| {
-                        dbg!("sidebar close button on_click triggered");
                         window.dispatch_action(ToggleWorkspaceSidebar.boxed_clone(), cx);
                     }),
             )
