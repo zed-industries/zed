@@ -38,6 +38,10 @@ impl AsRef<str> for GitSha {
     }
 }
 
+#[allow(
+    clippy::disallowed_methods,
+    reason = "This runs only in a CLI environment"
+)]
 fn parse_ref(value: &str) -> Result<GitSha, String> {
     const GIT_SHA_LENGTH: usize = 40;
     (value.len() == GIT_SHA_LENGTH)
@@ -54,7 +58,7 @@ fn parse_ref(value: &str) -> Result<GitSha, String> {
             value
                 .chars()
                 .all(|char| u16::from_str_radix(char.encode_utf8(&mut tmp), 16).is_ok()).then_some(value)
-                .ok_or_else(|| format!("Not a valid Git SHA"))
+                .ok_or_else(|| "Not a valid Git SHA".to_owned())
         })
         .and_then(|sha| {
            std::process::Command::new("git")
@@ -70,7 +74,7 @@ fn parse_ref(value: &str) -> Result<GitSha, String> {
                    output
                        .status.success()
                        .then_some(sha)
-                       .ok_or_else(||format!("SHA {sha} is not a valid Git SHA within this repository!")))
+                       .ok_or_else(|| format!("SHA {sha} is not a valid Git SHA within this repository!")))
         }).map(|sha| GitSha(sha.to_owned()))
 }
 
