@@ -1390,7 +1390,6 @@ impl Sidebar {
 
     pub fn toggle(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let new_state = !self.is_open;
-        dbg!(self.is_open, new_state, "sidebar.toggle called");
         self.set_open(new_state, cx);
         if new_state {
             cx.focus_self(window);
