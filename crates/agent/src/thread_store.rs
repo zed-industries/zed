@@ -162,6 +162,7 @@ mod tests {
             thinking_enabled: false,
             thinking_effort: None,
             draft_prompt: None,
+            provisional_title: None,
             ui_scroll_position: None,
         }
     }

@@ -29,6 +29,7 @@ pub struct ThreadItem {
     added: Option<usize>,
     removed: Option<usize>,
     worktree: Option<SharedString>,
+    provisional: bool,
     highlight_positions: Vec<usize>,
     worktree_highlight_positions: Vec<usize>,
     on_click: Option<Box<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>>,
@@ -50,6 +51,7 @@ impl ThreadItem {
             selected: false,
             focused: false,
             hovered: false,
+            provisional: false,
             added: None,
             removed: None,
             worktree: None,
@@ -124,6 +126,11 @@ impl ThreadItem {
 
     pub fn hovered(mut self, hovered: bool) -> Self {
         self.hovered = hovered;
+        self
+    }
+
+    pub fn provisional(mut self, provisional: bool) -> Self {
+        self.provisional = provisional;
         self
     }
 
@@ -209,9 +216,13 @@ impl RenderOnce for ThreadItem {
         let title = self.title;
         let highlight_positions = self.highlight_positions;
         let title_label = if highlight_positions.is_empty() {
-            Label::new(title).into_any_element()
+            Label::new(title)
+                .when(self.provisional, |label| label.italic())
+                .into_any_element()
         } else {
-            HighlightedLabel::new(title, highlight_positions).into_any_element()
+            HighlightedLabel::new(title, highlight_positions)
+                .when(self.provisional, |label| label.italic())
+                .into_any_element()
         };
 
         let base_bg = if self.selected {

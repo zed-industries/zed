@@ -50,6 +50,7 @@ const DEFAULT_THREADS_SHOWN: usize = 5;
 struct ActiveThreadInfo {
     session_id: acp::SessionId,
     title: SharedString,
+    is_provisional: bool,
     status: AgentThreadStatus,
     icon: IconName,
     icon_from_external_svg: Option<SharedString>,
@@ -78,6 +79,7 @@ struct ThreadEntry {
     workspace: Entity<Workspace>,
     is_live: bool,
     is_background: bool,
+    is_provisional: bool,
     highlight_positions: Vec<usize>,
 }
 
@@ -388,6 +390,7 @@ impl Sidebar {
                 let title = thread.title();
                 let session_id = thread.session_id().clone();
                 let is_background = agent_panel_ref.is_background_thread(&session_id);
+                let is_provisional = thread.has_provisional_title();
 
                 let status = if thread.is_waiting_for_confirmation() {
                     AgentThreadStatus::WaitingForConfirmation
@@ -403,6 +406,7 @@ impl Sidebar {
                 ActiveThreadInfo {
                     session_id,
                     title,
+                    is_provisional,
                     status,
                     icon,
                     icon_from_external_svg,
@@ -463,6 +467,7 @@ impl Sidebar {
                             workspace: workspace.clone(),
                             is_live: false,
                             is_background: false,
+                            is_provisional: false,
                             highlight_positions: Vec::new(),
                         });
                     }
@@ -489,6 +494,7 @@ impl Sidebar {
                         thread.icon_from_external_svg = info.icon_from_external_svg.clone();
                         thread.is_live = true;
                         thread.is_background = info.is_background;
+                        thread.is_provisional = info.is_provisional;
                     }
                 }
 
@@ -1173,6 +1179,7 @@ impl Sidebar {
             .when_some(thread.icon_from_external_svg.clone(), |this, svg| {
                 this.custom_icon_from_external_svg(svg)
             })
+            .provisional(thread.is_provisional)
             .highlight_positions(thread.highlight_positions.to_vec())
             .status(thread.status)
             .notified(has_notification)
@@ -1562,6 +1569,7 @@ mod tests {
             thinking_effort: None,
             draft_prompt: None,
             ui_scroll_position: None,
+            provisional_title: None,
         }
     }
 
@@ -2032,6 +2040,7 @@ mod tests {
                     workspace: workspace.clone(),
                     is_live: false,
                     is_background: false,
+                    is_provisional: false,
                     highlight_positions: Vec::new(),
                 }),
                 // Active thread with Running status
@@ -2050,6 +2059,7 @@ mod tests {
                     workspace: workspace.clone(),
                     is_live: true,
                     is_background: false,
+                    is_provisional: false,
                     highlight_positions: Vec::new(),
                 }),
                 // Active thread with Error status
@@ -2068,6 +2078,7 @@ mod tests {
                     workspace: workspace.clone(),
                     is_live: true,
                     is_background: false,
+                    is_provisional: false,
                     highlight_positions: Vec::new(),
                 }),
                 // Thread with WaitingForConfirmation status, not active
@@ -2086,6 +2097,7 @@ mod tests {
                     workspace: workspace.clone(),
                     is_live: false,
                     is_background: false,
+                    is_provisional: false,
                     highlight_positions: Vec::new(),
                 }),
                 // Background thread that completed (should show notification)
@@ -2104,6 +2116,7 @@ mod tests {
                     workspace: workspace.clone(),
                     is_live: true,
                     is_background: true,
+                    is_provisional: false,
                     highlight_positions: Vec::new(),
                 }),
                 // View More entry

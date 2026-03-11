@@ -1453,6 +1453,14 @@ impl AcpThread {
     /// (e.g. first 20 chars of the user message) that should be shown
     /// immediately but replaced once the LLM generates a proper title via
     /// `set_title`.
+    pub fn has_provisional_title(&self) -> bool {
+        self.provisional_title.is_some()
+    }
+
+    pub fn provisional_title(&self) -> Option<&SharedString> {
+        self.provisional_title.as_ref()
+    }
+
     pub fn set_provisional_title(&mut self, title: SharedString, cx: &mut Context<Self>) {
         self.provisional_title = Some(title);
         cx.emit(AcpThreadEvent::TitleUpdated);

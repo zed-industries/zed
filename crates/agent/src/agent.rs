@@ -332,6 +332,7 @@ impl NativeAgent {
         let parent_session_id = thread.parent_thread_id();
         let title = thread.title();
         let draft_prompt = thread.draft_prompt().map(Vec::from);
+        let provisional_title = thread.provisional_title().cloned();
         let scroll_position = thread.ui_scroll_position();
         let token_usage = thread.latest_token_usage();
         let project = thread.project.clone();
@@ -354,6 +355,12 @@ impl NativeAgent {
             acp_thread.update_token_usage(token_usage, cx);
             acp_thread
         });
+
+        if let Some(provisional_title) = provisional_title {
+            acp_thread.update(cx, |acp_thread, cx| {
+                acp_thread.set_provisional_title(provisional_title, cx);
+            });
+        }
 
         let registry = LanguageModelRegistry::read_global(cx);
         let summarization_model = registry.thread_summary_model().map(|c| c.model);
@@ -980,9 +987,11 @@ impl NativeAgent {
         );
 
         let draft_prompt = session.acp_thread.read(cx).draft_prompt().map(Vec::from);
+        let provisional_title = session.acp_thread.read(cx).provisional_title().cloned();
         let database_future = ThreadsDatabase::connect(cx);
         let db_thread = thread.update(cx, |thread, cx| {
             thread.set_draft_prompt(draft_prompt);
+            thread.set_provisional_title(provisional_title);
             thread.to_db(cx)
         });
         let thread_store = self.thread_store.clone();
