@@ -489,7 +489,7 @@ impl UiLineHeight {
     /// Returns the value of the line height.
     pub fn value(&self) -> f32 {
         match self {
-            UiLineHeight::Comfortable => 1.618,
+            UiLineHeight::Comfortable => 1.5,
             UiLineHeight::Standard => 1.3,
             UiLineHeight::Custom(line_height) => *line_height,
         }
@@ -768,7 +768,7 @@ impl settings::Settings for ThemeSettings {
             },
             buffer_font_size: clamp_font_size(content.buffer_font_size.unwrap().into_gpui()),
             buffer_line_height: content.buffer_line_height.unwrap().into(),
-            ui_line_height: content.ui_line_height.unwrap().into(),
+            ui_line_height: content.ui_line_height.unwrap_or_default().into(),
             agent_ui_font_size: content.agent_ui_font_size.map(|s| s.into_gpui()),
             agent_buffer_font_size: content.agent_buffer_font_size.map(|s| s.into_gpui()),
             theme: theme_selection,

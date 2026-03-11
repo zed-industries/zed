@@ -960,7 +960,7 @@ fn appearance_page() -> SettingsPage {
                             let settings_value = settings_content
                                 .theme
                                 .ui_line_height
-                                .get_or_insert_with(|| settings::UiLineHeight::default());
+                                .get_or_insert_default();
                             *settings_value = match value {
                                 settings::UiLineHeightDiscriminants::Comfortable => {
                                     settings::UiLineHeight::Comfortable
