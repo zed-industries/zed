@@ -16,8 +16,8 @@ use std::collections::{HashMap, HashSet};
 use std::mem;
 use theme::{ActiveTheme, ThemeSettings};
 use ui::{
-    AgentThreadStatus, ButtonStyle, GradientFade, HighlightedLabel, IconButtonShape, ListItem, Tab,
-    ThreadItem, Tooltip, WithScrollbar, prelude::*,
+    AgentThreadStatus, ButtonStyle, HighlightedLabel, IconButtonShape, ListItem, Tab, ThreadItem,
+    Tooltip, WithScrollbar, prelude::*,
 };
 use util::path_list::PathList;
 use workspace::{MultiWorkspace, MultiWorkspaceEvent, Workspace, multi_workspace_enabled};
@@ -785,17 +785,6 @@ impl Sidebar {
                 .into_any_element()
         };
 
-        let color = cx.theme().colors();
-        let base_bg = if is_active_workspace {
-            color.ghost_element_selected
-        } else {
-            color.panel_background
-        };
-        let gradient_overlay =
-            GradientFade::new(base_bg, color.element_hover, color.element_active)
-                .width(px(48.0))
-                .group_name(group_name.clone());
-
         ListItem::new(id)
             .group_name(group_name)
             .toggle_state(is_active_workspace)
@@ -812,9 +801,9 @@ impl Sidebar {
                             .size(IconSize::Small)
                             .color(Color::Custom(cx.theme().colors().icon_muted.opacity(0.6))),
                     )
-                    .child(label)
-                    .child(gradient_overlay),
+                    .child(label),
             )
+            .end_hover_gradient_overlay(true)
             .end_hover_slot(
                 h_flex()
                     .when(workspace_count > 1, |this| {
