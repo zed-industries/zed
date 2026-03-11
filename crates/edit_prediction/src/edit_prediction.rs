@@ -245,21 +245,28 @@ pub enum UserActionType {
 pub struct StoredEvent {
     pub event: Arc<zeta_prompt::Event>,
     pub old_snapshot: TextBufferSnapshot,
-    pub edit_range: Range<Anchor>,
+    pub new_snapshot_version: clock::Global,
+    pub total_edit_range: Range<Anchor>,
 }
 
 impl StoredEvent {
     fn can_merge(
         &self,
         next_old_event: &&&StoredEvent,
-        new_snapshot: &TextBufferSnapshot,
-        last_edit_range: &Range<Anchor>,
+        next_new_snapshot: &TextBufferSnapshot,
+        latest_edit_range: &Range<Anchor>,
     ) -> bool {
-        // Events must be for the same buffer
+        // Events must be for the same buffer and be contiguous across included snapshots to be mergeable.
         if self.old_snapshot.remote_id() != next_old_event.old_snapshot.remote_id() {
             return false;
         }
-        if self.old_snapshot.remote_id() != new_snapshot.remote_id() {
+        if next_old_event.old_snapshot.remote_id() != next_new_snapshot.remote_id() {
+            return false;
+        }
+        if self.new_snapshot_version != next_old_event.old_snapshot.version {
+            return false;
+        }
+        if next_old_event.new_snapshot_version != next_new_snapshot.version {
             return false;
         }
 
@@ -284,9 +291,9 @@ impl StoredEvent {
             return false;
         }
 
-        let left_range = self.edit_range.to_point(new_snapshot);
-        let right_range = next_old_event.edit_range.to_point(new_snapshot);
-        let latest_range = last_edit_range.to_point(&new_snapshot);
+        let left_range = self.total_edit_range.to_point(&next_old_event.old_snapshot);
+        let right_range = next_old_event.total_edit_range.to_point(next_new_snapshot);
+        let latest_range = latest_edit_range.to_point(next_new_snapshot);
 
         // Events near to the latest edit are not merged if their sources differ.
         if lines_between_ranges(&left_range, &latest_range)
@@ -519,7 +526,9 @@ struct LastEvent {
     new_snapshot: TextBufferSnapshot,
     old_file: Option<Arc<dyn File>>,
     new_file: Option<Arc<dyn File>>,
-    edit_range: Option<Range<Anchor>>,
+    latest_edit_range: Range<Anchor>,
+    total_edit_range: Range<Anchor>,
+    total_edit_range_at_last_pause_boundary: Option<Range<Anchor>>,
     predicted: bool,
     snapshot_after_last_editing_pause: Option<TextBufferSnapshot>,
     last_edit_time: Option<Instant>,
@@ -545,8 +554,11 @@ impl LastEvent {
                     })
                 });
 
-        let (diff, edit_range) =
-            compute_diff_between_snapshots(&self.old_snapshot, &self.new_snapshot)?;
+        let (diff, edit_range) = compute_diff_between_snapshots_in_range(
+            &self.old_snapshot,
+            &self.new_snapshot,
+            &self.total_edit_range,
+        )?;
 
         if path == old_path && diff.is_empty() {
             None
@@ -559,9 +571,10 @@ impl LastEvent {
                     in_open_source_repo,
                     predicted: self.predicted,
                 }),
-                edit_range: self.new_snapshot.anchor_before(edit_range.start)
-                    ..self.new_snapshot.anchor_before(edit_range.end),
                 old_snapshot: self.old_snapshot.clone(),
+                new_snapshot_version: self.new_snapshot.version.clone(),
+                total_edit_range: self.new_snapshot.anchor_before(edit_range.start)
+                    ..self.new_snapshot.anchor_before(edit_range.end),
             })
         }
     }
@@ -571,12 +584,28 @@ impl LastEvent {
             return (self.clone(), None);
         };
 
+        let total_edit_range_before_pause = self
+            .total_edit_range_at_last_pause_boundary
+            .clone()
+            .unwrap_or_else(|| self.total_edit_range.clone());
+
+        let Some(total_edit_range_after_pause) =
+            compute_total_edit_range_between_snapshots(boundary_snapshot, &self.new_snapshot)
+        else {
+            return (self.clone(), None);
+        };
+
+        let latest_edit_range_before_pause = total_edit_range_before_pause.clone();
+        let latest_edit_range_after_pause = total_edit_range_after_pause.clone();
+
         let before = LastEvent {
             old_snapshot: self.old_snapshot.clone(),
             new_snapshot: boundary_snapshot.clone(),
             old_file: self.old_file.clone(),
             new_file: self.new_file.clone(),
-            edit_range: None,
+            latest_edit_range: latest_edit_range_before_pause,
+            total_edit_range: total_edit_range_before_pause,
+            total_edit_range_at_last_pause_boundary: None,
             predicted: self.predicted,
             snapshot_after_last_editing_pause: None,
             last_edit_time: self.last_edit_time,
@@ -587,7 +616,9 @@ impl LastEvent {
             new_snapshot: self.new_snapshot.clone(),
             old_file: self.old_file.clone(),
             new_file: self.new_file.clone(),
-            edit_range: None,
+            latest_edit_range: latest_edit_range_after_pause,
+            total_edit_range: total_edit_range_after_pause,
+            total_edit_range_at_last_pause_boundary: None,
             predicted: self.predicted,
             snapshot_after_last_editing_pause: None,
             last_edit_time: self.last_edit_time,
@@ -597,20 +628,86 @@ impl LastEvent {
     }
 }
 
+#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) fn compute_diff_between_snapshots(
     old_snapshot: &TextBufferSnapshot,
     new_snapshot: &TextBufferSnapshot,
 ) -> Option<(String, Range<Point>)> {
+    let total_edit_range = compute_total_edit_range_between_snapshots(old_snapshot, new_snapshot)?;
+    compute_diff_between_snapshots_in_range(old_snapshot, new_snapshot, &total_edit_range)
+}
+
+fn compute_total_edit_range_between_snapshots(
+    old_snapshot: &TextBufferSnapshot,
+    new_snapshot: &TextBufferSnapshot,
+) -> Option<Range<Anchor>> {
     let edits: Vec<Edit<usize>> = new_snapshot
         .edits_since::<usize>(&old_snapshot.version)
         .collect();
 
     let (first_edit, last_edit) = edits.first().zip(edits.last())?;
-
-    let old_start_point = old_snapshot.offset_to_point(first_edit.old.start);
-    let old_end_point = old_snapshot.offset_to_point(last_edit.old.end);
     let new_start_point = new_snapshot.offset_to_point(first_edit.new.start);
     let new_end_point = new_snapshot.offset_to_point(last_edit.new.end);
+
+    Some(new_snapshot.anchor_before(new_start_point)..new_snapshot.anchor_before(new_end_point))
+}
+
+fn compute_old_range_for_new_range(
+    old_snapshot: &TextBufferSnapshot,
+    new_snapshot: &TextBufferSnapshot,
+    total_edit_range: &Range<Anchor>,
+) -> Option<Range<Point>> {
+    let new_start_offset = total_edit_range.start.to_offset(new_snapshot);
+    let new_end_offset = total_edit_range.end.to_offset(new_snapshot);
+
+    let edits: Vec<Edit<usize>> = new_snapshot
+        .edits_since::<usize>(&old_snapshot.version)
+        .collect();
+    let mut old_start_offset = None;
+    let mut old_end_offset = None;
+    let mut delta: isize = 0;
+
+    for edit in &edits {
+        if old_start_offset.is_none() && new_start_offset <= edit.new.end {
+            old_start_offset = Some(if new_start_offset < edit.new.start {
+                new_start_offset.checked_add_signed(-delta)?
+            } else {
+                edit.old.start
+            });
+        }
+
+        if old_end_offset.is_none() && new_end_offset <= edit.new.end {
+            old_end_offset = Some(if new_end_offset < edit.new.start {
+                new_end_offset.checked_add_signed(-delta)?
+            } else {
+                edit.old.end
+            });
+        }
+
+        delta += edit.new.len() as isize - edit.old.len() as isize;
+    }
+
+    let old_start_offset =
+        old_start_offset.unwrap_or_else(|| new_start_offset.saturating_add_signed(-delta));
+    let old_end_offset =
+        old_end_offset.unwrap_or_else(|| new_end_offset.saturating_add_signed(-delta));
+
+    Some(
+        old_snapshot.offset_to_point(old_start_offset)
+            ..old_snapshot.offset_to_point(old_end_offset),
+    )
+}
+
+fn compute_diff_between_snapshots_in_range(
+    old_snapshot: &TextBufferSnapshot,
+    new_snapshot: &TextBufferSnapshot,
+    total_edit_range: &Range<Anchor>,
+) -> Option<(String, Range<Point>)> {
+    let new_start_point = total_edit_range.start.to_point(new_snapshot);
+    let new_end_point = total_edit_range.end.to_point(new_snapshot);
+    let old_range = compute_old_range_for_new_range(old_snapshot, new_snapshot, total_edit_range)?;
+    let old_start_point = old_range.start;
+    let old_end_point = old_range.end;
 
     const CONTEXT_LINES: u32 = 3;
 
@@ -1258,7 +1355,6 @@ impl EditPredictionStore {
         if new_snapshot.version == registered_buffer.snapshot.version {
             return;
         }
-
         let old_file = mem::replace(&mut registered_buffer.file, new_file.clone());
         let old_snapshot = mem::replace(&mut registered_buffer.snapshot, new_snapshot.clone());
         let mut num_edits = 0usize;
@@ -1342,15 +1438,10 @@ impl EditPredictionStore {
 
             let should_coalesce = is_next_snapshot_of_same_buffer
                 && !prediction_source_changed
-                && last_event
-                    .edit_range
-                    .as_ref()
-                    .is_some_and(|last_edit_range| {
-                        lines_between_ranges(
-                            &edit_range.to_point(&new_snapshot),
-                            &last_edit_range.to_point(&new_snapshot),
-                        ) <= CHANGE_GROUPING_LINE_SPAN
-                    });
+                && lines_between_ranges(
+                    &edit_range.to_point(&new_snapshot),
+                    &last_event.latest_edit_range.to_point(&new_snapshot),
+                ) <= CHANGE_GROUPING_LINE_SPAN;
 
             if should_coalesce {
                 let pause_elapsed = last_event
@@ -1360,9 +1451,13 @@ impl EditPredictionStore {
                 if pause_elapsed {
                     last_event.snapshot_after_last_editing_pause =
                         Some(last_event.new_snapshot.clone());
+                    last_event.total_edit_range_at_last_pause_boundary =
+                        Some(last_event.total_edit_range.clone());
                 }
 
-                last_event.edit_range = Some(edit_range);
+                last_event.latest_edit_range = edit_range.clone();
+                last_event.total_edit_range =
+                    merge_anchor_ranges(&last_event.total_edit_range, &edit_range, &new_snapshot);
                 last_event.new_snapshot = new_snapshot;
                 last_event.last_edit_time = Some(now);
                 return;
@@ -1378,14 +1473,16 @@ impl EditPredictionStore {
             }
         }
 
-        merge_trailing_events_if_needed(events, &old_snapshot, &new_snapshot, &edit_range);
+        merge_trailing_events_if_needed(events, &old_snapshot, &edit_range);
 
         project_state.last_event = Some(LastEvent {
             old_file,
             new_file,
             old_snapshot,
             new_snapshot,
-            edit_range: Some(edit_range),
+            latest_edit_range: edit_range.clone(),
+            total_edit_range: edit_range,
+            total_edit_range_at_last_pause_boundary: None,
             predicted: is_predicted,
             snapshot_after_last_editing_pause: None,
             last_edit_time: Some(now),
@@ -2744,7 +2841,6 @@ fn collaborator_edit_overlaps_locality_region(
 
 fn merge_trailing_events_if_needed(
     events: &mut VecDeque<StoredEvent>,
-    end_snapshot: &TextBufferSnapshot,
     latest_snapshot: &TextBufferSnapshot,
     latest_edit_range: &Range<Anchor>,
 ) {
@@ -2752,18 +2848,23 @@ fn merge_trailing_events_if_needed(
         if last_event.old_snapshot.remote_id() != latest_snapshot.remote_id() {
             return;
         }
+        if last_event.new_snapshot_version != latest_snapshot.version {
+            return;
+        }
     }
 
     let mut next_old_event = None;
+    let mut next_new_snapshot = latest_snapshot;
     let mut mergeable_count = 0;
     for old_event in events.iter().rev() {
         if let Some(next_old_event) = &next_old_event
-            && !old_event.can_merge(&next_old_event, latest_snapshot, latest_edit_range)
+            && !old_event.can_merge(&next_old_event, next_new_snapshot, latest_edit_range)
         {
             break;
         }
         mergeable_count += 1;
         next_old_event = Some(old_event);
+        next_new_snapshot = &old_event.old_snapshot;
     }
 
     if mergeable_count <= 1 {
@@ -2773,10 +2874,19 @@ fn merge_trailing_events_if_needed(
     let mut events_to_merge = events.range(events.len() - mergeable_count..).peekable();
     let oldest_event = events_to_merge.peek().unwrap();
     let oldest_snapshot = oldest_event.old_snapshot.clone();
+    let newest_snapshot = latest_snapshot;
+    let mut merged_edit_range = oldest_event.total_edit_range.clone();
 
-    if let Some((diff, edited_range)) =
-        compute_diff_between_snapshots(&oldest_snapshot, end_snapshot)
-    {
+    for event in events.range(events.len() - mergeable_count + 1..) {
+        merged_edit_range =
+            merge_anchor_ranges(&merged_edit_range, &event.total_edit_range, newest_snapshot);
+    }
+
+    if let Some((diff, edit_range)) = compute_diff_between_snapshots_in_range(
+        &oldest_snapshot,
+        newest_snapshot,
+        &merged_edit_range,
+    ) {
         let merged_event = match oldest_event.event.as_ref() {
             zeta_prompt::Event::BufferChange {
                 old_path,
@@ -2800,13 +2910,32 @@ fn merge_trailing_events_if_needed(
                     }),
                 }),
                 old_snapshot: oldest_snapshot.clone(),
-                edit_range: end_snapshot.anchor_before(edited_range.start)
-                    ..end_snapshot.anchor_before(edited_range.end),
+                new_snapshot_version: newest_snapshot.version.clone(),
+                total_edit_range: newest_snapshot.anchor_before(edit_range.start)
+                    ..newest_snapshot.anchor_before(edit_range.end),
             },
         };
         events.truncate(events.len() - mergeable_count);
         events.push_back(merged_event);
     }
+}
+
+fn merge_anchor_ranges(
+    left: &Range<Anchor>,
+    right: &Range<Anchor>,
+    snapshot: &TextBufferSnapshot,
+) -> Range<Anchor> {
+    let start = if left.start.cmp(&right.start, snapshot).is_le() {
+        left.start
+    } else {
+        right.start
+    };
+    let end = if left.end.cmp(&right.end, snapshot).is_ge() {
+        left.end
+    } else {
+        right.end
+    };
+    start..end
 }
 
 #[derive(Error, Debug)]

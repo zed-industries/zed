@@ -370,6 +370,12 @@ async fn test_edit_history_getter_pause_splits_last_event(cx: &mut TestAppContex
         ep_store.edit_history_for_project(&project, cx)
     });
     assert_eq!(events.len(), 2);
+
+    let first_total_edit_range = buffer.read_with(cx, |buffer, _| {
+        events[0].total_edit_range.to_point(&buffer.snapshot())
+    });
+    assert_eq!(first_total_edit_range, Point::new(1, 0)..Point::new(1, 3));
+
     let zeta_prompt::Event::BufferChange { diff, .. } = events[0].event.as_ref();
     assert_eq!(
         diff.as_str(),
@@ -381,6 +387,11 @@ async fn test_edit_history_getter_pause_splits_last_event(cx: &mut TestAppContex
              Bye
         "}
     );
+
+    let second_total_edit_range = buffer.read_with(cx, |buffer, _| {
+        events[1].total_edit_range.to_point(&buffer.snapshot())
+    });
+    assert_eq!(second_total_edit_range, Point::new(1, 3)..Point::new(1, 13));
 
     let zeta_prompt::Event::BufferChange { diff, .. } = events[1].event.as_ref();
     assert_eq!(
