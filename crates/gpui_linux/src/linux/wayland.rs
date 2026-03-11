@@ -5,6 +5,8 @@ mod display;
 mod serial;
 mod window;
 
+pub mod appmenu;
+
 /// Contains Types for configuring layer_shell surfaces.
 pub mod layer_shell;
 

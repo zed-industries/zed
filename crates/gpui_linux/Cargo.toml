@@ -129,3 +129,8 @@ xim = { git = "https://github.com/zed-industries/xim-rs.git", rev = "16f35a2c881
     "x11rb-client",
 ], package = "zed-xim", version = "0.4.0-zed", optional = true }
 x11-clipboard = { version = "0.9.3", optional = true }
+
+[dependencies]
+tokio = { workspace = true, features = ["rt"] }
+wayland-scanner = "0.31.9"
+zbus = { version = "5", features = ["tokio"] }
