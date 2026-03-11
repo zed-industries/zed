@@ -4131,7 +4131,10 @@ impl AgentPanel {
             ActiveView::History { .. } | ActiveView::Configuration
         );
 
-        let use_v2_empty_toolbar = has_v2_flag && is_empty_state && !is_in_history_or_config;
+        let is_text_thread = matches!(&self.active_view, ActiveView::TextThread { .. });
+
+        let use_v2_empty_toolbar =
+            has_v2_flag && is_empty_state && !is_in_history_or_config && !is_text_thread;
 
         let is_sidebar_open = self
             .sidebar
