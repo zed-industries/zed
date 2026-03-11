@@ -152,15 +152,14 @@ pub(crate) fn build_serialized_pane_layout(pane_group: &Member, cx: &App) -> Ser
         Member::Axis(PaneAxis {
             axis,
             members,
-            flexes,
-            bounding_boxes: _,
+            state,
         }) => SerializedPaneLayout::Group {
             axis: *axis,
             children: members
                 .iter()
                 .map(|member| build_serialized_pane_layout(member, cx))
                 .collect::<Vec<_>>(),
-            flexes: Some(flexes.lock().clone()),
+            flexes: Some(state.flexes()),
         },
         Member::Pane(pane_handle) => SerializedPaneLayout::Pane(serialize_pane(pane_handle, cx)),
     }

@@ -10,12 +10,11 @@ use gpui::{
     Along, AnyView, AnyWeakView, Axis, Bounds, Entity, Hsla, IntoElement, MouseButton, Pixels,
     Point, StyleRefinement, WeakEntity, Window, point, size,
 };
-use parking_lot::Mutex;
 use project::Project;
 use schemars::JsonSchema;
 use serde::Deserialize;
 use settings::Settings;
-use std::sync::Arc;
+use std::{cell::RefCell, rc::Rc, sync::Arc};
 use ui::prelude::*;
 
 pub const HANDLE_HITBOX_SIZE: f32 = 4.0;
@@ -581,22 +580,75 @@ impl Member {
 }
 
 #[derive(Debug, Clone)]
+pub struct PaneAxisState(Rc<RefCell<PaneAxisStateInner>>);
+
+#[derive(Debug)]
+struct PaneAxisStateInner {
+    flexes: Vec<f32>,
+    bounding_boxes: Vec<Option<Bounds<Pixels>>>,
+}
+
+impl PaneAxisState {
+    pub fn new(member_count: usize) -> Self {
+        Self(Rc::new(RefCell::new(PaneAxisStateInner {
+            flexes: vec![1.; member_count],
+            bounding_boxes: vec![None; member_count],
+        })))
+    }
+
+    fn with_flexes(flexes: Vec<f32>) -> Self {
+        let member_count = flexes.len();
+        Self(Rc::new(RefCell::new(PaneAxisStateInner {
+            flexes,
+            bounding_boxes: vec![None; member_count],
+        })))
+    }
+
+    pub fn flexes(&self) -> Vec<f32> {
+        self.0.borrow().flexes.clone()
+    }
+
+    pub fn len(&self) -> usize {
+        self.0.borrow().flexes.len()
+    }
+
+    fn resize(&self, len: usize) {
+        let mut inner = self.0.borrow_mut();
+        inner.flexes.clear();
+        inner.flexes.resize(len, 1.);
+        inner.bounding_boxes.clear();
+        inner.bounding_boxes.resize(len, None);
+    }
+
+    fn reset_flexes(&self) {
+        let mut inner = self.0.borrow_mut();
+        inner.flexes.iter_mut().for_each(|f| *f = 1.);
+        inner.bounding_boxes.iter_mut().for_each(|f| *f = None);
+    }
+
+    fn bounding_boxes(&self) -> Vec<Option<Bounds<Pixels>>> {
+        self.0.borrow().bounding_boxes.clone()
+    }
+
+    fn bounding_box_at(&self, index: usize) -> Option<Bounds<Pixels>> {
+        self.0.borrow().bounding_boxes[index]
+    }
+}
+
+#[derive(Debug, Clone)]
 pub struct PaneAxis {
     pub axis: Axis,
     pub members: Vec<Member>,
-    pub flexes: Arc<Mutex<Vec<f32>>>,
-    pub bounding_boxes: Arc<Mutex<Vec<Option<Bounds<Pixels>>>>>,
+    pub state: PaneAxisState,
 }
 
 impl PaneAxis {
     pub fn new(axis: Axis, members: Vec<Member>) -> Self {
-        let flexes = Arc::new(Mutex::new(vec![1.; members.len()]));
-        let bounding_boxes = Arc::new(Mutex::new(vec![None; members.len()]));
+        let state = PaneAxisState::new(members.len());
         Self {
             axis,
             members,
-            flexes,
-            bounding_boxes,
+            state,
         }
     }
 
@@ -608,13 +660,11 @@ impl PaneAxis {
             flexes = vec![1.; members.len()];
         }
 
-        let flexes = Arc::new(Mutex::new(flexes));
-        let bounding_boxes = Arc::new(Mutex::new(vec![None; members.len()]));
+        let state = PaneAxisState::with_flexes(flexes);
         Self {
             axis,
             members,
-            flexes,
-            bounding_boxes,
+            state,
         }
     }
 
@@ -652,7 +702,7 @@ impl PaneAxis {
 
     fn insert_pane(&mut self, idx: usize, new_pane: &Entity<Pane>) {
         self.members.insert(idx, Member::Pane(new_pane.clone()));
-        *self.flexes.lock() = vec![1.; self.members.len()];
+        self.state.resize(self.members.len());
     }
 
     fn find_pane_at_border(&self, direction: SplitDirection) -> Option<&Entity<Pane>> {
@@ -697,12 +747,12 @@ impl PaneAxis {
         if found_pane {
             if let Some(idx) = remove_member {
                 self.members.remove(idx);
-                *self.flexes.lock() = vec![1.; self.members.len()];
+                self.state.resize(self.members.len());
             }
 
             if self.members.len() == 1 {
                 let result = self.members.pop();
-                *self.flexes.lock() = vec![1.; self.members.len()];
+                self.state.resize(self.members.len());
                 Ok(result)
             } else {
                 Ok(None)
@@ -713,7 +763,7 @@ impl PaneAxis {
     }
 
     fn reset_pane_sizes(&self) {
-        *self.flexes.lock() = vec![1.; self.members.len()];
+        self.state.resize(self.members.len());
         for member in self.members.iter() {
             if let Member::Axis(axis) = member {
                 axis.reset_pane_sizes();
@@ -729,8 +779,8 @@ impl PaneAxis {
         bounds: &Bounds<Pixels>,
     ) -> Option<bool> {
         let container_size = self
-            .bounding_boxes
-            .lock()
+            .state
+            .bounding_boxes()
             .iter()
             .filter_map(|e| *e)
             .reduce(|acc, e| acc.union(&e))
@@ -767,7 +817,8 @@ impl PaneAxis {
             Axis::Horizontal => px(HORIZONTAL_MIN_SIZE),
             Axis::Vertical => px(VERTICAL_MIN_SIZE),
         };
-        let mut flexes = self.flexes.lock();
+        let mut state = self.state.0.borrow_mut();
+        let flexes = &mut state.flexes;
 
         let ix = if found_pane {
             self.members.iter().position(|m| {
@@ -847,13 +898,13 @@ impl PaneAxis {
     }
 
     fn bounding_box_for_pane(&self, pane: &Entity<Pane>) -> Option<Bounds<Pixels>> {
-        debug_assert!(self.members.len() == self.bounding_boxes.lock().len());
+        debug_assert!(self.members.len() == self.state.len());
 
         for (idx, member) in self.members.iter().enumerate() {
             match member {
                 Member::Pane(found) => {
                     if pane == found {
-                        return self.bounding_boxes.lock()[idx];
+                        return self.state.bounding_box_at(idx);
                     }
                 }
                 Member::Axis(axis) => {
@@ -867,9 +918,9 @@ impl PaneAxis {
     }
 
     fn pane_at_pixel_position(&self, coordinate: Point<Pixels>) -> Option<&Entity<Pane>> {
-        debug_assert!(self.members.len() == self.bounding_boxes.lock().len());
+        debug_assert!(self.members.len() == self.state.len());
 
-        let bounding_boxes = self.bounding_boxes.lock();
+        let bounding_boxes = self.state.bounding_boxes();
 
         for (idx, member) in self.members.iter().enumerate() {
             if let Some(coordinates) = bounding_boxes[idx]
@@ -892,7 +943,7 @@ impl PaneAxis {
         window: &mut Window,
         cx: &mut App,
     ) -> PaneRenderResult {
-        debug_assert!(self.members.len() == self.flexes.lock().len());
+        debug_assert!(self.members.len() == self.state.len());
         let mut active_pane_ix = None;
         let mut contains_active_pane = false;
         let mut is_leaf_pane = vec![false; self.members.len()];
@@ -926,8 +977,7 @@ impl PaneAxis {
         let element = pane_axis(
             self.axis,
             basis,
-            self.flexes.clone(),
-            self.bounding_boxes.clone(),
+            self.state.clone(),
             render_cx.workspace().clone(),
         )
         .with_is_leaf_pane_mask(is_leaf_pane)
@@ -1037,7 +1087,7 @@ impl SplitDirection {
 
 pub mod element {
     use std::mem;
-    use std::{cell::RefCell, iter, rc::Rc, sync::Arc};
+    use std::{cell::RefCell, iter, rc::Rc};
 
     use gpui::{
         Along, AnyElement, App, Axis, BorderStyle, Bounds, Element, GlobalElementId,
@@ -1045,7 +1095,6 @@ pub mod element {
         Pixels, Point, Size, Style, WeakEntity, Window, px, relative, size,
     };
     use gpui::{CursorStyle, Hitbox};
-    use parking_lot::Mutex;
     use settings::Settings;
     use smallvec::SmallVec;
     use ui::prelude::*;
@@ -1055,22 +1104,20 @@ pub mod element {
 
     use crate::WorkspaceSettings;
 
-    use super::{HANDLE_HITBOX_SIZE, HORIZONTAL_MIN_SIZE, VERTICAL_MIN_SIZE};
+    use super::{HANDLE_HITBOX_SIZE, HORIZONTAL_MIN_SIZE, PaneAxisState, VERTICAL_MIN_SIZE};
 
     const DIVIDER_SIZE: f32 = 1.0;
 
     pub fn pane_axis(
         axis: Axis,
         basis: usize,
-        flexes: Arc<Mutex<Vec<f32>>>,
-        bounding_boxes: Arc<Mutex<Vec<Option<Bounds<Pixels>>>>>,
+        state: PaneAxisState,
         workspace: WeakEntity<Workspace>,
     ) -> PaneAxisElement {
         PaneAxisElement {
             axis,
             basis,
-            flexes,
-            bounding_boxes,
+            state,
             children: SmallVec::new(),
             active_pane_ix: None,
             workspace,
@@ -1081,10 +1128,7 @@ pub mod element {
     pub struct PaneAxisElement {
         axis: Axis,
         basis: usize,
-        /// Equivalent to ColumnWidths (but in terms of flexes instead of percentages)
-        /// For example, flexes "1.33, 1, 1", instead of "40%, 30%, 30%"
-        flexes: Arc<Mutex<Vec<f32>>>,
-        bounding_boxes: Arc<Mutex<Vec<Option<Bounds<Pixels>>>>>,
+        state: PaneAxisState,
         children: SmallVec<[AnyElement; 2]>,
         active_pane_ix: Option<usize>,
         workspace: WeakEntity<Workspace>,
@@ -1121,7 +1165,7 @@ pub mod element {
         }
 
         fn compute_resize(
-            flexes: &Arc<Mutex<Vec<f32>>>,
+            state: &PaneAxisState,
             e: &MouseMoveEvent,
             ix: usize,
             axis: Axis,
@@ -1135,7 +1179,8 @@ pub mod element {
                 Axis::Horizontal => px(HORIZONTAL_MIN_SIZE),
                 Axis::Vertical => px(VERTICAL_MIN_SIZE),
             };
-            let mut flexes = flexes.lock();
+            let mut inner = state.0.borrow_mut();
+            let flexes = &mut inner.flexes;
             debug_assert!(flex_values_in_bounds(flexes.as_slice()));
 
             // Math to convert a flex value to a pixel value
@@ -1299,7 +1344,7 @@ pub mod element {
                     (state.clone(), state)
                 },
             );
-            let flexes = self.flexes.lock().clone();
+            let flexes = self.state.flexes();
             let len = self.children.len();
             debug_assert!(flexes.len() == len);
             debug_assert!(flex_values_in_bounds(flexes.as_slice()));
@@ -1309,8 +1354,7 @@ pub mod element {
             let mut origin = bounds.origin;
             let space_per_flex = bounds.size.along(self.axis) / total_flex;
 
-            let mut bounding_boxes = self.bounding_boxes.lock();
-            bounding_boxes.clear();
+            self.state.0.borrow_mut().bounding_boxes.clear();
 
             let mut layout = PaneAxisLayout {
                 dragged_handle,
@@ -1329,7 +1373,11 @@ pub mod element {
                     size: child_size,
                 };
 
-                bounding_boxes.push(Some(child_bounds));
+                self.state
+                    .0
+                    .borrow_mut()
+                    .bounding_boxes
+                    .push(Some(child_bounds));
                 child.layout_as_root(child_size.into(), window, cx);
                 child.prepaint_at(origin, window, cx);
 
@@ -1449,15 +1497,14 @@ pub mod element {
 
                     window.on_mouse_event({
                         let dragged_handle = layout.dragged_handle.clone();
-                        let flexes = self.flexes.clone();
+                        let state = self.state.clone();
                         let workspace = self.workspace.clone();
                         let handle_hitbox = handle.hitbox.clone();
                         move |e: &MouseDownEvent, phase, window, cx| {
                             if phase.bubble() && handle_hitbox.is_hovered(window) {
                                 dragged_handle.replace(Some(ix));
                                 if e.click_count >= 2 {
-                                    let mut borrow = flexes.lock();
-                                    *borrow = vec![1.; borrow.len()];
+                                    state.reset_flexes();
                                     workspace
                                         .update(cx, |this, cx| this.serialize_workspace(window, cx))
                                         .log_err();
@@ -1471,14 +1518,14 @@ pub mod element {
                     window.on_mouse_event({
                         let workspace = self.workspace.clone();
                         let dragged_handle = layout.dragged_handle.clone();
-                        let flexes = self.flexes.clone();
+                        let state = self.state.clone();
                         let child_bounds = child.bounds;
                         let axis = self.axis;
                         move |e: &MouseMoveEvent, phase, window, cx| {
                             let dragged_handle = dragged_handle.borrow();
                             if phase.bubble() && *dragged_handle == Some(ix) {
                                 Self::compute_resize(
-                                    &flexes,
+                                    &state,
                                     e,
                                     ix,
                                     axis,

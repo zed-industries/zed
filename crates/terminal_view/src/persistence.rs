@@ -41,15 +41,14 @@ fn build_serialized_pane_group(
         Member::Axis(PaneAxis {
             axis,
             members,
-            flexes,
-            bounding_boxes: _,
+            state,
         }) => SerializedPaneGroup::Group {
             axis: SerializedAxis(*axis),
             children: members
                 .iter()
                 .map(|member| build_serialized_pane_group(member, active_pane, cx))
                 .collect::<Vec<_>>(),
-            flexes: Some(flexes.lock().clone()),
+            flexes: Some(state.flexes()),
         },
         Member::Pane(pane_handle) => {
             SerializedPaneGroup::Pane(serialize_pane(pane_handle, pane_handle == active_pane, cx))

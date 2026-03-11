@@ -73,10 +73,9 @@ use notifications::{
 };
 pub use pane::*;
 pub use pane_group::{
-    ActivePaneDecorator, HANDLE_HITBOX_SIZE, Member, PaneAxis, PaneGroup, PaneRenderContext,
-    SplitDirection, pane_axis,
+    ActivePaneDecorator, HANDLE_HITBOX_SIZE, Member, PaneAxis, PaneAxisState, PaneGroup,
+    PaneRenderContext, SplitDirection, pane_axis,
 };
-use parking_lot::Mutex;
 use persistence::{DB, SerializedWindowBounds, model::SerializedWorkspace};
 pub use persistence::{
     DB as WORKSPACE_DB, WorkspaceDb, delete_unloaded_items,
@@ -1337,8 +1336,7 @@ pub struct Workspace {
     last_open_dock_positions: Vec<DockPosition>,
     removing: bool,
     _panels_task: Option<Task<Result<()>>>,
-    center_element_flexes: Arc<Mutex<Vec<f32>>>,
-    center_element_bounding_boxes: Arc<Mutex<Vec<Option<Bounds<Pixels>>>>>,
+    center_element_state: PaneAxisState,
 }
 
 impl EventEmitter<Event> for Workspace {}
@@ -1744,8 +1742,7 @@ impl Workspace {
             scheduled_tasks: Vec::new(),
             last_open_dock_positions: Vec::new(),
             removing: false,
-            center_element_flexes: Arc::new(Mutex::new(Vec::new())),
-            center_element_bounding_boxes: Arc::new(Mutex::new(Vec::new())),
+            center_element_state: PaneAxisState::new(0),
         }
     }
 
@@ -6139,15 +6136,14 @@ impl Workspace {
                 Member::Axis(PaneAxis {
                     axis,
                     members,
-                    flexes,
-                    bounding_boxes: _,
+                    state,
                 }) => SerializedPaneGroup::Group {
                     axis: SerializedAxis(*axis),
                     children: members
                         .iter()
                         .map(|member| build_serialized_pane_group(member, window, cx))
                         .collect::<Vec<_>>(),
-                    flexes: Some(flexes.lock().clone()),
+                    flexes: Some(state.flexes()),
                 },
                 Member::Pane(pane_handle) => {
                     SerializedPaneGroup::Pane(serialize_pane_handle(pane_handle, window, cx))
@@ -7052,24 +7048,14 @@ impl Workspace {
         let member_count =
             1 + left_center_element.is_some() as usize + right_center_element.is_some() as usize;
 
-        {
-            let mut flexes = self.center_element_flexes.lock();
-            if flexes.len() != member_count {
-                *flexes = vec![1.; member_count];
-            }
-        }
-        {
-            let mut bounding_boxes = self.center_element_bounding_boxes.lock();
-            if bounding_boxes.len() != member_count {
-                *bounding_boxes = vec![None; member_count];
-            }
+        if self.center_element_state.len() != member_count {
+            self.center_element_state = PaneAxisState::new(member_count);
         }
 
         let axis_element = pane_axis(
             Axis::Horizontal,
             0,
-            self.center_element_flexes.clone(),
-            self.center_element_bounding_boxes.clone(),
+            self.center_element_state.clone(),
             self.weak_self.clone(),
         );
 
