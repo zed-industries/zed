@@ -228,6 +228,7 @@ impl AgentConfiguration {
             .unwrap_or(false);
 
         v_flex()
+            .min_w_0()
             .w_full()
             .when(is_expanded, |this| this.mb_2())
             .child(
@@ -312,6 +313,7 @@ impl AgentConfiguration {
             )
             .child(
                 v_flex()
+                    .min_w_0()
                     .w_full()
                     .px_2()
                     .gap_1()
@@ -459,6 +461,7 @@ impl AgentConfiguration {
             });
 
         v_flex()
+            .min_w_0()
             .w_full()
             .child(self.render_section_title(
                 "LLM Providers",
@@ -559,6 +562,7 @@ impl AgentConfiguration {
             });
 
         v_flex()
+            .min_w_0()
             .border_b_1()
             .border_color(cx.theme().colors().border)
             .child(self.render_section_title(
@@ -802,9 +806,12 @@ impl AgentConfiguration {
             });
 
         v_flex()
+            .min_w_0()
             .id(item_id.clone())
             .child(
                 h_flex()
+                    .min_w_0()
+                    .w_full()
                     .justify_between()
                     .child(
                         h_flex()
@@ -820,13 +827,13 @@ impl AgentConfiguration {
                                     .tooltip(Tooltip::text(tooltip_text))
                                     .child(status_indicator),
                             )
-                            .child(Label::new(item_id).truncate())
+                            .child(Label::new(item_id).flex_shrink_0().truncate())
                             .child(
                                 div()
                                     .id("extension-source")
+                                    .min_w_0()
                                     .mt_0p5()
                                     .mx_1()
-                                    .flex_none()
                                     .tooltip(Tooltip::text(source_tooltip))
                                     .child(
                                         Icon::new(source_icon)
@@ -1019,6 +1026,7 @@ impl AgentConfiguration {
             });
 
         v_flex()
+            .min_w_0()
             .border_b_1()
             .border_color(cx.theme().colors().border)
             .child(
@@ -1217,6 +1225,7 @@ impl Render for AgentConfiguration {
                             .id("assistant-configuration-content")
                             .track_scroll(&self.scroll_handle)
                             .size_full()
+                            .min_w_0()
                             .overflow_y_scroll()
                             .child(self.render_agent_servers_section(cx))
                             .child(self.render_context_servers_section(window, cx))

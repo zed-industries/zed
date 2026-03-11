@@ -1250,7 +1250,7 @@ impl Sidebar {
             .focused(is_selected)
             .child(
                 h_flex()
-                    .p_1()
+                    .py_1()
                     .gap_1p5()
                     .child(Icon::new(icon).size(IconSize::Small).color(Color::Muted))
                     .child(Label::new(label).color(Color::Muted))
