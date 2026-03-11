@@ -31422,6 +31422,94 @@ async fn test_tab_list_indent(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_tab_ordered_list_single_line_renumbering(cx: &mut TestAppContext) {
+    init_test(cx, |settings| {
+        settings.defaults.tab_size = Some(2.try_into().unwrap());
+    });
+
+    let markdown_language = languages::language("markdown", tree_sitter_md::LANGUAGE.into());
+    let mut cx = EditorTestContext::new(cx).await;
+    cx.update_buffer(|buffer, cx| buffer.set_language(Some(markdown_language), cx));
+
+    // Case 1: Single-line indent resets ordered marker to 1 when there is content.
+    cx.set_state(indoc! {"
+        2. ˇsub item
+    "});
+    cx.update_editor(|e, window, cx| e.tab(&Tab, window, cx));
+    cx.wait_for_autoindent_applied().await;
+    let expected = indoc! {"
+        $$1. ˇsub item
+    "};
+    cx.assert_editor_state(expected.replace("$", " ").as_str());
+
+    // Case 2: Single-line indent of an empty ordered item also resets to 1.
+    cx.set_state(indoc! {"
+        2. ˇ
+    "});
+    cx.update_editor(|e, window, cx| e.tab(&Tab, window, cx));
+    cx.wait_for_autoindent_applied().await;
+    let expected = indoc! {"
+        $$1. ˇ
+    "};
+    cx.assert_editor_state(expected.replace("$", " ").as_str());
+
+    // Case 3: Multi-row indent renumbers sequentially starting at 1.
+    cx.set_state(indoc! {"
+        1. parent
+        «2. child a
+        3. child bˇ»
+    "});
+    cx.update_editor(|e, window, cx| e.tab(&Tab, window, cx));
+    cx.wait_for_autoindent_applied().await;
+    let expected = indoc! {"
+        1. parent
+        $$«1. child a
+        $$2. child bˇ»
+    "};
+    cx.assert_editor_state(expected.replace("$", " ").as_str());
+
+    // Case 4: Multi-row indent of 5/6 after an existing nested list also resets to 1/2.
+    cx.set_state(indoc! {"
+        1. list
+        2. list
+          1. list
+          2. list
+        «5. list
+        6. listˇ»
+    "});
+    cx.update_editor(|e, window, cx| e.tab(&Tab, window, cx));
+    cx.wait_for_autoindent_applied().await;
+    let expected = indoc! {"
+        1. list
+        2. list
+          1. list
+          2. list
+          «1. list
+          2. listˇ»
+    "};
+    cx.assert_editor_state(expected);
+
+    // Case 5: Following sibling at original indent is renumbered to close the gap.
+    cx.set_state(indoc! {"
+        1. top
+          1. child
+        «2. moved a
+        3. moved bˇ»
+        4. trailing
+    "});
+    cx.update_editor(|e, window, cx| e.tab(&Tab, window, cx));
+    cx.wait_for_autoindent_applied().await;
+    let expected = indoc! {"
+        1. top
+          1. child
+          «1. moved a
+          2. moved bˇ»
+        2. trailing
+    "};
+    cx.assert_editor_state(expected);
+}
+
+#[gpui::test]
 async fn test_local_worktree_trust(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
     cx.update(|cx| project::trusted_worktrees::init(HashMap::default(), cx));

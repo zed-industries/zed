@@ -11115,7 +11115,12 @@ impl Editor {
         }
 
         let mut delta_for_end_row = 0;
+        let mut next_ordered_list_number = 1;
         let has_multiple_rows = start_row + 1 != end_row;
+        let original_indent_len = snapshot
+            .indent_size_for_line(MultiBufferRow(start_row))
+            .len;
+        let mut moved_ordered_items_at_original_indent = 0u32;
         for row in start_row..end_row {
             let current_indent = snapshot.indent_size_for_line(MultiBufferRow(row));
             let indent_delta = match (current_indent.kind, indent_kind) {
@@ -11138,21 +11143,31 @@ impl Editor {
                 indent_delta.chars().collect::<String>(),
             ));
 
-            // When indenting a single ordered list item, reset its number to 1
-            // since it starts a new sub-list at the deeper indentation level.
-            // For multi-row selections we skip this because the user is moving
-            // an existing list block and the relative ordering must be preserved.
-            if !has_multiple_rows {
-                if let Some(language) =
-                    snapshot.language_scope_at(Point::new(row, current_indent.len))
+            if let Some(language) = snapshot.language_scope_at(Point::new(row, current_indent.len))
+            {
+                let renumber_to = if has_multiple_rows {
+                    next_ordered_list_number
+                } else {
+                    1
+                };
+                if let Some((marker_start_col, marker_end_col, marker_text)) =
+                    ordered_list_indent_renumber(
+                        row,
+                        &current_indent,
+                        snapshot,
+                        &language,
+                        renumber_to,
+                    )
                 {
-                    if let Some((marker_start_col, marker_end_col, reset_marker)) =
-                        ordered_list_indent_reset(row, &current_indent, snapshot, &language)
-                    {
-                        edits.push((
-                            Point::new(row, marker_start_col)..Point::new(row, marker_end_col),
-                            reset_marker,
-                        ));
+                    edits.push((
+                        Point::new(row, marker_start_col)..Point::new(row, marker_end_col),
+                        marker_text,
+                    ));
+                    if has_multiple_rows {
+                        next_ordered_list_number += 1;
+                        if current_indent.len == original_indent_len {
+                            moved_ordered_items_at_original_indent += 1;
+                        }
                     }
                 }
             }
@@ -11164,6 +11179,21 @@ impl Editor {
             if row == selection.end.row {
                 selection.end.column += indent_delta.len;
                 delta_for_end_row = indent_delta.len;
+            }
+        }
+
+        if has_multiple_rows && moved_ordered_items_at_original_indent > 0 {
+            if let Some(language) =
+                snapshot.language_scope_at(Point::new(start_row, original_indent_len))
+            {
+                renumber_following_ordered_list_siblings_after_indent(
+                    start_row,
+                    end_row,
+                    original_indent_len,
+                    snapshot,
+                    &language,
+                    edits,
+                );
             }
         }
 
@@ -26287,23 +26317,39 @@ fn list_delimiter_for_newline(
     None
 }
 
-/// Returns `(marker_start_col, marker_end_col, reset_text)` for an ordered list item
-/// on `row` that has content after the marker, so the caller can replace the marker
-/// with `reset_text` (which always formats the number as `1`) when indenting.
-///
-/// Returns `None` if the row is not an ordered list item with content, or if the
-/// marker would not change (i.e., it is already `1`).
-fn ordered_list_indent_reset(
+/// Returns `(marker_start_col, marker_end_col, marker_text)` for an ordered list item
+/// on `row`, allowing the caller to replace the marker while indenting.
+fn ordered_list_indent_renumber(
     row: u32,
     current_indent: &IndentSize,
     snapshot: &MultiBufferSnapshot,
     language: &LanguageScope,
+    renumber_to: u32,
 ) -> Option<(u32, u32, String)> {
+    let marker = ordered_list_marker(row, current_indent.len, snapshot, language)?;
+    let marker_text = marker.format.replace("{1}", &renumber_to.to_string());
+    Some((marker.start_col, marker.end_col, marker_text))
+}
+
+#[derive(Clone)]
+struct OrderedListMarker {
+    start_col: u32,
+    end_col: u32,
+    number: u32,
+    format: String,
+}
+
+fn ordered_list_marker(
+    row: u32,
+    indent_len: u32,
+    snapshot: &MultiBufferSnapshot,
+    language: &LanguageScope,
+) -> Option<OrderedListMarker> {
     let (buffer_snapshot, range) = snapshot.buffer_line_for_row(MultiBufferRow(row))?;
-    let indent_len = current_indent.len as usize;
+    let indent_len = indent_len as usize;
 
     let candidate: String = buffer_snapshot
-        .chars_for_range(range.clone())
+        .chars_for_range(range)
         .skip(indent_len)
         .take(ORDERED_LIST_MAX_MARKER_LEN)
         .collect();
@@ -26316,31 +26362,88 @@ fn ordered_list_indent_reset(
 
         if let Some(captures) = regex.captures(&candidate) {
             let full_match = captures.get(0)?;
-            let marker_len = full_match.len();
-            let end_of_marker = indent_len + marker_len;
-
-            let has_content = buffer_snapshot
-                .chars_for_range(range)
-                .skip(end_of_marker)
-                .any(|c| !c.is_whitespace());
-
-            if !has_content {
-                return None;
-            }
-
-            let current_number: u32 = captures.get(1)?.as_str().parse().ok()?;
-            if current_number == 1 {
-                return None;
-            }
-
-            let reset_marker = ordered_config.format.replace("{1}", "1");
-            let marker_start_col = indent_len as u32;
-            let marker_end_col = end_of_marker as u32;
-            return Some((marker_start_col, marker_end_col, reset_marker));
+            let number = captures.get(1)?.as_str().parse().ok()?;
+            return Some(OrderedListMarker {
+                start_col: indent_len as u32,
+                end_col: (indent_len + full_match.len()) as u32,
+                number,
+                format: ordered_config.format.to_string(),
+            });
         }
     }
 
     None
+}
+
+fn previous_ordered_list_number_at_indent(
+    before_row: u32,
+    indent_len: u32,
+    snapshot: &MultiBufferSnapshot,
+    language: &LanguageScope,
+) -> u32 {
+    for row in (0..before_row).rev() {
+        let row = MultiBufferRow(row);
+        if snapshot.is_line_blank(row) {
+            return 0;
+        }
+
+        let row_indent_len = snapshot.indent_size_for_line(row).len;
+        if row_indent_len < indent_len {
+            return 0;
+        }
+
+        if row_indent_len == indent_len {
+            if let Some(marker) = ordered_list_marker(row.0, indent_len, snapshot, language) {
+                return marker.number;
+            }
+            return 0;
+        }
+    }
+
+    0
+}
+
+fn renumber_following_ordered_list_siblings_after_indent(
+    moved_start_row: u32,
+    following_start_row: u32,
+    indent_len: u32,
+    snapshot: &MultiBufferSnapshot,
+    language: &LanguageScope,
+    edits: &mut Vec<(Range<Point>, String)>,
+) {
+    let mut next_number =
+        previous_ordered_list_number_at_indent(moved_start_row, indent_len, snapshot, language) + 1;
+    let max_row = snapshot.max_point().row;
+
+    for row in following_start_row..=max_row {
+        let row = MultiBufferRow(row);
+        if snapshot.is_line_blank(row) {
+            break;
+        }
+
+        let row_indent_len = snapshot.indent_size_for_line(row).len;
+        if row_indent_len < indent_len {
+            break;
+        }
+
+        if row_indent_len > indent_len {
+            continue;
+        }
+
+        let Some(marker) = ordered_list_marker(row.0, indent_len, snapshot, language) else {
+            break;
+        };
+
+        if marker.number != next_number {
+            let marker_text = marker.format.replace("{1}", &next_number.to_string());
+            edits.push((
+                Point::new(row.0, marker.start_col)..Point::new(row.0, marker.end_col),
+                marker_text,
+            ));
+        }
+
+        next_number += 1;
+    }
 }
 
 fn is_list_prefix_row(
