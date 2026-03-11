@@ -142,6 +142,8 @@ pub struct ThemeSettingsContent {
     pub buffer_font_weight: Option<FontWeightContent>,
     /// The buffer's line height.
     pub buffer_line_height: Option<BufferLineHeight>,
+    /// The line height for UI elements like the file tree, git panel, and outline panel.
+    pub ui_line_height: Option<UiLineHeight>,
     /// The OpenType features to enable for rendering in text buffers.
     #[schemars(default = "default_font_features")]
     pub buffer_font_features: Option<FontFeaturesContent>,
@@ -439,6 +441,31 @@ pub enum BufferLineHeight {
     Custom(#[serde(deserialize_with = "deserialize_line_height")] f32),
 }
 
+/// The line height for UI elements like the file tree, git panel, and outline panel.
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    Serialize,
+    Deserialize,
+    PartialEq,
+    JsonSchema,
+    MergeFrom,
+    Default,
+    strum::EnumDiscriminants,
+)]
+#[strum_discriminants(derive(strum::VariantArray, strum::VariantNames, strum::FromRepr))]
+#[serde(rename_all = "snake_case")]
+pub enum UiLineHeight {
+    /// A less dense line height.
+    #[default]
+    Comfortable,
+    /// The default line height.
+    Standard,
+    /// A custom line height, where 1.0 is the font's height. Must be at least 1.0.
+    Custom(#[serde(deserialize_with = "deserialize_line_height")] f32),
+}
+
 fn deserialize_line_height<'de, D>(deserializer: D) -> Result<f32, D::Error>
 where
     D: serde::Deserializer<'de>,
@@ -446,7 +473,7 @@ where
     let value = f32::deserialize(deserializer)?;
     if value < 1.0 {
         return Err(serde::de::Error::custom(
-            "buffer_line_height.custom must be at least 1.0",
+            "line_height.custom must be at least 1.0",
         ));
     }
 

@@ -5,7 +5,7 @@ use crate::{
 use collections::HashMap;
 use derive_more::{Deref, DerefMut};
 use gpui::{
-    App, Context, Font, FontFallbacks, FontStyle, Global, Pixels, Subscription, Window, px,
+    App, Context, Font, FontFallbacks, FontStyle, Global, Pixels, Rems, Subscription, Window, px,
 };
 use refineable::Refineable;
 use schemars::JsonSchema;
@@ -120,6 +120,8 @@ pub struct ThemeSettings {
     ///
     /// The terminal font family can be overridden using it's own setting.
     pub buffer_line_height: BufferLineHeight,
+    /// The line height for UI elements like the file tree, git panel, and outline panel.
+    pub ui_line_height: UiLineHeight,
     /// The current theme selection.
     pub theme: ThemeSelection,
     /// Manual overrides for the active theme.
@@ -461,6 +463,39 @@ impl BufferLineHeight {
     }
 }
 
+/// The line height for UI elements like the file tree, git panel, and outline panel.
+#[derive(Clone, Copy, Debug, PartialEq, Default)]
+pub enum UiLineHeight {
+    /// A less dense line height.
+    #[default]
+    Comfortable,
+    /// The default line height.
+    Standard,
+    /// A custom line height, where 1.0 is the font's height. Must be at least 1.0.
+    Custom(f32),
+}
+
+impl From<settings::UiLineHeight> for UiLineHeight {
+    fn from(value: settings::UiLineHeight) -> Self {
+        match value {
+            settings::UiLineHeight::Comfortable => UiLineHeight::Comfortable,
+            settings::UiLineHeight::Standard => UiLineHeight::Standard,
+            settings::UiLineHeight::Custom(line_height) => UiLineHeight::Custom(line_height),
+        }
+    }
+}
+
+impl UiLineHeight {
+    /// Returns the value of the line height.
+    pub fn value(&self) -> f32 {
+        match self {
+            UiLineHeight::Comfortable => 1.618,
+            UiLineHeight::Standard => 1.3,
+            UiLineHeight::Custom(line_height) => *line_height,
+        }
+    }
+}
+
 impl ThemeSettings {
     /// Returns the buffer font size.
     pub fn buffer_font_size(&self, cx: &App) -> Pixels {
@@ -534,6 +569,11 @@ impl ThemeSettings {
     /// Returns the buffer's line height.
     pub fn line_height(&self) -> f32 {
         f32::max(self.buffer_line_height.value(), MIN_LINE_HEIGHT)
+    }
+
+    /// Returns the UI line height as rems.
+    pub fn ui_line_height_in_rems(&self) -> Rems {
+        Rems(f32::max(self.ui_line_height.value(), MIN_LINE_HEIGHT))
     }
 
     /// Applies the theme overrides, if there are any, to the current theme.
@@ -728,6 +768,7 @@ impl settings::Settings for ThemeSettings {
             },
             buffer_font_size: clamp_font_size(content.buffer_font_size.unwrap().into_gpui()),
             buffer_line_height: content.buffer_line_height.unwrap().into(),
+            ui_line_height: content.ui_line_height.unwrap().into(),
             agent_ui_font_size: content.agent_ui_font_size.map(|s| s.into_gpui()),
             agent_buffer_font_size: content.agent_buffer_font_size.map(|s| s.into_gpui()),
             theme: theme_selection,

@@ -53,6 +53,9 @@
   //           "custom": 2
   //         },
   "buffer_line_height": "comfortable",
+  // The line height for UI elements like the file tree, git panel,
+  // and outline panel. Takes the same values as buffer_line_height.
+  "ui_line_height": "comfortable",
   // The name of a font to use for rendering text in the UI
   // You can set this to ".SystemUIFont" to use the system font
   // ".ZedSans" currently aliases to "IBM Plex Sans", but this may

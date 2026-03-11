@@ -2684,6 +2684,7 @@ impl OutlinePanel {
         cx: &mut Context<OutlinePanel>,
     ) -> Stateful<Div> {
         let settings = OutlinePanelSettings::get_global(cx);
+        let ui_line_height = ThemeSettings::get_global(cx).ui_line_height_in_rems();
         div()
             .text_ui(cx)
             .id(item_id.clone())
@@ -2715,7 +2716,7 @@ impl OutlinePanel {
                     .child(
                         h_flex()
                             .child(h_flex().w(px(16.)).justify_center().child(icon_element))
-                            .child(h_flex().h_6().child(label_element).ml_1()),
+                            .child(h_flex().h(ui_line_height).child(label_element).ml_1()),
                     )
                     .on_secondary_mouse_down(cx.listener(
                         move |outline_panel, event: &MouseDownEvent, window, cx| {
