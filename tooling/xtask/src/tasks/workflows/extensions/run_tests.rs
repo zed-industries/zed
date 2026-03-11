@@ -1,4 +1,4 @@
-use gh_workflow::{Event, Input, Job, Level, Permissions, PullRequest, Push, UsesJob, Workflow};
+use gh_workflow::{Event, Job, Level, Permissions, PullRequest, Push, UsesJob, Workflow};
 
 use crate::tasks::workflows::{
     GenerateWorkflowArgs, GitSha,
@@ -24,11 +24,7 @@ pub(crate) fn call_extension_tests(target_ref: Option<&GitSha>) -> NamedJob<Uses
             "zed",
             ".github/workflows/extension_tests.yml",
             target_ref.map_or("main", AsRef::as_ref),
-        )
-        .with(Input::default().add(
-            "working-directory",
-            "${{ vars.EXTENSION_DIRECTORY || '.' }}",
-        ));
+        );
 
     named::job(job)
 }

@@ -59,11 +59,7 @@ pub(crate) fn call_bump_version(
         .with(
             Input::default()
                 .add("bump-type", bump_type.to_string())
-                .add("force-bump", "${{ github.event_name != 'push' }}")
-                .add(
-                    "working-directory",
-                    "${{ vars.EXTENSION_DIRECTORY || '.' }}",
-                ),
+                .add("force-bump", "${{ github.event_name != 'push' }}"),
         )
         .with_app_secrets();
 
