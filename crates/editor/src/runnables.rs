@@ -1,0 +1,600 @@
+use std::{collections::BTreeMap, mem, ops::Range, sync::Arc};
+
+use collections::HashMap;
+use gpui::{
+    App, AppContext as _, AsyncWindowContext, ClickEvent, Context, Entity, Focusable as _,
+    MouseButton, Task, Window,
+};
+use language::{Buffer, BufferRow, Runnable};
+use lsp::LanguageServerName;
+use multi_buffer::{Anchor, BufferOffset, MultiBufferOffset, MultiBufferRow, ToPoint as _};
+use project::{
+    Location, Project, TaskSourceKind,
+    debugger::breakpoint_store::{Breakpoint, BreakpointSessionState},
+    project_settings::ProjectSettings,
+};
+use settings::Settings as _;
+use smallvec::SmallVec;
+use task::{ResolvedTask, RunnableTag, TaskContext, TaskTemplate, TaskVariables, VariableName};
+use text::{BufferId, OffsetRangeExt as _, ToOffset as _, ToPoint as _};
+use ui::{Clickable as _, Color, IconButton, IconSize, Toggleable as _};
+
+use crate::{
+    CodeActionSource, Editor, EditorSettings, EditorStyle, SpawnNearestTask, ToggleCodeActions,
+    UPDATE_DEBOUNCE,
+    display_map::{DisplayRow, DisplaySnapshot},
+};
+
+pub(super) struct RunnableData {
+    runnables: BTreeMap<(BufferId, BufferRow), RunnableTasks>,
+    runnables_update_task: Task<()>,
+}
+
+impl RunnableData {
+    pub fn new() -> Self {
+        Self {
+            runnables: BTreeMap::default(),
+            runnables_update_task: Task::ready(()),
+        }
+    }
+
+    pub fn runnables(&self) -> &
+}
+
+#[derive(Clone, Debug)]
+pub struct RunnableTasks {
+    pub templates: Vec<(TaskSourceKind, TaskTemplate)>,
+    pub offset: multi_buffer::Anchor,
+    // We need the column at which the task context evaluation should take place (when we're spawning it via gutter).
+    pub column: u32,
+    // Values of all named captures, including those starting with '_'
+    pub extra_variables: HashMap<String, String>,
+    // Full range of the tagged region. We use it to determine which `extra_variables` to grab for context resolution in e.g. a modal.
+    pub context_range: Range<BufferOffset>,
+}
+
+impl RunnableTasks {
+    pub fn resolve<'a>(
+        &'a self,
+        cx: &'a task::TaskContext,
+    ) -> impl Iterator<Item = (TaskSourceKind, ResolvedTask)> + 'a {
+        self.templates.iter().filter_map(|(kind, template)| {
+            template
+                .resolve_task(&kind.to_id_base(), cx)
+                .map(|task| (kind.clone(), task))
+        })
+    }
+}
+
+#[derive(Clone)]
+pub struct ResolvedTasks {
+    pub templates: SmallVec<[(TaskSourceKind, ResolvedTask); 1]>,
+    pub position: Anchor,
+}
+
+impl Editor {
+    pub fn refresh_runnables(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.mode().is_full()
+            || !EditorSettings::get_global(cx).gutter.runnables
+            || !self.enable_runnables
+        {
+            self.clear_runnables(None);
+            return;
+        }
+        let project = self.project().map(Entity::downgrade);
+        let task_sources = self.lsp_task_sources(true, cx);
+        let multi_buffer = self.buffer.downgrade();
+        let lsp_data_enabled = self.lsp_data_enabled();
+        dbg!((
+            cx.entity(),
+            self.title(cx),
+            self.enable_runnables,
+            lsp_data_enabled
+        ));
+        self.runnables.runnables_update_task = cx.spawn_in(window, async move |editor, cx| {
+            cx.background_executor().timer(UPDATE_DEBOUNCE).await;
+            let Some(project) = project.and_then(|p| p.upgrade()) else {
+                return;
+            };
+            let Ok(display_snapshot) = editor.update(cx, |this, cx| {
+                this.display_map.update(cx, |map, cx| map.snapshot(cx))
+            }) else {
+                return;
+            };
+
+            let hide_runnables = project.update(cx, |project, _| project.is_via_collab());
+            if hide_runnables {
+                return;
+            }
+            let new_rows = cx
+                .background_spawn({
+                    let snapshot = display_snapshot.clone();
+                    async move {
+                        snapshot
+                            .buffer_snapshot()
+                            // TODO kb refresh runnables based on the viewport
+                            .runnable_ranges(Anchor::min()..Anchor::max())
+                            .collect()
+                    }
+                })
+                .await;
+            let lsp_tasks = if lsp_data_enabled {
+                let Ok(lsp_tasks) =
+                    cx.update(|_, cx| crate::lsp_tasks(project.clone(), &task_sources, None, cx))
+                else {
+                    return;
+                };
+                lsp_tasks.await
+            } else {
+                Vec::new()
+            };
+
+            let Ok(mut lsp_tasks_by_rows) = cx.update(|_, cx| {
+                lsp_tasks
+                    .into_iter()
+                    .flat_map(|(kind, tasks)| {
+                        tasks.into_iter().filter_map(move |(location, task)| {
+                            Some((kind.clone(), location?, task))
+                        })
+                    })
+                    .fold(HashMap::default(), |mut acc, (kind, location, task)| {
+                        let buffer = location.target.buffer;
+                        let buffer_snapshot = buffer.read(cx).snapshot();
+                        let offset = display_snapshot.buffer_snapshot().excerpts().find_map(
+                            |(excerpt_id, snapshot, _)| {
+                                if snapshot.remote_id() == buffer_snapshot.remote_id() {
+                                    display_snapshot
+                                        .buffer_snapshot()
+                                        .anchor_in_excerpt(excerpt_id, location.target.range.start)
+                                } else {
+                                    None
+                                }
+                            },
+                        );
+                        if let Some(offset) = offset {
+                            let task_buffer_range =
+                                location.target.range.to_point(&buffer_snapshot);
+                            let context_buffer_range =
+                                task_buffer_range.to_offset(&buffer_snapshot);
+                            let context_range = BufferOffset(context_buffer_range.start)
+                                ..BufferOffset(context_buffer_range.end);
+
+                            acc.entry((buffer_snapshot.remote_id(), task_buffer_range.start.row))
+                                .or_insert_with(|| RunnableTasks {
+                                    templates: Vec::new(),
+                                    offset,
+                                    column: task_buffer_range.start.column,
+                                    extra_variables: HashMap::default(),
+                                    context_range,
+                                })
+                                .templates
+                                .push((kind, task.original_task().clone()));
+                        }
+
+                        acc
+                    })
+            }) else {
+                return;
+            };
+
+            let Ok(prefer_lsp) = multi_buffer.update(cx, |buffer, cx| {
+                buffer.language_settings(cx).tasks.prefer_lsp
+            }) else {
+                return;
+            };
+
+            let rows = Self::runnable_rows(
+                project,
+                display_snapshot,
+                prefer_lsp && !lsp_tasks_by_rows.is_empty(),
+                new_rows,
+                cx.clone(),
+            )
+            .await;
+            editor
+                .update(cx, |editor, _| {
+                    // TODO kb invalidate instead
+                    editor.clear_runnables(None);
+                    for (key, mut value) in rows {
+                        if let Some(lsp_tasks) = lsp_tasks_by_rows.remove(&key) {
+                            value.templates.extend(lsp_tasks.templates);
+                        }
+
+                        editor.insert_runnables(key, value);
+                    }
+                    for (key, value) in lsp_tasks_by_rows {
+                        editor.insert_runnables(key, value);
+                    }
+                })
+                .ok();
+        });
+    }
+
+    pub fn spawn_nearest_task(
+        &mut self,
+        action: &SpawnNearestTask,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some((workspace, _)) = self.workspace.clone() else {
+            return;
+        };
+        let Some(project) = self.project.clone() else {
+            return;
+        };
+
+        // Try to find a closest, enclosing node using tree-sitter that has a task
+        let Some((buffer, buffer_row, tasks)) = self
+            .find_enclosing_node_task(cx)
+            // Or find the task that's closest in row-distance.
+            .or_else(|| self.find_closest_task(cx))
+        else {
+            return;
+        };
+
+        let reveal_strategy = action.reveal;
+        let task_context = Self::build_tasks_context(&project, &buffer, buffer_row, &tasks, cx);
+        cx.spawn_in(window, async move |_, cx| {
+            let context = task_context.await?;
+            let (task_source_kind, mut resolved_task) = tasks.resolve(&context).next()?;
+
+            let resolved = &mut resolved_task.resolved;
+            resolved.reveal = reveal_strategy;
+
+            workspace
+                .update_in(cx, |workspace, window, cx| {
+                    workspace.schedule_resolved_task(
+                        task_source_kind,
+                        resolved_task,
+                        false,
+                        window,
+                        cx,
+                    );
+                })
+                .ok()
+        })
+        .detach();
+    }
+
+    pub fn clear_runnables(&mut self, for_buffer: Option<BufferId>) {
+        if let Some(buffer_id) = for_buffer {
+            self.runnables
+                .runnables
+                .retain(|(task_buffer_id, _), _| task_buffer_id != &buffer_id);
+        } else {
+            self.runnables.runnables.clear();
+        }
+        self.runnables.runnables_update_task = Task::ready(());
+    }
+
+    pub fn task_context(&self, window: &mut Window, cx: &mut App) -> Task<Option<TaskContext>> {
+        let Some(project) = self.project.clone() else {
+            return Task::ready(None);
+        };
+        let (selection, buffer, editor_snapshot) = {
+            let selection = self.selections.newest_adjusted(&self.display_snapshot(cx));
+            let Some((buffer, _)) = self
+                .buffer()
+                .read(cx)
+                .point_to_buffer_offset(selection.start, cx)
+            else {
+                return Task::ready(None);
+            };
+            let snapshot = self.snapshot(window, cx);
+            (selection, buffer, snapshot)
+        };
+        let selection_range = selection.range();
+        let start = editor_snapshot
+            .display_snapshot
+            .buffer_snapshot()
+            .anchor_after(selection_range.start)
+            .text_anchor;
+        let end = editor_snapshot
+            .display_snapshot
+            .buffer_snapshot()
+            .anchor_after(selection_range.end)
+            .text_anchor;
+        let location = Location {
+            buffer,
+            range: start..end,
+        };
+        let captured_variables = {
+            let mut variables = TaskVariables::default();
+            let buffer = location.buffer.read(cx);
+            let buffer_id = buffer.remote_id();
+            let snapshot = buffer.snapshot();
+            let starting_point = location.range.start.to_point(&snapshot);
+            let starting_offset = starting_point.to_offset(&snapshot);
+            for (_, tasks) in self
+                .runnables
+                .runnables
+                .range((buffer_id, 0)..(buffer_id, starting_point.row + 1))
+            {
+                if !tasks
+                    .context_range
+                    .contains(&crate::BufferOffset(starting_offset))
+                {
+                    continue;
+                }
+                for (capture_name, value) in tasks.extra_variables.iter() {
+                    variables.insert(
+                        VariableName::Custom(capture_name.to_owned().into()),
+                        value.clone(),
+                    );
+                }
+            }
+            variables
+        };
+
+        project.update(cx, |project, cx| {
+            project.task_store().update(cx, |task_store, cx| {
+                task_store.task_context_for_location(captured_variables, location, cx)
+            })
+        })
+    }
+
+    pub fn lsp_task_sources(
+        &self,
+        visible_only: bool,
+        cx: &mut Context<Self>,
+    ) -> HashMap<LanguageServerName, Vec<BufferId>> {
+        let buffers = if visible_only {
+            self.visible_excerpts(true, cx)
+                .into_values()
+                .map(|(buffer, _, _)| buffer)
+                .collect()
+        } else {
+            self.buffer().read(cx).all_buffers()
+        };
+
+        let lsp_settings = &ProjectSettings::get_global(cx).lsp;
+
+        buffers
+            .into_iter()
+            .filter_map(|buffer| {
+                let lsp_tasks_source = buffer
+                    .read(cx)
+                    .language()?
+                    .context_provider()?
+                    .lsp_task_source()?;
+                if lsp_settings
+                    .get(&lsp_tasks_source)
+                    .is_none_or(|s| s.enable_lsp_tasks)
+                {
+                    let buffer_id = buffer.read(cx).remote_id();
+                    Some((lsp_tasks_source, buffer_id))
+                } else {
+                    None
+                }
+            })
+            .fold(
+                HashMap::default(),
+                |mut acc, (lsp_task_source, buffer_id)| {
+                    acc.entry(lsp_task_source)
+                        .or_insert_with(Vec::new)
+                        .push(buffer_id);
+                    acc
+                },
+            )
+    }
+
+    fn insert_runnables(&mut self, key: (BufferId, BufferRow), value: RunnableTasks) {
+        if self.runnables.runnables.insert(key, value).is_some() {
+            // This case should hopefully be rare, but just in case...
+            log::error!(
+                "multiple different run targets found on a single line, only the last target will be rendered"
+            )
+        }
+    }
+
+    fn runnable_rows(
+        project: Entity<Project>,
+        snapshot: DisplaySnapshot,
+        prefer_lsp: bool,
+        runnable_ranges: Vec<(Range<MultiBufferOffset>, language::RunnableRange)>,
+        cx: AsyncWindowContext,
+    ) -> Task<Vec<((BufferId, BufferRow), RunnableTasks)>> {
+        cx.spawn(async move |cx| {
+            let mut runnable_rows = Vec::with_capacity(runnable_ranges.len());
+            for (run_range, mut runnable) in runnable_ranges {
+                let Some(tasks) = cx
+                    .update(|_, cx| Self::templates_with_tags(&project, &mut runnable.runnable, cx))
+                    .ok()
+                else {
+                    continue;
+                };
+                let mut tasks = tasks.await;
+
+                if prefer_lsp {
+                    tasks.retain(|(task_kind, _)| {
+                        !matches!(task_kind, TaskSourceKind::Language { .. })
+                    });
+                }
+                if tasks.is_empty() {
+                    continue;
+                }
+
+                let point = run_range.start.to_point(&snapshot.buffer_snapshot());
+                let Some(row) = snapshot
+                    .buffer_snapshot()
+                    .buffer_line_for_row(MultiBufferRow(point.row))
+                    .map(|(_, range)| range.start.row)
+                else {
+                    continue;
+                };
+
+                let context_range =
+                    BufferOffset(runnable.full_range.start)..BufferOffset(runnable.full_range.end);
+                runnable_rows.push((
+                    (runnable.buffer_id, row),
+                    RunnableTasks {
+                        templates: tasks,
+                        offset: snapshot.buffer_snapshot().anchor_before(run_range.start),
+                        context_range,
+                        column: point.column,
+                        extra_variables: runnable.extra_captures,
+                    },
+                ));
+            }
+            runnable_rows
+        })
+    }
+
+    fn templates_with_tags(
+        project: &Entity<Project>,
+        runnable: &mut Runnable,
+        cx: &mut App,
+    ) -> Task<Vec<(TaskSourceKind, TaskTemplate)>> {
+        let (inventory, worktree_id, file) = project.read_with(cx, |project, cx| {
+            let (worktree_id, file) = project
+                .buffer_for_id(runnable.buffer, cx)
+                .and_then(|buffer| buffer.read(cx).file())
+                .map(|file| (file.worktree_id(cx), file.clone()))
+                .unzip();
+
+            (
+                project.task_store().read(cx).task_inventory().cloned(),
+                worktree_id,
+                file,
+            )
+        });
+
+        let tags = mem::take(&mut runnable.tags);
+        let language = runnable.language.clone();
+        cx.spawn(async move |cx| {
+            let mut templates_with_tags = Vec::new();
+            if let Some(inventory) = inventory {
+                for RunnableTag(tag) in tags {
+                    let new_tasks = inventory.update(cx, |inventory, cx| {
+                        inventory.list_tasks(file.clone(), Some(language.clone()), worktree_id, cx)
+                    });
+                    templates_with_tags.extend(new_tasks.await.into_iter().filter(
+                        move |(_, template)| {
+                            template.tags.iter().any(|source_tag| source_tag == &tag)
+                        },
+                    ));
+                }
+            }
+            templates_with_tags.sort_by_key(|(kind, _)| kind.to_owned());
+
+            if let Some((leading_tag_source, _)) = templates_with_tags.first() {
+                // Strongest source wins; if we have worktree tag binding, prefer that to
+                // global and language bindings;
+                // if we have a global binding, prefer that to language binding.
+                let first_mismatch = templates_with_tags
+                    .iter()
+                    .position(|(tag_source, _)| tag_source != leading_tag_source);
+                if let Some(index) = first_mismatch {
+                    templates_with_tags.truncate(index);
+                }
+            }
+
+            templates_with_tags
+        })
+    }
+
+    fn find_closest_task(
+        &mut self,
+        cx: &mut Context<Self>,
+    ) -> Option<(Entity<Buffer>, u32, Arc<RunnableTasks>)> {
+        let cursor_row = self
+            .selections
+            .newest_adjusted(&self.display_snapshot(cx))
+            .head()
+            .row;
+
+        let ((buffer_id, row), tasks) = self
+            .runnables
+            .runnables
+            .iter()
+            .min_by_key(|((_, row), _)| cursor_row.abs_diff(*row))?;
+
+        let buffer = self.buffer.read(cx).buffer(*buffer_id)?;
+        let tasks = Arc::new(tasks.to_owned());
+        Some((buffer, *row, tasks))
+    }
+
+    pub fn find_enclosing_node_task(
+        &mut self,
+        cx: &mut Context<Self>,
+    ) -> Option<(Entity<Buffer>, u32, Arc<RunnableTasks>)> {
+        let snapshot = self.buffer.read(cx).snapshot(cx);
+        let offset = self
+            .selections
+            .newest::<MultiBufferOffset>(&self.display_snapshot(cx))
+            .head();
+        let mut excerpt = snapshot.excerpt_containing(offset..offset)?;
+        let offset = excerpt.map_offset_to_buffer(offset);
+        let buffer_id = excerpt.buffer().remote_id();
+
+        let layer = excerpt.buffer().syntax_layer_at(offset)?;
+        let mut cursor = layer.node().walk();
+
+        while cursor.goto_first_child_for_byte(offset.0).is_some() {
+            if cursor.node().end_byte() == offset.0 {
+                cursor.goto_next_sibling();
+            }
+        }
+
+        // Ascend to the smallest ancestor that contains the range and has a task.
+        loop {
+            let node = cursor.node();
+            let node_range = node.byte_range();
+            let symbol_start_row = excerpt.buffer().offset_to_point(node.start_byte()).row;
+
+            // Check if this node contains our offset
+            if node_range.start <= offset.0 && node_range.end >= offset.0 {
+                // If it contains offset, check for task
+                if let Some(tasks) = self.runnables.runnables.get(&(buffer_id, symbol_start_row)) {
+                    let buffer = self.buffer.read(cx).buffer(buffer_id)?;
+                    return Some((buffer, symbol_start_row, Arc::new(tasks.to_owned())));
+                }
+            }
+
+            if !cursor.goto_parent() {
+                break;
+            }
+        }
+        None
+    }
+
+    pub fn render_run_indicator(
+        &self,
+        _style: &EditorStyle,
+        is_active: bool,
+        row: DisplayRow,
+        breakpoint: Option<(Anchor, Breakpoint, Option<BreakpointSessionState>)>,
+        cx: &mut Context<Self>,
+    ) -> IconButton {
+        let color = Color::Muted;
+        let position = breakpoint.as_ref().map(|(anchor, _, _)| *anchor);
+
+        IconButton::new(
+            ("run_indicator", row.0 as usize),
+            ui::IconName::PlayOutlined,
+        )
+        .shape(ui::IconButtonShape::Square)
+        .icon_size(IconSize::XSmall)
+        .icon_color(color)
+        .toggle_state(is_active)
+        .on_click(cx.listener(move |editor, e: &ClickEvent, window, cx| {
+            let quick_launch = match e {
+                ClickEvent::Keyboard(_) => true,
+                ClickEvent::Mouse(e) => e.down.button == MouseButton::Left,
+            };
+
+            window.focus(&editor.focus_handle(cx), cx);
+            editor.toggle_code_actions(
+                &ToggleCodeActions {
+                    deployed_from: Some(CodeActionSource::RunMenu(row)),
+                    quick_launch,
+                },
+                window,
+                cx,
+            );
+        }))
+        .on_right_click(cx.listener(move |editor, event: &ClickEvent, window, cx| {
+            editor.set_breakpoint_context_menu(row, position, event.position(), window, cx);
+        }))
+    }
+}

@@ -3275,7 +3275,8 @@ impl EditorElement {
                 snapshot.display_point_to_point(DisplayPoint::new(range.end, 0), Bias::Right);
 
             editor
-                .tasks
+                .runnables
+                .runnables
                 .iter()
                 .filter_map(|(_, tasks)| {
                     let multibuffer_point = tasks.offset.to_point(&snapshot.buffer_snapshot());

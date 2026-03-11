@@ -5,6 +5,7 @@ use crate::{
     edit_prediction_tests::FakeEditPredictionDelegate,
     element::StickyHeader,
     linked_editing_ranges::LinkedEditingRanges,
+    runnables::RunnableTasks,
     scroll::scroll_amount::ScrollAmount,
     test::{
         assert_text_with_selections, build_editor, editor_content_with_blocks,
@@ -24403,7 +24404,7 @@ async fn test_find_enclosing_node_with_task(cx: &mut TestAppContext) {
 
     editor.update_in(cx, |editor, window, cx| {
         let snapshot = editor.buffer().read(cx).snapshot(cx);
-        editor.tasks.insert(
+        editor.runnables.runnables.insert(
             (buffer.read(cx).remote_id(), 3),
             RunnableTasks {
                 templates: vec![],
@@ -24413,7 +24414,7 @@ async fn test_find_enclosing_node_with_task(cx: &mut TestAppContext) {
                 context_range: BufferOffset(43)..BufferOffset(85),
             },
         );
-        editor.tasks.insert(
+        editor.runnables.runnables.insert(
             (buffer.read(cx).remote_id(), 8),
             RunnableTasks {
                 templates: vec![],
