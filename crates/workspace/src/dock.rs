@@ -5,10 +5,10 @@ use anyhow::Context as _;
 use client::proto;
 
 use gpui::{
-    Action, AnyView, App, Axis, Context, Corner, Entity, EntityId, EventEmitter, FocusHandle,
-    Focusable, IntoElement, KeyContext, MouseButton, MouseDownEvent, MouseUpEvent, ParentElement,
-    Render, SharedString, StyleRefinement, Styled, Subscription, WeakEntity, Window, deferred, div,
-    px,
+    Action, AnyElement, AnyView, App, Axis, Context, Corner, Entity, EntityId, EventEmitter,
+    FocusHandle, Focusable, IntoElement, KeyContext, MouseButton, MouseDownEvent, MouseUpEvent,
+    ParentElement, Render, SharedString, StyleRefinement, Styled, Subscription, WeakEntity, Window,
+    deferred, div, px,
 };
 use settings::SettingsStore;
 use std::sync::Arc;
@@ -59,6 +59,19 @@ pub trait Panel: Focusable + EventEmitter<PanelEvent> + Render + Sized {
     fn enabled(&self, _cx: &App) -> bool {
         true
     }
+    fn render_center_element(
+        &mut self,
+        _window: &mut Window,
+        _cx: &mut Context<Self>,
+    ) -> Option<AnyElement> {
+        None
+    }
+    fn has_center_element(&self, _window: &Window, _cx: &App) -> bool {
+        false
+    }
+    fn has_main_element(&self, _window: &Window, _cx: &App) -> bool {
+        true
+    }
 }
 
 pub trait PanelHandle: Send + Sync {
@@ -83,6 +96,9 @@ pub trait PanelHandle: Send + Sync {
     fn to_any(&self) -> AnyView;
     fn activation_priority(&self, cx: &App) -> u32;
     fn enabled(&self, cx: &App) -> bool;
+    fn center_element(&self, window: &Window, cx: &mut App) -> Option<AnyView>;
+    fn has_center_element(&self, window: &Window, cx: &App) -> bool;
+    fn has_main_element(&self, window: &Window, cx: &App) -> bool;
     fn move_to_next_position(&self, window: &mut Window, cx: &mut App) {
         let current_position = self.position(window, cx);
         let next_position = [
@@ -186,6 +202,32 @@ where
 
     fn enabled(&self, cx: &App) -> bool {
         self.read(cx).enabled(cx)
+    }
+
+    fn center_element(&self, window: &Window, cx: &mut App) -> Option<AnyView> {
+        if !self.read(cx).has_center_element(window, cx) {
+            return None;
+        }
+        Some(cx.new(|_| PanelCenterView(self.clone())).into())
+    }
+
+    fn has_center_element(&self, window: &Window, cx: &App) -> bool {
+        self.read(cx).has_center_element(window, cx)
+    }
+
+    fn has_main_element(&self, window: &Window, cx: &App) -> bool {
+        self.read(cx).has_main_element(window, cx)
+    }
+}
+
+struct PanelCenterView<T: Panel>(Entity<T>);
+
+impl<T: Panel> Render for PanelCenterView<T> {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.0.update(cx, |this, cx| {
+            this.render_center_element(window, cx)
+                .unwrap_or_else(|| gpui::Empty.into_any_element())
+        })
     }
 }
 
@@ -690,6 +732,11 @@ impl Dock {
         Some(&entry.panel)
     }
 
+    pub fn visible_panel_center_element(&self, window: &Window, cx: &mut App) -> Option<AnyView> {
+        let entry = self.visible_entry()?;
+        entry.panel.center_element(window, cx)
+    }
+
     pub fn active_panel(&self) -> Option<&Arc<dyn PanelHandle>> {
         let panel_entry = self.active_panel_entry()?;
         Some(&panel_entry.panel)
@@ -783,7 +830,10 @@ impl Dock {
 impl Render for Dock {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let dispatch_context = Self::dispatch_context();
-        if let Some(entry) = self.visible_entry() {
+        if let Some(entry) = self
+            .visible_entry()
+            .filter(|entry| entry.panel.has_main_element(window, cx))
+        {
             let size = entry.panel.size(window, cx);
 
             let position = self.position;

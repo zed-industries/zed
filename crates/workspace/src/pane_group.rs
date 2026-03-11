@@ -1,7 +1,7 @@
+pub use crate::pane_group::element::{PaneAxisElement, pane_axis};
 use crate::{
     AnyActiveCall, AppState, CollaboratorId, FollowerState, Pane, ParticipantLocation, Workspace,
     WorkspaceSettings,
-    pane_group::element::pane_axis,
     workspace_settings::{PaneSplitDirectionHorizontal, PaneSplitDirectionVertical},
 };
 use anyhow::Result;
@@ -1035,7 +1035,7 @@ impl SplitDirection {
     }
 }
 
-mod element {
+pub mod element {
     use std::mem;
     use std::{cell::RefCell, iter, rc::Rc, sync::Arc};
 
@@ -1059,7 +1059,7 @@ mod element {
 
     const DIVIDER_SIZE: f32 = 1.0;
 
-    pub(super) fn pane_axis(
+    pub fn pane_axis(
         axis: Axis,
         basis: usize,
         flexes: Arc<Mutex<Vec<f32>>>,
