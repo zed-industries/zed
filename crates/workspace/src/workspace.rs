@@ -51,12 +51,12 @@ use futures::{
     future::{Shared, try_join_all},
 };
 use gpui::{
-    Action, AnyElement, AnyEntity, AnyView, AnyWeakView, App, AsyncApp, AsyncWindowContext, Axis,
-    Bounds, Context, CursorStyle, Decorations, DragMoveEvent, Entity, EntityId, EventEmitter,
-    FocusHandle, Focusable, Global, HitboxBehavior, Hsla, KeyContext, Keystroke, ManagedView,
-    MouseButton, PathPromptOptions, Point, PromptLevel, Render, ResizeEdge, Size, Stateful,
-    Subscription, SystemWindowTabController, Task, Tiling, WeakEntity, WindowBounds, WindowHandle,
-    WindowId, WindowOptions, actions, canvas, point, relative, size, transparent_black,
+    Action, AnyElement, AnyEntity, AnyView, AnyWeakView, App, AsyncApp, AsyncWindowContext, Bounds,
+    Context, CursorStyle, Decorations, DragMoveEvent, Entity, EntityId, EventEmitter, FocusHandle,
+    Focusable, Global, HitboxBehavior, Hsla, KeyContext, Keystroke, ManagedView, MouseButton,
+    PathPromptOptions, Point, PromptLevel, Render, ResizeEdge, Size, Stateful, Subscription,
+    SystemWindowTabController, Task, Tiling, WeakEntity, WindowBounds, WindowHandle, WindowId,
+    WindowOptions, actions, canvas, point, relative, size, transparent_black,
 };
 pub use history_manager::*;
 pub use item::{
@@ -1336,7 +1336,6 @@ pub struct Workspace {
     last_open_dock_positions: Vec<DockPosition>,
     removing: bool,
     _panels_task: Option<Task<Result<()>>>,
-    center_element_state: PaneAxisState,
 }
 
 impl EventEmitter<Event> for Workspace {}
@@ -1742,7 +1741,6 @@ impl Workspace {
             scheduled_tasks: Vec::new(),
             last_open_dock_positions: Vec::new(),
             removing: false,
-            center_element_state: PaneAxisState::new(0),
         }
     }
 
@@ -7003,27 +7001,33 @@ impl Workspace {
         window: &mut Window,
         cx: &mut App,
     ) -> AnyElement {
-        let left_visible_panel = if self.zoomed_position != Some(DockPosition::Left) {
-            self.left_dock.read(cx).visible_panel().cloned()
-        } else {
-            None
-        };
-        let left_center_element =
-            left_visible_panel.and_then(|panel| panel.center_element(window, cx));
-
-        let right_visible_panel = if self.zoomed_position != Some(DockPosition::Right) {
-            self.right_dock.read(cx).visible_panel().cloned()
-        } else {
-            None
-        };
-        let right_center_element =
-            right_visible_panel.and_then(|panel| panel.center_element(window, cx));
+        let left_panel_flex_content = (self.zoomed_position != Some(DockPosition::Left))
+            .then(|| {
+                self.left_dock
+                    .read(cx)
+                    .visible_panel()
+                    .cloned()
+                    .and_then(|panel| panel.flex_content(window, cx))
+            })
+            .flatten();
+        let right_panel_flex_content = (self.zoomed_position != Some(DockPosition::Right))
+            .then(|| {
+                self.right_dock
+                    .read(cx)
+                    .visible_panel()
+                    .cloned()
+                    .and_then(|panel| panel.flex_content(window, cx))
+            })
+            .flatten();
 
         let center_pane_group = h_flex()
+            .size_full()
             .flex_1()
             .when_some(paddings.0, |this, p| this.child(p.border_r_1()))
             .child(self.center.render(
                 self.zoomed.as_ref(),
+                left_panel_flex_content,
+                right_panel_flex_content,
                 &PaneRenderContext {
                     follower_states: &self.follower_states,
                     active_call: self.active_call(),
@@ -7038,59 +7042,9 @@ impl Workspace {
             .when_some(paddings.1, |this, p| this.child(p.border_l_1()))
             .into_any_element();
 
-        if left_center_element.is_none() && right_center_element.is_none() {
-            return h_flex()
-                .flex_1()
-                .child(center_pane_group)
-                .into_any_element();
-        }
-
-        let member_count =
-            1 + left_center_element.is_some() as usize + right_center_element.is_some() as usize;
-
-        if self.center_element_state.len() != member_count {
-            self.center_element_state = PaneAxisState::new(member_count);
-        }
-
-        let axis_element = pane_axis(
-            Axis::Horizontal,
-            0,
-            self.center_element_state.clone(),
-            self.weak_self.clone(),
-        );
-
-        let axis_element = if let Some(left_element) = left_center_element {
-            axis_element.child(
-                div()
-                    .flex_1()
-                    .size_full()
-                    .overflow_hidden()
-                    .child(left_element),
-            )
-        } else {
-            axis_element
-        };
-
-        let axis_element = axis_element.child(center_pane_group);
-
-        let axis_element = if let Some(right_element) = right_center_element {
-            axis_element.child(
-                div()
-                    .flex_1()
-                    .size_full()
-                    .overflow_hidden()
-                    .child(right_element),
-            )
-        } else {
-            axis_element
-        };
-
-        div()
-            .flex()
-            .flex_row()
+        h_flex()
             .flex_1()
-            .size_full()
-            .child(axis_element)
+            .child(center_pane_group)
             .into_any_element()
     }
 

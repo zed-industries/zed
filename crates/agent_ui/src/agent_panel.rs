@@ -3186,7 +3186,7 @@ impl Panel for AgentPanel {
         cx.notify();
     }
 
-    fn render_center_element(
+    fn render_flex_content(
         &mut self,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -3194,11 +3194,11 @@ impl Panel for AgentPanel {
         Some(self.render_content(window, cx).into_any_element())
     }
 
-    fn has_center_element(&self, _window: &Window, _: &App) -> bool {
+    fn has_flex_content(&self, _window: &Window, _: &App) -> bool {
         true
     }
 
-    fn has_main_element(&self, window: &Window, cx: &App) -> bool {
+    fn has_panel_content(&self, window: &Window, cx: &App) -> bool {
         sidebar_is_open(window, cx)
     }
 }

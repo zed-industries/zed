@@ -1362,6 +1362,8 @@ impl Render for TerminalPanel {
             .update(cx, |workspace, cx| {
                 registrar.size_full().child(self.center.render(
                     workspace.zoomed_item(),
+                    None,
+                    None,
                     &workspace::PaneRenderContext {
                         follower_states: &HashMap::default(),
                         active_call: workspace.active_call(),
