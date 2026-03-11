@@ -321,11 +321,7 @@ impl RenderOnce for ThreadItem {
                         .min_w_0()
                         .gap_1p5()
                         .child(icon_container()) // Icon Spacing
-                        .child(DiffStat::new(
-                            diff_stat_id,
-                            added_count,
-                            removed_count,
-                        )),
+                        .child(DiffStat::new(diff_stat_id, added_count, removed_count)),
                 )
             })
             .when_some(self.on_click, |this, on_click| this.on_click(on_click))

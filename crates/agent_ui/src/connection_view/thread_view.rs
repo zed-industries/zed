@@ -156,8 +156,6 @@ impl ThreadFeedbackState {
     }
 }
 
-
-
 pub enum AcpThreadViewEvent {
     FirstSendRequested { content: Vec<acp::ContentBlock> },
 }
