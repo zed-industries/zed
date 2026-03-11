@@ -423,6 +423,21 @@
   (identifier) @tag.jsx
   (#match? @tag.jsx "^[a-z][^.]*$"))
 
+; React component tags (uppercase identifiers like <MyComponent>)
+; These override the generic @type capture from above,
+; allowing themes to color components differently from types.
+(jsx_opening_element
+  (identifier) @tag.component.jsx
+  (#match? @tag.component.jsx "^[A-Z]"))
+
+(jsx_closing_element
+  (identifier) @tag.component.jsx
+  (#match? @tag.component.jsx "^[A-Z]"))
+
+(jsx_self_closing_element
+  (identifier) @tag.component.jsx
+  (#match? @tag.component.jsx "^[A-Z]"))
+
 (jsx_attribute
   (property_identifier) @attribute.jsx)
 
