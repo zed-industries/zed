@@ -1515,7 +1515,7 @@ impl GitStore {
                         .insert(worktree_id);
                     existing.update(cx, |existing, cx| {
                         existing.snapshot.work_directory_abs_path = new_work_directory_abs_path;
-                        existing.schedule_scan(updates_tx.clone(), cx);
+                        existing.schedule_scan(updates_tx.clone(), cx).log_err();
                     });
                 } else {
                     if let Some(worktree_ids) = self.worktree_ids.get_mut(&repo_id) {
@@ -1562,7 +1562,7 @@ impl GitStore {
                             .unbounded_send(DownstreamUpdate::UpdateRepository(repo.snapshot()))
                             .ok();
                     }
-                    repo.schedule_scan(updates_tx.clone(), cx);
+                    repo.schedule_scan(updates_tx.clone(), cx).log_err();
                     repo
                 });
                 self._subscriptions
@@ -4208,10 +4208,28 @@ impl Repository {
             return Task::ready(Ok(()));
         }
 
-        let abs_paths = paths
-            .iter()
-            .map(|path| self.snapshot.repo_path_to_abs_path(path))
-            .collect::<Vec<_>>();
+        let abs_paths = Self::normalize_abs_paths(
+            paths
+                .iter()
+                .map(|path| self.snapshot.repo_path_to_abs_path(path))
+                .collect::<Vec<_>>(),
+        );
+
+        let Some(git_store) = self.git_store.upgrade() else {
+            return Task::ready(Err(anyhow!("git store was dropped")));
+        };
+        let worktree_store = git_store.read(cx).worktree_store.read(cx);
+        let worktree_fs = worktree_store.fs();
+        let mut remote_abs_paths = Vec::new();
+        let mut remote_missing_paths = Vec::new();
+        for abs_path in &abs_paths {
+            if worktree_store.find_worktree(abs_path, cx).is_some() {
+                remote_abs_paths.push(abs_path.clone());
+            } else {
+                remote_missing_paths.push(abs_path.clone());
+            }
+        }
+
         self.spawn_job_with_tracking(
             paths.clone(),
             pending_op::GitStatus::Reverted,
@@ -4220,6 +4238,9 @@ impl Repository {
                 this.update(cx, |this, _| {
                     this.send_job(Some("trash files".into()), move |git_repo, _| {
                         let abs_paths = abs_paths.clone();
+                        let remote_abs_paths = remote_abs_paths.clone();
+                        let remote_missing_paths = remote_missing_paths.clone();
+                        let worktree_fs = worktree_fs.clone();
                         async move {
                             match git_repo {
                                 RepositoryState::Local(LocalRepositoryState { fs, .. }) => {
@@ -4243,7 +4264,30 @@ impl Repository {
                                     Ok(())
                                 }
                                 RepositoryState::Remote(_) => {
-                                    bail!("Trashing untracked files outside opened worktrees is not supported for remote repositories")
+                                    if !remote_missing_paths.is_empty() {
+                                        bail!("Trashing untracked files outside opened worktrees is not supported for remote repositories");
+                                    }
+                                    let Some(fs) = worktree_fs else {
+                                        bail!("Trashing untracked files outside opened worktrees is not supported for remote repositories");
+                                    };
+                                    for abs_path in remote_abs_paths {
+                                        let metadata = fs.metadata(&abs_path).await?.with_context(
+                                            || format!("missing path to trash: {abs_path:?}"),
+                                        )?;
+                                        if metadata.is_dir {
+                                            fs.trash_dir(
+                                                &abs_path,
+                                                RemoveOptions {
+                                                    recursive: true,
+                                                    ignore_if_not_exists: false,
+                                                },
+                                            )
+                                            .await?;
+                                        } else {
+                                            fs.trash_file(&abs_path, Default::default()).await?;
+                                        }
+                                    }
+                                    Ok(())
                                 }
                             }
                         }
@@ -4252,7 +4296,7 @@ impl Repository {
                 .await??;
 
                 this.update(cx, |this, cx| {
-                    this.schedule_scan(None, cx);
+                    this.schedule_scan(None, cx).log_err();
                 })?;
 
                 Ok(())
@@ -4266,6 +4310,28 @@ impl Repository {
             .snapshot
             .work_directory_abs_path
             .starts_with(&self.snapshot.work_directory_abs_path)
+    }
+
+    fn normalize_abs_paths(abs_paths: Vec<PathBuf>) -> Vec<PathBuf> {
+        let mut abs_paths = abs_paths
+            .into_iter()
+            .map(|path| SanitizedPath::new(&path).as_path().to_path_buf())
+            .collect::<Vec<_>>();
+        abs_paths.sort_by(|left, right| {
+            let left_len = left.components().count();
+            let right_len = right.components().count();
+            left_len.cmp(&right_len).then_with(|| left.cmp(right))
+        });
+        abs_paths.dedup();
+
+        let mut pruned = Vec::new();
+        for path in abs_paths {
+            if pruned.iter().any(|parent| path.starts_with(parent)) {
+                continue;
+            }
+            pruned.push(path);
+        }
+        pruned
     }
 
     pub fn open_commit_buffer(
@@ -6219,17 +6285,24 @@ impl Repository {
     }
 
     /// Trigger a full repository status refresh.
-    pub fn refresh_status(&mut self, cx: &mut Context<Self>) {
-        self.schedule_scan(None, cx);
+    pub fn refresh_status(&mut self, cx: &mut Context<Self>) -> Result<()> {
+        self.schedule_scan(None, cx)
     }
 
     fn schedule_scan(
         &mut self,
         updates_tx: Option<mpsc::UnboundedSender<DownstreamUpdate>>,
         cx: &mut Context<Self>,
-    ) {
+    ) -> Result<()> {
+        if matches!(
+            self.repository_state.peek(),
+            Some(Ok(RepositoryState::Remote(_)))
+        ) {
+            bail!("not a local repository");
+        }
+
         let this = cx.weak_entity();
-        let _ = self.send_keyed_job(
+        self.send_keyed_job(
             Some(GitJobKey::ReloadGitState),
             None,
             |state, mut cx| async move {
@@ -6259,13 +6332,18 @@ impl Repository {
                     }
                 });
                 if let Some(updates_tx) = updates_tx {
-                    updates_tx
-                        .unbounded_send(DownstreamUpdate::UpdateRepository(snapshot))
-                        .ok();
+                    if let Err(error) =
+                        updates_tx.unbounded_send(DownstreamUpdate::UpdateRepository(snapshot))
+                    {
+                        log::error!(
+                            "Failed to send downstream repository update after scan: {error}"
+                        );
+                    }
                 }
                 Ok(())
             },
         );
+        Ok(())
     }
 
     fn spawn_local_git_worker(

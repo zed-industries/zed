@@ -1005,7 +1005,7 @@ impl GitPanel {
                 .flatten()
             {
                 let _ = repo.update(cx, |repo, cx| {
-                    repo.refresh_status(cx);
+                    repo.refresh_status(cx).log_err();
                 });
             }
 
@@ -1019,12 +1019,17 @@ impl GitPanel {
                     .flatten()
                 {
                     let _ = repo.update(cx, |repo, cx| {
-                        repo.refresh_status(cx);
+                        repo.refresh_status(cx).log_err();
                     });
                 } else {
                     break;
                 }
             }
+
+            this.update(cx, |this, _| {
+                this.periodic_scan_task = None;
+            })
+            .log_err();
         }));
     }
 
@@ -3543,7 +3548,15 @@ impl GitPanel {
             .as_ref()
             .and_then(|op| self.entry_by_path(&op.anchor));
 
+        let had_repository = self.active_repository.is_some();
         self.active_repository = self.project.read(cx).active_repository(cx);
+        if !had_repository
+            && self.active_repository.is_some()
+            && self.periodic_scan_task.is_none()
+            && self.focus_handle.contains_focused(window, cx)
+        {
+            self.start_periodic_scan(cx);
+        }
         self.entries.clear();
         self.entries_indices.clear();
         self.single_staged_entry.take();
