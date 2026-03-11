@@ -586,12 +586,15 @@ fn map_to_language_model_completion_events(
                     cache_creation_input_tokens: 0,
                     cache_read_input_tokens: 0,
                 })));
-                if state.used_tools {
+                let stop_reason = if delta.done_reason.as_deref() == Some("length") {
+                    StopReason::MaxTokens
+                } else if state.used_tools {
                     state.used_tools = false;
-                    events.push(Ok(LanguageModelCompletionEvent::Stop(StopReason::ToolUse)));
+                    StopReason::ToolUse
                 } else {
-                    events.push(Ok(LanguageModelCompletionEvent::Stop(StopReason::EndTurn)));
-                }
+                    StopReason::EndTurn
+                };
+                events.push(Ok(LanguageModelCompletionEvent::Stop(stop_reason)));
             }
 
             Some((events, state))
@@ -1137,5 +1140,71 @@ mod tests {
             "3b model should have its own display_name"
         );
         assert_eq!(model_3b.max_tokens, 6000);
+    }
+
+    #[test]
+    fn test_done_reason_length_maps_to_max_tokens() {
+        let delta = ChatResponseDelta {
+            model: "llama3.2".to_string(),
+            created_at: "2024-01-01T00:00:00Z".to_string(),
+            message: ChatMessage::Assistant {
+                content: "".to_string(),
+                tool_calls: None,
+                images: None,
+                thinking: None,
+            },
+            done_reason: Some("length".to_string()),
+            done: true,
+            prompt_eval_count: Some(100),
+            eval_count: Some(50),
+        };
+
+        let events: Vec<_> = smol::block_on(
+            map_to_language_model_completion_events(
+                futures::stream::once(async { anyhow::Ok(delta) }).boxed(),
+            )
+            .collect::<Vec<_>>(),
+        );
+
+        assert!(
+            events.iter().any(|e| matches!(
+                e,
+                Ok(LanguageModelCompletionEvent::Stop(StopReason::MaxTokens))
+            )),
+            "expected MaxTokens stop reason for done_reason=length, got: {events:?}"
+        );
+    }
+
+    #[test]
+    fn test_done_reason_stop_maps_to_end_turn() {
+        let delta = ChatResponseDelta {
+            model: "llama3.2".to_string(),
+            created_at: "2024-01-01T00:00:00Z".to_string(),
+            message: ChatMessage::Assistant {
+                content: "Hello".to_string(),
+                tool_calls: None,
+                images: None,
+                thinking: None,
+            },
+            done_reason: Some("stop".to_string()),
+            done: true,
+            prompt_eval_count: Some(100),
+            eval_count: Some(10),
+        };
+
+        let events: Vec<_> = smol::block_on(
+            map_to_language_model_completion_events(
+                futures::stream::once(async { anyhow::Ok(delta) }).boxed(),
+            )
+            .collect::<Vec<_>>(),
+        );
+
+        assert!(
+            events.iter().any(|e| matches!(
+                e,
+                Ok(LanguageModelCompletionEvent::Stop(StopReason::EndTurn))
+            )),
+            "expected EndTurn stop reason for done_reason=stop, got: {events:?}"
+        );
     }
 }
