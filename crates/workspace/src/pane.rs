@@ -638,7 +638,7 @@ impl Pane {
             self.was_focused = true;
             self.update_history(self.active_item_index);
             if !self.suppress_scroll && self.items.get(self.active_item_index).is_some() {
-                self.update_active_tab(self.active_item_index);
+                self.update_active_tab(self.active_item_index, None, window, cx);
             }
             cx.emit(Event::Focus);
             cx.notify();
@@ -1446,16 +1446,52 @@ impl Pane {
                 focus_changed: focus_item,
             });
 
-            self.update_active_tab(index);
+            self.update_active_tab(index, Some(prev_active_item_ix), window, cx);
             cx.notify();
         }
     }
 
-    fn update_active_tab(&mut self, index: usize) {
+    fn update_active_tab(
+        &mut self,
+        index: usize,
+        previous_active_item_index: Option<usize>,
+        _window: &mut Window,
+        _cx: &mut Context<Self>,
+    ) {
         if !self.is_tab_pinned(index) {
             self.suppress_scroll = false;
-            self.tab_bar_scroll_handle
-                .scroll_to_item(index - self.pinned_tab_count);
+            let unpinned_index = index - self.pinned_tab_count;
+            let Some(tab_bounds) = self.tab_bar_scroll_handle.bounds_for_item(unpinned_index)
+            else {
+                self.tab_bar_scroll_handle.scroll_to_item(unpinned_index);
+                return;
+            };
+
+            // The newly selected tab can grow wider than its inactive layout, so reserve that
+            // delta up front or the tab can still end up clipped after activation.
+            let selected_width_reserve = previous_active_item_index
+                .filter(|previous_active_item_index| {
+                    !self.is_tab_pinned(*previous_active_item_index)
+                })
+                .and_then(|previous_active_item_index| {
+                    let previous_selected_bounds = self
+                        .tab_bar_scroll_handle
+                        .bounds_for_item(previous_active_item_index - self.pinned_tab_count)?;
+                    Some((previous_selected_bounds.size.width - tab_bounds.size.width).max(px(0.)))
+                })
+                .unwrap_or(px(0.));
+
+            let scroll_bounds = self.tab_bar_scroll_handle.bounds();
+            let mut scroll_offset = self.tab_bar_scroll_handle.offset();
+            let effective_right_edge = scroll_bounds.right() - selected_width_reserve;
+
+            if tab_bounds.left() + scroll_offset.x < scroll_bounds.left() {
+                scroll_offset.x = scroll_bounds.left() - tab_bounds.left();
+            } else if tab_bounds.right() + scroll_offset.x > effective_right_edge {
+                scroll_offset.x = effective_right_edge - tab_bounds.right();
+            }
+
+            self.tab_bar_scroll_handle.set_offset(scroll_offset);
         }
     }
 
@@ -3435,23 +3471,30 @@ impl Pane {
                 window,
                 cx,
             )
-            .children(pinned_tabs.len().ne(&0).then(|| {
-                let max_scroll = self.tab_bar_scroll_handle.max_offset().x;
-                // We need to check both because offset returns delta values even when the scroll handle is not scrollable
-                let is_scrolled = self.tab_bar_scroll_handle.offset().x < px(0.);
-                // Avoid flickering when max_offset is very small (< 2px).
-                // The border adds 1-2px which can push max_offset back to 0, creating a loop.
-                let is_scrollable = max_scroll > px(2.0);
-                let has_active_unpinned_tab = self.active_item_index >= self.pinned_tab_count;
+            .child(
                 h_flex()
-                    .children(pinned_tabs)
-                    .when(is_scrollable && is_scrolled, |this| {
-                        this.when(has_active_unpinned_tab, |this| this.border_r_2())
-                            .when(!has_active_unpinned_tab, |this| this.border_r_1())
-                            .border_color(cx.theme().colors().border)
-                    })
-            }))
-            .child(self.render_unpinned_tabs_container(unpinned_tabs, tab_count, cx));
+                    .w_full()
+                    .min_w_0()
+                    .children(pinned_tabs.len().ne(&0).then(|| {
+                        let max_scroll = self.tab_bar_scroll_handle.max_offset().x;
+                        // We need to check both because offset returns delta values even when the scroll handle is not scrollable
+                        let is_scrolled = self.tab_bar_scroll_handle.offset().x < px(0.);
+                        // Avoid flickering when max_offset is very small (< 2px).
+                        // The border adds 1-2px which can push max_offset back to 0, creating a loop.
+                        let is_scrollable = max_scroll > px(2.0);
+                        let has_active_unpinned_tab =
+                            self.active_item_index >= self.pinned_tab_count;
+                        h_flex().flex_none().children(pinned_tabs).when(
+                            is_scrollable && is_scrolled,
+                            |this| {
+                                this.when(has_active_unpinned_tab, |this| this.border_r_2())
+                                    .when(!has_active_unpinned_tab, |this| this.border_r_1())
+                                    .border_color(cx.theme().colors().border)
+                            },
+                        )
+                    }))
+                    .child(self.render_unpinned_tabs_container(unpinned_tabs, tab_count, cx)),
+            );
         tab_bar.into_any_element()
     }
 
@@ -3502,16 +3545,19 @@ impl Pane {
         tab_count: usize,
         cx: &mut Context<Pane>,
     ) -> impl IntoElement {
-        h_flex()
-            .id("unpinned tabs")
-            .overflow_x_scroll()
-            .w_full()
-            .track_scroll(&self.tab_bar_scroll_handle)
-            .on_scroll_wheel(cx.listener(|this, _, _, _| {
-                this.suppress_scroll = true;
-            }))
-            .children(unpinned_tabs)
-            .child(self.render_tab_bar_drop_target(tab_count, cx))
+        div().flex_1().min_w_0().overflow_x_hidden().child(
+            h_flex()
+                .id("unpinned tabs")
+                .flex_grow()
+                .w_full()
+                .overflow_x_scroll()
+                .track_scroll(&self.tab_bar_scroll_handle)
+                .on_scroll_wheel(cx.listener(|this, _, _, _| {
+                    this.suppress_scroll = true;
+                }))
+                .children(unpinned_tabs)
+                .child(self.render_tab_bar_drop_target(tab_count, cx)),
+        )
     }
 
     fn render_tab_bar_drop_target(
@@ -4827,7 +4873,7 @@ mod tests {
         Member,
         item::test::{TestItem, TestProjectItem},
     };
-    use gpui::{AppContext, Axis, TestAppContext, VisualTestContext, size};
+    use gpui::{AppContext, Axis, TestAppContext, VisualTestContext, point, size};
     use project::FakeFs;
     use settings::SettingsStore;
     use theme::LoadThemes;
@@ -8132,6 +8178,110 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_active_unpinned_tab_stays_visible_in_narrow_split_with_pinned_tabs(
+        cx: &mut TestAppContext,
+    ) {
+        test_active_unpinned_tab_stays_visible_in_narrow_split_impl(false, cx).await;
+    }
+
+    #[gpui::test]
+    async fn test_active_unpinned_tab_stays_visible_in_narrow_split_with_pinned_tabs_in_separate_row(
+        cx: &mut TestAppContext,
+    ) {
+        test_active_unpinned_tab_stays_visible_in_narrow_split_impl(true, cx).await;
+    }
+
+    async fn test_active_unpinned_tab_stays_visible_in_narrow_split_impl(
+        separate_pinned_tabs_row: bool,
+        cx: &mut TestAppContext,
+    ) {
+        const TARGET_TAB_INDEX: usize = 17;
+        const PREVIOUS_ACTIVE_TAB_INDEX: usize = 21;
+
+        init_test(cx);
+        set_pinned_tabs_separate_row(cx, separate_pinned_tabs_row);
+
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, None, cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
+
+        cx.simulate_resize(size(px(540.), px(300.)));
+
+        let pane_a = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
+        let pane_b = workspace.update_in(cx, |workspace, window, cx| {
+            workspace.split_pane(pane_a.clone(), SplitDirection::Right, window, cx)
+        });
+        let pane_c = workspace.update_in(cx, |workspace, window, cx| {
+            workspace.split_pane(pane_b.clone(), SplitDirection::Right, window, cx)
+        });
+
+        for label in ["A", "B", "C"] {
+            add_labeled_item(&pane_c, label, false, cx);
+        }
+
+        pane_c.update_in(cx, |pane, window, cx| {
+            pane.pin_tab_at(0, window, cx);
+            pane.pin_tab_at(1, window, cx);
+            pane.pin_tab_at(2, window, cx);
+        });
+
+        for label in [
+            "D", "E", "F", "G", "H", "I", "J", "K", "L", "M", "N", "O", "P", "Q", "R", "S", "T",
+            "U", "V",
+        ] {
+            add_labeled_item(&pane_c, label, false, cx);
+        }
+
+        cx.run_until_parked();
+
+        let scroll_handle =
+            pane_c.update_in(cx, |pane, _window, _cx| pane.tab_bar_scroll_handle.clone());
+        assert!(
+            scroll_handle.max_offset().x > px(200.),
+            "Test requires enough horizontal overflow in the third pane to verify scrolling."
+        );
+
+        pane_c.update_in(cx, |pane, _window, _cx| {
+            pane.suppress_scroll = true;
+        });
+        scroll_handle.set_offset(point(px(-200.), px(0.)));
+        cx.run_until_parked();
+
+        let expected_inline_offset = (!separate_pinned_tabs_row).then(|| {
+            let target_unpinned_index = TARGET_TAB_INDEX - 3;
+            let previous_active_unpinned_index = PREVIOUS_ACTIVE_TAB_INDEX - 3;
+            let target_bounds = scroll_handle
+                .bounds_for_item(target_unpinned_index)
+                .unwrap();
+            let previous_active_bounds = scroll_handle
+                .bounds_for_item(previous_active_unpinned_index)
+                .unwrap();
+            let selected_width_reserve =
+                (previous_active_bounds.size.width - target_bounds.size.width).max(px(0.));
+
+            scroll_handle.bounds().right() - selected_width_reserve - target_bounds.right()
+        });
+
+        pane_c.update_in(cx, |pane, window, cx| {
+            pane.activate_item(TARGET_TAB_INDEX, true, true, window, cx);
+        });
+        cx.run_until_parked();
+
+        if let Some(expected_inline_offset) = expected_inline_offset {
+            let actual_offset = pane_c.update_in(cx, |pane, _window, _cx| {
+                pane.tab_bar_scroll_handle.offset().x
+            });
+            assert_eq!(
+                actual_offset, expected_inline_offset,
+                "Inline pinned tabs should reserve room for the selected tab width change"
+            );
+        } else {
+            assert_tab_is_fully_visible(&pane_c, TARGET_TAB_INDEX, cx);
+        }
+    }
+
+    #[gpui::test]
     async fn test_close_all_items_including_pinned(cx: &mut TestAppContext) {
         init_test(cx);
         let fs = FakeFs::new(cx.executor());
@@ -8479,6 +8629,35 @@ mod tests {
                     .show_pinned_tabs_in_separate_row = Some(enabled);
             });
         });
+    }
+
+    #[track_caller]
+    fn assert_tab_is_fully_visible(pane: &Entity<Pane>, index: usize, cx: &mut VisualTestContext) {
+        let (tab_bar_scroll_handle, pinned_tab_count) = pane.update_in(cx, |pane, _window, _cx| {
+            (pane.tab_bar_scroll_handle.clone(), pane.pinned_tab_count)
+        });
+        let tab_bounds = tab_bar_scroll_handle
+            .bounds_for_item(index - pinned_tab_count)
+            .unwrap();
+        let scroll_bounds = tab_bar_scroll_handle.bounds();
+        let scroll_offset = tab_bar_scroll_handle.offset();
+
+        assert!(
+            tab_bounds.left() + scroll_offset.x >= scroll_bounds.left(),
+            "Tab {index} should not extend past the left edge of the visible tab strip: \
+             left={} offset={} viewport_left={}",
+            tab_bounds.left(),
+            scroll_offset.x,
+            scroll_bounds.left()
+        );
+        assert!(
+            tab_bounds.right() + scroll_offset.x <= scroll_bounds.right(),
+            "Tab {index} should not extend past the right edge of the visible tab strip: \
+             right={} offset={} viewport_right={}",
+            tab_bounds.right(),
+            scroll_offset.x,
+            scroll_bounds.right()
+        );
     }
 
     fn add_labeled_item(
