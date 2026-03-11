@@ -22,8 +22,8 @@ impl Editor {
 
         let buffers_to_query = self
             .visible_excerpts(true, cx)
-            .into_values()
-            .map(|(buffer, ..)| buffer)
+            .into_iter()
+            .map(|(buffer, _, _, _)| buffer)
             .chain(for_buffer.and_then(|id| self.buffer.read(cx).buffer(id)))
             .filter(|buffer| {
                 let id = buffer.read(cx).remote_id();

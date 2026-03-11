@@ -45,7 +45,8 @@ impl InlaySplice {
 #[derive(Debug, Clone)]
 pub struct Inlay {
     pub id: InlayId,
-    pub position: ExcerptAnchor,
+    // TODO this could be an ExcerptAnchor
+    pub position: Anchor,
     pub content: InlayContent,
 }
 

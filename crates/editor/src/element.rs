@@ -2790,7 +2790,7 @@ impl EditorElement {
             .newest::<language::Point>(&editor_snapshot.display_snapshot)
             .head();
 
-        let Some((buffer, buffer_point, _)) = editor_snapshot
+        let Some((buffer, buffer_point)) = editor_snapshot
             .buffer_snapshot()
             .point_to_buffer_point(cursor_point)
         else {
@@ -3383,8 +3383,8 @@ impl EditorElement {
             .enumerate()
             .map(|(ix, row_info)| {
                 let ExpandInfo {
-                    excerpt_id,
                     direction,
+                    excerpt_range,
                 } = row_info.expand_info?;
 
                 let icon_name = match direction {
@@ -8131,21 +8131,17 @@ pub(crate) fn header_jump_data(
     first_excerpt: &ExcerptBoundaryInfo,
     latest_selection_anchors: &HashMap<BufferId, Anchor>,
 ) -> JumpData {
-    let jump_target = if let Some(anchor) = latest_selection_anchors.get(&first_excerpt.buffer_id)
-        && let Some(range) = editor_snapshot.context_range_for_excerpt(anchor.excerpt_id)
-        && let Some(buffer) = editor_snapshot
-            .buffer_snapshot()
-            .buffer_for_excerpt(anchor.excerpt_id)
+    let jump_target = if let Some(anchor) =
+        latest_selection_anchors.get(&first_excerpt.buffer.remote_id())
+        && let Some(anchor) = anchor.to_excerpt_anchor(editor_snapshot.buffer_snapshot())
     {
         JumpTargetInExcerptInput {
-            id: anchor.excerpt_id,
-            buffer,
-            excerpt_start_anchor: range.start,
-            jump_anchor: anchor.text_anchor,
+            buffer: &first_excerpt.buffer,
+            excerpt_start_anchor: first_excerpt.range.context.start,
+            jump_anchor: anchor.text_anchor(),
         }
     } else {
         JumpTargetInExcerptInput {
-            id: first_excerpt.id,
             buffer: &first_excerpt.buffer,
             excerpt_start_anchor: first_excerpt.range.context.start,
             jump_anchor: first_excerpt.range.primary.start,
@@ -8155,7 +8151,6 @@ pub(crate) fn header_jump_data(
 }
 
 struct JumpTargetInExcerptInput<'a> {
-    id: ExcerptId,
     buffer: &'a language::BufferSnapshot,
     excerpt_start_anchor: text::Anchor,
     jump_anchor: text::Anchor,
@@ -8186,7 +8181,6 @@ fn header_jump_data_inner(
         );
 
     JumpData::MultiBufferPoint {
-        excerpt_id: for_excerpt.id,
         anchor: for_excerpt.jump_anchor,
         position: jump_position,
         line_offset_from_top,
@@ -8216,10 +8210,10 @@ pub(crate) fn render_buffer_header(
 
     let file_status = multi_buffer
         .all_diff_hunks_expanded()
-        .then(|| editor_read.status_for_buffer_id(for_excerpt.buffer_id, cx))
+        .then(|| editor_read.status_for_buffer_id(for_excerpt.buffer.remote_id(), cx))
         .flatten();
     let indicator = multi_buffer
-        .buffer(for_excerpt.buffer_id)
+        .buffer(for_excerpt.buffer.remote_id())
         .and_then(|buffer| {
             let buffer = buffer.read(cx);
             let indicator_color = match (buffer.has_conflict(), buffer.is_dirty()) {
@@ -8253,7 +8247,7 @@ pub(crate) fn render_buffer_header(
     let colors = cx.theme().colors();
 
     let header = div()
-        .id(("buffer-header", for_excerpt.buffer_id.to_proto()))
+        .id(("buffer-header", for_excerpt.buffer.remote_id().to_proto()))
         .p_1()
         .w_full()
         .h(FILE_HEADER_HEIGHT as f32 * window.line_height())
@@ -8281,7 +8275,7 @@ pub(crate) fn render_buffer_header(
                 .hover(|style| style.bg(colors.element_hover))
                 .map(|header| {
                     let editor = editor.clone();
-                    let buffer_id = for_excerpt.buffer_id;
+                    let buffer_id = for_excerpt.buffer.remote_id();
                     let toggle_chevron_icon =
                         FileIcons::get_chevron_icon(!is_folded, cx).map(Icon::from_path);
                     let button_size = rems_from_px(28.);

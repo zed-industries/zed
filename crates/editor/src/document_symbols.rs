@@ -143,7 +143,7 @@ impl Editor {
         let buffers_to_query = self
             .visible_excerpts(true, cx)
             .into_iter()
-            .filter_map(|(buffer, _, _)| {
+            .filter_map(|(buffer, _, _, _)| {
                 let id = buffer.read(cx).remote_id();
                 if for_buffer.is_none_or(|target| target == id)
                     && lsp_symbols_enabled(buffer.read(cx), cx)
@@ -307,7 +307,7 @@ fn highlights_from_buffer(
             let result = highlights_for_buffer_range(
                 name_offset_in_text,
                 name_start_offset..name_end_offset,
-                buffer_id,
+                buffer_snapshot,
                 display_snapshot,
                 syntax_theme,
             );
@@ -341,7 +341,7 @@ fn highlights_from_buffer(
             if let Some(mut word_highlights) = highlights_for_buffer_range(
                 text_cursor,
                 buf_word_start..buf_word_end,
-                buffer_id,
+                buffer_snapshot,
                 display_snapshot,
                 syntax_theme,
             ) {
@@ -362,11 +362,11 @@ fn highlights_from_buffer(
 fn highlights_for_buffer_range(
     text_cursor_start: usize,
     buffer_range: Range<usize>,
-    buffer_id: BufferId,
+    buffer_snapshot: &BufferSnapshot,
     display_snapshot: &DisplaySnapshot,
     syntax_theme: &SyntaxTheme,
 ) -> Option<Vec<(Range<usize>, HighlightStyle)>> {
-    let raw = display_snapshot.combined_highlights(buffer_id, buffer_range, syntax_theme);
+    let raw = display_snapshot.combined_highlights(buffer_snapshot, buffer_range, syntax_theme);
     if raw.is_empty() {
         return None;
     }

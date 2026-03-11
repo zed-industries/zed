@@ -1952,7 +1952,6 @@ impl CodeActionProvider for AssistantCodeActionProvider {
         &self,
         buffer: Entity<Buffer>,
         action: CodeAction,
-        excerpt_id: ExcerptId,
         _push_to_history: bool,
         window: &mut Window,
         cx: &mut App,
@@ -1976,29 +1975,7 @@ impl CodeActionProvider for AssistantCodeActionProvider {
                     editor.buffer().update(cx, |multibuffer, cx| {
                         let buffer = buffer.read(cx);
                         let multibuffer_snapshot = multibuffer.read(cx);
-
-                        let old_context_range =
-                            multibuffer_snapshot.context_range_for_excerpt(excerpt_id)?;
-                        let mut new_context_range = old_context_range.clone();
-                        if action
-                            .range
-                            .start
-                            .cmp(&old_context_range.start, buffer)
-                            .is_lt()
-                        {
-                            new_context_range.start = action.range.start;
-                        }
-                        if action.range.end.cmp(&old_context_range.end, buffer).is_gt() {
-                            new_context_range.end = action.range.end;
-                        }
-                        drop(multibuffer_snapshot);
-
-                        if new_context_range != old_context_range {
-                            multibuffer.resize_excerpt(excerpt_id, new_context_range, cx);
-                        }
-
-                        let multibuffer_snapshot = multibuffer.read(cx);
-                        multibuffer_snapshot.anchor_range_in_buffer(excerpt_id, action.range)
+                        multibuffer_snapshot.anchor_range_in_buffer(action.range)
                     })
                 })
                 .context("invalid range")?;

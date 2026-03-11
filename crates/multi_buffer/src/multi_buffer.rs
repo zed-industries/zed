@@ -2200,12 +2200,8 @@ impl MultiBuffer {
         self.all_buffers_iter().collect()
     }
 
-    pub fn all_buffer_ids_iter(&self) -> impl Iterator<Item = BufferId> {
+    pub fn all_buffer_ids(&self) -> impl Iterator<Item = BufferId> {
         self.buffers.keys().copied()
-    }
-
-    pub fn all_buffer_ids(&self) -> Vec<BufferId> {
-        self.all_buffer_ids_iter().collect()
     }
 
     pub fn buffer(&self, buffer_id: BufferId) -> Option<Entity<Buffer>> {
@@ -3343,7 +3339,7 @@ impl MultiBuffer {
 
         let mut buffers = Vec::new();
         for _ in 0..mutation_count {
-            let buffer_ids = self.all_buffer_ids();
+            let buffer_ids = self.all_buffer_ids().collect::<Vec<_>>();
             if buffer_ids.is_empty() || (rng.random() && buffer_ids.len() < max_buffers) {
                 let buffer_handle = if rng.random() || self.buffers.is_empty() {
                     let text = RandomCharIter::new(&mut *rng).take(10).collect::<String>();
@@ -6565,6 +6561,14 @@ impl MultiBufferSnapshot {
         selection: Range<text::Anchor>,
     ) -> Option<MultiBufferExcerpt2<'_>> {
         todo!()
+    }
+
+    /// Returns all nonempty intersections of the given buffer range with excerpts in the multibuffer in order
+    pub fn buffer_range_to_excerpt_ranges(
+        &self,
+        range: Range<text::Anchor>,
+    ) -> impl Iterator<Item = Range<Anchor>> {
+        std::iter::once(todo!())
     }
 }
 

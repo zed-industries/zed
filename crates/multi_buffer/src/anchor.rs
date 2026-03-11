@@ -10,6 +10,7 @@ use std::{
     ops::{Add, AddAssign, Range, Sub},
 };
 use sum_tree::Bias;
+use text::BufferId;
 
 /// A multibuffer anchor derived from an anchor into a specific excerpted buffer.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
@@ -62,6 +63,10 @@ impl From<ExcerptAnchor> for Anchor {
 }
 
 impl ExcerptAnchor {
+    pub fn buffer_id(&self) -> BufferId {
+        self.text_anchor.buffer_id
+    }
+
     pub fn text_anchor(&self) -> text::Anchor {
         self.text_anchor
     }
@@ -217,6 +222,37 @@ impl ExcerptAnchor {
             snapshot: buffer,
         })
     }
+
+    pub(crate) fn range_in_buffer(
+        path: PathKeyIndex,
+        range: Range<text::Anchor>,
+    ) -> Range<ExcerptAnchor> {
+        Self::in_buffer(path, range.start)..Self::in_buffer(path, range.end)
+    }
+
+    pub fn diff_base_anchor(&self) -> Option<text::Anchor> {
+        self.diff_base_anchor
+    }
+}
+
+impl ToOffset for ExcerptAnchor {
+    fn to_offset(&self, snapshot: &MultiBufferSnapshot) -> MultiBufferOffset {
+        Anchor::from(*self).to_offset(snapshot)
+    }
+
+    fn to_offset_utf16(&self, snapshot: &MultiBufferSnapshot) -> MultiBufferOffsetUtf16 {
+        Anchor::from(*self).to_offset_utf16(snapshot)
+    }
+}
+
+impl ToPoint for ExcerptAnchor {
+    fn to_point(&self, snapshot: &MultiBufferSnapshot) -> Point {
+        Anchor::from(*self).to_point(snapshot)
+    }
+
+    fn to_point_utf16(&self, snapshot: &MultiBufferSnapshot) -> rope::PointUtf16 {
+        Anchor::from(*self).to_point_utf16(snapshot)
+    }
 }
 
 impl Anchor {
@@ -328,6 +364,7 @@ impl Anchor {
         }
     }
 
+    // todo!() this could be replaced by to_excerpt_anchor
     pub fn to_singleton_anchor(&self, buffer: &BufferSnapshot) -> text::Anchor {
         match self {
             Anchor::Min => text::Anchor::min_for_buffer(buffer.remote_id()),

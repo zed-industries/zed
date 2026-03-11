@@ -8,7 +8,7 @@ use collections::HashMap;
 use gpui::Pixels;
 use itertools::Itertools as _;
 use language::{Bias, Point, Selection, SelectionGoal};
-use multi_buffer::{MultiBufferDimension, MultiBufferOffset};
+use multi_buffer::{ExcerptAnchor, MultiBufferDimension, MultiBufferOffset};
 use util::post_inc;
 
 use crate::{
@@ -273,6 +273,13 @@ impl SelectionsCollection {
             .map(|s| &s.selection)
             .or_else(|| self.disjoint.iter().max_by_key(|s| s.id))
             .unwrap()
+    }
+
+    pub fn newest_excerpt_anchor(
+        &self,
+        snapshot: &DisplaySnapshot,
+    ) -> Option<Selection<ExcerptAnchor>> {
+        todo!()
     }
 
     pub fn newest<D>(&self, snapshot: &DisplaySnapshot) -> Selection<D>

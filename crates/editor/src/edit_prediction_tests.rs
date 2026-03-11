@@ -418,7 +418,7 @@ async fn test_edit_prediction_preview_cleanup_on_toggle_off(cx: &mut gpui::TestA
 
 fn assert_editor_active_edit_completion(
     cx: &mut EditorTestContext,
-    assert: impl FnOnce(MultiBufferSnapshot, &Vec<(Range<ExcerptAnchor>, Arc<str>)>),
+    assert: impl FnOnce(MultiBufferSnapshot, &Vec<(Range<Anchor>, Arc<str>)>),
 ) {
     cx.editor(|editor, _, cx| {
         let completion_state = editor

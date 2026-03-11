@@ -90,6 +90,7 @@ pub use fold_map::{
 };
 pub use inlay_map::{InlayOffset, InlayPoint};
 pub use invisibles::{is_invisible, replacement};
+use language::BufferSnapshot;
 pub use wrap_map::{WrapPoint, WrapRow, WrapSnapshot};
 
 use collections::{HashMap, HashSet, IndexSet};
@@ -1969,36 +1970,21 @@ impl DisplaySnapshot {
     /// Returned ranges are 0-based relative to `buffer_range.start`.
     pub(super) fn combined_highlights(
         &self,
-        buffer_id: BufferId,
+        buffer: &BufferSnapshot,
         buffer_range: Range<usize>,
         syntax_theme: &theme::SyntaxTheme,
     ) -> Vec<(Range<usize>, HighlightStyle)> {
+        let buffer_id = buffer.remote_id();
         let multibuffer = self.buffer_snapshot();
 
-        let multibuffer_range = multibuffer
-            .excerpts()
-            .find_map(|(excerpt_id, buffer, range)| {
-                if buffer.remote_id() != buffer_id {
-                    return None;
-                }
-                let context_start = range.context.start.to_offset(buffer);
-                let context_end = range.context.end.to_offset(buffer);
-                if buffer_range.start < context_start || buffer_range.end > context_end {
-                    return None;
-                }
-                let start_anchor = buffer.anchor_before(buffer_range.start);
-                let end_anchor = buffer.anchor_after(buffer_range.end);
-                let mb_range =
-                    multibuffer.anchor_range_in_buffer(excerpt_id, start_anchor..end_anchor)?;
-                Some(mb_range.start.to_offset(multibuffer)..mb_range.end.to_offset(multibuffer))
-            });
+        let start_anchor = buffer.anchor_before(buffer_range.start);
+        let end_anchor = buffer.anchor_after(buffer_range.end);
+        let multibuffer_range = multibuffer.anchor_range_in_buffer(start_anchor..end_anchor);
 
         let Some(multibuffer_range) = multibuffer_range else {
             // Range is outside all excerpts (e.g. symbol name not in a
             // multi-buffer excerpt). Fall back to buffer-level syntax highlights.
-            let buffer_snapshot = multibuffer.excerpts().find_map(|(_, buffer, _)| {
-                (buffer.remote_id() == buffer_id).then(|| buffer.clone())
-            });
+            let buffer_snapshot = multibuffer.buffer_for_id(buffer_id).cloned();
             let Some(buffer_snapshot) = buffer_snapshot else {
                 return Vec::new();
             };
@@ -2021,7 +2007,7 @@ impl DisplaySnapshot {
         };
 
         let chunks = custom_highlights::CustomHighlightsChunks::new(
-            multibuffer_range,
+            multibuffer_range.to_offset(multibuffer),
             true,
             None,
             Some(&self.semantic_token_highlights),
