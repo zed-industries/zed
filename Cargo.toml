@@ -511,7 +511,6 @@ aws-smithy-runtime-api = { version = "1.9.2", features = ["http-1x", "client"] }
 aws-smithy-types = { version = "1.3.4", features = ["http-body-1-x"] }
 backtrace = "0.3"
 base64 = "0.22"
-bincode = "1.2.1"
 bitflags = "2.6.0"
 brotli = "8.0.2"
 bytes = "1.0"
@@ -570,7 +569,6 @@ human_bytes = "0.4.1"
 html5ever = "0.27.0"
 http = "1.1"
 http-body = "1.0"
-hyper = "0.14"
 ignore = "0.4.22"
 image = "0.25.1"
 imara-diff = "0.1.8"
@@ -688,7 +686,6 @@ serde_json_lenient = { version = "0.2", features = [
     "raw_value",
 ] }
 serde_path_to_error = "0.1.17"
-serde_repr = "0.1"
 serde_urlencoded = "0.7"
 sha2 = "0.10"
 shellexpand = "2.1.0"
@@ -719,7 +716,6 @@ time = { version = "0.3", features = [
 ] }
 tiny_http = "0.8"
 tokio = { version = "1" }
-tokio-tungstenite = { version = "0.26", features = ["__rustls-tls"] }
 tokio-socks = { version = "0.5.2", default-features = false, features = [
     "futures-io",
     "tokio",
