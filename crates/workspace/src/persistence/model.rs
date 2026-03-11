@@ -68,9 +68,13 @@ pub struct MultiWorkspaceState {
 /// The serialized state of a single MultiWorkspace window from a previous session.
 #[derive(Debug, Clone)]
 pub struct SerializedMultiWorkspace {
+    pub id: Option<MultiWorkspaceId>,
     pub workspaces: Vec<SessionWorkspace>,
     pub state: MultiWorkspaceState,
 }
+
+#[derive(Debug, Clone, Copy)]
+pub struct MultiWorkspaceId(pub u64);
 
 #[derive(Debug, PartialEq, Clone)]
 pub(crate) struct SerializedWorkspace {

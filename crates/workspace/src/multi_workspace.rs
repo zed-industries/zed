@@ -16,6 +16,7 @@ pub const SIDEBAR_RESIZE_HANDLE_SIZE: Pixels = px(6.0);
 use crate::{
     CloseIntent, CloseWindow, DockPosition, Event as WorkspaceEvent, Item, ModalView, Panel, Toast,
     Workspace, WorkspaceId, client_side_decorations, notifications::NotificationId,
+    persistence::model::MultiWorkspaceId,
 };
 
 actions!(
@@ -52,6 +53,7 @@ impl Render for DraggedSidebar {
 pub struct MultiWorkspace {
     window_id: WindowId,
     workspaces: Vec<Entity<Workspace>>,
+    database_id: Option<MultiWorkspaceId>,
     active_workspace_index: usize,
     pending_removal_tasks: Vec<Task<()>>,
     _serialize_task: Option<Task<()>>,
@@ -82,6 +84,7 @@ impl MultiWorkspace {
         Self::subscribe_to_workspace(&workspace, cx);
         Self {
             window_id: window.window_handle().window_id(),
+            database_id: None,
             workspaces: vec![workspace],
             active_workspace_index: 0,
             pending_removal_tasks: Vec::new(),
@@ -181,6 +184,14 @@ impl MultiWorkspace {
             cx.notify();
             self.workspaces.len() - 1
         }
+    }
+
+    pub fn database_id(&self) -> Option<MultiWorkspaceId> {
+        self.database_id
+    }
+
+    pub fn set_database_id(&mut self, id: Option<MultiWorkspaceId>) {
+        self.database_id = id;
     }
 
     pub fn activate_index(&mut self, index: usize, window: &mut Window, cx: &mut Context<Self>) {
@@ -338,7 +349,7 @@ impl MultiWorkspace {
         self.workspace().read(cx).items_of_type::<T>(cx)
     }
 
-    pub fn database_id(&self, cx: &App) -> Option<WorkspaceId> {
+    pub fn active_workspace_database_id(&self, cx: &App) -> Option<WorkspaceId> {
         self.workspace().read(cx).database_id()
     }
 

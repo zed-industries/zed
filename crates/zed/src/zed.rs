@@ -697,9 +697,12 @@ async fn initialize_agent_panel(
 ) -> anyhow::Result<()> {
     workspace_handle
         .update_in(&mut cx, |workspace, window, cx| {
+            let mw_database_id = window
+                .root::<MultiWorkspace>()
+                .and_then(|mw| mw?.read(cx).database_id());
             let prompt_builder = prompt_builder.clone();
             setup_or_teardown_ai_panel(workspace, window, cx, move |workspace, cx| {
-                agent_ui::AgentPanel::load(workspace, prompt_builder, cx)
+                agent_ui::AgentPanel::load(workspace, mw_database_id, prompt_builder, cx)
             })
         })?
         .await?;
@@ -707,9 +710,12 @@ async fn initialize_agent_panel(
     workspace_handle.update_in(&mut cx, |workspace, window, cx| {
         let prompt_builder = prompt_builder.clone();
         cx.observe_global_in::<SettingsStore>(window, move |workspace, window, cx| {
+            let mw_database_id = window
+                .root::<MultiWorkspace>()
+                .and_then(|mw| mw?.read(cx).database_id());
             let prompt_builder = prompt_builder.clone();
             setup_or_teardown_ai_panel(workspace, window, cx, move |workspace, cx| {
-                agent_ui::AgentPanel::load(workspace, prompt_builder, cx)
+                agent_ui::AgentPanel::load(workspace, mw_database_id, prompt_builder, cx)
             })
             .detach_and_log_err(cx);
         })

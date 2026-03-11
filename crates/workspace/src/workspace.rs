@@ -80,8 +80,8 @@ use persistence::{DB, SerializedWindowBounds, model::SerializedWorkspace};
 pub use persistence::{
     DB as WORKSPACE_DB, WorkspaceDb, delete_unloaded_items,
     model::{
-        DockStructure, ItemId, SerializedMultiWorkspace, SerializedWorkspaceLocation,
-        SessionWorkspace,
+        DockStructure, ItemId, MultiWorkspaceId, SerializedMultiWorkspace,
+        SerializedWorkspaceLocation, SessionWorkspace,
     },
     read_serialized_multi_workspaces,
 };
@@ -8178,7 +8178,11 @@ pub async fn restore_multiworkspace(
     app_state: Arc<AppState>,
     cx: &mut AsyncApp,
 ) -> anyhow::Result<MultiWorkspaceRestoreResult> {
-    let SerializedMultiWorkspace { workspaces, state } = multi_workspace;
+    let SerializedMultiWorkspace {
+        workspaces,
+        state,
+        id: window_id,
+    } = multi_workspace;
     let mut group_iter = workspaces.into_iter();
     let first = group_iter
         .next()
@@ -8242,6 +8246,7 @@ pub async fn restore_multiworkspace(
     if let Some(target_id) = state.active_workspace_id {
         window_handle
             .update(cx, |multi_workspace, window, cx| {
+                multi_workspace.set_database_id(window_id);
                 let target_index = multi_workspace
                     .workspaces()
                     .iter()

@@ -87,8 +87,8 @@ use ui::{
 use util::ResultExt as _;
 use workspace::{
     CollaboratorId, DraggedSelection, DraggedSidebar, DraggedTab, FocusWorkspaceSidebar,
-    MultiWorkspace, SIDEBAR_RESIZE_HANDLE_SIZE, ToggleWorkspaceSidebar, ToggleZoom,
-    ToolbarItemView, Workspace, WorkspaceId,
+    MultiWorkspace, MultiWorkspaceId, SIDEBAR_RESIZE_HANDLE_SIZE, ToggleWorkspaceSidebar,
+    ToggleZoom, ToolbarItemView, Workspace, WorkspaceId,
     dock::{DockPosition, Panel, PanelEvent},
     multi_workspace_enabled,
 };
@@ -937,6 +937,7 @@ impl AgentPanel {
 
     pub fn load(
         workspace: WeakEntity<Workspace>,
+        multi_workspace_id: Option<MultiWorkspaceId>,
         prompt_builder: Arc<PromptBuilder>,
         mut cx: AsyncWindowContext,
     ) -> Task<Result<Entity<Self>>> {
@@ -5197,15 +5198,25 @@ mod tests {
         let prompt_builder = Arc::new(prompt_store::PromptBuilder::new(None).unwrap());
 
         let async_cx = cx.update(|window, cx| window.to_async(cx));
-        let loaded_a = AgentPanel::load(workspace_a.downgrade(), prompt_builder.clone(), async_cx)
-            .await
-            .expect("panel A load should succeed");
+        let loaded_a = AgentPanel::load(
+            workspace_a.downgrade(),
+            None,
+            prompt_builder.clone(),
+            async_cx,
+        )
+        .await
+        .expect("panel A load should succeed");
         cx.run_until_parked();
 
         let async_cx = cx.update(|window, cx| window.to_async(cx));
-        let loaded_b = AgentPanel::load(workspace_b.downgrade(), prompt_builder.clone(), async_cx)
-            .await
-            .expect("panel B load should succeed");
+        let loaded_b = AgentPanel::load(
+            workspace_b.downgrade(),
+            None,
+            prompt_builder.clone(),
+            async_cx,
+        )
+        .await
+        .expect("panel B load should succeed");
         cx.run_until_parked();
 
         // Workspace A should restore its thread, width, and agent type
@@ -5925,10 +5936,14 @@ mod tests {
         // Load a fresh panel from the serialized data.
         let prompt_builder = Arc::new(prompt_store::PromptBuilder::new(None).unwrap());
         let async_cx = cx.update(|window, cx| window.to_async(cx));
-        let loaded_panel =
-            AgentPanel::load(workspace.downgrade(), prompt_builder.clone(), async_cx)
-                .await
-                .expect("panel load should succeed");
+        let loaded_panel = AgentPanel::load(
+            workspace.downgrade(),
+            None,
+            prompt_builder.clone(),
+            async_cx,
+        )
+        .await
+        .expect("panel load should succeed");
         cx.run_until_parked();
 
         loaded_panel.read_with(cx, |panel, _cx| {
