@@ -165,7 +165,7 @@ impl DebugPanel {
             if let Some(window) = self.popped_out_window.as_ref() {
                 window
                     .update(cx, |_, window, _| window.activate_window())
-                    .ok();
+                    .log_err();
             }
             return;
         }
@@ -228,7 +228,7 @@ impl DebugPanel {
                         cx.notify();
                         (panel.workspace_window, panel.workspace.clone())
                     })
-                    .ok()
+                    .log_err()
                 else {
                     return;
                 };
@@ -239,9 +239,9 @@ impl DebugPanel {
                             .update(cx, |workspace, cx| {
                                 workspace.close_panel::<DebugPanel>(window, cx);
                             })
-                            .ok();
+                            .log_err();
                     })
-                    .ok();
+                    .log_err();
             }
         });
     }
@@ -806,14 +806,14 @@ impl DebugPanel {
                     IconButton::new("debug-pop-in", IconName::Minimize)
                         .icon_size(IconSize::Small)
                         .on_click(move |_, _, cx| {
-                            this.update(cx, |panel, cx| panel.pop_in(cx)).ok();
+                            this.update(cx, |panel, cx| panel.pop_in(cx)).log_err();
                         })
                         .tooltip(Tooltip::text("Return to Dock"))
                 } else {
                     IconButton::new("debug-pop-out", IconName::ArrowUpRight)
                         .icon_size(IconSize::Small)
                         .on_click(move |_, _, cx| {
-                            this.update(cx, |panel, cx| panel.pop_out(cx)).ok();
+                            this.update(cx, |panel, cx| panel.pop_out(cx)).log_err();
                         })
                         .tooltip(Tooltip::text("Open in New Window"))
                 }
@@ -1148,7 +1148,9 @@ impl DebugPanel {
                                         .child(documentation_button())
                                         .child(logs_button())
                                         .child(pop_out_or_in_button())
-                                        .child(close_bottom_panel_button)
+                                        .when(!in_popped_out_window, |this| {
+                                            this.child(close_bottom_panel_button)
+                                        })
                                 }),
                         ),
                 ),
@@ -2202,7 +2204,7 @@ impl DebuggerWindow {
                             panel.popped_out_window.is_some(),
                         )
                     })
-                    .ok()
+                    .log_err()
                 else {
                     return;
                 };
@@ -2211,7 +2213,7 @@ impl DebuggerWindow {
                         panel.popped_out_window = None;
                         cx.notify();
                     })
-                    .ok();
+                    .log_err();
 
                 if !should_reopen_dock_panel {
                     return;
@@ -2223,9 +2225,9 @@ impl DebuggerWindow {
                             .update(cx, |workspace, cx| {
                                 workspace.open_panel::<DebugPanel>(window, cx);
                             })
-                            .ok();
+                            .log_err();
                     })
-                    .ok();
+                    .log_err();
             }
         });
 

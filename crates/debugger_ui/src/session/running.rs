@@ -849,9 +849,7 @@ impl RunningState {
                                 let panel = workspace.panel::<crate::DebugPanel>(cx);
 
                                 if let Some(panel) = panel.as_ref() {
-                                    if panel.read(cx).is_popped_out() {
-                                        panel.update(cx, |panel, cx| panel.pop_out(cx));
-                                    } else {
+                                    if !panel.read(cx).is_popped_out() {
                                         workspace.open_panel::<crate::DebugPanel>(window, cx);
                                     }
                                 }

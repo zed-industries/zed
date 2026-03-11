@@ -2922,9 +2922,36 @@ mod tests {
             );
         });
 
-        // Wait for the printf command to execute and produce output
-        // Use real time since parking is enabled
-        cx.executor().timer(Duration::from_millis(500)).await;
+        // Wait for the printf command to execute and produce output before killing.
+        // This uses a bounded retry loop because shell startup can take longer than
+        // a fixed delay on slower or busy CI machines.
+        let mut output_before_kill = false;
+        for _ in 0..100 {
+            cx.run_until_parked();
+
+            let has_output = thread.read_with(cx, |thread, cx| {
+                let term = thread.terminals.get(&terminal_id).unwrap();
+                term.read(cx)
+                    .inner()
+                    .read(cx)
+                    .get_content()
+                    .contains("output_before_kill")
+            });
+
+            if has_output {
+                output_before_kill = true;
+                break;
+            }
+
+            cx.background_executor
+                .timer(Duration::from_millis(50))
+                .await;
+        }
+
+        assert!(
+            output_before_kill,
+            "terminal did not produce expected output before kill"
+        );
 
         // Get the acp_thread Terminal and kill it
         let wait_for_exit = thread.update(cx, |thread, cx| {
