@@ -5,6 +5,7 @@ use crate::{
     edit_prediction_tests::FakeEditPredictionDelegate,
     element::StickyHeader,
     linked_editing_ranges::LinkedEditingRanges,
+    runnables::RunnableTasks,
     scroll::scroll_amount::ScrollAmount,
     test::{
         assert_text_with_selections, build_editor, editor_content_with_blocks,
@@ -24403,20 +24404,24 @@ async fn test_find_enclosing_node_with_task(cx: &mut TestAppContext) {
 
     editor.update_in(cx, |editor, window, cx| {
         let snapshot = editor.buffer().read(cx).snapshot(cx);
-        editor.tasks.insert(
-            (buffer.read(cx).remote_id(), 3),
+        editor.runnables.insert(
+            buffer.read(cx).remote_id(),
+            3,
+            buffer.read(cx).version(),
             RunnableTasks {
-                templates: vec![],
+                templates: Vec::new(),
                 offset: snapshot.anchor_before(MultiBufferOffset(43)),
                 column: 0,
                 extra_variables: HashMap::default(),
                 context_range: BufferOffset(43)..BufferOffset(85),
             },
         );
-        editor.tasks.insert(
-            (buffer.read(cx).remote_id(), 8),
+        editor.runnables.insert(
+            buffer.read(cx).remote_id(),
+            8,
+            buffer.read(cx).version(),
             RunnableTasks {
-                templates: vec![],
+                templates: Vec::new(),
                 offset: snapshot.anchor_before(MultiBufferOffset(86)),
                 column: 0,
                 extra_variables: HashMap::default(),
@@ -33556,4 +33561,67 @@ comment */ˇ»;"#},
     editor.update(cx, |editor, cx| {
         assert_text_with_selections(editor, indoc! {r#"let arr = [«1, 2, 3]ˇ»;"#}, cx);
     });
+}
+
+#[gpui::test]
+async fn test_restore_and_next(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    let mut cx = EditorTestContext::new(cx).await;
+
+    let diff_base = r#"
+        one
+        two
+        three
+        four
+        five
+        "#
+    .unindent();
+
+    cx.set_state(
+        &r#"
+        ONE
+        two
+        ˇTHREE
+        four
+        FIVE
+        "#
+        .unindent(),
+    );
+    cx.set_head_text(&diff_base);
+
+    cx.update_editor(|editor, window, cx| {
+        editor.set_expand_all_diff_hunks(cx);
+        editor.restore_and_next(&Default::default(), window, cx);
+    });
+    cx.run_until_parked();
+
+    cx.assert_state_with_diff(
+        r#"
+        - one
+        + ONE
+          two
+          three
+          four
+        - ˇfive
+        + FIVE
+        "#
+        .unindent(),
+    );
+
+    cx.update_editor(|editor, window, cx| {
+        editor.restore_and_next(&Default::default(), window, cx);
+    });
+    cx.run_until_parked();
+
+    cx.assert_state_with_diff(
+        r#"
+        - one
+        + ONE
+          two
+          three
+          four
+          ˇfive
+        "#
+        .unindent(),
+    );
 }

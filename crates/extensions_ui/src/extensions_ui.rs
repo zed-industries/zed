@@ -870,9 +870,12 @@ impl ExtensionsPage {
             )
             .child(
                 h_flex()
+                    .min_w_0()
+                    .w_full()
                     .justify_between()
                     .child(
                         h_flex()
+                            .min_w_0()
                             .gap_1()
                             .child(
                                 Icon::new(IconName::Person)
@@ -889,6 +892,7 @@ impl ExtensionsPage {
                     .child(
                         h_flex()
                             .gap_1()
+                            .flex_shrink_0()
                             .child({
                                 let repo_url_for_tooltip = repository_url.clone();
 

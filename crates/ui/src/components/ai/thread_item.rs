@@ -1,9 +1,9 @@
 use crate::{
-    DecoratedIcon, DiffStat, HighlightedLabel, IconDecoration, IconDecorationKind, SpinnerLabel,
-    prelude::*,
+    DecoratedIcon, DiffStat, GradientFade, HighlightedLabel, IconDecoration, IconDecorationKind,
+    SpinnerLabel, prelude::*,
 };
 
-use gpui::{AnyView, ClickEvent, Hsla, SharedString, linear_color_stop, linear_gradient};
+use gpui::{AnyView, ClickEvent, Hsla, SharedString};
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum AgentThreadStatus {
@@ -220,24 +220,18 @@ impl RenderOnce for ThreadItem {
             color.panel_background
         };
 
-        let gradient_overlay = div()
-            .absolute()
-            .top_0()
-            .right(px(-10.0))
-            .w_12()
-            .h_full()
-            .bg(linear_gradient(
-                90.,
-                linear_color_stop(base_bg, 0.6),
-                linear_color_stop(base_bg.opacity(0.0), 0.),
-            ))
-            .group_hover("thread-item", |s| {
-                s.bg(linear_gradient(
-                    90.,
-                    linear_color_stop(color.element_hover, 0.6),
-                    linear_color_stop(color.element_hover.opacity(0.0), 0.),
-                ))
-            });
+        let gradient_overlay =
+            GradientFade::new(base_bg, color.element_hover, color.element_active)
+                .width(px(32.0))
+                .right(px(-10.0))
+                .gradient_stop(0.8)
+                .group_name("thread-item");
+
+        let has_diff_stats = self.added.is_some() || self.removed.is_some();
+        let added_count = self.added.unwrap_or(0);
+        let removed_count = self.removed.unwrap_or(0);
+        let diff_stat_id = self.id.clone();
+        let has_worktree = self.worktree.is_some();
 
         v_flex()
             .id(self.id.clone())
@@ -247,7 +241,7 @@ impl RenderOnce for ThreadItem {
             .cursor_pointer()
             .w_full()
             .map(|this| {
-                if self.worktree.is_some() {
+                if has_worktree || has_diff_stats {
                     this.p_2()
                 } else {
                     this.px_2().py_1()
@@ -312,33 +306,22 @@ impl RenderOnce for ThreadItem {
                         .gap_1p5()
                         .child(icon_container()) // Icon Spacing
                         .child(worktree_label)
-                        // TODO: Uncomment the elements below when we're ready to expose this data
-                        // .child(dot_separator())
-                        // .child(
-                        //     Label::new(self.timestamp)
-                        //         .size(LabelSize::Small)
-                        //         .color(Color::Muted),
-                        // )
-                        // .child(
-                        //     Label::new("•")
-                        //         .size(LabelSize::Small)
-                        //         .color(Color::Muted)
-                        //         .alpha(0.5),
-                        // )
-                        // .when(has_no_changes, |this| {
-                        //     this.child(
-                        //         Label::new("No Changes")
-                        //             .size(LabelSize::Small)
-                        //             .color(Color::Muted),
-                        //     )
-                        // })
-                        .when(self.added.is_some() || self.removed.is_some(), |this| {
+                        .when(has_diff_stats, |this| {
                             this.child(DiffStat::new(
-                                self.id,
-                                self.added.unwrap_or(0),
-                                self.removed.unwrap_or(0),
+                                diff_stat_id.clone(),
+                                added_count,
+                                removed_count,
                             ))
                         }),
+                )
+            })
+            .when(!has_worktree && has_diff_stats, |this| {
+                this.child(
+                    h_flex()
+                        .min_w_0()
+                        .gap_1p5()
+                        .child(icon_container()) // Icon Spacing
+                        .child(DiffStat::new(diff_stat_id, added_count, removed_count)),
                 )
             })
             .when_some(self.on_click, |this, on_click| this.on_click(on_click))

@@ -1,7 +1,7 @@
 use crate::{
     PredictionProvider,
     example::{ActualCursor, Example},
-    format_prompt::TeacherPrompt,
+    format_prompt::{TeacherMultiRegionPrompt, TeacherPrompt},
     repair,
 };
 use anyhow::{Context as _, Result};
@@ -40,6 +40,10 @@ pub fn parse_prediction_output(
     match provider {
         PredictionProvider::Teacher(_) | PredictionProvider::TeacherNonBatching(_) => {
             TeacherPrompt::parse(example, actual_output)
+        }
+        PredictionProvider::TeacherMultiRegion(_)
+        | PredictionProvider::TeacherMultiRegionNonBatching(_) => {
+            TeacherMultiRegionPrompt::parse(example, actual_output)
         }
         PredictionProvider::Zeta2(version) => parse_zeta2_output(example, actual_output, version),
         PredictionProvider::Repair => repair::parse(example, actual_output),

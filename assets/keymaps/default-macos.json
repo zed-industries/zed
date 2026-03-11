@@ -297,6 +297,7 @@
       "cmd-shift-j": "agent::ToggleNavigationMenu",
       "cmd-alt-m": "agent::ToggleOptionsMenu",
       "cmd-alt-shift-n": "agent::ToggleNewThreadMenu",
+      "cmd-alt-shift-t": "agent::ToggleStartThreadInSelector",
       "shift-alt-escape": "agent::ExpandMessageEditor",
       "cmd->": "agent::AddSelectionToThread",
       "cmd-shift-e": "project_panel::ToggleFocus",
@@ -881,7 +882,7 @@
     },
   },
   {
-    "context": "!ContextEditor > Editor && mode == full",
+    "context": "!ContextEditor && !AcpThread > Editor && mode == full",
     "use_key_equivalents": true,
     "bindings": {
       "alt-enter": "editor::OpenExcerpts",
@@ -1033,6 +1034,7 @@
       "cmd-shift-enter": "git::Amend",
       "cmd-ctrl-y": "git::StageAll",
       "cmd-ctrl-shift-y": "git::UnstageAll",
+      "cmd-alt-z": "git::RestoreAndNext",
     },
   },
   {
