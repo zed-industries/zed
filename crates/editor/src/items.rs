@@ -1859,7 +1859,7 @@ impl SearchableItem for Editor {
             };
 
             for range in search_within_ranges {
-                for (search_buffer, search_range, excerpt_id, deleted_hunk_anchor) in
+                for (search_buffer, search_range, deleted_hunk_anchor) in
                     buffer.range_to_buffer_ranges_with_deleted_hunks(range)
                 {
                     ranges.extend(

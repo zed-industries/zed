@@ -71,7 +71,7 @@ impl ExcerptAnchor {
         self
     }
 
-    pub(crate) fn cmp(&self, other: &Self, snapshot: &MultiBufferSnapshot) -> Ordering {
+    pub fn cmp(&self, other: &Self, snapshot: &MultiBufferSnapshot) -> Ordering {
         let Some(self_path_key) = snapshot.path_keys_by_index.get(&self.path) else {
             panic!("anchor's path was never added to multibuffer")
         };

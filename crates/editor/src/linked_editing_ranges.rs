@@ -69,19 +69,29 @@ pub(super) fn refresh_linked_ranges(
                 let buffer = editor.buffer.read(cx);
                 for selection in selections {
                     let cursor_position = selection.head();
-                    let start_position = snapshot.anchor_before(cursor_position);
-                    let end_position = snapshot.anchor_after(selection.tail());
-                    if start_position.text_anchor.buffer_id != end_position.text_anchor.buffer_id
-                        || end_position.text_anchor.buffer_id.is_none()
+                    let Some(start_position) = snapshot
+                        .anchor_before(cursor_position)
+                        .to_excerpt_anchor(snapshot)
+                    else {
+                        continue;
+                    };
+                    let Some(end_position) = snapshot
+                        .anchor_after(selection.tail())
+                        .to_excerpt_anchor(snapshot)
+                    else {
+                        continue;
+                    };
+                    if start_position.text_anchor().buffer_id
+                        != end_position.text_anchor().buffer_id
                     {
                         // Throw away selections spanning multiple buffers.
                         continue;
                     }
-                    if let Some(buffer) = buffer.buffer_for_anchor(end_position, cx) {
+                    if let Some(buffer) = buffer.buffer(end_position.text_anchor().buffer_id) {
                         applicable_selections.push((
                             buffer,
-                            start_position.text_anchor,
-                            end_position.text_anchor,
+                            start_position.text_anchor(),
+                            end_position.text_anchor(),
                         ));
                     }
                 }

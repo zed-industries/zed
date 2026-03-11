@@ -20,7 +20,7 @@ pub mod inlay_hints;
 use std::sync::OnceLock;
 
 use gpui::{Context, HighlightStyle, Hsla, Rgba, Task};
-use multi_buffer::Anchor;
+use multi_buffer::{Anchor, ExcerptAnchor};
 use project::{InlayHint, InlayId};
 use text::Rope;
 
@@ -45,7 +45,7 @@ impl InlaySplice {
 #[derive(Debug, Clone)]
 pub struct Inlay {
     pub id: InlayId,
-    pub position: Anchor,
+    pub position: ExcerptAnchor,
     pub content: InlayContent,
 }
 

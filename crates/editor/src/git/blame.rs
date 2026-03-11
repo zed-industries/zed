@@ -204,7 +204,7 @@ impl GitBlame {
                         git_blame.generate(cx);
                     }
                 }
-                multi_buffer::Event::ExcerptsAdded { .. }
+                multi_buffer::Event::BufferUpdated { .. }
                 | multi_buffer::Event::BuffersEdited { .. } => git_blame.regenerate_on_edit(cx),
                 _ => {}
             },

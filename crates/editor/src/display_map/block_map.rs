@@ -11,8 +11,8 @@ use collections::{Bound, HashMap, HashSet};
 use gpui::{AnyElement, App, EntityId, Pixels, Window};
 use language::{Patch, Point};
 use multi_buffer::{
-    Anchor, ExcerptBoundaryInfo, ExcerptId, MultiBuffer, MultiBufferOffset, MultiBufferPoint,
-    MultiBufferRow, MultiBufferSnapshot, RowInfo, ToOffset, ToPoint as _,
+    Anchor, ExcerptBoundaryInfo, MultiBuffer, MultiBufferOffset, MultiBufferPoint, MultiBufferRow,
+    MultiBufferSnapshot, RowInfo, ToOffset, ToPoint as _,
 };
 use parking_lot::Mutex;
 use std::{

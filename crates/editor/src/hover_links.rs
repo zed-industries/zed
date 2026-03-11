@@ -322,16 +322,18 @@ pub fn show_link_definition(
         return;
     }
 
-    let trigger_anchor = trigger_point.anchor();
-    let anchor = snapshot.buffer_snapshot().anchor_before(*trigger_anchor);
-    let Some(buffer) = editor.buffer().read(cx).buffer_for_anchor(anchor, cx) else {
+    let anchor = trigger_point.anchor().bias_left(snapshot.buffer_snapshot());
+    let Some(anchor) = anchor.to_excerpt_anchor(snapshot.buffer_snapshot()) else {
         return;
     };
-    let Anchor {
-        excerpt_id,
-        text_anchor,
-        ..
-    } = anchor;
+    let Some(buffer) = editor
+        .buffer
+        .read(cx)
+        .buffer(anchor.text_anchor().buffer_id)
+    else {
+        return;
+    };
+    let text_anchor = anchor.text_anchor();
     let same_kind = hovered_link_state.preferred_kind == preferred_kind
         || hovered_link_state
             .links
@@ -364,8 +366,8 @@ pub fn show_link_definition(
                     if let Some((url_range, url)) = find_url(&buffer, text_anchor, cx.clone()) {
                         this.read_with(cx, |_, _| {
                             let range = maybe!({
-                                let range =
-                                    snapshot.anchor_range_in_buffer(excerpt_id, url_range)?;
+                                let range = snapshot
+                                    .anchor_range_in_buffer(text_anchor.buffer_id, url_range)?;
                                 Some(RangeInEditor::Text(range))
                             });
                             (range, vec![HoverLink::Url(url)])
@@ -375,8 +377,8 @@ pub fn show_link_definition(
                         find_file(&buffer, project.clone(), text_anchor, cx).await
                     {
                         let range = maybe!({
-                            let range =
-                                snapshot.anchor_range_in_buffer(excerpt_id, filename_range)?;
+                            let range = snapshot
+                                .anchor_range_in_buffer(text_anchor.buffer_id, filename_range)?;
                             Some(RangeInEditor::Text(range))
                         });
 
@@ -391,7 +393,7 @@ pub fn show_link_definition(
                                     definition_result.iter().find_map(|link| {
                                         link.origin.as_ref().and_then(|origin| {
                                             let range = snapshot.anchor_range_in_buffer(
-                                                excerpt_id,
+                                                text_anchor.buffer_id,
                                                 origin.range.clone(),
                                             )?;
                                             Some(RangeInEditor::Text(range))

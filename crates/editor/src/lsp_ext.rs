@@ -33,15 +33,22 @@ where
     F: Fn(&Language) -> bool,
 {
     let project = editor.project.clone()?;
+    let multibuffer_snapshot = editor.buffer.read(cx).snapshot(cx);
     editor
         .selections
         .disjoint_anchors_arc()
         .iter()
-        .filter_map(|selection| Some((selection.head(), selection.head().text_anchor.buffer_id?)))
+        .filter_map(|selection| {
+            let text_anchor = selection
+                .head()
+                .to_excerpt_anchor(&multibuffer_snapshot)?
+                .text_anchor();
+            Some((selection.head(), text_anchor))
+        })
         .unique_by(|(_, buffer_id)| *buffer_id)
-        .find_map(|(trigger_anchor, buffer_id)| {
-            let buffer = editor.buffer().read(cx).buffer(buffer_id)?;
-            let language = buffer.read(cx).language_at(trigger_anchor.text_anchor)?;
+        .find_map(|(trigger_anchor, text_anchor)| {
+            let buffer = editor.buffer().read(cx).buffer(text_anchor.buffer_id)?;
+            let language = buffer.read(cx).language_at(text_anchor)?;
             if filter_language(&language) {
                 let server_id = buffer.update(cx, |buffer, cx| {
                     project
@@ -97,7 +104,7 @@ pub fn lsp_tasks(
             let buffers = buffer_ids
                 .iter()
                 .filter(|&&buffer_id| match for_position {
-                    Some(for_position) => for_position.buffer_id == Some(buffer_id),
+                    Some(for_position) => for_position.buffer_id == buffer_id,
                     None => true,
                 })
                 .filter_map(|&buffer_id| project.read(cx).buffer_for_id(buffer_id, cx))

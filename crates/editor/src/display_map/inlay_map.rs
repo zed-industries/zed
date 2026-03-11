@@ -12,7 +12,7 @@ use crate::{
 use collections::BTreeSet;
 use language::{Chunk, Edit, Point, TextSummary};
 use multi_buffer::{
-    MBTextSummary, MultiBufferOffset, MultiBufferRow, MultiBufferRows, MultiBufferSnapshot,
+    Anchor, MBTextSummary, MultiBufferOffset, MultiBufferRow, MultiBufferRows, MultiBufferSnapshot,
     RowInfo, ToOffset,
 };
 use project::InlayId;
@@ -621,8 +621,7 @@ impl InlayMap {
                 let new_start = InlayOffset(new_transforms.summary().output.len);
 
                 let start_ix = match self.inlays.binary_search_by(|probe| {
-                    probe
-                        .position
+                    Anchor::from(probe.position)
                         .to_offset(&buffer_snapshot)
                         .cmp(&buffer_edit.new.start)
                         .then(std::cmp::Ordering::Greater)
@@ -631,10 +630,10 @@ impl InlayMap {
                 };
 
                 for inlay in &self.inlays[start_ix..] {
-                    if !inlay.position.is_valid(&buffer_snapshot) {
+                    if !Anchor::from(inlay.position).is_valid(&buffer_snapshot) {
                         continue;
                     }
-                    let buffer_offset = inlay.position.to_offset(&buffer_snapshot);
+                    let buffer_offset = Anchor::from(inlay.position).to_offset(&buffer_snapshot);
                     if buffer_offset > buffer_edit.new.end {
                         break;
                     }
@@ -705,7 +704,7 @@ impl InlayMap {
         self.inlays.retain(|inlay| {
             let retain = !to_remove.contains(&inlay.id);
             if !retain {
-                let offset = inlay.position.to_offset(&snapshot.buffer);
+                let offset = Anchor::from(inlay.position).to_offset(&snapshot.buffer);
                 edits.insert(offset);
             }
             retain
@@ -717,7 +716,7 @@ impl InlayMap {
                 continue;
             }
 
-            let offset = inlay_to_insert.position.to_offset(&snapshot.buffer);
+            let offset = Anchor::from(inlay_to_insert.position).to_offset(&snapshot.buffer);
             match self.inlays.binary_search_by(|probe| {
                 probe
                     .position
@@ -914,7 +913,7 @@ impl InlaySnapshot {
                 Some(Transform::Isomorphic(_)) => {
                     if offset == cursor.end().0 {
                         while let Some(Transform::Inlay(inlay)) = cursor.next_item() {
-                            if inlay.position.bias() == Bias::Right {
+                            if inlay.position.text_anchor().bias == Bias::Right {
                                 break;
                             } else {
                                 cursor.next();
@@ -927,7 +926,7 @@ impl InlaySnapshot {
                     }
                 }
                 Some(Transform::Inlay(inlay)) => {
-                    if inlay.position.bias() == Bias::Left {
+                    if inlay.position.text_anchor().bias == Bias::Left {
                         cursor.next();
                     } else {
                         return cursor.start().1;
@@ -1008,7 +1007,7 @@ impl InlaySnapshot {
                 Some(Transform::Isomorphic(transform)) => {
                     if cursor.start().0 == point {
                         if let Some(Transform::Inlay(inlay)) = cursor.prev_item() {
-                            if inlay.position.bias() == Bias::Left {
+                            if inlay.position.text_anchor().bias == Bias::Left {
                                 return point;
                             } else if bias == Bias::Left {
                                 cursor.prev();
@@ -1022,7 +1021,7 @@ impl InlaySnapshot {
                         }
                     } else if cursor.end().0 == point {
                         if let Some(Transform::Inlay(inlay)) = cursor.next_item() {
-                            if inlay.position.bias() == Bias::Right {
+                            if inlay.position.text_anchor().bias == Bias::Right {
                                 return point;
                             } else if bias == Bias::Right {
                                 cursor.next();
@@ -1049,19 +1048,22 @@ impl InlaySnapshot {
                     }
                 }
                 Some(Transform::Inlay(inlay)) => {
-                    if point == cursor.start().0 && inlay.position.bias() == Bias::Right {
+                    if point == cursor.start().0 && inlay.position.text_anchor().bias == Bias::Right
+                    {
                         match cursor.prev_item() {
                             Some(Transform::Inlay(inlay)) => {
-                                if inlay.position.bias() == Bias::Left {
+                                if inlay.position.text_anchor().bias == Bias::Left {
                                     return point;
                                 }
                             }
                             _ => return point,
                         }
-                    } else if point == cursor.end().0 && inlay.position.bias() == Bias::Left {
+                    } else if point == cursor.end().0
+                        && inlay.position.text_anchor().bias == Bias::Left
+                    {
                         match cursor.next_item() {
                             Some(Transform::Inlay(inlay)) => {
-                                if inlay.position.bias() == Bias::Right {
+                                if inlay.position.text_anchor().bias == Bias::Right {
                                     return point;
                                 }
                             }
@@ -1276,7 +1278,9 @@ impl InlayPointCursor<'_> {
                 Some(Transform::Isomorphic(_)) => {
                     if point == cursor.end().0 {
                         while let Some(Transform::Inlay(inlay)) = cursor.next_item() {
-                            if bias == Bias::Left && inlay.position.bias() == Bias::Right {
+                            if bias == Bias::Left
+                                && inlay.position.text_anchor().bias == Bias::Right
+                            {
                                 break;
                             } else {
                                 cursor.next();
@@ -1289,7 +1293,7 @@ impl InlayPointCursor<'_> {
                     }
                 }
                 Some(Transform::Inlay(inlay)) => {
-                    if inlay.position.bias() == Bias::Left || bias == Bias::Right {
+                    if inlay.position.text_anchor().bias == Bias::Left || bias == Bias::Right {
                         cursor.next();
                     } else {
                         return cursor.start().1;
@@ -1870,9 +1874,9 @@ mod tests {
             let inlays = inlay_map
                 .inlays
                 .iter()
-                .filter(|inlay| inlay.position.is_valid(&buffer_snapshot))
+                .filter(|inlay| Anchor::from(inlay.position).is_valid(&buffer_snapshot))
                 .map(|inlay| {
-                    let offset = inlay.position.to_offset(&buffer_snapshot);
+                    let offset = Anchor::from(inlay.position).to_offset(&buffer_snapshot);
                     (offset, inlay.clone())
                 })
                 .collect::<Vec<_>>();

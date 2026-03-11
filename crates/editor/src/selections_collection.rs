@@ -12,7 +12,7 @@ use multi_buffer::{MultiBufferDimension, MultiBufferOffset};
 use util::post_inc;
 
 use crate::{
-    Anchor, DisplayPoint, DisplayRow, ExcerptId, MultiBufferSnapshot, SelectMode, ToOffset,
+    Anchor, DisplayPoint, DisplayRow, MultiBufferSnapshot, SelectMode, ToOffset,
     display_map::{DisplaySnapshot, ToDisplayPoint},
     movement::TextLayoutDetails,
 };
@@ -684,10 +684,8 @@ impl<'snap, 'a> MutableSelectionsCollection<'snap, 'a> {
             let buffer_snapshot = self.snapshot.buffer_snapshot();
             let anchor = buffer_snapshot
                 .excerpts()
-                .find(|(_, buffer, _)| buffer.remote_id() == buffer_id)
-                .and_then(|(excerpt_id, _, range)| {
-                    buffer_snapshot.anchor_in_buffer(excerpt_id, range.context.start)
-                })
+                .find(|excerpt| excerpt.buffer_id() == buffer_id)
+                .map(|excerpt| excerpt.start_anchor())
                 .unwrap_or_else(|| self.snapshot.anchor_before(MultiBufferOffset(0)));
             self.collection.disjoint = Arc::from([Selection {
                 id: post_inc(&mut self.collection.next_selection_id),

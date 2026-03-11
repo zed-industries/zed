@@ -7,7 +7,6 @@ use std::ops::Range;
 use crate::{Editor, HighlightKey};
 use collections::HashMap;
 use gpui::{Context, HighlightStyle};
-use itertools::Itertools;
 use language::language_settings;
 use multi_buffer::Anchor;
 use ui::{ActiveTheme, utils::ensure_minimum_contrast};
@@ -24,18 +23,10 @@ impl Editor {
 
         let accents_count = cx.theme().accents().0.len();
         let multi_buffer_snapshot = self.buffer().read(cx).snapshot(cx);
-        let anchors_in_multi_buffer = |current_excerpt: ExcerptId,
-                                       text_anchors: [text::Anchor; 4]|
-         -> Option<[Option<_>; 4]> {
-            // todo!() move filtering out.
-            multi_buffer_snapshot
-                .anchors_in_buffer(current_excerpt, text_anchors)?
-                .collect_array()
-        };
 
         let bracket_matches_by_accent = self.visible_excerpts(false, cx).into_iter().fold(
             HashMap::default(),
-            |mut acc, (excerpt_id, (buffer, _, buffer_range))| {
+            |mut acc, (buffer, _, buffer_range, path_key_index)| {
                 let buffer_snapshot = buffer.read(cx).snapshot();
                 if language_settings::language_settings(
                     buffer_snapshot.language().map(|language| language.name()),
@@ -46,7 +37,7 @@ impl Editor {
                 {
                     let fetched_chunks = self
                         .fetched_tree_sitter_chunks
-                        .entry(excerpt_id)
+                        .entry(buffer_snapshot.remote_id())
                         .or_default();
 
                     let brackets_by_accent = buffer_snapshot
@@ -65,40 +56,35 @@ impl Editor {
                         .filter_map(|pair| {
                             let color_index = pair.color_index?;
 
-                            let buffer_open_range =
-                                buffer_snapshot.anchor_range_around(pair.open_range);
-                            let buffer_close_range =
-                                buffer_snapshot.anchor_range_around(pair.close_range);
-                            let [
-                                buffer_open_range_start,
-                                buffer_open_range_end,
-                                buffer_close_range_start,
-                                buffer_close_range_end,
-                            ] = anchors_in_multi_buffer(
-                                excerpt_id,
-                                [
-                                    buffer_open_range.start,
-                                    buffer_open_range.end,
-                                    buffer_close_range.start,
-                                    buffer_close_range.end,
-                                ],
-                            )?;
-                            let multi_buffer_open_range =
-                                buffer_open_range_start.zip(buffer_open_range_end);
-                            let multi_buffer_close_range =
-                                buffer_close_range_start.zip(buffer_close_range_end);
+                            let open_range = pair.open_range.start.max(buffer_range.start)
+                                ..pair.open_range.end.min(buffer_range.end);
+                            let close_range = pair.close_range.start.max(buffer_range.start)
+                                ..pair.close_range.end.min(buffer_range.end);
 
-                            let mut ranges = Vec::with_capacity(2);
-                            if let Some((open_start, open_end)) = multi_buffer_open_range {
-                                ranges.push(open_start..open_end);
-                            }
-                            if let Some((close_start, close_end)) = multi_buffer_close_range {
-                                ranges.push(close_start..close_end);
-                            }
-                            if ranges.is_empty() {
+                            let buffer_open_range = if open_range.is_empty() {
                                 None
                             } else {
-                                Some((color_index % accents_count, ranges))
+                                Some(Anchor::range_in_buffer(
+                                    path_key_index,
+                                    buffer_snapshot.anchor_range_around(pair.open_range),
+                                ))
+                            };
+                            let buffer_close_range = if close_range.is_empty() {
+                                None
+                            } else {
+                                Some(Anchor::range_in_buffer(
+                                    path_key_index,
+                                    buffer_snapshot.anchor_range_around(pair.close_range),
+                                ))
+                            };
+
+                            if buffer_open_range.is_none() && buffer_close_range.is_none() {
+                                None
+                            } else {
+                                Some((
+                                    color_index % accents_count,
+                                    [buffer_open_range, buffer_close_range],
+                                ))
                             }
                         });
 
@@ -107,7 +93,7 @@ impl Editor {
                             .entry(accent_number)
                             .or_insert_with(Vec::<Range<Anchor>>::new);
 
-                        for new_range in new_ranges {
+                        for new_range in new_ranges.into_iter().flatten() {
                             let i = ranges
                                 .binary_search_by(|probe| {
                                     probe.start.cmp(&new_range.start, &multi_buffer_snapshot)

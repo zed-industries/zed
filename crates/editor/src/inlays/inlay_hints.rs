@@ -14,7 +14,7 @@ use language::{
     language_settings::{InlayHintKind, InlayHintSettings, language_settings},
 };
 use lsp::LanguageServerId;
-use multi_buffer::{Anchor, ExcerptId, MultiBufferSnapshot};
+use multi_buffer::{Anchor, MultiBufferSnapshot};
 use project::{
     HoverBlock, HoverBlockKind, InlayHintLabel, InlayHintLabelPartTooltip, InlayHintTooltip,
     InvalidationStrategy, ResolveState,
@@ -350,7 +350,7 @@ impl Editor {
             .extend(invalidate_hints_for_buffers);
 
         let mut buffers_to_query = HashMap::default();
-        for (_, (buffer, buffer_version, visible_range)) in visible_excerpts {
+        for (buffer, buffer_version, visible_range, _) in visible_excerpts {
             let buffer_id = buffer.read(cx).remote_id();
 
             if !self.registered_buffers.contains_key(&buffer_id) {

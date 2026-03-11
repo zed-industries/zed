@@ -810,6 +810,14 @@ impl<'a> MultiBufferExcerpt2<'a> {
         }
         .into()
     }
+
+    pub fn path_key_index(&self) -> PathKeyIndex {
+        self.excerpt.path_key_index
+    }
+
+    pub fn start_anchor(&self) -> Anchor {
+        todo!()
+    }
 }
 
 impl PartialEq for MultiBufferExcerpt2<'_> {
@@ -5322,10 +5330,12 @@ impl MultiBufferSnapshot {
     /// Creates a multibuffer anchor range for the given buffer anchor range, if any excerpt contains both endpoints.
     pub fn anchor_range_in_buffer(
         &self,
-        buffer_id: BufferId,
         text_anchor: Range<text::Anchor>,
     ) -> Option<Range<Anchor>> {
-        for excerpt in self.excerpts_for_buffer(buffer_id) {
+        if text_anchor.start.buffer_id != text_anchor.end.buffer_id {
+            return None;
+        }
+        for excerpt in self.excerpts_for_buffer(text_anchor.start.buffer_id) {
             let buffer_snapshot = excerpt.buffer_snapshot(self);
             if excerpt.range.contains(&text_anchor.start, &buffer_snapshot)
                 && excerpt.range.contains(&text_anchor.end, &buffer_snapshot)
@@ -5338,12 +5348,8 @@ impl MultiBufferSnapshot {
     }
 
     /// Creates a multibuffer anchor for the given buffer anchor, if it is contained in any excerpt.
-    pub fn anchor_in_buffer(
-        &self,
-        buffer_id: BufferId,
-        text_anchor: text::Anchor,
-    ) -> Option<Anchor> {
-        for excerpt in self.excerpts_for_buffer(buffer_id) {
+    pub fn anchor_in_buffer(&self, text_anchor: text::Anchor) -> Option<Anchor> {
+        for excerpt in self.excerpts_for_buffer(text_anchor.buffer_id) {
             let buffer_snapshot = excerpt.buffer_snapshot(self);
             if excerpt.range.contains(&text_anchor, &buffer_snapshot) {
                 return Some(Anchor::in_buffer(excerpt.path_key_index, text_anchor));
@@ -5351,19 +5357,6 @@ impl MultiBufferSnapshot {
         }
 
         None
-    }
-
-    pub fn anchors_in_buffer(
-        &self,
-        buffer_id: BufferId,
-        text_anchors: impl IntoIterator<Item = text::Anchor>,
-    ) -> Option<impl Iterator<Item = Anchor>> {
-        let path_key_index = self.path_key_index_for_buffer(buffer_id)?;
-        Some(
-            text_anchors
-                .into_iter()
-                .map(move |anchor| Anchor::in_buffer(path_key_index, anchor)),
-        )
     }
 
     pub fn can_resolve(&self, anchor: &Anchor) -> bool {
@@ -6207,28 +6200,17 @@ impl MultiBufferSnapshot {
                 .flat_map(|item| {
                     Some(OutlineItem {
                         depth: item.depth,
-                        range: self.anchor_range_in_buffer(
-                            excerpt.buffer_snapshot().remote_id(),
-                            item.range,
-                        )?,
-                        source_range_for_text: self.anchor_range_in_buffer(
-                            excerpt.buffer_snapshot().remote_id(),
-                            item.source_range_for_text,
-                        )?,
+                        range: self.anchor_range_in_buffer(item.range)?,
+                        source_range_for_text: self
+                            .anchor_range_in_buffer(item.source_range_for_text)?,
                         text: item.text,
                         highlight_ranges: item.highlight_ranges,
                         name_ranges: item.name_ranges,
-                        body_range: item.body_range.and_then(|body_range| {
-                            self.anchor_range_in_buffer(
-                                excerpt.buffer_snapshot().remote_id(),
-                                body_range,
-                            )
-                        }),
+                        body_range: item
+                            .body_range
+                            .and_then(|body_range| self.anchor_range_in_buffer(body_range)),
                         annotation_range: item.annotation_range.and_then(|annotation_range| {
-                            self.anchor_range_in_buffer(
-                                excerpt.buffer_snapshot().remote_id(),
-                                annotation_range,
-                            )
+                            self.anchor_range_in_buffer(annotation_range)
                         }),
                     })
                 })
