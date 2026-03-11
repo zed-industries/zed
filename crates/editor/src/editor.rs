@@ -11138,6 +11138,25 @@ impl Editor {
                 indent_delta.chars().collect::<String>(),
             ));
 
+            // When indenting a single ordered list item, reset its number to 1
+            // since it starts a new sub-list at the deeper indentation level.
+            // For multi-row selections we skip this because the user is moving
+            // an existing list block and the relative ordering must be preserved.
+            if !has_multiple_rows {
+                if let Some(language) =
+                    snapshot.language_scope_at(Point::new(row, current_indent.len))
+                {
+                    if let Some((marker_start_col, marker_end_col, reset_marker)) =
+                        ordered_list_indent_reset(row, &current_indent, snapshot, &language)
+                    {
+                        edits.push((
+                            Point::new(row, marker_start_col)..Point::new(row, marker_end_col),
+                            reset_marker,
+                        ));
+                    }
+                }
+            }
+
             // Update this selection's endpoints to reflect the indentation.
             if row == selection.start.row {
                 selection.start.column += indent_delta.len;
@@ -26262,6 +26281,62 @@ fn list_delimiter_for_newline(
             }
 
             return None;
+        }
+    }
+
+    None
+}
+
+/// Returns `(marker_start_col, marker_end_col, reset_text)` for an ordered list item
+/// on `row` that has content after the marker, so the caller can replace the marker
+/// with `reset_text` (which always formats the number as `1`) when indenting.
+///
+/// Returns `None` if the row is not an ordered list item with content, or if the
+/// marker would not change (i.e., it is already `1`).
+fn ordered_list_indent_reset(
+    row: u32,
+    current_indent: &IndentSize,
+    snapshot: &MultiBufferSnapshot,
+    language: &LanguageScope,
+) -> Option<(u32, u32, String)> {
+    let (buffer_snapshot, range) = snapshot.buffer_line_for_row(MultiBufferRow(row))?;
+    let indent_len = current_indent.len as usize;
+
+    let candidate: String = buffer_snapshot
+        .chars_for_range(range.clone())
+        .skip(indent_len)
+        .take(ORDERED_LIST_MAX_MARKER_LEN)
+        .collect();
+
+    for ordered_config in language.ordered_list() {
+        let regex = match Regex::new(&ordered_config.pattern) {
+            Ok(r) => r,
+            Err(_) => continue,
+        };
+
+        if let Some(captures) = regex.captures(&candidate) {
+            let full_match = captures.get(0)?;
+            let marker_len = full_match.len();
+            let end_of_marker = indent_len + marker_len;
+
+            let has_content = buffer_snapshot
+                .chars_for_range(range)
+                .skip(end_of_marker)
+                .any(|c| !c.is_whitespace());
+
+            if !has_content {
+                return None;
+            }
+
+            let current_number: u32 = captures.get(1)?.as_str().parse().ok()?;
+            if current_number == 1 {
+                return None;
+            }
+
+            let reset_marker = ordered_config.format.replace("{1}", "1");
+            let marker_start_col = indent_len as u32;
+            let marker_end_col = end_of_marker as u32;
+            return Some((marker_start_col, marker_end_col, reset_marker));
         }
     }
 
