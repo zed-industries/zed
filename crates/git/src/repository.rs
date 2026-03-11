@@ -1974,12 +1974,10 @@ impl GitRepository for RealGitRepository {
             .spawn(async move {
                 let git = git_binary?;
                 let output = match diff {
-                    DiffType::HeadToIndex => {
-                        git.build_command(["diff", "--staged"]).output().await?
-                    }
-                    DiffType::HeadToWorktree => git.build_command(["diff"]).output().await?,
+                    DiffType::HeadToIndex => git.build_diff_command(["--staged"]).output().await?,
+                    DiffType::HeadToWorktree => git.build_diff_command::<&str>([]).output().await?,
                     DiffType::MergeBase { base_ref } => {
-                        git.build_command(["diff", "--merge-base", base_ref.as_ref()])
+                        git.build_diff_command(["--merge-base", base_ref.as_ref()])
                             .output()
                             .await?
                     }
@@ -3129,6 +3127,25 @@ impl GitBinary {
             command.env("GIT_INDEX_FILE", index_file_path);
         }
         command.envs(&self.envs);
+        command
+    }
+
+    /// Wrapper over [`Self::build_command`] to ensure that `--no-ext-diff` is
+    /// used when the repository is not trusted.
+    pub(crate) fn build_diff_command<S>(
+        &self,
+        args: impl IntoIterator<Item = S>,
+    ) -> util::command::Command
+    where
+        S: AsRef<OsStr>,
+    {
+        let mut command = if !self.is_trusted {
+            self.build_command(["diff", "--no-ext-diff"])
+        } else {
+            self.build_command(["diff"])
+        };
+
+        command.args(args);
         command
     }
 }
