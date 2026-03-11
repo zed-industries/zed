@@ -33,6 +33,7 @@ pub mod test_support;
 mod text_thread_editor;
 mod text_thread_history;
 mod thread_history;
+mod thread_history_view;
 mod ui;
 
 use std::rc::Rc;
@@ -74,7 +75,8 @@ pub(crate) use mode_selector::ModeSelector;
 pub(crate) use model_selector::ModelSelector;
 pub(crate) use model_selector_popover::ModelSelectorPopover;
 pub use text_thread_editor::{AgentPanelDelegate, TextThreadEditor};
-pub(crate) use thread_history::*;
+pub(crate) use thread_history::ThreadHistory;
+pub(crate) use thread_history_view::*;
 use zed_actions;
 
 actions!(
