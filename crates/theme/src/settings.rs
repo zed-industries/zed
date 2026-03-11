@@ -5,7 +5,7 @@ use crate::{
 use collections::HashMap;
 use derive_more::{Deref, DerefMut};
 use gpui::{
-    App, Context, Font, FontFallbacks, FontStyle, Global, Pixels, Rems, Subscription, Window, px,
+    App, Context, Font, FontFallbacks, FontStyle, Global, Pixels, Subscription, Window, px,
 };
 use refineable::Refineable;
 use schemars::JsonSchema;
@@ -571,9 +571,9 @@ impl ThemeSettings {
         f32::max(self.buffer_line_height.value(), MIN_LINE_HEIGHT)
     }
 
-    /// Returns the UI line height as rems.
-    pub fn ui_line_height_in_rems(&self) -> Rems {
-        Rems(f32::max(self.ui_line_height.value(), MIN_LINE_HEIGHT))
+    /// Returns the UI line height.
+    pub fn ui_line_height(&self) -> f32 {
+        f32::max(self.ui_line_height.value(), MIN_LINE_HEIGHT)
     }
 
     /// Applies the theme overrides, if there are any, to the current theme.

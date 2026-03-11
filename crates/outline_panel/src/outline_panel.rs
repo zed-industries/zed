@@ -2684,7 +2684,7 @@ impl OutlinePanel {
         cx: &mut Context<OutlinePanel>,
     ) -> Stateful<Div> {
         let settings = OutlinePanelSettings::get_global(cx);
-        let ui_line_height = ThemeSettings::get_global(cx).ui_line_height_in_rems();
+        let ui_line_height = rems(ThemeSettings::get_global(cx).ui_line_height());
         div()
             .text_ui(cx)
             .id(item_id.clone())

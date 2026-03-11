@@ -4878,7 +4878,7 @@ impl GitPanel {
     }
 
     fn list_item_height(&self, cx: &App) -> Rems {
-        ThemeSettings::get_global(cx).ui_line_height_in_rems()
+        rems(ThemeSettings::get_global(cx).ui_line_height())
     }
 
     fn render_list_header(

@@ -2897,7 +2897,7 @@ impl CollabPanel {
 
         let width = self.width.unwrap_or(px(240.));
         let root_id = channel.root_id();
-        let ui_line_height = ThemeSettings::get_global(cx).ui_line_height_in_rems();
+        let ui_line_height = rems(ThemeSettings::get_global(cx).ui_line_height());
 
         div()
             .h(ui_line_height)
