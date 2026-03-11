@@ -9991,7 +9991,7 @@ pub fn with_active_or_new_workspace(
 
 #[cfg(test)]
 mod tests {
-    use std::{cell::RefCell, rc::Rc};
+    use std::{cell::RefCell, rc::Rc, sync::Arc, time::Duration};
 
     use super::*;
     use crate::{
@@ -13565,6 +13565,117 @@ mod tests {
             cx.set_global(settings_store);
             theme::init(theme::LoadThemes::JustBase, cx);
         });
+    }
+
+    #[gpui::test]
+    async fn test_toggle_theme_mode_persists_and_updates_active_theme(cx: &mut TestAppContext) {
+        use settings::{ThemeName, ThemeSelection};
+        use zed_actions::theme::ToggleMode;
+
+        fn read_theme_selection(settings_text: &str) -> serde_json::Value {
+            let settings: serde_json::Value = serde_json::from_str(settings_text).unwrap();
+            settings.get("theme").cloned().unwrap()
+        }
+
+        // Initialize the test app and register the theme assets used by the
+        // toggle logic.
+        init_test(cx);
+
+        cx.update(|cx| {
+            theme::init(theme::LoadThemes::All(Box::new(assets::Assets)), cx);
+        });
+
+        // Create a fake filesystem and a simple project root so the workspace
+        // has a real settings backend to persist into.
+        let fs = FakeFs::new(cx.executor());
+        let settings_fs: Arc<dyn fs::Fs> = fs.clone();
+
+        fs.insert_tree(path!("/root"), json!({ "file.rs": "fn main() {}\n" }))
+            .await;
+
+        // Build a test project and workspace view so we can call the workspace
+        // action handler directly.
+        let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+
+        // Seed the settings file with a plain static light theme so the first
+        // toggle has a known starting point.
+        workspace.update_in(cx, |_workspace, _window, cx| {
+            settings::update_settings_file(settings_fs.clone(), cx, |settings, _cx| {
+                settings.theme.theme = Some(ThemeSelection::Static(ThemeName("One Light".into())));
+            });
+        });
+        cx.executor().advance_clock(Duration::from_millis(200));
+        cx.run_until_parked();
+
+        // Verify the initial persisted form is the expected static theme string
+        // before any toggles happen.
+        let settings_text = SettingsStore::load_settings(&settings_fs).await.unwrap();
+        assert_eq!(
+            read_theme_selection(&settings_text),
+            serde_json::json!("One Light"),
+        );
+
+        // Call toggle_theme_mode once and let the async settings write
+        // complete.
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.toggle_theme_mode(&ToggleMode, window, cx);
+        });
+        cx.executor().advance_clock(Duration::from_millis(200));
+        cx.run_until_parked();
+
+        // Confirm the first toggle switches persistence into system mode while
+        // preserving the light and dark theme names.
+        let settings_text = SettingsStore::load_settings(&settings_fs).await.unwrap();
+        assert_eq!(
+            read_theme_selection(&settings_text),
+            serde_json::json!({
+                "mode": "system",
+                "light": "One Light",
+                "dark": "One Dark"
+            }),
+        );
+
+        // Call toggle_theme_mode a second time to move from system mode to
+        // explicit dark mode.
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.toggle_theme_mode(&ToggleMode, window, cx);
+        });
+        cx.executor().advance_clock(Duration::from_millis(200));
+        cx.run_until_parked();
+
+        // Confirm the second toggle persists explicit dark mode with the same
+        // paired theme names.
+        let settings_text = SettingsStore::load_settings(&settings_fs).await.unwrap();
+        assert_eq!(
+            read_theme_selection(&settings_text),
+            serde_json::json!({
+                "mode": "dark",
+                "light": "One Light",
+                "dark": "One Dark"
+            }),
+        );
+
+        // Call toggle_theme_mode a third time to cycle from dark mode back to
+        // explicit light mode.
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.toggle_theme_mode(&ToggleMode, window, cx);
+        });
+        cx.executor().advance_clock(Duration::from_millis(200));
+        cx.run_until_parked();
+
+        // Confirm the third toggle persists explicit light mode, completing the
+        // expected cycle.
+        let settings_text = SettingsStore::load_settings(&settings_fs).await.unwrap();
+        assert_eq!(
+            read_theme_selection(&settings_text),
+            serde_json::json!({
+                "mode": "light",
+                "light": "One Light",
+                "dark": "One Dark"
+            }),
+        );
     }
 
     fn dirty_project_item(id: u64, path: &str, cx: &mut App) -> Entity<TestProjectItem> {
