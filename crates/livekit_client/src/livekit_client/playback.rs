@@ -111,7 +111,7 @@ impl AudioStack {
             source.num_channels as i32,
         );
 
-        let receive_task = self.executor.spawn({
+        let receive_task = self.executor.spawn_with_priority(Priority::RealtimeAudio, {
             let source = source.clone();
             async move {
                 while let Some(frame) = stream.next().await {
@@ -202,7 +202,7 @@ impl AudioStack {
         let apm = self.apm.clone();
 
         let (frame_tx, mut frame_rx) = futures::channel::mpsc::unbounded();
-        let transmit_task = self.executor.spawn({
+        let transmit_task = self.executor.spawn_with_priority(Priority::RealtimeAudio, {
             async move {
                 while let Some(frame) = frame_rx.next().await {
                     source.capture_frame(&frame).await.log_err();
