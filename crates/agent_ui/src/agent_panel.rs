@@ -1189,14 +1189,16 @@ impl AgentPanel {
         let mut panel = Self {
             workspace_id,
             active_view,
-            workspace,
+            workspace: workspace.clone(),
             user_store,
             project: project.clone(),
             fs: fs.clone(),
             language_registry,
             text_thread_store,
             prompt_store,
-            connection_store: cx.new(|cx| AgentConnectionStore::new(project.clone(), cx)),
+            connection_store: cx.new(|cx| {
+                AgentConnectionStore::new(project.clone(), workspace.clone(), cx)
+            }),
             configuration: None,
             configuration_subscription: None,
             focus_handle: cx.focus_handle(),

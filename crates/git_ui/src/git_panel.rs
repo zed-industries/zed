@@ -706,7 +706,7 @@ impl GitPanel {
         let app_state = workspace.app_state().clone();
         let fs = app_state.fs.clone();
         let git_store = project.read(cx).git_store().clone();
-        let active_repository = project.read(cx).active_repository(cx);
+        let active_repository = workspace.effective_active_repository(cx);
 
         cx.new(|cx| {
             let focus_handle = cx.focus_handle();
@@ -3485,7 +3485,11 @@ impl GitPanel {
             .as_ref()
             .and_then(|op| self.entry_by_path(&op.anchor));
 
-        self.active_repository = self.project.read(cx).active_repository(cx);
+        self.active_repository = self
+            .workspace
+            .upgrade()
+            .and_then(|workspace| workspace.read(cx).effective_active_repository(cx))
+            .or_else(|| self.project.read(cx).active_repository(cx));
         self.entries.clear();
         self.entries_indices.clear();
         self.single_staged_entry.take();
@@ -5980,9 +5984,13 @@ impl RenderOnce for PanelRepoFooter {
         let repo_selector = PopoverMenu::new("repository-switcher")
             .menu({
                 let project = project;
+                let workspace = workspace.clone();
                 move |window, cx| {
                     let project = project.clone()?;
-                    Some(cx.new(|cx| RepositorySelector::new(project, rems(20.), window, cx)))
+                    let workspace = workspace.clone()?;
+                    Some(cx.new(|cx| {
+                        RepositorySelector::new(project, workspace, rems(20.), window, cx)
+                    }))
                 }
             })
             .trigger_with_tooltip(

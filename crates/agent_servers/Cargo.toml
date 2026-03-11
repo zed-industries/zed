@@ -52,6 +52,7 @@ terminal.workspace = true
 uuid.workspace = true
 util.workspace = true
 watch.workspace = true
+workspace.workspace = true
 
 [target.'cfg(unix)'.dependencies]
 libc.workspace = true

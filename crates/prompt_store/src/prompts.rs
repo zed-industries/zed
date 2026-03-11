@@ -35,6 +35,9 @@ pub const RULES_FILE_NAMES: &[&str] = &[
 #[derive(Default, Debug, Clone, Serialize)]
 pub struct ProjectContext {
     pub worktrees: Vec<WorktreeContext>,
+    pub active_worktree_root_name: Option<String>,
+    /// `active_worktree_root_name.is_some()` - provided as a field because handlebars can't do this.
+    pub has_active_worktree: bool,
     /// Whether any worktree has a rules_file. Provided as a field because handlebars can't do this.
     pub has_rules: bool,
     pub user_rules: Vec<UserRulesContext>,
@@ -47,11 +50,17 @@ pub struct ProjectContext {
 
 impl ProjectContext {
     pub fn new(worktrees: Vec<WorktreeContext>, default_user_rules: Vec<UserRulesContext>) -> Self {
+        let active_worktree_root_name = worktrees
+            .iter()
+            .find(|worktree| worktree.is_active)
+            .map(|worktree| worktree.root_name.clone());
         let has_rules = worktrees
             .iter()
             .any(|worktree| worktree.rules_file.is_some());
         Self {
             worktrees,
+            has_active_worktree: active_worktree_root_name.is_some(),
+            active_worktree_root_name,
             has_rules,
             has_user_rules: !default_user_rules.is_empty(),
             user_rules: default_user_rules,
@@ -74,6 +83,7 @@ pub struct UserRulesContext {
 pub struct WorktreeContext {
     pub root_name: String,
     pub abs_path: Arc<Path>,
+    pub is_active: bool,
     pub rules_file: Option<RulesFileContext>,
 }
 

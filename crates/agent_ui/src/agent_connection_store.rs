@@ -5,9 +5,10 @@ use agent_servers::{AgentServer, AgentServerDelegate};
 use anyhow::Result;
 use collections::HashMap;
 use futures::{FutureExt, future::Shared};
-use gpui::{AppContext, Context, Entity, EventEmitter, SharedString, Subscription, Task};
+use gpui::{AppContext, Context, Entity, EventEmitter, SharedString, Subscription, Task, WeakEntity};
 use project::{AgentServerStore, AgentServersUpdated, Project};
 use watch::Receiver;
+use workspace::Workspace;
 
 use crate::ExternalAgent;
 use project::ExternalAgentServerName;
@@ -44,16 +45,22 @@ impl EventEmitter<ConnectionEntryEvent> for ConnectionEntry {}
 
 pub struct AgentConnectionStore {
     project: Entity<Project>,
+    workspace: WeakEntity<Workspace>,
     entries: HashMap<ExternalAgent, Entity<ConnectionEntry>>,
     _subscriptions: Vec<Subscription>,
 }
 
 impl AgentConnectionStore {
-    pub fn new(project: Entity<Project>, cx: &mut Context<Self>) -> Self {
+    pub fn new(
+        project: Entity<Project>,
+        workspace: WeakEntity<Workspace>,
+        cx: &mut Context<Self>,
+    ) -> Self {
         let agent_server_store = project.read(cx).agent_server_store().clone();
         let subscription = cx.subscribe(&agent_server_store, Self::handle_agent_servers_updated);
         Self {
             project,
+            workspace,
             entries: HashMap::default(),
             _subscriptions: vec![subscription],
         }
@@ -148,7 +155,11 @@ impl AgentConnectionStore {
         let (new_version_tx, new_version_rx) = watch::channel::<Option<String>>(None);
 
         let agent_server_store = self.project.read(cx).agent_server_store().clone();
-        let delegate = AgentServerDelegate::new(agent_server_store, Some(new_version_tx));
+        let delegate = AgentServerDelegate::new(
+            agent_server_store,
+            Some(self.workspace.clone()),
+            Some(new_version_tx),
+        );
 
         let connect_task = server.connect(delegate, cx);
         let connect_task = cx.spawn(async move |_this, _cx| match connect_task.await {

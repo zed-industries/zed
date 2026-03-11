@@ -4,7 +4,7 @@ use crate::{
     ListDirectoryTool, MovePathTool, NowTool, OpenTool, ProjectSnapshot, ReadFileTool,
     RestoreFileFromDiskTool, SaveFileTool, SpawnAgentTool, StreamingEditFileTool,
     SystemPromptTemplate, Template, Templates, TerminalTool, ToolPermissionDecision, WebSearchTool,
-    decide_permission_from_settings,
+    WorktreeTool, decide_permission_from_settings,
 };
 use acp_thread::{MentionUri, UserMessageId};
 use action_log::ActionLog;
@@ -60,6 +60,7 @@ use std::{
 use std::{fmt::Write, path::PathBuf};
 use util::{ResultExt, debug_panic, markdown::MarkdownCodeBlock, paths::PathStyle};
 use uuid::Uuid;
+use workspace::Workspace;
 
 const TOOL_CANCELED_MESSAGE: &str = "Tool canceled by user";
 pub const MAX_TOOL_NAME_LENGTH: usize = 64;
@@ -913,6 +914,7 @@ pub struct Thread {
     prompt_capabilities_tx: watch::Sender<acp::PromptCapabilities>,
     pub(crate) prompt_capabilities_rx: watch::Receiver<acp::PromptCapabilities>,
     pub(crate) project: Entity<Project>,
+    workspace: Option<WeakEntity<Workspace>>,
     pub(crate) action_log: Entity<ActionLog>,
     /// True if this thread was imported from a shared thread and can be synced.
     imported: bool,
@@ -936,6 +938,7 @@ impl Thread {
     pub fn new_subagent(parent_thread: &Entity<Thread>, cx: &mut Context<Self>) -> Self {
         let project = parent_thread.read(cx).project.clone();
         let project_context = parent_thread.read(cx).project_context.clone();
+        let workspace = parent_thread.read(cx).workspace.clone();
         let context_server_registry = parent_thread.read(cx).context_server_registry.clone();
         let templates = parent_thread.read(cx).templates.clone();
         let model = parent_thread.read(cx).model().cloned();
@@ -945,6 +948,7 @@ impl Thread {
         let mut thread = Self::new_internal(
             project,
             project_context,
+            workspace,
             context_server_registry,
             templates,
             model,
@@ -966,9 +970,30 @@ impl Thread {
         model: Option<Arc<dyn LanguageModel>>,
         cx: &mut Context<Self>,
     ) -> Self {
+        Self::new_with_workspace(
+            project,
+            project_context,
+            None,
+            context_server_registry,
+            templates,
+            model,
+            cx,
+        )
+    }
+
+    pub fn new_with_workspace(
+        project: Entity<Project>,
+        project_context: Entity<ProjectContext>,
+        workspace: Option<WeakEntity<Workspace>>,
+        context_server_registry: Entity<ContextServerRegistry>,
+        templates: Arc<Templates>,
+        model: Option<Arc<dyn LanguageModel>>,
+        cx: &mut Context<Self>,
+    ) -> Self {
         Self::new_internal(
             project.clone(),
             project_context,
+            workspace,
             context_server_registry,
             templates,
             model,
@@ -980,6 +1005,7 @@ impl Thread {
     fn new_internal(
         project: Entity<Project>,
         project_context: Entity<ProjectContext>,
+        workspace: Option<WeakEntity<Workspace>>,
         context_server_registry: Entity<ContextServerRegistry>,
         templates: Arc<Templates>,
         model: Option<Arc<dyn LanguageModel>>,
@@ -1032,6 +1058,7 @@ impl Thread {
             prompt_capabilities_tx,
             prompt_capabilities_rx,
             project,
+            workspace,
             action_log,
             imported: false,
             subagent_context: None,
@@ -1178,6 +1205,7 @@ impl Thread {
         db_thread: DbThread,
         project: Entity<Project>,
         project_context: Entity<ProjectContext>,
+        workspace: Option<WeakEntity<Workspace>>,
         context_server_registry: Entity<ContextServerRegistry>,
         templates: Arc<Templates>,
         cx: &mut Context<Self>,
@@ -1245,6 +1273,7 @@ impl Thread {
             thinking_effort: db_thread.thinking_effort,
             speed: db_thread.speed,
             project,
+            workspace,
             action_log,
             updated_at: db_thread.updated_at,
             prompt_capabilities_tx,
@@ -1477,9 +1506,18 @@ impl Thread {
             language_registry,
         ));
         self.add_tool(FetchTool::new(self.project.read(cx).client().http_client()));
-        self.add_tool(FindPathTool::new(self.project.clone()));
-        self.add_tool(GrepTool::new(self.project.clone()));
-        self.add_tool(ListDirectoryTool::new(self.project.clone()));
+        self.add_tool(FindPathTool::new_with_project_context(
+            self.project.clone(),
+            self.project_context.clone(),
+        ));
+        self.add_tool(GrepTool::new_with_project_context(
+            self.project.clone(),
+            self.project_context.clone(),
+        ));
+        self.add_tool(ListDirectoryTool::new_with_project_context(
+            self.project.clone(),
+            self.project_context.clone(),
+        ));
         self.add_tool(MovePathTool::new(self.project.clone()));
         self.add_tool(NowTool);
         self.add_tool(OpenTool::new(self.project.clone()));
@@ -1490,7 +1528,14 @@ impl Thread {
         ));
         self.add_tool(SaveFileTool::new(self.project.clone()));
         self.add_tool(RestoreFileFromDiskTool::new(self.project.clone()));
-        self.add_tool(TerminalTool::new(self.project.clone(), environment.clone()));
+        self.add_tool(TerminalTool::new_with_project_context(
+            self.project.clone(),
+            self.project_context.clone(),
+            environment.clone(),
+        ));
+        if let Some(workspace) = self.workspace.clone() {
+            self.add_tool(WorktreeTool::new(self.project.clone(), workspace));
+        }
         self.add_tool(WebSearchTool);
 
         if self.depth() < MAX_SUBAGENT_DEPTH {

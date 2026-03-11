@@ -1523,6 +1523,7 @@ impl EditAgentTest {
             let worktrees = vec![WorktreeContext {
                 root_name: "root".to_string(),
                 abs_path: Path::new("/path/to/root").into(),
+                is_active: true,
                 rules_file: None,
             }];
             let project_context = ProjectContext::new(worktrees, Vec::default());

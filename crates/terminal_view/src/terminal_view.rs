@@ -214,7 +214,7 @@ impl TerminalView {
         let working_directory = default_working_directory(workspace, cx);
         TerminalPanel::add_center_terminal(workspace, window, cx, move |project, cx| {
             if local {
-                project.create_local_terminal(cx)
+                project.create_local_terminal(working_directory, cx)
             } else {
                 project.create_terminal_shell(working_directory, cx)
             }
@@ -1974,23 +1974,40 @@ pub(crate) fn default_working_directory(workspace: &Workspace, cx: &App) -> Opti
 
 fn current_project_directory(workspace: &Workspace, cx: &App) -> Option<PathBuf> {
     workspace
-        .project()
-        .read(cx)
-        .active_project_directory(cx)
-        .as_deref()
-        .map(Path::to_path_buf)
+        .active_worktree_override()
+        .and_then(|worktree_id| {
+            workspace
+                .project()
+                .read(cx)
+                .worktree_for_id(worktree_id, cx)
+        })
+        .as_ref()
+        .and_then(|worktree| worktree_directory(worktree, cx))
+        .or_else(|| {
+            workspace
+                .project()
+                .read(cx)
+                .active_project_directory(cx)
+                .as_deref()
+                .map(Path::to_path_buf)
+        })
         .or_else(|| first_project_directory(workspace, cx))
 }
 
 ///Gets the first project's home directory, or the home directory
 fn first_project_directory(workspace: &Workspace, cx: &App) -> Option<PathBuf> {
-    let worktree = workspace.worktrees(cx).next()?.read(cx);
+    let worktree = workspace.worktrees(cx).next()?;
+    worktree_directory(&worktree, cx)
+}
+
+fn worktree_directory(worktree: &Entity<project::Worktree>, cx: &App) -> Option<PathBuf> {
+    let worktree = worktree.read(cx);
     let worktree_path = worktree.abs_path();
     if worktree.root_entry()?.is_dir() {
         Some(worktree_path.to_path_buf())
     } else {
         // If worktree is a file, return its parent directory
-        worktree_path.parent().map(|p| p.to_path_buf())
+        worktree_path.as_ref().parent().map(Path::to_path_buf)
     }
 }
 
@@ -2143,6 +2160,28 @@ mod tests {
             assert_eq!(res, Some(Path::new("/root2/").to_path_buf()));
             let res = first_project_directory(workspace, cx);
             assert_eq!(res, Some(Path::new("/root1/").to_path_buf()));
+        });
+    }
+
+    #[gpui::test]
+    async fn current_project_directory_prefers_active_worktree_override(cx: &mut TestAppContext) {
+        let (project, workspace) = init_test(cx).await;
+
+        let (_worktree_a, _entry_a) = create_folder_wt(project.clone(), "/root1/", cx).await;
+        let (worktree_b, _entry_b) = create_folder_wt(project.clone(), "/root2/", cx).await;
+        let worktree_b_id = cx.read(|cx| worktree_b.read(cx).id());
+
+        workspace.update(cx, |workspace, cx| {
+            workspace.set_active_worktree_override(Some(worktree_b_id), cx);
+        });
+
+        cx.read(|cx| {
+            let workspace = workspace.read(cx);
+
+            let res = default_working_directory(workspace, cx);
+            assert_eq!(res, Some(Path::new("/root2/").to_path_buf()));
+            let res = current_project_directory(workspace, cx);
+            assert_eq!(res, Some(Path::new("/root2/").to_path_buf()));
         });
     }
 

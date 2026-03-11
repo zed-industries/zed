@@ -90,6 +90,7 @@ use project::{
     DirectoryLister, Project, ProjectEntryId, ProjectPath, ResolvedPath, Worktree, WorktreeId,
     WorktreeSettings,
     debugger::{breakpoint_store::BreakpointStoreEvent, session::ThreadStatus},
+    git_store::Repository,
     project_settings::ProjectSettings,
     toolchain_store::ToolchainStoreEvent,
     trusted_worktrees::{RemoteHostLocation, TrustedWorktrees, TrustedWorktreesEvent},
@@ -1294,6 +1295,7 @@ pub struct Workspace {
     right_dock: Entity<Dock>,
     panes: Vec<Entity<Pane>>,
     active_worktree_override: Option<WorktreeId>,
+    pending_active_worktree_override_path: Option<PathBuf>,
     panes_by_item: HashMap<EntityId, WeakEntity<Pane>>,
     active_pane: Entity<Pane>,
     last_active_center_pane: Option<WeakEntity<Pane>>,
@@ -1416,6 +1418,7 @@ impl Workspace {
 
                 &project::Event::WorktreeRemoved(id) | &project::Event::WorktreeAdded(id) => {
                     this.update_window_title(window, cx);
+                    this.resolve_pending_active_worktree_override(cx);
                     if this
                         .project()
                         .read(cx)
@@ -1701,6 +1704,7 @@ impl Workspace {
             toast_layer,
             titlebar_item: None,
             active_worktree_override: None,
+            pending_active_worktree_override_path: None,
             notifications: Notifications::default(),
             suppressed_notifications: HashSet::default(),
             left_dock,
@@ -1858,6 +1862,9 @@ impl Workspace {
                         .as_ref()
                         .map(|w| w.centered_layout)
                         .unwrap_or(false);
+                    let active_worktree_path = serialized_workspace
+                        .as_ref()
+                        .and_then(|workspace| workspace.active_worktree_path.clone());
 
                     let workspace = window.update(cx, |multi_workspace, window, cx| {
                         let workspace = cx.new(|cx| {
@@ -1870,6 +1877,7 @@ impl Workspace {
                             );
 
                             workspace.centered_layout = centered_layout;
+                            workspace.restore_active_worktree_path(active_worktree_path, cx);
 
                             // Call init callback to add items before window renders
                             if let Some(init) = init {
@@ -1914,6 +1922,9 @@ impl Workspace {
                         .as_ref()
                         .map(|w| w.centered_layout)
                         .unwrap_or(false);
+                    let active_worktree_path = serialized_workspace
+                        .as_ref()
+                        .and_then(|workspace| workspace.active_worktree_path.clone());
                     let window = cx.open_window(options, {
                         let app_state = app_state.clone();
                         let project_handle = project_handle.clone();
@@ -1927,6 +1938,8 @@ impl Workspace {
                                     cx,
                                 );
                                 workspace.centered_layout = centered_layout;
+                                workspace
+                                    .restore_active_worktree_path(active_worktree_path.clone(), cx);
 
                                 // Call init callback to add items before window renders
                                 if let Some(init) = init {
@@ -2649,12 +2662,100 @@ impl Workspace {
         cx: &mut Context<Self>,
     ) {
         self.active_worktree_override = worktree_id;
+        self.pending_active_worktree_override_path = None;
         cx.notify();
+    }
+
+    pub fn set_active_worktree_override_and_serialize(
+        &mut self,
+        worktree_id: Option<WorktreeId>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.set_active_worktree_override(worktree_id, cx);
+        self.serialize_workspace(window, cx);
     }
 
     pub fn clear_active_worktree_override(&mut self, cx: &mut Context<Self>) {
         self.active_worktree_override = None;
+        self.pending_active_worktree_override_path = None;
         cx.notify();
+    }
+
+    fn restore_active_worktree_path(
+        &mut self,
+        active_worktree_path: Option<PathBuf>,
+        cx: &mut Context<Self>,
+    ) {
+        self.pending_active_worktree_override_path = active_worktree_path;
+        self.resolve_pending_active_worktree_override(cx);
+    }
+
+    fn resolve_pending_active_worktree_override(&mut self, cx: &mut Context<Self>) {
+        let Some(active_worktree_path) = self.pending_active_worktree_override_path.as_ref() else {
+            return;
+        };
+
+        let worktree_id = self
+            .project
+            .read(cx)
+            .visible_worktrees(cx)
+            .find(|worktree| {
+                worktree.read(cx).abs_path().as_ref() == active_worktree_path.as_path()
+            })
+            .map(|worktree| worktree.read(cx).id());
+
+        if let Some(worktree_id) = worktree_id {
+            self.active_worktree_override = Some(worktree_id);
+            self.pending_active_worktree_override_path = None;
+            cx.notify();
+        }
+    }
+
+    fn serialized_active_worktree_path(&self, cx: &App) -> Option<PathBuf> {
+        self.effective_active_worktree(cx)
+            .map(|worktree| worktree.read(cx).abs_path().to_path_buf())
+    }
+
+    pub fn effective_active_worktree(&self, cx: &App) -> Option<Entity<Worktree>> {
+        let project = self.project.read(cx);
+
+        if let Some(override_id) = self.active_worktree_override()
+            && let Some(worktree) = project.worktree_for_id(override_id, cx)
+        {
+            return Some(worktree);
+        }
+
+        if let Some(repo) = project.active_repository(cx) {
+            let repo = repo.read(cx);
+            let repo_path = &repo.work_directory_abs_path;
+
+            for worktree in project.visible_worktrees(cx) {
+                let worktree_path = worktree.read(cx).abs_path();
+                if worktree_path == *repo_path || worktree_path.starts_with(repo_path.as_ref()) {
+                    return Some(worktree);
+                }
+            }
+        }
+
+        project.visible_worktrees(cx).next()
+    }
+
+    pub fn effective_active_repository(&self, cx: &App) -> Option<Entity<Repository>> {
+        let worktree = self.effective_active_worktree(cx)?;
+        let worktree_abs_path = worktree.read(cx).abs_path();
+        let project = self.project.read(cx);
+        let git_store = project.git_store().read(cx);
+
+        git_store
+            .repositories()
+            .values()
+            .filter(|repo| {
+                let repo_path = &repo.read(cx).work_directory_abs_path;
+                *repo_path == worktree_abs_path || worktree_abs_path.starts_with(repo_path.as_ref())
+            })
+            .max_by_key(|repo| repo.read(cx).work_directory_abs_path.as_os_str().len())
+            .cloned()
     }
 
     /// Call the given callback with a workspace whose project is local or remote via WSL (allowing host access).
@@ -6180,6 +6281,7 @@ impl Workspace {
                     id: database_id,
                     location,
                     paths,
+                    active_worktree_path: self.serialized_active_worktree_path(cx),
                     center_group,
                     window_bounds,
                     display: Default::default(),
@@ -8768,6 +8870,7 @@ pub fn open_workspace_by_id(
             .with_context(|| format!("Workspace {workspace_id:?} not found"))?;
 
         let centered_layout = serialized_workspace.centered_layout;
+        let active_worktree_path = serialized_workspace.active_worktree_path.clone();
 
         let (window, workspace) = if let Some(window) = requesting_window {
             let workspace = window.update(cx, |multi_workspace, window, cx| {
@@ -8780,6 +8883,7 @@ pub fn open_workspace_by_id(
                         cx,
                     );
                     workspace.centered_layout = centered_layout;
+                    workspace.restore_active_worktree_path(active_worktree_path.clone(), cx);
                     workspace
                 });
                 multi_workspace.add_workspace(workspace.clone(), cx);
@@ -8820,6 +8924,7 @@ pub fn open_workspace_by_id(
                             cx,
                         );
                         workspace.centered_layout = centered_layout;
+                        workspace.restore_active_worktree_path(active_worktree_path.clone(), cx);
                         workspace
                     });
                     cx.new(|cx| MultiWorkspace::new(workspace, window, cx))
@@ -9212,6 +9317,9 @@ async fn open_remote_project_inner(
 
     let workspace = window.update(cx, |multi_workspace, window, cx| {
         telemetry::event!("SSH Project Opened");
+        let active_worktree_path = serialized_workspace
+            .as_ref()
+            .and_then(|workspace| workspace.active_worktree_path.clone());
 
         let new_workspace = cx.new(|cx| {
             let mut workspace =
@@ -9221,6 +9329,7 @@ async fn open_remote_project_inner(
             if let Some(ref serialized) = serialized_workspace {
                 workspace.centered_layout = serialized.centered_layout;
             }
+            workspace.restore_active_worktree_path(active_worktree_path, cx);
 
             workspace
         });
@@ -9964,7 +10073,7 @@ pub fn with_active_or_new_workspace(
 
 #[cfg(test)]
 mod tests {
-    use std::{cell::RefCell, rc::Rc};
+    use std::{cell::RefCell, path::Path, rc::Rc};
 
     use super::*;
     use crate::{
@@ -10125,6 +10234,96 @@ mod tests {
         // Remove a project folder
         project.update(cx, |project, cx| project.remove_worktree(worktree_id, cx));
         assert_eq!(cx.window_title().as_deref(), Some("root2 — one.txt"));
+    }
+
+    #[gpui::test]
+    async fn test_effective_active_worktree_prefers_override_then_active_repo(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            "/project_a",
+            json!({
+                ".git": {},
+                "a.txt": "CHANGED_A\n",
+            }),
+        )
+        .await;
+        fs.insert_tree(
+            "/project_b",
+            json!({
+                ".git": {},
+                "b.txt": "CHANGED_B\n",
+            }),
+        )
+        .await;
+
+        fs.set_head_and_index_for_repo(
+            Path::new("/project_a/.git"),
+            &[("a.txt", "original_a\n".to_string())],
+        );
+        fs.set_head_and_index_for_repo(
+            Path::new("/project_b/.git"),
+            &[("b.txt", "original_b\n".to_string())],
+        );
+
+        let project = Project::test(
+            fs.clone(),
+            [Path::new("/project_a"), Path::new("/project_b")],
+            cx,
+        )
+        .await;
+
+        let (worktree_a_id, worktree_b_id) = project.read_with(cx, |project, cx| {
+            let mut worktrees: Vec<_> = project.worktrees(cx).collect();
+            worktrees.sort_by_key(|worktree| worktree.read(cx).abs_path());
+            (worktrees[0].read(cx).id(), worktrees[1].read(cx).id())
+        });
+
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        cx.run_until_parked();
+
+        workspace.update(cx, |workspace, cx| {
+            workspace.set_active_worktree_override(Some(worktree_a_id), cx);
+        });
+        let effective_override = workspace.read_with(cx, |workspace, cx| {
+            workspace
+                .effective_active_worktree(cx)
+                .map(|worktree| worktree.read(cx).id())
+        });
+        assert_eq!(effective_override, Some(worktree_a_id));
+
+        workspace.update(cx, |workspace, cx| {
+            workspace.clear_active_worktree_override(cx);
+        });
+        project.update(cx, |project, cx| {
+            project.git_store().update(cx, |git_store, cx| {
+                git_store.set_active_repo_for_path(
+                    &ProjectPath {
+                        worktree_id: worktree_b_id,
+                        path: rel_path("b.txt").into(),
+                    },
+                    cx,
+                );
+            });
+        });
+
+        let effective_active_repo = workspace.read_with(cx, |workspace, cx| {
+            workspace
+                .effective_active_worktree(cx)
+                .map(|worktree| worktree.read(cx).id())
+        });
+        assert_eq!(effective_active_repo, Some(worktree_b_id));
+
+        let effective_repository = workspace.read_with(cx, |workspace, cx| {
+            workspace
+                .effective_active_repository(cx)
+                .map(|repository| repository.read(cx).work_directory_abs_path.clone())
+        });
+        assert_eq!(effective_repository, Some(Path::new("/project_b").into()));
     }
 
     #[gpui::test]

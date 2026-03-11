@@ -13,26 +13,34 @@ use project::agent_server_store::AgentServerStore;
 
 use acp_thread::AgentConnection;
 use anyhow::Result;
-use gpui::{App, AppContext, Entity, SharedString, Task};
+use gpui::{App, AppContext, Entity, SharedString, Task, WeakEntity};
 use settings::SettingsStore;
 use std::{any::Any, rc::Rc, sync::Arc};
+use workspace::Workspace;
 
 pub use acp::AcpConnection;
 
 pub struct AgentServerDelegate {
     store: Entity<AgentServerStore>,
+    workspace: Option<WeakEntity<Workspace>>,
     new_version_available: Option<watch::Sender<Option<String>>>,
 }
 
 impl AgentServerDelegate {
     pub fn new(
         store: Entity<AgentServerStore>,
+        workspace: Option<WeakEntity<Workspace>>,
         new_version_tx: Option<watch::Sender<Option<String>>>,
     ) -> Self {
         Self {
             store,
+            workspace,
             new_version_available: new_version_tx,
         }
+    }
+
+    pub fn workspace(&self) -> Option<&WeakEntity<Workspace>> {
+        self.workspace.as_ref()
     }
 }
 

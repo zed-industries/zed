@@ -4,6 +4,7 @@ use anyhow::Result;
 use futures::FutureExt as _;
 use gpui::{App, Entity, SharedString, Task};
 use project::Project;
+use prompt_store::ProjectContext;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::Settings;
@@ -49,6 +50,7 @@ pub struct TerminalToolInput {
 
 pub struct TerminalTool {
     project: Entity<Project>,
+    project_context: Option<Entity<ProjectContext>>,
     environment: Rc<dyn ThreadEnvironment>,
 }
 
@@ -56,6 +58,19 @@ impl TerminalTool {
     pub fn new(project: Entity<Project>, environment: Rc<dyn ThreadEnvironment>) -> Self {
         Self {
             project,
+            project_context: None,
+            environment,
+        }
+    }
+
+    pub fn new_with_project_context(
+        project: Entity<Project>,
+        project_context: Entity<ProjectContext>,
+        environment: Rc<dyn ThreadEnvironment>,
+    ) -> Self {
+        Self {
+            project,
+            project_context: Some(project_context),
             environment,
         }
     }
@@ -97,7 +112,8 @@ impl AgentTool for TerminalTool {
 
             let (working_dir, authorize) = cx.update(|cx| {
                 let working_dir =
-                    working_dir(&input, &self.project, cx).map_err(|err| err.to_string())?;
+                    working_dir(&input, &self.project, self.project_context.as_ref(), cx)
+                        .map_err(|err| err.to_string())?;
 
                 let decision = decide_permission_from_settings(
                     Self::NAME,
@@ -281,12 +297,19 @@ fn process_content(
 fn working_dir(
     input: &TerminalToolInput,
     project: &Entity<Project>,
+    project_context: Option<&Entity<ProjectContext>>,
     cx: &mut App,
 ) -> Result<Option<PathBuf>> {
     let project = project.read(cx);
     let cd = &input.cd;
 
     if cd == "." || cd.is_empty() {
+        if let Some(active_worktree) =
+            super::tool_permissions::active_worktree_context(&project, project_context, cx)
+        {
+            return Ok(Some(active_worktree.abs_path));
+        }
+
         // Accept "." or "" as meaning "the one worktree" if we only have one worktree.
         let mut worktrees = project.worktrees(cx);
 
@@ -322,6 +345,12 @@ fn working_dir(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use gpui::{AppContext, TestAppContext};
+    use project::{FakeFs, Project};
+    use prompt_store::{ProjectContext, WorktreeContext};
+    use settings::SettingsStore;
+    use std::sync::Arc;
+    use util::path;
 
     #[test]
     fn test_initial_title_shows_full_multiline_command() {
@@ -471,6 +500,64 @@ mod tests {
         } else {
             String::new()
         }
+    }
+
+    #[gpui::test]
+    async fn test_working_dir_uses_active_worktree_for_dot_in_multi_root(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            let settings_store = SettingsStore::test(cx);
+            cx.set_global(settings_store);
+        });
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(path!("/worktree-a"), serde_json::json!({}))
+            .await;
+        fs.insert_tree(path!("/worktree-b"), serde_json::json!({}))
+            .await;
+
+        let project = Project::test(
+            fs,
+            [path!("/worktree-a").as_ref(), path!("/worktree-b").as_ref()],
+            cx,
+        )
+        .await;
+        let project_context = cx.new(|_cx| {
+            ProjectContext::new(
+                vec![
+                    WorktreeContext {
+                        root_name: "worktree-a".into(),
+                        abs_path: Arc::from(path!("/worktree-a").as_ref()),
+                        is_active: false,
+                        rules_file: None,
+                    },
+                    WorktreeContext {
+                        root_name: "worktree-b".into(),
+                        abs_path: Arc::from(path!("/worktree-b").as_ref()),
+                        is_active: true,
+                        rules_file: None,
+                    },
+                ],
+                vec![],
+            )
+        });
+
+        let working_directory = cx.update(|cx| {
+            working_dir(
+                &TerminalToolInput {
+                    command: "pwd".into(),
+                    cd: ".".into(),
+                    timeout_ms: None,
+                },
+                &project,
+                Some(&project_context),
+                cx,
+            )
+        });
+
+        assert_eq!(
+            working_directory.expect("working dir should resolve"),
+            Some(PathBuf::from(path!("/worktree-b")))
+        );
     }
 
     #[test]

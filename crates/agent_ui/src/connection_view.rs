@@ -518,7 +518,7 @@ impl ConnectionView {
             connection_store: connection_store.clone(),
             connection_key: connection_key.clone(),
             agent_server_store,
-            workspace,
+            workspace: workspace.clone(),
             project: project.clone(),
             thread_store,
             prompt_store,
@@ -2903,7 +2903,9 @@ pub(crate) mod tests {
         // Create history without an initial session list - it will be set after connection
         let history = cx.update(|_window, cx| cx.new(|cx| ThreadHistory::new(None, cx)));
         let connection_store =
-            cx.update(|_window, cx| cx.new(|cx| AgentConnectionStore::new(project.clone(), cx)));
+            cx.update(|_window, cx| {
+                cx.new(|cx| AgentConnectionStore::new(project.clone(), workspace.downgrade(), cx))
+            });
 
         let thread_view = cx.update(|window, cx| {
             cx.new(|cx| {
@@ -3009,7 +3011,9 @@ pub(crate) mod tests {
         let thread_store = cx.update(|_window, cx| cx.new(|cx| ThreadStore::new(cx)));
         let history = cx.update(|_window, cx| cx.new(|cx| ThreadHistory::new(None, cx)));
         let connection_store =
-            cx.update(|_window, cx| cx.new(|cx| AgentConnectionStore::new(project.clone(), cx)));
+            cx.update(|_window, cx| {
+                cx.new(|cx| AgentConnectionStore::new(project.clone(), workspace.downgrade(), cx))
+            });
 
         let thread_view = cx.update(|window, cx| {
             cx.new(|cx| {
@@ -3068,7 +3072,9 @@ pub(crate) mod tests {
         let thread_store = cx.update(|_window, cx| cx.new(|cx| ThreadStore::new(cx)));
         let history = cx.update(|_window, cx| cx.new(|cx| ThreadHistory::new(None, cx)));
         let connection_store =
-            cx.update(|_window, cx| cx.new(|cx| AgentConnectionStore::new(project.clone(), cx)));
+            cx.update(|_window, cx| {
+                cx.new(|cx| AgentConnectionStore::new(project.clone(), workspace.downgrade(), cx))
+            });
 
         let _thread_view = cx.update(|window, cx| {
             cx.new(|cx| {
@@ -3125,7 +3131,9 @@ pub(crate) mod tests {
         let thread_store = cx.update(|_window, cx| cx.new(|cx| ThreadStore::new(cx)));
         let history = cx.update(|_window, cx| cx.new(|cx| ThreadHistory::new(None, cx)));
         let connection_store =
-            cx.update(|_window, cx| cx.new(|cx| AgentConnectionStore::new(project.clone(), cx)));
+            cx.update(|_window, cx| {
+                cx.new(|cx| AgentConnectionStore::new(project.clone(), workspace.downgrade(), cx))
+            });
 
         let _thread_view = cx.update(|window, cx| {
             cx.new(|cx| {
@@ -3182,7 +3190,9 @@ pub(crate) mod tests {
         let thread_store = cx.update(|_window, cx| cx.new(|cx| ThreadStore::new(cx)));
         let history = cx.update(|_window, cx| cx.new(|cx| ThreadHistory::new(None, cx)));
         let connection_store =
-            cx.update(|_window, cx| cx.new(|cx| AgentConnectionStore::new(project.clone(), cx)));
+            cx.update(|_window, cx| {
+                cx.new(|cx| AgentConnectionStore::new(project.clone(), workspace.downgrade(), cx))
+            });
 
         let _thread_view = cx.update(|window, cx| {
             cx.new(|cx| {
@@ -3500,7 +3510,9 @@ pub(crate) mod tests {
         let thread_store = cx.update(|_window, cx| cx.new(|cx| ThreadStore::new(cx)));
         let history = cx.update(|_window, cx| cx.new(|cx| ThreadHistory::new(None, cx)));
         let connection_store =
-            cx.update(|_window, cx| cx.new(|cx| AgentConnectionStore::new(project1.clone(), cx)));
+            cx.update(|_window, cx| {
+                cx.new(|cx| AgentConnectionStore::new(project1.clone(), workspace1.downgrade(), cx))
+            });
 
         let agent = StubAgentServer::default_response();
         let thread_view = cx.update(|window, cx| {
@@ -3720,7 +3732,9 @@ pub(crate) mod tests {
         let thread_store = cx.update(|_window, cx| cx.new(|cx| ThreadStore::new(cx)));
         let history = cx.update(|_window, cx| cx.new(|cx| ThreadHistory::new(None, cx)));
         let connection_store =
-            cx.update(|_window, cx| cx.new(|cx| AgentConnectionStore::new(project.clone(), cx)));
+            cx.update(|_window, cx| {
+                cx.new(|cx| AgentConnectionStore::new(project.clone(), workspace.downgrade(), cx))
+            });
 
         let thread_view = cx.update(|window, cx| {
             cx.new(|cx| {
@@ -4456,7 +4470,9 @@ pub(crate) mod tests {
         let thread_store = cx.update(|_window, cx| cx.new(|cx| ThreadStore::new(cx)));
         let history = cx.update(|_window, cx| cx.new(|cx| ThreadHistory::new(None, cx)));
         let connection_store =
-            cx.update(|_window, cx| cx.new(|cx| AgentConnectionStore::new(project.clone(), cx)));
+            cx.update(|_window, cx| {
+                cx.new(|cx| AgentConnectionStore::new(project.clone(), workspace.downgrade(), cx))
+            });
 
         let connection = Rc::new(StubAgentConnection::new());
         let thread_view = cx.update(|window, cx| {

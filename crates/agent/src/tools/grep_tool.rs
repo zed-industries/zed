@@ -1,3 +1,4 @@
+use super::tool_permissions::active_worktree_context;
 use crate::{AgentTool, ToolCallEventStream, ToolInput};
 use agent_client_protocol as acp;
 use anyhow::Result;
@@ -8,6 +9,7 @@ use project::{
     Project, SearchResults, WorktreeSettings,
     search::{SearchQuery, SearchResult},
 };
+use prompt_store::ProjectContext;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::Settings;
@@ -68,11 +70,25 @@ const RESULTS_PER_PAGE: u32 = 20;
 
 pub struct GrepTool {
     project: Entity<Project>,
+    project_context: Option<Entity<ProjectContext>>,
 }
 
 impl GrepTool {
     pub fn new(project: Entity<Project>) -> Self {
-        Self { project }
+        Self {
+            project,
+            project_context: None,
+        }
+    }
+
+    pub fn new_with_project_context(
+        project: Entity<Project>,
+        project_context: Entity<ProjectContext>,
+    ) -> Self {
+        Self {
+            project,
+            project_context: Some(project_context),
+        }
     }
 }
 
@@ -127,14 +143,20 @@ impl AgentTool for GrepTool {
                 .recv()
                 .await
                 .map_err(|e| format!("Failed to receive tool input: {e}"))?;
+            let effective_include_pattern = project.read_with(cx, |project, cx| {
+                input.include_pattern.clone().or_else(|| {
+                    active_worktree_context(project, self.project_context.as_ref(), cx)
+                        .map(|worktree| format!("{}/**", worktree.root_name))
+                })
+            });
 
             let results = cx.update(|cx| {
                 let path_style = project.read(cx).path_style(cx);
 
                 let include_matcher = PathMatcher::new(
-                    input
-                        .include_pattern
+                    effective_include_pattern
                         .as_ref()
+                        .map(|pattern| pattern.as_str())
                         .into_iter()
                         .collect::<Vec<_>>(),
                     path_style,
@@ -335,10 +357,12 @@ mod tests {
     use crate::ToolCallEventStream;
 
     use super::*;
-    use gpui::{TestAppContext, UpdateGlobal};
+    use gpui::{AppContext, TestAppContext, UpdateGlobal};
     use project::{FakeFs, Project};
+    use prompt_store::{ProjectContext, WorktreeContext};
     use serde_json::json;
     use settings::SettingsStore;
+    use std::sync::Arc;
     use unindent::Unindent;
     use util::path;
 
@@ -784,7 +808,7 @@ mod tests {
         project: Entity<Project>,
         cx: &mut TestAppContext,
     ) -> String {
-        let tool = Arc::new(GrepTool { project });
+        let tool = Arc::new(GrepTool::new(project));
         let task = cx.update(|cx| {
             tool.run(
                 ToolInput::resolved(input),
@@ -803,6 +827,69 @@ mod tests {
             }
             Err(e) => panic!("Failed to run grep tool: {}", e),
         }
+    }
+
+    #[gpui::test]
+    async fn test_grep_tool_defaults_to_active_worktree(cx: &mut TestAppContext) {
+        init_test(cx);
+        cx.executor().allow_parking();
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/worktree-a"),
+            json!({ "src": { "main.rs": "fn shared() { println!(\"from a\"); }" } }),
+        )
+        .await;
+        fs.insert_tree(
+            path!("/worktree-b"),
+            json!({ "src": { "main.rs": "fn shared() { println!(\"from b\"); }" } }),
+        )
+        .await;
+
+        let project = Project::test(
+            fs.clone(),
+            [path!("/worktree-a").as_ref(), path!("/worktree-b").as_ref()],
+            cx,
+        )
+        .await;
+        let project_context = cx.new(|_cx| {
+            ProjectContext::new(
+                vec![
+                    WorktreeContext {
+                        root_name: "worktree-a".into(),
+                        abs_path: Arc::from(path!("/worktree-a").as_ref()),
+                        is_active: false,
+                        rules_file: None,
+                    },
+                    WorktreeContext {
+                        root_name: "worktree-b".into(),
+                        abs_path: Arc::from(path!("/worktree-b").as_ref()),
+                        is_active: true,
+                        rules_file: None,
+                    },
+                ],
+                vec![],
+            )
+        });
+        let tool = Arc::new(GrepTool::new_with_project_context(project, project_context));
+        let result = cx
+            .update(|cx| {
+                tool.run(
+                    ToolInput::resolved(GrepToolInput {
+                        regex: "shared".into(),
+                        include_pattern: None,
+                        offset: 0,
+                        case_sensitive: false,
+                    }),
+                    ToolCallEventStream::test().0,
+                    cx,
+                )
+            })
+            .await
+            .expect("grep should succeed");
+
+        assert!(result.contains("worktree-b/src/main.rs"));
+        assert!(!result.contains("worktree-a/src/main.rs"));
     }
 
     fn init_test(cx: &mut TestAppContext) {

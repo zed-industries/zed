@@ -81,6 +81,7 @@ pub(crate) struct SerializedWorkspace {
     pub(crate) id: WorkspaceId,
     pub(crate) location: SerializedWorkspaceLocation,
     pub(crate) paths: PathList,
+    pub(crate) active_worktree_path: Option<PathBuf>,
     pub(crate) center_group: SerializedPaneGroup,
     pub(crate) window_bounds: Option<SerializedWindowBounds>,
     pub(crate) centered_layout: bool,

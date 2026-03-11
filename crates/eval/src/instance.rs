@@ -301,6 +301,7 @@ impl ExampleInstance {
                     WorktreeContext {
                         root_name,
                         abs_path,
+                        is_active: false,
                         rules_file: None,
                     }
                 }).collect::<Vec<_>>();

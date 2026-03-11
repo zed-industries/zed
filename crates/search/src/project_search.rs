@@ -1103,6 +1103,11 @@ impl ProjectSearchView {
             let query = editor.query_suggestion(window, cx);
             if query.is_empty() { None } else { Some(query) }
         });
+        let active_worktree_filter = if existing.is_none() && action.included_files.is_none() {
+            Self::active_worktree_search_filter(workspace, cx)
+        } else {
+            None
+        };
 
         let search = if let Some(existing) = existing {
             workspace.activate_item(&existing, true, true, window, cx);
@@ -1142,6 +1147,11 @@ impl ProjectSearchView {
                     .included_files_editor
                     .update(cx, |editor, cx| editor.set_text(included_files, window, cx));
                 search.filters_enabled = true;
+            } else if let Some(included_files) = active_worktree_filter.as_deref() {
+                search
+                    .included_files_editor
+                    .update(cx, |editor, cx| editor.set_text(included_files, window, cx));
+                search.filters_enabled = true;
             }
             if let Some(excluded_files) = action.excluded_files.as_deref() {
                 search
@@ -1151,6 +1161,20 @@ impl ProjectSearchView {
             }
             search.focus_query_editor(window, cx)
         });
+    }
+
+    fn active_worktree_search_filter(workspace: &Workspace, cx: &App) -> Option<String> {
+        let project = workspace.project().read(cx);
+        if workspace.active_worktree_override().is_none()
+            || project.visible_worktrees(cx).count() < 2
+        {
+            return None;
+        }
+
+        workspace.effective_active_worktree(cx).map(|worktree| {
+            let root_name = worktree.read(cx).root_name_str().replace(',', r"\,");
+            format!("{root_name}/**")
+        })
     }
 
     fn prompt_to_save_if_dirty_then_search(
@@ -3734,6 +3758,68 @@ pub mod tests {
                 "New search in directory should have a filter that matches a certain directory"
             );
                 })
+            })
+            .unwrap();
+    }
+
+    #[perf]
+    #[gpui::test]
+    async fn test_new_search_prefills_active_worktree_filter(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(
+            path!("/dir-a"),
+            json!({ "one.rs": "const ONE: usize = 1;" }),
+        )
+        .await;
+        fs.insert_tree(
+            path!("/dir-b"),
+            json!({ "two.rs": "const TWO: usize = 2;" }),
+        )
+        .await;
+
+        let project = Project::test(fs.clone(), ["/dir-a".as_ref(), "/dir-b".as_ref()], cx).await;
+        let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project, window, cx));
+        let workspace = window
+            .read_with(cx, |mw, _| mw.workspace().clone())
+            .unwrap();
+        let worktree_b_id = workspace.read_with(cx, |workspace, cx| {
+            workspace
+                .worktrees(cx)
+                .find(|worktree| worktree.read(cx).abs_path().as_ref() == path!("/dir-b"))
+                .map(|worktree| worktree.read(cx).id())
+                .expect("missing second worktree")
+        });
+
+        let cx = &mut VisualTestContext::from_window(window.into(), cx);
+        workspace.update(cx, |workspace, cx| {
+            workspace.set_active_worktree_override(Some(worktree_b_id), cx);
+        });
+
+        workspace.update_in(cx, |workspace, window, cx| {
+            ProjectSearchView::new_search(workspace, &workspace::NewSearch, window, cx)
+        });
+
+        let Some(search_view) = cx.read(|cx| {
+            workspace
+                .read(cx)
+                .active_pane()
+                .read(cx)
+                .active_item()
+                .and_then(|item| item.downcast::<ProjectSearchView>())
+        }) else {
+            panic!("Search view expected to appear after new search event trigger")
+        };
+
+        window
+            .update(cx, |_, _, cx| {
+                search_view.update(cx, |search_view, cx| {
+                    search_view.included_files_editor.update(cx, |editor, cx| {
+                        assert_eq!(editor.display_text(cx), "dir-b/**");
+                    });
+                    assert!(search_view.filters_enabled);
+                });
             })
             .unwrap();
     }

@@ -287,8 +287,7 @@ pub fn task_contexts(
         })
         .or_else(|| {
             workspace
-                .visible_worktrees(cx)
-                .next()
+                .effective_active_worktree(cx)
                 .map(|tree| tree.read(cx).id())
         });
 
@@ -599,6 +598,52 @@ mod tests {
                 ]),
                 project_env: HashMap::default(),
             }
+        );
+    }
+
+    #[gpui::test]
+    async fn test_task_contexts_prefer_active_worktree_override_without_active_item(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(path!("/dir-a"), json!({})).await;
+        fs.insert_tree(path!("/dir-b"), json!({})).await;
+
+        let project =
+            Project::test(fs, [path!("/dir-a").as_ref(), path!("/dir-b").as_ref()], cx).await;
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
+
+        let worktree_b_id = workspace.update(cx, |workspace, cx| {
+            workspace
+                .worktrees(cx)
+                .find(|worktree| worktree.read(cx).abs_path().as_ref() == path!("/dir-b"))
+                .map(|worktree| worktree.read(cx).id())
+                .expect("missing second worktree")
+        });
+
+        let task_contexts = workspace
+            .update_in(cx, |workspace, window, cx| {
+                workspace.set_active_worktree_override(Some(worktree_b_id), cx);
+                task_contexts(workspace, window, cx)
+            })
+            .await;
+
+        assert_eq!(
+            task_contexts.active_worktree_context,
+            Some((
+                worktree_b_id,
+                TaskContext {
+                    cwd: Some(path!("/dir-b").into()),
+                    task_variables: TaskVariables::from_iter([(
+                        VariableName::WorktreeRoot,
+                        path!("/dir-b").into()
+                    )]),
+                    project_env: HashMap::default(),
+                }
+            ))
         );
     }
 

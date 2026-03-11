@@ -1,8 +1,10 @@
 use anyhow::Context as _;
-use collections::HashSet;
+use collections::{HashMap, HashSet};
 use fuzzy::StringMatchCandidate;
 
-use git::repository::{Worktree as GitWorktree, validate_worktree_directory};
+use git::repository::{
+    UpstreamTrackingStatus, Worktree as GitWorktree, validate_worktree_directory,
+};
 use gpui::{
     Action, App, AsyncWindowContext, Context, DismissEvent, Entity, EventEmitter, FocusHandle,
     Focusable, InteractiveElement, IntoElement, Modifiers, ModifiersChangedEvent, ParentElement,
@@ -39,7 +41,7 @@ pub fn open(
     window: &mut Window,
     cx: &mut Context<Workspace>,
 ) {
-    let repository = workspace.project().read(cx).active_repository(cx);
+    let repository = workspace.effective_active_repository(cx);
     let workspace_handle = workspace.weak_handle();
     workspace.toggle_modal(window, cx, |window, cx| {
         WorktreeList::new(repository, workspace_handle, rems(34.), window, cx)
@@ -248,9 +250,17 @@ struct WorktreeEntry {
     is_new: bool,
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct OpenWorktreeStatus {
+    change_count: usize,
+    tracking_status: Option<UpstreamTrackingStatus>,
+}
+
 pub struct WorktreeListDelegate {
     matches: Vec<WorktreeEntry>,
     all_worktrees: Option<Vec<GitWorktree>>,
+    active_worktree_path: Option<PathBuf>,
+    open_worktree_statuses: HashMap<PathBuf, OpenWorktreeStatus>,
     workspace: WeakEntity<Workspace>,
     repo: Option<Entity<Repository>>,
     selected_index: usize,
@@ -267,9 +277,42 @@ impl WorktreeListDelegate {
         _window: &mut Window,
         cx: &mut Context<WorktreeList>,
     ) -> Self {
+        let (active_worktree_path, open_worktree_statuses) = workspace
+            .upgrade()
+            .map(|workspace| {
+                let workspace = workspace.read(cx);
+                let active_worktree_path = workspace
+                    .effective_active_worktree(cx)
+                    .map(|worktree| worktree.read(cx).abs_path().to_path_buf());
+                let project = workspace.project().clone();
+                let git_store = project.read(cx).git_store().clone();
+                let open_worktree_statuses = git_store
+                    .read(cx)
+                    .repositories()
+                    .values()
+                    .map(|repo| {
+                        let repo = repo.read(cx);
+                        (
+                            repo.work_directory_abs_path.as_ref().to_path_buf(),
+                            OpenWorktreeStatus {
+                                change_count: repo.status_summary().count,
+                                tracking_status: repo
+                                    .branch
+                                    .as_ref()
+                                    .and_then(|branch| branch.tracking_status()),
+                            },
+                        )
+                    })
+                    .collect();
+
+                (active_worktree_path, open_worktree_statuses)
+            })
+            .unwrap_or_default();
         Self {
             matches: vec![],
             all_worktrees: None,
+            active_worktree_path,
+            open_worktree_statuses,
             workspace,
             selected_index: 0,
             repo,
@@ -390,52 +433,12 @@ impl WorktreeListDelegate {
         let workspace = self.workspace.clone();
         let path = worktree_path.clone();
 
-        let Some((connection_options, app_state, is_local)) = workspace
-            .update(cx, |workspace, cx| {
-                let project = workspace.project().clone();
-                let connection_options = project.read(cx).remote_connection_options(cx);
-                let app_state = workspace.app_state().clone();
-                let is_local = project.read(cx).is_local();
-                (connection_options, app_state, is_local)
-            })
-            .log_err()
-        else {
-            return;
-        };
-
-        if is_local {
-            let open_task = workspace.update(cx, |workspace, cx| {
-                workspace.open_workspace_for_paths(replace_current_window, vec![path], window, cx)
-            });
-            cx.spawn(async move |_, _| {
-                open_task?.await?;
-                anyhow::Ok(())
-            })
-            .detach_and_prompt_err(
-                "Failed to open worktree",
-                window,
-                cx,
-                |e, _, _| Some(e.to_string()),
-            );
-        } else if let Some(connection_options) = connection_options {
-            cx.spawn_in(window, async move |_, cx| {
-                open_remote_worktree(
-                    connection_options,
-                    vec![path],
-                    app_state,
-                    workspace,
-                    replace_current_window,
-                    cx,
-                )
-                .await
-            })
-            .detach_and_prompt_err(
-                "Failed to open worktree",
-                window,
-                cx,
-                |e, _, _| Some(e.to_string()),
-            );
-        }
+        cx.spawn_in(window, async move |_, cx| {
+            open_worktree_path(workspace, path, replace_current_window, cx).await
+        })
+        .detach_and_prompt_err("Failed to open worktree", window, cx, |e, _, _| {
+            Some(e.to_string())
+        });
 
         cx.emit(DismissEvent);
     }
@@ -450,7 +453,13 @@ impl WorktreeListDelegate {
         let Some(entry) = self.matches.get(idx).cloned() else {
             return;
         };
-        if entry.is_new {
+        if entry.is_new
+            || is_active_worktree_path(
+                self.active_worktree_path.as_deref(),
+                entry.is_new,
+                &entry.worktree.path,
+            )
+        {
             return;
         }
         let Some(repo) = self.repo.clone() else {
@@ -598,6 +607,46 @@ async fn open_remote_worktree(
     Ok(())
 }
 
+pub(crate) async fn open_worktree_path(
+    workspace: WeakEntity<Workspace>,
+    path: PathBuf,
+    replace_current_window: bool,
+    cx: &mut AsyncWindowContext,
+) -> anyhow::Result<()> {
+    let Some((connection_options, app_state, is_local)) = workspace
+        .update(cx, |workspace, cx| {
+            let project = workspace.project().clone();
+            let connection_options = project.read(cx).remote_connection_options(cx);
+            let app_state = workspace.app_state().clone();
+            let is_local = project.read(cx).is_local();
+            (connection_options, app_state, is_local)
+        })
+        .log_err()
+    else {
+        return Ok(());
+    };
+
+    if is_local {
+        workspace
+            .update_in(cx, |workspace, window, cx| {
+                workspace.open_workspace_for_paths(replace_current_window, vec![path], window, cx)
+            })?
+            .await?;
+    } else if let Some(connection_options) = connection_options {
+        open_remote_worktree(
+            connection_options,
+            vec![path],
+            app_state,
+            workspace,
+            replace_current_window,
+            cx,
+        )
+        .await?;
+    }
+
+    Ok(())
+}
+
 impl PickerDelegate for WorktreeListDelegate {
     type ListItem = ListItem;
 
@@ -635,6 +684,8 @@ impl PickerDelegate for WorktreeListDelegate {
         let Some(all_worktrees) = self.all_worktrees.clone() else {
             return Task::ready(());
         };
+        let active_worktree_path = self.active_worktree_path.clone();
+        let open_worktree_statuses = self.open_worktree_statuses.clone();
 
         cx.spawn_in(window, async move |picker, cx| {
             let mut matches: Vec<WorktreeEntry> = if query.is_empty() {
@@ -670,6 +721,21 @@ impl PickerDelegate for WorktreeListDelegate {
                 })
                 .collect()
             };
+            matches.sort_by_key(|entry| {
+                (
+                    entry.is_new,
+                    !is_active_worktree_path(
+                        active_worktree_path.as_deref(),
+                        entry.is_new,
+                        &entry.worktree.path,
+                    ),
+                    !is_open_worktree_path(
+                        &open_worktree_statuses,
+                        entry.is_new,
+                        &entry.worktree.path,
+                    ),
+                )
+            });
             picker
                 .update(cx, |picker, _| {
                     if !query.is_empty()
@@ -727,6 +793,15 @@ impl PickerDelegate for WorktreeListDelegate {
         cx: &mut Context<Picker<Self>>,
     ) -> Option<Self::ListItem> {
         let entry = &self.matches.get(ix)?;
+        let is_active = is_active_worktree_path(
+            self.active_worktree_path.as_deref(),
+            entry.is_new,
+            &entry.worktree.path,
+        );
+        let open_worktree_status = self
+            .open_worktree_statuses
+            .get(&entry.worktree.path)
+            .copied();
         let path = entry.worktree.path.to_string_lossy().to_string();
         let sha = entry
             .worktree
@@ -780,11 +855,75 @@ impl PickerDelegate for WorktreeListDelegate {
                                 .child(branch_name)
                                 .when(!entry.is_new, |this| {
                                     this.child(
-                                        Label::new(sha)
-                                            .size(LabelSize::Small)
-                                            .color(Color::Muted)
-                                            .buffer_font(cx)
-                                            .into_element(),
+                                        h_flex()
+                                            .gap_1p5()
+                                            .child(
+                                                Label::new(sha)
+                                                    .size(LabelSize::Small)
+                                                    .color(Color::Muted)
+                                                    .buffer_font(cx)
+                                                    .into_element(),
+                                            )
+                                            .when(is_active, |this| {
+                                                this.child(
+                                                    Label::new("Active")
+                                                        .size(LabelSize::XSmall)
+                                                        .color(Color::Accent)
+                                                        .into_element(),
+                                                )
+                                            })
+                                            .when(
+                                                open_worktree_status.is_some() && !is_active,
+                                                |this| {
+                                                    this.child(
+                                                        Label::new("Open")
+                                                            .size(LabelSize::XSmall)
+                                                            .color(Color::Muted)
+                                                            .into_element(),
+                                                    )
+                                                },
+                                            )
+                                            .when_some(open_worktree_status, |this, status| {
+                                                this.when(status.change_count > 0, |this| {
+                                                    this.child(
+                                                        Label::new(format!(
+                                                            "{} changes",
+                                                            status.change_count
+                                                        ))
+                                                        .size(LabelSize::XSmall)
+                                                        .color(Color::Warning)
+                                                        .into_element(),
+                                                    )
+                                                })
+                                            })
+                                            .when_some(
+                                                open_worktree_status
+                                                    .and_then(|status| status.tracking_status),
+                                                |this, tracking_status| {
+                                                    this.when(tracking_status.behind > 0, |this| {
+                                                        this.child(
+                                                            Label::new(format!(
+                                                                "{} behind",
+                                                                tracking_status.behind
+                                                            ))
+                                                            .size(LabelSize::XSmall)
+                                                            .color(Color::Muted)
+                                                            .into_element(),
+                                                        )
+                                                    })
+                                                    .when(tracking_status.ahead > 0, |this| {
+                                                        this.child(
+                                                            Label::new(format!(
+                                                                "{} ahead",
+                                                                tracking_status.ahead
+                                                            ))
+                                                            .size(LabelSize::XSmall)
+                                                            .color(Color::Muted)
+                                                            .into_element(),
+                                                        )
+                                                    })
+                                                },
+                                            ),
                                     )
                                 }),
                         )
@@ -807,6 +946,13 @@ impl PickerDelegate for WorktreeListDelegate {
         let focus_handle = self.focus_handle.clone();
         let selected_entry = self.matches.get(self.selected_index);
         let is_creating = selected_entry.is_some_and(|entry| entry.is_new);
+        let delete_disabled = selected_entry.is_none_or(|entry| {
+            is_active_worktree_path(
+                self.active_worktree_path.as_deref(),
+                entry.is_new,
+                &entry.worktree.path,
+            )
+        });
 
         let footer_container = h_flex()
             .w_full()
@@ -856,6 +1002,7 @@ impl PickerDelegate for WorktreeListDelegate {
                 footer_container
                     .child(
                         Button::new("delete-worktree", "Delete")
+                            .disabled(delete_disabled)
                             .key_binding(
                                 KeyBinding::for_action_in(&DeleteWorktree, &focus_handle, cx)
                                     .map(|kb| kb.size(rems_from_px(12.))),
@@ -891,5 +1038,62 @@ impl PickerDelegate for WorktreeListDelegate {
                     .into_any(),
             )
         }
+    }
+}
+
+fn is_active_worktree_path(
+    active_worktree_path: Option<&std::path::Path>,
+    is_new_entry: bool,
+    worktree_path: &std::path::Path,
+) -> bool {
+    active_worktree_path.is_some_and(|path| !is_new_entry && worktree_path == path)
+}
+
+fn is_open_worktree_path(
+    open_worktree_statuses: &HashMap<PathBuf, OpenWorktreeStatus>,
+    is_new_entry: bool,
+    worktree_path: &std::path::Path,
+) -> bool {
+    !is_new_entry && open_worktree_statuses.contains_key(worktree_path)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        HashMap, OpenWorktreeStatus, PathBuf, is_active_worktree_path, is_open_worktree_path,
+    };
+
+    #[test]
+    fn test_active_worktree_path_ignores_new_entries() {
+        let worktree_path = PathBuf::from("/tmp/feature");
+
+        assert!(is_active_worktree_path(
+            Some(worktree_path.as_path()),
+            false,
+            worktree_path.as_path()
+        ));
+        assert!(!is_active_worktree_path(
+            Some(worktree_path.as_path()),
+            true,
+            worktree_path.as_path()
+        ));
+    }
+
+    #[test]
+    fn test_open_worktree_path_requires_existing_entry() {
+        let worktree_path = PathBuf::from("/tmp/feature");
+        let mut open_worktree_statuses = HashMap::default();
+        open_worktree_statuses.insert(worktree_path.clone(), OpenWorktreeStatus::default());
+
+        assert!(is_open_worktree_path(
+            &open_worktree_statuses,
+            false,
+            worktree_path.as_path()
+        ));
+        assert!(!is_open_worktree_path(
+            &open_worktree_statuses,
+            true,
+            worktree_path.as_path()
+        ));
     }
 }

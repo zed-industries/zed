@@ -55,6 +55,7 @@ use std::sync::Arc;
 use util::ResultExt;
 use util::path_list::PathList;
 use util::rel_path::RelPath;
+use workspace::Workspace;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ProjectSnapshot {
@@ -252,6 +253,7 @@ pub struct NativeAgent {
     templates: Arc<Templates>,
     /// Cached model information
     models: LanguageModels,
+    workspace: Option<WeakEntity<Workspace>>,
     prompt_store: Option<Entity<PromptStore>>,
     fs: Arc<dyn Fs>,
     _subscriptions: Vec<Subscription>,
@@ -265,6 +267,17 @@ impl NativeAgent {
         fs: Arc<dyn Fs>,
         cx: &mut App,
     ) -> Entity<NativeAgent> {
+        Self::new_with_workspace(thread_store, templates, prompt_store, fs, None, cx)
+    }
+
+    pub fn new_with_workspace(
+        thread_store: Entity<ThreadStore>,
+        templates: Arc<Templates>,
+        prompt_store: Option<Entity<PromptStore>>,
+        fs: Arc<dyn Fs>,
+        workspace: Option<WeakEntity<Workspace>>,
+        cx: &mut App,
+    ) -> Entity<NativeAgent> {
         log::debug!("Creating new NativeAgent");
 
         cx.new(|cx| {
@@ -275,6 +288,13 @@ impl NativeAgent {
             if let Some(prompt_store) = prompt_store.as_ref() {
                 subscriptions.push(cx.subscribe(prompt_store, Self::handle_prompts_updated_event))
             }
+            if let Some(workspace) = workspace.as_ref().and_then(|workspace| workspace.upgrade()) {
+                subscriptions.push(cx.observe(&workspace, |this, _, _cx| {
+                    for state in this.projects.values_mut() {
+                        state.project_context_needs_refresh.send(()).ok();
+                    }
+                }));
+            }
 
             Self {
                 sessions: HashMap::default(),
@@ -282,6 +302,7 @@ impl NativeAgent {
                 projects: HashMap::default(),
                 templates,
                 models: LanguageModels::new(cx),
+                workspace,
                 prompt_store,
                 fs,
                 _subscriptions: subscriptions,
@@ -306,9 +327,10 @@ impl NativeAgent {
                 .model_from_id(&LanguageModels::model_id(&default_model.model))
         });
         let thread = cx.new(|cx| {
-            Thread::new(
+            Thread::new_with_workspace(
                 project,
                 project_state.project_context.clone(),
+                self.workspace.clone(),
                 project_state.context_server_registry.clone(),
                 self.templates.clone(),
                 default_model,
@@ -488,6 +510,7 @@ impl NativeAgent {
                     anyhow::Ok(Self::build_project_context(
                         &state.project,
                         this.prompt_store.as_ref(),
+                        this.workspace.as_ref(),
                         cx,
                     ))
                 })??
@@ -505,13 +528,44 @@ impl NativeAgent {
     fn build_project_context(
         project: &Entity<Project>,
         prompt_store: Option<&Entity<PromptStore>>,
+        workspace: Option<&WeakEntity<Workspace>>,
         cx: &mut App,
     ) -> Task<ProjectContext> {
         let worktrees = project.read(cx).visible_worktrees(cx).collect::<Vec<_>>();
+        let active_worktree_id = workspace
+            .and_then(|workspace| workspace.upgrade())
+            .and_then(|workspace| {
+                workspace
+                    .read(cx)
+                    .effective_active_worktree(cx)
+                    .map(|worktree| worktree.read(cx).id())
+            })
+            .or_else(|| {
+                project
+                    .read(cx)
+                    .agent_location()
+                    .and_then(|location| {
+                        location
+                            .buffer
+                            .read_with(cx, |buffer, cx| {
+                                buffer.file().map(|file| file.worktree_id(cx))
+                            })
+                            .ok()
+                            .flatten()
+                    })
+                    .or_else(|| {
+                        if worktrees.len() == 1 {
+                            Some(worktrees[0].read(cx).id())
+                        } else {
+                            None
+                        }
+                    })
+            });
         let worktree_tasks = worktrees
             .into_iter()
             .map(|worktree| {
-                Self::load_worktree_info_for_system_prompt(worktree, project.clone(), cx)
+                let is_active = active_worktree_id == Some(worktree.read(cx).id());
+                Self::load_worktree_info_for_system_prompt(worktree, project.clone(), is_active, cx)
             })
             .collect::<Vec<_>>();
         let default_user_rules_task = if let Some(prompt_store) = prompt_store.as_ref() {
@@ -570,6 +624,7 @@ impl NativeAgent {
     fn load_worktree_info_for_system_prompt(
         worktree: Entity<Worktree>,
         project: Entity<Project>,
+        is_active: bool,
         cx: &mut App,
     ) -> Task<(WorktreeContext, Option<RulesLoadingError>)> {
         let tree = worktree.read(cx);
@@ -579,6 +634,7 @@ impl NativeAgent {
         let mut context = WorktreeContext {
             root_name,
             abs_path,
+            is_active,
             rules_file: None,
         };
 
@@ -694,6 +750,9 @@ impl NativeAgent {
         };
         match event {
             project::Event::WorktreeAdded(_) | project::Event::WorktreeRemoved(_) => {
+                state.project_context_needs_refresh.send(()).ok();
+            }
+            project::Event::AgentLocationChanged => {
                 state.project_context_needs_refresh.send(()).ok();
             }
             project::Event::WorktreeUpdatedEntries(_, items) => {
@@ -894,6 +953,7 @@ impl NativeAgent {
                         db_thread,
                         project_state.project.clone(),
                         project_state.project_context.clone(),
+                        this.workspace.clone(),
                         project_state.context_server_registry.clone(),
                         this.templates.clone(),
                         cx,
@@ -2135,6 +2195,7 @@ mod internal_tests {
                 vec![WorktreeContext {
                     root_name: "a".into(),
                     abs_path: Path::new("/a").into(),
+                    is_active: true,
                     rules_file: None
                 }]
             )
@@ -2155,6 +2216,7 @@ mod internal_tests {
                 vec![WorktreeContext {
                     root_name: "a".into(),
                     abs_path: Path::new("/a").into(),
+                    is_active: true,
                     rules_file: Some(RulesFileContext {
                         path_in_worktree: rel_path(".rules").into(),
                         text: "".into(),
@@ -2162,6 +2224,111 @@ mod internal_tests {
                     })
                 }]
             )
+        });
+    }
+
+    #[gpui::test]
+    async fn test_agent_location_updates_active_worktree_context(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            "/",
+            json!({
+                "a": {
+                    "a.txt": "alpha"
+                },
+                "b": {
+                    "b.txt": "beta"
+                }
+            }),
+        )
+        .await;
+        let project = Project::test(fs.clone(), [], cx).await;
+        let thread_store = cx.new(|cx| ThreadStore::new(cx));
+        let agent =
+            cx.update(|cx| NativeAgent::new(thread_store, Templates::new(), None, fs.clone(), cx));
+
+        let worktree_a = project
+            .update(cx, |project, cx| project.create_worktree("/a", true, cx))
+            .await
+            .unwrap();
+        let worktree_b = project
+            .update(cx, |project, cx| project.create_worktree("/b", true, cx))
+            .await
+            .unwrap();
+        cx.run_until_parked();
+
+        agent.read_with(cx, |agent, cx| {
+            let project_id = project.entity_id();
+            let state = agent.projects.get(&project_id).unwrap();
+            assert!(!state.project_context.read(cx).has_active_worktree);
+            assert_eq!(
+                state.project_context.read(cx).active_worktree_root_name,
+                None
+            );
+        });
+
+        let buffer = project
+            .update(cx, |project, cx| {
+                project.open_buffer(
+                    ProjectPath {
+                        worktree_id: worktree_b.read(cx).id(),
+                        path: rel_path("b.txt").into(),
+                    },
+                    cx,
+                )
+            })
+            .await
+            .unwrap();
+
+        project.update(cx, |project, cx| {
+            project.set_agent_location(
+                Some(project::AgentLocation {
+                    buffer: buffer.downgrade(),
+                    position: buffer.read_with(cx, |buffer, _| {
+                        buffer.anchor_before(language::Point::new(0, 0))
+                    }),
+                }),
+                cx,
+            );
+        });
+        cx.run_until_parked();
+
+        agent.read_with(cx, |agent, cx| {
+            let project_id = project.entity_id();
+            let project_context = agent
+                .projects
+                .get(&project_id)
+                .unwrap()
+                .project_context
+                .read(cx);
+            assert!(project_context.has_active_worktree);
+            assert_eq!(
+                project_context.active_worktree_root_name.as_deref(),
+                Some("b")
+            );
+            assert_eq!(
+                project_context.worktrees,
+                vec![
+                    WorktreeContext {
+                        root_name: "a".into(),
+                        abs_path: Path::new("/a").into(),
+                        is_active: false,
+                        rules_file: None,
+                    },
+                    WorktreeContext {
+                        root_name: "b".into(),
+                        abs_path: Path::new("/b").into(),
+                        is_active: true,
+                        rules_file: None,
+                    }
+                ]
+            );
+        });
+
+        // Ensure the unused worktree entity remains part of the project for the duration of the test.
+        worktree_a.read_with(cx, |worktree, _| {
+            assert_eq!(worktree.root_name_str(), "a");
         });
     }
 
@@ -2635,9 +2802,22 @@ mod internal_tests {
         )
         .await;
         let project = Project::test(fs.clone(), [path!("/a").as_ref()], cx).await;
+        let (multi_workspace, _) = cx.add_window_view(|window, cx| {
+            workspace::MultiWorkspace::test_new(project.clone(), window, cx)
+        });
+        let workspace = multi_workspace.read_with(cx, |multi_workspace, _cx| {
+            multi_workspace.workspace().downgrade()
+        });
         let thread_store = cx.new(|cx| ThreadStore::new(cx));
         let agent = cx.update(|cx| {
-            NativeAgent::new(thread_store.clone(), Templates::new(), None, fs.clone(), cx)
+            NativeAgent::new_with_workspace(
+                thread_store.clone(),
+                Templates::new(),
+                None,
+                fs.clone(),
+                Some(workspace),
+                cx,
+            )
         });
         let connection = Rc::new(NativeAgentConnection(agent.clone()));
 
@@ -2801,6 +2981,16 @@ mod internal_tests {
             assert_eq!(scroll.item_ix, 5);
             assert_eq!(scroll.offset_in_item, gpui::px(12.5));
         });
+
+        let reloaded_thread = agent.read_with(cx, |agent, _cx| {
+            agent.sessions.get(&session_id).unwrap().thread.clone()
+        });
+        reloaded_thread.read_with(cx, |thread, _cx| {
+            assert!(
+                thread.has_registered_tool(WorktreeTool::NAME),
+                "reloaded thread should keep the worktree tool when workspace context is available"
+            );
+        });
     }
 
     fn thread_entries(
@@ -2822,6 +3012,7 @@ mod internal_tests {
             cx.set_global(settings_store);
 
             LanguageModelRegistry::test(cx);
+            theme::init(theme::LoadThemes::JustBase, cx);
         });
     }
 }

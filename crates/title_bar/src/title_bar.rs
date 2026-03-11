@@ -302,11 +302,8 @@ impl TitleBar {
             }),
         );
         subscriptions.push(
-            cx.subscribe(&project, |this, _, event: &project::Event, cx| {
+            cx.subscribe(&project, |_this, _, event: &project::Event, cx| {
                 if let project::Event::BufferEdited = event {
-                    // Clear override when user types in any editor,
-                    // so the title bar reflects the project they're actually working in
-                    this.clear_active_worktree_override(cx);
                     cx.notify();
                 }
             }),
@@ -314,13 +311,8 @@ impl TitleBar {
         subscriptions.push(cx.observe(&active_call, |this, _, cx| this.active_call_changed(cx)));
         subscriptions.push(cx.observe_window_activation(window, Self::window_activation_changed));
         subscriptions.push(
-            cx.subscribe(&git_store, move |this, _, event, cx| match event {
-                GitStoreEvent::ActiveRepositoryChanged(_) => {
-                    // Clear override when focus-derived active repo changes
-                    // (meaning the user focused a file from a different project)
-                    this.clear_active_worktree_override(cx);
-                    cx.notify();
-                }
+            cx.subscribe(&git_store, move |_this, _, event, cx| match event {
+                GitStoreEvent::ActiveRepositoryChanged(_) => cx.notify(),
                 GitStoreEvent::RepositoryUpdated(_, _, true) => {
                     cx.notify();
                 }
@@ -404,29 +396,11 @@ impl TitleBar {
     /// - Otherwise, derive from the active repository
     /// - Fall back to the first visible worktree
     pub fn effective_active_worktree(&self, cx: &App) -> Option<Entity<project::Worktree>> {
-        let project = self.project.read(cx);
-
         if let Some(workspace) = self.workspace.upgrade() {
-            if let Some(override_id) = workspace.read(cx).active_worktree_override() {
-                if let Some(worktree) = project.worktree_for_id(override_id, cx) {
-                    return Some(worktree);
-                }
-            }
+            return workspace.read(cx).effective_active_worktree(cx);
         }
 
-        if let Some(repo) = project.active_repository(cx) {
-            let repo = repo.read(cx);
-            let repo_path = &repo.work_directory_abs_path;
-
-            for worktree in project.visible_worktrees(cx) {
-                let worktree_path = worktree.read(cx).abs_path();
-                if worktree_path == *repo_path || worktree_path.starts_with(repo_path.as_ref()) {
-                    return Some(worktree);
-                }
-            }
-        }
-
-        project.visible_worktrees(cx).next()
+        self.project.read(cx).visible_worktrees(cx).next()
     }
 
     pub fn set_active_worktree_override(
@@ -437,15 +411,6 @@ impl TitleBar {
         if let Some(workspace) = self.workspace.upgrade() {
             workspace.update(cx, |workspace, cx| {
                 workspace.set_active_worktree_override(Some(worktree_id), cx);
-            });
-        }
-        cx.notify();
-    }
-
-    fn clear_active_worktree_override(&mut self, cx: &mut Context<Self>) {
-        if let Some(workspace) = self.workspace.upgrade() {
-            workspace.update(cx, |workspace, cx| {
-                workspace.clear_active_worktree_override(cx);
             });
         }
         cx.notify();

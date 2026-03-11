@@ -1,3 +1,4 @@
+use super::tool_permissions::{ActiveWorktreeContext, active_worktree_context};
 use crate::{AgentTool, ToolCallEventStream, ToolInput};
 use agent_client_protocol as acp;
 use anyhow::{Result, anyhow};
@@ -5,6 +6,7 @@ use futures::FutureExt as _;
 use gpui::{App, AppContext, Entity, SharedString, Task};
 use language_model::LanguageModelToolResultContent;
 use project::Project;
+use prompt_store::ProjectContext;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::fmt::Write;
@@ -89,11 +91,25 @@ const RESULTS_PER_PAGE: usize = 50;
 
 pub struct FindPathTool {
     project: Entity<Project>,
+    project_context: Option<Entity<ProjectContext>>,
 }
 
 impl FindPathTool {
     pub fn new(project: Entity<Project>) -> Self {
-        Self { project }
+        Self {
+            project,
+            project_context: None,
+        }
+    }
+
+    pub fn new_with_project_context(
+        project: Entity<Project>,
+        project_context: Entity<ProjectContext>,
+    ) -> Self {
+        Self {
+            project,
+            project_context: Some(project_context),
+        }
     }
 }
 
@@ -131,7 +147,12 @@ impl AgentTool for FindPathTool {
                 error: format!("Failed to receive tool input: {e}"),
             })?;
 
-            let search_paths_task = cx.update(|cx| search_paths(&input.glob, project, cx));
+            let active_worktree = project.read_with(cx, |project, cx| {
+                active_worktree_context(project, self.project_context.as_ref(), cx)
+            });
+
+            let search_paths_task =
+                cx.update(|cx| search_paths(&input.glob, active_worktree, project, cx));
 
             let matches = futures::select! {
                 result = search_paths_task.fuse() => result.map_err(|e| FindPathToolOutput::Error { error: e.to_string() })?,
@@ -175,7 +196,12 @@ impl AgentTool for FindPathTool {
     }
 }
 
-fn search_paths(glob: &str, project: Entity<Project>, cx: &mut App) -> Task<Result<Vec<PathBuf>>> {
+fn search_paths(
+    glob: &str,
+    active_worktree: Option<ActiveWorktreeContext>,
+    project: Entity<Project>,
+    cx: &mut App,
+) -> Task<Result<Vec<PathBuf>>> {
     let path_style = project.read(cx).path_style(cx);
     let path_matcher = match PathMatcher::new(
         [
@@ -187,11 +213,27 @@ fn search_paths(glob: &str, project: Entity<Project>, cx: &mut App) -> Task<Resu
         Ok(matcher) => matcher,
         Err(err) => return Task::ready(Err(anyhow!("Invalid glob: {err}"))),
     };
-    let snapshots: Vec<_> = project
-        .read(cx)
-        .worktrees(cx)
-        .map(|worktree| worktree.read(cx).snapshot())
-        .collect();
+    let snapshots: Vec<_> = project.read_with(cx, |project, cx| {
+        let explicit_worktree_scope = project.worktrees(cx).any(|worktree| {
+            let root_name = worktree.read(cx).root_name_str();
+            glob == root_name
+                || glob
+                    .strip_prefix(root_name)
+                    .is_some_and(|suffix| suffix.starts_with('/'))
+        });
+
+        project
+            .worktrees(cx)
+            .filter(|worktree| match active_worktree.as_ref() {
+                Some(active_worktree) => {
+                    explicit_worktree_scope
+                        || worktree.read(cx).root_name_str() == active_worktree.root_name
+                }
+                None => true,
+            })
+            .map(|worktree| worktree.read(cx).snapshot())
+            .collect()
+    });
 
     cx.background_spawn(async move {
         let mut results = Vec::new();
@@ -212,7 +254,9 @@ mod test {
     use super::*;
     use gpui::TestAppContext;
     use project::{FakeFs, Project};
+    use prompt_store::{ProjectContext, WorktreeContext};
     use settings::SettingsStore;
+    use std::sync::Arc;
     use util::path;
 
     #[gpui::test]
@@ -238,7 +282,7 @@ mod test {
         let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
 
         let matches = cx
-            .update(|cx| search_paths("root/**/car*", project.clone(), cx))
+            .update(|cx| search_paths("root/**/car*", None, project.clone(), cx))
             .await
             .unwrap();
         assert_eq!(
@@ -250,7 +294,7 @@ mod test {
         );
 
         let matches = cx
-            .update(|cx| search_paths("**/car*", project.clone(), cx))
+            .update(|cx| search_paths("**/car*", None, project.clone(), cx))
             .await
             .unwrap();
         assert_eq!(
@@ -259,6 +303,83 @@ mod test {
                 PathBuf::from(path!("/root/apple/banana/carrot")),
                 PathBuf::from(path!("/root/apple/bandana/carbonara"))
             ]
+        );
+    }
+
+    #[gpui::test]
+    async fn test_find_path_tool_defaults_to_active_worktree(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/worktree-a"),
+            serde_json::json!({ "a.rs": "const A: usize = 1;" }),
+        )
+        .await;
+        fs.insert_tree(
+            path!("/worktree-b"),
+            serde_json::json!({ "b.rs": "const B: usize = 2;" }),
+        )
+        .await;
+
+        let project = Project::test(
+            fs.clone(),
+            [path!("/worktree-a").as_ref(), path!("/worktree-b").as_ref()],
+            cx,
+        )
+        .await;
+
+        let project_context = cx.new(|_cx| {
+            ProjectContext::new(
+                vec![
+                    WorktreeContext {
+                        root_name: "worktree-a".into(),
+                        abs_path: Arc::from(path!("/worktree-a").as_ref()),
+                        is_active: false,
+                        rules_file: None,
+                    },
+                    WorktreeContext {
+                        root_name: "worktree-b".into(),
+                        abs_path: Arc::from(path!("/worktree-b").as_ref()),
+                        is_active: true,
+                        rules_file: None,
+                    },
+                ],
+                vec![],
+            )
+        });
+
+        let tool = Arc::new(FindPathTool::new_with_project_context(
+            project,
+            project_context,
+        ));
+        let result = cx
+            .update(|cx| {
+                tool.run(
+                    ToolInput::resolved(FindPathToolInput {
+                        glob: "**/*.rs".into(),
+                        offset: 0,
+                    }),
+                    ToolCallEventStream::test().0,
+                    cx,
+                )
+            })
+            .await
+            .expect("find_path should succeed");
+
+        let FindPathToolOutput::Success {
+            current_matches_page,
+            all_matches_len,
+            ..
+        } = result
+        else {
+            panic!("find_path should return success output");
+        };
+
+        assert_eq!(all_matches_len, 1);
+        assert_eq!(
+            current_matches_page,
+            vec![PathBuf::from(path!("/worktree-b/b.rs"))]
         );
     }
 
