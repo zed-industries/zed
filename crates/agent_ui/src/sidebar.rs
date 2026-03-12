@@ -1,6 +1,6 @@
 use crate::threads_archive_view::{ThreadsArchiveView, ThreadsArchiveViewEvent};
 use crate::{AgentPanel, AgentPanelEvent, NewThread};
-use acp_thread::{ThreadStatus};
+use acp_thread::ThreadStatus;
 use action_log::DiffStats;
 use agent::ThreadStore;
 use agent_client_protocol as acp;
