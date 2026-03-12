@@ -6974,9 +6974,11 @@ impl Workspace {
         dock: &Entity<Dock>,
         window: &mut Window,
         cx: &mut App,
-    ) -> Option<Div> {
+    ) -> impl Iterator<Item = AnyElement> {
+        let mut results = [None, None];
+
         if self.zoomed_position == Some(position) {
-            return None;
+            return results.into_iter().flatten();
         }
 
         let leader_border = dock.read(cx).active_panel().and_then(|panel| {
@@ -6985,66 +6987,67 @@ impl Workspace {
             leader_border_for_pane(follower_states, &pane, window, cx)
         });
 
-        Some(
+        results[0] = Some(
             div()
                 .flex()
                 .flex_none()
                 .overflow_hidden()
                 .child(dock.clone())
-                .children(leader_border),
-        )
+                .children(leader_border)
+                .into_any_element(),
+        );
+
+        results[1] = dock
+            .read(cx)
+            .visible_panel()
+            .cloned()
+            .and_then(|panel| panel.flex_content(window, cx))
+            .map(|flex_content| {
+                div()
+                    .h_full()
+                    .flex_1()
+                    .min_w(px(10.))
+                    .flex_grow()
+                    .child(flex_content)
+                    .into_any_element()
+            });
+
+        if position == DockPosition::Right {
+            results.swap(0, 1);
+        }
+
+        results.into_iter().flatten()
     }
 
-    fn render_center_with_panel_elements(
+    fn render_center(
         &mut self,
         paddings: (Option<Div>, Option<Div>),
         window: &mut Window,
         cx: &mut App,
     ) -> AnyElement {
-        let left_panel_flex_content = (self.zoomed_position != Some(DockPosition::Left))
-            .then(|| {
-                self.left_dock
-                    .read(cx)
-                    .visible_panel()
-                    .cloned()
-                    .and_then(|panel| panel.flex_content(window, cx))
-            })
-            .flatten();
-        let right_panel_flex_content = (self.zoomed_position != Some(DockPosition::Right))
-            .then(|| {
-                self.right_dock
-                    .read(cx)
-                    .visible_panel()
-                    .cloned()
-                    .and_then(|panel| panel.flex_content(window, cx))
-            })
-            .flatten();
-
-        let center_pane_group = h_flex()
-            .size_full()
-            .flex_1()
-            .when_some(paddings.0, |this, p| this.child(p.border_r_1()))
-            .child(self.center.render(
-                self.zoomed.as_ref(),
-                left_panel_flex_content,
-                right_panel_flex_content,
-                &PaneRenderContext {
-                    follower_states: &self.follower_states,
-                    active_call: self.active_call(),
-                    active_pane: &self.active_pane,
-                    app_state: &self.app_state,
-                    project: &self.project,
-                    workspace: &self.weak_self,
-                },
-                window,
-                cx,
-            ))
-            .when_some(paddings.1, |this, p| this.child(p.border_l_1()))
-            .into_any_element();
-
         h_flex()
             .flex_1()
-            .child(center_pane_group)
+            .child(
+                h_flex()
+                    .size_full()
+                    .flex_1()
+                    .when_some(paddings.0, |this, p| this.child(p.border_r_1()))
+                    .child(self.center.render(
+                        self.zoomed.as_ref(),
+                        &PaneRenderContext {
+                            follower_states: &self.follower_states,
+                            active_call: self.active_call(),
+                            active_pane: &self.active_pane,
+                            app_state: &self.app_state,
+                            project: &self.project,
+                            workspace: &self.weak_self,
+                        },
+                        window,
+                        cx,
+                    ))
+                    .when_some(paddings.1, |this, p| this.child(p.border_l_1()))
+                    .into_any_element(),
+            )
             .into_any_element()
     }
 
@@ -7585,7 +7588,10 @@ impl Focusable for Workspace {
 }
 
 #[derive(Clone)]
-struct DraggedDock(DockPosition);
+struct DraggedDock {
+    position: DockPosition,
+    is_flex_content: bool,
+}
 
 impl Render for DraggedDock {
     fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
@@ -7636,7 +7642,7 @@ impl Render for Workspace {
             .collect::<Vec<_>>();
         let bottom_dock_layout = WorkspaceSettings::get_global(cx).bottom_dock_layout;
 
-        let mut center_area = Some(self.render_center_with_panel_elements(paddings, window, cx));
+        let mut center_area = Some(self.render_center(paddings, window, cx));
 
         div()
             .relative()
@@ -7724,7 +7730,7 @@ impl Render for Workspace {
                                             workspace.previous_dock_drag_coordinates =
                                                 Some(e.event.position);
 
-                                            match e.drag(cx).0 {
+                                            match e.drag(cx).position {
                                                 DockPosition::Left => {
                                                     workspace.resize_left_dock(
                                                         e.event.position.x

@@ -823,14 +823,25 @@ impl Render for Dock {
         {
             let size = entry.panel.size(window, cx);
 
+            let panel_content = entry
+                .panel
+                .to_any()
+                .cached(StyleRefinement::default().v_flex().size_full());
+
             let position = self.position;
-            let create_resize_handle = || {
+            let create_resize_handle = |is_flex_content: bool| {
                 let handle = div()
                     .id("resize-handle")
-                    .on_drag(DraggedDock(position), |dock, _, _, cx| {
-                        cx.stop_propagation();
-                        cx.new(|_| dock.clone())
-                    })
+                    .on_drag(
+                        DraggedDock {
+                            position,
+                            is_flex_content,
+                        },
+                        |dock, _, _, cx| {
+                            cx.stop_propagation();
+                            cx.new(|_| dock.clone())
+                        },
+                    )
                     .on_mouse_down(
                         MouseButton::Left,
                         cx.listener(|_, _: &MouseDownEvent, _, cx| {
@@ -891,29 +902,22 @@ impl Render for Dock {
                 .border_color(cx.theme().colors().border)
                 .overflow_hidden()
                 .map(|this| match self.position().axis() {
-                    Axis::Horizontal => this.w(size).h_full().flex_row(),
-                    Axis::Vertical => this.h(size).w_full().flex_col(),
+                    Axis::Horizontal => this
+                        .h_full()
+                        .flex_row()
+                        .child(div().w(size).h_full().child(panel_content)),
+                    Axis::Vertical => this
+                        .w_full()
+                        .flex_col()
+                        .child(div().h(size).w_full().child(panel_content)),
                 })
                 .map(|this| match self.position() {
                     DockPosition::Left => this.border_r_1(),
                     DockPosition::Right => this.border_l_1(),
                     DockPosition::Bottom => this.border_t_1(),
                 })
-                .child(
-                    div()
-                        .map(|this| match self.position().axis() {
-                            Axis::Horizontal => this.min_w(size).h_full(),
-                            Axis::Vertical => this.min_h(size).w_full(),
-                        })
-                        .child(
-                            entry
-                                .panel
-                                .to_any()
-                                .cached(StyleRefinement::default().v_flex().size_full()),
-                        ),
-                )
                 .when(self.resizable(cx), |this| {
-                    this.child(create_resize_handle())
+                    this.child(create_resize_handle(false))
                 })
         } else {
             div()

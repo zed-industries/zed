@@ -493,9 +493,6 @@ pub fn init(cx: &mut App) {
                                 window.focus(&pane_focus, cx);
                             }
                         }
-                        // Explicitly notify the panel so the dock picks up
-                        // the change to `has_main_element` via its observer.
-                        panel.update(cx, |_, cx| cx.notify());
                     }
                 })
                 .register_action(|workspace, _: &FocusWorkspaceSidebar, window, cx| {
@@ -508,9 +505,6 @@ pub fn init(cx: &mut App) {
                                 sidebar.focus_or_unfocus(workspace, window, cx);
                             });
                         }
-                        // Explicitly notify the panel so the dock picks up
-                        // any change to `has_main_element` via its observer.
-                        panel.update(cx, |_, cx| cx.notify());
                     }
                 });
         },
@@ -1250,8 +1244,6 @@ impl AgentPanel {
 
         cx.defer_in(window, move |this, _window, cx| {
             this.sidebar = find_or_create_sidebar_for_window(_window, cx);
-            // Observe the sidebar so that when its open state changes,
-            // the panel (and thus the dock) is notified and re-rendered.
             this._sidebar_observation = this
                 .sidebar
                 .as_ref()

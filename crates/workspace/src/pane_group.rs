@@ -27,7 +27,6 @@ const VERTICAL_MIN_SIZE: f32 = 100.;
 #[derive(Clone)]
 pub struct PaneGroup {
     pub root: Member,
-    pub state: PaneGroupState,
     pub is_center: bool,
 }
 
@@ -40,7 +39,6 @@ impl PaneGroup {
     pub fn with_root(root: Member) -> Self {
         Self {
             root,
-            state: PaneGroupState::default(),
             is_center: false,
         }
     }
@@ -64,7 +62,6 @@ impl PaneGroup {
             Member::Pane(pane) => {
                 if pane == old_pane {
                     self.root = Member::new_axis(old_pane.clone(), new_pane.clone(), direction);
-                    self.state.reset_flexes();
                     true
                 } else {
                     false
@@ -174,7 +171,6 @@ impl PaneGroup {
             Member::Axis(axis) => {
                 if let Some(last_pane) = axis.remove(pane)? {
                     self.root = last_pane;
-                    self.state.reset_flexes();
                 }
                 Ok(true)
             }
@@ -223,46 +219,11 @@ impl PaneGroup {
     pub fn render(
         &self,
         zoomed: Option<&AnyWeakView>,
-        left_content: Option<AnyElement>,
-        right_content: Option<AnyElement>,
         render_cx: &dyn PaneLeaderDecorator,
         window: &mut Window,
         cx: &mut App,
     ) -> impl IntoElement {
-        let mut state = self.state.0.borrow_mut();
-        if left_content.is_some() {
-            state.left_entry_is_active = true;
-            state.left_entry.get_or_insert(PaneAxisStateEntry {
-                flex: 1.0,
-                bounding_box: None,
-            });
-        } else {
-            state.left_entry_is_active = false;
-        }
-
-        if right_content.is_some() {
-            state.right_entry_is_active = true;
-            state.right_entry.get_or_insert(PaneAxisStateEntry {
-                flex: 1.0,
-                bounding_box: None,
-            });
-        } else {
-            state.right_entry_is_active = false;
-        }
-        drop(state);
-
-        self.root
-            .render(
-                0,
-                zoomed,
-                left_content,
-                right_content,
-                Some(self.state.clone()),
-                render_cx,
-                window,
-                cx,
-            )
-            .element
+        self.root.render(0, zoomed, render_cx, window, cx).element
     }
 
     pub fn panes(&self) -> Vec<&Entity<Pane>> {
@@ -546,66 +507,10 @@ impl Member {
         &self,
         basis: usize,
         zoomed: Option<&AnyWeakView>,
-        left_content: Option<AnyElement>,
-        right_content: Option<AnyElement>,
-        pane_group_state: Option<PaneGroupState>,
         render_cx: &dyn PaneLeaderDecorator,
         window: &mut Window,
         cx: &mut App,
     ) -> PaneRenderResult {
-        if let Some(pane_group_state) = pane_group_state
-            && (left_content.is_some() || right_content.is_some())
-        {
-            return match self {
-                Member::Axis(axis) if axis.axis == Axis::Horizontal => axis.render(
-                    basis + 1,
-                    zoomed,
-                    Some(pane_group_state),
-                    left_content,
-                    right_content,
-                    render_cx,
-                    window,
-                    cx,
-                ),
-                _ => {
-                    let mut active_pane_ix = 0;
-                    if left_content.is_some() {
-                        active_pane_ix += 1;
-                    }
-                    if right_content.is_some() {
-                        active_pane_ix += 1;
-                    }
-
-                    let inner = self.render(0, zoomed, None, None, None, render_cx, window, cx);
-
-                    let mut children = Vec::new();
-                    children.extend(left_content.map(|content| content.into_any_element()));
-                    children.push(inner.element);
-                    children.extend(right_content.map(|content| content.into_any_element()));
-
-                    let element = pane_axis(
-                        Axis::Horizontal,
-                        0,
-                        PaneAxisState::with_flexes(vec![
-                            children.len() as f32
-                                - pane_group_state.total_flex();
-                            1
-                        ]),
-                        Some(pane_group_state),
-                        render_cx.workspace().clone(),
-                    )
-                    .with_active_pane(Some(active_pane_ix))
-                    .with_is_leaf_pane_mask(vec![true, matches!(self, Member::Pane(_)), true])
-                    .children(children)
-                    .into_any_element();
-                    PaneRenderResult {
-                        element,
-                        contains_active_pane: inner.contains_active_pane,
-                    }
-                }
-            };
-        }
-
         match self {
             Member::Pane(pane) => {
                 if zoomed == Some(&pane.downgrade().into()) {
@@ -643,9 +548,7 @@ impl Member {
                     contains_active_pane: is_active,
                 }
             }
-            Member::Axis(axis) => {
-                axis.render(basis + 1, zoomed, None, None, None, render_cx, window, cx)
-            }
+            Member::Axis(axis) => axis.render(basis + 1, zoomed, render_cx, window, cx),
         }
     }
 
@@ -676,55 +579,15 @@ impl Member {
 #[derive(Debug, Clone)]
 pub struct PaneAxisState(Rc<RefCell<PaneAxisStateInner>>);
 
-#[derive(Default, Debug, Clone)]
-pub struct PaneGroupState(Rc<RefCell<PaneGroupStateInner>>);
-
 #[derive(Debug)]
 struct PaneAxisStateInner {
     entries: Vec<PaneAxisStateEntry>,
-}
-
-#[derive(Default, Debug)]
-struct PaneGroupStateInner {
-    left_entry: Option<PaneAxisStateEntry>,
-    left_entry_is_active: bool,
-    right_entry: Option<PaneAxisStateEntry>,
-    right_entry_is_active: bool,
 }
 
 #[derive(Clone, Copy, Debug)]
 struct PaneAxisStateEntry {
     flex: f32,
     bounding_box: Option<Bounds<Pixels>>,
-}
-
-impl PaneGroupState {
-    fn total_flex(&self) -> f32 {
-        let state = self.0.borrow();
-        let left = state
-            .left_entry
-            .as_ref()
-            .filter(|_| state.left_entry_is_active)
-            .map_or(0., |e| e.flex);
-        let right = state
-            .right_entry
-            .as_ref()
-            .filter(|_| state.right_entry_is_active)
-            .map_or(0., |e| e.flex);
-        left + right
-    }
-
-    fn reset_flexes(&self) {
-        let mut state = self.0.borrow_mut();
-        if let Some(left_entry) = state.left_entry.as_mut() {
-            left_entry.flex = 1.0;
-            left_entry.bounding_box = None;
-        }
-        if let Some(right_entry) = state.right_entry.as_mut() {
-            right_entry.flex = 1.0;
-            right_entry.bounding_box = None;
-        }
-    }
 }
 
 impl PaneAxisState {
@@ -1094,9 +957,6 @@ impl PaneAxis {
         &self,
         basis: usize,
         zoomed: Option<&AnyWeakView>,
-        pane_group_state: Option<PaneGroupState>,
-        left_content: Option<AnyElement>,
-        right_content: Option<AnyElement>,
         render_cx: &dyn PaneLeaderDecorator,
         window: &mut Window,
         cx: &mut App,
@@ -1106,9 +966,11 @@ impl PaneAxis {
         let mut contains_active_pane = false;
         let mut is_leaf_pane = vec![false; self.members.len()];
 
-        let rendered_children = left_content
-            .into_iter()
-            .chain(self.members.iter().enumerate().map(|(ix, member)| {
+        let rendered_children = self
+            .members
+            .iter()
+            .enumerate()
+            .map(|(ix, member)| {
                 match member {
                     Member::Pane(pane) => {
                         is_leaf_pane[ix] = true;
@@ -1122,29 +984,18 @@ impl PaneAxis {
                     }
                 }
 
-                let result = member.render(
-                    (basis + ix) * 10,
-                    zoomed,
-                    None,
-                    None,
-                    None,
-                    render_cx,
-                    window,
-                    cx,
-                );
+                let result = member.render((basis + ix) * 10, zoomed, render_cx, window, cx);
                 if result.contains_active_pane {
                     contains_active_pane = true;
                 }
                 result.element.into_any_element()
-            }))
-            .chain(right_content)
+            })
             .collect::<Vec<_>>();
 
         let element = pane_axis(
             self.axis,
             basis,
             self.state.clone(),
-            pane_group_state,
             render_cx.workspace().clone(),
         )
         .with_is_leaf_pane_mask(is_leaf_pane)
@@ -1156,35 +1007,6 @@ impl PaneAxis {
             element,
             contains_active_pane,
         }
-    }
-}
-
-impl PaneAxisStateInner {
-    pub fn entries<'a>(
-        &'a mut self,
-        pane_group_state: Option<&'a mut PaneGroupStateInner>,
-    ) -> Vec<&'a mut PaneAxisStateEntry> {
-        let mut entries = Vec::new();
-        if let Some(pane_group_state) = pane_group_state {
-            if let Some(left) = pane_group_state
-                .left_entry
-                .as_mut()
-                .filter(|_| pane_group_state.left_entry_is_active)
-            {
-                entries.push(left);
-            }
-            entries.extend(self.entries.iter_mut());
-            if let Some(right) = pane_group_state
-                .right_entry
-                .as_mut()
-                .filter(|_| pane_group_state.right_entry_is_active)
-            {
-                entries.push(right);
-            }
-        } else {
-            entries.extend(self.entries.iter_mut());
-        }
-        entries
     }
 }
 
@@ -1299,7 +1121,7 @@ pub mod element {
     use crate::Workspace;
 
     use crate::WorkspaceSettings;
-    use crate::pane_group::{PaneAxisStateEntry, PaneGroupState};
+    use crate::pane_group::PaneAxisStateEntry;
 
     use super::{HANDLE_HITBOX_SIZE, HORIZONTAL_MIN_SIZE, PaneAxisState, VERTICAL_MIN_SIZE};
 
@@ -1309,14 +1131,12 @@ pub mod element {
         axis: Axis,
         basis: usize,
         state: PaneAxisState,
-        pane_group_state: Option<PaneGroupState>,
         workspace: WeakEntity<Workspace>,
     ) -> PaneAxisElement {
         PaneAxisElement {
             axis,
             basis,
             state,
-            pane_group_state,
             children: SmallVec::new(),
             active_pane_ix: None,
             workspace,
@@ -1328,7 +1148,6 @@ pub mod element {
         axis: Axis,
         basis: usize,
         state: PaneAxisState,
-        pane_group_state: Option<PaneGroupState>,
         children: SmallVec<[AnyElement; 2]>,
         active_pane_ix: Option<usize>,
         workspace: WeakEntity<Workspace>,
@@ -1365,7 +1184,6 @@ pub mod element {
         }
 
         fn compute_resize(
-            pane_group_state: Option<&PaneGroupState>,
             state: &PaneAxisState,
             e: &MouseMoveEvent,
             ix: usize,
@@ -1376,36 +1194,33 @@ pub mod element {
             window: &mut Window,
             cx: &mut App,
         ) {
-            let mut state = state.0.borrow_mut();
-            let mut group_state = pane_group_state.as_ref().map(|state| state.0.borrow_mut());
-            let group_state = group_state.as_deref_mut();
-            let mut entries = state.entries(group_state);
+            let entries = &mut state.0.borrow_mut().entries;
 
             let min_size = match axis {
                 Axis::Horizontal => px(HORIZONTAL_MIN_SIZE),
                 Axis::Vertical => px(VERTICAL_MIN_SIZE),
             };
-            check_flex_values_in_bounds(&entries);
+            check_flex_values_in_bounds(entries);
 
             // Math to convert a flex value to a pixel value
-            let size = move |ix: usize, state: &[&mut PaneAxisStateEntry]| {
-                container_size.along(axis) * (state[ix].flex / state.len() as f32)
+            let size = move |ix: usize, entries: &[PaneAxisStateEntry]| {
+                container_size.along(axis) * (entries[ix].flex / entries.len() as f32)
             };
 
             // Don't allow resizing to less than the minimum size, if elements are already too small
-            if min_size - px(1.) > size(ix, &entries) {
+            if min_size - px(1.) > size(ix, entries) {
                 return;
             }
 
             // This is basically a "bucket" of pixel changes that need to be applied in response to this
             // mouse event. Probably a small, fractional number like 0.5 or 1.5 pixels
             let mut proposed_current_pixel_change =
-                (e.position - child_start).along(axis) - size(ix, &entries);
+                (e.position - child_start).along(axis) - size(ix, entries);
 
             // This takes a pixel change, and computes the flex changes that correspond to this pixel change
             // as well as the next one, for some reason
             let flex_changes =
-                |pixel_dx, target_ix: usize, next: isize, entries: &[&mut PaneAxisStateEntry]| {
+                |pixel_dx, target_ix: usize, next: isize, entries: &[PaneAxisStateEntry]| {
                     let flex_change = pixel_dx / container_size.along(axis);
                     let current_target_flex = entries[target_ix].flex + flex_change;
                     let next_target_flex =
@@ -1440,19 +1255,19 @@ pub mod element {
                 };
 
                 let next_target_size = Pixels::max(
-                    size(current_ix + 1, &entries) - proposed_current_pixel_change,
+                    size(current_ix + 1, entries) - proposed_current_pixel_change,
                     min_size,
                 );
 
                 let current_target_size = Pixels::max(
-                    size(current_ix, &entries) + size(current_ix + 1, &entries) - next_target_size,
+                    size(current_ix, entries) + size(current_ix + 1, entries) - next_target_size,
                     min_size,
                 );
 
-                let current_pixel_change = current_target_size - size(current_ix, &entries);
+                let current_pixel_change = current_target_size - size(current_ix, entries);
 
                 let (current_target_flex, next_target_flex) =
-                    flex_changes(current_pixel_change, current_ix, 1, &entries);
+                    flex_changes(current_pixel_change, current_ix, 1, entries);
 
                 entries[current_ix].flex = current_target_flex;
                 entries[current_ix + 1].flex = next_target_flex;
@@ -1548,14 +1363,11 @@ pub mod element {
                     (state.clone(), state)
                 },
             );
-            let mut state = self.state.0.borrow_mut();
-            let mut group_state = self.pane_group_state.as_ref().map(|s| s.0.borrow_mut());
-            let group_state = group_state.as_deref_mut();
-            let mut entries = state.entries(group_state);
+            let entries = &mut self.state.0.borrow_mut().entries;
 
             let len = self.children.len();
             debug_assert!(entries.len() == len);
-            check_flex_values_in_bounds(&entries);
+            check_flex_values_in_bounds(entries);
 
             let total_flex = len as f32;
 
@@ -1702,7 +1514,6 @@ pub mod element {
                     window.on_mouse_event({
                         let dragged_handle = layout.dragged_handle.clone();
                         let state = self.state.clone();
-                        let group_state = self.pane_group_state.clone();
                         let workspace = self.workspace.clone();
                         let handle_hitbox = handle.hitbox.clone();
                         move |e: &MouseDownEvent, phase, window, cx| {
@@ -1710,9 +1521,6 @@ pub mod element {
                                 dragged_handle.replace(Some(ix));
                                 if e.click_count >= 2 {
                                     state.reset_flexes();
-                                    if let Some(group_state) = group_state.as_ref() {
-                                        group_state.reset_flexes();
-                                    }
                                     workspace
                                         .update(cx, |this, cx| this.serialize_workspace(window, cx))
                                         .log_err();
@@ -1727,14 +1535,12 @@ pub mod element {
                         let workspace = self.workspace.clone();
                         let dragged_handle = layout.dragged_handle.clone();
                         let state = self.state.clone();
-                        let group_state = self.pane_group_state.clone();
                         let child_bounds = child.bounds;
                         let axis = self.axis;
                         move |e: &MouseMoveEvent, phase, window, cx| {
                             let dragged_handle = dragged_handle.borrow();
                             if phase.bubble() && *dragged_handle == Some(ix) {
                                 Self::compute_resize(
-                                    group_state.as_ref(),
                                     &state,
                                     e,
                                     ix,
@@ -1768,7 +1574,7 @@ pub mod element {
         }
     }
 
-    fn check_flex_values_in_bounds(inner: &[&mut PaneAxisStateEntry]) {
+    fn check_flex_values_in_bounds(inner: &[PaneAxisStateEntry]) {
         #[cfg(debug_assertions)]
         if (inner.iter().map(|e| e.flex).sum::<f32>() - inner.len() as f32).abs() >= 0.001 {
             panic!(

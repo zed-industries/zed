@@ -116,8 +116,6 @@ impl Render for RunningState {
             self.panes
                 .render(
                     None,
-                    None,
-                    None,
                     &ActivePaneDecorator::new(active, &self.workspace),
                     window,
                     cx,
