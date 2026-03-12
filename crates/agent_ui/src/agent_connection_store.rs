@@ -9,7 +9,7 @@ use gpui::{AppContext, Context, Entity, EventEmitter, SharedString, Subscription
 use project::{AgentServerStore, AgentServersUpdated, Project};
 use watch::Receiver;
 
-use crate::{ExternalAgent, ThreadHistory};
+use crate::{Agent, ThreadHistory};
 use project::ExternalAgentServerName;
 
 pub enum AgentConnectionEntry {
@@ -53,7 +53,7 @@ impl EventEmitter<AgentConnectionEntryEvent> for AgentConnectionEntry {}
 
 pub struct AgentConnectionStore {
     project: Entity<Project>,
-    entries: HashMap<ExternalAgent, Entity<AgentConnectionEntry>>,
+    entries: HashMap<Agent, Entity<AgentConnectionEntry>>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -68,13 +68,13 @@ impl AgentConnectionStore {
         }
     }
 
-    pub fn entry(&self, key: &ExternalAgent) -> Option<&Entity<AgentConnectionEntry>> {
+    pub fn entry(&self, key: &Agent) -> Option<&Entity<AgentConnectionEntry>> {
         self.entries.get(key)
     }
 
     pub fn request_connection(
         &mut self,
-        key: ExternalAgent,
+        key: Agent,
         server: Rc<dyn AgentServer>,
         cx: &mut Context<Self>,
     ) -> Entity<AgentConnectionEntry> {
@@ -142,8 +142,8 @@ impl AgentConnectionStore {
     ) {
         let store = store.read(cx);
         self.entries.retain(|key, _| match key {
-            ExternalAgent::NativeAgent => true,
-            ExternalAgent::Custom { name } => store
+            Agent::NativeAgent => true,
+            Agent::Custom { name } => store
                 .external_agents
                 .contains_key(&ExternalAgentServerName(name.clone())),
         });
