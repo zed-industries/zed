@@ -38,6 +38,8 @@ static CLIPBOARD_PNG_FORMAT: LazyLock<u32> =
     LazyLock::new(|| register_clipboard_format(windows::core::w!("PNG")));
 static CLIPBOARD_JPG_FORMAT: LazyLock<u32> =
     LazyLock::new(|| register_clipboard_format(windows::core::w!("JFIF")));
+static CLIPBOARD_HTML_FORMAT: LazyLock<u32> =
+    LazyLock::new(|| register_clipboard_format(windows::core::w!("HTML Format")));
 
 // Helper maps and sets
 static FORMATS_MAP: LazyLock<FxHashMap<u32, ClipboardFormatType>> = LazyLock::new(|| {
@@ -49,6 +51,7 @@ static FORMATS_MAP: LazyLock<FxHashMap<u32, ClipboardFormatType>> = LazyLock::ne
     formats_map.insert(*CLIPBOARD_SVG_FORMAT, ClipboardFormatType::Image);
     formats_map.insert(CF_DIB.0 as u32, ClipboardFormatType::Image);
     formats_map.insert(CF_HDROP.0 as u32, ClipboardFormatType::Files);
+    formats_map.insert(*CLIPBOARD_HTML_FORMAT, ClipboardFormatType::Text);
     formats_map
 });
 static IMAGE_FORMATS_MAP: LazyLock<FxHashMap<u32, ImageFormat>> = LazyLock::new(|| {
@@ -74,7 +77,15 @@ pub(crate) fn write_to_clipboard(item: ClipboardItem) {
 pub(crate) fn read_from_clipboard() -> Option<ClipboardItem> {
     with_clipboard(|| {
         with_best_match_format(|item_format| match format_to_type(item_format) {
-            ClipboardFormatType::Text => read_string_from_clipboard(),
+            ClipboardFormatType::Text => {
+                if item_format == CF_UNICODETEXT.0 as u32 {
+                    read_string_from_clipboard()
+                } else if item_format == *CLIPBOARD_HTML_FORMAT {
+                    read_html_string_from_clipboard()
+                } else {
+                    None
+                }
+            }
             ClipboardFormatType::Image => read_image_from_clipboard(item_format),
             ClipboardFormatType::Files => read_files_from_clipboard(),
         })
@@ -315,6 +326,156 @@ fn read_string_from_clipboard() -> Option<ClipboardEntry> {
     }
 }
 
+fn read_html_string_from_clipboard() -> Option<ClipboardEntry> {
+    // CF_HTML is UTF-8 encoded (unlike CF_UNICODETEXT which is UTF-16)
+    let text = with_clipboard_data(*CLIPBOARD_HTML_FORMAT, |data_ptr, size| {
+        let bytes = unsafe { std::slice::from_raw_parts(data_ptr as *const u8, size) };
+        // Trim any trailing null bytes
+        let bytes = match bytes.iter().position(|&b| b == 0) {
+            Some(pos) => &bytes[..pos],
+            None => bytes,
+        };
+        let html_str = std::str::from_utf8(bytes).ok()?;
+        Some(extract_plain_text_from_cf_html(html_str))
+    })??;
+    if text.is_empty() {
+        return None;
+    }
+    Some(ClipboardEntry::String(ClipboardString::new(text)))
+}
+
+/// Extracts plain text from CF_HTML clipboard format.
+///
+/// CF_HTML has a header with byte offsets pointing to the HTML fragment:
+/// ```text
+/// Version:0.9
+/// StartHTML:000000105
+/// EndHTML:000000184
+/// StartFragment:000000141
+/// EndFragment:000000148
+/// <html><body><!--StartFragment-->content<!--EndFragment--></body></html>
+/// ```
+fn extract_plain_text_from_cf_html(cf_html: &str) -> String {
+    // Try to extract just the fragment using the header offsets
+    let fragment = extract_html_fragment(cf_html).unwrap_or(cf_html);
+    strip_html_tags(fragment)
+}
+
+fn extract_html_fragment(cf_html: &str) -> Option<&str> {
+    let start = cf_html
+        .lines()
+        .find(|line| line.starts_with("StartFragment:"))?
+        .strip_prefix("StartFragment:")?
+        .trim()
+        .parse::<usize>()
+        .ok()?;
+    let end = cf_html
+        .lines()
+        .find(|line| line.starts_with("EndFragment:"))?
+        .strip_prefix("EndFragment:")?
+        .trim()
+        .parse::<usize>()
+        .ok()?;
+    cf_html.get(start..end)
+}
+
+/// Strips HTML tags and decodes common HTML entities to produce plain text.
+fn strip_html_tags(html: &str) -> String {
+    let mut result = String::with_capacity(html.len());
+    let mut in_tag = false;
+    let mut chars = html.chars().peekable();
+
+    while let Some(ch) = chars.next() {
+        match ch {
+            '<' => {
+                // Check for <br> variants to insert newlines
+                let rest: String = chars.clone().take(10).collect();
+                let rest_lower = rest.to_ascii_lowercase();
+                if rest_lower.starts_with("br")
+                    && rest_lower[2..]
+                        .starts_with(|c: char| c == '>' || c == '/' || c == ' ')
+                {
+                    result.push('\n');
+                }
+                if rest_lower.starts_with("/p>")
+                    || rest_lower.starts_with("/div>")
+                    || rest_lower.starts_with("/li>")
+                    || rest_lower.starts_with("/tr>")
+                {
+                    result.push('\n');
+                }
+                in_tag = true;
+            }
+            '>' if in_tag => {
+                in_tag = false;
+            }
+            '&' if !in_tag => {
+                // Decode HTML entities
+                let mut entity = String::new();
+                for ec in chars.by_ref() {
+                    if ec == ';' {
+                        break;
+                    }
+                    entity.push(ec);
+                    if entity.len() > 10 {
+                        // Not a real entity, push what we have
+                        result.push('&');
+                        result.push_str(&entity);
+                        break;
+                    }
+                }
+                if entity.len() <= 10 {
+                    match entity.as_str() {
+                        "amp" => result.push('&'),
+                        "lt" => result.push('<'),
+                        "gt" => result.push('>'),
+                        "quot" => result.push('"'),
+                        "apos" => result.push('\''),
+                        "nbsp" => result.push(' '),
+                        s if s.starts_with('#') => {
+                            let code = if s.starts_with("#x") || s.starts_with("#X") {
+                                u32::from_str_radix(&s[2..], 16).ok()
+                            } else {
+                                s[1..].parse::<u32>().ok()
+                            };
+                            if let Some(c) = code.and_then(char::from_u32) {
+                                result.push(c);
+                            }
+                        }
+                        _ => {
+                            result.push('&');
+                            result.push_str(&entity);
+                            result.push(';');
+                        }
+                    }
+                }
+            }
+            _ if !in_tag => {
+                result.push(ch);
+            }
+            _ => {}
+        }
+    }
+
+    // Collapse multiple consecutive newlines and trim
+    let mut cleaned = String::with_capacity(result.len());
+    let mut prev_newline = false;
+    for ch in result.chars() {
+        if ch == '\n' {
+            if !prev_newline {
+                cleaned.push('\n');
+            }
+            prev_newline = true;
+        } else if ch == '\r' {
+            continue;
+        } else {
+            prev_newline = false;
+            cleaned.push(ch);
+        }
+    }
+    cleaned.trim_matches('\n').to_string()
+}
+
 fn read_hash_from_clipboard() -> Option<u64> {
     if unsafe { IsClipboardFormatAvailable(*CLIPBOARD_HASH_FORMAT).is_err() } {
         return None;
@@ -451,5 +612,72 @@ fn gpui_image_format_to_image(value: ImageFormat) -> image::ImageFormat {
         ImageFormat::Bmp => image::ImageFormat::Bmp,
         ImageFormat::Tiff => image::ImageFormat::Tiff,
         _ => unreachable!(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_extract_html_fragment() {
+        let cf_html = "Version:0.9\r\nStartHTML:0000000105\r\nEndHTML:0000000177\r\nStartFragment:0000000137\r\nEndFragment:0000000146\r\n<html><body><!--StartFragment-->Hello Zed<!--EndFragment--></body></html>";
+        let fragment = extract_html_fragment(cf_html).unwrap();
+        assert_eq!(fragment, "Hello Zed");
+    }
+
+    #[test]
+    fn test_extract_html_fragment_missing_header() {
+        let html = "<html><body>Hello</body></html>";
+        assert!(extract_html_fragment(html).is_none());
+    }
+
+    #[test]
+    fn test_strip_html_tags_plain_text() {
+        assert_eq!(strip_html_tags("Hello world"), "Hello world");
+    }
+
+    #[test]
+    fn test_strip_html_tags_simple() {
+        assert_eq!(strip_html_tags("<p>Hello <b>world</b></p>"), "Hello world");
+    }
+
+    #[test]
+    fn test_strip_html_tags_br() {
+        assert_eq!(strip_html_tags("line1<br>line2"), "line1\nline2");
+        assert_eq!(strip_html_tags("line1<br/>line2"), "line1\nline2");
+        assert_eq!(strip_html_tags("line1<BR>line2"), "line1\nline2");
+    }
+
+    #[test]
+    fn test_strip_html_tags_block_elements() {
+        assert_eq!(
+            strip_html_tags("<div>first</div><div>second</div>"),
+            "first\nsecond"
+        );
+        assert_eq!(strip_html_tags("<p>para1</p><p>para2</p>"), "para1\npara2");
+    }
+
+    #[test]
+    fn test_strip_html_tags_entities() {
+        assert_eq!(strip_html_tags("&amp; &lt; &gt; &quot;"), "& < > \"");
+        assert_eq!(strip_html_tags("&nbsp;"), " ");
+        assert_eq!(strip_html_tags("&#65;"), "A");
+        assert_eq!(strip_html_tags("&#x41;"), "A");
+    }
+
+    #[test]
+    fn test_strip_html_tags_collapses_newlines() {
+        assert_eq!(
+            strip_html_tags("<p>a</p>\n\n<p>b</p>"),
+            "a\nb"
+        );
+    }
+
+    #[test]
+    fn test_extract_plain_text_from_cf_html_full() {
+        let cf_html = "Version:0.9\r\nStartHTML:0000000105\r\nEndHTML:0000000192\r\nStartFragment:0000000137\r\nEndFragment:0000000161\r\n<html><body><!--StartFragment--><p>Hello</p><p>World</p><!--EndFragment--></body></html>";
+        let text = extract_plain_text_from_cf_html(cf_html);
+        assert_eq!(text, "Hello\nWorld");
     }
 }
