@@ -3442,7 +3442,11 @@ mod tests {
             PathBuf::from(path!("/root/.git/HEAD")),
             PathBuf::from(path!("/root/excluded_dir/ignored_subdir")),
         ];
-        let (opened_workspace, new_items) = cx
+        let workspace::OpenResult {
+            window: opened_workspace,
+            opened_items: new_items,
+            ..
+        } = cx
             .update(|cx| {
                 workspace::open_paths(
                     &paths_to_open,
@@ -5866,7 +5870,9 @@ mod tests {
         //
         //   Window A: workspace for dir1, workspace for dir2
         //   Window B: workspace for dir3
-        let (window_a, _) = cx
+        let workspace::OpenResult {
+            window: window_a, ..
+        } = cx
             .update(|cx| {
                 Workspace::new_local(
                     vec![dir1.into()],
@@ -5890,7 +5896,9 @@ mod tests {
             .expect("failed to open second workspace into window A");
         cx.run_until_parked();
 
-        let (window_b, _) = cx
+        let workspace::OpenResult {
+            window: window_b, ..
+        } = cx
             .update(|cx| {
                 Workspace::new_local(
                     vec![dir3.into()],
