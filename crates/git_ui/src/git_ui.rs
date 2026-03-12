@@ -47,9 +47,24 @@ pub mod stash_picker;
 pub mod text_diff_view;
 pub mod worktree_picker;
 
+const BRANCH_DIFF_TIP_MESSAGE: &str = "
+Want to review your changes but you've already made some commits? Use the Branch \
+Diff to see the changes compared to the default branch.
+";
+
 pub fn init(cx: &mut App) {
     editor::set_blame_renderer(blame_ui::GitBlameRenderer, cx);
     commit_view::init(cx);
+
+    workspace::welcome::register_tip(
+        workspace::welcome::Tip {
+            title: "Review Your Branch Diff".into(),
+            message: BRANCH_DIFF_TIP_MESSAGE.into(),
+            icon: Some(ui::IconName::GitBranch),
+            mentioned_actions: vec![Box::new(project_diff::BranchDiff)],
+        },
+        cx,
+    );
 
     cx.observe_new(|editor: &mut Editor, _, cx| {
         conflict_view::register_editor(editor, editor.buffer().clone(), cx);

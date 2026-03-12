@@ -2,19 +2,21 @@ use crate::{
     NewFile, Open, PathList, SerializedWorkspaceLocation, WORKSPACE_DB, Workspace, WorkspaceId,
     item::{Item, ItemEvent},
 };
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, Datelike, Utc};
 use git::Clone as GitClone;
 use gpui::WeakEntity;
 use gpui::{
-    Action, App, Context, Entity, EventEmitter, FocusHandle, Focusable, InteractiveElement,
-    ParentElement, Render, Styled, Task, Window, actions,
+    Action, App, Context, Entity, EventEmitter, FocusHandle, Focusable, FontWeight, Global,
+    InteractiveElement, ParentElement, Render, Styled, Task, Window, actions,
 };
 use menu::{SelectNext, SelectPrevious};
 use project::DisableAiSettings;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::Settings;
-use ui::{ButtonLike, Divider, DividerColor, KeyBinding, Vector, VectorName, prelude::*};
+use ui::{
+    ButtonLike, Divider, DividerColor, IconButtonShape, KeyBinding, Vector, VectorName, prelude::*,
+};
 use util::ResultExt;
 use zed_actions::{Extensions, OpenOnboarding, OpenSettings, agent, command_palette};
 
@@ -32,6 +34,70 @@ actions!(
         ShowWelcome
     ]
 );
+
+actions!(
+    welcome,
+    [
+        /// Show the next tip of the day
+        NextTip,
+        /// Show the previous tip of the day
+        PreviousTip,
+    ]
+);
+
+pub struct Tip {
+    pub title: SharedString,
+    pub message: SharedString,
+    pub icon: Option<IconName>,
+    pub mentioned_actions: Vec<Box<dyn Action>>,
+}
+
+#[derive(Default)]
+struct TipRegistry {
+    tips: Vec<Tip>,
+}
+
+impl Global for TipRegistry {}
+
+pub fn register_tip(tip: Tip, cx: &mut App) {
+    cx.default_global::<TipRegistry>().tips.push(tip);
+}
+
+fn humanize_action_name(name: &str) -> String {
+    let capacity = name.len() + name.chars().filter(|c| c.is_uppercase()).count();
+    let mut result = String::with_capacity(capacity);
+    for char in name.chars() {
+        if char == ':' {
+            if result.ends_with(':') {
+                result.push(' ');
+            } else {
+                result.push(':');
+            }
+        } else if char == '_' {
+            result.push(' ');
+        } else if char.is_uppercase() {
+            if !result.ends_with(' ') {
+                result.push(' ');
+            }
+            result.extend(char.to_lowercase());
+        } else {
+            result.push(char);
+        }
+    }
+    result
+}
+
+fn tip_index_for_today(cx: &App) -> usize {
+    let Some(registry) = cx.try_global::<TipRegistry>() else {
+        return 0;
+    };
+    let count = registry.tips.len();
+    if count == 0 {
+        return 0;
+    }
+    let today = Utc::now().date_naive();
+    today.num_days_from_ce() as usize % count
+}
 
 #[derive(IntoElement)]
 struct SectionHeader {
@@ -246,6 +312,7 @@ pub struct WelcomePage {
     workspace: WeakEntity<Workspace>,
     focus_handle: FocusHandle,
     fallback_to_recent_projects: bool,
+    tip_index: usize,
     recent_workspaces: Option<
         Vec<(
             WorkspaceId,
@@ -292,6 +359,7 @@ impl WelcomePage {
             workspace,
             focus_handle,
             fallback_to_recent_projects,
+            tip_index: tip_index_for_today(cx),
             recent_workspaces: None,
         }
     }
@@ -304,6 +372,26 @@ impl WelcomePage {
     fn select_previous(&mut self, _: &SelectPrevious, window: &mut Window, cx: &mut Context<Self>) {
         window.focus_prev(cx);
         cx.notify();
+    }
+
+    fn next_tip(&mut self, _: &NextTip, _window: &mut Window, cx: &mut Context<Self>) {
+        let count = cx
+            .try_global::<TipRegistry>()
+            .map_or(0, |r| r.tips.len());
+        if count > 0 {
+            self.tip_index = (self.tip_index + 1) % count;
+            cx.notify();
+        }
+    }
+
+    fn previous_tip(&mut self, _: &PreviousTip, _window: &mut Window, cx: &mut Context<Self>) {
+        let count = cx
+            .try_global::<TipRegistry>()
+            .map_or(0, |r| r.tips.len());
+        if count > 0 {
+            self.tip_index = (self.tip_index + count - 1) % count;
+            cx.notify();
+        }
     }
 
     fn open_recent_project(
@@ -377,6 +465,115 @@ impl WelcomePage {
             self.focus_handle.clone(),
         )
     }
+
+    fn render_tip_section(&self, cx: &App) -> Option<impl IntoElement> {
+        let registry = cx.try_global::<TipRegistry>()?;
+        let tip = registry.tips.get(self.tip_index)?;
+        let focus = &self.focus_handle;
+
+        Some(
+            v_flex()
+                .w_full()
+                .p_4()
+                .border_1()
+                .border_color(cx.theme().colors().border_variant)
+                .rounded_md()
+                .bg(cx.theme().colors().surface_background)
+                .gap_3()
+                .child(
+                    h_flex()
+                        .justify_between()
+                        .items_center()
+                        .child(
+                            Label::new("TIP OF THE DAY")
+                                .buffer_font(cx)
+                                .color(Color::Muted)
+                                .size(LabelSize::XSmall),
+                        )
+                        .child(
+                            h_flex()
+                                .gap_1()
+                                .items_center()
+                                .child(
+                                    IconButton::new("prev-tip", IconName::ChevronLeft)
+                                        .shape(IconButtonShape::Square)
+                                        .icon_size(IconSize::Small)
+                                        .on_click(|_, window, cx| {
+                                            window
+                                                .dispatch_action(PreviousTip.boxed_clone(), cx);
+                                        }),
+                                )
+                                .child(
+                                    IconButton::new("next-tip", IconName::ChevronRight)
+                                        .shape(IconButtonShape::Square)
+                                        .icon_size(IconSize::Small)
+                                        .on_click(|_, window, cx| {
+                                            window
+                                                .dispatch_action(NextTip.boxed_clone(), cx);
+                                        }),
+                                ),
+                        ),
+                )
+                .child(
+                    h_flex()
+                        .gap_2()
+                        .items_center()
+                        .when_some(tip.icon, |this, icon| {
+                            this.child(
+                                Icon::new(icon).size(IconSize::Medium).color(Color::Accent),
+                            )
+                        })
+                        .child(
+                            Label::new(tip.title.clone())
+                                .weight(FontWeight::BOLD)
+                                .size(LabelSize::Large),
+                        ),
+                )
+                .child(
+                    Label::new(tip.message.trim().to_string())
+                        .color(Color::Muted)
+                        .size(LabelSize::Small),
+                )
+                .when(!tip.mentioned_actions.is_empty(), |this| {
+                    this.child(
+                        h_flex()
+                            .gap_2()
+                            .items_center()
+                            .flex_wrap()
+                            .child(
+                                Label::new("Try it out:")
+                                    .color(Color::Muted)
+                                    .size(LabelSize::Small)
+                                    .weight(FontWeight::BOLD),
+                            )
+                            .children(tip.mentioned_actions.iter().map(|action| {
+                                let action_name = humanize_action_name(action.name());
+                                let action_clone = action.boxed_clone();
+                                let focus_handle = focus.clone();
+                                ButtonLike::new(SharedString::from(format!(
+                                    "tip-action-{action_name}"
+                                )))
+                                .size(ButtonSize::Compact)
+                                .child(
+                                    h_flex()
+                                        .gap_1p5()
+                                        .items_center()
+                                        .child(
+                                            Label::new(action_name).size(LabelSize::Small),
+                                        )
+                                        .child(KeyBinding::for_action_in(
+                                            action.as_ref(), focus, cx,
+                                        )),
+                                )
+                                .on_click(move |_, window, cx| {
+                                    focus_handle
+                                        .dispatch_action(&*action_clone, window, cx);
+                                })
+                            })),
+                    )
+                }),
+        )
+    }
 }
 
 impl Render for WelcomePage {
@@ -418,6 +615,8 @@ impl Render for WelcomePage {
             .on_action(cx.listener(Self::select_previous))
             .on_action(cx.listener(Self::select_next))
             .on_action(cx.listener(Self::open_recent_project))
+            .on_action(cx.listener(Self::next_tip))
+            .on_action(cx.listener(Self::previous_tip))
             .size_full()
             .justify_center()
             .overflow_hidden()
@@ -430,12 +629,15 @@ impl Render for WelcomePage {
                     .max_w(px(1100.))
                     .child(
                         v_flex()
+                            .id("welcome-content")
                             .flex_1()
-                            .justify_center()
+                            .h_full()
                             .max_w_128()
                             .mx_auto()
                             .gap_6()
                             .overflow_x_hidden()
+                            .overflow_y_scroll()
+                            .child(div().flex_grow())
                             .child(
                                 h_flex()
                                     .w_full()
@@ -454,6 +656,7 @@ impl Render for WelcomePage {
                             )
                             .child(first_section.render(Default::default(), &self.focus_handle, cx))
                             .child(second_section)
+                            .children(self.render_tip_section(cx))
                             .when(!self.fallback_to_recent_projects, |this| {
                                 this.child(
                                     v_flex().gap_1().child(Divider::horizontal()).child(
@@ -469,7 +672,8 @@ impl Render for WelcomePage {
                                             }),
                                     ),
                                 )
-                            }),
+                            })
+                            .child(div().flex_grow()),
                     ),
             )
     }

@@ -723,6 +723,23 @@ pub fn init(app_state: Arc<AppState>, cx: &mut App) {
     toast_layer::init(cx);
     history_manager::init(app_state.fs.clone(), cx);
 
+    welcome::register_tip(
+        welcome::Tip {
+            title: "Master the Command Palette".into(),
+            message: "The command palette is your gateway to everything in Zed. Instead of \
+                hunting through menus, you can quickly find and execute any command by typing a \
+                few letters of its name. It supports fuzzy matching, so you don't need to \
+                remember exact command names. Whether you want to change your theme, toggle a \
+                panel, run a task, or trigger a Git operation, the command palette has you \
+                covered. Try building muscle memory by using it for actions you'd normally reach \
+                for with a mouse."
+                .into(),
+            icon: Some(ui::IconName::Sparkle),
+            mentioned_actions: vec![Box::new(zed_actions::command_palette::Toggle)],
+        },
+        cx,
+    );
+
     cx.on_action(|_: &CloseWindow, cx| Workspace::close_global(cx))
         .on_action(|_: &Reload, cx| reload(cx))
         .on_action({

@@ -387,10 +387,20 @@ struct SettingsFieldMetadata {
     should_do_titlecase: Option<bool>,
 }
 
+// const SETTINGS_PROFILES_TIP_MESSAGE: &str = "
+
+// ";
+
 pub fn init(cx: &mut App) {
     init_renderers(cx);
     let queue = ProjectSettingsUpdateQueue::new(cx);
     cx.set_global(queue);
+
+    // workspace::welcome::register_tip(workspace::welcome::Tip {
+    //     icon: Some(IconName::Settings),
+    //     title: "Quickly switch settings profiles".into(),
+    //     message
+    // }, cx);
 
     cx.observe_new(|workspace: &mut workspace::Workspace, _, _| {
         workspace
