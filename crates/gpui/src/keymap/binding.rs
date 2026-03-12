@@ -2,7 +2,7 @@ use std::rc::Rc;
 
 use crate::{
     Action, AsKeystroke, DummyKeyboardMapper, InvalidKeystrokeError, KeyBindingContextPredicate,
-    KeybindingKeystroke, Keystroke, PlatformKeyboardMapper, SharedString, is_xf86_key,
+    KeybindingKeystroke, Keystroke, PlatformKeyboardMapper, SharedString,
 };
 use smallvec::SmallVec;
 
@@ -123,11 +123,6 @@ impl KeyBinding {
     /// Get the action input associated with the action for this binding
     pub fn action_input(&self) -> Option<SharedString> {
         self.action_input.clone()
-    }
-
-    /// Returns true if any keystroke in this binding uses an XF86 multimedia key.
-    pub fn has_xf86_keystroke(&self) -> bool {
-        self.keystrokes.iter().any(|k| is_xf86_key(k.key()))
     }
 }
 

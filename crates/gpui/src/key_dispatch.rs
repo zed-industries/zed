@@ -427,12 +427,7 @@ impl DispatchTree {
             .bindings_for_action(action)
             .rev()
             .find(|binding| {
-                !binding.has_xf86_keystroke()
-                    && Self::binding_matches_predicate_and_not_shadowed(
-                        &keymap,
-                        binding,
-                        context_stack,
-                    )
+                Self::binding_matches_predicate_and_not_shadowed(&keymap, binding, context_stack)
             })
             .cloned()
     }
@@ -697,49 +692,18 @@ mod tests {
     }
 
     #[test]
-    fn test_xf86_bindings_hidden_from_highest_precedence_but_still_dispatch() {
+    fn test_xf86_binding_order_determines_display_precedence() {
+        // XF86 keys like "save", "new", "copy" etc. map to single-word key names
+        // that look confusing in menus (e.g. "Save" instead of "Ctrl+S").
+        // The keymap file must list XF86 bindings BEFORE regular bindings so that
+        // highest_precedence_binding_for_action (which picks the last match)
+        // selects the regular binding for display.
+
+        // Correct order: XF86 binding first, regular binding second.
         let keymap = Keymap::new(vec![
-            KeyBinding::new("new", TestAction, None),
-            KeyBinding::new("cmd-n", TestAction, None),
+            KeyBinding::new("save", TestAction, Some("ContextEditor")),
+            KeyBinding::new("ctrl-s", TestAction, Some("ContextEditor")),
         ]);
-
-        let mut registry = ActionRegistry::default();
-        registry.load_action::<TestAction>();
-
-        let keymap = Rc::new(RefCell::new(keymap));
-        let mut tree = DispatchTree::new(keymap, Rc::new(registry));
-
-        let contexts = vec![KeyContext::parse("Workspace").unwrap()];
-
-        // The XF86 binding ("new") should be excluded from the highest precedence
-        // binding used for display in menus and keybinding hints.
-        let binding = tree.highest_precedence_binding_for_action(&TestAction, &contexts);
-        assert!(binding.is_some(), "should find a non-XF86 binding");
-        assert_eq!(
-            binding.as_ref().map(|b| b.keystrokes[0].key()),
-            Some("n"),
-            "should pick cmd-n, not the XF86 'new' binding"
-        );
-
-        // Both bindings should still appear in the full bindings list.
-        let all_bindings = tree.bindings_for_action(&TestAction, &contexts);
-        assert_eq!(all_bindings.len(), 2, "both bindings should be present");
-
-        // The XF86 key should still dispatch when pressed.
-        let node_id = tree.push_node();
-        tree.pop_node();
-        let dispatch_path = tree.dispatch_path(node_id);
-
-        let result = tree.dispatch_key(SmallVec::new(), Keystroke::parse("new").unwrap(), &dispatch_path);
-        assert_eq!(result.bindings.len(), 1, "XF86 'new' key should still dispatch");
-        assert!(result.bindings[0].action.partial_eq(&TestAction));
-    }
-
-    #[test]
-    fn test_xf86_only_binding_hidden_from_highest_precedence() {
-        // When the only binding for an action is an XF86 key,
-        // highest_precedence should return None.
-        let keymap = Keymap::new(vec![KeyBinding::new("save", TestAction, None)]);
 
         let mut registry = ActionRegistry::default();
         registry.load_action::<TestAction>();
@@ -747,14 +711,41 @@ mod tests {
         let keymap = Rc::new(RefCell::new(keymap));
         let tree = DispatchTree::new(keymap, Rc::new(registry));
 
-        let contexts = vec![KeyContext::parse("Workspace").unwrap()];
+        let contexts = vec![KeyContext::parse("ContextEditor").unwrap()];
 
         let binding = tree.highest_precedence_binding_for_action(&TestAction, &contexts);
-        assert!(binding.is_none(), "XF86-only binding should not appear for display");
+        assert!(binding.is_some(), "should find a binding");
+        assert_eq!(
+            binding.as_ref().map(|b| b.keystrokes[0].key()),
+            Some("s"),
+            "ctrl-s should be the highest precedence binding, not the XF86 'save' key"
+        );
+    }
 
-        // But it should still be in the full bindings list.
-        let all_bindings = tree.bindings_for_action(&TestAction, &contexts);
-        assert_eq!(all_bindings.len(), 1);
+    #[test]
+    fn test_xf86_binding_wrong_order_shows_xf86_key() {
+        // This test documents that if XF86 bindings are listed AFTER regular
+        // bindings, the XF86 key name will be shown in menus — which is the
+        // bug we're preventing via keymap ordering.
+        let keymap = Keymap::new(vec![
+            KeyBinding::new("ctrl-s", TestAction, Some("ContextEditor")),
+            KeyBinding::new("save", TestAction, Some("ContextEditor")),
+        ]);
+
+        let mut registry = ActionRegistry::default();
+        registry.load_action::<TestAction>();
+
+        let keymap = Rc::new(RefCell::new(keymap));
+        let tree = DispatchTree::new(keymap, Rc::new(registry));
+
+        let contexts = vec![KeyContext::parse("ContextEditor").unwrap()];
+
+        let binding = tree.highest_precedence_binding_for_action(&TestAction, &contexts);
+        assert_eq!(
+            binding.as_ref().map(|b| b.keystrokes[0].key()),
+            Some("save"),
+            "wrong order: XF86 'save' key takes precedence over ctrl-s"
+        );
     }
 
     #[test]
