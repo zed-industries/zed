@@ -1831,7 +1831,7 @@ impl AgentPanel {
             // running in the background.
             #[cfg(feature = "external_websocket_sync")]
             if let Some(ActiveView::AgentThread { server_view }) = &self.previous_view {
-                if let Some(active_thread) = server_view.read(cx).active_thread() {
+                if let Some(active_thread) = server_view.read(cx).active_thread().cloned() {
                     active_thread.update(cx, |thread_view, cx| {
                         thread_view.cancel_generation(cx);
                     });
@@ -1848,7 +1848,7 @@ impl AgentPanel {
                 // previous_view before dropping it.
                 #[cfg(feature = "external_websocket_sync")]
                 if let Some(ActiveView::AgentThread { server_view }) = &self.previous_view {
-                    if let Some(active_thread) = server_view.read(cx).active_thread() {
+                    if let Some(active_thread) = server_view.read(cx).active_thread().cloned() {
                         active_thread.update(cx, |thread_view, cx| {
                             thread_view.cancel_generation(cx);
                         });
