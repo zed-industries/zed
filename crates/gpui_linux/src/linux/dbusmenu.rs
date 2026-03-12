@@ -7,6 +7,7 @@ use std::sync::{
 };
 use std::time::Duration;
 
+use calloop::channel::Sender as CalloopSender;
 use gpui::{Action, KeyContext, Keymap, KeybindingKeystroke, OwnedMenu, OwnedMenuItem};
 use zbus::zvariant::{OwnedValue, Value};
 
@@ -31,6 +32,14 @@ pub enum DBusMenuCommand {
         removed_props: Vec<(i32, Vec<String>)>,
         object_paths: Vec<String>,
     },
+    Unexport {
+        object_path: String,
+    },
+}
+
+pub struct ValidateRequest {
+    pub action: Box<dyn Action>,
+    pub responded: std::sync::mpsc::Sender<bool>,
 }
 
 struct MenuItemEntry {
@@ -51,6 +60,7 @@ pub struct DBusMenuServer {
     action_callback: Arc<Mutex<Option<Box<ActionCallback>>>>,
     will_open_callback: Arc<Mutex<Option<Arc<WillOpenCallback>>>>,
     command_sender: Arc<Mutex<Option<async_channel::Sender<DBusMenuCommand>>>>,
+    validate_sender: Arc<Mutex<Option<CalloopSender<ValidateRequest>>>>,
     connected: Arc<AtomicBool>,
     object_paths: Arc<Mutex<HashSet<String>>>,
     exported_paths: Arc<Mutex<HashSet<String>>>,
@@ -80,6 +90,7 @@ impl DBusMenuServer {
             action_callback: Arc::new(Mutex::new(None)),
             will_open_callback: Arc::new(Mutex::new(None)),
             command_sender: Arc::new(Mutex::new(None)),
+            validate_sender: Arc::new(Mutex::new(None)),
             connected: Arc::new(AtomicBool::new(false)),
             object_paths: Arc::new(Mutex::new(object_paths)),
             exported_paths: Arc::new(Mutex::new(exported_paths)),
@@ -91,6 +102,15 @@ impl DBusMenuServer {
             Ok(mut slot) => *slot = Some(sender),
             Err(error) => {
                 log::error!("Failed to store DBusMenu command sender: {error}");
+            }
+        }
+    }
+
+    pub fn set_validate_sender(&self, sender: CalloopSender<ValidateRequest>) {
+        match self.validate_sender.lock() {
+            Ok(mut slot) => *slot = Some(sender),
+            Err(error) => {
+                log::error!("Failed to store DBusMenu validate sender: {error}");
             }
         }
     }
@@ -238,6 +258,34 @@ impl DBusMenuServer {
         exported
     }
 
+    pub fn unexport_object_path(&self, object_path: String) {
+        if object_path == DBUSMENU_OBJECT_PATH {
+            return;
+        }
+
+        if let Ok(mut object_paths) = self.object_paths.lock() {
+            object_paths.remove(&object_path);
+        }
+        if let Ok(mut exported_paths) = self.exported_paths.lock() {
+            exported_paths.remove(&object_path);
+        }
+
+        let sender = match self.command_sender.lock() {
+            Ok(sender) => sender.clone(),
+            Err(error) => {
+                log::error!("Failed to read DBusMenu command sender: {error}");
+                return;
+            }
+        };
+        let Some(sender) = sender else {
+            return;
+        };
+
+        if let Err(error) = sender.try_send(DBusMenuCommand::Unexport { object_path }) {
+            log::error!("Failed to queue DBusMenu unexport request: {error}");
+        }
+    }
+
     pub fn refresh_enabled_states(&self, validate: &mut dyn FnMut(&dyn Action) -> bool) {
         let mut updated_props: Vec<(i32, HashMap<String, OwnedValue>)> = Vec::new();
 
@@ -278,6 +326,32 @@ impl DBusMenuServer {
         }
 
         self.request_items_properties_updated(updated_props, Vec::new());
+    }
+
+    fn validate_enabled(&self, action: &dyn Action) -> Option<bool> {
+        let sender = match self.validate_sender.lock() {
+            Ok(sender) => sender,
+            Err(error) => {
+                log::error!("Failed to read DBusMenu validate sender: {error}");
+                return None;
+            }
+        };
+        let Some(sender) = sender.as_ref() else {
+            return None;
+        };
+
+        let (responded_tx, responded_rx) = std::sync::mpsc::channel();
+        let request = ValidateRequest {
+            action: action.boxed_clone(),
+            responded: responded_tx,
+        };
+
+        if let Err(error) = sender.send(request) {
+            log::error!("Failed to send DBusMenu validate request: {error}");
+            return None;
+        }
+
+        responded_rx.recv_timeout(Duration::from_millis(20)).ok()
     }
 
     fn get_layout_node(
@@ -466,19 +540,49 @@ impl DBusMenuServer {
         ids: Vec<i32>,
         _property_names: Vec<String>,
     ) -> zbus::fdo::Result<Vec<(i32, HashMap<String, OwnedValue>)>> {
-        let state = self
-            .state
-            .lock()
-            .map_err(|_| zbus::fdo::Error::Failed("Failed to access DBusMenu state".to_string()))?;
-        let result = ids
-            .into_iter()
-            .filter_map(|id| {
-                state
-                    .items
-                    .get(&id)
-                    .map(|entry| (id, entry.properties.clone()))
-            })
-            .collect();
+        let entries = {
+            let state = self.state.lock().map_err(|_| {
+                zbus::fdo::Error::Failed("Failed to access DBusMenu state".to_string())
+            })?;
+            ids.into_iter()
+                .filter_map(|id| {
+                    state.items.get(&id).map(|entry| {
+                        (
+                            id,
+                            entry.properties.clone(),
+                            entry.action.as_ref().map(|action| action.boxed_clone()),
+                        )
+                    })
+                })
+                .collect::<Vec<_>>()
+        };
+
+        let mut updated: Vec<(i32, bool, OwnedValue)> = Vec::new();
+        let mut result = Vec::with_capacity(entries.len());
+
+        for (id, mut properties, action) in entries {
+            if let Some(action) = action {
+                if let Some(enabled) = self.validate_enabled(action.as_ref()) {
+                    if let Some(value) = owned_bool(enabled) {
+                        properties.insert("enabled".to_string(), value.clone());
+                        updated.push((id, enabled, value));
+                    }
+                }
+            }
+            result.push((id, properties));
+        }
+
+        if !updated.is_empty() {
+            if let Ok(mut state) = self.state.lock() {
+                for (id, enabled, value) in updated {
+                    if let Some(entry) = state.items.get_mut(&id) {
+                        entry.enabled = Some(enabled);
+                        entry.properties.insert("enabled".to_string(), value);
+                    }
+                }
+            }
+        }
+
         Ok(result)
     }
 
@@ -509,10 +613,35 @@ impl DBusMenuServer {
     }
 
     async fn get_property(&self, id: i32, name: &str) -> zbus::fdo::Result<OwnedValue> {
-        let state = self
-            .state
-            .lock()
-            .map_err(|_| zbus::fdo::Error::Failed("Failed to access DBusMenu state".to_string()))?;
+        if name == "enabled" {
+            let action = {
+                let state = self.state.lock().map_err(|_| {
+                    zbus::fdo::Error::Failed("Failed to access DBusMenu state".to_string())
+                })?;
+                state
+                    .items
+                    .get(&id)
+                    .and_then(|entry| entry.action.as_ref().map(|action| action.boxed_clone()))
+            };
+
+            if let Some(action) = action {
+                if let Some(enabled) = self.validate_enabled(action.as_ref())
+                    && let Some(value) = owned_bool(enabled)
+                {
+                    if let Ok(mut state) = self.state.lock() {
+                        if let Some(entry) = state.items.get_mut(&id) {
+                            entry.enabled = Some(enabled);
+                            entry.properties.insert("enabled".to_string(), value.clone());
+                        }
+                    }
+                    return Ok(value);
+                }
+            }
+        }
+
+        let state = self.state.lock().map_err(|_| {
+            zbus::fdo::Error::Failed("Failed to access DBusMenu state".to_string())
+        })?;
         state
             .items
             .get(&id)

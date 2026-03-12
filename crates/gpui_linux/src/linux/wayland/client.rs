@@ -418,6 +418,14 @@ impl WaylandClientStatePtr {
     pub fn drop_window(&self, surface_id: &ObjectId) {
         let client = self.get_client();
         let mut state = client.borrow_mut();
+
+        #[cfg(feature = "global-menu")]
+        if let Some(dbus_menu_server) = state.common.dbus_menu_server.as_ref() {
+            let object_path =
+                crate::linux::dbusmenu::object_path_for_window(surface_id.protocol_id());
+            dbus_menu_server.unexport_object_path(object_path);
+        }
+
         let closed_window = state.windows.remove(surface_id).unwrap();
         if let Some(window) = state.mouse_focused_window.take()
             && !window.ptr_eq(&closed_window)
@@ -702,6 +710,8 @@ impl WaylandClient {
                 // Channel for sending menu actions from the DBus thread to the main thread.
                 let (action_tx, action_rx) = calloop::channel::channel::<Box<dyn Action>>();
                 let (will_open_tx, will_open_rx) = calloop::channel::channel::<()>();
+                let (validate_tx, validate_rx) =
+                    calloop::channel::channel::<crate::linux::dbusmenu::ValidateRequest>();
 
                 dbus_menu_server.set_action_callback({
                     let action_tx = action_tx.clone();
@@ -723,6 +733,7 @@ impl WaylandClient {
                         }
                     })
                 });
+                dbus_menu_server.set_validate_sender(validate_tx);
 
                 state
                     .borrow()
@@ -764,6 +775,38 @@ impl WaylandClient {
                                         state.common.callbacks.validate_app_menu_command.as_mut(),
                                     ) {
                                         dbus_menu_server.refresh_enabled_states(validate_callback);
+                                    }
+                                }
+                            }
+                        }
+                    })
+                    .log_err();
+
+                state
+                    .borrow()
+                    .loop_handle
+                    .insert_source(validate_rx, {
+                        let client = Rc::downgrade(&state);
+                        move |event, _, _| {
+                            if let calloop::channel::Event::Msg(request) = event {
+                                if let Some(client) = client.upgrade() {
+                                    let enabled = {
+                                        let mut state = client.borrow_mut();
+                                        match state
+                                            .common
+                                            .callbacks
+                                            .validate_app_menu_command
+                                            .as_mut()
+                                        {
+                                            Some(validate) => validate(request.action.as_ref()),
+                                            None => true,
+                                        }
+                                    };
+
+                                    if let Err(error) = request.responded.send(enabled) {
+                                        log::error!(
+                                            "Failed to send DBusMenu validate response: {error}"
+                                        );
                                     }
                                 }
                             }
@@ -888,6 +931,24 @@ impl WaylandClient {
                                             {
                                                 log::error!(
                                                     "Failed to emit DBusMenu ItemsPropertiesUpdated for {object_path}: {error}"
+                                                );
+                                            }
+                                        }
+                                    }
+                                    crate::linux::dbusmenu::DBusMenuCommand::Unexport {
+                                        object_path,
+                                    } => {
+                                        let result = connection
+                                            .object_server()
+                                            .remove::<crate::linux::dbusmenu::DBusMenuServer, _>(
+                                                object_path.as_str(),
+                                            )
+                                            .await;
+                                        match result {
+                                            Ok(_) => {}
+                                            Err(error) => {
+                                                log::error!(
+                                                    "Failed to unexport DBusMenu object at {object_path}: {error}"
                                                 );
                                             }
                                         }
