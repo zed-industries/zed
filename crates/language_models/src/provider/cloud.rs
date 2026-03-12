@@ -109,9 +109,10 @@ impl State {
         cx: &mut Context<Self>,
     ) -> Self {
         let refresh_llm_token_listener = RefreshLlmTokenListener::global(cx);
+        let llm_api_token = LlmApiToken::global(cx);
         Self {
             client: client.clone(),
-            llm_api_token: LlmApiToken::default(),
+            llm_api_token,
             user_store: user_store.clone(),
             status,
             models: Vec::new(),
@@ -158,9 +159,6 @@ impl State {
                         .current_organization()
                         .map(|o| o.id.clone());
                     cx.spawn(async move |this, cx| {
-                        llm_api_token
-                            .refresh(&client, organization_id.clone())
-                            .await?;
                         let response =
                             Self::fetch_models(client, llm_api_token, organization_id).await?;
                         this.update(cx, |this, cx| {
@@ -866,7 +864,10 @@ impl LanguageModel for CloudLanguageModel {
                 );
 
                 if enable_thinking && let Some(effort) = effort {
-                    request.reasoning = Some(open_ai::responses::ReasoningConfig { effort });
+                    request.reasoning = Some(open_ai::responses::ReasoningConfig {
+                        effort,
+                        summary: Some(open_ai::responses::ReasoningSummaryMode::Auto),
+                    });
                 }
 
                 let future = self.request_limiter.stream(async move {

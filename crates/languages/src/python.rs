@@ -159,6 +159,75 @@ fn process_pyright_completions(items: &mut [lsp::CompletionItem]) {
     }
 }
 
+fn label_for_pyright_completion(
+    item: &lsp::CompletionItem,
+    language: &Arc<language::Language>,
+) -> Option<language::CodeLabel> {
+    let label = &item.label;
+    let label_len = label.len();
+    let grammar = language.grammar()?;
+    let highlight_id = match item.kind? {
+        lsp::CompletionItemKind::METHOD => grammar.highlight_id_for_name("function.method"),
+        lsp::CompletionItemKind::FUNCTION => grammar.highlight_id_for_name("function"),
+        lsp::CompletionItemKind::CLASS => grammar.highlight_id_for_name("type"),
+        lsp::CompletionItemKind::CONSTANT => grammar.highlight_id_for_name("constant"),
+        lsp::CompletionItemKind::VARIABLE => grammar.highlight_id_for_name("variable"),
+        _ => {
+            return None;
+        }
+    };
+    let mut text = label.clone();
+    if let Some(completion_details) = item
+        .label_details
+        .as_ref()
+        .and_then(|details| details.description.as_ref())
+    {
+        write!(&mut text, " {}", completion_details).ok();
+    }
+    Some(language::CodeLabel::filtered(
+        text,
+        label_len,
+        item.filter_text.as_deref(),
+        highlight_id
+            .map(|id| (0..label_len, id))
+            .into_iter()
+            .collect(),
+    ))
+}
+
+fn label_for_python_symbol(
+    symbol: &Symbol,
+    language: &Arc<language::Language>,
+) -> Option<language::CodeLabel> {
+    let name = &symbol.name;
+    let (text, filter_range, display_range) = match symbol.kind {
+        lsp::SymbolKind::METHOD | lsp::SymbolKind::FUNCTION => {
+            let text = format!("def {}():\n", name);
+            let filter_range = 4..4 + name.len();
+            let display_range = 0..filter_range.end;
+            (text, filter_range, display_range)
+        }
+        lsp::SymbolKind::CLASS => {
+            let text = format!("class {}:", name);
+            let filter_range = 6..6 + name.len();
+            let display_range = 0..filter_range.end;
+            (text, filter_range, display_range)
+        }
+        lsp::SymbolKind::CONSTANT => {
+            let text = format!("{} = 0", name);
+            let filter_range = 0..name.len();
+            let display_range = 0..filter_range.end;
+            (text, filter_range, display_range)
+        }
+        _ => return None,
+    };
+    Some(language::CodeLabel::new(
+        text[display_range.clone()].to_string(),
+        filter_range,
+        language.highlight_text(&text.as_str().into(), display_range),
+    ))
+}
+
 pub struct TyLspAdapter {
     fs: Arc<dyn Fs>,
 }
@@ -253,6 +322,14 @@ impl LspAdapter for TyLspAdapter {
                 .into_iter()
                 .collect(),
         ))
+    }
+
+    async fn label_for_symbol(
+        &self,
+        symbol: &language::Symbol,
+        language: &Arc<language::Language>,
+    ) -> Option<language::CodeLabel> {
+        label_for_python_symbol(symbol, language)
     }
 
     async fn workspace_configuration(
@@ -531,36 +608,7 @@ impl LspAdapter for PyrightLspAdapter {
         item: &lsp::CompletionItem,
         language: &Arc<language::Language>,
     ) -> Option<language::CodeLabel> {
-        let label = &item.label;
-        let label_len = label.len();
-        let grammar = language.grammar()?;
-        let highlight_id = match item.kind? {
-            lsp::CompletionItemKind::METHOD => grammar.highlight_id_for_name("function.method"),
-            lsp::CompletionItemKind::FUNCTION => grammar.highlight_id_for_name("function"),
-            lsp::CompletionItemKind::CLASS => grammar.highlight_id_for_name("type"),
-            lsp::CompletionItemKind::CONSTANT => grammar.highlight_id_for_name("constant"),
-            lsp::CompletionItemKind::VARIABLE => grammar.highlight_id_for_name("variable"),
-            _ => {
-                return None;
-            }
-        };
-        let mut text = label.clone();
-        if let Some(completion_details) = item
-            .label_details
-            .as_ref()
-            .and_then(|details| details.description.as_ref())
-        {
-            write!(&mut text, " {}", completion_details).ok();
-        }
-        Some(language::CodeLabel::filtered(
-            text,
-            label_len,
-            item.filter_text.as_deref(),
-            highlight_id
-                .map(|id| (0..label_len, id))
-                .into_iter()
-                .collect(),
-        ))
+        label_for_pyright_completion(item, language)
     }
 
     async fn label_for_symbol(
@@ -568,34 +616,7 @@ impl LspAdapter for PyrightLspAdapter {
         symbol: &language::Symbol,
         language: &Arc<language::Language>,
     ) -> Option<language::CodeLabel> {
-        let name = &symbol.name;
-        let (text, filter_range, display_range) = match symbol.kind {
-            lsp::SymbolKind::METHOD | lsp::SymbolKind::FUNCTION => {
-                let text = format!("def {}():\n", name);
-                let filter_range = 4..4 + name.len();
-                let display_range = 0..filter_range.end;
-                (text, filter_range, display_range)
-            }
-            lsp::SymbolKind::CLASS => {
-                let text = format!("class {}:", name);
-                let filter_range = 6..6 + name.len();
-                let display_range = 0..filter_range.end;
-                (text, filter_range, display_range)
-            }
-            lsp::SymbolKind::CONSTANT => {
-                let text = format!("{} = 0", name);
-                let filter_range = 0..name.len();
-                let display_range = 0..filter_range.end;
-                (text, filter_range, display_range)
-            }
-            _ => return None,
-        };
-
-        Some(language::CodeLabel::new(
-            text[display_range.clone()].to_string(),
-            filter_range,
-            language.highlight_text(&text.as_str().into(), display_range),
-        ))
+        label_for_python_symbol(symbol, language)
     }
 
     async fn workspace_configuration(
@@ -1738,33 +1759,7 @@ impl LspAdapter for PyLspAdapter {
         symbol: &language::Symbol,
         language: &Arc<language::Language>,
     ) -> Option<language::CodeLabel> {
-        let name = &symbol.name;
-        let (text, filter_range, display_range) = match symbol.kind {
-            lsp::SymbolKind::METHOD | lsp::SymbolKind::FUNCTION => {
-                let text = format!("def {}():\n", name);
-                let filter_range = 4..4 + name.len();
-                let display_range = 0..filter_range.end;
-                (text, filter_range, display_range)
-            }
-            lsp::SymbolKind::CLASS => {
-                let text = format!("class {}:", name);
-                let filter_range = 6..6 + name.len();
-                let display_range = 0..filter_range.end;
-                (text, filter_range, display_range)
-            }
-            lsp::SymbolKind::CONSTANT => {
-                let text = format!("{} = 0", name);
-                let filter_range = 0..name.len();
-                let display_range = 0..filter_range.end;
-                (text, filter_range, display_range)
-            }
-            _ => return None,
-        };
-        Some(language::CodeLabel::new(
-            text[display_range.clone()].to_string(),
-            filter_range,
-            language.highlight_text(&text.as_str().into(), display_range),
-        ))
+        label_for_python_symbol(symbol, language)
     }
 
     async fn workspace_configuration(
@@ -1846,6 +1841,17 @@ impl LspInstaller for PyLspAdapter {
     ) -> Option<LanguageServerBinary> {
         if let Some(pylsp_bin) = delegate.which(Self::SERVER_NAME.as_ref()).await {
             let env = delegate.shell_env().await;
+            delegate
+                .try_exec(LanguageServerBinary {
+                    path: pylsp_bin.clone(),
+                    arguments: vec!["--version".into()],
+                    env: Some(env.clone()),
+                })
+                .await
+                .inspect_err(|err| {
+                    log::warn!("failed to validate user-installed pylsp at {pylsp_bin:?}: {err:#}")
+                })
+                .ok()?;
             Some(LanguageServerBinary {
                 path: pylsp_bin,
                 env: Some(env),
@@ -1854,7 +1860,21 @@ impl LspInstaller for PyLspAdapter {
         } else {
             let toolchain = toolchain?;
             let pylsp_path = Path::new(toolchain.path.as_ref()).parent()?.join("pylsp");
-            pylsp_path.exists().then(|| LanguageServerBinary {
+            if !pylsp_path.exists() {
+                return None;
+            }
+            delegate
+                .try_exec(LanguageServerBinary {
+                    path: toolchain.path.to_string().into(),
+                    arguments: vec![pylsp_path.clone().into(), "--version".into()],
+                    env: None,
+                })
+                .await
+                .inspect_err(|err| {
+                    log::warn!("failed to validate toolchain pylsp at {pylsp_path:?}: {err:#}")
+                })
+                .ok()?;
+            Some(LanguageServerBinary {
                 path: toolchain.path.to_string().into(),
                 arguments: vec![pylsp_path.into()],
                 env: None,
@@ -1994,36 +2014,7 @@ impl LspAdapter for BasedPyrightLspAdapter {
         item: &lsp::CompletionItem,
         language: &Arc<language::Language>,
     ) -> Option<language::CodeLabel> {
-        let label = &item.label;
-        let label_len = label.len();
-        let grammar = language.grammar()?;
-        let highlight_id = match item.kind? {
-            lsp::CompletionItemKind::METHOD => grammar.highlight_id_for_name("function.method"),
-            lsp::CompletionItemKind::FUNCTION => grammar.highlight_id_for_name("function"),
-            lsp::CompletionItemKind::CLASS => grammar.highlight_id_for_name("type"),
-            lsp::CompletionItemKind::CONSTANT => grammar.highlight_id_for_name("constant"),
-            lsp::CompletionItemKind::VARIABLE => grammar.highlight_id_for_name("variable"),
-            _ => {
-                return None;
-            }
-        };
-        let mut text = label.clone();
-        if let Some(completion_details) = item
-            .label_details
-            .as_ref()
-            .and_then(|details| details.description.as_ref())
-        {
-            write!(&mut text, " {}", completion_details).ok();
-        }
-        Some(language::CodeLabel::filtered(
-            text,
-            label_len,
-            item.filter_text.as_deref(),
-            highlight_id
-                .map(|id| (0..label.len(), id))
-                .into_iter()
-                .collect(),
-        ))
+        label_for_pyright_completion(item, language)
     }
 
     async fn label_for_symbol(
@@ -2031,33 +2022,7 @@ impl LspAdapter for BasedPyrightLspAdapter {
         symbol: &Symbol,
         language: &Arc<language::Language>,
     ) -> Option<language::CodeLabel> {
-        let name = &symbol.name;
-        let (text, filter_range, display_range) = match symbol.kind {
-            lsp::SymbolKind::METHOD | lsp::SymbolKind::FUNCTION => {
-                let text = format!("def {}():\n", name);
-                let filter_range = 4..4 + name.len();
-                let display_range = 0..filter_range.end;
-                (text, filter_range, display_range)
-            }
-            lsp::SymbolKind::CLASS => {
-                let text = format!("class {}:", name);
-                let filter_range = 6..6 + name.len();
-                let display_range = 0..filter_range.end;
-                (text, filter_range, display_range)
-            }
-            lsp::SymbolKind::CONSTANT => {
-                let text = format!("{} = 0", name);
-                let filter_range = 0..name.len();
-                let display_range = 0..filter_range.end;
-                (text, filter_range, display_range)
-            }
-            _ => return None,
-        };
-        Some(language::CodeLabel::new(
-            text[display_range.clone()].to_string(),
-            filter_range,
-            language.highlight_text(&text.as_str().into(), display_range),
-        ))
+        label_for_python_symbol(symbol, language)
     }
 
     async fn workspace_configuration(

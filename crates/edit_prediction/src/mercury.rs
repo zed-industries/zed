@@ -10,17 +10,14 @@ use gpui::{
     App, AppContext as _, Entity, Global, SharedString, Task,
     http_client::{self, AsyncBody, HttpClient, Method},
 };
-use language::{OffsetRangeExt as _, ToOffset, ToPoint as _};
+use language::{ToOffset, ToPoint as _};
 use language_model::{ApiKeyState, EnvVar, env_var};
 use release_channel::AppVersion;
 use serde::Serialize;
 use std::{mem, ops::Range, path::Path, sync::Arc, time::Instant};
-
-use zeta_prompt::{ExcerptRanges, ZetaPromptInput};
+use zeta_prompt::ZetaPromptInput;
 
 const MERCURY_API_URL: &str = "https://api.inceptionlabs.ai/v1/edit/completions";
-const MAX_REWRITE_TOKENS: usize = 150;
-const MAX_CONTEXT_TOKENS: usize = 350;
 
 pub struct Mercury {
     pub api_token: Entity<ApiKeyState>,
@@ -64,52 +61,47 @@ impl Mercury {
         let active_buffer = buffer.clone();
 
         let result = cx.background_spawn(async move {
-            let (editable_range, context_range) =
-                crate::cursor_excerpt::editable_and_context_ranges_for_cursor_position(
-                    cursor_point,
-                    &snapshot,
-                    MAX_CONTEXT_TOKENS,
-                    MAX_REWRITE_TOKENS,
-                );
+            let cursor_offset = cursor_point.to_offset(&snapshot);
+            let (excerpt_point_range, excerpt_offset_range, cursor_offset_in_excerpt) =
+                crate::cursor_excerpt::compute_cursor_excerpt(&snapshot, cursor_offset);
 
             let related_files = zeta_prompt::filter_redundant_excerpts(
                 related_files,
                 full_path.as_ref(),
-                context_range.start.row..context_range.end.row,
+                excerpt_point_range.start.row..excerpt_point_range.end.row,
             );
 
-            let context_offset_range = context_range.to_offset(&snapshot);
-            let context_start_row = context_range.start.row;
+            let cursor_excerpt: Arc<str> = snapshot
+                .text_for_range(excerpt_point_range.clone())
+                .collect::<String>()
+                .into();
+            let syntax_ranges = crate::cursor_excerpt::compute_syntax_ranges(
+                &snapshot,
+                cursor_offset,
+                &excerpt_offset_range,
+            );
+            let excerpt_ranges = zeta_prompt::compute_legacy_excerpt_ranges(
+                &cursor_excerpt,
+                cursor_offset_in_excerpt,
+                &syntax_ranges,
+            );
 
-            let editable_offset_range = editable_range.to_offset(&snapshot);
-
-            let editable_range_in_excerpt = (editable_offset_range.start
-                - context_offset_range.start)
-                ..(editable_offset_range.end - context_offset_range.start);
-            let context_range_in_excerpt =
-                0..(context_offset_range.end - context_offset_range.start);
+            let editable_offset_range = (excerpt_offset_range.start
+                + excerpt_ranges.editable_350.start)
+                ..(excerpt_offset_range.start + excerpt_ranges.editable_350.end);
 
             let inputs = zeta_prompt::ZetaPromptInput {
                 events,
-                related_files,
+                related_files: Some(related_files),
                 cursor_offset_in_excerpt: cursor_point.to_offset(&snapshot)
-                    - context_offset_range.start,
+                    - excerpt_offset_range.start,
                 cursor_path: full_path.clone(),
-                cursor_excerpt: snapshot
-                    .text_for_range(context_range)
-                    .collect::<String>()
-                    .into(),
+                cursor_excerpt,
                 experiment: None,
-                excerpt_start_row: Some(context_start_row),
-                excerpt_ranges: ExcerptRanges {
-                    editable_150: editable_range_in_excerpt.clone(),
-                    editable_180: editable_range_in_excerpt.clone(),
-                    editable_350: editable_range_in_excerpt.clone(),
-                    editable_150_context_350: context_range_in_excerpt.clone(),
-                    editable_180_context_350: context_range_in_excerpt.clone(),
-                    editable_350_context_150: context_range_in_excerpt.clone(),
-                    ..Default::default()
-                },
+                excerpt_start_row: Some(excerpt_point_range.start.row),
+                excerpt_ranges,
+                syntax_ranges: Some(syntax_ranges),
+                active_buffer_diagnostics: vec![],
                 in_open_source_repo: false,
                 can_collect_data: false,
                 repo_url: None,
@@ -260,7 +252,7 @@ fn build_prompt(inputs: &ZetaPromptInput) -> String {
         &mut prompt,
         RECENTLY_VIEWED_SNIPPETS_START..RECENTLY_VIEWED_SNIPPETS_END,
         |prompt| {
-            for related_file in inputs.related_files.iter() {
+            for related_file in inputs.related_files.as_deref().unwrap_or_default().iter() {
                 for related_excerpt in &related_file.excerpts {
                     push_delimited(
                         prompt,

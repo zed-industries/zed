@@ -1241,8 +1241,8 @@ impl PickerDelegate for RecentProjectsDelegate {
         let focus_handle = self.focus_handle.clone();
         let popover_style = matches!(self.style, ProjectPickerStyle::Popover);
         let open_folder_section = matches!(
-            self.filtered_entries.get(self.selected_index)?,
-            ProjectPickerEntry::OpenFolder { .. }
+            self.filtered_entries.get(self.selected_index),
+            Some(ProjectPickerEntry::OpenFolder { .. })
         );
 
         if popover_style {

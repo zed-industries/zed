@@ -2371,6 +2371,11 @@ impl ProjectPanel {
             }
             let answer = if !skip_prompt {
                 let operation = if trash { "Trash" } else { "Delete" };
+                let message_start = if trash {
+                    "Do you want to trash"
+                } else {
+                    "Are you sure you want to permanently delete"
+                };
                 let prompt = match file_paths.first() {
                     Some((_, path)) if file_paths.len() == 1 => {
                         let unsaved_warning = if dirty_buffers > 0 {
@@ -2379,7 +2384,7 @@ impl ProjectPanel {
                             ""
                         };
 
-                        format!("{operation} {path}?{unsaved_warning}")
+                        format!("{message_start} {path}?{unsaved_warning}")
                     }
                     _ => {
                         const CUTOFF_POINT: usize = 10;
@@ -2411,14 +2416,20 @@ impl ProjectPanel {
                         };
 
                         format!(
-                            "Do you want to {} the following {} files?\n{}{unsaved_warning}",
-                            operation.to_lowercase(),
+                            "{message_start} the following {} files?\n{}{unsaved_warning}",
                             file_paths.len(),
                             names.join("\n")
                         )
                     }
                 };
-                Some(window.prompt(PromptLevel::Info, &prompt, None, &[operation, "Cancel"], cx))
+                let detail = (!trash).then_some("This cannot be undone.");
+                Some(window.prompt(
+                    PromptLevel::Info,
+                    &prompt,
+                    detail,
+                    &[operation, "Cancel"],
+                    cx,
+                ))
             } else {
                 None
             };
@@ -3403,8 +3414,7 @@ impl ProjectPanel {
         _: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if let Some((worktree, entry)) = self.selected_sub_entry(cx) {
-            let path = worktree.read(cx).absolutize(&entry.path);
+        if let Some(path) = self.reveal_in_file_manager_path(cx) {
             self.project
                 .update(cx, |project, cx| project.reveal_path(&path, cx));
         }
@@ -3761,6 +3771,20 @@ impl ProjectPanel {
         }
         Some((worktree, entry))
     }
+
+    fn reveal_in_file_manager_path(&self, cx: &App) -> Option<PathBuf> {
+        if let Some((worktree, entry)) = self.selected_sub_entry(cx) {
+            return Some(worktree.read(cx).absolutize(&entry.path));
+        }
+
+        let root_entry_id = self.state.last_worktree_root_id?;
+        let project = self.project.read(cx);
+        let worktree = project.worktree_for_entry(root_entry_id, cx)?;
+        let worktree = worktree.read(cx);
+        let root_entry = worktree.entry_for_id(root_entry_id)?;
+        Some(worktree.absolutize(&root_entry.path))
+    }
+
     fn selected_entry_handle<'a>(
         &self,
         cx: &'a App,
@@ -4415,16 +4439,24 @@ impl ProjectPanel {
                 return;
             }
 
+            let workspace = self.workspace.clone();
             if folded_selection_info.is_empty() {
                 for (_, task) in move_tasks {
-                    task.detach_and_log_err(cx);
+                    let workspace = workspace.clone();
+                    cx.spawn_in(window, async move |_, mut cx| {
+                        task.await.notify_workspace_async_err(workspace, &mut cx);
+                    })
+                    .detach();
                 }
             } else {
-                cx.spawn_in(window, async move |project_panel, cx| {
+                cx.spawn_in(window, async move |project_panel, mut cx| {
                     // Await all move tasks and collect successful results
                     let mut move_results: Vec<(ProjectEntryId, Entry)> = Vec::new();
                     for (entry_id, task) in move_tasks {
-                        if let Some(CreatedEntry::Included(new_entry)) = task.await.log_err() {
+                        if let Some(CreatedEntry::Included(new_entry)) = task
+                            .await
+                            .notify_workspace_async_err(workspace.clone(), &mut cx)
+                        {
                             move_results.push((entry_id, new_entry));
                         }
                     }

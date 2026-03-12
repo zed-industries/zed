@@ -26,7 +26,6 @@ impl ExternalAgentServer for NoopExternalAgent {
     fn get_command(
         &mut self,
         _extra_env: HashMap<String, String>,
-        _status_tx: Option<watch::Sender<SharedString>>,
         _new_version_available_tx: Option<watch::Sender<Option<String>>>,
         _cx: &mut AsyncApp,
     ) -> Task<Result<AgentServerCommand>> {
