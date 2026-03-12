@@ -502,7 +502,6 @@ impl InputEvent for PinchEvent {
 impl GestureEvent for PinchEvent {}
 impl MouseEvent for PinchEvent {}
 
-
 impl Deref for PinchEvent {
     type Target = Modifiers;
 

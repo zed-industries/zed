@@ -1356,7 +1356,6 @@ pub(crate) type MouseMoveListener =
 pub(crate) type ScrollWheelListener =
     Box<dyn Fn(&ScrollWheelEvent, DispatchPhase, &Hitbox, &mut Window, &mut App) + 'static>;
 
-
 pub(crate) type PinchListener =
     Box<dyn Fn(&PinchEvent, DispatchPhase, &Hitbox, &mut Window, &mut App) + 'static>;
 
@@ -2285,7 +2284,6 @@ impl Interactivity {
                 listener(event, phase, &hitbox, window, cx);
             })
         }
-
 
         for listener in self.pinch_listeners.drain(..) {
             let hitbox = hitbox.clone();

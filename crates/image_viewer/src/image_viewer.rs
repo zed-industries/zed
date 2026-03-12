@@ -9,9 +9,9 @@ use file_icons::FileIcons;
 use gpui::{
     AnyElement, App, Bounds, Context, DispatchPhase, Element, ElementId, Entity, EventEmitter,
     FocusHandle, Focusable, GlobalElementId, InspectorElementId, InteractiveElement, IntoElement,
-    LayoutId, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement, Pixels,
-    PinchEvent, Point, Render, ScrollDelta, ScrollWheelEvent, Style, Styled, Task, WeakEntity, Window, actions,
-    checkerboard, div, img, point, px, size,
+    LayoutId, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement, PinchEvent,
+    Pixels, Point, Render, ScrollDelta, ScrollWheelEvent, Style, Styled, Task, WeakEntity, Window,
+    actions, checkerboard, div, img, point, px, size,
 };
 use language::File as _;
 use persistence::IMAGE_VIEWER;
