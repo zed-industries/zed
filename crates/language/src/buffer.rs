@@ -2620,6 +2620,21 @@ impl Buffer {
     }
 
     /// Replaces the buffer's entire text.
+
+    pub fn restore_history(&mut self, undo_history: &[u8], cx: &mut Context<Self>) -> anyhow::Result<()> {
+        let new_text = TextBuffer::deserialize_history(undo_history, self.replica_id(), self.remote_id())?;
+        self.text = new_text;
+        self.has_unsaved_edits.set((clock::Global::new(), false));
+        self.reparse(cx, false);
+        cx.emit(BufferEvent::Reloaded);
+        cx.notify();
+        Ok(())
+    }
+    
+    pub fn serialize_history(&self, max_operations: usize) -> anyhow::Result<Vec<u8>> {
+        self.text.serialize_history(max_operations)
+    }
+
     pub fn set_text<T>(&mut self, text: T, cx: &mut Context<Self>) -> Option<clock::Lamport>
     where
         T: Into<Arc<str>>,

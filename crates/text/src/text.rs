@@ -123,15 +123,17 @@ pub struct BufferSnapshot {
     line_ending: LineEnding,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct HistoryEntry {
     transaction: Transaction,
+    #[serde(skip, default = "std::time::Instant::now")]
     first_edit_at: Instant,
+    #[serde(skip, default = "std::time::Instant::now")]
     last_edit_at: Instant,
     suppress_grouping: bool,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct Transaction {
     pub id: TransactionId,
     pub edit_ids: Vec<clock::Lamport>,
@@ -614,13 +616,13 @@ struct InsertionFragmentKey {
     split_offset: u32,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum Operation {
     Edit(EditOperation),
     Undo(UndoOperation),
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct EditOperation {
     pub timestamp: clock::Lamport,
     pub version: clock::Global,
@@ -628,7 +630,7 @@ pub struct EditOperation {
     pub new_text: Vec<Arc<str>>,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct UndoOperation {
     pub timestamp: clock::Lamport,
     pub version: clock::Global,
@@ -743,7 +745,59 @@ impl FromIterator<char> for LineIndent {
     }
 }
 
+
+#[derive(serde::Serialize)]
+struct SerializedHistory<'a> {
+    base_text: String,
+    line_ending: LineEnding,
+    operations: Vec<&'a Operation>,
+    undo_stack: &'a [HistoryEntry],
+    redo_stack: &'a [HistoryEntry],
+}
+
+#[derive(serde::Deserialize)]
+struct DeserializedHistory {
+    base_text: String,
+    line_ending: LineEnding,
+    operations: Vec<Operation>,
+    undo_stack: Vec<HistoryEntry>,
+    redo_stack: Vec<HistoryEntry>,
+}
+
 impl Buffer {
+    pub fn serialize_history(&self, max_operations: usize) -> anyhow::Result<Vec<u8>> {
+        let history = &self.history;
+        if history.operations.iter().count() > max_operations {
+            anyhow::bail!("Too many operations to serialize");
+        }
+        let serialized = SerializedHistory {
+            base_text: history.base_text.to_string(),
+            line_ending: self.line_ending(),
+            operations: history.operations.values().map(|v| v).collect(),
+            undo_stack: &history.undo_stack,
+            redo_stack: &history.redo_stack,
+        };
+        let bytes = bincode::serialize(&serialized)?;
+        let compressed = zstd::stream::encode_all(&*bytes, 0)?;
+        Ok(compressed)
+    }
+
+    pub fn deserialize_history(bytes: &[u8], replica_id: ReplicaId, remote_id: BufferId) -> anyhow::Result<Self> {
+        let uncompressed = zstd::stream::decode_all(bytes)?;
+        let deserialized: DeserializedHistory = bincode::deserialize(&uncompressed)?;
+        
+        let mut buffer = Self::new_normalized(
+            replica_id,
+            remote_id,
+            deserialized.line_ending,
+            Rope::from(deserialized.base_text.as_str()),
+        );
+        buffer.apply_ops(deserialized.operations);
+        buffer.history.undo_stack = deserialized.undo_stack;
+        buffer.history.redo_stack = deserialized.redo_stack;
+        Ok(buffer)
+    }
+
     pub fn new(replica_id: ReplicaId, remote_id: BufferId, base_text: impl Into<String>) -> Buffer {
         let mut base_text = base_text.into();
         let line_ending = LineEnding::detect(&base_text);
@@ -3087,7 +3141,7 @@ impl sum_tree::ContextLessSummary for InsertionFragmentKey {
     }
 }
 
-#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize)]
 pub struct FullOffset(pub usize);
 
 impl ops::AddAssign<usize> for FullOffset {
@@ -3421,7 +3475,7 @@ impl FromAnchor for usize {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum LineEnding {
     Unix,
     Windows,

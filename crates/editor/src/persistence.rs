@@ -23,11 +23,12 @@ pub(crate) struct SerializedEditor {
     pub(crate) contents: Option<String>,
     pub(crate) language: Option<String>,
     pub(crate) mtime: Option<MTime>,
+    pub(crate) undo_history: Option<Vec<u8>>,
 }
 
 impl StaticColumnCount for SerializedEditor {
     fn column_count() -> usize {
-        6
+        7
     }
 }
 
@@ -57,6 +58,7 @@ impl Bind for SerializedEditor {
                 statement.bind::<Option<i32>>(&None, start_index)?
             }
         };
+        let start_index = statement.bind(&self.undo_history, start_index)?;
         Ok(start_index)
     }
 }
@@ -75,6 +77,8 @@ impl Column for SerializedEditor {
             Column::column(statement, start_index)?;
         let (mtime_nanos, start_index): (Option<i32>, i32) =
             Column::column(statement, start_index)?;
+        let (undo_history, start_index): (Option<Vec<u8>>, i32) =
+            Column::column(statement, start_index)?;
 
         let mtime = mtime_seconds
             .zip(mtime_nanos)
@@ -85,6 +89,7 @@ impl Column for SerializedEditor {
             contents,
             language,
             mtime,
+            undo_history,
         };
         Ok((editor, start_index))
     }
@@ -223,6 +228,9 @@ impl Domain for EditorDb {
                 PRIMARY KEY(workspace_id, path, start)
             );
         ),
+        sql! (
+            ALTER TABLE editors ADD COLUMN undo_history BLOB DEFAULT NULL;
+        ),
     ];
 }
 
@@ -236,7 +244,7 @@ const MAX_QUERY_PLACEHOLDERS: usize = 32000;
 impl EditorDb {
     query! {
         pub fn get_serialized_editor(item_id: ItemId, workspace_id: WorkspaceId) -> Result<Option<SerializedEditor>> {
-            SELECT path, buffer_path, contents, language, mtime_seconds, mtime_nanos FROM editors
+            SELECT path, buffer_path, contents, language, mtime_seconds, mtime_nanos, undo_history FROM editors
             WHERE item_id = ? AND workspace_id = ?
         }
     }
@@ -244,9 +252,9 @@ impl EditorDb {
     query! {
         pub async fn save_serialized_editor(item_id: ItemId, workspace_id: WorkspaceId, serialized_editor: SerializedEditor) -> Result<()> {
             INSERT INTO editors
-                (item_id, workspace_id, path, buffer_path, contents, language, mtime_seconds, mtime_nanos)
+                (item_id, workspace_id, path, buffer_path, contents, language, mtime_seconds, mtime_nanos, undo_history)
             VALUES
-                (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+                (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
             ON CONFLICT DO UPDATE SET
                 item_id = ?1,
                 workspace_id = ?2,
@@ -255,7 +263,8 @@ impl EditorDb {
                 contents = ?5,
                 language = ?6,
                 mtime_seconds = ?7,
-                mtime_nanos = ?8
+                mtime_nanos = ?8,
+                undo_history = ?9
         }
     }
 
@@ -423,6 +432,7 @@ mod tests {
             contents: None,
             language: None,
             mtime: None,
+            undo_history: None,
         };
 
         DB.save_serialized_editor(1234, workspace_id, serialized_editor.clone())
@@ -441,6 +451,7 @@ mod tests {
             contents: Some("Test".to_owned()),
             language: Some("Go".to_owned()),
             mtime: None,
+            undo_history: None,
         };
 
         DB.save_serialized_editor(1234, workspace_id, serialized_editor.clone())
@@ -459,6 +470,7 @@ mod tests {
             contents: None,
             language: None,
             mtime: None,
+            undo_history: None,
         };
 
         DB.save_serialized_editor(1234, workspace_id, serialized_editor.clone())
@@ -477,6 +489,7 @@ mod tests {
             contents: None,
             language: None,
             mtime: Some(MTime::from_seconds_and_nanos(100, 42)),
+            undo_history: None,
         };
 
         DB.save_serialized_editor(1234, workspace_id, serialized_editor.clone())

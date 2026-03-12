@@ -1164,6 +1164,7 @@ impl SerializableItem for Editor {
                         contents: None,
                         language: None,
                         mtime: None,
+                        undo_history: None,
                     }
                 }
             }
@@ -1185,6 +1186,7 @@ impl SerializableItem for Editor {
                 abs_path: None,
                 contents: Some(contents),
                 language,
+                undo_history,
                 ..
             } => window.spawn(cx, {
                 let project = project.clone();
@@ -1212,7 +1214,17 @@ impl SerializableItem for Editor {
                     // Then set the text so that the dirty bit is set correctly
                     buffer.update(cx, |buffer, cx| {
                         buffer.set_language_registry(language_registry);
-                        buffer.set_text(contents, cx);
+                        let mut restored = false;
+                        if let Some(history) = undo_history {
+                            if let Err(e) = buffer.restore_history(&history, cx) {
+                                log::error!("Failed to restore undo history: {:?}", e);
+                            } else {
+                                restored = true;
+                            }
+                        }
+                        if !restored {
+                            buffer.set_text(contents, cx);
+                        }
                         if let Some(entry) = buffer.peek_undo_stack() {
                             buffer.forget_transaction(entry.transaction_id());
                         }
@@ -1370,6 +1382,13 @@ impl SerializableItem for Editor {
         let is_dirty = buffer.read(cx).is_dirty();
         let mtime = buffer.read(cx).saved_mtime();
 
+        let max_ops = ProjectSettings::get_global(cx).session.restore_unsaved_buffers_max_operations;
+        let undo_history = if serialize_dirty_buffers && is_dirty {
+            buffer.read(cx).serialize_history(max_ops).ok()
+        } else {
+            None
+        };
+
         let snapshot = buffer.read(cx).snapshot();
 
         Some(cx.spawn_in(window, async move |_this, cx| {
@@ -1387,6 +1406,7 @@ impl SerializableItem for Editor {
                     contents,
                     language,
                     mtime,
+                    undo_history,
                 };
                 log::debug!("Serializing editor {item_id:?} in workspace {workspace_id:?}");
                 DB.save_serialized_editor(item_id, workspace_id, editor)
@@ -2132,6 +2152,7 @@ mod tests {
                 contents: Some("fn main() {}".to_string()),
                 language: Some("Rust".to_string()),
                 mtime: Some(mtime),
+                undo_history: None,
             };
 
             DB.save_serialized_editor(item_id, workspace_id, serialized_editor.clone())
@@ -2166,6 +2187,7 @@ mod tests {
                 contents: None,
                 language: None,
                 mtime: None,
+                undo_history: None,
             };
 
             DB.save_serialized_editor(item_id, workspace_id, serialized_editor)
@@ -2206,6 +2228,7 @@ mod tests {
                 contents: Some("hello".to_string()),
                 language: Some("Rust".to_string()),
                 mtime: None,
+                undo_history: None,
             };
 
             DB.save_serialized_editor(item_id, workspace_id, serialized_editor)
@@ -2245,6 +2268,7 @@ mod tests {
                 contents: Some("fn main() {}".to_string()),
                 language: Some("Rust".to_string()),
                 mtime: Some(old_mtime),
+                undo_history: None,
             };
 
             DB.save_serialized_editor(item_id, workspace_id, serialized_editor)
@@ -2276,6 +2300,7 @@ mod tests {
                 contents: None,
                 language: None,
                 mtime: None,
+                undo_history: None,
             };
 
             DB.save_serialized_editor(item_id, workspace_id, serialized_editor)
@@ -2326,6 +2351,7 @@ mod tests {
                 contents: Some("modified content".to_string()),
                 language: Some("Rust".to_string()),
                 mtime: Some(mtime),
+                undo_history: None,
             };
 
             DB.save_serialized_editor(item_id, workspace_id, serialized_editor)

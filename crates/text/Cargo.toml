@@ -17,6 +17,10 @@ test-support = ["rand", "util/test-support"]
 
 [dependencies]
 anyhow.workspace = true
+
+bincode.workspace = true
+serde.workspace = true
+zstd.workspace = true
 clock.workspace = true
 collections.workspace = true
 log.workspace = true
