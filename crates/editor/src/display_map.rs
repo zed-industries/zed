@@ -1047,17 +1047,9 @@ impl DisplayMap {
             return;
         }
 
-        let excerpt_ids = snapshot
-            .excerpts()
-            .filter(|(_, buf, _)| buf.remote_id() == buffer_id)
-            .map(|(id, _, _)| id)
-            .collect::<Vec<_>>();
-
         let base_placeholder = self.fold_placeholder.clone();
         let creases = ranges.into_iter().filter_map(|folding_range| {
-            let mb_range = excerpt_ids
-                .iter()
-                .find_map(|&id| snapshot.anchor_range_in_buffer(id, folding_range.range.clone()))?;
+            let mb_range = snapshot.anchor_range_in_buffer(folding_range.range.clone())?;
             let placeholder = if let Some(collapsed_text) = folding_range.collapsed_text {
                 FoldPlaceholder {
                     render: Arc::new({
