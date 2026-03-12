@@ -87,7 +87,7 @@ use ui::{
 use util::{ResultExt as _, debug_panic};
 use workspace::{
     CollaboratorId, DraggedSelection, DraggedSidebar, DraggedTab, FocusWorkspaceSidebar,
-    MultiWorkspace, SIDEBAR_RESIZE_HANDLE_SIZE, ToggleWorkspaceSidebar, ToggleZoom,
+    MultiWorkspace, OpenResult, SIDEBAR_RESIZE_HANDLE_SIZE, ToggleWorkspaceSidebar, ToggleZoom,
     ToolbarItemView, Workspace, WorkspaceId,
     dock::{DockPosition, Panel, PanelEvent},
     multi_workspace_enabled,
@@ -3025,20 +3025,15 @@ impl AgentPanel {
             workspace.set_dock_structure(dock_structure, window, cx);
         }));
 
-        let (new_window_handle, _) = cx
+        let OpenResult {
+            window: new_window_handle,
+            workspace: new_workspace,
+            ..
+        } = cx
             .update(|_window, cx| {
                 Workspace::new_local(all_paths, app_state, window_handle, None, init, false, cx)
             })?
             .await?;
-
-        let new_workspace = new_window_handle.update(cx, |multi_workspace, _window, _cx| {
-            let workspaces = multi_workspace.workspaces();
-            workspaces.last().cloned()
-        })?;
-
-        let Some(new_workspace) = new_workspace else {
-            anyhow::bail!("New workspace was not added to MultiWorkspace");
-        };
 
         let panels_task = new_window_handle.update(cx, |_, _, cx| {
             new_workspace.update(cx, |workspace, _cx| workspace.take_panels_task())
