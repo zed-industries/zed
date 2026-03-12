@@ -841,6 +841,7 @@ impl WorktreeStore {
                 false
             }
         });
+        self.update_initial_scan_state(cx);
         self.send_project_updates(cx);
     }
 
