@@ -157,7 +157,7 @@ impl State {
                         .user_store
                         .read(cx)
                         .current_organization()
-                        .map(|o| o.id.clone());
+                        .map(|organization| organization.id.clone());
                     cx.spawn(async move |this, cx| {
                         let response =
                             Self::fetch_models(client, llm_api_token, organization_id).await?;
@@ -705,7 +705,7 @@ impl LanguageModel for CloudLanguageModel {
                     .user_store
                     .read(cx)
                     .current_organization()
-                    .map(|o| o.id.clone());
+                    .map(|organization| organization.id.clone());
                 let model_id = self.model.id.to_string();
                 let generate_content_request =
                     into_google(request, model_id.clone(), GoogleModelMode::Default);
@@ -777,7 +777,7 @@ impl LanguageModel for CloudLanguageModel {
             user_store
                 .read(cx)
                 .current_organization()
-                .map(|o| o.id.clone())
+                .map(|organization| organization.id.clone())
         });
         let thinking_allowed = request.thinking_allowed;
         let enable_thinking = thinking_allowed && self.model.supports_thinking;
