@@ -591,40 +591,43 @@ impl NotebookEditor {
         }
     }
 
-    fn run_current_cell(
-        &mut self,
-        _: &Run,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-        advance: bool,
-    ) {
-        if let Some(cell_id) = self.cell_order.get(self.selected_cell_index).cloned() {
-            if let Some(cell) = self.cell_map.get(&cell_id) {
-                match cell {
-                    Cell::Code(_) => {
-                        self.execute_cell(cell_id, cx);
-                        if advance {
-                            self.move_to_next_cell(window, cx);
-                        }
-                    }
-                    Cell::Markdown(markdown_cell) => {
-                        // for markdown, finish editing and move to next cell
-                        let is_editing = markdown_cell.read(cx).is_editing();
-                        if is_editing {
-                            markdown_cell.update(cx, |cell, cx| {
-                                cell.run(cx);
-                            });
-                            // move to the next cell
-                            // Discussion can be done on this default implementation
-                            // the default behavior was already to advance from a markdown cell when run,
-                            // which seems reasonable as what else could you mean to accomplish by running
-                            // a markdown cell, but it could be set to obey the different commands like above.
-                            self.move_to_next_cell(window, cx);
-                        }
-                    }
-                    Cell::Raw(_) => {}
+    /// Returns true if the cell advanced as a side effect (e.g. finishing a markdown edit).
+    fn run_current_cell(&mut self, _: &Run, window: &mut Window, cx: &mut Context<Self>) -> bool {
+        let Some(cell_id) = self.cell_order.get(self.selected_cell_index).cloned() else {
+            return false;
+        };
+        let Some(cell) = self.cell_map.get(&cell_id) else {
+            return false;
+        };
+        match cell {
+            Cell::Code(_) => {
+                self.execute_cell(cell_id, cx);
+                false
+            }
+            Cell::Markdown(markdown_cell) => {
+                if markdown_cell.read(cx).is_editing() {
+                    markdown_cell.update(cx, |cell, cx| {
+                        cell.run(cx);
+                    });
+                    self.move_to_next_cell(window, cx);
+                    true
+                } else {
+                    false
                 }
             }
+            Cell::Raw(_) => false,
+        }
+    }
+
+    fn run_current_cell_and_advance(
+        &mut self,
+        _: &RunAndAdvance,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let already_advanced = self.run_current_cell(&Run, window, cx);
+        if !already_advanced {
+            self.move_to_next_cell(window, cx);
         }
     }
 
@@ -1240,10 +1243,10 @@ impl Render for NotebookEditor {
                 cx.listener(|this, _: &ClearOutputs, window, cx| this.clear_outputs(window, cx)),
             )
             .on_action(cx.listener(|this, _: &Run, window, cx| {
-                this.run_current_cell(&Run, window, cx, false)
+                this.run_current_cell(&Run, window, cx);
             }))
-            .on_action(cx.listener(|this, action: &RunAndAdvance, window, cx| {
-                this.run_current_cell(&Run, window, cx, true)
+            .on_action(cx.listener(|this, _: &RunAndAdvance, window, cx| {
+                this.run_current_cell_and_advance(&RunAndAdvance, window, cx)
             }))
             .on_action(cx.listener(|this, _: &RunAll, window, cx| this.run_cells(window, cx)))
             .on_action(
