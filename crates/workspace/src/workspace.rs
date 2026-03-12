@@ -6047,7 +6047,7 @@ impl Workspace {
         }
     }
 
-    pub fn remove_from_session(&mut self, window: &mut Window, cx: &mut App) -> Task<()> {
+    fn remove_from_session(&mut self, window: &mut Window, cx: &mut App) -> Task<()> {
         self.session_id.take();
         self.serialize_workspace_internal(window, cx)
     }
