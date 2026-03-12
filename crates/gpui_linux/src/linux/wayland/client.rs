@@ -468,7 +468,8 @@ impl WaylandClient {
     pub(crate) fn new() -> Self {
         let conn = Connection::connect_to_env().unwrap();
 
-        let (globals, event_queue) = registry_queue_init::<WaylandClientStatePtr>(&conn).unwrap();
+        let (globals, mut event_queue) =
+            registry_queue_init::<WaylandClientStatePtr>(&conn).unwrap();
         let qh = event_queue.handle();
 
         let mut seat: Option<wl_seat::WlSeat> = None;
@@ -656,6 +657,14 @@ impl WaylandClient {
             pending_activation: None,
             event_loop: Some(event_loop),
         }));
+
+        // The initial registry roundtrip discovers and binds wl_output globals, but their
+        // property events (Name, Geometry, Mode, Scale, Done) are queued server-side. This
+        // extra roundtrip ensures all output events are delivered before we return, so
+        // displays() returns the full list immediately after init.
+        event_queue
+            .roundtrip(&mut WaylandClientStatePtr(Rc::downgrade(&state)))
+            .unwrap();
 
         WaylandSource::new(conn, event_queue)
             .insert(handle)
