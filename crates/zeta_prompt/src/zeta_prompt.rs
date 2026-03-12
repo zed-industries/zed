@@ -1,3 +1,6 @@
+pub mod excerpt_ranges;
+pub mod multi_region;
+
 use anyhow::{Result, anyhow};
 use serde::{Deserialize, Serialize};
 use std::fmt::Write;
@@ -5,6 +8,10 @@ use std::ops::Range;
 use std::path::Path;
 use std::sync::Arc;
 use strum::{EnumIter, IntoEnumIterator as _, IntoStaticStr};
+
+pub use crate::excerpt_ranges::{
+    ExcerptRanges, compute_editable_and_context_ranges, compute_legacy_excerpt_ranges,
+};
 
 pub const CURSOR_MARKER: &str = "<|user_cursor|>";
 pub const MAX_PROMPT_TOKENS: usize = 4096;
@@ -18,31 +25,6 @@ fn estimate_tokens(bytes: usize) -> usize {
     bytes / 3
 }
 
-/// Pre-computed byte offset ranges within `cursor_excerpt` for different
-/// editable and context token budgets. Allows the server to select the
-/// appropriate ranges for whichever model it uses.
-#[derive(Clone, Debug, Default, PartialEq, Hash, Serialize, Deserialize)]
-pub struct ExcerptRanges {
-    /// Editable region computed with a 150-token budget.
-    pub editable_150: Range<usize>,
-    /// Editable region computed with a 180-token budget.
-    pub editable_180: Range<usize>,
-    /// Editable region computed with a 350-token budget.
-    pub editable_350: Range<usize>,
-    /// Editable region computed with a 350-token budget.
-    pub editable_512: Option<Range<usize>>,
-    /// Context boundary when using editable_150 with 350 tokens of additional context.
-    pub editable_150_context_350: Range<usize>,
-    /// Context boundary when using editable_180 with 350 tokens of additional context.
-    pub editable_180_context_350: Range<usize>,
-    /// Context boundary when using editable_350 with 150 tokens of additional context.
-    pub editable_350_context_150: Range<usize>,
-    pub editable_350_context_512: Option<Range<usize>>,
-    pub editable_350_context_1024: Option<Range<usize>>,
-    pub context_4096: Option<Range<usize>>,
-    pub context_8192: Option<Range<usize>>,
-}
-
 #[derive(Clone, Debug, PartialEq, Hash, Serialize, Deserialize)]
 pub struct ZetaPromptInput {
     pub cursor_path: Arc<Path>,
@@ -53,8 +35,16 @@ pub struct ZetaPromptInput {
     pub events: Vec<Arc<Event>>,
     #[serde(default)]
     pub related_files: Option<Vec<RelatedFile>>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub active_buffer_diagnostics: Vec<ActiveBufferDiagnostic>,
     /// These ranges let the server select model-appropriate subsets.
     pub excerpt_ranges: ExcerptRanges,
+    /// Byte offset ranges within `cursor_excerpt` for all syntax nodes that
+    /// contain `cursor_offset_in_excerpt`, ordered from innermost to outermost.
+    /// When present, the server uses these to compute editable/context ranges
+    /// instead of `excerpt_ranges`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub syntax_ranges: Option<Vec<Range<usize>>>,
     /// The name of the edit prediction model experiment to use.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub experiment: Option<String>,
@@ -92,6 +82,7 @@ pub enum ZetaFormat {
     v0226Hashline,
     V0304VariableEdit,
     V0304SeedNoEdits,
+    V0306SeedMultiRegions,
 }
 
 impl std::fmt::Display for ZetaFormat {
@@ -182,6 +173,15 @@ pub fn write_event(prompt: &mut String, event: &Event) {
 }
 
 #[derive(Clone, Debug, PartialEq, Hash, Serialize, Deserialize)]
+pub struct ActiveBufferDiagnostic {
+    pub severity: Option<i32>,
+    pub message: String,
+    pub snippet: String,
+    pub snippet_buffer_row_range: Range<u32>,
+    pub diagnostic_range_in_snippet: Range<usize>,
+}
+
+#[derive(Clone, Debug, PartialEq, Hash, Serialize, Deserialize)]
 pub struct RelatedFile {
     pub path: Arc<Path>,
     pub max_row: u32,
@@ -220,6 +220,36 @@ pub fn special_tokens_for_format(format: ZetaFormat) -> &'static [&'static str] 
         ZetaFormat::v0226Hashline => hashline::special_tokens(),
         ZetaFormat::V0304VariableEdit => v0304_variable_edit::special_tokens(),
         ZetaFormat::V0304SeedNoEdits => seed_coder::special_tokens(),
+        ZetaFormat::V0306SeedMultiRegions => {
+            static TOKENS: &[&str] = &[
+                seed_coder::FIM_SUFFIX,
+                seed_coder::FIM_PREFIX,
+                seed_coder::FIM_MIDDLE,
+                seed_coder::FILE_MARKER,
+                seed_coder::START_MARKER,
+                seed_coder::SEPARATOR,
+                seed_coder::END_MARKER,
+                CURSOR_MARKER,
+                multi_region::MARKER_TAG_PREFIX,
+            ];
+            TOKENS
+        }
+    }
+}
+
+/// Returns the (editable_token_limit, context_token_limit) for a given format.
+pub fn token_limits_for_format(format: ZetaFormat) -> (usize, usize) {
+    match format {
+        ZetaFormat::V0112MiddleAtEnd | ZetaFormat::V0113Ordered => (150, 350),
+        ZetaFormat::V0114180EditableRegion => (180, 350),
+        ZetaFormat::V0120GitMergeMarkers
+        | ZetaFormat::V0131GitMergeMarkersPrefix
+        | ZetaFormat::V0211Prefill
+        | ZetaFormat::V0211SeedCoder
+        | ZetaFormat::v0226Hashline
+        | ZetaFormat::V0306SeedMultiRegions
+        | ZetaFormat::V0304SeedNoEdits => (350, 150),
+        ZetaFormat::V0304VariableEdit => (1024, 0),
     }
 }
 
@@ -234,6 +264,7 @@ pub fn stop_tokens_for_format(format: ZetaFormat) -> &'static [&'static str] {
         | ZetaFormat::V0211Prefill
         | ZetaFormat::V0211SeedCoder
         | ZetaFormat::V0304VariableEdit
+        | ZetaFormat::V0306SeedMultiRegions
         | ZetaFormat::V0304SeedNoEdits => &[],
     }
 }
@@ -256,14 +287,16 @@ pub fn excerpt_ranges_for_format(
         | ZetaFormat::V0211Prefill
         | ZetaFormat::V0211SeedCoder
         | ZetaFormat::v0226Hashline
-        | ZetaFormat::V0304SeedNoEdits => (
+        | ZetaFormat::V0304SeedNoEdits
+        | ZetaFormat::V0306SeedMultiRegions => (
             ranges.editable_350.clone(),
             ranges.editable_350_context_150.clone(),
         ),
         ZetaFormat::V0304VariableEdit => {
             let context = ranges
-                .context_8192
+                .editable_350_context_1024
                 .clone()
+                .or(ranges.editable_350_context_512.clone())
                 .unwrap_or_else(|| ranges.editable_350_context_150.clone());
             (context.clone(), context)
         }
@@ -330,7 +363,44 @@ pub fn write_cursor_excerpt_section_for_format(
         ZetaFormat::V0304VariableEdit => {
             v0304_variable_edit::write_cursor_excerpt_section(prompt, path, context, cursor_offset)
         }
+        ZetaFormat::V0306SeedMultiRegions => {
+            prompt.push_str(&build_v0306_cursor_prefix(
+                path,
+                context,
+                editable_range,
+                cursor_offset,
+            ));
+        }
     }
+}
+
+fn build_v0306_cursor_prefix(
+    path: &Path,
+    context: &str,
+    editable_range: &Range<usize>,
+    cursor_offset: usize,
+) -> String {
+    let mut section = String::new();
+    let path_str = path.to_string_lossy();
+    write!(section, "{}{}\n", seed_coder::FILE_MARKER, path_str).ok();
+
+    section.push_str(&context[..editable_range.start]);
+    section.push_str(seed_coder::START_MARKER);
+
+    let editable_text = &context[editable_range.clone()];
+    let cursor_in_editable = cursor_offset - editable_range.start;
+    multi_region::write_editable_with_markers(
+        &mut section,
+        editable_text,
+        cursor_in_editable,
+        CURSOR_MARKER,
+    );
+
+    if !section.ends_with('\n') {
+        section.push('\n');
+    }
+    section.push_str(seed_coder::SEPARATOR);
+    section
 }
 
 fn offset_range_to_row_range(text: &str, range: Range<usize>) -> Range<u32> {
@@ -373,6 +443,18 @@ pub fn format_prompt_with_budget_for_format(
                 context,
                 &editable_range,
                 cursor_offset,
+                &input.events,
+                related_files,
+                max_tokens,
+            )
+        }
+        ZetaFormat::V0306SeedMultiRegions => {
+            let cursor_prefix =
+                build_v0306_cursor_prefix(path, context, &editable_range, cursor_offset);
+            seed_coder::assemble_fim_prompt(
+                context,
+                &editable_range,
+                &cursor_prefix,
                 &input.events,
                 related_files,
                 max_tokens,
@@ -449,7 +531,7 @@ pub fn get_prefill_for_format(
         | ZetaFormat::V0211SeedCoder
         | ZetaFormat::v0226Hashline
         | ZetaFormat::V0304VariableEdit => String::new(),
-        ZetaFormat::V0304SeedNoEdits => String::new(),
+        ZetaFormat::V0304SeedNoEdits | ZetaFormat::V0306SeedMultiRegions => String::new(),
     }
 }
 
@@ -458,7 +540,9 @@ pub fn output_end_marker_for_format(format: ZetaFormat) -> Option<&'static str> 
         ZetaFormat::V0120GitMergeMarkers => Some(v0120_git_merge_markers::END_MARKER),
         ZetaFormat::V0131GitMergeMarkersPrefix => Some(v0131_git_merge_markers_prefix::END_MARKER),
         ZetaFormat::V0211Prefill => Some(v0131_git_merge_markers_prefix::END_MARKER),
-        ZetaFormat::V0211SeedCoder | ZetaFormat::V0304SeedNoEdits => Some(seed_coder::END_MARKER),
+        ZetaFormat::V0211SeedCoder
+        | ZetaFormat::V0304SeedNoEdits
+        | ZetaFormat::V0306SeedMultiRegions => Some(seed_coder::END_MARKER),
         ZetaFormat::V0112MiddleAtEnd
         | ZetaFormat::V0113Ordered
         | ZetaFormat::V0114180EditableRegion
@@ -483,7 +567,9 @@ pub fn encode_patch_as_output_for_format(
             cursor_offset,
         )
         .map(Some),
-        ZetaFormat::V0304SeedNoEdits => Ok(seed_coder::no_edits(patch)),
+        ZetaFormat::V0304SeedNoEdits | ZetaFormat::V0306SeedMultiRegions => {
+            Ok(seed_coder::no_edits(patch))
+        }
         _ => Ok(None),
     }
 }
@@ -529,6 +615,14 @@ pub fn parse_zeta2_model_output(
                 output.to_string()
             },
         ),
+        ZetaFormat::V0306SeedMultiRegions => (
+            editable_range_in_context,
+            if output.starts_with(seed_coder::NO_EDITS) {
+                old_editable_region.to_string()
+            } else {
+                multi_region::apply_marker_span(old_editable_region, output)?
+            },
+        ),
         _ => (editable_range_in_context, output.to_string()),
     };
 
@@ -552,7 +646,18 @@ pub fn resolve_cursor_region(
     input: &ZetaPromptInput,
     format: ZetaFormat,
 ) -> (&str, Range<usize>, Range<usize>, usize) {
-    let (editable_range, context_range) = excerpt_range_for_format(format, &input.excerpt_ranges);
+    let (editable_range, context_range) = if let Some(syntax_ranges) = &input.syntax_ranges {
+        let (editable_tokens, context_tokens) = token_limits_for_format(format);
+        compute_editable_and_context_ranges(
+            &input.cursor_excerpt,
+            input.cursor_offset_in_excerpt,
+            syntax_ranges,
+            editable_tokens,
+            context_tokens,
+        )
+    } else {
+        excerpt_range_for_format(format, &input.excerpt_ranges)
+    };
     let context_start = context_range.start;
     let context_text = &input.cursor_excerpt[context_range.clone()];
     let adjusted_editable =
@@ -2562,9 +2667,27 @@ pub mod seed_coder {
         related_files: &[RelatedFile],
         max_tokens: usize,
     ) -> String {
-        let suffix_section = build_suffix_section(context, editable_range);
         let cursor_prefix_section =
             build_cursor_prefix_section(path, context, editable_range, cursor_offset);
+        assemble_fim_prompt(
+            context,
+            editable_range,
+            &cursor_prefix_section,
+            events,
+            related_files,
+            max_tokens,
+        )
+    }
+
+    pub fn assemble_fim_prompt(
+        context: &str,
+        editable_range: &Range<usize>,
+        cursor_prefix_section: &str,
+        events: &[Arc<Event>],
+        related_files: &[RelatedFile],
+        max_tokens: usize,
+    ) -> String {
+        let suffix_section = build_suffix_section(context, editable_range);
 
         let suffix_tokens = estimate_tokens(suffix_section.len());
         let cursor_prefix_tokens = estimate_tokens(cursor_prefix_section.len());
@@ -2597,7 +2720,7 @@ pub mod seed_coder {
         if !edit_history_section.is_empty() {
             prompt.push('\n');
         }
-        prompt.push_str(&cursor_prefix_section);
+        prompt.push_str(cursor_prefix_section);
         prompt.push_str(FIM_MIDDLE);
         prompt
     }
@@ -3867,6 +3990,7 @@ mod tests {
             excerpt_start_row: None,
             events: events.into_iter().map(Arc::new).collect(),
             related_files: Some(related_files),
+            active_buffer_diagnostics: vec![],
             excerpt_ranges: ExcerptRanges {
                 editable_150: editable_range.clone(),
                 editable_180: editable_range.clone(),
@@ -3876,6 +4000,7 @@ mod tests {
                 editable_350_context_150: context_range,
                 ..Default::default()
             },
+            syntax_ranges: None,
             experiment: None,
             in_open_source_repo: false,
             can_collect_data: false,
@@ -3896,6 +4021,7 @@ mod tests {
             excerpt_start_row: None,
             events: vec![],
             related_files: Some(vec![]),
+            active_buffer_diagnostics: vec![],
             excerpt_ranges: ExcerptRanges {
                 editable_150: editable_range.clone(),
                 editable_180: editable_range.clone(),
@@ -3905,6 +4031,7 @@ mod tests {
                 editable_350_context_150: context_range,
                 ..Default::default()
             },
+            syntax_ranges: None,
             experiment: None,
             in_open_source_repo: false,
             can_collect_data: false,
@@ -4479,6 +4606,7 @@ mod tests {
             excerpt_start_row: Some(0),
             events: vec![Arc::new(make_event("other.rs", "-old\n+new\n"))],
             related_files: Some(vec![]),
+            active_buffer_diagnostics: vec![],
             excerpt_ranges: ExcerptRanges {
                 editable_150: 15..41,
                 editable_180: 15..41,
@@ -4488,6 +4616,7 @@ mod tests {
                 editable_350_context_150: 0..excerpt.len(),
                 ..Default::default()
             },
+            syntax_ranges: None,
             experiment: None,
             in_open_source_repo: false,
             can_collect_data: false,
@@ -4542,6 +4671,7 @@ mod tests {
             excerpt_start_row: Some(10),
             events: vec![],
             related_files: Some(vec![]),
+            active_buffer_diagnostics: vec![],
             excerpt_ranges: ExcerptRanges {
                 editable_150: 0..28,
                 editable_180: 0..28,
@@ -4551,6 +4681,7 @@ mod tests {
                 editable_350_context_150: 0..28,
                 ..Default::default()
             },
+            syntax_ranges: None,
             experiment: None,
             in_open_source_repo: false,
             can_collect_data: false,
@@ -4600,6 +4731,7 @@ mod tests {
             excerpt_start_row: Some(0),
             events: vec![],
             related_files: Some(vec![]),
+            active_buffer_diagnostics: vec![],
             excerpt_ranges: ExcerptRanges {
                 editable_150: editable_range.clone(),
                 editable_180: editable_range.clone(),
@@ -4609,6 +4741,7 @@ mod tests {
                 editable_350_context_150: context_range.clone(),
                 ..Default::default()
             },
+            syntax_ranges: None,
             experiment: None,
             in_open_source_repo: false,
             can_collect_data: false,

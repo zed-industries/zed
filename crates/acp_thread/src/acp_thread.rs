@@ -4027,7 +4027,7 @@ mod tests {
         }
 
         fn authenticate(&self, method: acp::AuthMethodId, _cx: &mut App) -> Task<gpui::Result<()>> {
-            if self.auth_methods().iter().any(|m| m.id == method) {
+            if self.auth_methods().iter().any(|m| m.id() == &method) {
                 Task::ready(Ok(()))
             } else {
                 Task::ready(Err(anyhow!("Invalid Auth Method")))

@@ -156,43 +156,6 @@ impl ThreadFeedbackState {
     }
 }
 
-#[derive(Default, Clone, Copy)]
-struct DiffStats {
-    lines_added: u32,
-    lines_removed: u32,
-}
-
-impl DiffStats {
-    fn single_file(buffer: &Buffer, diff: &BufferDiff, cx: &App) -> Self {
-        let mut stats = DiffStats::default();
-        let diff_snapshot = diff.snapshot(cx);
-        let buffer_snapshot = buffer.snapshot();
-        let base_text = diff_snapshot.base_text();
-
-        for hunk in diff_snapshot.hunks(&buffer_snapshot) {
-            let added_rows = hunk.range.end.row.saturating_sub(hunk.range.start.row);
-            stats.lines_added += added_rows;
-
-            let base_start = hunk.diff_base_byte_range.start.to_point(base_text).row;
-            let base_end = hunk.diff_base_byte_range.end.to_point(base_text).row;
-            let removed_rows = base_end.saturating_sub(base_start);
-            stats.lines_removed += removed_rows;
-        }
-
-        stats
-    }
-
-    fn all_files(changed_buffers: &BTreeMap<Entity<Buffer>, Entity<BufferDiff>>, cx: &App) -> Self {
-        let mut total = DiffStats::default();
-        for (buffer, diff) in changed_buffers {
-            let stats = DiffStats::single_file(buffer.read(cx), diff.read(cx), cx);
-            total.lines_added += stats.lines_added;
-            total.lines_removed += stats.lines_removed;
-        }
-        total
-    }
-}
-
 pub enum AcpThreadViewEvent {
     FirstSendRequested { content: Vec<acp::ContentBlock> },
 }
@@ -1464,6 +1427,13 @@ impl ThreadView {
 
         match event {
             EditorEvent::BufferEdited => {
+                // We only want to set the title if the user has actively edited
+                // it. If the title editor is not focused, we programmatically
+                // changed the text, so we don't want to set the title again.
+                if !title_editor.read(cx).is_focused(window) {
+                    return;
+                }
+
                 let new_title = title_editor.read(cx).text(cx);
                 thread.update(cx, |thread, cx| {
                     thread
@@ -4870,6 +4840,7 @@ impl ThreadView {
         cx: &Context<Self>,
     ) -> Div {
         v_flex()
+            .group(group.clone())
             .p_1p5()
             .bg(self.tool_card_header_bg(cx))
             .when(is_preview, |this| {
@@ -7438,7 +7409,7 @@ impl ThreadView {
                                     // TODO: Add keyboard navigation.
                                     let is_hovered =
                                         self.hovered_recent_history_item == Some(index);
-                                    crate::thread_history::HistoryEntryElement::new(
+                                    crate::thread_history_view::HistoryEntryElement::new(
                                         entry,
                                         self.server_view.clone(),
                                     )
@@ -7995,6 +7966,7 @@ pub(crate) fn open_link(
             MentionUri::Diagnostics { .. } => {}
             MentionUri::TerminalSelection { .. } => {}
             MentionUri::GitDiff { .. } => {}
+            MentionUri::MergeConflict { .. } => {}
         })
     } else {
         cx.open_url(&url);

@@ -4429,7 +4429,7 @@ impl LspStore {
         cx: &mut Context<Self>,
     ) {
         match event {
-            language::BufferEvent::Edited => {
+            language::BufferEvent::Edited { .. } => {
                 self.on_buffer_edited(buffer, cx);
             }
 

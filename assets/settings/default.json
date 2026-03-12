@@ -920,8 +920,8 @@
     },
     // Whether to show the addition/deletion change count next to each file in the Git panel.
     //
-    // Default: false
-    "diff_stats": false,
+    // Default: true
+    "diff_stats": true,
   },
   "message_editor": {
     // Whether to automatically replace emoji shortcodes with emoji characters.
