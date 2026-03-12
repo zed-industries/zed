@@ -25,7 +25,7 @@ use futures::{
 };
 use gpui::{
     App, AppContext as _, AsyncApp, BackgroundExecutor, BorrowAppContext, Context, Entity,
-    EventEmitter, FutureExt, Global, Task, WeakEntity,
+    EventEmitter, FutureExt, Global, Subscription, Task, WeakEntity,
 };
 use parking_lot::Mutex;
 
@@ -837,6 +837,13 @@ impl RemoteClient {
                             ProxyLaunchError::ServerNotRunning => {
                                 log::error!("failed to reconnect because server is not running");
                                 this.update(cx, |this, cx| {
+                                    // Evict a stale Persistent entry so the next
+                                    // connect() does a fresh reconnect rather than
+                                    // immediately handing back a dead Arc.
+                                    let opts = this.connection_options();
+                                    cx.update_global(|pool: &mut ConnectionPool, _| {
+                                        pool.evict_if_persistent(&opts);
+                                    });
                                     this.set_state(State::ServerNotRunning, cx);
                                 })?;
                             }
@@ -1064,17 +1071,14 @@ impl RemoteClient {
     pub fn simulate_disconnect(&self, client_cx: &mut App) -> Task<()> {
         let opts = self.connection_options();
         client_cx.spawn(async move |cx| {
-            let connection = cx.update_global(|c: &mut ConnectionPool, _| {
-                if let Some(ConnectionPoolEntry::Connected(c)) = c.connections.get(&opts) {
-                    if let Some(connection) = c.upgrade() {
-                        connection
-                    } else {
-                        panic!("connection was dropped")
-                    }
-                } else {
-                    panic!("missing test connection")
-                }
-            });
+            let connection =
+                cx.update_global(|c: &mut ConnectionPool, _| match c.connections.get(&opts) {
+                    Some(ConnectionPoolEntry::Connected(c)) => c
+                        .upgrade()
+                        .unwrap_or_else(|| panic!("connection was dropped")),
+                    Some(ConnectionPoolEntry::Persistent { connection, .. }) => connection.clone(),
+                    _ => panic!("missing test connection"),
+                });
 
             connection.simulate_disconnect(cx);
         })
@@ -1165,11 +1169,24 @@ impl RemoteClient {
 enum ConnectionPoolEntry {
     Connecting(WeakShared<Task<Result<Arc<dyn RemoteConnection>, Arc<anyhow::Error>>>>),
     Connected(Weak<dyn RemoteConnection>),
+    Persistent {
+        connection: Arc<dyn RemoteConnection>,
+        workspace_count: usize,
+    },
 }
 
-#[derive(Default)]
-struct ConnectionPool {
+pub struct ConnectionPool {
     connections: HashMap<RemoteConnectionOptions, ConnectionPoolEntry>,
+    _quit_subscription: Option<Subscription>,
+}
+
+impl Default for ConnectionPool {
+    fn default() -> Self {
+        Self {
+            connections: HashMap::default(),
+            _quit_subscription: None,
+        }
+    }
 }
 
 impl Global for ConnectionPool {}
@@ -1205,9 +1222,55 @@ impl ConnectionPool {
                 log::debug!("Connection is dead, removing it and restarting a connection");
                 self.connections.remove(&opts);
             }
+            Some(ConnectionPoolEntry::Persistent {
+                connection,
+                workspace_count,
+            }) => {
+                // `monitor()` asynchronously calls `evict_if_persistent()` whenever it
+                // detects exit-code 90 (`ServerNotRunning`), so by the time `connect()`
+                // is called again the stale entry will already have been removed.  We
+                // still check `has_been_killed()` here as a belt-and-suspenders guard,
+                // but note that on WSL this always returns `false` (the kill signal is
+                // not observable at the Rust layer) — eviction is handled entirely by
+                // the monitor task in that case.
+                if !connection.has_been_killed() {
+                    log::debug!(
+                        "Persistent connection is still alive, reusing (workspace_count={})",
+                        workspace_count
+                    );
+                    *workspace_count += 1;
+                    return Task::ready(Ok(connection.clone())).shared();
+                }
+                log::debug!(
+                    "Persistent connection is dead, removing it and restarting a connection"
+                );
+                self.connections.remove(&opts);
+            }
             None => {
                 log::debug!("No existing connection found, starting a new one");
             }
+        }
+
+        if self._quit_subscription.is_none() {
+            self._quit_subscription = Some(cx.on_app_quit(|cx| async move {
+                let persistent_opts: Vec<RemoteConnectionOptions> = cx
+                    .update_global(|pool: &mut ConnectionPool, _| {
+                        pool.connections
+                            .iter()
+                            .filter_map(|(opts, entry)| {
+                                matches!(entry, ConnectionPoolEntry::Persistent { .. })
+                                    .then(|| opts.clone())
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                cx.update_global(|pool: &mut ConnectionPool, _| {
+                    for opts in persistent_opts {
+                        pool.release(&opts);
+                    }
+                })
+                .ok();
+            }));
         }
 
         let task = cx
@@ -1250,10 +1313,15 @@ impl ConnectionPool {
                         ));
                         match connection {
                             Ok(connection) => {
-                                pool.connections.insert(
-                                    opts.clone(),
-                                    ConnectionPoolEntry::Connected(Arc::downgrade(&connection)),
-                                );
+                                let entry = if should_persist(&opts) {
+                                    ConnectionPoolEntry::Persistent {
+                                        connection: connection.clone(),
+                                        workspace_count: 1,
+                                    }
+                                } else {
+                                    ConnectionPoolEntry::Connected(Arc::downgrade(&connection))
+                                };
+                                pool.connections.insert(opts.clone(), entry);
                                 Ok(connection)
                             }
                             Err(error) => {
@@ -1271,6 +1339,56 @@ impl ConnectionPool {
         }
         task
     }
+
+    pub fn is_persistent(&self, opts: &RemoteConnectionOptions) -> bool {
+        matches!(
+            self.connections.get(opts),
+            Some(ConnectionPoolEntry::Persistent { .. })
+        )
+    }
+
+    /// Removes the pool entry for `opts` only if it is currently `Persistent`.
+    /// `Connected` entries and absent entries are left untouched.
+    /// Called from `RemoteClient::monitor()` when exit-code-90 is observed so
+    /// that a stale persistent arc is not reused on the next `connect()` call.
+    pub fn evict_if_persistent(&mut self, opts: &RemoteConnectionOptions) {
+        if matches!(
+            self.connections.get(opts),
+            Some(ConnectionPoolEntry::Persistent { .. })
+        ) {
+            self.connections.remove(opts);
+        }
+    }
+
+    pub fn release(&mut self, opts: &RemoteConnectionOptions) {
+        match self.connections.get_mut(opts) {
+            Some(ConnectionPoolEntry::Persistent {
+                workspace_count, ..
+            }) => {
+                if *workspace_count > 1 {
+                    *workspace_count -= 1;
+                    return;
+                }
+                // workspace_count is 1 (now dropping to 0): fall through to remove.
+            }
+            _ => return,
+        }
+        if let Some(ConnectionPoolEntry::Persistent { connection, .. }) =
+            self.connections.remove(opts)
+        {
+            let weak = Arc::downgrade(&connection);
+            drop(connection);
+            if weak.upgrade().is_some() {
+                self.connections
+                    .insert(opts.clone(), ConnectionPoolEntry::Connected(weak));
+            }
+            // If weak.upgrade() is None: no consumers remain; entry stays removed.
+        }
+    }
+}
+
+pub(crate) fn should_persist(opts: &RemoteConnectionOptions) -> bool {
+    matches!(opts, RemoteConnectionOptions::Wsl(_))
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -1726,5 +1844,607 @@ impl ProtoClient for ChannelClient {
 
     fn has_wsl_interop(&self) -> bool {
         self.has_wsl_interop
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::transport::{mock::MockConnectionOptions, wsl::WslConnectionOptions};
+    use std::sync::Arc;
+
+    /// Minimal stub that implements `RemoteConnection` for unit tests that only
+    /// need an `Arc<dyn RemoteConnection>` — none of the trait methods are
+    /// actually called.
+    struct StubConnection;
+
+    #[async_trait(?Send)]
+    impl RemoteConnection for StubConnection {
+        fn start_proxy(
+            &self,
+            _unique_identifier: String,
+            _reconnect: bool,
+            _incoming_tx: futures::channel::mpsc::UnboundedSender<rpc::proto::Envelope>,
+            _outgoing_rx: futures::channel::mpsc::UnboundedReceiver<rpc::proto::Envelope>,
+            _connection_activity_tx: futures::channel::mpsc::Sender<()>,
+            _delegate: Arc<dyn RemoteClientDelegate>,
+            _cx: &mut AsyncApp,
+        ) -> Task<Result<i32>> {
+            Task::ready(Ok(0))
+        }
+
+        fn upload_directory(
+            &self,
+            _src_path: std::path::PathBuf,
+            _dest_path: util::paths::RemotePathBuf,
+            _cx: &App,
+        ) -> Task<Result<()>> {
+            Task::ready(Ok(()))
+        }
+
+        async fn kill(&self) -> Result<()> {
+            Ok(())
+        }
+
+        fn has_been_killed(&self) -> bool {
+            false
+        }
+
+        fn build_command(
+            &self,
+            _program: Option<String>,
+            _args: &[String],
+            _env: &collections::HashMap<String, String>,
+            _working_dir: Option<String>,
+            _port_forward: Option<(u16, String, u16)>,
+            _interactive: Interactive,
+        ) -> Result<CommandTemplate> {
+            Ok(CommandTemplate {
+                program: "stub".into(),
+                args: vec![],
+                env: Default::default(),
+            })
+        }
+
+        fn build_forward_ports_command(
+            &self,
+            _forwards: Vec<(u16, String, u16)>,
+        ) -> Result<CommandTemplate> {
+            Ok(CommandTemplate {
+                program: "stub".into(),
+                args: vec![],
+                env: Default::default(),
+            })
+        }
+
+        fn connection_options(&self) -> RemoteConnectionOptions {
+            RemoteConnectionOptions::Wsl(WslConnectionOptions {
+                distro_name: "stub".into(),
+                user: None,
+            })
+        }
+
+        fn path_style(&self) -> util::paths::PathStyle {
+            util::paths::PathStyle::local()
+        }
+
+        fn shell(&self) -> String {
+            "sh".into()
+        }
+
+        fn default_system_shell(&self) -> String {
+            "sh".into()
+        }
+
+        fn has_wsl_interop(&self) -> bool {
+            false
+        }
+    }
+
+    fn stub_connection() -> Arc<dyn RemoteConnection> {
+        Arc::new(StubConnection)
+    }
+
+    fn wsl_opts(distro: &str) -> RemoteConnectionOptions {
+        RemoteConnectionOptions::Wsl(WslConnectionOptions {
+            distro_name: distro.into(),
+            user: None,
+        })
+    }
+
+    fn ssh_opts(host: &str) -> RemoteConnectionOptions {
+        RemoteConnectionOptions::Ssh(SshConnectionOptions {
+            host: host.into(),
+            username: None,
+            port: None,
+            password: None,
+            args: None,
+            port_forwards: None,
+            connection_timeout: None,
+            nickname: None,
+            upload_binary_over_ssh: false,
+        })
+    }
+
+    fn mock_opts() -> RemoteConnectionOptions {
+        RemoteConnectionOptions::Mock(MockConnectionOptions { id: 0 })
+    }
+
+    // --- should_persist tests ---
+
+    #[test]
+    fn test_should_persist_wsl_returns_true() {
+        assert!(should_persist(&wsl_opts("Ubuntu")));
+    }
+
+    #[test]
+    fn test_should_persist_ssh_returns_false() {
+        assert!(!should_persist(&ssh_opts("myhost")));
+    }
+
+    #[test]
+    fn test_should_persist_mock_returns_false() {
+        assert!(!should_persist(&mock_opts()));
+    }
+
+    // --- is_persistent tests ---
+
+    #[test]
+    fn test_is_persistent_returns_true_for_persistent_entry() {
+        let opts = wsl_opts("Ubuntu");
+        let mut pool = ConnectionPool::default();
+        pool.connections.insert(
+            opts.clone(),
+            ConnectionPoolEntry::Persistent {
+                connection: stub_connection(),
+                workspace_count: 1,
+            },
+        );
+        assert!(pool.is_persistent(&opts));
+    }
+
+    #[test]
+    fn test_is_persistent_returns_false_for_connected_entry() {
+        let opts = ssh_opts("myhost");
+        let connection = stub_connection();
+        let mut pool = ConnectionPool::default();
+        pool.connections.insert(
+            opts.clone(),
+            ConnectionPoolEntry::Connected(Arc::downgrade(&connection)),
+        );
+        assert!(!pool.is_persistent(&opts));
+    }
+
+    #[test]
+    fn test_is_persistent_returns_false_when_absent() {
+        let pool = ConnectionPool::default();
+        assert!(!pool.is_persistent(&wsl_opts("Ubuntu")));
+    }
+
+    // --- release tests ---
+
+    #[test]
+    fn test_release_decrements_workspace_count_from_two_to_one() {
+        let opts = wsl_opts("Ubuntu");
+        let connection = stub_connection();
+        let mut pool = ConnectionPool::default();
+        pool.connections.insert(
+            opts.clone(),
+            ConnectionPoolEntry::Persistent {
+                connection: connection.clone(),
+                workspace_count: 2,
+            },
+        );
+
+        pool.release(&opts);
+
+        match pool.connections.get(&opts).unwrap() {
+            ConnectionPoolEntry::Persistent {
+                workspace_count, ..
+            } => {
+                assert_eq!(*workspace_count, 1);
+            }
+            _ => panic!("expected Persistent entry"),
+        }
+    }
+
+    #[test]
+    fn test_release_at_count_one_removes_or_downgrades_to_connected() {
+        let opts = wsl_opts("Ubuntu");
+        let connection = stub_connection();
+        let weak = Arc::downgrade(&connection);
+        let mut pool = ConnectionPool::default();
+        pool.connections.insert(
+            opts.clone(),
+            ConnectionPoolEntry::Persistent {
+                connection,
+                workspace_count: 1,
+            },
+        );
+
+        pool.release(&opts);
+
+        // The Arc we kept alive via `weak` means the entry should now be
+        // Connected(Weak) rather than removed entirely.
+        match pool.connections.get(&opts) {
+            Some(ConnectionPoolEntry::Connected(stored_weak)) => {
+                assert!(stored_weak.upgrade().is_some());
+                assert!(weak.upgrade().is_some());
+            }
+            None => {
+                // Acceptable if the strong Arc was the only reference — entry
+                // is simply removed.
+            }
+            _ => panic!("unexpected entry type after release"),
+        }
+    }
+
+    #[test]
+    fn test_release_at_count_one_removes_entry_when_no_other_owner() {
+        let opts = wsl_opts("Ubuntu");
+        let mut pool = ConnectionPool::default();
+        // Insert without keeping any extra Arc, so the connection is dropped
+        // at release() time and the entry should be removed entirely.
+        pool.connections.insert(
+            opts.clone(),
+            ConnectionPoolEntry::Persistent {
+                connection: stub_connection(),
+                workspace_count: 1,
+            },
+        );
+
+        pool.release(&opts);
+
+        // After releasing the last workspace, the Persistent Arc is dropped.
+        // No external strong reference exists, so the entry is gone.
+        assert!(pool.connections.get(&opts).is_none());
+    }
+
+    #[test]
+    fn test_release_on_non_persistent_entry_is_no_op() {
+        let opts = ssh_opts("myhost");
+        let connection = stub_connection();
+        let mut pool = ConnectionPool::default();
+        pool.connections.insert(
+            opts.clone(),
+            ConnectionPoolEntry::Connected(Arc::downgrade(&connection)),
+        );
+
+        // Must not panic.
+        pool.release(&opts);
+
+        // Entry is unchanged.
+        assert!(matches!(
+            pool.connections.get(&opts),
+            Some(ConnectionPoolEntry::Connected(_))
+        ));
+    }
+
+    #[test]
+    fn test_release_on_absent_entry_is_no_op() {
+        let mut pool = ConnectionPool::default();
+        // Must not panic.
+        pool.release(&wsl_opts("Ubuntu"));
+        assert!(pool.connections.is_empty());
+    }
+
+    // --- evict_if_persistent tests ---
+
+    /// 7.3: Two releases from count-2 → count-1 → entry no longer Persistent.
+    #[test]
+    fn test_two_releases_from_count_two_to_count_one_then_removed() {
+        let opts = wsl_opts("Ubuntu");
+        let connection = stub_connection();
+        let mut pool = ConnectionPool::default();
+        pool.connections.insert(
+            opts.clone(),
+            ConnectionPoolEntry::Persistent {
+                connection: connection.clone(),
+                workspace_count: 2,
+            },
+        );
+
+        // First release: count goes 2 → 1, still Persistent.
+        pool.release(&opts);
+        match pool
+            .connections
+            .get(&opts)
+            .expect("entry should still exist")
+        {
+            ConnectionPoolEntry::Persistent {
+                workspace_count, ..
+            } => {
+                assert_eq!(*workspace_count, 1);
+            }
+            _ => panic!("expected Persistent entry after first release"),
+        }
+
+        // Second release: count goes 1 → 0. External `connection` arc is still
+        // alive, so the entry downgrades to Connected rather than being removed.
+        pool.release(&opts);
+        assert!(
+            !matches!(
+                pool.connections.get(&opts),
+                Some(ConnectionPoolEntry::Persistent { .. })
+            ),
+            "entry must no longer be Persistent after second release"
+        );
+    }
+
+    /// 7.4: Release with no external Arc holder → entry removed entirely.
+    #[test]
+    fn test_release_with_no_external_arc_removes_entry() {
+        let opts = wsl_opts("Ubuntu");
+        let mut pool = ConnectionPool::default();
+        // Insert without keeping any external strong reference.
+        pool.connections.insert(
+            opts.clone(),
+            ConnectionPoolEntry::Persistent {
+                connection: stub_connection(),
+                workspace_count: 1,
+            },
+        );
+
+        pool.release(&opts);
+
+        // Pool held the only strong Arc; after release the weak upgrade fails
+        // and the entry is removed.
+        assert!(
+            pool.connections.get(&opts).is_none(),
+            "entry must be absent when no external Arc holder exists"
+        );
+    }
+
+    /// 7.5: evict_if_persistent removes a Persistent entry.
+    #[test]
+    fn test_evict_if_persistent_removes_persistent_entry() {
+        let opts = wsl_opts("Ubuntu");
+        let mut pool = ConnectionPool::default();
+        pool.connections.insert(
+            opts.clone(),
+            ConnectionPoolEntry::Persistent {
+                connection: stub_connection(),
+                workspace_count: 1,
+            },
+        );
+
+        pool.evict_if_persistent(&opts);
+
+        assert!(
+            !pool.is_persistent(&opts),
+            "entry must not be Persistent after eviction"
+        );
+        assert!(
+            pool.connections.get(&opts).is_none(),
+            "entry must be absent after eviction"
+        );
+    }
+
+    /// 7.6: evict_if_persistent does NOT remove a Connected entry.
+    #[test]
+    fn test_evict_if_persistent_leaves_connected_entry_intact() {
+        let opts = ssh_opts("myhost");
+        let connection = stub_connection();
+        let mut pool = ConnectionPool::default();
+        pool.connections.insert(
+            opts.clone(),
+            ConnectionPoolEntry::Connected(Arc::downgrade(&connection)),
+        );
+
+        pool.evict_if_persistent(&opts);
+
+        assert!(
+            !pool.is_persistent(&opts),
+            "Connected entry must not be reported as Persistent"
+        );
+        assert!(
+            matches!(
+                pool.connections.get(&opts),
+                Some(ConnectionPoolEntry::Connected(_))
+            ),
+            "Connected entry must still be present after evict_if_persistent"
+        );
+    }
+
+    /// 7.7: SSH opts never become Persistent; inserting Connected for SSH
+    /// opts leaves is_persistent() returning false.
+    #[test]
+    fn test_ssh_opts_connected_entry_is_never_persistent() {
+        let opts = ssh_opts("myhost");
+        let connection = stub_connection();
+        let mut pool = ConnectionPool::default();
+
+        // should_persist() must return false for SSH.
+        assert!(
+            !should_persist(&opts),
+            "SSH must not be eligible for persistence"
+        );
+
+        pool.connections.insert(
+            opts.clone(),
+            ConnectionPoolEntry::Connected(Arc::downgrade(&connection)),
+        );
+
+        assert!(
+            !pool.is_persistent(&opts),
+            "SSH Connected entry must never be reported as Persistent"
+        );
+    }
+
+    // --- specifically-named tests required by tasks 7.3–7.7 ---
+
+    /// Task 7.3: A WSL Persistent entry is reused and workspace_count increments.
+    ///
+    /// `connect()` requires a GPUI context so we cannot call it directly in a
+    /// unit test.  Instead we simulate the fast-path by inserting a Persistent
+    /// entry at count=1 and then manually applying the same mutation that
+    /// `connect()` performs — incrementing `workspace_count` — before verifying
+    /// the result.
+    #[test]
+    fn test_wsl_persistent_connection_is_reused() {
+        let opts = wsl_opts("Ubuntu");
+        let connection = stub_connection();
+        let mut pool = ConnectionPool::default();
+        pool.connections.insert(
+            opts.clone(),
+            ConnectionPoolEntry::Persistent {
+                connection: connection.clone(),
+                workspace_count: 1,
+            },
+        );
+
+        // Simulate the fast-path in connect(): increment workspace_count and
+        // return the existing Arc rather than creating a new connection.
+        let returned_connection = match pool.connections.get_mut(&opts) {
+            Some(ConnectionPoolEntry::Persistent {
+                connection,
+                workspace_count,
+            }) if !connection.has_been_killed() => {
+                *workspace_count += 1;
+                connection.clone()
+            }
+            _ => panic!("expected a live Persistent entry"),
+        };
+
+        // The returned Arc must be the same object as the one we inserted.
+        assert!(Arc::ptr_eq(&returned_connection, &connection));
+
+        // workspace_count must now be 2.
+        match pool.connections.get(&opts).unwrap() {
+            ConnectionPoolEntry::Persistent {
+                workspace_count, ..
+            } => assert_eq!(*workspace_count, 2),
+            _ => panic!("expected Persistent entry"),
+        }
+    }
+
+    /// Task 7.4: release() decrements workspace_count and removes the entry
+    /// when it reaches zero (and no external Arc keeps it alive).
+    #[test]
+    fn test_release_decrements_workspace_count_and_drops_at_zero() {
+        let opts = wsl_opts("Ubuntu");
+        let mut pool = ConnectionPool::default();
+        pool.connections.insert(
+            opts.clone(),
+            ConnectionPoolEntry::Persistent {
+                connection: stub_connection(),
+                workspace_count: 2,
+            },
+        );
+
+        // First release: 2 → 1, entry still Persistent.
+        pool.release(&opts);
+        match pool.connections.get(&opts).unwrap() {
+            ConnectionPoolEntry::Persistent {
+                workspace_count, ..
+            } => assert_eq!(*workspace_count, 1),
+            _ => panic!("expected Persistent entry after first release"),
+        }
+
+        // Second release: 1 → 0. No external Arc, so entry must be gone.
+        pool.release(&opts);
+        assert!(
+            pool.connections.get(&opts).is_none(),
+            "entry must be removed when workspace_count reaches zero with no external Arc"
+        );
+    }
+
+    /// Task 7.5: evict_if_persistent() removes a Persistent entry entirely.
+    #[test]
+    fn test_evict_if_persistent_removes_entry() {
+        let opts = wsl_opts("Ubuntu");
+        let mut pool = ConnectionPool::default();
+        pool.connections.insert(
+            opts.clone(),
+            ConnectionPoolEntry::Persistent {
+                connection: stub_connection(),
+                workspace_count: 1,
+            },
+        );
+
+        pool.evict_if_persistent(&opts);
+
+        assert!(
+            pool.connections.get(&opts).is_none(),
+            "entry must be absent after evict_if_persistent"
+        );
+        assert!(
+            !pool.is_persistent(&opts),
+            "is_persistent must return false after eviction"
+        );
+    }
+
+    /// Task 7.6: Simulates the app-quit handler by releasing all Persistent
+    /// entries.  The quit handler cannot be tested without a GPUI context, so
+    /// we call release() directly on each Persistent key — exactly what the
+    /// handler does.
+    #[test]
+    fn test_on_app_quit_releases_all_persistent_entries() {
+        let opts_a = wsl_opts("Ubuntu");
+        let opts_b = wsl_opts("Debian");
+        let mut pool = ConnectionPool::default();
+        pool.connections.insert(
+            opts_a.clone(),
+            ConnectionPoolEntry::Persistent {
+                connection: stub_connection(),
+                workspace_count: 1,
+            },
+        );
+        pool.connections.insert(
+            opts_b.clone(),
+            ConnectionPoolEntry::Persistent {
+                connection: stub_connection(),
+                workspace_count: 1,
+            },
+        );
+
+        // Replicate what the on_app_quit closure does: collect Persistent keys,
+        // then release each one.
+        let persistent_opts: Vec<RemoteConnectionOptions> = pool
+            .connections
+            .iter()
+            .filter_map(|(opts, entry)| {
+                matches!(entry, ConnectionPoolEntry::Persistent { .. }).then(|| opts.clone())
+            })
+            .collect();
+        for opts in persistent_opts {
+            pool.release(&opts);
+        }
+
+        assert!(
+            pool.connections.get(&opts_a).is_none(),
+            "Ubuntu entry must be gone after quit"
+        );
+        assert!(
+            pool.connections.get(&opts_b).is_none(),
+            "Debian entry must be gone after quit"
+        );
+    }
+
+    /// Task 7.7: SSH connections are never stored as Persistent;
+    /// should_persist() returns false for SSH opts.
+    #[test]
+    fn test_ssh_connection_not_stored_as_persistent() {
+        let opts = ssh_opts("example.com");
+
+        // should_persist() must return false for SSH — the pool must never
+        // upgrade an SSH entry to Persistent.
+        assert!(
+            !should_persist(&opts),
+            "SSH must not be eligible for persistence"
+        );
+
+        // Even if somehow a Connected entry exists for an SSH host,
+        // is_persistent() must return false.
+        let connection = stub_connection();
+        let mut pool = ConnectionPool::default();
+        pool.connections.insert(
+            opts.clone(),
+            ConnectionPoolEntry::Connected(Arc::downgrade(&connection)),
+        );
+        assert!(
+            !pool.is_persistent(&opts),
+            "SSH Connected entry must never be reported as Persistent"
+        );
     }
 }

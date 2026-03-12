@@ -24,8 +24,8 @@ use paths::{global_ssh_config_file, user_ssh_config_file};
 use picker::{Picker, PickerDelegate};
 use project::{Fs, Project};
 use remote::{
-    RemoteClient, RemoteConnectionOptions, SshConnectionOptions, WslConnectionOptions,
-    remote_client::ConnectionIdentifier,
+    ConnectionPool, RemoteClient, RemoteConnectionOptions, SshConnectionOptions,
+    WslConnectionOptions, remote_client::ConnectionIdentifier,
 };
 use settings::{
     RemoteProject, RemoteSettingsContent, Settings as _, SettingsStore, update_settings_file,
@@ -748,7 +748,7 @@ enum ViewServerOptionsState {
     Wsl {
         connection: WslConnectionOptions,
         server_index: WslServerIndex,
-        entries: [NavigableEntry; 2],
+        entries: [NavigableEntry; 3],
     },
 }
 
@@ -2268,61 +2268,112 @@ impl RemoteServerProjects {
     ) -> impl IntoElement {
         let distro_name = SharedString::new(connection.distro_name.clone());
 
-        v_flex().child({
-            fn remove_wsl_distro(
-                remote_servers: Entity<RemoteServerProjects>,
-                index: WslServerIndex,
-                distro_name: SharedString,
-                window: &mut Window,
-                cx: &mut App,
-            ) {
-                let prompt_message = format!("Remove WSL distro `{}`?", distro_name);
+        v_flex()
+            .child({
+                fn remove_wsl_distro(
+                    remote_servers: Entity<RemoteServerProjects>,
+                    index: WslServerIndex,
+                    distro_name: SharedString,
+                    window: &mut Window,
+                    cx: &mut App,
+                ) {
+                    let prompt_message = format!("Remove WSL distro `{}`?", distro_name);
 
-                let confirmation = window.prompt(
-                    PromptLevel::Warning,
-                    &prompt_message,
-                    None,
-                    &["Yes, remove it", "No, keep it"],
-                    cx,
-                );
+                    let confirmation = window.prompt(
+                        PromptLevel::Warning,
+                        &prompt_message,
+                        None,
+                        &["Yes, remove it", "No, keep it"],
+                        cx,
+                    );
 
-                cx.spawn(async move |cx| {
-                    if confirmation.await.ok() == Some(0) {
-                        remote_servers.update(cx, |this, cx| {
-                            this.delete_wsl_distro(index, cx);
-                        });
-                        remote_servers.update(cx, |this, cx| {
-                            this.mode = Mode::default_mode(&this.ssh_config_servers, cx);
-                            cx.notify();
-                        });
-                    }
-                    anyhow::Ok(())
-                })
-                .detach_and_log_err(cx);
-            }
-            div()
-                .id("wsl-options-remove-distro")
-                .track_focus(&entries[0].focus_handle)
-                .on_action(cx.listener({
-                    let distro_name = distro_name.clone();
-                    move |_, _: &menu::Confirm, window, cx| {
-                        remove_wsl_distro(cx.entity(), index, distro_name.clone(), window, cx);
-                        cx.focus_self(window);
-                    }
-                }))
-                .child(
-                    ListItem::new("remove-distro")
-                        .toggle_state(entries[0].focus_handle.contains_focused(window, cx))
-                        .inset(true)
-                        .spacing(ui::ListItemSpacing::Sparse)
-                        .start_slot(Icon::new(IconName::Trash).color(Color::Error))
-                        .child(Label::new("Remove Distro").color(Color::Error))
-                        .on_click(cx.listener(move |_, _, window, cx| {
+                    cx.spawn(async move |cx| {
+                        if confirmation.await.ok() == Some(0) {
+                            remote_servers.update(cx, |this, cx| {
+                                this.delete_wsl_distro(index, cx);
+                            });
+                            remote_servers.update(cx, |this, cx| {
+                                this.mode = Mode::default_mode(&this.ssh_config_servers, cx);
+                                cx.notify();
+                            });
+                        }
+                        anyhow::Ok(())
+                    })
+                    .detach_and_log_err(cx);
+                }
+                div()
+                    .id("wsl-options-remove-distro")
+                    .track_focus(&entries[0].focus_handle)
+                    .on_action(cx.listener({
+                        let distro_name = distro_name.clone();
+                        move |_, _: &menu::Confirm, window, cx| {
                             remove_wsl_distro(cx.entity(), index, distro_name.clone(), window, cx);
                             cx.focus_self(window);
-                        })),
-                )
-        })
+                        }
+                    }))
+                    .child(
+                        ListItem::new("remove-distro")
+                            .toggle_state(entries[0].focus_handle.contains_focused(window, cx))
+                            .inset(true)
+                            .spacing(ui::ListItemSpacing::Sparse)
+                            .start_slot(Icon::new(IconName::Trash).color(Color::Error))
+                            .child(Label::new("Remove Distro").color(Color::Error))
+                            .on_click(cx.listener(move |_, _, window, cx| {
+                                remove_wsl_distro(
+                                    cx.entity(),
+                                    index,
+                                    distro_name.clone(),
+                                    window,
+                                    cx,
+                                );
+                                cx.focus_self(window);
+                            })),
+                    )
+            })
+            .when(
+                cx.try_global::<ConnectionPool>().is_some_and(|pool| {
+                    pool.is_persistent(&RemoteConnectionOptions::Wsl(connection.clone()))
+                }),
+                |this| {
+                    let connection_opts = RemoteConnectionOptions::Wsl(connection.clone());
+                    this.child(
+                        div()
+                            .id("wsl-options-disconnect-persistent")
+                            .track_focus(&entries[1].focus_handle)
+                            .on_action(cx.listener({
+                                let connection_opts = connection_opts.clone();
+                                move |this, _: &menu::Confirm, _, cx| {
+                                    cx.update_global(|pool: &mut ConnectionPool, _| {
+                                        pool.release(&connection_opts);
+                                    });
+                                    this.retained_connections.retain(|entity| {
+                                        entity.read(cx).connection_options() != connection_opts
+                                    });
+                                    cx.notify();
+                                }
+                            }))
+                            .child(
+                                ListItem::new("disconnect-persistent")
+                                    .toggle_state(
+                                        entries[1].focus_handle.contains_focused(window, cx),
+                                    )
+                                    .inset(true)
+                                    .spacing(ui::ListItemSpacing::Sparse)
+                                    .start_slot(Icon::new(IconName::X).color(Color::Warning))
+                                    .child(Label::new("Disconnect Persistent Session"))
+                                    .on_click(cx.listener(move |this, _, _, cx| {
+                                        cx.update_global(|pool: &mut ConnectionPool, _| {
+                                            pool.release(&connection_opts);
+                                        });
+                                        this.retained_connections.retain(|entity| {
+                                            entity.read(cx).connection_options() != connection_opts
+                                        });
+                                        cx.notify();
+                                    })),
+                            ),
+                    )
+                },
+            )
     }
 
     fn render_edit_ssh(
