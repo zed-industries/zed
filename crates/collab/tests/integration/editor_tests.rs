@@ -4721,6 +4721,54 @@ async fn test_copy_file_location(cx_a: &mut TestAppContext, cx_b: &mut TestAppCo
         cx_b.read_from_clipboard().and_then(|item| item.text()),
         Some(format!("{}:2", path!("src/main.rs")))
     );
+
+    editor_a.update_in(cx_a, |editor, window, cx| {
+        editor.change_selections(Default::default(), window, cx, |s| {
+            s.select_ranges([MultiBufferOffset(16)..MultiBufferOffset(44)]);
+        });
+        editor.copy_file_location(&CopyFileLocation, window, cx);
+    });
+
+    assert_eq!(
+        cx_a.read_from_clipboard().and_then(|item| item.text()),
+        Some(format!("{}:2-3", path!("src/main.rs")))
+    );
+
+    editor_b.update_in(cx_b, |editor, window, cx| {
+        editor.change_selections(Default::default(), window, cx, |s| {
+            s.select_ranges([MultiBufferOffset(16)..MultiBufferOffset(44)]);
+        });
+        editor.copy_file_location(&CopyFileLocation, window, cx);
+    });
+
+    assert_eq!(
+        cx_b.read_from_clipboard().and_then(|item| item.text()),
+        Some(format!("{}:2-3", path!("src/main.rs")))
+    );
+
+    editor_a.update_in(cx_a, |editor, window, cx| {
+        editor.change_selections(Default::default(), window, cx, |s| {
+            s.select_ranges([MultiBufferOffset(16)..MultiBufferOffset(43)]);
+        });
+        editor.copy_file_location(&CopyFileLocation, window, cx);
+    });
+
+    assert_eq!(
+        cx_a.read_from_clipboard().and_then(|item| item.text()),
+        Some(format!("{}:2", path!("src/main.rs")))
+    );
+
+    editor_b.update_in(cx_b, |editor, window, cx| {
+        editor.change_selections(Default::default(), window, cx, |s| {
+            s.select_ranges([MultiBufferOffset(16)..MultiBufferOffset(43)]);
+        });
+        editor.copy_file_location(&CopyFileLocation, window, cx);
+    });
+
+    assert_eq!(
+        cx_b.read_from_clipboard().and_then(|item| item.text()),
+        Some(format!("{}:2", path!("src/main.rs")))
+    );
 }
 
 #[track_caller]
