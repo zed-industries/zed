@@ -42,7 +42,7 @@ use crate::{
     ui::EndTrialUpsell,
 };
 use crate::{
-    AgentInitialContent, ExternalAgent, ExternalSourcePrompt, NewExternalAgentThread,
+    Agent, AgentInitialContent, ExternalSourcePrompt, NewExternalAgentThread,
     NewNativeAgentThreadFromSummary,
 };
 use crate::{
@@ -738,11 +738,11 @@ impl AgentType {
     }
 }
 
-impl From<ExternalAgent> for AgentType {
-    fn from(value: ExternalAgent) -> Self {
+impl From<Agent> for AgentType {
+    fn from(value: Agent) -> Self {
         match value {
-            ExternalAgent::Custom { name } => Self::Custom { name },
-            ExternalAgent::NativeAgent => Self::NativeAgent,
+            Agent::Custom { name } => Self::Custom { name },
+            Agent::NativeAgent => Self::NativeAgent,
         }
     }
 }
@@ -1283,7 +1283,7 @@ impl AgentPanel {
         cx: &mut Context<Self>,
     ) {
         self.external_thread(
-            Some(crate::ExternalAgent::NativeAgent),
+            Some(crate::Agent::NativeAgent),
             Some(session_id),
             cwd,
             title,
@@ -1335,7 +1335,7 @@ impl AgentPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let agent = ExternalAgent::NativeAgent;
+        let agent = Agent::NativeAgent;
 
         let server = agent.server(self.fs.clone(), self.thread_store.clone());
         let session_id = action.from_session_id.clone();
@@ -1417,7 +1417,7 @@ impl AgentPanel {
 
     fn external_thread(
         &mut self,
-        agent_choice: Option<crate::ExternalAgent>,
+        agent_choice: Option<crate::Agent>,
         resume_session_id: Option<acp::SessionId>,
         cwd: Option<PathBuf>,
         title: Option<SharedString>,
@@ -1435,7 +1435,7 @@ impl AgentPanel {
 
         #[derive(Serialize, Deserialize)]
         struct LastUsedExternalAgent {
-            agent: crate::ExternalAgent,
+            agent: crate::Agent,
         }
 
         let thread_store = self.thread_store.clone();
@@ -1473,7 +1473,7 @@ impl AgentPanel {
         } else {
             cx.spawn_in(window, async move |this, cx| {
                 let ext_agent = if is_via_collab {
-                    ExternalAgent::NativeAgent
+                    Agent::NativeAgent
                 } else {
                     cx.background_spawn(async move {
                         KEY_VALUE_STORE.read_kvp(LAST_USED_EXTERNAL_AGENT_KEY)
@@ -1485,7 +1485,7 @@ impl AgentPanel {
                         serde_json::from_str::<LastUsedExternalAgent>(&value).log_err()
                     })
                     .map(|agent| agent.agent)
-                    .unwrap_or(ExternalAgent::NativeAgent)
+                    .unwrap_or(Agent::NativeAgent)
                 };
 
                 let server = ext_agent.server(fs, thread_store);
@@ -1554,7 +1554,7 @@ impl AgentPanel {
         match &self.selected_agent {
             AgentType::TextThread | AgentType::NativeAgent => true,
             AgentType::Custom { name } => {
-                let agent = ExternalAgent::Custom { name: name.clone() };
+                let agent = Agent::Custom { name: name.clone() };
                 self.connection_store
                     .read(cx)
                     .entry(&agent)
@@ -1574,7 +1574,7 @@ impl AgentPanel {
                 let history = self
                     .connection_store
                     .read(cx)
-                    .entry(&ExternalAgent::NativeAgent)?
+                    .entry(&Agent::NativeAgent)?
                     .read(cx)
                     .history()?
                     .clone();
@@ -1584,7 +1584,7 @@ impl AgentPanel {
                 })
             }
             AgentType::Custom { name } => {
-                let agent = ExternalAgent::Custom { name: name.clone() };
+                let agent = Agent::Custom { name: name.clone() };
                 let history = self
                     .connection_store
                     .read(cx)
@@ -2376,10 +2376,10 @@ impl AgentPanel {
         cx.notify();
     }
 
-    fn selected_external_agent(&self) -> Option<ExternalAgent> {
+    fn selected_external_agent(&self) -> Option<Agent> {
         match &self.selected_agent {
-            AgentType::NativeAgent => Some(ExternalAgent::NativeAgent),
-            AgentType::Custom { name } => Some(ExternalAgent::Custom { name: name.clone() }),
+            AgentType::NativeAgent => Some(Agent::NativeAgent),
+            AgentType::Custom { name } => Some(Agent::Custom { name: name.clone() }),
             AgentType::TextThread => None,
         }
     }
@@ -2448,7 +2448,7 @@ impl AgentPanel {
                 window.dispatch_action(NewTextThread.boxed_clone(), cx);
             }
             AgentType::NativeAgent => self.external_thread(
-                Some(crate::ExternalAgent::NativeAgent),
+                Some(crate::Agent::NativeAgent),
                 None,
                 None,
                 None,
@@ -2458,7 +2458,7 @@ impl AgentPanel {
                 cx,
             ),
             AgentType::Custom { name } => self.external_thread(
-                Some(crate::ExternalAgent::Custom { name }),
+                Some(crate::Agent::Custom { name }),
                 None,
                 None,
                 None,
@@ -2544,7 +2544,7 @@ impl AgentPanel {
         initial_content: Option<AgentInitialContent>,
         workspace: WeakEntity<Workspace>,
         project: Entity<Project>,
-        ext_agent: ExternalAgent,
+        ext_agent: Agent,
         focus: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -4976,7 +4976,7 @@ impl rules_library::InlineAssistDelegate for PromptLibraryInlineAssist {
                 .read(cx)
                 .connection_store()
                 .read(cx)
-                .entry(&crate::ExternalAgent::NativeAgent)
+                .entry(&crate::Agent::NativeAgent)
                 .and_then(|s| s.read(cx).history())
             else {
                 log::error!("No connection entry found for native agent");
@@ -5158,7 +5158,7 @@ impl AgentPanel {
         let workspace = self.workspace.clone();
         let project = self.project.clone();
 
-        let ext_agent = ExternalAgent::Custom {
+        let ext_agent = Agent::Custom {
             name: server.name(),
         };
 

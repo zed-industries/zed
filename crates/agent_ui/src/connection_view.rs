@@ -76,9 +76,9 @@ use crate::message_editor::{MessageEditor, MessageEditorEvent};
 use crate::profile_selector::{ProfileProvider, ProfileSelector};
 use crate::ui::{AgentNotification, AgentNotificationEvent};
 use crate::{
-    AgentDiffPane, AgentInitialContent, AgentPanel, AllowAlways, AllowOnce, AuthorizeToolCall,
-    ClearMessageQueue, CycleFavoriteModels, CycleModeSelector, CycleThinkingEffort,
-    EditFirstQueuedMessage, ExpandMessageEditor, ExternalAgent, Follow, KeepAll, NewThread,
+    Agent, AgentDiffPane, AgentInitialContent, AgentPanel, AllowAlways, AllowOnce,
+    AuthorizeToolCall, ClearMessageQueue, CycleFavoriteModels, CycleModeSelector,
+    CycleThinkingEffort, EditFirstQueuedMessage, ExpandMessageEditor, Follow, KeepAll, NewThread,
     OpenAddContextMenu, OpenAgentDiff, OpenHistory, RejectAll, RejectOnce,
     RemoveFirstQueuedMessage, SendImmediately, SendNextQueuedMessage, ToggleFastMode,
     ToggleProfileSelector, ToggleThinkingEffortMenu, ToggleThinkingMode, UndoLastReject,
@@ -309,7 +309,7 @@ impl EventEmitter<AcpServerViewEvent> for ConnectionView {}
 pub struct ConnectionView {
     agent: Rc<dyn AgentServer>,
     connection_store: Entity<AgentConnectionStore>,
-    connection_key: ExternalAgent,
+    connection_key: Agent,
     agent_server_store: Entity<AgentServerStore>,
     workspace: WeakEntity<Workspace>,
     project: Entity<Project>,
@@ -477,7 +477,7 @@ impl ConnectionView {
     pub fn new(
         agent: Rc<dyn AgentServer>,
         connection_store: Entity<AgentConnectionStore>,
-        connection_key: ExternalAgent,
+        connection_key: Agent,
         resume_session_id: Option<acp::SessionId>,
         cwd: Option<PathBuf>,
         title: Option<SharedString>,
@@ -597,7 +597,7 @@ impl ConnectionView {
     fn initial_state(
         agent: Rc<dyn AgentServer>,
         connection_store: Entity<AgentConnectionStore>,
-        connection_key: ExternalAgent,
+        connection_key: Agent,
         resume_session_id: Option<acp::SessionId>,
         cwd: Option<PathBuf>,
         title: Option<SharedString>,
@@ -2918,7 +2918,7 @@ pub(crate) mod tests {
                 ConnectionView::new(
                     Rc::new(StubAgentServer::default_response()),
                     connection_store,
-                    ExternalAgent::Custom {
+                    Agent::Custom {
                         name: "Test".into(),
                     },
                     None,
@@ -3030,7 +3030,7 @@ pub(crate) mod tests {
                 ConnectionView::new(
                     Rc::new(StubAgentServer::new(ResumeOnlyAgentConnection)),
                     connection_store,
-                    ExternalAgent::Custom {
+                    Agent::Custom {
                         name: "Test".into(),
                     },
                     Some(SessionId::new("resume-session")),
@@ -3087,7 +3087,7 @@ pub(crate) mod tests {
                 ConnectionView::new(
                     Rc::new(StubAgentServer::new(connection)),
                     connection_store,
-                    ExternalAgent::Custom {
+                    Agent::Custom {
                         name: "Test".into(),
                     },
                     Some(SessionId::new("session-1")),
@@ -3142,7 +3142,7 @@ pub(crate) mod tests {
                 ConnectionView::new(
                     Rc::new(StubAgentServer::new(connection)),
                     connection_store,
-                    ExternalAgent::Custom {
+                    Agent::Custom {
                         name: "Test".into(),
                     },
                     Some(SessionId::new("session-1")),
@@ -3197,7 +3197,7 @@ pub(crate) mod tests {
                 ConnectionView::new(
                     Rc::new(StubAgentServer::new(connection)),
                     connection_store,
-                    ExternalAgent::Custom {
+                    Agent::Custom {
                         name: "Test".into(),
                     },
                     Some(SessionId::new("session-1")),
@@ -3514,7 +3514,7 @@ pub(crate) mod tests {
                 ConnectionView::new(
                     Rc::new(agent),
                     connection_store,
-                    ExternalAgent::Custom {
+                    Agent::Custom {
                         name: "Test".into(),
                     },
                     None,
@@ -3729,7 +3729,7 @@ pub(crate) mod tests {
         let connection_store =
             cx.update(|_window, cx| cx.new(|cx| AgentConnectionStore::new(project.clone(), cx)));
 
-        let agent_key = ExternalAgent::Custom {
+        let agent_key = Agent::Custom {
             name: "Test".into(),
         };
 
@@ -4479,7 +4479,7 @@ pub(crate) mod tests {
                 ConnectionView::new(
                     Rc::new(StubAgentServer::new(connection.as_ref().clone())),
                     connection_store,
-                    ExternalAgent::Custom {
+                    Agent::Custom {
                         name: "Test".into(),
                     },
                     None,
