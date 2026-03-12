@@ -224,6 +224,7 @@ members = [
     "crates/time_format",
     "crates/title_bar",
     "crates/toolchain_selector",
+    "crates/typst_viewer",
     "crates/ui",
     "crates/ui_input",
     "crates/ui_macros",
@@ -495,6 +496,7 @@ theme_settings = { path = "crates/theme_settings" }
 time_format = { path = "crates/time_format" }
 title_bar = { path = "crates/title_bar" }
 toolchain_selector = { path = "crates/toolchain_selector" }
+typst_viewer = { path = "crates/typst_viewer" }
 ui = { path = "crates/ui" }
 ui_input = { path = "crates/ui_input" }
 ui_macros = { path = "crates/ui_macros" }
@@ -1060,6 +1062,8 @@ proc-macro2 = { opt-level = 3 }
 tree-sitter = { opt-level = 3 }
 taffy = { opt-level = 3 }
 resvg = { opt-level = 3 }
+usvg = { opt-level = 3 }
+tiny-skia = { opt-level = 3 }
 wasmtime = { opt-level = 3 }
 cranelift-codegen = { opt-level = 3 }
 wasmtime-environ = { opt-level = 3 }

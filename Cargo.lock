@@ -19123,6 +19123,34 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "562d481066bde0658276a35467c4af00bdc6ee726305698a55b86e61d7ad82bb"
 
 [[package]]
+name = "typst_viewer"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-tungstenite",
+ "futures 0.3.31",
+ "gpui",
+ "image",
+ "language",
+ "log",
+ "lsp",
+ "multi_buffer",
+ "project",
+ "resvg",
+ "serde",
+ "serde_json",
+ "settings",
+ "smallvec",
+ "smol",
+ "tiny-skia",
+ "ui",
+ "url",
+ "usvg",
+ "workspace",
+ "zed_actions",
+]
+
+[[package]]
 name = "ucd-trie"
 version = "0.1.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -22523,6 +22551,7 @@ dependencies = [
  "title_bar",
  "toolchain_selector",
  "tracing",
+ "typst_viewer",
  "ui",
  "ui_prompt",
  "url",

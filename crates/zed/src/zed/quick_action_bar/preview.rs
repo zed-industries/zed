@@ -3,6 +3,7 @@ use gpui::{AnyElement, Entity, Modifiers};
 use markdown_preview::markdown_preview_view::MarkdownPreviewView;
 use svg_preview::svg_preview_view::SvgPreviewView;
 use tabular_data_preview::TabularDataPreviewPane;
+use typst_viewer::typst_viewer_view::TypstPreviewView;
 use ui::{Tooltip, prelude::*, text_for_keystroke};
 
 use super::QuickActionBar;
@@ -11,6 +12,7 @@ enum PreviewTarget {
     Markdown(Entity<Editor>),
     Svg(Entity<MultiBuffer>),
     TabularData(Entity<Editor>),
+    Typst(Entity<MultiBuffer>),
 }
 
 impl QuickActionBar {
@@ -33,6 +35,10 @@ impl QuickActionBar {
             && TabularDataPreviewPane::is_tabular_data_file(&editor, cx)
         {
             PreviewTarget::TabularData(editor)
+        } else if let Some(buffer) = active_item.act_as::<MultiBuffer>(cx)
+            && TypstPreviewView::is_typst_file(&buffer, cx)
+        {
+            PreviewTarget::Typst(buffer)
         } else {
             return None;
         };
@@ -52,6 +58,11 @@ impl QuickActionBar {
                 "toggle-tabular-preview",
                 "Preview Tabular Data",
                 &tabular_data_preview::OpenPreview as &dyn gpui::Action,
+            ),
+            PreviewTarget::Typst(_) => (
+                "toggle-typst-viewer",
+                "Preview Typst",
+                &typst_viewer::OpenPreview as &dyn gpui::Action,
             ),
         };
 
@@ -123,6 +134,14 @@ impl QuickActionBar {
                                         editor, pane, window, cx,
                                     );
                                 }
+                            }
+                            PreviewTarget::Typst(_) => {
+                                let action: Box<dyn gpui::Action> = if open_to_the_side {
+                                    Box::new(typst_viewer::OpenPreviewToTheSide)
+                                } else {
+                                    Box::new(typst_viewer::OpenPreview)
+                                };
+                                window.dispatch_action(action, cx);
                             }
                         }
                     });

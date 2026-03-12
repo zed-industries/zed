@@ -5,7 +5,7 @@ mod toolbar;
 
 use hayro::vello_cpu::color::palette::css::WHITE;
 
-pub use pdf_item::{PdfItem, is_pdf_file};
+pub use pdf_item::{PdfItem, PdfItemEvent, is_pdf_file};
 pub use toolbar::PdfViewToolbarControls;
 
 use std::collections::{HashMap, HashSet};
@@ -13,7 +13,7 @@ use std::ops::Range;
 use std::path::Path;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use file_icons::FileIcons;
 use gpui::{
@@ -82,7 +82,8 @@ pub struct PdfViewer {
     focus_handle: FocusHandle,
     scroll_handle: ScrollHandle,
     metadata: Option<PdfMetadata>,
-    rendered_pages: HashMap<usize, (f32, Arc<RenderImage>)>,
+    rendered_pages: HashMap<usize, (f32, u64, Arc<RenderImage>)>,
+    content_generation: u64,
     pages_in_flight: HashSet<usize>,
     cancel_token: Arc<AtomicBool>,
     render_task: Task<()>,
@@ -112,6 +113,7 @@ impl PdfViewer {
             scroll_handle: ScrollHandle::new(),
             metadata: None,
             rendered_pages: HashMap::new(),
+            content_generation: 0,
             pages_in_flight: HashSet::new(),
             cancel_token: Arc::new(AtomicBool::new(false)),
             render_task: Task::ready(()),
@@ -126,12 +128,31 @@ impl PdfViewer {
             selection_end: None,
             is_selecting: false,
         };
+        cx.subscribe(&this.pdf_item, |this, _item, event, cx| {
+            let PdfItemEvent::Reloaded = event;
+            this.content_generation += 1;
+            log::info!(
+                "pdf_viewer: PdfItem reloaded, scheduling re-render (generation {})",
+                this.content_generation,
+            );
+            this.cancel_token.store(true, Ordering::Relaxed);
+            this.cancel_token = Arc::new(AtomicBool::new(false));
+            this.pages_in_flight.clear();
+            this.text_layouts.clear();
+            this.selection_start = None;
+            this.selection_end = None;
+            this.is_selecting = false;
+            this.render_error = None;
+            this.load_metadata(cx);
+        }).detach();
+
         this.load_metadata(cx);
         this
     }
 
     fn load_metadata(&mut self, cx: &mut Context<Self>) {
         let pdf_bytes = self.pdf_item.read(cx).pdf_bytes().clone();
+        log::info!("pdf_viewer: load_metadata starting, {} bytes", pdf_bytes.len());
 
         let background_task =
             cx.background_spawn(async move { pdf_renderer::parse_metadata(&pdf_bytes) });
@@ -140,11 +161,13 @@ impl PdfViewer {
             let result = background_task.await;
             this.update(cx, |this, cx| match result {
                 Ok(metadata) => {
-                    log::debug!(
+                    log::info!(
                         "pdf_viewer: loaded metadata — {} pages",
                         metadata.page_count
                     );
+                    let page_count = metadata.page_count;
                     this.metadata = Some(metadata);
+                    this.rendered_pages.retain(|&index, _| index < page_count);
                     this.render_error = None;
                     log::debug!("pdf_viewer: kicking off text extraction");
                     this.extract_all_text(cx);
@@ -291,6 +314,7 @@ impl PdfViewer {
 
     fn request_visible_pages(&mut self, cx: &mut Context<Self>) {
         if self.metadata.is_none() {
+            log::debug!("pdf_viewer: request_visible_pages: no metadata yet");
             return;
         }
 
@@ -308,12 +332,15 @@ impl PdfViewer {
         let target_range = self.buffered_range(visible.clone());
 
         let current_scale = self.render_scale;
+        let current_generation = self.content_generation;
         let needs_render = |index: &usize| -> bool {
             !self.pages_in_flight.contains(index)
                 && self
                     .rendered_pages
                     .get(index)
-                    .map_or(true, |(scale, _)| *scale != current_scale)
+                    .map_or(true, |(scale, generation, _)| {
+                        *scale != current_scale || *generation != current_generation
+                    })
         };
 
         let mut needed: Vec<usize> = visible.clone().filter(&needs_render).collect();
@@ -331,14 +358,15 @@ impl PdfViewer {
         }
 
         let needed_display: Vec<usize> = needed.iter().map(|i| i + 1).collect();
-        log::debug!(
-            "pdf_viewer: rendering pages {:?} at scale {:.1}",
+        log::info!(
+            "pdf_viewer: request_visible_pages: rendering pages {:?} at scale {:.1}",
             needed_display,
             self.render_scale
         );
 
         let pdf_bytes = self.pdf_item.read(cx).pdf_bytes().clone();
         let render_scale = self.render_scale;
+        let content_generation = self.content_generation;
         let cancel_token = self.cancel_token.clone();
 
         let (sender, receiver) = smol::channel::unbounded::<(usize, Arc<RenderImage>)>();
@@ -361,7 +389,8 @@ impl PdfViewer {
                         log::debug!("pdf_viewer: render cancelled");
                         break;
                     }
-                    log::debug!("pdf_viewer: rendering page {}...", page_index + 1);
+                    let page_start = Instant::now();
+                    log::info!("pdf_viewer: rendering page {}...", page_index + 1);
                     match pdf_renderer::render_single_page(
                         &pdf,
                         page_index,
@@ -369,11 +398,12 @@ impl PdfViewer {
                         WHITE,
                     ) {
                         Ok(rendered) => {
-                            log::debug!(
-                                "pdf_viewer: page {} rendered ({}x{})",
+                            log::info!(
+                                "pdf_viewer: page {} rendered ({}x{}) in {:.0}ms",
                                 page_index + 1,
                                 rendered.page_width,
-                                rendered.page_height
+                                rendered.page_height,
+                                page_start.elapsed().as_secs_f64() * 1000.0,
                             );
                             if sender.send_blocking((page_index, rendered.image)).is_err() {
                                 break;
@@ -395,10 +425,11 @@ impl PdfViewer {
 
         self.render_task = cx.spawn(async move |this, cx| {
             while let Ok((page_index, image)) = receiver.recv().await {
+                log::info!("pdf_viewer: page {} image received on main thread", page_index + 1);
                 let scale = render_scale;
                 this.update(cx, |this, cx| {
                     this.pages_in_flight.remove(&page_index);
-                    this.rendered_pages.insert(page_index, (scale, image));
+                    this.rendered_pages.insert(page_index, (scale, content_generation, image));
                     cx.notify();
                 })
                 .ok();
@@ -425,7 +456,7 @@ impl PdfViewer {
         let display_width = px(dimensions.width * scale);
         let display_height = px(dimensions.height * scale);
 
-        let page_content = if let Some((_scale, image)) = self.rendered_pages.get(&index) {
+        let page_content = if let Some((_scale, _gen, image)) = self.rendered_pages.get(&index) {
             img(image.clone())
                 .id(("pdf-page", index))
                 .w(display_width)
@@ -771,8 +802,8 @@ impl Item for PdfViewer {
         let text = self.pdf_item.read(cx).file_name().to_string();
         Some((
             vec![HighlightedText {
-                text,
-                highlights: None,
+                text: text.into(),
+                highlights: Vec::new(),
             }],
             None,
         ))
@@ -798,6 +829,7 @@ impl Item for PdfViewer {
             scroll_handle: ScrollHandle::new(),
             metadata: self.metadata.clone(),
             rendered_pages: self.rendered_pages.clone(),
+            content_generation: self.content_generation,
             pages_in_flight: HashSet::new(),
             cancel_token: Arc::new(AtomicBool::new(false)),
             render_task: Task::ready(()),

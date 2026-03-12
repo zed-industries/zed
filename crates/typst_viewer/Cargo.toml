@@ -1,0 +1,40 @@
+[package]
+name = "typst_viewer"
+version = "0.1.0"
+edition.workspace = true
+publish.workspace = true
+license = "GPL-3.0-or-later"
+
+[lints]
+workspace = true
+
+[lib]
+path = "src/typst_viewer.rs"
+doctest = false
+
+[dependencies]
+anyhow.workspace = true
+async-tungstenite.workspace = true
+futures.workspace = true
+gpui.workspace = true
+language.workspace = true
+log.workspace = true
+lsp.workspace = true
+multi_buffer.workspace = true
+project.workspace = true
+settings.workspace = true
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
+smallvec.workspace = true
+smol.workspace = true
+ui.workspace = true
+image.workspace = true
+resvg = "0.45.1"
+tiny-skia = "0.11.4"
+url.workspace = true
+usvg = "0.45.1"
+workspace.workspace = true
+zed_actions.workspace = true
+
+[dev-dependencies]
+gpui = { workspace = true, features = ["test-support"] }

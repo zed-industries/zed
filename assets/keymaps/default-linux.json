@@ -625,6 +625,14 @@
     },
   },
   {
+    "context": "Editor && extension == typ",
+    "use_key_equivalents": true,
+    "bindings": {
+      "ctrl-k v": "typst::OpenPreviewToTheSide",
+      "ctrl-shift-v": "typst::OpenPreview",
+    },
+  },
+  {
     "context": "Editor && mode == full",
     "bindings": {
       "ctrl-shift-o": "outline::Toggle",

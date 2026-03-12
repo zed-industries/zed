@@ -4,6 +4,7 @@ use std::sync::Arc;
 use anyhow::{Context as _, Result};
 use gpui::{App, AppContext as _, BackgroundExecutor, Entity, EventEmitter, Task};
 use project::{Project, ProjectEntryId, ProjectItem, ProjectPath};
+use project::WorktreeId;
 
 pub struct PdfItem {
     project_path: ProjectPath,
@@ -18,6 +19,26 @@ pub enum PdfItemEvent {
 impl EventEmitter<PdfItemEvent> for PdfItem {}
 
 impl PdfItem {
+    pub fn from_bytes(
+        pdf_bytes: Arc<[u8]>,
+        display_name: String,
+        cx: &mut App,
+    ) -> Entity<Self> {
+        cx.new(|_| PdfItem {
+            project_path: ProjectPath {
+                worktree_id: WorktreeId::from_usize(0),
+                path: util::rel_path::RelPath::empty().into(),
+            },
+            abs_path: PathBuf::from(display_name),
+            pdf_bytes,
+        })
+    }
+
+    pub fn update_bytes(&mut self, pdf_bytes: Arc<[u8]>, cx: &mut gpui::Context<Self>) {
+        self.pdf_bytes = pdf_bytes;
+        cx.emit(PdfItemEvent::Reloaded);
+    }
+
     pub fn abs_path(&self) -> &Path {
         &self.abs_path
     }

@@ -664,6 +664,14 @@
     },
   },
   {
+    "context": "Editor && extension == typ",
+    "use_key_equivalents": true,
+    "bindings": {
+      "cmd-k v": "typst::OpenPreviewToTheSide",
+      "cmd-shift-v": "typst::OpenPreview",
+    },
+  },
+  {
     "context": "Editor && mode == full",
     "use_key_equivalents": true,
     "bindings": {

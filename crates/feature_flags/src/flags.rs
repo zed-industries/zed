@@ -49,7 +49,7 @@ impl FeatureFlag for CreateThreadToolFeatureFlag {
     type Value = PresenceFlag;
 
     fn enabled_for_staff() -> bool {
-        true
+        false
     }
 }
 register_feature_flag!(CreateThreadToolFeatureFlag);
