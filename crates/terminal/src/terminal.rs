@@ -120,12 +120,14 @@ const DEBUG_LINE_HEIGHT: Pixels = px(5.);
 pub fn insert_zed_terminal_env(
     env: &mut HashMap<String, String>,
     version: &impl std::fmt::Display,
+    terminal_id: &str,
 ) {
     env.insert("ZED_TERM".to_string(), "true".to_string());
     env.insert("TERM_PROGRAM".to_string(), "zed".to_string());
     env.insert("TERM".to_string(), "xterm-256color".to_string());
     env.insert("COLORTERM".to_string(), "truecolor".to_string());
     env.insert("TERM_PROGRAM_VERSION".to_string(), version.to_string());
+    env.insert("ZED_TAB_ID".to_string(), terminal_id.to_string());
 }
 
 ///Upward flowing events, for changing the title and such
@@ -395,6 +397,7 @@ impl TerminalBuilder {
             hyperlink_regex_searches: RegexSearches::default(),
             vi_mode_enabled: false,
             is_remote_terminal: false,
+            terminal_id: uuid::Uuid::new_v4().to_string(),
             last_mouse_move_time: Instant::now(),
             last_hyperlink_search_position: None,
             mouse_down_hyperlink: None,
@@ -410,6 +413,7 @@ impl TerminalBuilder {
                 path_hyperlink_regexes: Vec::default(),
                 path_hyperlink_timeout_ms: 0,
                 window_id,
+                terminal_id: uuid::Uuid::new_v4().to_string(),
             },
             child_exited: None,
             event_loop_task: Task::ready(Ok(())),
@@ -441,10 +445,14 @@ impl TerminalBuilder {
         cx: &App,
         activation_script: Vec<String>,
         path_style: PathStyle,
+        terminal_id: Option<String>,
     ) -> Task<Result<TerminalBuilder>> {
         let version = release_channel::AppVersion::global(cx);
         let background_executor = cx.background_executor().clone();
         let fut = async move {
+            let terminal_id =
+                terminal_id.unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+
             // Remove SHLVL so the spawned shell initializes it to 1, matching
             // the behavior of standalone terminal emulators like iTerm2/Kitty/Alacritty.
             env.remove("SHLVL");
@@ -458,7 +466,7 @@ impl TerminalBuilder {
                     .or_insert_with(|| "en_US.UTF-8".to_string());
             }
 
-            insert_zed_terminal_env(&mut env, &version);
+            insert_zed_terminal_env(&mut env, &version, &terminal_id);
 
             #[derive(Default)]
             struct ShellParams {
@@ -628,6 +636,7 @@ impl TerminalBuilder {
                 ),
                 vi_mode_enabled: false,
                 is_remote_terminal,
+                terminal_id: terminal_id.clone(),
                 last_mouse_move_time: Instant::now(),
                 last_hyperlink_search_position: None,
                 mouse_down_hyperlink: None,
@@ -643,6 +652,7 @@ impl TerminalBuilder {
                     path_hyperlink_regexes,
                     path_hyperlink_timeout_ms,
                     window_id,
+                    terminal_id,
                 },
                 child_exited: None,
                 event_loop_task: Task::ready(Ok(())),
@@ -863,6 +873,7 @@ pub struct Terminal {
     task: Option<TaskState>,
     vi_mode_enabled: bool,
     is_remote_terminal: bool,
+    terminal_id: String,
     last_mouse_move_time: Instant,
     last_hyperlink_search_position: Option<Point<Pixels>>,
     mouse_down_hyperlink: Option<(String, bool, Match)>,
@@ -887,6 +898,7 @@ struct CopyTemplate {
     path_hyperlink_regexes: Vec<String>,
     path_hyperlink_timeout_ms: u64,
     window_id: u64,
+    terminal_id: String,
 }
 
 #[derive(Debug)]
@@ -2292,6 +2304,10 @@ impl Terminal {
         self.vi_mode_enabled
     }
 
+    pub fn terminal_id(&self) -> &str {
+        &self.terminal_id
+    }
+
     pub fn clone_builder(&self, cx: &App, cwd: Option<PathBuf>) -> Task<Result<TerminalBuilder>> {
         let working_directory = self.working_directory().or_else(|| cwd);
         TerminalBuilder::new(
@@ -2310,6 +2326,7 @@ impl Terminal {
             cx,
             self.activation_script.clone(),
             self.path_style,
+            Some(self.template.terminal_id.clone()),
         )
     }
 }
@@ -2597,6 +2614,7 @@ mod tests {
                     cx,
                     vec![],
                     PathStyle::local(),
+                    None,
                 )
             })
             .await
@@ -2743,6 +2761,7 @@ mod tests {
                     cx,
                     Vec::new(),
                     PathStyle::local(),
+                    None,
                 )
             })
             .await
@@ -2819,6 +2838,7 @@ mod tests {
                     cx,
                     Vec::new(),
                     PathStyle::local(),
+                    None,
                 )
             })
             .await
@@ -3307,6 +3327,7 @@ mod tests {
                         cx,
                         vec![],
                         PathStyle::local(),
+                        None,
                     )
                 })
                 .await

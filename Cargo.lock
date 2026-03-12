@@ -13129,6 +13129,7 @@ dependencies = [
  "unindent",
  "url",
  "util",
+ "uuid",
  "watch",
  "wax",
  "which 6.0.3",
@@ -17294,6 +17295,7 @@ dependencies = [
  "urlencoding",
  "util",
  "util_macros",
+ "uuid",
  "windows 0.61.3",
 ]
 

@@ -192,6 +192,7 @@ impl Project {
                                         env,
                                         path,
                                         remote_client,
+                                        "",
                                         cx,
                                     )?
                                 }
@@ -203,6 +204,7 @@ impl Project {
                                     env,
                                     path,
                                     remote_client,
+                                    "",
                                     cx,
                                 )?,
                             },
@@ -256,6 +258,7 @@ impl Project {
                         cx,
                         activation_script,
                         path_style,
+                        None,
                     ))
                 })??
                 .await?;
@@ -290,7 +293,7 @@ impl Project {
         cwd: Option<PathBuf>,
         cx: &mut Context<Self>,
     ) -> Task<Result<Entity<Terminal>>> {
-        self.create_terminal_shell_internal(cwd, false, cx)
+        self.create_terminal_shell_internal(cwd, false, None, cx)
     }
 
     /// Creates a local terminal even if the project is remote.
@@ -307,7 +310,16 @@ impl Project {
             // Local project: use project directory like normal terminals
             self.active_project_directory(cx).map(|p| p.to_path_buf())
         };
-        self.create_terminal_shell_internal(working_directory, true, cx)
+        self.create_terminal_shell_internal(working_directory, true, None, cx)
+    }
+
+    pub fn create_terminal_shell_with_id(
+        &mut self,
+        cwd: Option<PathBuf>,
+        terminal_id: String,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<Entity<Terminal>>> {
+        self.create_terminal_shell_internal(cwd, false, Some(terminal_id), cx)
     }
 
     /// Internal method for creating terminal shells.
@@ -317,6 +329,7 @@ impl Project {
         &mut self,
         cwd: Option<PathBuf>,
         force_local: bool,
+        terminal_id: Option<String>,
         cx: &mut Context<Self>,
     ) -> Task<Result<Entity<Terminal>>> {
         let path = cwd.map(|p| Arc::from(&*p));
@@ -372,6 +385,8 @@ impl Project {
 
         let lang_registry = self.languages.clone();
         cx.spawn(async move |project, cx| {
+            let terminal_id =
+                terminal_id.unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
             let shell_kind = ShellKind::new(&shell, path_style.is_windows());
             let mut env = env_task.await.unwrap_or_default();
             env.extend(settings.env);
@@ -400,7 +415,7 @@ impl Project {
                     let (shell, env) = {
                         match remote_client {
                             Some(remote_client) => {
-                                create_remote_shell(None, env, path, remote_client, cx)?
+                                create_remote_shell(None, env, path, remote_client, &terminal_id, cx)?
                             }
                             None => (settings.shell, env),
                         }
@@ -421,6 +436,7 @@ impl Project {
                         cx,
                         activation_script,
                         path_style,
+                        Some(terminal_id),
                     ))
                 })??
                 .await?;
@@ -609,9 +625,10 @@ fn create_remote_shell(
     mut env: HashMap<String, String>,
     working_directory: Option<Arc<Path>>,
     remote_client: Entity<RemoteClient>,
+    terminal_id: &str,
     cx: &mut App,
 ) -> Result<(Shell, HashMap<String, String>)> {
-    insert_zed_terminal_env(&mut env, &release_channel::AppVersion::global(cx));
+    insert_zed_terminal_env(&mut env, &release_channel::AppVersion::global(cx), terminal_id);
 
     let (program, args) = match spawn_command {
         Some((program, args)) => (Some(program.clone()), args),
