@@ -31507,6 +31507,137 @@ async fn test_tab_ordered_list_single_line_renumbering(cx: &mut TestAppContext) 
         2. trailing
     "};
     cx.assert_editor_state(expected);
+
+    // Case 6: Selection can start before the moved ordered rows; trailing sibling still renumbers.
+    cx.set_state(indoc! {"
+        1. top
+          intro
+        «  helper
+        2. moved a
+        3. moved bˇ»
+        4. trailing
+    "});
+    cx.update_editor(|e, window, cx| e.tab(&Tab, window, cx));
+    cx.wait_for_autoindent_applied().await;
+    let expected = indoc! {"
+        1. top
+          intro
+        «    helper
+          1. moved a
+          2. moved bˇ»
+        2. trailing
+    "};
+    cx.assert_editor_state(expected);
+
+    // Case 7: Blank lines above the moved block do not reset trailing list continuation.
+    cx.set_state(indoc! {"
+        1. top
+
+        «2. moved a
+        3. moved bˇ»
+        4. trailing
+    "});
+    cx.update_editor(|e, window, cx| e.tab(&Tab, window, cx));
+    cx.wait_for_autoindent_applied().await;
+    let expected = indoc! {"
+        1. top
+
+          «1. moved a
+          2. moved bˇ»
+        2. trailing
+    "};
+    cx.assert_editor_state(expected);
+}
+
+#[gpui::test]
+async fn test_tab_list_outdent(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let markdown_language = languages::language("markdown", tree_sitter_md::LANGUAGE.into());
+    let mut cx = EditorTestContext::new(cx).await;
+    cx.update_buffer(|buffer, cx| buffer.set_language(Some(markdown_language), cx));
+
+    // Case 1: Outdenting a sub-item continues parent list numbering.
+    // The parent list has "1. parent", so the outdented item becomes "2.".
+    let initial = indoc! {"
+        1. parent
+          2. ˇchild
+    "};
+    cx.set_state(initial);
+    cx.update_editor(|e, window, cx| e.outdent(&Outdent, window, cx));
+    let expected = indoc! {"
+        1. parent
+        2. ˇchild
+    "};
+    cx.assert_editor_state(expected);
+
+    // Case 2: Outdenting after two parent items picks up the next number in sequence.
+    let initial = indoc! {"
+        1. first
+        2. second
+          1. ˇchild
+    "};
+    cx.set_state(initial);
+    cx.update_editor(|e, window, cx| e.outdent(&Outdent, window, cx));
+    let expected = indoc! {"
+        1. first
+        2. second
+        3. ˇchild
+    "};
+    cx.assert_editor_state(expected);
+
+    // Case 3: Outdenting when there is no preceding parent at the target indent
+    // starts at 1 (nothing to continue from).
+    let initial = indoc! {"
+          1. ˇorphan
+    "};
+    cx.set_state(initial);
+    cx.update_editor(|e, window, cx| e.outdent(&Outdent, window, cx));
+    let expected = indoc! {"
+        1. ˇorphan
+    "};
+    cx.assert_editor_state(expected);
+
+    // Case 4: Outdenting an already top-level item with no indentation is a no-op
+    // (no indentation to remove, list number stays as-is).
+    cx.set_state(indoc! {"
+        3. ˇitem
+    "});
+    cx.update_editor(|e, window, cx| e.outdent(&Outdent, window, cx));
+    cx.assert_editor_state(indoc! {"
+        3. ˇitem
+    "});
+
+    // Case 5: Outdenting an empty ordered list item now renumbers correctly
+    // (the marker continues the parent list even with no content after it).
+    let initial = indoc! {"
+        1. parent
+          3. ˇ
+    "};
+    cx.set_state(initial);
+    cx.update_editor(|e, window, cx| e.outdent(&Outdent, window, cx));
+    let expected = indoc! {"
+        1. parent
+        2. ˇ
+    "};
+    cx.assert_editor_state(expected);
+
+    // Case 6: Outdenting multiple rows uses a shared running counter. The first row
+    // scans backward to find `1. parent`, so it becomes `2.` and each subsequent row
+    // increments from there.
+    let initial = indoc! {"
+        1. parent
+          «1. child a
+          2. child bˇ»
+    "};
+    cx.set_state(initial);
+    cx.update_editor(|e, window, cx| e.outdent(&Outdent, window, cx));
+    let expected = indoc! {"
+        1. parent
+        «2. child a
+        3. child bˇ»
+    "};
+    cx.assert_editor_state(expected);
 }
 
 #[gpui::test]

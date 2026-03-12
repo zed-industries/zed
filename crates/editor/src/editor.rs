@@ -11117,10 +11117,9 @@ impl Editor {
         let mut delta_for_end_row = 0;
         let mut next_ordered_list_number = 1;
         let has_multiple_rows = start_row + 1 != end_row;
-        let original_indent_len = snapshot
-            .indent_size_for_line(MultiBufferRow(start_row))
-            .len;
-        let mut moved_ordered_items_at_original_indent = 0u32;
+        let mut trailing_renumber_anchor_row: Option<u32> = None;
+        let mut trailing_renumber_indent_len: Option<u32> = None;
+        let mut moved_ordered_items_at_trailing_indent = 0u32;
         for row in start_row..end_row {
             let current_indent = snapshot.indent_size_for_line(MultiBufferRow(row));
             let indent_delta = match (current_indent.kind, indent_kind) {
@@ -11163,11 +11162,16 @@ impl Editor {
                         Point::new(row, marker_start_col)..Point::new(row, marker_end_col),
                         marker_text,
                     ));
-                    if has_multiple_rows {
-                        next_ordered_list_number += 1;
-                        if current_indent.len == original_indent_len {
-                            moved_ordered_items_at_original_indent += 1;
+                    next_ordered_list_number += 1;
+
+                    if let Some(indent_len) = trailing_renumber_indent_len {
+                        if current_indent.len == indent_len {
+                            moved_ordered_items_at_trailing_indent += 1;
                         }
+                    } else {
+                        trailing_renumber_anchor_row = Some(row);
+                        trailing_renumber_indent_len = Some(current_indent.len);
+                        moved_ordered_items_at_trailing_indent = 1;
                     }
                 }
             }
@@ -11182,18 +11186,26 @@ impl Editor {
             }
         }
 
-        if has_multiple_rows && moved_ordered_items_at_original_indent > 0 {
-            if let Some(language) =
-                snapshot.language_scope_at(Point::new(start_row, original_indent_len))
+        if moved_ordered_items_at_trailing_indent > 0 {
+            if let (Some(anchor_row), Some(indent_len)) =
+                (trailing_renumber_anchor_row, trailing_renumber_indent_len)
             {
-                renumber_following_ordered_list_siblings_after_indent(
-                    start_row,
-                    end_row,
-                    original_indent_len,
-                    snapshot,
-                    &language,
-                    edits,
-                );
+                if let Some(language) = snapshot.language_scope_at(Point::new(anchor_row, indent_len))
+                {
+                    renumber_following_ordered_list_siblings_after_indent(
+                        previous_ordered_list_number_at_indent(
+                            anchor_row,
+                            indent_len,
+                            snapshot,
+                            &language,
+                        ) + 1,
+                        end_row,
+                        indent_len,
+                        snapshot,
+                        &language,
+                        edits,
+                    );
+                }
             }
         }
 
@@ -11216,7 +11228,7 @@ impl Editor {
         self.hide_mouse_cursor(HideMouseCursorOrigin::TypingAction, cx);
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         let selections = self.selections.all::<Point>(&display_map);
-        let mut deletion_ranges = Vec::new();
+        let mut edits: Vec<(Range<Point>, String)> = Vec::new();
         let mut last_outdent = None;
         {
             let buffer = self.buffer.read(cx);
@@ -11233,7 +11245,15 @@ impl Editor {
                 {
                     rows.start = rows.start.next_row();
                 }
+
                 let has_multiple_rows = rows.len() > 1;
+                let original_indent_len =
+                    snapshot.indent_size_for_line(rows.start).len;
+
+                let mut next_outdent_number = 0u32;
+                let mut moved_ordered_items_at_original_indent = 0u32;
+                let mut first_target_indent: Option<u32> = None;
+
                 for row in rows.iter_rows() {
                     let indent_size = snapshot.indent_size_for_line(row);
                     if indent_size.len > 0 {
@@ -11256,10 +11276,98 @@ impl Editor {
                         } else {
                             selection.start.column - deletion_len
                         };
-                        deletion_ranges.push(
-                            Point::new(row.0, start)..Point::new(row.0, start + deletion_len),
-                        );
+                        let deletion_range =
+                            Point::new(row.0, start)..Point::new(row.0, start + deletion_len);
+                        edits.push((deletion_range, String::new()));
+
+                        if let Some(language) =
+                            snapshot.language_scope_at(Point::new(row.0, indent_size.len))
+                        {
+                            if let Some(marker) = ordered_list_marker(
+                                row.0,
+                                indent_size.len,
+                                &snapshot,
+                                &language,
+                            ) {
+                                let target_indent =
+                                    indent_size.len.saturating_sub(deletion_len);
+
+                                // Lazy-initialize the counter on the first ordered item
+                                // we encounter in this selection.
+                                if next_outdent_number == 0 {
+                                    next_outdent_number =
+                                        previous_ordered_list_number_at_indent(
+                                            row.0,
+                                            target_indent,
+                                            &snapshot,
+                                            &language,
+                                        ) + 1;
+                                    first_target_indent = Some(target_indent);
+                                }
+
+                                if marker.number != next_outdent_number {
+                                    let new_marker = marker
+                                        .format
+                                        .replace("{1}", &next_outdent_number.to_string());
+                                    edits.push((
+                                        Point::new(row.0, marker.start_col)
+                                            ..Point::new(row.0, marker.end_col),
+                                        new_marker,
+                                    ));
+                                }
+
+                                next_outdent_number += 1;
+                                if indent_size.len == original_indent_len {
+                                    moved_ordered_items_at_original_indent += 1;
+                                }
+                            }
+                        }
+
                         last_outdent = Some(row);
+                    }
+                }
+
+                // Renumber the siblings that were left behind at the original (deeper)
+                // indent level to fill the gap created by the outdented items.
+                if moved_ordered_items_at_original_indent > 0 {
+                    let following_row =
+                        last_outdent.map_or(rows.start.0, |r| r.next_row().0);
+                    if let Some(language) = snapshot
+                        .language_scope_at(Point::new(rows.start.0, original_indent_len))
+                    {
+                        renumber_following_ordered_list_siblings_after_indent(
+                            previous_ordered_list_number_at_indent(
+                                rows.start.0,
+                                original_indent_len,
+                                &snapshot,
+                                &language,
+                            ) + 1,
+                            following_row,
+                            original_indent_len,
+                            &snapshot,
+                            &language,
+                            &mut edits,
+                        );
+                    }
+                }
+
+                // Renumber the siblings at the target (shallower) indent that come
+                // after the outdented block — they are displaced forward since new
+                // items were inserted before them at that level.
+                if let Some(target_indent) = first_target_indent {
+                    let following_row =
+                        last_outdent.map_or(rows.start.0, |r| r.next_row().0);
+                    if let Some(language) = snapshot
+                        .language_scope_at(Point::new(rows.start.0, target_indent))
+                    {
+                        renumber_following_ordered_list_siblings_after_indent(
+                            next_outdent_number,
+                            following_row,
+                            target_indent,
+                            &snapshot,
+                            &language,
+                            &mut edits,
+                        );
                     }
                 }
             }
@@ -11267,14 +11375,7 @@ impl Editor {
 
         self.transact(window, cx, |this, window, cx| {
             this.buffer.update(cx, |buffer, cx| {
-                let empty_str: Arc<str> = Arc::default();
-                buffer.edit(
-                    deletion_ranges
-                        .into_iter()
-                        .map(|range| (range, empty_str.clone())),
-                    None,
-                    cx,
-                );
+                buffer.edit(edits, None, cx);
             });
             let selections = this
                 .selections
@@ -26375,16 +26476,19 @@ fn ordered_list_marker(
     None
 }
 
+const ORDERED_LIST_BACKWARD_SCAN_LIMIT: u32 = 256;
+
 fn previous_ordered_list_number_at_indent(
     before_row: u32,
     indent_len: u32,
     snapshot: &MultiBufferSnapshot,
     language: &LanguageScope,
 ) -> u32 {
-    for row in (0..before_row).rev() {
+    let scan_limit = before_row.saturating_sub(ORDERED_LIST_BACKWARD_SCAN_LIMIT);
+    for row in (scan_limit..before_row).rev() {
         let row = MultiBufferRow(row);
         if snapshot.is_line_blank(row) {
-            return 0;
+            continue;
         }
 
         let row_indent_len = snapshot.indent_size_for_line(row).len;
@@ -26404,15 +26508,13 @@ fn previous_ordered_list_number_at_indent(
 }
 
 fn renumber_following_ordered_list_siblings_after_indent(
-    moved_start_row: u32,
+    mut next_number: u32,
     following_start_row: u32,
     indent_len: u32,
     snapshot: &MultiBufferSnapshot,
     language: &LanguageScope,
     edits: &mut Vec<(Range<Point>, String)>,
 ) {
-    let mut next_number =
-        previous_ordered_list_number_at_indent(moved_start_row, indent_len, snapshot, language) + 1;
     let max_row = snapshot.max_point().row;
 
     for row in following_start_row..=max_row {
