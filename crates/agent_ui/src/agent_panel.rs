@@ -1178,6 +1178,17 @@ impl AgentPanel {
             None
         };
 
+        let connection_store = cx.new(|cx| {
+            let mut store = AgentConnectionStore::new(project.clone(), cx);
+            // Register the native agent right away, so that it is available for
+            // the inline assistant etc.
+            store.request_connection(
+                Agent::NativeAgent,
+                Agent::NativeAgent.server(fs.clone(), thread_store.clone()),
+                cx,
+            );
+            store
+        });
         let mut panel = Self {
             workspace_id,
             active_view,
@@ -1188,7 +1199,7 @@ impl AgentPanel {
             language_registry,
             text_thread_store,
             prompt_store,
-            connection_store: cx.new(|cx| AgentConnectionStore::new(project.clone(), cx)),
+            connection_store,
             configuration: None,
             configuration_subscription: None,
             focus_handle: cx.focus_handle(),
