@@ -1,5 +1,3 @@
-use std::sync::Arc;
-
 use anyhow::{Context as _, Result, anyhow};
 use audio::AudioSettings;
 use collections::HashMap;
@@ -54,10 +52,8 @@ impl Room {
         token: String,
         cx: &mut AsyncApp,
     ) -> Result<(Self, mpsc::UnboundedReceiver<RoomEvent>)> {
-        let connector =
-            tokio_tungstenite::Connector::Rustls(Arc::new(http_client_tls::tls_config()));
         let mut config = livekit::RoomOptions::default();
-        config.connector = Some(connector);
+        config.tls_config = livekit::TlsConfig(Some(http_client_tls::tls_config()));
         let (room, mut events) = Tokio::spawn(cx, async move {
             livekit::Room::connect(&url, &token, config).await
         })
@@ -154,7 +150,10 @@ impl Room {
             info!("Using experimental.rodio_audio audio pipeline for output");
             playback::play_remote_audio_track(&track.0, speaker, cx)
         } else if speaker.sends_legacy_audio {
-            Ok(self.playback.play_remote_audio_track(&track.0))
+            let output_audio_device = AudioSettings::get_global(cx).output_audio_device.clone();
+            Ok(self
+                .playback
+                .play_remote_audio_track(&track.0, output_audio_device))
         } else {
             Err(anyhow!("Client version too old to play audio in call"))
         }

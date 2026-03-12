@@ -1,15 +1,15 @@
 use crate::{
-    ActiveDiagnostic, BlockId, CURSORS_VISIBLE_FOR, ChunkRendererContext, ChunkReplacement,
-    CodeActionSource, ColumnarMode, ConflictsOurs, ConflictsOursMarker, ConflictsOuter,
-    ConflictsTheirs, ConflictsTheirsMarker, ContextMenuPlacement, CursorShape, CustomBlockId,
-    DisplayDiffHunk, DisplayPoint, DisplayRow, EditDisplayMode, EditPrediction, Editor, EditorMode,
-    EditorSettings, EditorSnapshot, EditorStyle, FILE_HEADER_HEIGHT, FocusedBlock,
-    GutterDimensions, HalfPageDown, HalfPageUp, HandleInput, HoveredCursor, InlayHintRefreshReason,
-    JumpData, LineDown, LineHighlight, LineUp, MAX_LINE_LEN, MINIMAP_FONT_SIZE,
-    MULTI_BUFFER_EXCERPT_HEADER_HEIGHT, OpenExcerpts, PageDown, PageUp, PhantomBreakpointIndicator,
-    PhantomDiffReviewIndicator, Point, RowExt, RowRangeExt, SelectPhase, Selection,
-    SelectionDragState, SelectionEffects, SizingBehavior, SoftWrap, StickyHeaderExcerpt, ToPoint,
-    ToggleFold, ToggleFoldAll,
+    ActiveDiagnostic, BUFFER_HEADER_PADDING, BlockId, CURSORS_VISIBLE_FOR, ChunkRendererContext,
+    ChunkReplacement, CodeActionSource, ColumnarMode, ConflictsOurs, ConflictsOursMarker,
+    ConflictsOuter, ConflictsTheirs, ConflictsTheirsMarker, ContextMenuPlacement, CursorShape,
+    CustomBlockId, DisplayDiffHunk, DisplayPoint, DisplayRow, EditDisplayMode, EditPrediction,
+    Editor, EditorMode, EditorSettings, EditorSnapshot, EditorStyle, FILE_HEADER_HEIGHT,
+    FocusedBlock, GutterDimensions, HalfPageDown, HalfPageUp, HandleInput, HoveredCursor,
+    InlayHintRefreshReason, JumpData, LineDown, LineHighlight, LineUp, MAX_LINE_LEN,
+    MINIMAP_FONT_SIZE, MULTI_BUFFER_EXCERPT_HEADER_HEIGHT, OpenExcerpts, PageDown, PageUp,
+    PhantomBreakpointIndicator, PhantomDiffReviewIndicator, Point, RowExt, RowRangeExt,
+    SelectPhase, Selection, SelectionDragState, SelectionEffects, SizingBehavior, SoftWrap,
+    StickyHeaderExcerpt, ToPoint, ToggleFold, ToggleFoldAll,
     code_context_menus::{CodeActionsMenu, MENU_ASIDE_MAX_WIDTH, MENU_ASIDE_MIN_WIDTH, MENU_GAP},
     column_pixels,
     display_map::{
@@ -637,6 +637,7 @@ impl EditorElement {
         register_action(editor, window, Editor::accept_edit_prediction);
         register_action(editor, window, Editor::restore_file);
         register_action(editor, window, Editor::git_restore);
+        register_action(editor, window, Editor::restore_and_next);
         register_action(editor, window, Editor::apply_all_diff_hunks);
         register_action(editor, window, Editor::apply_selected_diff_hunks);
         register_action(editor, window, Editor::open_active_item_in_terminal);
@@ -1242,7 +1243,7 @@ impl EditorElement {
         let gutter_hitbox = &position_map.gutter_hitbox;
         let modifiers = event.modifiers;
         let text_hovered = text_hitbox.is_hovered(window);
-        let gutter_hovered = gutter_hitbox.bounds.contains(&event.position);
+        let gutter_hovered = gutter_hitbox.is_hovered(window);
         editor.set_gutter_hovered(gutter_hovered, cx);
         editor.show_mouse_cursor(cx);
 
@@ -1461,6 +1462,7 @@ impl EditorElement {
         if text_hovered {
             editor.update_hovered_link(
                 point_for_position,
+                Some(event.position),
                 &position_map.snapshot,
                 modifiers,
                 window,
@@ -1472,12 +1474,13 @@ impl EditorElement {
                     .snapshot
                     .buffer_snapshot()
                     .anchor_before(point.to_offset(&position_map.snapshot, Bias::Left));
-                hover_at(editor, Some(anchor), window, cx);
+                hover_at(editor, Some(anchor), Some(event.position), window, cx);
                 Self::update_visible_cursor(editor, point, position_map, window, cx);
             } else {
                 editor.update_inlay_link_and_hover_points(
                     &position_map.snapshot,
                     point_for_position,
+                    Some(event.position),
                     modifiers.secondary(),
                     modifiers.shift,
                     window,
@@ -1486,7 +1489,7 @@ impl EditorElement {
             }
         } else {
             editor.hide_hovered_link(cx);
-            hover_at(editor, None, window, cx);
+            hover_at(editor, None, Some(event.position), window, cx);
         }
     }
 
@@ -2863,7 +2866,7 @@ impl EditorElement {
                 }
             });
 
-            window.defer_draw(element, origin, 2);
+            window.defer_draw(element, origin, 2, None);
         }
     }
 
@@ -3274,9 +3277,9 @@ impl EditorElement {
                 snapshot.display_point_to_point(DisplayPoint::new(range.end, 0), Bias::Right);
 
             editor
-                .tasks
-                .iter()
-                .filter_map(|(_, tasks)| {
+                .runnables
+                .all_runnables()
+                .filter_map(|tasks| {
                     let multibuffer_point = tasks.offset.to_point(&snapshot.buffer_snapshot());
                     if multibuffer_point < offset_range_start
                         || multibuffer_point > offset_range_end
@@ -4157,6 +4160,7 @@ impl EditorElement {
 
         div()
             .id(block_id)
+            .cursor(CursorStyle::Arrow)
             .w_full()
             .h((block_height as f32) * line_height)
             .flex()
@@ -5108,7 +5112,7 @@ impl EditorElement {
                         current_position.y -= size.height;
                     }
                     let position = current_position;
-                    window.defer_draw(element, current_position, 1);
+                    window.defer_draw(element, current_position, 1, None);
                     if !y_flipped {
                         current_position.y += size.height + MENU_GAP;
                     } else {
@@ -5211,7 +5215,7 @@ impl EditorElement {
         // Skip drawing if it doesn't fit anywhere.
         if let Some((aside, position, size)) = positioned_aside {
             let aside_bounds = Bounds::new(position, size);
-            window.defer_draw(aside, position, 2);
+            window.defer_draw(aside, position, 2, None);
             return Some(aside_bounds);
         }
 
@@ -5420,7 +5424,7 @@ impl EditorElement {
                 .on_mouse_move(|_, _, cx| cx.stop_propagation())
                 .into_any_element();
             occlusion.layout_as_root(size(width, HOVER_POPOVER_GAP).into(), window, cx);
-            window.defer_draw(occlusion, origin, 2);
+            window.defer_draw(occlusion, origin, 2, None);
         }
 
         fn place_popovers_above(
@@ -5437,7 +5441,7 @@ impl EditorElement {
                     current_y - size.height,
                 );
 
-                window.defer_draw(popover.element, popover_origin, 2);
+                window.defer_draw(popover.element, popover_origin, 2, None);
                 if position != itertools::Position::Last {
                     let origin = point(popover_origin.x, popover_origin.y - HOVER_POPOVER_GAP);
                     draw_occluder(size.width, origin, window, cx);
@@ -5459,7 +5463,7 @@ impl EditorElement {
                 let size = popover.size;
                 let popover_origin = point(hovered_point.x + popover.horizontal_offset, current_y);
 
-                window.defer_draw(popover.element, popover_origin, 2);
+                window.defer_draw(popover.element, popover_origin, 2, None);
                 if position != itertools::Position::Last {
                     let origin = point(popover_origin.x, popover_origin.y + size.height);
                     draw_occluder(size.width, origin, window, cx);
@@ -5561,7 +5565,7 @@ impl EditorElement {
                     let size = popover.size;
                     let popover_origin = point(origin.x, current_y);
 
-                    window.defer_draw(popover.element, popover_origin, 2);
+                    window.defer_draw(popover.element, popover_origin, 2, None);
                     if position != itertools::Position::Last {
                         let origin = point(popover_origin.x, popover_origin.y + size.height);
                         draw_occluder(size.width, origin, window, cx);
@@ -5893,7 +5897,7 @@ impl EditorElement {
             })
         };
 
-        window.defer_draw(element, final_origin, 2);
+        window.defer_draw(element, final_origin, 2, None);
     }
 
     fn paint_background(&self, layout: &EditorLayout, window: &mut Window, cx: &mut App) {
@@ -8070,7 +8074,7 @@ fn apply_dirty_filename_style(
     text_style: &gpui::TextStyle,
     cx: &App,
 ) -> Option<gpui::AnyElement> {
-    let text = segment.text.replace('\n', "⏎");
+    let text = segment.text.replace('\n', " ");
 
     let filename_position = std::path::Path::new(&segment.text)
         .file_name()
@@ -8254,7 +8258,7 @@ pub(crate) fn render_buffer_header(
 
     let header = div()
         .id(("buffer-header", for_excerpt.buffer_id.to_proto()))
-        .p_1()
+        .p(BUFFER_HEADER_PADDING)
         .w_full()
         .h(FILE_HEADER_HEIGHT as f32 * window.line_height())
         .child(
@@ -10959,7 +10963,9 @@ impl Element for EditorElement {
                         .and_then(|headers| headers.lines.last())
                         .map_or(Pixels::ZERO, |last| last.offset + line_height);
 
-                    let sticky_header_height = if sticky_buffer_header.is_some() {
+                    let has_sticky_buffer_header =
+                        sticky_buffer_header.is_some() || sticky_header_excerpt_id.is_some();
+                    let sticky_header_height = if has_sticky_buffer_header {
                         let full_height = FILE_HEADER_HEIGHT as f32 * line_height;
                         let display_row = blocks
                             .iter()
@@ -10978,7 +10984,9 @@ impl Element for EditorElement {
                             }
                             None => full_height,
                         };
-                        sticky_scroll_header_height + offset
+                        let header_bottom_padding =
+                            BUFFER_HEADER_PADDING.to_pixels(window.rem_size());
+                        sticky_scroll_header_height + offset - header_bottom_padding
                     } else {
                         sticky_scroll_header_height
                     };
@@ -11119,12 +11127,6 @@ impl Element for EditorElement {
                     self.paint_mouse_listeners(layout, window, cx);
                     self.paint_background(layout, window, cx);
 
-                    if !layout.spacer_blocks.is_empty() {
-                        window.with_element_namespace("blocks", |window| {
-                            self.paint_spacer_blocks(layout, window, cx);
-                        });
-                    }
-
                     self.paint_indent_guides(layout, window, cx);
 
                     if layout.gutter_hitbox.size.width > Pixels::ZERO {
@@ -11133,6 +11135,12 @@ impl Element for EditorElement {
                     }
 
                     self.paint_text(layout, window, cx);
+
+                    if !layout.spacer_blocks.is_empty() {
+                        window.with_element_namespace("blocks", |window| {
+                            self.paint_spacer_blocks(layout, window, cx);
+                        });
+                    }
 
                     if layout.gutter_hitbox.size.width > Pixels::ZERO {
                         self.paint_gutter_highlights(layout, window, cx);

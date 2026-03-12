@@ -30,32 +30,14 @@ impl RenderOnce for DiffStat {
             .id(self.id)
             .gap_1()
             .child(
-                h_flex()
-                    .gap_0p5()
-                    .child(
-                        Icon::new(IconName::Plus)
-                            .size(IconSize::XSmall)
-                            .color(Color::Success),
-                    )
-                    .child(
-                        Label::new(self.added.to_string())
-                            .color(Color::Success)
-                            .size(self.label_size),
-                    ),
+                Label::new(format!("+\u{2009}{}", self.added))
+                    .color(Color::Success)
+                    .size(self.label_size),
             )
             .child(
-                h_flex()
-                    .gap_0p5()
-                    .child(
-                        Icon::new(IconName::Dash)
-                            .size(IconSize::XSmall)
-                            .color(Color::Error),
-                    )
-                    .child(
-                        Label::new(self.removed.to_string())
-                            .color(Color::Error)
-                            .size(self.label_size),
-                    ),
+                Label::new(format!("\u{2012}\u{2009}{}", self.removed))
+                    .color(Color::Error)
+                    .size(self.label_size),
             )
     }
 }

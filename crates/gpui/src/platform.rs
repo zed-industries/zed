@@ -229,7 +229,7 @@ pub trait Platform: 'static {
 }
 
 /// A handle to a platform's display, e.g. a monitor or laptop screen.
-pub trait PlatformDisplay: Send + Sync + Debug {
+pub trait PlatformDisplay: Debug {
     /// Get the ID for this display
     fn id(&self) -> DisplayId;
 
@@ -1086,6 +1086,13 @@ impl PlatformInputHandler {
     #[allow(dead_code)]
     pub fn accepts_text_input(&mut self, window: &mut Window, cx: &mut App) -> bool {
         self.handler.accepts_text_input(window, cx)
+    }
+
+    #[allow(dead_code)]
+    pub fn query_accepts_text_input(&mut self) -> bool {
+        self.cx
+            .update(|window, cx| self.handler.accepts_text_input(window, cx))
+            .unwrap_or(true)
     }
 }
 

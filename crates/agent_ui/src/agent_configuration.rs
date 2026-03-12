@@ -228,6 +228,7 @@ impl AgentConfiguration {
             .unwrap_or(false);
 
         v_flex()
+            .min_w_0()
             .w_full()
             .when(is_expanded, |this| this.mb_2())
             .child(
@@ -312,6 +313,7 @@ impl AgentConfiguration {
             )
             .child(
                 v_flex()
+                    .min_w_0()
                     .w_full()
                     .px_2()
                     .gap_1()
@@ -459,6 +461,7 @@ impl AgentConfiguration {
             });
 
         v_flex()
+            .min_w_0()
             .w_full()
             .child(self.render_section_title(
                 "LLM Providers",
@@ -498,6 +501,7 @@ impl AgentConfiguration {
                 Plan::ZedFree => ("Free", Color::Default, free_chip_bg),
                 Plan::ZedProTrial => ("Pro Trial", Color::Accent, pro_chip_bg),
                 Plan::ZedPro => ("Pro", Color::Accent, pro_chip_bg),
+                Plan::ZedBusiness => ("Business", Color::Accent, pro_chip_bg),
                 Plan::ZedStudent => ("Student", Color::Accent, pro_chip_bg),
             };
 
@@ -559,6 +563,7 @@ impl AgentConfiguration {
             });
 
         v_flex()
+            .min_w_0()
             .border_b_1()
             .border_color(cx.theme().colors().border)
             .child(self.render_section_title(
@@ -802,9 +807,12 @@ impl AgentConfiguration {
             });
 
         v_flex()
+            .min_w_0()
             .id(item_id.clone())
             .child(
                 h_flex()
+                    .min_w_0()
+                    .w_full()
                     .justify_between()
                     .child(
                         h_flex()
@@ -820,13 +828,13 @@ impl AgentConfiguration {
                                     .tooltip(Tooltip::text(tooltip_text))
                                     .child(status_indicator),
                             )
-                            .child(Label::new(item_id).truncate())
+                            .child(Label::new(item_id).flex_shrink_0().truncate())
                             .child(
                                 div()
                                     .id("extension-source")
+                                    .min_w_0()
                                     .mt_0p5()
                                     .mx_1()
-                                    .flex_none()
                                     .tooltip(Tooltip::text(source_tooltip))
                                     .child(
                                         Icon::new(source_icon)
@@ -1019,6 +1027,7 @@ impl AgentConfiguration {
             });
 
         v_flex()
+            .min_w_0()
             .border_b_1()
             .border_color(cx.theme().colors().border)
             .child(
@@ -1140,7 +1149,34 @@ impl AgentConfiguration {
                     })),
                 )
             }
-            ExternalAgentSource::Custom => None,
+            ExternalAgentSource::Custom => {
+                let fs = self.fs.clone();
+                Some(
+                    IconButton::new(
+                        SharedString::from(format!("uninstall-{}", id)),
+                        IconName::Trash,
+                    )
+                    .icon_color(Color::Muted)
+                    .icon_size(IconSize::Small)
+                    .tooltip(Tooltip::text("Remove Custom Agent"))
+                    .on_click(cx.listener(move |_, _, _window, cx| {
+                        let agent_name = agent_server_name.clone();
+                        update_settings_file(fs.clone(), cx, move |settings, _| {
+                            let Some(agent_servers) = settings.agent_servers.as_mut() else {
+                                return;
+                            };
+                            if let Some(entry) = agent_servers.get(agent_name.0.as_ref())
+                                && matches!(
+                                    entry,
+                                    settings::CustomAgentServerSettings::Custom { .. }
+                                )
+                            {
+                                agent_servers.remove(agent_name.0.as_ref());
+                            }
+                        });
+                    })),
+                )
+            }
         };
 
         h_flex()
@@ -1190,6 +1226,7 @@ impl Render for AgentConfiguration {
                             .id("assistant-configuration-content")
                             .track_scroll(&self.scroll_handle)
                             .size_full()
+                            .min_w_0()
                             .overflow_y_scroll()
                             .child(self.render_agent_servers_section(cx))
                             .child(self.render_context_servers_section(window, cx))

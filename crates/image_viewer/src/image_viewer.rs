@@ -6,6 +6,8 @@ use std::path::Path;
 use anyhow::Context as _;
 use editor::{EditorSettings, items::entry_git_aware_label_color};
 use file_icons::FileIcons;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+use gpui::PinchEvent;
 use gpui::{
     AnyElement, App, Bounds, Context, DispatchPhase, Element, ElementId, Entity, EventEmitter,
     FocusHandle, Focusable, GlobalElementId, InspectorElementId, InteractiveElement, IntoElement,
@@ -259,6 +261,12 @@ impl ImageView {
             self.last_mouse_position = Some(event.position);
             cx.notify();
         }
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    fn handle_pinch(&mut self, event: &PinchEvent, _window: &mut Window, cx: &mut Context<Self>) {
+        let zoom_factor = 1.0 + event.delta;
+        self.set_zoom(self.zoom_level * zoom_factor, Some(event.position), cx);
     }
 }
 
@@ -679,8 +687,28 @@ impl Render for ImageView {
             .size_full()
             .relative()
             .bg(cx.theme().colors().editor_background)
-            .child(
-                div()
+            .child({
+                #[cfg(any(target_os = "linux", target_os = "macos"))]
+                let container = div()
+                    .id("image-container")
+                    .size_full()
+                    .overflow_hidden()
+                    .cursor(if self.is_dragging() {
+                        gpui::CursorStyle::ClosedHand
+                    } else {
+                        gpui::CursorStyle::OpenHand
+                    })
+                    .on_scroll_wheel(cx.listener(Self::handle_scroll_wheel))
+                    .on_pinch(cx.listener(Self::handle_pinch))
+                    .on_mouse_down(MouseButton::Left, cx.listener(Self::handle_mouse_down))
+                    .on_mouse_down(MouseButton::Middle, cx.listener(Self::handle_mouse_down))
+                    .on_mouse_up(MouseButton::Left, cx.listener(Self::handle_mouse_up))
+                    .on_mouse_up(MouseButton::Middle, cx.listener(Self::handle_mouse_up))
+                    .on_mouse_move(cx.listener(Self::handle_mouse_move))
+                    .child(ImageContentElement::new(cx.entity()));
+
+                #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+                let container = div()
                     .id("image-container")
                     .size_full()
                     .overflow_hidden()
@@ -695,8 +723,10 @@ impl Render for ImageView {
                     .on_mouse_up(MouseButton::Left, cx.listener(Self::handle_mouse_up))
                     .on_mouse_up(MouseButton::Middle, cx.listener(Self::handle_mouse_up))
                     .on_mouse_move(cx.listener(Self::handle_mouse_move))
-                    .child(ImageContentElement::new(cx.entity())),
-            )
+                    .child(ImageContentElement::new(cx.entity()));
+
+                container
+            })
     }
 }
 

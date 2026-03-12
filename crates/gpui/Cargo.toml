@@ -24,6 +24,7 @@ test-support = [
     "http_client/test-support",
     "wayland",
     "x11",
+    "proptest",
 ]
 inspector = ["gpui_macros/inspector"]
 leak-detection = ["backtrace"]
@@ -55,6 +56,7 @@ etagere = "0.2"
 futures.workspace = true
 futures-concurrency.workspace = true
 gpui_macros.workspace = true
+http_client.workspace = true
 image.workspace = true
 inventory.workspace = true
 itertools.workspace = true
@@ -63,6 +65,7 @@ num_cpus = "1.13"
 parking = "2.0.0"
 parking_lot.workspace = true
 postage.workspace = true
+proptest = { workspace = true, optional = true }
 chrono.workspace = true
 profiling.workspace = true
 rand.workspace = true
@@ -103,8 +106,6 @@ web-time.workspace = true
 getrandom = { version = "0.3.4", features = ["wasm_js"] }
 uuid = { workspace = true, features = ["js"] }
 
-[target.'cfg(not(target_family = "wasm"))'.dependencies]
-http_client.workspace = true
 
 [target.'cfg(target_os = "macos")'.dependencies]
 block = "0.1"
@@ -145,11 +146,11 @@ collections = { workspace = true, features = ["test-support"] }
 env_logger.workspace = true
 gpui_platform.workspace = true
 lyon = { version = "1.0", features = ["extra"] }
-pretty_assertions.workspace = true
 rand.workspace = true
 scheduler = { workspace = true, features = ["test-support"] }
 unicode-segmentation.workspace = true
 gpui_util = { workspace = true }
+proptest = { workspace = true }
 
 [target.'cfg(not(target_family = "wasm"))'.dev-dependencies]
 http_client = { workspace = true, features = ["test-support"] }
@@ -157,6 +158,7 @@ reqwest_client = { workspace = true, features = ["test-support"] }
 
 [target.'cfg(target_family = "wasm")'.dev-dependencies]
 wasm-bindgen = { workspace = true }
+gpui_web.workspace = true
 
 [build-dependencies]
 embed-resource = { version = "3.0", optional = true }

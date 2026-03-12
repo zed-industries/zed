@@ -18,6 +18,12 @@ pub fn headless() -> gpui::Application {
     gpui::Application::with_platform(current_platform(true))
 }
 
+/// Unlike `application`, this function returns a single-threaded web application.
+#[cfg(target_family = "wasm")]
+pub fn single_threaded_web() -> gpui::Application {
+    gpui::Application::with_platform(Rc::new(gpui_web::WebPlatform::new(false)))
+}
+
 /// Initializes panic hooks and logging for the web platform.
 /// Call this before running the application in a wasm_bindgen entrypoint.
 #[cfg(target_family = "wasm")]
@@ -49,7 +55,7 @@ pub fn current_platform(headless: bool) -> Rc<dyn Platform> {
     #[cfg(target_family = "wasm")]
     {
         let _ = headless;
-        Rc::new(gpui_web::WebPlatform::new())
+        Rc::new(gpui_web::WebPlatform::new(true))
     }
 }
 

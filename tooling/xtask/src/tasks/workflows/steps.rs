@@ -3,6 +3,11 @@ use serde_json::Value;
 
 use crate::tasks::workflows::{runners::Platform, vars, vars::StepOutput};
 
+pub(crate) fn use_clang(job: Job) -> Job {
+    job.add_env(Env::new("CC", "clang"))
+        .add_env(Env::new("CXX", "clang++"))
+}
+
 const SCCACHE_R2_BUCKET: &str = "sccache-zed";
 
 const BASH_SHELL: &str = "bash -euxo pipefail {0}";
@@ -126,22 +131,12 @@ impl From<CheckoutStep> for Step<Use> {
                 FetchDepth::Full => step.add_with(("fetch-depth", 0)),
                 FetchDepth::Custom(depth) => step.add_with(("fetch-depth", depth)),
             })
-            .map(|step| match value.token {
-                Some(token) => step.add_with(("token", token)),
-                None => step,
+            .when_some(value.path, |step, path| step.add_with(("path", path)))
+            .when_some(value.repository, |step, repository| {
+                step.add_with(("repository", repository))
             })
-            .map(|step| match value.path {
-                Some(path) => step.add_with(("path", path)),
-                None => step,
-            })
-            .map(|step| match value.repository {
-                Some(repository) => step.add_with(("repository", repository)),
-                None => step,
-            })
-            .map(|step| match value.ref_ {
-                Some(ref_) => step.add_with(("ref", ref_)),
-                None => step,
-            })
+            .when_some(value.ref_, |step, ref_| step.add_with(("ref", ref_)))
+            .when_some(value.token, |step, token| step.add_with(("token", token)))
     }
 }
 
@@ -498,9 +493,8 @@ pub mod named {
 }
 
 pub fn git_checkout(ref_name: &dyn std::fmt::Display) -> Step<Run> {
-    named::bash(&format!(
-        "git fetch origin {ref_name} && git checkout {ref_name}"
-    ))
+    named::bash(r#"git fetch origin "$REF_NAME" && git checkout "$REF_NAME""#)
+        .add_env(("REF_NAME", ref_name.to_string()))
 }
 
 pub fn authenticate_as_zippy() -> (Step<Use>, StepOutput) {

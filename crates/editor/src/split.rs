@@ -446,6 +446,9 @@ impl SplittableEditor {
             let mut editor =
                 Editor::for_multibuffer(rhs_multibuffer.clone(), Some(project.clone()), window, cx);
             editor.set_expand_all_diff_hunks(cx);
+            editor.disable_runnables();
+            editor.disable_diagnostics(cx);
+            editor.set_minimap_visibility(crate::MinimapVisibility::Disabled, window, cx);
             editor
         });
         // TODO(split-diff) we might want to tag editor events with whether they came from rhs/lhs
@@ -1165,8 +1168,8 @@ impl SplittableEditor {
                 let lhs_ranges: Vec<ExcerptRange<Point>> = rhs_multibuffer
                     .excerpts_for_buffer(main_buffer_snapshot.remote_id(), cx)
                     .into_iter()
-                    .filter(|(id, _)| rhs_excerpt_ids.contains(id))
-                    .map(|(_, excerpt_range)| {
+                    .filter(|(id, _, _)| rhs_excerpt_ids.contains(id))
+                    .map(|(_, _, excerpt_range)| {
                         let to_base_text = |range: Range<Point>| {
                             let start = diff_snapshot
                                 .buffer_point_to_base_text_range(
@@ -1857,6 +1860,21 @@ impl Item for SplittableEditor {
     fn pixel_position_of_cursor(&self, cx: &App) -> Option<gpui::Point<gpui::Pixels>> {
         self.focused_editor().read(cx).pixel_position_of_cursor(cx)
     }
+
+    fn act_as_type<'a>(
+        &'a self,
+        type_id: std::any::TypeId,
+        self_handle: &'a Entity<Self>,
+        _: &'a App,
+    ) -> Option<gpui::AnyEntity> {
+        if type_id == std::any::TypeId::of::<Self>() {
+            Some(self_handle.clone().into())
+        } else if type_id == std::any::TypeId::of::<Editor>() {
+            Some(self.rhs_editor.clone().into())
+        } else {
+            None
+        }
+    }
 }
 
 impl SearchableItem for SplittableEditor {
@@ -2064,7 +2082,7 @@ impl Render for SplittableEditor {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
+    use std::{any::TypeId, sync::Arc};
 
     use buffer_diff::BufferDiff;
     use collections::{HashMap, HashSet};
@@ -2080,14 +2098,14 @@ mod tests {
     use settings::{DiffViewStyle, SettingsStore};
     use ui::{VisualContext as _, div, px};
     use util::rel_path::rel_path;
-    use workspace::MultiWorkspace;
+    use workspace::{Item, MultiWorkspace};
 
-    use crate::SplittableEditor;
     use crate::display_map::{
         BlockPlacement, BlockProperties, BlockStyle, Crease, FoldPlaceholder,
     };
     use crate::inlays::Inlay;
     use crate::test::{editor_content_with_blocks_and_width, set_block_content_for_tests};
+    use crate::{Editor, SplittableEditor};
     use multi_buffer::MultiBufferOffset;
 
     async fn init_test(
@@ -6024,5 +6042,18 @@ mod tests {
         });
 
         cx.run_until_parked();
+    }
+
+    #[gpui::test]
+    async fn test_act_as_type(cx: &mut gpui::TestAppContext) {
+        let (splittable_editor, cx) = init_test(cx, SoftWrap::None, DiffViewStyle::Split).await;
+        let editor = splittable_editor.read_with(cx, |editor, cx| {
+            editor.act_as_type(TypeId::of::<Editor>(), &splittable_editor, cx)
+        });
+
+        assert!(
+            editor.is_some(),
+            "SplittableEditor should be able to act as Editor"
+        );
     }
 }

@@ -1,26 +1,28 @@
 mod cloud;
 
-use client::Client;
+use client::{Client, UserStore};
 use gpui::{App, Context, Entity};
 use language_model::LanguageModelRegistry;
 use std::sync::Arc;
 use web_search::{WebSearchProviderId, WebSearchRegistry};
 
-pub fn init(client: Arc<Client>, cx: &mut App) {
+pub fn init(client: Arc<Client>, user_store: Entity<UserStore>, cx: &mut App) {
     let registry = WebSearchRegistry::global(cx);
     registry.update(cx, |registry, cx| {
-        register_web_search_providers(registry, client, cx);
+        register_web_search_providers(registry, client, user_store, cx);
     });
 }
 
 fn register_web_search_providers(
     registry: &mut WebSearchRegistry,
     client: Arc<Client>,
+    user_store: Entity<UserStore>,
     cx: &mut Context<WebSearchRegistry>,
 ) {
     register_zed_web_search_provider(
         registry,
         client.clone(),
+        user_store.clone(),
         &LanguageModelRegistry::global(cx),
         cx,
     );
@@ -29,7 +31,13 @@ fn register_web_search_providers(
         &LanguageModelRegistry::global(cx),
         move |this, registry, event, cx| {
             if let language_model::Event::DefaultModelChanged = event {
-                register_zed_web_search_provider(this, client.clone(), &registry, cx)
+                register_zed_web_search_provider(
+                    this,
+                    client.clone(),
+                    user_store.clone(),
+                    &registry,
+                    cx,
+                )
             }
         },
     )
@@ -39,6 +47,7 @@ fn register_web_search_providers(
 fn register_zed_web_search_provider(
     registry: &mut WebSearchRegistry,
     client: Arc<Client>,
+    user_store: Entity<UserStore>,
     language_model_registry: &Entity<LanguageModelRegistry>,
     cx: &mut Context<WebSearchRegistry>,
 ) {
@@ -47,7 +56,10 @@ fn register_zed_web_search_provider(
         .default_model()
         .is_some_and(|default| default.is_provided_by_zed());
     if using_zed_provider {
-        registry.register_provider(cloud::CloudWebSearchProvider::new(client, cx), cx)
+        registry.register_provider(
+            cloud::CloudWebSearchProvider::new(client, user_store, cx),
+            cx,
+        )
     } else {
         registry.unregister_provider(WebSearchProviderId(
             cloud::ZED_WEB_SEARCH_PROVIDER_ID.into(),

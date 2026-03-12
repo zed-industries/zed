@@ -730,6 +730,7 @@ pub(crate) struct DeferredDraw {
     parent_node: DispatchNodeId,
     element_id_stack: SmallVec<[ElementId; 32]>,
     text_style_stack: Vec<TextStyleRefinement>,
+    content_mask: Option<ContentMask<Pixels>>,
     rem_size: Pixels,
     element: Option<AnyElement>,
     absolute_offset: Point<Pixels>,
@@ -2467,15 +2468,18 @@ impl Window {
                 .set_active_node(deferred_draw.parent_node);
 
             let prepaint_start = self.prepaint_index();
+            let content_mask = deferred_draw.content_mask.clone();
             if let Some(element) = deferred_draw.element.as_mut() {
                 self.with_rendered_view(deferred_draw.current_view, |window| {
-                    window.with_rem_size(Some(deferred_draw.rem_size), |window| {
-                        window.with_absolute_element_offset(
-                            deferred_draw.absolute_offset,
-                            |window| {
-                                element.prepaint(window, cx);
-                            },
-                        );
+                    window.with_content_mask(content_mask, |window| {
+                        window.with_rem_size(Some(deferred_draw.rem_size), |window| {
+                            window.with_absolute_element_offset(
+                                deferred_draw.absolute_offset,
+                                |window| {
+                                    element.prepaint(window, cx);
+                                },
+                            );
+                        });
                     });
                 })
             } else {
@@ -2507,10 +2511,13 @@ impl Window {
                 .set_active_node(deferred_draw.parent_node);
 
             let paint_start = self.paint_index();
+            let content_mask = deferred_draw.content_mask.clone();
             if let Some(element) = deferred_draw.element.as_mut() {
                 self.with_rendered_view(deferred_draw.current_view, |window| {
-                    window.with_rem_size(Some(deferred_draw.rem_size), |window| {
-                        element.paint(window, cx);
+                    window.with_content_mask(content_mask, |window| {
+                        window.with_rem_size(Some(deferred_draw.rem_size), |window| {
+                            element.paint(window, cx);
+                        });
                     })
                 })
             } else {
@@ -2574,6 +2581,7 @@ impl Window {
                     parent_node: reused_subtree.refresh_node_id(deferred_draw.parent_node),
                     element_id_stack: deferred_draw.element_id_stack.clone(),
                     text_style_stack: deferred_draw.text_style_stack.clone(),
+                    content_mask: deferred_draw.content_mask.clone(),
                     rem_size: deferred_draw.rem_size,
                     priority: deferred_draw.priority,
                     element: None,
@@ -3057,12 +3065,16 @@ impl Window {
     /// at a later time. The `priority` parameter determines the drawing order relative to other deferred elements,
     /// with higher values being drawn on top.
     ///
+    /// When `content_mask` is provided, the deferred element will be clipped to that region during
+    /// both prepaint and paint. When `None`, no additional clipping is applied.
+    ///
     /// This method should only be called as part of the prepaint phase of element drawing.
     pub fn defer_draw(
         &mut self,
         element: AnyElement,
         absolute_offset: Point<Pixels>,
         priority: usize,
+        content_mask: Option<ContentMask<Pixels>>,
     ) {
         self.invalidator.debug_assert_prepaint();
         let parent_node = self.next_frame.dispatch_tree.active_node_id().unwrap();
@@ -3071,6 +3083,7 @@ impl Window {
             parent_node,
             element_id_stack: self.element_id_stack.clone(),
             text_style_stack: self.text_style_stack.clone(),
+            content_mask,
             rem_size: self.rem_size(),
             priority,
             element: Some(element),
@@ -4111,6 +4124,12 @@ impl Window {
                 self.mouse_position = scroll_wheel.position;
                 self.modifiers = scroll_wheel.modifiers;
                 PlatformInput::ScrollWheel(scroll_wheel)
+            }
+            #[cfg(any(target_os = "linux", target_os = "macos"))]
+            PlatformInput::Pinch(pinch) => {
+                self.mouse_position = pinch.position;
+                self.modifiers = pinch.modifiers;
+                PlatformInput::Pinch(pinch)
             }
             // Translate dragging and dropping of external files from the operating system
             // to internal drag and drop events.
