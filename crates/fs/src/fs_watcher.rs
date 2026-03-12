@@ -5,10 +5,23 @@ use std::{
     ops::DerefMut,
     path::Path,
     sync::{Arc, OnceLock},
+    time::Duration,
 };
 use util::{ResultExt, paths::SanitizedPath};
 
 use crate::{PathEvent, PathEventKind, Watcher};
+
+/// Determines how file changes are detected.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum WatcherMode {
+    /// Use the OS-native file watcher (inotify on Linux, FSEvents on macOS,
+    /// ReadDirectoryChanges on Windows). Most efficient but doesn't work on
+    /// network filesystems, WSL drvfs mounts, or FUSE mounts.
+    #[default]
+    Native,
+    /// Use polling to detect file changes. Works on all filesystems but uses more CPU.
+    Poll,
+}
 
 pub struct FsWatcher {
     tx: smol::channel::Sender<()>,
@@ -209,6 +222,103 @@ fn coalesce_pending_rescans(pending_paths: &mut Vec<PathEvent>, path_events: &mu
 
 fn is_covered_rescan(kind: Option<PathEventKind>, path: &Path, ancestor: &Path) -> bool {
     kind == Some(PathEventKind::Rescan) && path != ancestor && path.starts_with(ancestor)
+}
+
+/// A polling-based file watcher that works on any filesystem.
+///
+/// Unlike [`FsWatcher`] (which uses OS-native inotify/FSEvents/ReadDirectoryChanges),
+/// this periodically polls the filesystem for changes. Use this for network filesystems,
+/// WSL drvfs mounts, FUSE mounts, or other situations where native watchers silently
+/// fail to deliver events.
+pub struct PollFsWatcher {
+    watcher: Mutex<notify::PollWatcher>,
+    watched_paths: Mutex<Vec<Arc<std::path::Path>>>,
+}
+
+impl PollFsWatcher {
+    pub fn new(
+        tx: smol::channel::Sender<()>,
+        pending_path_events: Arc<Mutex<Vec<PathEvent>>>,
+        poll_interval: Duration,
+    ) -> anyhow::Result<Self> {
+        let config = notify::Config::default().with_poll_interval(poll_interval);
+
+        let watcher = notify::PollWatcher::new(
+            move |event: Result<notify::Event, notify::Error>| {
+                let Some(event) = event
+                    .map_err(|e| log::warn!("poll watcher error: {e}"))
+                    .ok()
+                    .filter(|event| !matches!(event.kind, EventKind::Access(_)))
+                else {
+                    return;
+                };
+
+                let kind = match event.kind {
+                    EventKind::Create(_) => Some(PathEventKind::Created),
+                    EventKind::Modify(_) => Some(PathEventKind::Changed),
+                    EventKind::Remove(_) => Some(PathEventKind::Removed),
+                    _ => None,
+                };
+
+                let mut path_events = event
+                    .paths
+                    .iter()
+                    .map(|event_path| PathEvent {
+                        path: event_path.to_path_buf(),
+                        kind,
+                    })
+                    .collect::<Vec<_>>();
+
+                if !path_events.is_empty() {
+                    path_events.sort();
+                    let mut pending_paths = pending_path_events.lock();
+                    if pending_paths.is_empty() {
+                        tx.try_send(()).ok();
+                    }
+                    util::extend_sorted(&mut *pending_paths, path_events, usize::MAX, |a, b| {
+                        a.path.cmp(&b.path)
+                    });
+                }
+            },
+            config,
+        )?;
+
+        Ok(Self {
+            watcher: Mutex::new(watcher),
+            watched_paths: Mutex::new(Vec::new()),
+        })
+    }
+}
+
+impl Watcher for PollFsWatcher {
+    fn add(&self, path: &std::path::Path) -> anyhow::Result<()> {
+        use notify::Watcher as _;
+        log::trace!("poll watcher add: {path:?}");
+
+        {
+            let watched = self.watched_paths.lock();
+            if watched.iter().any(|p| path.starts_with(p.as_ref())) {
+                log::trace!("poll watcher: path already covered: {path:?}");
+                return Ok(());
+            }
+        }
+
+        self.watcher
+            .lock()
+            .watch(path, notify::RecursiveMode::Recursive)?;
+
+        self.watched_paths.lock().push(path.into());
+        Ok(())
+    }
+
+    fn remove(&self, path: &std::path::Path) -> anyhow::Result<()> {
+        use notify::Watcher as _;
+        log::trace!("poll watcher remove: {path:?}");
+
+        self.watched_paths.lock().retain(|p| p.as_ref() != path);
+        self.watcher.lock().unwatch(path)?;
+        Ok(())
+    }
 }
 
 #[derive(Default, Debug, Copy, Clone, PartialEq, Eq, Hash)]
