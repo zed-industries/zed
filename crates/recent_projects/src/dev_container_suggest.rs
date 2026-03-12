@@ -1,6 +1,5 @@
-use crate::RemoteServerProjects;
 use db::kvp::KEY_VALUE_STORE;
-use dev_container::{DevContainerContext, find_configs_in_snapshot, find_devcontainer_configs};
+use dev_container::find_configs_in_snapshot;
 use gpui::{SharedString, Window};
 use project::{Project, WorktreeId};
 use std::sync::LazyLock;
@@ -12,33 +11,6 @@ use workspace::notifications::simple_message_notification::MessageNotification;
 use worktree::UpdatedEntriesSet;
 
 const DEV_CONTAINER_SUGGEST_KEY: &str = "dev_container_suggest_dismissed";
-
-fn open_dev_container_modal(
-    workspace: &mut Workspace,
-    window: &mut Window,
-    cx: &mut Context<Workspace>,
-) {
-    if !workspace.project().read(cx).is_local() {
-        return;
-    }
-
-    let fs = workspace.project().read(cx).fs().clone();
-    let configs = find_devcontainer_configs(workspace, cx);
-    let app_state = workspace.app_state().clone();
-    let dev_container_context = DevContainerContext::from_workspace(workspace, cx);
-    let handle = cx.entity().downgrade();
-    workspace.toggle_modal(window, cx, |window, cx| {
-        RemoteServerProjects::new_dev_container(
-            fs,
-            configs,
-            app_state,
-            dev_container_context,
-            window,
-            handle,
-            cx,
-        )
-    });
-}
 
 fn devcontainer_dir_path() -> &'static RelPath {
     static PATH: LazyLock<&'static RelPath> =
@@ -102,13 +74,7 @@ pub fn suggest_on_worktree_updated(
                     .worktrees(cx)
                     .any(|wt| !find_configs_in_snapshot(wt.read(cx)).is_empty());
                 if has_configs {
-                    // Defer to next frame for test compatibility: the modal spawns
-                    // `docker --version` on a real blocking thread that can't be cancelled.
-                    // Without this deferral the blocking thread outlives the test scheduler.
-                    // TODO: Remove once dev container commands are mockable in tests.
-                    cx.on_next_frame(window, move |workspace, window, cx| {
-                        open_dev_container_modal(workspace, window, cx);
-                    });
+                    window.dispatch_action(Box::new(zed_actions::OpenDevContainer), cx);
                 } else {
                     log::warn!(
                         "--dev-container: no devcontainer configuration found in project"

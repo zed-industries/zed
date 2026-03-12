@@ -1594,9 +1594,6 @@ mod tests {
 
         assert!(!errored);
 
-        // The worktree scan during workspace creation triggers suggest_on_worktree_updated,
-        // which detects the open_in_dev_container flag and queues the modal to open on
-        // the next frame. Verify the flag was consumed.
         let multi_workspace = cx.update(|cx| cx.windows()[0].downcast::<MultiWorkspace>().unwrap());
         multi_workspace
             .update(cx, |multi_workspace, _, cx| {
