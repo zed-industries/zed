@@ -528,7 +528,8 @@ impl Sidebar {
         // main repo's header instead of getting their own.
         let mut main_repo_workspace: HashMap<Arc<Path>, usize> = HashMap::new();
         let mut absorbed: HashMap<usize, (usize, SharedString)> = HashMap::new();
-        let mut pending: HashMap<Arc<Path>, Vec<(usize, SharedString)>> = HashMap::new();
+        let mut pending: HashMap<Arc<Path>, Vec<(usize, SharedString, Arc<Path>)>> = HashMap::new();
+        let mut absorbed_workspace_by_path: HashMap<Arc<Path>, usize> = HashMap::new();
 
         for (i, workspace) in workspaces.iter().enumerate() {
             for snapshot in root_repository_snapshots(workspace, cx) {
@@ -537,8 +538,9 @@ impl Sidebar {
                         .entry(snapshot.work_directory_abs_path.clone())
                         .or_insert(i);
                     if let Some(waiting) = pending.remove(&snapshot.work_directory_abs_path) {
-                        for (ws_idx, name) in waiting {
+                        for (ws_idx, name, ws_path) in waiting {
                             absorbed.insert(ws_idx, (i, name));
+                            absorbed_workspace_by_path.insert(ws_path, ws_idx);
                         }
                     }
                 } else {
@@ -553,11 +555,13 @@ impl Sidebar {
                         main_repo_workspace.get(&snapshot.original_repo_abs_path)
                     {
                         absorbed.insert(i, (main_idx, name));
+                        absorbed_workspace_by_path
+                            .insert(snapshot.work_directory_abs_path.clone(), i);
                     } else {
                         pending
                             .entry(snapshot.original_repo_abs_path.clone())
                             .or_default()
-                            .push((i, name));
+                            .push((i, name, snapshot.work_directory_abs_path.clone()));
                     }
                 }
             }
@@ -599,7 +603,8 @@ impl Sidebar {
 
                 // Load threads from linked git worktrees of this workspace's repos.
                 if let Some(ref thread_store) = thread_store {
-                    let mut linked_worktree_queries: Vec<(PathList, SharedString)> = Vec::new();
+                    let mut linked_worktree_queries: Vec<(PathList, SharedString, Arc<Path>)> =
+                        Vec::new();
                     for snapshot in root_repository_snapshots(workspace, cx) {
                         if snapshot.work_directory_abs_path != snapshot.original_repo_abs_path {
                             continue;
@@ -614,11 +619,19 @@ impl Sidebar {
                             linked_worktree_queries.push((
                                 PathList::new(std::slice::from_ref(&git_worktree.path)),
                                 name.into(),
+                                Arc::from(git_worktree.path.as_path()),
                             ));
                         }
                     }
 
-                    for (worktree_path_list, worktree_name) in &linked_worktree_queries {
+                    for (worktree_path_list, worktree_name, worktree_path) in
+                        &linked_worktree_queries
+                    {
+                        let target_workspace = absorbed_workspace_by_path
+                            .get(worktree_path.as_ref())
+                            .map(|&idx| &workspaces[idx])
+                            .unwrap_or(workspace);
+
                         for meta in thread_store.read(cx).threads_for_paths(worktree_path_list) {
                             if !seen_session_ids.insert(meta.id.clone()) {
                                 continue;
@@ -628,7 +641,7 @@ impl Sidebar {
                                 icon: IconName::ZedAgent,
                                 icon_from_external_svg: None,
                                 status: AgentThreadStatus::default(),
-                                workspace: workspace.clone(),
+                                workspace: target_workspace.clone(),
                                 is_live: false,
                                 is_background: false,
                                 highlight_positions: Vec::new(),
@@ -4303,6 +4316,121 @@ mod tests {
         assert_eq!(
             visible_entries_as_strings(&sidebar, cx),
             vec!["v [project]", "  Thread A {wt-feature-a}",]
+        );
+    }
+
+    #[gpui::test]
+    async fn test_clicking_absorbed_worktree_thread_activates_worktree_workspace(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+
+        fs.insert_tree(
+            "/project",
+            serde_json::json!({
+                ".git": {
+                    "worktrees": {
+                        "feature-a": {
+                            "commondir": "../../",
+                            "HEAD": "ref: refs/heads/feature-a",
+                        },
+                    },
+                },
+                "src": {},
+            }),
+        )
+        .await;
+
+        fs.insert_tree(
+            "/wt-feature-a",
+            serde_json::json!({
+                ".git": "gitdir: /project/.git/worktrees/feature-a",
+                "src": {},
+            }),
+        )
+        .await;
+
+        fs.with_git_state(std::path::Path::new("/project/.git"), false, |state| {
+            state.worktrees.push(git::repository::Worktree {
+                path: std::path::PathBuf::from("/wt-feature-a"),
+                ref_name: "refs/heads/feature-a".into(),
+                sha: "aaa".into(),
+            });
+        })
+        .unwrap();
+
+        cx.update(|cx| <dyn fs::Fs>::set_global(fs.clone(), cx));
+
+        let main_project = project::Project::test(fs.clone(), ["/project".as_ref()], cx).await;
+        let worktree_project =
+            project::Project::test(fs.clone(), ["/wt-feature-a".as_ref()], cx).await;
+
+        main_project
+            .update(cx, |p, cx| p.git_scans_complete(cx))
+            .await;
+        worktree_project
+            .update(cx, |p, cx| p.git_scans_complete(cx))
+            .await;
+
+        let (multi_workspace, cx) = cx.add_window_view(|window, cx| {
+            MultiWorkspace::test_new(main_project.clone(), window, cx)
+        });
+
+        let worktree_workspace = multi_workspace.update_in(cx, |mw, window, cx| {
+            mw.test_add_workspace(worktree_project.clone(), window, cx)
+        });
+
+        // Activate the main workspace before setting up the sidebar.
+        multi_workspace.update_in(cx, |mw, window, cx| {
+            mw.activate_index(0, window, cx);
+        });
+
+        let sidebar = setup_sidebar(&multi_workspace, cx);
+
+        let paths_main = PathList::new(&[std::path::PathBuf::from("/project")]);
+        let paths_wt = PathList::new(&[std::path::PathBuf::from("/wt-feature-a")]);
+        save_named_thread("thread-main", "Main Thread", &paths_main, cx).await;
+        save_named_thread("thread-wt", "WT Thread", &paths_wt, cx).await;
+
+        multi_workspace.update_in(cx, |_, _window, cx| cx.notify());
+        cx.run_until_parked();
+
+        // The worktree workspace should be absorbed under the main repo.
+        let entries = visible_entries_as_strings(&sidebar, cx);
+        assert_eq!(entries.len(), 3);
+        assert_eq!(entries[0], "v [project]");
+        assert!(entries.contains(&"  Main Thread".to_string()));
+        assert!(entries.contains(&"  WT Thread {wt-feature-a}".to_string()));
+
+        let wt_thread_index = entries
+            .iter()
+            .position(|e| e.contains("WT Thread"))
+            .expect("should find the worktree thread entry");
+
+        assert_eq!(
+            multi_workspace.read_with(cx, |mw, _| mw.active_workspace_index()),
+            0,
+            "main workspace should be active initially"
+        );
+
+        // Focus the sidebar and select the absorbed worktree thread.
+        open_and_focus_sidebar(&sidebar, cx);
+        sidebar.update_in(cx, |sidebar, _window, _cx| {
+            sidebar.selection = Some(wt_thread_index);
+        });
+
+        // Confirm to activate the worktree thread.
+        cx.dispatch_action(Confirm);
+        cx.run_until_parked();
+
+        // The worktree workspace should now be active, not the main one.
+        let active_workspace = multi_workspace.read_with(cx, |mw, _| {
+            mw.workspaces()[mw.active_workspace_index()].clone()
+        });
+        assert_eq!(
+            active_workspace, worktree_workspace,
+            "clicking an absorbed worktree thread should activate the worktree workspace"
         );
     }
 }
