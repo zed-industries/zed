@@ -30,11 +30,12 @@ impl TestDispatcher {
                 .map_or(false, |var| var == "1" || var == "true"),
             timeout_ticks: 0..=1000,
         }));
+        Self::from_scheduler(scheduler)
+    }
 
-        let session_id = scheduler.allocate_session_id();
-
+    pub fn from_scheduler(scheduler: Arc<TestScheduler>) -> Self {
         TestDispatcher {
-            session_id,
+            session_id: scheduler.allocate_session_id(),
             scheduler,
             num_cpus_override: Arc::new(AtomicUsize::new(0)),
         }
