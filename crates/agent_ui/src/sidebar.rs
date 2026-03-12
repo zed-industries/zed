@@ -1,11 +1,11 @@
-use crate::thread_history::ThreadHistory;
+use crate::threads_archive_view::{ThreadsArchiveView, ThreadsArchiveViewEvent};
 use crate::{AgentPanel, AgentPanelEvent, NewThread};
 use acp_thread::{AgentSessionInfo, ThreadStatus};
 use action_log::DiffStats;
 use agent::ThreadStore;
 use agent_client_protocol as acp;
 use agent_settings::AgentSettings;
-use chrono::{Datelike as _, Local, NaiveDate, TimeDelta, Utc};
+use chrono::Utc;
 use db::kvp::KEY_VALUE_STORE;
 use editor::Editor;
 use feature_flags::{AgentV2FeatureFlag, FeatureFlagViewExt as _};
@@ -51,54 +51,6 @@ enum SidebarView {
     #[default]
     ThreadList,
     Archive,
-}
-
-#[derive(Clone)]
-enum ArchiveListItem {
-    BucketSeparator(TimeBucket),
-    Entry {
-        session: AgentSessionInfo,
-        highlight_positions: Vec<usize>,
-    },
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum TimeBucket {
-    Today,
-    Yesterday,
-    ThisWeek,
-    PastWeek,
-    Older,
-}
-
-impl TimeBucket {
-    fn from_dates(reference: NaiveDate, date: NaiveDate) -> Self {
-        if date == reference {
-            return TimeBucket::Today;
-        }
-        if date == reference - TimeDelta::days(1) {
-            return TimeBucket::Yesterday;
-        }
-        let week = date.iso_week();
-        if reference.iso_week() == week {
-            return TimeBucket::ThisWeek;
-        }
-        let last_week = (reference - TimeDelta::days(7)).iso_week();
-        if week == last_week {
-            return TimeBucket::PastWeek;
-        }
-        TimeBucket::Older
-    }
-
-    fn label(&self) -> &'static str {
-        match self {
-            TimeBucket::Today => "Today",
-            TimeBucket::Yesterday => "Yesterday",
-            TimeBucket::ThisWeek => "This Week",
-            TimeBucket::PastWeek => "Past Week",
-            TimeBucket::Older => "Older",
-        }
-    }
 }
 
 fn read_sidebar_open_state(multi_workspace_id: u64) -> bool {
@@ -268,12 +220,8 @@ pub struct Sidebar {
     collapsed_groups: HashSet<PathList>,
     expanded_groups: HashMap<PathList, usize>,
     view: SidebarView,
-    history: Option<Entity<ThreadHistory>>,
-    archive_list_state: ListState,
-    archive_items: Vec<ArchiveListItem>,
-    archive_selection: Option<usize>,
-    archive_filter_editor: Entity<Editor>,
-    _history_subscription: Option<gpui::Subscription>,
+    archive_view: Option<Entity<ThreadsArchiveView>>,
+    _subscriptions: Vec<gpui::Subscription>,
 }
 
 impl Sidebar {
@@ -291,19 +239,6 @@ impl Sidebar {
             editor.set_placeholder_text("Search…", window, cx);
             editor
         });
-
-        let archive_filter_editor = cx.new(|cx| {
-            let mut editor = Editor::single_line(window, cx);
-            editor.set_placeholder_text("Search threads archive…", window, cx);
-            editor
-        });
-
-        cx.subscribe(&archive_filter_editor, |this: &mut Self, _, event, cx| {
-            if let editor::EditorEvent::BufferEdited = event {
-                this.update_archive_items(cx);
-            }
-        })
-        .detach();
 
         cx.subscribe_in(
             &multi_workspace,
@@ -387,12 +322,8 @@ impl Sidebar {
             collapsed_groups: HashSet::new(),
             expanded_groups: HashMap::new(),
             view: SidebarView::default(),
-            history: None,
-            archive_list_state: ListState::new(0, gpui::ListAlignment::Top, px(1000.)),
-            archive_items: Vec::new(),
-            archive_selection: None,
-            archive_filter_editor,
-            _history_subscription: None,
+            archive_view: None,
+            _subscriptions: Vec::new(),
         }
     }
 
@@ -1409,16 +1340,6 @@ impl Sidebar {
         self.filter_editor.clone()
     }
 
-    fn render_archive_filter_input(&self) -> impl IntoElement {
-        self.archive_filter_editor.clone()
-    }
-
-    fn reset_archive_filter_editor_text(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.archive_filter_editor.update(cx, |editor, cx| {
-            editor.set_text("", window, cx);
-        });
-    }
-
     fn render_view_more(
         &self,
         ix: usize,
@@ -1572,138 +1493,10 @@ impl Sidebar {
                     .icon_color(Color::Muted)
                     .icon_size(IconSize::Small)
                     .icon_position(IconPosition::Start)
-                    .on_click(cx.listener(|this, _, _window, cx| {
-                        this.show_archive(cx);
-                    })),
-            )
-    }
-
-    fn render_archive_header(
-        &self,
-        docked_right: bool,
-        cx: &mut Context<Self>,
-    ) -> impl IntoElement {
-        let has_query = !self.archive_filter_editor.read(cx).text(cx).is_empty();
-
-        h_flex()
-            .h(Tab::container_height(cx))
-            .px_1()
-            .gap_1p5()
-            .border_b_1()
-            .border_color(cx.theme().colors().border)
-            .child(
-                IconButton::new("back", IconName::ArrowLeft)
-                    .icon_size(IconSize::Small)
-                    .tooltip(Tooltip::text("Back to Sidebar"))
                     .on_click(cx.listener(|this, _, window, cx| {
-                        this.show_thread_list(window, cx);
+                        this.show_archive(window, cx);
                     })),
             )
-            .child(self.render_archive_filter_input())
-            .when(has_query, |this| {
-                this.when(!docked_right, |this| this.pr_1p5()).child(
-                    IconButton::new("clear_archive_filter", IconName::Close)
-                        .shape(IconButtonShape::Square)
-                        .tooltip(Tooltip::text("Clear Search"))
-                        .on_click(cx.listener(|this, _, window, cx| {
-                            this.reset_archive_filter_editor_text(window, cx);
-                            this.update_archive_items(cx);
-                        })),
-                )
-            })
-    }
-
-    fn render_archive_list_entry(
-        &mut self,
-        ix: usize,
-        _window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> AnyElement {
-        let Some(item) = self.archive_items.get(ix) else {
-            return div().into_any_element();
-        };
-
-        match item {
-            ArchiveListItem::BucketSeparator(bucket) => div()
-                .w_full()
-                .px_2()
-                .pt_3()
-                .pb_1()
-                .child(
-                    Label::new(bucket.label())
-                        .size(LabelSize::Small)
-                        .color(Color::Muted),
-                )
-                .into_any_element(),
-            ArchiveListItem::Entry {
-                session,
-                highlight_positions,
-            } => {
-                let is_selected = self.archive_selection == Some(ix);
-                let title: SharedString =
-                    session.title.clone().unwrap_or_else(|| "Untitled".into());
-                let session_info = session.clone();
-                let highlight_positions = highlight_positions.clone();
-
-                let timestamp = session.created_at.or(session.updated_at).map(|entry_time| {
-                    let now = Utc::now();
-                    let duration = now.signed_duration_since(entry_time);
-
-                    let minutes = duration.num_minutes();
-                    let hours = duration.num_hours();
-                    let days = duration.num_days();
-                    let weeks = days / 7;
-                    let months = days / 30;
-
-                    if minutes < 60 {
-                        format!("{}m", minutes.max(1))
-                    } else if hours < 24 {
-                        format!("{}h", hours)
-                    } else if weeks < 4 {
-                        format!("{}w", weeks.max(1))
-                    } else {
-                        format!("{}mo", months.max(1))
-                    }
-                });
-
-                let id = SharedString::from(format!("archive-entry-{}", ix));
-
-                let title_label = if highlight_positions.is_empty() {
-                    Label::new(title)
-                        .size(LabelSize::Small)
-                        .truncate()
-                        .into_any_element()
-                } else {
-                    HighlightedLabel::new(title, highlight_positions)
-                        .size(LabelSize::Small)
-                        .truncate()
-                        .into_any_element()
-                };
-
-                ListItem::new(id)
-                    .toggle_state(is_selected)
-                    .child(
-                        h_flex()
-                            .min_w_0()
-                            .w_full()
-                            .py_1()
-                            .px_0p5()
-                            .gap_1()
-                            .justify_between()
-                            .child(title_label)
-                            .when_some(timestamp, |this, ts| {
-                                this.child(
-                                    Label::new(ts).size(LabelSize::Small).color(Color::Muted),
-                                )
-                            }),
-                    )
-                    .on_click(cx.listener(move |this, _, window, cx| {
-                        this.archive_selection = None;
-                        this.open_archive_thread(session_info.clone(), window, cx);
-                    }))
-                    .into_any_element()
-            }
-        }
     }
 
     fn open_archive_thread(
@@ -1776,84 +1569,46 @@ impl Sidebar {
         self.is_open
     }
 
-    pub fn set_history(&mut self, history: Entity<ThreadHistory>, cx: &mut Context<Self>) {
-        self._history_subscription = Some(cx.observe(&history, |this, _, cx| {
-            if this.view == SidebarView::Archive {
-                this.update_archive_items(cx);
-            }
-        }));
-        self.history = Some(history);
-    }
+    fn show_archive(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(active_workspace) = self.multi_workspace.upgrade().and_then(|w| {
+            w.read(cx)
+                .workspaces()
+                .get(w.read(cx).active_workspace_index())
+                .cloned()
+        }) else {
+            return;
+        };
+        let Some(agent_panel) = active_workspace.read(cx).panel::<AgentPanel>(cx) else {
+            return;
+        };
 
-    fn show_archive(&mut self, cx: &mut Context<Self>) {
+        let agent_connection_store = agent_panel.read(cx).connection_store().clone();
+
+        let archive_view = cx.new(|cx| ThreadsArchiveView::new(agent_connection_store, window, cx));
+        let subscription = cx.subscribe_in(
+            &archive_view,
+            window,
+            |this, _, event: &ThreadsArchiveViewEvent, window, cx| match event {
+                ThreadsArchiveViewEvent::Close => {
+                    this.show_thread_list(window, cx);
+                }
+                ThreadsArchiveViewEvent::OpenThread(session_info) => {
+                    this.open_archive_thread(session_info.clone(), window, cx);
+                }
+            },
+        );
+
+        self._subscriptions.push(subscription);
+        self.archive_view = Some(archive_view);
         self.view = SidebarView::Archive;
-        self.archive_selection = None;
-
-        if let Some(history) = &self.history {
-            history.update(cx, |history, cx| {
-                history.refresh_full_history(cx);
-            });
-        }
-
-        self.update_archive_items(cx);
         cx.notify();
     }
 
     fn show_thread_list(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.view = SidebarView::ThreadList;
-        self.reset_archive_filter_editor_text(window, cx);
+        self.archive_view = None;
+        self._subscriptions.clear();
         window.focus(&self.focus_handle, cx);
-        cx.notify();
-    }
-
-    fn update_archive_items(&mut self, cx: &mut Context<Self>) {
-        let Some(history) = &self.history else {
-            return;
-        };
-
-        let sessions = history.read(cx).sessions().to_vec();
-        let query = self.archive_filter_editor.read(cx).text(cx).to_lowercase();
-        let today = Local::now().naive_local().date();
-
-        let mut items = Vec::with_capacity(sessions.len() + 5);
-        let mut current_bucket: Option<TimeBucket> = None;
-
-        for session in sessions {
-            let highlight_positions = if !query.is_empty() {
-                let title = session.title.as_ref().map(|t| t.as_ref()).unwrap_or("");
-                match fuzzy_match_positions(&query, title) {
-                    Some(positions) => positions,
-                    None => continue,
-                }
-            } else {
-                Vec::new()
-            };
-
-            let entry_bucket = session
-                .updated_at
-                .map(|timestamp| {
-                    let entry_date = timestamp.with_timezone(&Local).naive_local().date();
-                    TimeBucket::from_dates(today, entry_date)
-                })
-                .unwrap_or(TimeBucket::Older);
-
-            if Some(entry_bucket) != current_bucket {
-                current_bucket = Some(entry_bucket);
-                items.push(ArchiveListItem::BucketSeparator(entry_bucket));
-            }
-
-            items.push(ArchiveListItem::Entry {
-                session,
-                highlight_positions,
-            });
-        }
-
-        self.archive_items = items;
-        self.archive_list_state = ListState::new(
-            self.archive_items.len(),
-            gpui::ListAlignment::Top,
-            px(1000.),
-        );
         cx.notify();
     }
 
@@ -1965,47 +1720,11 @@ impl Render for Sidebar {
                     )
                     .child(self.render_thread_list_footer(cx)),
                 SidebarView::Archive => {
-                    let has_session_list = self
-                        .history
-                        .as_ref()
-                        .map(|h| h.read(cx).has_session_list())
-                        .unwrap_or(false);
-                    let is_empty = self.archive_items.is_empty();
-                    let has_query = !self.archive_filter_editor.read(cx).text(cx).is_empty();
-
-                    let empty_state_container = |label: SharedString| {
-                        v_flex()
-                            .flex_1()
-                            .justify_center()
-                            .items_center()
-                            .child(Label::new(label).size(LabelSize::Small).color(Color::Muted))
-                    };
-
-                    this.child(self.render_archive_header(docked_right, cx))
-                        .child(if !has_session_list {
-                            empty_state_container("Start a thread to see your archive.".into())
-                                .into_any_element()
-                        } else if is_empty && has_query {
-                            empty_state_container("No threads match your search.".into())
-                                .into_any_element()
-                        } else if is_empty {
-                            empty_state_container("No archived threads yet.".into())
-                                .into_any_element()
-                        } else {
-                            v_flex()
-                                .flex_1()
-                                .overflow_hidden()
-                                .child(
-                                    list(
-                                        self.archive_list_state.clone(),
-                                        cx.processor(Self::render_archive_list_entry),
-                                    )
-                                    .flex_1()
-                                    .size_full(),
-                                )
-                                .vertical_scrollbar_for(&self.archive_list_state, window, cx)
-                                .into_any_element()
-                        })
+                    if let Some(archive_view) = &self.archive_view {
+                        this.child(archive_view.clone())
+                    } else {
+                        this
+                    }
                 }
             })
     }

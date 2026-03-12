@@ -1232,12 +1232,6 @@ impl AgentPanel {
 
         cx.defer_in(window, move |this, window, cx| {
             this.sidebar = find_or_create_sidebar_for_window(window, cx);
-            if let Some(sidebar) = &this.sidebar {
-                let history = this.acp_history.clone();
-                sidebar.update(cx, |sidebar, cx| {
-                    sidebar.set_history(history, cx);
-                });
-            }
             cx.notify();
         });
 
