@@ -654,9 +654,8 @@ impl ConnectionView {
             .or_else(|| worktree_roots.first().cloned())
             .unwrap_or_else(|| paths::home_dir().as_path().into());
 
-        let connection_entry = connection_store.update(cx, |store, cx| {
-            store.request_connection(connection_key, agent.clone(), cx)
-        });
+        let connection_entry =
+            connection_store.update(cx, |store, cx| store.request_connection(connection_key, cx));
 
         let connection_entry_subscription =
             cx.subscribe(&connection_entry, |this, _entry, event, cx| match event {
@@ -2910,8 +2909,9 @@ pub(crate) mod tests {
         let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
 
         let thread_store = cx.update(|_window, cx| cx.new(|cx| ThreadStore::new(cx)));
-        let connection_store =
-            cx.update(|_window, cx| cx.new(|cx| AgentConnectionStore::new(project.clone(), cx)));
+        let connection_store = cx.update(|_window, cx| {
+            cx.new(|cx| AgentConnectionStore::new(project.clone(), thread_store.clone(), cx))
+        });
 
         let thread_view = cx.update(|window, cx| {
             cx.new(|cx| {
@@ -3022,8 +3022,9 @@ pub(crate) mod tests {
         let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
 
         let thread_store = cx.update(|_window, cx| cx.new(|cx| ThreadStore::new(cx)));
-        let connection_store =
-            cx.update(|_window, cx| cx.new(|cx| AgentConnectionStore::new(project.clone(), cx)));
+        let connection_store = cx.update(|_window, cx| {
+            cx.new(|cx| AgentConnectionStore::new(project.clone(), thread_store.clone(), cx))
+        });
 
         let thread_view = cx.update(|window, cx| {
             cx.new(|cx| {
@@ -3079,8 +3080,9 @@ pub(crate) mod tests {
         let captured_cwd = connection.captured_cwd.clone();
 
         let thread_store = cx.update(|_window, cx| cx.new(|cx| ThreadStore::new(cx)));
-        let connection_store =
-            cx.update(|_window, cx| cx.new(|cx| AgentConnectionStore::new(project.clone(), cx)));
+        let connection_store = cx.update(|_window, cx| {
+            cx.new(|cx| AgentConnectionStore::new(project.clone(), thread_store.clone(), cx))
+        });
 
         let _thread_view = cx.update(|window, cx| {
             cx.new(|cx| {
@@ -3134,8 +3136,9 @@ pub(crate) mod tests {
         let captured_cwd = connection.captured_cwd.clone();
 
         let thread_store = cx.update(|_window, cx| cx.new(|cx| ThreadStore::new(cx)));
-        let connection_store =
-            cx.update(|_window, cx| cx.new(|cx| AgentConnectionStore::new(project.clone(), cx)));
+        let connection_store = cx.update(|_window, cx| {
+            cx.new(|cx| AgentConnectionStore::new(project.clone(), thread_store.clone(), cx))
+        });
 
         let _thread_view = cx.update(|window, cx| {
             cx.new(|cx| {
@@ -3189,8 +3192,9 @@ pub(crate) mod tests {
         let captured_cwd = connection.captured_cwd.clone();
 
         let thread_store = cx.update(|_window, cx| cx.new(|cx| ThreadStore::new(cx)));
-        let connection_store =
-            cx.update(|_window, cx| cx.new(|cx| AgentConnectionStore::new(project.clone(), cx)));
+        let connection_store = cx.update(|_window, cx| {
+            cx.new(|cx| AgentConnectionStore::new(project.clone(), thread_store.clone(), cx))
+        });
 
         let _thread_view = cx.update(|window, cx| {
             cx.new(|cx| {
@@ -3505,8 +3509,9 @@ pub(crate) mod tests {
 
         // Set up thread view in workspace 1
         let thread_store = cx.update(|_window, cx| cx.new(|cx| ThreadStore::new(cx)));
-        let connection_store =
-            cx.update(|_window, cx| cx.new(|cx| AgentConnectionStore::new(project1.clone(), cx)));
+        let connection_store = cx.update(|_window, cx| {
+            cx.new(|cx| AgentConnectionStore::new(project1.clone(), thread_store.clone(), cx))
+        });
 
         let agent = StubAgentServer::default_response();
         let thread_view = cx.update(|window, cx| {
@@ -3726,8 +3731,9 @@ pub(crate) mod tests {
         let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
 
         let thread_store = cx.update(|_window, cx| cx.new(|cx| ThreadStore::new(cx)));
-        let connection_store =
-            cx.update(|_window, cx| cx.new(|cx| AgentConnectionStore::new(project.clone(), cx)));
+        let connection_store = cx.update(|_window, cx| {
+            cx.new(|cx| AgentConnectionStore::new(project.clone(), thread_store.clone(), cx))
+        });
 
         let agent_key = ExternalAgent::Custom {
             name: "Test".into(),
@@ -4470,8 +4476,9 @@ pub(crate) mod tests {
         let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
 
         let thread_store = cx.update(|_window, cx| cx.new(|cx| ThreadStore::new(cx)));
-        let connection_store =
-            cx.update(|_window, cx| cx.new(|cx| AgentConnectionStore::new(project.clone(), cx)));
+        let connection_store = cx.update(|_window, cx| {
+            cx.new(|cx| AgentConnectionStore::new(project.clone(), thread_store.clone(), cx))
+        });
 
         let connection = Rc::new(StubAgentConnection::new());
         let thread_view = cx.update(|window, cx| {

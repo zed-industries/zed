@@ -1188,7 +1188,8 @@ impl AgentPanel {
             language_registry,
             text_thread_store,
             prompt_store,
-            connection_store: cx.new(|cx| AgentConnectionStore::new(project.clone(), cx)),
+            connection_store: cx
+                .new(|cx| AgentConnectionStore::new(project.clone(), thread_store.clone(), cx)),
             configuration: None,
             configuration_subscription: None,
             focus_handle: cx.focus_handle(),
@@ -1337,12 +1338,11 @@ impl AgentPanel {
     ) {
         let agent = ExternalAgent::NativeAgent;
 
-        let server = agent.server(self.fs.clone(), self.thread_store.clone());
         let session_id = action.from_session_id.clone();
 
-        let entry = self.connection_store.update(cx, |store, cx| {
-            store.request_connection(agent.clone(), server, cx)
-        });
+        let entry = self
+            .connection_store
+            .update(cx, |store, cx| store.request_connection(agent.clone(), cx));
         let connect_task = entry.read(cx).wait_for_connection();
 
         cx.spawn_in(window, async move |this, cx| {

@@ -1,6 +1,7 @@
 use std::rc::Rc;
 
 use acp_thread::{AgentConnection, LoadError};
+use agent::ThreadStore;
 use agent_servers::{AgentServer, AgentServerDelegate};
 use anyhow::Result;
 use collections::HashMap;
@@ -53,16 +54,22 @@ impl EventEmitter<AgentConnectionEntryEvent> for AgentConnectionEntry {}
 
 pub struct AgentConnectionStore {
     project: Entity<Project>,
+    thread_store: Entity<ThreadStore>,
     entries: HashMap<ExternalAgent, Entity<AgentConnectionEntry>>,
     _subscriptions: Vec<Subscription>,
 }
 
 impl AgentConnectionStore {
-    pub fn new(project: Entity<Project>, cx: &mut Context<Self>) -> Self {
+    pub fn new(
+        project: Entity<Project>,
+        thread_store: Entity<ThreadStore>,
+        cx: &mut Context<Self>,
+    ) -> Self {
         let agent_server_store = project.read(cx).agent_server_store().clone();
         let subscription = cx.subscribe(&agent_server_store, Self::handle_agent_servers_updated);
         Self {
             project,
+            thread_store,
             entries: HashMap::default(),
             _subscriptions: vec![subscription],
         }
@@ -74,11 +81,15 @@ impl AgentConnectionStore {
 
     pub fn request_connection(
         &mut self,
-        key: ExternalAgent,
-        server: Rc<dyn AgentServer>,
+        agent: ExternalAgent,
         cx: &mut Context<Self>,
     ) -> Entity<AgentConnectionEntry> {
-        self.entries.get(&key).cloned().unwrap_or_else(|| {
+        self.entries.get(&agent).cloned().unwrap_or_else(|| {
+            let server = agent.server(
+                self.project.read(cx).fs().clone(),
+                self.thread_store.clone(),
+            );
+
             let (mut new_version_rx, connect_task) = self.start_connection(server.clone(), cx);
             let connect_task = connect_task.shared();
 
@@ -86,10 +97,10 @@ impl AgentConnectionStore {
                 connect_task: connect_task.clone(),
             });
 
-            self.entries.insert(key.clone(), entry.clone());
+            self.entries.insert(agent.clone(), entry.clone());
 
             cx.spawn({
-                let key = key.clone();
+                let key = agent.clone();
                 let entry = entry.clone();
                 async move |this, cx| match connect_task.await {
                     Ok(connected_state) => {
@@ -123,7 +134,8 @@ impl AgentConnectionStore {
                                     version.clone().into(),
                                 ));
                             });
-                            this.update(cx, |this, _cx| this.entries.remove(&key)).ok();
+                            this.update(cx, |this, _cx| this.entries.remove(&agent))
+                                .ok();
                         }
                     }
                 }
