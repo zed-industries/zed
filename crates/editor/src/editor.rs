@@ -12549,7 +12549,9 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.manipulate_text(window, cx, |text| Self::convert_text_case(text, Case::Title))
+        self.manipulate_text(window, cx, |text| {
+            Self::convert_text_case(text, Case::Title)
+        })
     }
 
     pub fn convert_to_snake_case(
@@ -12558,7 +12560,9 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.manipulate_text(window, cx, |text| Self::convert_text_case(text, Case::Snake))
+        self.manipulate_text(window, cx, |text| {
+            Self::convert_text_case(text, Case::Snake)
+        })
     }
 
     pub fn convert_to_kebab_case(
@@ -12567,7 +12571,9 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.manipulate_text(window, cx, |text| Self::convert_text_case(text, Case::Kebab))
+        self.manipulate_text(window, cx, |text| {
+            Self::convert_text_case(text, Case::Kebab)
+        })
     }
 
     pub fn convert_to_upper_camel_case(
@@ -12576,7 +12582,9 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.manipulate_text(window, cx, |text| Self::convert_text_case(text, Case::UpperCamel))
+        self.manipulate_text(window, cx, |text| {
+            Self::convert_text_case(text, Case::UpperCamel)
+        })
     }
 
     pub fn convert_to_lower_camel_case(
@@ -12585,7 +12593,9 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.manipulate_text(window, cx, |text| Self::convert_text_case(text, Case::Camel))
+        self.manipulate_text(window, cx, |text| {
+            Self::convert_text_case(text, Case::Camel)
+        })
     }
 
     pub fn convert_to_opposite_case(
@@ -12613,7 +12623,9 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.manipulate_text(window, cx, |text| Self::convert_text_case(text, Case::Sentence))
+        self.manipulate_text(window, cx, |text| {
+            Self::convert_text_case(text, Case::Sentence)
+        })
     }
 
     pub fn toggle_case(&mut self, _: &ToggleCase, window: &mut Window, cx: &mut Context<Self>) {
