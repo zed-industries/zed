@@ -86,8 +86,8 @@ actions!(
         NewTextThread,
         /// Toggles the menu to create new agent threads.
         ToggleNewThreadMenu,
-        /// Toggles the selector for choosing where new threads start (current project or new worktree).
-        ToggleStartThreadInSelector,
+        /// Cycles through the options for where new threads start (current project or new worktree).
+        CycleStartThreadIn,
         /// Toggles the navigation menu for switching between threads and views.
         ToggleNavigationMenu,
         /// Toggles the options menu for agent settings and preferences.
@@ -655,6 +655,7 @@ mod tests {
             message_editor_min_lines: 1,
             tool_permissions: Default::default(),
             show_turn_stats: false,
+            new_thread_location: Default::default(),
         };
 
         cx.update(|cx| {
