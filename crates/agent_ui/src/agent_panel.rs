@@ -816,6 +816,19 @@ impl AgentPanel {
                             if let Some(active_thread) = server_view.read(cx).active_thread() {
                                 if active_thread.read(cx).thread == notification.thread_entity {
                                     eprintln!("🔄 [AGENT_PANEL] Already showing thread {} with same entity, skipping", incoming_session_id);
+
+                                    // Activate following for follow-up messages from Helix.
+                                    // The view already exists but follow may have lapsed after
+                                    // the previous generation completed.
+                                    let should_follow = active_thread.read(cx).should_be_following;
+                                    if should_follow {
+                                        if let Some(workspace) = this.workspace.upgrade() {
+                                            workspace.update(cx, |workspace, cx| {
+                                                workspace.follow(CollaboratorId::Agent, window, cx);
+                                            });
+                                        }
+                                    }
+
                                     return;
                                 }
                                 eprintln!("🔄 [AGENT_PANEL] Thread {} entity changed (container restart?), rebinding to new entity", incoming_session_id);
@@ -864,6 +877,22 @@ impl AgentPanel {
                                 Rc::new(NativeAgentSessionList::new(thread_store, cx));
                             history.set_session_list(Some(session_list), cx);
                         });
+
+                        // Activate following for externally-initiated threads.
+                        // AcpThreadView defaults should_be_following to true, so new
+                        // threads from Helix will auto-follow the agent's location.
+                        if let ActiveView::AgentThread { server_view } = &this.active_view {
+                            if let Some(active_thread) = server_view.read(cx).active_thread() {
+                                let should_follow = active_thread.read(cx).should_be_following;
+                                if should_follow {
+                                    if let Some(workspace) = this.workspace.upgrade() {
+                                        workspace.update(cx, |workspace, cx| {
+                                            workspace.follow(CollaboratorId::Agent, window, cx);
+                                        });
+                                    }
+                                }
+                            }
+                        }
 
                         eprintln!("✅ [AGENT_PANEL] Auto-opened existing headless thread {} in UI", incoming_session_id);
                     }).log_err();
@@ -1795,11 +1824,36 @@ impl AgentPanel {
         let new_is_special = new_is_history || new_is_config;
 
         if current_is_uninitialized || (current_is_special && !new_is_special) {
+            // Transitioning from History/Config to a new AgentThread (e.g., user
+            // clicked a thread from the history list). If previous_view holds a
+            // stale AgentThread with a running generation, cancel it now — the
+            // user has chosen a different thread, so the old one should not keep
+            // running in the background.
+            #[cfg(feature = "external_websocket_sync")]
+            if let Some(ActiveView::AgentThread { server_view }) = &self.previous_view {
+                if let Some(active_thread) = server_view.read(cx).active_thread() {
+                    active_thread.update(cx, |thread_view, cx| {
+                        thread_view.cancel_generation(cx);
+                    });
+                }
+            }
+            self.previous_view = None;
             self.active_view = new_view;
         } else if !current_is_special && new_is_special {
             self.previous_view = Some(std::mem::replace(&mut self.active_view, new_view));
         } else {
             if !new_is_special {
+                // Replacing one AgentThread with another directly (not via
+                // History). Cancel any running generation in the stale
+                // previous_view before dropping it.
+                #[cfg(feature = "external_websocket_sync")]
+                if let Some(ActiveView::AgentThread { server_view }) = &self.previous_view {
+                    if let Some(active_thread) = server_view.read(cx).active_thread() {
+                        active_thread.update(cx, |thread_view, cx| {
+                            thread_view.cancel_generation(cx);
+                        });
+                    }
+                }
                 self.previous_view = None;
             }
             self.active_view = new_view;
