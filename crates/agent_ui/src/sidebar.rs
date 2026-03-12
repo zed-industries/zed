@@ -854,8 +854,7 @@ impl Sidebar {
                         this.child(
                             IconButton::new(
                                 SharedString::from(format!(
-                                    "{}project-header-remove-{}",
-                                    id_prefix, ix
+                                    "{id_prefix}project-header-remove-{ix}",
                                 )),
                                 IconName::Close,
                             )
@@ -873,8 +872,7 @@ impl Sidebar {
                         this.child(
                             IconButton::new(
                                 SharedString::from(format!(
-                                    "{}project-header-collapse-{}",
-                                    id_prefix, ix
+                                    "{id_prefix}project-header-collapse-{ix}",
                                 )),
                                 IconName::ListCollapse,
                             )
@@ -966,7 +964,7 @@ impl Sidebar {
             cx,
         );
 
-        let max_height = self
+        let top_offset = self
             .contents
             .project_header_indices
             .iter()
@@ -975,16 +973,16 @@ impl Sidebar {
                 let bounds = self.list_state.bounds_for_item(next_idx)?;
                 let viewport = self.list_state.viewport_bounds();
                 let y_in_viewport = bounds.origin.y - viewport.origin.y;
-                (y_in_viewport >= px(0.)).then_some(y_in_viewport)
-            });
+                let header_height = bounds.size.height;
+                (y_in_viewport < header_height).then_some(y_in_viewport - header_height)
+            })
+            .unwrap_or(px(0.));
 
         let element = v_flex()
             .absolute()
-            .top_0()
+            .top(top_offset)
             .left_0()
             .w_full()
-            .overflow_hidden()
-            .when_some(max_height, |this, height| this.max_h(height))
             .bg(cx.theme().colors().surface_background)
             .border_b_1()
             .border_color(cx.theme().colors().border_variant)
