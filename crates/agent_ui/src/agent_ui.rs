@@ -34,6 +34,7 @@ mod text_thread_editor;
 mod text_thread_history;
 mod thread_history;
 mod thread_history_view;
+mod threads_archive_view;
 mod ui;
 
 use std::rc::Rc;
