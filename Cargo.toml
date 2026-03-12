@@ -66,6 +66,7 @@ members = [
     "crates/encoding_selector",
     "crates/etw_tracing",
     "crates/eval",
+    "crates/eval_cli",
     "crates/eval_utils",
     "crates/explorer_command_injector",
     "crates/extension",
@@ -158,7 +159,6 @@ members = [
     "crates/remote_server",
     "crates/repl",
     "crates/reqwest_client",
-    "crates/rich_text",
     "crates/rope",
     "crates/rpc",
     "crates/rules_library",
@@ -173,7 +173,6 @@ members = [
     "crates/settings_profile_selector",
     "crates/settings_ui",
     "crates/shell_command_parser",
-    "crates/sidebar",
     "crates/snippet",
     "crates/snippet_provider",
     "crates/snippets_ui",
@@ -412,7 +411,6 @@ rules_library = { path = "crates/rules_library" }
 scheduler = { path = "crates/scheduler" }
 search = { path = "crates/search" }
 session = { path = "crates/session" }
-sidebar = { path = "crates/sidebar" }
 settings = { path = "crates/settings" }
 settings_content = { path = "crates/settings_content" }
 settings_json = { path = "crates/settings_json" }
@@ -475,7 +473,7 @@ ztracing_macro = { path = "crates/ztracing_macro" }
 # External crates
 #
 
-agent-client-protocol = { version = "=0.9.4", features = ["unstable"] }
+agent-client-protocol = { version = "=0.10.2", features = ["unstable"] }
 aho-corasick = "1.1"
 alacritty_terminal = { git = "https://github.com/zed-industries/alacritty", rev = "9d9640d4" }
 any_vec = "0.14"
@@ -513,7 +511,6 @@ aws-smithy-runtime-api = { version = "1.9.2", features = ["http-1x", "client"] }
 aws-smithy-types = { version = "1.3.4", features = ["http-body-1-x"] }
 backtrace = "0.3"
 base64 = "0.22"
-bincode = "1.2.1"
 bitflags = "2.6.0"
 brotli = "8.0.2"
 bytes = "1.0"
@@ -572,7 +569,6 @@ human_bytes = "0.4.1"
 html5ever = "0.27.0"
 http = "1.1"
 http-body = "1.0"
-hyper = "0.14"
 ignore = "0.4.22"
 image = "0.25.1"
 imara-diff = "0.1.8"
@@ -595,7 +591,7 @@ lsp-types = { git = "https://github.com/zed-industries/lsp-types", rev = "a4f410
 mach2 = "0.5"
 markup5ever_rcdom = "0.3.0"
 metal = "0.33"
-minidumper = "0.8"
+minidumper = "0.9"
 moka = { version = "0.12.10", features = ["sync"] }
 naga = { version = "28.0", features = ["wgsl-in"] }
 nanoid = "0.4"
@@ -649,6 +645,9 @@ postage = { version = "0.5", features = ["futures-traits"] }
 pretty_assertions = { version = "1.3.0", features = ["unstable"] }
 proc-macro2 = "1.0.93"
 profiling = "1"
+# replace this with main when #635 is merged
+proptest = { git = "https://github.com/proptest-rs/proptest", rev = "3dca198a8fef1b32e3a66f1e1897c955b4dc5b5b", features = ["attr-macro"] }
+proptest-derive = "0.8.0"
 prost = "0.9"
 prost-build = "0.9"
 prost-types = "0.9"
@@ -687,7 +686,6 @@ serde_json_lenient = { version = "0.2", features = [
     "raw_value",
 ] }
 serde_path_to_error = "0.1.17"
-serde_repr = "0.1"
 serde_urlencoded = "0.7"
 sha2 = "0.10"
 shellexpand = "2.1.0"
@@ -718,7 +716,6 @@ time = { version = "0.3", features = [
 ] }
 tiny_http = "0.8"
 tokio = { version = "1" }
-tokio-tungstenite = { version = "0.26", features = ["__rustls-tls"] }
 tokio-socks = { version = "0.5.2", default-features = false, features = [
     "futures-io",
     "tokio",
@@ -779,7 +776,7 @@ wax = "0.7"
 which = "6.0.0"
 wasm-bindgen = "0.2.113"
 web-time = "1.1.0"
-wgpu = { git = "https://github.com/zed-industries/wgpu", rev = "9459e95113c5bd116b2cc2c87e8424b28059e17c" }
+wgpu = { git = "https://github.com/zed-industries/wgpu", rev = "465557eccfe77c840a9b4936f1408da9503372c4" }
 windows-core = "0.61"
 yawc = "0.2.5"
 zeroize = "1.8"
@@ -904,7 +901,6 @@ refineable = { codegen-units = 1 }
 release_channel = { codegen-units = 1 }
 reqwest_client = { codegen-units = 1 }
 session = { codegen-units = 1 }
-sidebar = { codegen-units = 1 }
 snippet = { codegen-units = 1 }
 snippets_ui = { codegen-units = 1 }
 story = { codegen-units = 1 }

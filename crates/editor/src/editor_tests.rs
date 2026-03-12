@@ -5,6 +5,7 @@ use crate::{
     edit_prediction_tests::FakeEditPredictionDelegate,
     element::StickyHeader,
     linked_editing_ranges::LinkedEditingRanges,
+    runnables::RunnableTasks,
     scroll::scroll_amount::ScrollAmount,
     test::{
         assert_text_with_selections, build_editor, editor_content_with_blocks,
@@ -75,6 +76,9 @@ fn display_ranges(editor: &Editor, cx: &mut Context<'_, Editor>) -> Vec<Range<Di
         .selections
         .display_ranges(&editor.display_snapshot(cx))
 }
+
+#[cfg(any(test, feature = "test-support"))]
+pub mod property_test;
 
 #[gpui::test]
 fn test_edit_events(cx: &mut TestAppContext) {
@@ -12916,6 +12920,96 @@ async fn test_document_format_during_save(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_auto_formatter_skips_server_without_formatting(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_file(path!("/file.rs"), Default::default()).await;
+
+    let project = Project::test(fs, [path!("/file.rs").as_ref()], cx).await;
+
+    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+    language_registry.add(rust_lang());
+
+    // First server: no formatting capability
+    let mut no_format_servers = language_registry.register_fake_lsp(
+        "Rust",
+        FakeLspAdapter {
+            name: "no-format-server",
+            capabilities: lsp::ServerCapabilities {
+                completion_provider: Some(lsp::CompletionOptions::default()),
+                ..Default::default()
+            },
+            ..Default::default()
+        },
+    );
+
+    // Second server: has formatting capability
+    let mut format_servers = language_registry.register_fake_lsp(
+        "Rust",
+        FakeLspAdapter {
+            name: "format-server",
+            capabilities: lsp::ServerCapabilities {
+                document_formatting_provider: Some(lsp::OneOf::Left(true)),
+                ..Default::default()
+            },
+            ..Default::default()
+        },
+    );
+
+    let buffer = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer(path!("/file.rs"), cx)
+        })
+        .await
+        .unwrap();
+
+    let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
+    let (editor, cx) = cx.add_window_view(|window, cx| {
+        build_editor_with_project(project.clone(), buffer, window, cx)
+    });
+    editor.update_in(cx, |editor, window, cx| {
+        editor.set_text("one\ntwo\nthree\n", window, cx)
+    });
+
+    let _no_format_server = no_format_servers.next().await.unwrap();
+    let format_server = format_servers.next().await.unwrap();
+
+    format_server.set_request_handler::<lsp::request::Formatting, _, _>(
+        move |params, _| async move {
+            assert_eq!(
+                params.text_document.uri,
+                lsp::Uri::from_file_path(path!("/file.rs")).unwrap()
+            );
+            Ok(Some(vec![lsp::TextEdit::new(
+                lsp::Range::new(lsp::Position::new(0, 3), lsp::Position::new(1, 0)),
+                ", ".to_string(),
+            )]))
+        },
+    );
+
+    let save = editor
+        .update_in(cx, |editor, window, cx| {
+            editor.save(
+                SaveOptions {
+                    format: true,
+                    autosave: false,
+                },
+                project.clone(),
+                window,
+                cx,
+            )
+        })
+        .unwrap();
+    save.await;
+
+    assert_eq!(
+        editor.update(cx, |editor, cx| editor.text(cx)),
+        "one, two\nthree\n"
+    );
+}
+
+#[gpui::test]
 async fn test_redo_after_noop_format(cx: &mut TestAppContext) {
     init_test(cx, |settings| {
         settings.defaults.ensure_final_newline_on_save = Some(false);
@@ -24310,20 +24404,24 @@ async fn test_find_enclosing_node_with_task(cx: &mut TestAppContext) {
 
     editor.update_in(cx, |editor, window, cx| {
         let snapshot = editor.buffer().read(cx).snapshot(cx);
-        editor.tasks.insert(
-            (buffer.read(cx).remote_id(), 3),
+        editor.runnables.insert(
+            buffer.read(cx).remote_id(),
+            3,
+            buffer.read(cx).version(),
             RunnableTasks {
-                templates: vec![],
+                templates: Vec::new(),
                 offset: snapshot.anchor_before(MultiBufferOffset(43)),
                 column: 0,
                 extra_variables: HashMap::default(),
                 context_range: BufferOffset(43)..BufferOffset(85),
             },
         );
-        editor.tasks.insert(
-            (buffer.read(cx).remote_id(), 8),
+        editor.runnables.insert(
+            buffer.read(cx).remote_id(),
+            8,
+            buffer.read(cx).version(),
             RunnableTasks {
-                templates: vec![],
+                templates: Vec::new(),
                 offset: snapshot.anchor_before(MultiBufferOffset(86)),
                 column: 0,
                 extra_variables: HashMap::default(),
@@ -33463,4 +33561,67 @@ comment */ˇ»;"#},
     editor.update(cx, |editor, cx| {
         assert_text_with_selections(editor, indoc! {r#"let arr = [«1, 2, 3]ˇ»;"#}, cx);
     });
+}
+
+#[gpui::test]
+async fn test_restore_and_next(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    let mut cx = EditorTestContext::new(cx).await;
+
+    let diff_base = r#"
+        one
+        two
+        three
+        four
+        five
+        "#
+    .unindent();
+
+    cx.set_state(
+        &r#"
+        ONE
+        two
+        ˇTHREE
+        four
+        FIVE
+        "#
+        .unindent(),
+    );
+    cx.set_head_text(&diff_base);
+
+    cx.update_editor(|editor, window, cx| {
+        editor.set_expand_all_diff_hunks(cx);
+        editor.restore_and_next(&Default::default(), window, cx);
+    });
+    cx.run_until_parked();
+
+    cx.assert_state_with_diff(
+        r#"
+        - one
+        + ONE
+          two
+          three
+          four
+        - ˇfive
+        + FIVE
+        "#
+        .unindent(),
+    );
+
+    cx.update_editor(|editor, window, cx| {
+        editor.restore_and_next(&Default::default(), window, cx);
+    });
+    cx.run_until_parked();
+
+    cx.assert_state_with_diff(
+        r#"
+        - one
+        + ONE
+          two
+          three
+          four
+          ˇfive
+        "#
+        .unindent(),
+    );
 }

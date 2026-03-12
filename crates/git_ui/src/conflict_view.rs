@@ -1,3 +1,4 @@
+use agent_settings::AgentSettings;
 use collections::{HashMap, HashSet};
 use editor::{
     ConflictsOurs, ConflictsOursMarker, ConflictsOuter, ConflictsTheirs, ConflictsTheirsMarker,
@@ -5,14 +6,25 @@ use editor::{
     display_map::{BlockContext, BlockPlacement, BlockProperties, BlockStyle, CustomBlockId},
 };
 use gpui::{
-    App, Context, Entity, InteractiveElement as _, ParentElement as _, Subscription, Task,
-    WeakEntity,
+    App, Context, DismissEvent, Entity, InteractiveElement as _, ParentElement as _, Subscription,
+    Task, WeakEntity,
 };
 use language::{Anchor, Buffer, BufferId};
-use project::{ConflictRegion, ConflictSet, ConflictSetUpdate, ProjectItem as _};
-use std::{ops::Range, sync::Arc};
-use ui::{ActiveTheme, Element as _, Styled, Window, prelude::*};
+use project::{
+    ConflictRegion, ConflictSet, ConflictSetUpdate, ProjectItem as _,
+    git_store::{GitStoreEvent, RepositoryEvent},
+};
+use settings::Settings;
+use std::{cell::RefCell, ops::Range, rc::Rc, sync::Arc};
+use ui::{ActiveTheme, Divider, Element as _, Styled, Window, prelude::*};
 use util::{ResultExt as _, debug_panic, maybe};
+use workspace::{
+    Workspace,
+    notifications::{NotificationId, simple_message_notification::MessageNotification},
+};
+use zed_actions::agent::{
+    ConflictContent, ResolveConflictedFilesWithAgent, ResolveConflictsWithAgent,
+};
 
 pub(crate) struct ConflictAddon {
     buffers: HashMap<BufferId, BufferConflicts>,
@@ -182,7 +194,7 @@ fn conflicts_updated(
     let excerpts = multibuffer.excerpts_for_buffer(buffer_id, cx);
     let Some(buffer_snapshot) = excerpts
         .first()
-        .and_then(|(excerpt_id, _)| snapshot.buffer_for_excerpt(*excerpt_id))
+        .and_then(|(excerpt_id, _, _)| snapshot.buffer_for_excerpt(*excerpt_id))
     else {
         return;
     };
@@ -221,7 +233,7 @@ fn conflicts_updated(
         let mut removed_highlighted_ranges = Vec::new();
         let mut removed_block_ids = HashSet::default();
         for (conflict_range, block_id) in old_conflicts {
-            let Some((excerpt_id, _)) = excerpts.iter().find(|(_, range)| {
+            let Some((excerpt_id, _, _)) = excerpts.iter().find(|(_, _, range)| {
                 let precedes_start = range
                     .context
                     .start
@@ -263,7 +275,7 @@ fn conflicts_updated(
     let new_conflicts = &conflict_set.conflicts[event.new_range.clone()];
     let mut blocks = Vec::new();
     for conflict in new_conflicts {
-        let Some((excerpt_id, _)) = excerpts.iter().find(|(_, range)| {
+        let Some((excerpt_id, _, _)) = excerpts.iter().find(|(_, _, range)| {
             let precedes_start = range
                 .context
                 .start
@@ -368,11 +380,12 @@ fn render_conflict_buttons(
     editor: WeakEntity<Editor>,
     cx: &mut BlockContext,
 ) -> AnyElement {
+    let is_ai_enabled = AgentSettings::get_global(cx).enabled(cx);
+
     h_flex()
         .id(cx.block_id)
         .h(cx.line_height)
         .ml(cx.margins.gutter.width)
-        .items_end()
         .gap_1()
         .bg(cx.theme().colors().editor_background)
         .child(
@@ -419,6 +432,7 @@ fn render_conflict_buttons(
             Button::new("both", "Use Both")
                 .label_size(LabelSize::Small)
                 .on_click({
+                    let editor = editor.clone();
                     let conflict = conflict.clone();
                     let ours = conflict.ours.clone();
                     let theirs = conflict.theirs.clone();
@@ -435,7 +449,144 @@ fn render_conflict_buttons(
                     }
                 }),
         )
+        .when(is_ai_enabled, |this| {
+            this.child(Divider::vertical()).child(
+                Button::new("resolve-with-agent", "Resolve with Agent")
+                    .label_size(LabelSize::Small)
+                    .icon(IconName::ZedAssistant)
+                    .icon_position(IconPosition::Start)
+                    .icon_size(IconSize::Small)
+                    .icon_color(Color::Muted)
+                    .on_click({
+                        let conflict = conflict.clone();
+                        move |_, window, cx| {
+                            let content = editor
+                                .update(cx, |editor, cx| {
+                                    let multibuffer = editor.buffer().read(cx);
+                                    let buffer_id = conflict.ours.end.buffer_id?;
+                                    let buffer = multibuffer.buffer(buffer_id)?;
+                                    let buffer_read = buffer.read(cx);
+                                    let snapshot = buffer_read.snapshot();
+                                    let conflict_text = snapshot
+                                        .text_for_range(conflict.range.clone())
+                                        .collect::<String>();
+                                    let file_path = buffer_read
+                                        .file()
+                                        .and_then(|file| file.as_local())
+                                        .map(|f| f.abs_path(cx).to_string_lossy().to_string())
+                                        .unwrap_or_default();
+                                    Some(ConflictContent {
+                                        file_path,
+                                        conflict_text,
+                                        ours_branch_name: conflict.ours_branch_name.to_string(),
+                                        theirs_branch_name: conflict.theirs_branch_name.to_string(),
+                                    })
+                                })
+                                .ok()
+                                .flatten();
+                            if let Some(content) = content {
+                                window.dispatch_action(
+                                    Box::new(ResolveConflictsWithAgent {
+                                        conflicts: vec![content],
+                                    }),
+                                    cx,
+                                );
+                            }
+                        }
+                    }),
+            )
+        })
         .into_any()
+}
+
+struct MergeConflictNotification;
+
+fn merge_conflict_notification_id() -> NotificationId {
+    NotificationId::unique::<MergeConflictNotification>()
+}
+
+fn collect_conflicted_file_paths(workspace: &Workspace, cx: &App) -> Vec<String> {
+    let project = workspace.project().read(cx);
+    let git_store = project.git_store().read(cx);
+    let mut paths = Vec::new();
+
+    for repo in git_store.repositories().values() {
+        let snapshot = repo.read(cx).snapshot();
+        for (repo_path, _) in snapshot.merge.merge_heads_by_conflicted_path.iter() {
+            if let Some(project_path) = repo.read(cx).repo_path_to_project_path(repo_path, cx) {
+                paths.push(
+                    project_path
+                        .path
+                        .as_std_path()
+                        .to_string_lossy()
+                        .to_string(),
+                );
+            }
+        }
+    }
+
+    paths
+}
+
+pub(crate) fn register_conflict_notification(
+    workspace: &mut Workspace,
+    cx: &mut Context<Workspace>,
+) {
+    let git_store = workspace.project().read(cx).git_store().clone();
+
+    let last_shown_paths: Rc<RefCell<HashSet<String>>> = Rc::new(RefCell::new(HashSet::default()));
+
+    cx.subscribe(&git_store, move |workspace, _git_store, event, cx| {
+        let conflicts_changed = matches!(
+            event,
+            GitStoreEvent::ConflictsUpdated
+                | GitStoreEvent::RepositoryUpdated(_, RepositoryEvent::StatusesChanged, _)
+        );
+        if !AgentSettings::get_global(cx).enabled || !conflicts_changed {
+            return;
+        }
+
+        let paths = collect_conflicted_file_paths(workspace, cx);
+        let notification_id = merge_conflict_notification_id();
+        let current_paths_set: HashSet<String> = paths.iter().cloned().collect();
+
+        if paths.is_empty() {
+            last_shown_paths.borrow_mut().clear();
+            workspace.dismiss_notification(&notification_id, cx);
+        } else if *last_shown_paths.borrow() != current_paths_set {
+            // Only show the notification if the set of conflicted paths has changed.
+            // This prevents re-showing after the user dismisses it while working on the same conflicts.
+            *last_shown_paths.borrow_mut() = current_paths_set;
+            let file_count = paths.len();
+            workspace.show_notification(notification_id, cx, |cx| {
+                cx.new(|cx| {
+                    let message = if file_count == 1 {
+                        "1 file has unresolved merge conflicts".to_string()
+                    } else {
+                        format!("{file_count} files have unresolved merge conflicts")
+                    };
+
+                    MessageNotification::new(message, cx)
+                        .primary_message("Resolve with Agent")
+                        .primary_icon(IconName::ZedAssistant)
+                        .primary_icon_color(Color::Muted)
+                        .primary_on_click({
+                            let paths = paths.clone();
+                            move |window, cx| {
+                                window.dispatch_action(
+                                    Box::new(ResolveConflictedFilesWithAgent {
+                                        conflicted_file_paths: paths.clone(),
+                                    }),
+                                    cx,
+                                );
+                                cx.emit(DismissEvent);
+                            }
+                        })
+                })
+            });
+        }
+    })
+    .detach();
 }
 
 pub(crate) fn resolve_conflict(

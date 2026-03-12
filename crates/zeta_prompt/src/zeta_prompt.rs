@@ -1,10 +1,17 @@
-use anyhow::Result;
+pub mod excerpt_ranges;
+pub mod multi_region;
+
+use anyhow::{Result, anyhow};
 use serde::{Deserialize, Serialize};
 use std::fmt::Write;
 use std::ops::Range;
 use std::path::Path;
 use std::sync::Arc;
 use strum::{EnumIter, IntoEnumIterator as _, IntoStaticStr};
+
+pub use crate::excerpt_ranges::{
+    ExcerptRanges, compute_editable_and_context_ranges, compute_legacy_excerpt_ranges,
+};
 
 pub const CURSOR_MARKER: &str = "<|user_cursor|>";
 pub const MAX_PROMPT_TOKENS: usize = 4096;
@@ -18,31 +25,6 @@ fn estimate_tokens(bytes: usize) -> usize {
     bytes / 3
 }
 
-/// Pre-computed byte offset ranges within `cursor_excerpt` for different
-/// editable and context token budgets. Allows the server to select the
-/// appropriate ranges for whichever model it uses.
-#[derive(Clone, Debug, Default, PartialEq, Hash, Serialize, Deserialize)]
-pub struct ExcerptRanges {
-    /// Editable region computed with a 150-token budget.
-    pub editable_150: Range<usize>,
-    /// Editable region computed with a 180-token budget.
-    pub editable_180: Range<usize>,
-    /// Editable region computed with a 350-token budget.
-    pub editable_350: Range<usize>,
-    /// Editable region computed with a 350-token budget.
-    pub editable_512: Option<Range<usize>>,
-    /// Context boundary when using editable_150 with 350 tokens of additional context.
-    pub editable_150_context_350: Range<usize>,
-    /// Context boundary when using editable_180 with 350 tokens of additional context.
-    pub editable_180_context_350: Range<usize>,
-    /// Context boundary when using editable_350 with 150 tokens of additional context.
-    pub editable_350_context_150: Range<usize>,
-    pub editable_350_context_512: Option<Range<usize>>,
-    pub editable_350_context_1024: Option<Range<usize>>,
-    pub context_4096: Option<Range<usize>>,
-    pub context_8192: Option<Range<usize>>,
-}
-
 #[derive(Clone, Debug, PartialEq, Hash, Serialize, Deserialize)]
 pub struct ZetaPromptInput {
     pub cursor_path: Arc<Path>,
@@ -51,9 +33,18 @@ pub struct ZetaPromptInput {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub excerpt_start_row: Option<u32>,
     pub events: Vec<Arc<Event>>,
-    pub related_files: Vec<RelatedFile>,
+    #[serde(default)]
+    pub related_files: Option<Vec<RelatedFile>>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub active_buffer_diagnostics: Vec<ActiveBufferDiagnostic>,
     /// These ranges let the server select model-appropriate subsets.
     pub excerpt_ranges: ExcerptRanges,
+    /// Byte offset ranges within `cursor_excerpt` for all syntax nodes that
+    /// contain `cursor_offset_in_excerpt`, ordered from innermost to outermost.
+    /// When present, the server uses these to compute editable/context ranges
+    /// instead of `excerpt_ranges`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub syntax_ranges: Option<Vec<Range<usize>>>,
     /// The name of the edit prediction model experiment to use.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub experiment: Option<String>,
@@ -89,7 +80,9 @@ pub enum ZetaFormat {
     V0211Prefill,
     V0211SeedCoder,
     v0226Hashline,
+    V0304VariableEdit,
     V0304SeedNoEdits,
+    V0306SeedMultiRegions,
 }
 
 impl std::fmt::Display for ZetaFormat {
@@ -180,6 +173,15 @@ pub fn write_event(prompt: &mut String, event: &Event) {
 }
 
 #[derive(Clone, Debug, PartialEq, Hash, Serialize, Deserialize)]
+pub struct ActiveBufferDiagnostic {
+    pub severity: Option<i32>,
+    pub message: String,
+    pub snippet: String,
+    pub snippet_buffer_row_range: Range<u32>,
+    pub diagnostic_range_in_snippet: Range<usize>,
+}
+
+#[derive(Clone, Debug, PartialEq, Hash, Serialize, Deserialize)]
 pub struct RelatedFile {
     pub path: Arc<Path>,
     pub max_row: u32,
@@ -216,7 +218,54 @@ pub fn special_tokens_for_format(format: ZetaFormat) -> &'static [&'static str] 
         ZetaFormat::V0211Prefill => v0211_prefill::special_tokens(),
         ZetaFormat::V0211SeedCoder => seed_coder::special_tokens(),
         ZetaFormat::v0226Hashline => hashline::special_tokens(),
+        ZetaFormat::V0304VariableEdit => v0304_variable_edit::special_tokens(),
         ZetaFormat::V0304SeedNoEdits => seed_coder::special_tokens(),
+        ZetaFormat::V0306SeedMultiRegions => {
+            static TOKENS: &[&str] = &[
+                seed_coder::FIM_SUFFIX,
+                seed_coder::FIM_PREFIX,
+                seed_coder::FIM_MIDDLE,
+                seed_coder::FILE_MARKER,
+                seed_coder::START_MARKER,
+                seed_coder::SEPARATOR,
+                seed_coder::END_MARKER,
+                CURSOR_MARKER,
+                multi_region::MARKER_TAG_PREFIX,
+            ];
+            TOKENS
+        }
+    }
+}
+
+/// Returns the (editable_token_limit, context_token_limit) for a given format.
+pub fn token_limits_for_format(format: ZetaFormat) -> (usize, usize) {
+    match format {
+        ZetaFormat::V0112MiddleAtEnd | ZetaFormat::V0113Ordered => (150, 350),
+        ZetaFormat::V0114180EditableRegion => (180, 350),
+        ZetaFormat::V0120GitMergeMarkers
+        | ZetaFormat::V0131GitMergeMarkersPrefix
+        | ZetaFormat::V0211Prefill
+        | ZetaFormat::V0211SeedCoder
+        | ZetaFormat::v0226Hashline
+        | ZetaFormat::V0306SeedMultiRegions
+        | ZetaFormat::V0304SeedNoEdits => (350, 150),
+        ZetaFormat::V0304VariableEdit => (1024, 0),
+    }
+}
+
+pub fn stop_tokens_for_format(format: ZetaFormat) -> &'static [&'static str] {
+    match format {
+        ZetaFormat::v0226Hashline => &[hashline::NO_EDITS_COMMAND_MARKER],
+        ZetaFormat::V0112MiddleAtEnd
+        | ZetaFormat::V0113Ordered
+        | ZetaFormat::V0114180EditableRegion
+        | ZetaFormat::V0120GitMergeMarkers
+        | ZetaFormat::V0131GitMergeMarkersPrefix
+        | ZetaFormat::V0211Prefill
+        | ZetaFormat::V0211SeedCoder
+        | ZetaFormat::V0304VariableEdit
+        | ZetaFormat::V0306SeedMultiRegions
+        | ZetaFormat::V0304SeedNoEdits => &[],
     }
 }
 
@@ -238,10 +287,19 @@ pub fn excerpt_ranges_for_format(
         | ZetaFormat::V0211Prefill
         | ZetaFormat::V0211SeedCoder
         | ZetaFormat::v0226Hashline
-        | ZetaFormat::V0304SeedNoEdits => (
+        | ZetaFormat::V0304SeedNoEdits
+        | ZetaFormat::V0306SeedMultiRegions => (
             ranges.editable_350.clone(),
             ranges.editable_350_context_150.clone(),
         ),
+        ZetaFormat::V0304VariableEdit => {
+            let context = ranges
+                .editable_350_context_1024
+                .clone()
+                .or(ranges.editable_350_context_512.clone())
+                .unwrap_or_else(|| ranges.editable_350_context_150.clone());
+            (context.clone(), context)
+        }
     }
 }
 
@@ -302,7 +360,56 @@ pub fn write_cursor_excerpt_section_for_format(
             editable_range,
             cursor_offset,
         ),
+        ZetaFormat::V0304VariableEdit => {
+            v0304_variable_edit::write_cursor_excerpt_section(prompt, path, context, cursor_offset)
+        }
+        ZetaFormat::V0306SeedMultiRegions => {
+            prompt.push_str(&build_v0306_cursor_prefix(
+                path,
+                context,
+                editable_range,
+                cursor_offset,
+            ));
+        }
     }
+}
+
+fn build_v0306_cursor_prefix(
+    path: &Path,
+    context: &str,
+    editable_range: &Range<usize>,
+    cursor_offset: usize,
+) -> String {
+    let mut section = String::new();
+    let path_str = path.to_string_lossy();
+    write!(section, "{}{}\n", seed_coder::FILE_MARKER, path_str).ok();
+
+    section.push_str(&context[..editable_range.start]);
+    section.push_str(seed_coder::START_MARKER);
+
+    let editable_text = &context[editable_range.clone()];
+    let cursor_in_editable = cursor_offset - editable_range.start;
+    multi_region::write_editable_with_markers(
+        &mut section,
+        editable_text,
+        cursor_in_editable,
+        CURSOR_MARKER,
+    );
+
+    if !section.ends_with('\n') {
+        section.push('\n');
+    }
+    section.push_str(seed_coder::SEPARATOR);
+    section
+}
+
+fn offset_range_to_row_range(text: &str, range: Range<usize>) -> Range<u32> {
+    let start_row = text[0..range.start].matches('\n').count() as u32;
+    let mut end_row = start_row + text[range.clone()].matches('\n').count() as u32;
+    if !text[..range.end].ends_with('\n') {
+        end_row += 1;
+    }
+    return start_row..end_row;
 }
 
 pub fn format_prompt_with_budget_for_format(
@@ -310,8 +417,24 @@ pub fn format_prompt_with_budget_for_format(
     format: ZetaFormat,
     max_tokens: usize,
 ) -> String {
-    let (context, editable_range, cursor_offset) = resolve_cursor_region(input, format);
+    let (context, editable_range, context_range, cursor_offset) =
+        resolve_cursor_region(input, format);
     let path = &*input.cursor_path;
+
+    let empty_files = Vec::new();
+    let input_related_files = input.related_files.as_deref().unwrap_or(&empty_files);
+    let related_files = if let Some(cursor_excerpt_start_row) = input.excerpt_start_row {
+        let relative_row_range = offset_range_to_row_range(&input.cursor_excerpt, context_range);
+        let row_range = relative_row_range.start + cursor_excerpt_start_row
+            ..relative_row_range.end + cursor_excerpt_start_row;
+        &filter_redundant_excerpts(
+            input_related_files.to_vec(),
+            input.cursor_path.as_ref(),
+            row_range,
+        )
+    } else {
+        input_related_files
+    };
 
     match format {
         ZetaFormat::V0211SeedCoder | ZetaFormat::V0304SeedNoEdits => {
@@ -321,7 +444,19 @@ pub fn format_prompt_with_budget_for_format(
                 &editable_range,
                 cursor_offset,
                 &input.events,
-                &input.related_files,
+                related_files,
+                max_tokens,
+            )
+        }
+        ZetaFormat::V0306SeedMultiRegions => {
+            let cursor_prefix =
+                build_v0306_cursor_prefix(path, context, &editable_range, cursor_offset);
+            seed_coder::assemble_fim_prompt(
+                context,
+                &editable_range,
+                &cursor_prefix,
+                &input.events,
+                related_files,
                 max_tokens,
             )
         }
@@ -349,7 +484,7 @@ pub fn format_prompt_with_budget_for_format(
             let budget_after_edit_history = budget_after_cursor.saturating_sub(edit_history_tokens);
 
             let related_files_section = format_related_files_within_budget(
-                &input.related_files,
+                &related_files,
                 "<|file_sep|>",
                 "",
                 budget_after_edit_history,
@@ -362,6 +497,23 @@ pub fn format_prompt_with_budget_for_format(
             prompt
         }
     }
+}
+
+pub fn filter_redundant_excerpts(
+    mut related_files: Vec<RelatedFile>,
+    cursor_path: &Path,
+    cursor_row_range: Range<u32>,
+) -> Vec<RelatedFile> {
+    for file in &mut related_files {
+        if file.path.as_ref() == cursor_path {
+            file.excerpts.retain(|excerpt| {
+                excerpt.row_range.start < cursor_row_range.start
+                    || excerpt.row_range.end > cursor_row_range.end
+            });
+        }
+    }
+    related_files.retain(|file| !file.excerpts.is_empty());
+    related_files
 }
 
 pub fn get_prefill_for_format(
@@ -378,7 +530,8 @@ pub fn get_prefill_for_format(
         | ZetaFormat::V0131GitMergeMarkersPrefix
         | ZetaFormat::V0211SeedCoder
         | ZetaFormat::v0226Hashline
-        | ZetaFormat::V0304SeedNoEdits => String::new(),
+        | ZetaFormat::V0304VariableEdit => String::new(),
+        ZetaFormat::V0304SeedNoEdits | ZetaFormat::V0306SeedMultiRegions => String::new(),
     }
 }
 
@@ -387,36 +540,14 @@ pub fn output_end_marker_for_format(format: ZetaFormat) -> Option<&'static str> 
         ZetaFormat::V0120GitMergeMarkers => Some(v0120_git_merge_markers::END_MARKER),
         ZetaFormat::V0131GitMergeMarkersPrefix => Some(v0131_git_merge_markers_prefix::END_MARKER),
         ZetaFormat::V0211Prefill => Some(v0131_git_merge_markers_prefix::END_MARKER),
-        ZetaFormat::V0211SeedCoder | ZetaFormat::V0304SeedNoEdits => Some(seed_coder::END_MARKER),
+        ZetaFormat::V0211SeedCoder
+        | ZetaFormat::V0304SeedNoEdits
+        | ZetaFormat::V0306SeedMultiRegions => Some(seed_coder::END_MARKER),
         ZetaFormat::V0112MiddleAtEnd
         | ZetaFormat::V0113Ordered
         | ZetaFormat::V0114180EditableRegion
-        | ZetaFormat::v0226Hashline => None,
-    }
-}
-
-pub fn current_region_markers_for_format(format: ZetaFormat) -> (&'static str, &'static str) {
-    match format {
-        ZetaFormat::V0112MiddleAtEnd => ("<|fim_middle|>current\n", "<|fim_middle|>updated"),
-        ZetaFormat::V0113Ordered
-        | ZetaFormat::V0114180EditableRegion
-        | ZetaFormat::v0226Hashline => ("<|fim_middle|>current\n", "<|fim_suffix|>"),
-        ZetaFormat::V0120GitMergeMarkers
-        | ZetaFormat::V0131GitMergeMarkersPrefix
-        | ZetaFormat::V0211Prefill => (
-            v0120_git_merge_markers::START_MARKER,
-            v0120_git_merge_markers::SEPARATOR,
-        ),
-        ZetaFormat::V0211SeedCoder | ZetaFormat::V0304SeedNoEdits => {
-            (seed_coder::START_MARKER, seed_coder::SEPARATOR)
-        }
-    }
-}
-
-pub fn clean_extracted_region_for_format(format: ZetaFormat, region: &str) -> String {
-    match format {
-        ZetaFormat::v0226Hashline => hashline::strip_hashline_prefixes(region),
-        _ => region.to_string(),
+        | ZetaFormat::v0226Hashline
+        | ZetaFormat::V0304VariableEdit => None,
     }
 }
 
@@ -430,44 +561,78 @@ pub fn encode_patch_as_output_for_format(
         ZetaFormat::v0226Hashline => {
             hashline::patch_to_edit_commands(old_editable_region, patch, cursor_offset).map(Some)
         }
-        ZetaFormat::V0304SeedNoEdits => Ok(seed_coder::no_edits(patch)),
+        ZetaFormat::V0304VariableEdit => v0304_variable_edit::patch_to_variable_edit_output(
+            old_editable_region,
+            patch,
+            cursor_offset,
+        )
+        .map(Some),
+        ZetaFormat::V0304SeedNoEdits | ZetaFormat::V0306SeedMultiRegions => {
+            Ok(seed_coder::no_edits(patch))
+        }
         _ => Ok(None),
     }
 }
 
-pub fn output_with_context_for_format(
-    format: ZetaFormat,
-    old_editable_region: &str,
+pub struct ParsedOutput {
+    /// Text that should replace the editable region
+    pub new_editable_region: String,
+    /// The byte range within `cursor_excerpt` that this replacement applies to
+    pub range_in_excerpt: Range<usize>,
+}
+
+/// Parse model output for the given zeta format
+pub fn parse_zeta2_model_output(
     output: &str,
-) -> Result<Option<String>> {
-    match format {
-        ZetaFormat::v0226Hashline => {
-            if hashline::output_has_edit_commands(output) {
-                Ok(Some(hashline::apply_edit_commands(
-                    old_editable_region,
-                    output,
-                )))
-            } else {
-                Ok(None)
-            }
-        }
-        ZetaFormat::V0304SeedNoEdits => {
-            if output.starts_with(seed_coder::NO_EDITS) {
-                Ok(Some(old_editable_region.to_owned()))
-            } else {
-                Ok(None)
-            }
-        }
-        _ => Ok(None),
-    }
-}
-
-/// Post-processes model output for the given zeta format by stripping format-specific suffixes.
-pub fn clean_zeta2_model_output(output: &str, format: ZetaFormat) -> &str {
-    match output_end_marker_for_format(format) {
+    format: ZetaFormat,
+    prompt_inputs: &ZetaPromptInput,
+) -> Result<ParsedOutput> {
+    let output = match output_end_marker_for_format(format) {
         Some(marker) => output.strip_suffix(marker).unwrap_or(output),
         None => output,
-    }
+    };
+
+    let (context, editable_range_in_context, context_range, _) =
+        resolve_cursor_region(prompt_inputs, format);
+    let context_start = context_range.start;
+    let old_editable_region = &context[editable_range_in_context.clone()];
+
+    let (range_in_context, output) = match format {
+        ZetaFormat::v0226Hashline => (
+            editable_range_in_context,
+            if hashline::output_has_edit_commands(output) {
+                hashline::apply_edit_commands(old_editable_region, output)
+            } else {
+                output.to_string()
+            },
+        ),
+        ZetaFormat::V0304VariableEdit => v0304_variable_edit::apply_variable_edit(context, output)?,
+        ZetaFormat::V0304SeedNoEdits => (
+            editable_range_in_context,
+            if output.starts_with(seed_coder::NO_EDITS) {
+                old_editable_region.to_string()
+            } else {
+                output.to_string()
+            },
+        ),
+        ZetaFormat::V0306SeedMultiRegions => (
+            editable_range_in_context,
+            if output.starts_with(seed_coder::NO_EDITS) {
+                old_editable_region.to_string()
+            } else {
+                multi_region::apply_marker_span(old_editable_region, output)?
+            },
+        ),
+        _ => (editable_range_in_context, output.to_string()),
+    };
+
+    let range_in_excerpt =
+        range_in_context.start + context_start..range_in_context.end + context_start;
+
+    Ok(ParsedOutput {
+        new_editable_region: output,
+        range_in_excerpt,
+    })
 }
 
 pub fn excerpt_range_for_format(
@@ -480,19 +645,35 @@ pub fn excerpt_range_for_format(
 pub fn resolve_cursor_region(
     input: &ZetaPromptInput,
     format: ZetaFormat,
-) -> (&str, Range<usize>, usize) {
-    let (editable_range, context_range) = excerpt_range_for_format(format, &input.excerpt_ranges);
+) -> (&str, Range<usize>, Range<usize>, usize) {
+    let (editable_range, context_range) = if let Some(syntax_ranges) = &input.syntax_ranges {
+        let (editable_tokens, context_tokens) = token_limits_for_format(format);
+        compute_editable_and_context_ranges(
+            &input.cursor_excerpt,
+            input.cursor_offset_in_excerpt,
+            syntax_ranges,
+            editable_tokens,
+            context_tokens,
+        )
+    } else {
+        excerpt_range_for_format(format, &input.excerpt_ranges)
+    };
     let context_start = context_range.start;
-    let context_text = &input.cursor_excerpt[context_range];
+    let context_text = &input.cursor_excerpt[context_range.clone()];
     let adjusted_editable =
         (editable_range.start - context_start)..(editable_range.end - context_start);
     let adjusted_cursor = input.cursor_offset_in_excerpt - context_start;
 
-    (context_text, adjusted_editable, adjusted_cursor)
+    (
+        context_text,
+        adjusted_editable,
+        context_range,
+        adjusted_cursor,
+    )
 }
 
 pub fn get_prefill(input: &ZetaPromptInput, format: ZetaFormat) -> String {
-    let (context, editable_range, _) = resolve_cursor_region(input, format);
+    let (context, editable_range, _, _) = resolve_cursor_region(input, format);
     get_prefill_for_format(format, context, &editable_range)
 }
 
@@ -952,12 +1133,14 @@ pub mod hashline {
 
     const SET_COMMAND_MARKER: &str = "<|set|>";
     const INSERT_COMMAND_MARKER: &str = "<|insert|>";
+    pub const NO_EDITS_COMMAND_MARKER: &str = "<|no_edits|>";
 
     pub fn special_tokens() -> &'static [&'static str] {
         return &[
             SET_COMMAND_MARKER,
             "<|set_range|>",
             INSERT_COMMAND_MARKER,
+            NO_EDITS_COMMAND_MARKER,
             CURSOR_MARKER,
             "<|file_sep|>",
             "<|fim_prefix|>",
@@ -1051,6 +1234,7 @@ pub mod hashline {
         }
 
         prompt.push_str(END_MARKER);
+        prompt.push('\n');
     }
 
     /// A single edit command parsed from the model output.
@@ -1176,7 +1360,9 @@ pub mod hashline {
     }
 
     pub fn output_has_edit_commands(model_output: &str) -> bool {
-        model_output.contains(SET_COMMAND_MARKER) || model_output.contains(INSERT_COMMAND_MARKER)
+        model_output.contains(SET_COMMAND_MARKER)
+            || model_output.contains(INSERT_COMMAND_MARKER)
+            || model_output.contains(NO_EDITS_COMMAND_MARKER)
     }
 
     /// Apply `<|set|>` and `<|insert|>` edit commands from the model output to the
@@ -1187,6 +1373,13 @@ pub mod hashline {
     ///
     /// Returns the full replacement text for the editable region.
     pub fn apply_edit_commands(editable_region: &str, model_output: &str) -> String {
+        if model_output
+            .trim_start()
+            .starts_with(NO_EDITS_COMMAND_MARKER)
+        {
+            return editable_region.to_string();
+        }
+
         let original_lines: Vec<&str> = editable_region.lines().collect();
         let old_hashes: Vec<u8> = original_lines
             .iter()
@@ -1491,6 +1684,10 @@ pub mod hashline {
             result.pop();
         }
 
+        if result.is_empty() {
+            return Ok(NO_EDITS_COMMAND_MARKER.to_string());
+        }
+
         Ok(result)
     }
 
@@ -1521,7 +1718,8 @@ pub mod hashline {
                     <|fim_middle|>current
                     0:5c|hello<|user_cursor|> world
                     <|fim_suffix|>
-                    <|fim_middle|>updated"},
+                    <|fim_middle|>updated
+                    "},
                 },
                 Case {
                     name: "multiline_cursor_on_second_line",
@@ -1536,7 +1734,8 @@ pub mod hashline {
                     1:26|b<|user_cursor|>bb
                     2:29|ccc
                     <|fim_suffix|>
-                    <|fim_middle|>updated"},
+                    <|fim_middle|>updated
+                    "},
                 },
                 Case {
                     name: "no_trailing_newline_in_context",
@@ -1550,7 +1749,8 @@ pub mod hashline {
                     0:d9|lin<|user_cursor|>e1
                     1:da|line2
                     <|fim_suffix|>
-                    <|fim_middle|>updated"},
+                    <|fim_middle|>updated
+                    "},
                 },
                 Case {
                     name: "leading_newline_in_editable_region",
@@ -1564,7 +1764,8 @@ pub mod hashline {
                     0:00|
                     1:26|a<|user_cursor|>bc
                     <|fim_suffix|>
-                    <|fim_middle|>updated"},
+                    <|fim_middle|>updated
+                    "},
                 },
                 Case {
                     name: "with_suffix",
@@ -1578,7 +1779,8 @@ pub mod hashline {
                     0:26|ab<|user_cursor|>c
                     <|fim_suffix|>
                     def
-                    <|fim_middle|>updated"},
+                    <|fim_middle|>updated
+                    "},
                 },
                 Case {
                     name: "unicode_two_byte_chars",
@@ -1591,7 +1793,8 @@ pub mod hashline {
                     <|fim_middle|>current
                     0:1b|hé<|user_cursor|>llo
                     <|fim_suffix|>
-                    <|fim_middle|>updated"},
+                    <|fim_middle|>updated
+                    "},
                 },
                 Case {
                     name: "unicode_three_byte_chars",
@@ -1604,7 +1807,8 @@ pub mod hashline {
                     <|fim_middle|>current
                     0:80|日本<|user_cursor|>語
                     <|fim_suffix|>
-                    <|fim_middle|>updated"},
+                    <|fim_middle|>updated
+                    "},
                 },
                 Case {
                     name: "unicode_four_byte_chars",
@@ -1617,7 +1821,8 @@ pub mod hashline {
                     <|fim_middle|>current
                     0:6b|a🌍<|user_cursor|>b
                     <|fim_suffix|>
-                    <|fim_middle|>updated"},
+                    <|fim_middle|>updated
+                    "},
                 },
                 Case {
                     name: "cursor_at_start_of_region_not_placed",
@@ -1630,7 +1835,8 @@ pub mod hashline {
                     <|fim_middle|>current
                     0:26|abc
                     <|fim_suffix|>
-                    <|fim_middle|>updated"},
+                    <|fim_middle|>updated
+                    "},
                 },
                 Case {
                     name: "cursor_at_end_of_line_not_placed",
@@ -1644,7 +1850,8 @@ pub mod hashline {
                     0:26|abc
                     1:2f|def
                     <|fim_suffix|>
-                    <|fim_middle|>updated"},
+                    <|fim_middle|>updated
+                    "},
                 },
                 Case {
                     name: "cursor_offset_relative_to_context_not_editable_region",
@@ -1663,7 +1870,8 @@ pub mod hashline {
                     1:26|b<|user_cursor|>bb
                     <|fim_suffix|>
                     suf
-                    <|fim_middle|>updated"},
+                    <|fim_middle|>updated
+                    "},
                 },
             ];
 
@@ -1831,6 +2039,18 @@ pub mod hashline {
                     world
                 "},
                     model_output: "some random text with no commands",
+                    expected: indoc! {"
+                    hello
+                    world
+                "},
+                },
+                Case {
+                    name: "no_edits_command_returns_original",
+                    original: indoc! {"
+                    hello
+                    world
+                "},
+                    model_output: "<|no_edits|>",
                     expected: indoc! {"
                     hello
                     world
@@ -2055,6 +2275,7 @@ pub mod hashline {
             )));
             assert!(!hashline::output_has_edit_commands("just plain text"));
             assert!(!hashline::output_has_edit_commands("NO_EDITS"));
+            assert!(hashline::output_has_edit_commands("<|no_edits|>"));
         }
 
         // ---- hashline::patch_to_edit_commands round-trip tests ----
@@ -2292,35 +2513,47 @@ pub mod hashline {
                     }
                 "#},
                     patch: indoc! {r#"
-                    @@ -1,3 +1,3 @@
-                     fn main() {
-                    -    println!();
-                    +    eprintln!("");
-                     }
-                "#},
+                        @@ -1,3 +1,3 @@
+                        fn main() {
+                        -    println!();
+                        +    eprintln!("");
+                        }
+                    "#},
                     expected_new: indoc! {r#"
-                    fn main() {
-                        eprintln!("<|user_cursor|>");
-                    }
-                "#},
+                        fn main() {
+                            eprintln!("<|user_cursor|>");
+                        }
+                    "#},
                 },
                 Case {
                     name: "non_local_hunk_header_pure_insertion_repro",
                     old: indoc! {"
-                    aaa
-                    bbb
-                "},
+                        aaa
+                        bbb
+                    "},
                     patch: indoc! {"
-                    @@ -20,2 +20,3 @@
-                     aaa
-                    +xxx
-                     bbb
-                "},
+                        @@ -20,2 +20,3 @@
+                        aaa
+                        +xxx
+                        bbb
+                    "},
                     expected_new: indoc! {"
-                    aaa
-                    xxx
-                    bbb
-                "},
+                        aaa
+                        xxx
+                        bbb
+                    "},
+                },
+                Case {
+                    name: "empty_patch_produces_no_edits_marker",
+                    old: indoc! {"
+                        aaa
+                        bbb
+                    "},
+                    patch: "@@ -20,2 +20,3 @@\n",
+                    expected_new: indoc! {"
+                        aaa
+                        bbb
+                    "},
                 },
             ];
 
@@ -2434,9 +2667,27 @@ pub mod seed_coder {
         related_files: &[RelatedFile],
         max_tokens: usize,
     ) -> String {
-        let suffix_section = build_suffix_section(context, editable_range);
         let cursor_prefix_section =
             build_cursor_prefix_section(path, context, editable_range, cursor_offset);
+        assemble_fim_prompt(
+            context,
+            editable_range,
+            &cursor_prefix_section,
+            events,
+            related_files,
+            max_tokens,
+        )
+    }
+
+    pub fn assemble_fim_prompt(
+        context: &str,
+        editable_range: &Range<usize>,
+        cursor_prefix_section: &str,
+        events: &[Arc<Event>],
+        related_files: &[RelatedFile],
+        max_tokens: usize,
+    ) -> String {
+        let suffix_section = build_suffix_section(context, editable_range);
 
         let suffix_tokens = estimate_tokens(suffix_section.len());
         let cursor_prefix_tokens = estimate_tokens(cursor_prefix_section.len());
@@ -2469,7 +2720,7 @@ pub mod seed_coder {
         if !edit_history_section.is_empty() {
             prompt.push('\n');
         }
-        prompt.push_str(&cursor_prefix_section);
+        prompt.push_str(cursor_prefix_section);
         prompt.push_str(FIM_MIDDLE);
         prompt
     }
@@ -2514,6 +2765,1009 @@ pub mod seed_coder {
             Some(format!("{NO_EDITS}{END_MARKER}"))
         } else {
             None
+        }
+    }
+}
+
+pub mod v0304_variable_edit {
+    //! A prompt format with no fixed editable region. The entire context is shown
+    //! to the model, and it chooses which text to replace by outputting surrounding
+    //! context lines with `<|fim_middle|>` and `<|fim_suffix|>` delimiting the new
+    //! text.
+    //!
+    //! Example prompt:
+    //!
+    //! <|file_sep|>path/to/file.py
+    //! zero
+    //! one
+    //! two
+    //! three<|user_cursor|>
+    //! four
+    //! five
+    //! <|fim_prefix|>
+    //
+    //! Expected output (model generates):
+    //!
+    //! two
+    //! <|fim_middle|>
+    //! THREE
+    //! <|fim_suffix|>
+    //! four
+    //!
+    //! The output means: find "two\n...\nfour" in the context, and replace
+    //! everything between "two\n" and "four" with "THREE\n".
+
+    use super::*;
+
+    pub fn special_tokens() -> &'static [&'static str] {
+        &[
+            "<|fim_prefix|>",
+            "<|fim_suffix|>",
+            "<|fim_middle|>",
+            "<|file_sep|>",
+            CURSOR_MARKER,
+        ]
+    }
+
+    pub fn write_cursor_excerpt_section(
+        prompt: &mut String,
+        path: &Path,
+        context: &str,
+        cursor_offset: usize,
+    ) {
+        let path_str = path.to_string_lossy();
+        write!(prompt, "<|file_sep|>{}\n", path_str).ok();
+
+        prompt.push_str(&context[..cursor_offset]);
+        prompt.push_str(CURSOR_MARKER);
+        prompt.push_str(&context[cursor_offset..]);
+        if !prompt.ends_with('\n') {
+            prompt.push('\n');
+        }
+        prompt.push_str("<|fim_prefix|>\n")
+    }
+
+    /// Apply a variable-edit model output to the original context text.
+    ///
+    /// The model output has the form:
+    ///
+    /// - prefix context lines
+    /// - `<|fim_middle|>`
+    /// - new text
+    /// - `<|fim_suffix|>`
+    /// - suffix context lines
+    ///
+    /// We locate the prefix/suffix context lines in the original text and replace
+    /// everything between them with the new text.
+    pub fn apply_variable_edit(
+        context: &str,
+        model_output: &str,
+    ) -> Result<(Range<usize>, String)> {
+        let (prefix_context, rest) = model_output
+            .split_once("<|fim_middle|>\n")
+            .or_else(|| model_output.split_once("<|fim_middle|>"))
+            .ok_or_else(|| anyhow::anyhow!("missing <|fim_middle|> in model output"))?;
+
+        let (new_text, suffix_context) = rest
+            .split_once("<|fim_suffix|>\n")
+            .or_else(|| rest.split_once("<|fim_suffix|>"))
+            .unwrap_or((rest, ""));
+
+        let suffix_context = if prefix_context.is_empty() && !suffix_context.is_empty() {
+            suffix_context.strip_prefix('\n').unwrap_or(suffix_context)
+        } else {
+            suffix_context
+        };
+
+        let prefix_offset = find_substring_at_line_boundary(context, prefix_context)
+            .ok_or_else(|| anyhow!("could not locate prefix lines"))?
+            + prefix_context.len();
+        let suffix_offset = if suffix_context.is_empty() {
+            context.len()
+        } else {
+            find_substring_at_line_boundary(&context[prefix_offset..], suffix_context)
+                .ok_or_else(|| anyhow!("could not locate suffix lines"))?
+                + prefix_offset
+        };
+
+        let edit_range = prefix_offset..suffix_offset;
+        return Ok((edit_range, new_text.to_string()));
+    }
+
+    fn find_substring_at_line_boundary(haystack: &str, needle: &str) -> Option<usize> {
+        if needle.is_empty() {
+            return Some(0);
+        }
+
+        haystack.match_indices(needle).find_map(|(offset, _)| {
+            let matched_line_start = offset == 0 || haystack[..offset].ends_with('\n');
+            matched_line_start.then_some(offset)
+        })
+    }
+
+    /// Convert a unified diff patch into the variable-edit output format.
+    ///
+    /// Parses `patch` as a unified diff against `old_text` and produces model
+    /// output with context lines surrounding `<|fim_middle|>` / `<|fim_suffix|>`
+    /// delimiters. The diff is resolved by content matching rather than line
+    /// numbers.
+    pub fn patch_to_variable_edit_output(
+        old_text: &str,
+        patch: &str,
+        cursor_offset: Option<usize>,
+    ) -> Result<String> {
+        // Parse the unified diff into hunks. Each hunk has an `old_context`
+        // string (context + deleted lines interleaved in order) and a list of
+        // edits expressed as byte ranges within that context plus replacement
+        // text.
+        let hunks = parse_hunks(patch);
+        if hunks.is_empty() {
+            return Ok(String::new());
+        }
+
+        // Apply each hunk by finding its old_context in the text and
+        // performing the edits. We search forward from where the previous
+        // hunk ended so that hunks are applied in order.
+        let mut new_text = old_text.to_string();
+        let mut search_from: usize = 0;
+        let mut first_hunk_pos: Option<usize> = None;
+
+        for hunk in &hunks {
+            let context_pos = new_text[search_from..]
+                .find(&hunk.old_context)
+                .map(|pos| pos + search_from)
+                .ok_or_else(|| anyhow::anyhow!("could not locate hunk context in text"))?;
+
+            if first_hunk_pos.is_none() {
+                first_hunk_pos = Some(context_pos);
+            }
+
+            // Apply edits in reverse order so byte offsets remain valid.
+            for edit in hunk.edits.iter().rev() {
+                let abs_start = context_pos + edit.range.start;
+                let abs_end = context_pos + edit.range.end;
+                new_text.replace_range(abs_start..abs_end, &edit.text);
+            }
+
+            // Advance past this hunk's region in the (now modified) text.
+            let new_region_len: usize =
+                hunk.edits.iter().fold(hunk.old_context.len(), |len, edit| {
+                    len + edit.text.len() - (edit.range.end - edit.range.start)
+                });
+            search_from = context_pos + new_region_len;
+        }
+
+        // Now we have old_text and new_text. Find the changed line range by
+        // comparing them.
+        let old_lines: Vec<&str> = old_text.lines().collect();
+        let new_lines: Vec<&str> = new_text.lines().collect();
+
+        // Find first differing line.
+        let first_changed_row = old_lines
+            .iter()
+            .zip(new_lines.iter())
+            .position(|(a, b)| a != b)
+            .unwrap_or_else(|| old_lines.len().min(new_lines.len()));
+
+        // Find last differing line (from the end).
+        let max_suffix = old_lines.len().min(new_lines.len()) - first_changed_row;
+        let common_suffix = old_lines
+            .iter()
+            .rev()
+            .zip(new_lines.iter().rev())
+            .take(max_suffix)
+            .take_while(|(a, b)| a == b)
+            .count();
+
+        let old_end = old_lines.len() - common_suffix;
+        let new_end = new_lines.len() - common_suffix;
+
+        if first_changed_row == old_end && first_changed_row == new_end {
+            return Ok(String::new());
+        }
+
+        // Build the replacement text from new_lines[first_diff..new_end].
+        let mut merged_new_text = String::new();
+        for line in &new_lines[first_changed_row..new_end] {
+            merged_new_text.push_str(line);
+            merged_new_text.push('\n');
+        }
+
+        // cursor_offset is relative to the first hunk's new content in
+        // new_text. Translate it to an offset within merged_new_text, which
+        // only contains lines first_diff..new_end of new_text.
+        if let Some(hunk_offset) = cursor_offset {
+            let hunk_start = first_hunk_pos.unwrap_or(0);
+            let absolute_pos = hunk_start + hunk_offset;
+
+            // Byte offset where first_diff starts in new_text.
+            let merged_start: usize = new_lines[..first_changed_row]
+                .iter()
+                .map(|line| line.len() + 1)
+                .sum();
+
+            if absolute_pos >= merged_start {
+                let relative_offset = absolute_pos - merged_start;
+                if relative_offset <= merged_new_text.len() {
+                    merged_new_text.insert_str(relative_offset, CURSOR_MARKER);
+                }
+            }
+        }
+
+        // Build output with 2 lines of context above and below.
+        let context_lines_count = 2;
+        let mut prefix_start = first_changed_row.saturating_sub(context_lines_count);
+        let mut suffix_end = (old_end + context_lines_count).min(old_lines.len());
+
+        fn count_matches(line_range: Range<usize>, lines: &[&str]) -> usize {
+            let pattern = &lines[line_range];
+            let pattern_len = pattern.len();
+
+            let mut count = 0;
+            for offset in 0..=lines.len() - pattern_len {
+                if &lines[offset..offset + pattern_len] == pattern {
+                    count += 1;
+                }
+            }
+            count
+        }
+
+        // Expand prefix and suffix until they are unique
+        while prefix_start > 0 {
+            if count_matches(prefix_start..first_changed_row, &old_lines) > 1 {
+                prefix_start -= 1;
+            } else {
+                break;
+            }
+        }
+        while suffix_end < old_lines.len() {
+            if count_matches(old_end..suffix_end, &old_lines) > 1 {
+                suffix_end += 1;
+            } else {
+                break;
+            }
+        }
+
+        let mut output = String::new();
+        for line in &old_lines[prefix_start..first_changed_row] {
+            output.push_str(line);
+            output.push('\n');
+        }
+        output.push_str("<|fim_middle|>\n");
+        output.push_str(&merged_new_text);
+        output.push_str("<|fim_suffix|>\n");
+        for line in &old_lines[old_end..suffix_end] {
+            output.push_str(line);
+            output.push('\n');
+        }
+
+        Ok(output)
+    }
+
+    struct ParsedHunk {
+        old_context: String,
+        edits: Vec<ParsedEdit>,
+    }
+
+    struct ParsedEdit {
+        range: Range<usize>,
+        text: String,
+    }
+
+    /// Parse a unified diff into content-based hunks. Each hunk contains an
+    /// `old_context` string (context lines + deleted lines, which together
+    /// form the text that should be found in the original) and a list of edits
+    /// expressed as byte ranges within that context.
+    fn parse_hunks(patch: &str) -> Vec<ParsedHunk> {
+        let mut hunks = Vec::new();
+        let mut current: Option<ParsedHunk> = None;
+
+        for line in patch.lines() {
+            if line.starts_with("@@") {
+                if let Some(hunk) = current.take() {
+                    if !hunk.old_context.is_empty() || !hunk.edits.is_empty() {
+                        hunks.push(hunk);
+                    }
+                }
+                current = Some(ParsedHunk {
+                    old_context: String::new(),
+                    edits: Vec::new(),
+                });
+            } else if line.starts_with("---") || line.starts_with("+++") {
+                continue;
+            } else if let Some(hunk) = &mut current {
+                if let Some(added) = line.strip_prefix('+') {
+                    let pos = hunk.old_context.len();
+                    if let Some(last_edit) = hunk.edits.last_mut() {
+                        if last_edit.range.end == pos {
+                            writeln!(&mut last_edit.text, "{added}").ok();
+                            continue;
+                        }
+                    }
+                    hunk.edits.push(ParsedEdit {
+                        range: pos..pos,
+                        text: format!("{added}\n"),
+                    });
+                } else if let Some(removed) = line.strip_prefix('-') {
+                    let start = hunk.old_context.len();
+                    writeln!(&mut hunk.old_context, "{removed}").ok();
+                    let end = hunk.old_context.len();
+                    if let Some(last_edit) = hunk.edits.last_mut() {
+                        if last_edit.range.end == start {
+                            last_edit.range.end = end;
+                            continue;
+                        }
+                    }
+                    hunk.edits.push(ParsedEdit {
+                        range: start..end,
+                        text: String::new(),
+                    });
+                } else {
+                    let ctx = line.strip_prefix(' ').unwrap_or(line);
+                    writeln!(&mut hunk.old_context, "{ctx}").ok();
+                }
+            }
+        }
+
+        if let Some(hunk) = current {
+            if !hunk.old_context.is_empty() || !hunk.edits.is_empty() {
+                hunks.push(hunk);
+            }
+        }
+
+        hunks
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+        use indoc::indoc;
+
+        #[test]
+        fn test_apply_variable_edit() {
+            struct Case {
+                name: &'static str,
+                original: &'static str,
+                model_output: &'static str,
+                expected: &'static str,
+            }
+
+            let cases = [
+                Case {
+                    name: "simple_single_line_replacement",
+                    original: indoc! {"
+                        zero
+                        one
+                        two
+                        three
+                        four
+                        five
+                    "},
+                    model_output: indoc! {"
+                        two
+                        <|fim_middle|>
+                        THREE
+                        <|fim_suffix|>
+                        four
+                    "},
+                    expected: indoc! {"
+                        zero
+                        one
+                        two
+                        THREE
+                        four
+                        five
+                    "},
+                },
+                Case {
+                    name: "multi_line_replacement",
+                    original: indoc! {"
+                        a
+                        b
+                        c
+                        d
+                        e
+                    "},
+                    model_output: indoc! {"
+                        a
+                        <|fim_middle|>
+                        B
+                        C
+                        D
+                        <|fim_suffix|>
+                        e
+                    "},
+                    expected: indoc! {"
+                        a
+                        B
+                        C
+                        D
+                        e
+                    "},
+                },
+                Case {
+                    name: "insertion_between_existing_lines",
+                    original: indoc! {"
+                        a
+                        b
+                        c
+                    "},
+                    model_output: indoc! {"
+                        a
+                        <|fim_middle|>
+                        X
+                        <|fim_suffix|>
+                        b
+                    "},
+                    expected: indoc! {"
+                        a
+                        X
+                        b
+                        c
+                    "},
+                },
+                Case {
+                    name: "deletion",
+                    original: indoc! {"
+                        a
+                        b
+                        c
+                        d
+                    "},
+                    model_output: indoc! {"
+                        a
+                        <|fim_middle|>
+                        <|fim_suffix|>
+                        c
+                    "},
+                    expected: indoc! {"
+                        a
+                        c
+                        d
+                    "},
+                },
+                Case {
+                    name: "replacement_at_start_no_prefix_context",
+                    original: indoc! {"
+                        a
+                        b
+                        c
+                    "},
+                    model_output: indoc! {"
+                        <|fim_middle|>
+                        X
+                        <|fim_suffix|>
+                        b
+                    "},
+                    expected: indoc! {"
+                        X
+                        b
+                        c
+                    "},
+                },
+                Case {
+                    name: "replacement_at_end_no_suffix_context",
+                    original: indoc! {"
+                        a
+                        b
+                        c
+                    "},
+                    model_output: indoc! {"
+                        b
+                        <|fim_middle|>
+                        Z
+                        <|fim_suffix|>
+                    "},
+                    expected: indoc! {"
+                        a
+                        b
+                        Z
+                    "},
+                },
+                Case {
+                    name: "context_with_trailing_newline_is_preserved",
+                    original: indoc! {"
+                        a
+                        b
+                        c
+                    "},
+                    model_output: indoc! {"
+                        a
+                        <|fim_middle|>
+                        B
+                        <|fim_suffix|>
+                        c
+                    "},
+                    expected: indoc! {"
+                        a
+                        B
+                        c
+                    "},
+                },
+                Case {
+                    name: "cursor_marker_passes_through_untouched",
+                    original: indoc! {"
+                        a
+                        b
+                        c
+                    "},
+                    model_output: indoc! {"
+                        a
+                        <|fim_middle|>
+                        B<|user_cursor|>B
+                        <|fim_suffix|>
+                        c
+                    "},
+                    expected: indoc! {"
+                        a
+                        B<|user_cursor|>B
+                        c
+                    "},
+                },
+                Case {
+                    name: "multiple_prefix_context_lines",
+                    original: indoc! {"
+                        a
+                        b
+                        c
+                        d
+                        e
+                    "},
+                    model_output: indoc! {"
+                        b
+                        c
+                        <|fim_middle|>
+                        D
+                        <|fim_suffix|>
+                        e
+                    "},
+                    expected: indoc! {"
+                        a
+                        b
+                        c
+                        D
+                        e
+                    "},
+                },
+            ];
+
+            for case in cases {
+                let (edit_range, replacement) =
+                    apply_variable_edit(case.original, case.model_output).unwrap();
+                let mut edited = case.original.to_string();
+                edited.replace_range(edit_range, &replacement);
+                assert_eq!(edited, case.expected, "{}", case.name);
+            }
+        }
+
+        #[test]
+        fn test_patch_to_variable_edit() {
+            struct Case {
+                name: &'static str,
+                old: &'static str,
+                patch: &'static str,
+                cursor_offset: Option<usize>,
+                expected_variable_edit: &'static str,
+                expected_after_apply: &'static str,
+            }
+
+            let cases = [
+                Case {
+                    name: "simple_replacement",
+                    old: indoc! {"
+                        zero
+                        one
+                        two
+                        three
+                        four
+                        five
+                    "},
+                    patch: indoc! {"
+                        @@ -3,3 +3,3 @@
+                         two
+                        -three
+                        +THREE
+                         four
+                    "},
+                    cursor_offset: None,
+                    expected_variable_edit: indoc! {"
+                        one
+                        two
+                        <|fim_middle|>
+                        THREE
+                        <|fim_suffix|>
+                        four
+                        five
+                    "},
+                    expected_after_apply: indoc! {"
+                        zero
+                        one
+                        two
+                        THREE
+                        four
+                        five
+                    "},
+                },
+                Case {
+                    name: "insertion",
+                    old: indoc! {"
+                        a
+                        b
+                        c
+                        d
+                        e
+                    "},
+                    patch: indoc! {"
+                        @@ -2,0 +3,1 @@
+                         b
+                        +X
+                         c
+                    "},
+                    cursor_offset: None,
+                    expected_variable_edit: indoc! {"
+                        a
+                        b
+                        <|fim_middle|>
+                        X
+                        <|fim_suffix|>
+                        c
+                        d
+                    "},
+                    expected_after_apply: indoc! {"
+                        a
+                        b
+                        X
+                        c
+                        d
+                        e
+                    "},
+                },
+                Case {
+                    name: "deletion",
+                    old: indoc! {"
+                        a
+                        b
+                        c
+                        d
+                        e
+                    "},
+                    patch: indoc! {"
+                        @@ -2,3 +2,2 @@
+                         b
+                        -c
+                         d
+                    "},
+                    cursor_offset: None,
+                    expected_variable_edit: indoc! {"
+                        a
+                        b
+                        <|fim_middle|>
+                        <|fim_suffix|>
+                        d
+                        e
+                    "},
+                    expected_after_apply: indoc! {"
+                        a
+                        b
+                        d
+                        e
+                    "},
+                },
+                Case {
+                    name: "edit_near_start",
+                    old: indoc! {"
+                        first
+                        second
+                        third
+                        fourth
+                    "},
+                    patch: indoc! {"
+                        @@ -1,1 +1,1 @@
+                        -first
+                        +FIRST
+                    "},
+                    cursor_offset: None,
+                    expected_variable_edit: indoc! {"
+                        <|fim_middle|>
+                        FIRST
+                        <|fim_suffix|>
+                        second
+                        third
+                    "},
+                    expected_after_apply: indoc! {"
+                        FIRST
+                        second
+                        third
+                        fourth
+                    "},
+                },
+                Case {
+                    name: "edit_near_end",
+                    old: indoc! {"
+                        first
+                        second
+                        third
+                        fourth
+                    "},
+                    patch: indoc! {"
+                        @@ -4,1 +4,1 @@
+                        -fourth
+                        +FOURTH
+                    "},
+                    cursor_offset: None,
+                    expected_variable_edit: indoc! {"
+                        second
+                        third
+                        <|fim_middle|>
+                        FOURTH
+                        <|fim_suffix|>
+                    "},
+                    expected_after_apply: indoc! {"
+                        first
+                        second
+                        third
+                        FOURTH
+                    "},
+                },
+                Case {
+                    name: "cursor_at_start_of_replacement",
+                    old: indoc! {"
+                        zero
+                        one
+                        two
+                        three
+                        four
+                        five
+                    "},
+                    patch: indoc! {"
+                        @@ -3,3 +3,3 @@
+                         two
+                        -three
+                        +THREE
+                         four
+                    "},
+                    cursor_offset: Some(4),
+                    expected_variable_edit: indoc! {"
+                        one
+                        two
+                        <|fim_middle|>
+                        <|user_cursor|>THREE
+                        <|fim_suffix|>
+                        four
+                        five
+                    "},
+                    expected_after_apply: indoc! {"
+                        zero
+                        one
+                        two
+                        <|user_cursor|>THREE
+                        four
+                        five
+                    "},
+                },
+                Case {
+                    name: "cursor_in_middle_of_replacement",
+                    old: indoc! {"
+                        zero
+                        one
+                        two
+                        three
+                        four
+                        five
+                    "},
+                    patch: indoc! {"
+                        @@ -3,3 +3,3 @@
+                         two
+                        -three
+                        +THREE
+                         four
+                    "},
+                    cursor_offset: Some(6),
+                    expected_variable_edit: indoc! {"
+                        one
+                        two
+                        <|fim_middle|>
+                        TH<|user_cursor|>REE
+                        <|fim_suffix|>
+                        four
+                        five
+                    "},
+                    expected_after_apply: indoc! {"
+                        zero
+                        one
+                        two
+                        TH<|user_cursor|>REE
+                        four
+                        five
+                    "},
+                },
+                Case {
+                    name: "expands_context_when_two_lines_not_unique_before_and_after",
+                    old: indoc! {"
+                        one
+                        a
+                        b
+                        c
+                        d
+                        two
+                        a
+                        b
+                        c
+                        d
+                        three
+                        a
+                        b
+                        c
+                        d
+                        four
+                    "},
+                    patch: indoc! {"
+                        @@ -4,5 +4,5 @@
+                         two
+                         a
+                         b
+                        -c
+                        +C
+                         d
+                         three
+                    "},
+                    cursor_offset: None,
+                    expected_variable_edit: indoc! {"
+                        two
+                        a
+                        b
+                        <|fim_middle|>
+                        C
+                        <|fim_suffix|>
+                        d
+                        three
+                    "},
+                    expected_after_apply: indoc! {"
+                        one
+                        a
+                        b
+                        c
+                        d
+                        two
+                        a
+                        b
+                        C
+                        d
+                        three
+                        a
+                        b
+                        c
+                        d
+                        four
+                    "},
+                },
+                Case {
+                    name: "expands_context_when_two_lines_not_unique_before_and_after",
+                    old: indoc! {"
+                        {
+                            {
+                                one();
+                            }
+                        }
+                        {
+                            {
+                                two();
+                            }
+                        }
+                        {
+                            {
+                                three();
+                            }
+                        }
+                        {
+                            {
+                                four();
+                            }
+                        }
+                    "},
+                    patch: indoc! {"
+                        @@ -4,5 +4,5 @@
+                             {
+                        -        two();
+                        +        TWO();
+                             }
+                    "},
+                    cursor_offset: None,
+                    expected_variable_edit: indoc! {"
+                                one();
+                            }
+                        }
+                        {
+                            {
+                        <|fim_middle|>
+                                TWO();
+                        <|fim_suffix|>
+                            }
+                        }
+                        {
+                            {
+                                three();
+                    "},
+                    expected_after_apply: indoc! {"
+                        {
+                            {
+                                one();
+                            }
+                        }
+                        {
+                            {
+                                TWO();
+                            }
+                        }
+                        {
+                            {
+                                three();
+                            }
+                        }
+                        {
+                            {
+                                four();
+                            }
+                        }
+                    "},
+                },
+            ];
+
+            for case in cases {
+                let output =
+                    patch_to_variable_edit_output(case.old, case.patch, case.cursor_offset)
+                        .unwrap_or_else(|error| {
+                            panic!("failed converting patch for {}: {error}", case.name)
+                        });
+                assert_eq!(
+                    output, case.expected_variable_edit,
+                    "patch->variable_edit mismatch for {}",
+                    case.name
+                );
+
+                let (edit_range, replacement) = apply_variable_edit(case.old, &output)
+                    .unwrap_or_else(|error| {
+                        panic!("failed applying variable_edit for {}: {error}", case.name)
+                    });
+                let mut edited_by_variable_edit = case.old.to_string();
+                edited_by_variable_edit.replace_range(edit_range, &replacement);
+                assert_eq!(
+                    edited_by_variable_edit, case.expected_after_apply,
+                    "variable_edit apply mismatch for {}",
+                    case.name
+                );
+
+                let (expected_edit_range, expected_replacement) =
+                    apply_variable_edit(case.old, case.expected_variable_edit).unwrap_or_else(
+                        |error| {
+                            panic!(
+                                "failed applying expected variable_edit for {}: {error}",
+                                case.name
+                            )
+                        },
+                    );
+                let mut edited_by_expected_variable_edit = case.old.to_string();
+                edited_by_expected_variable_edit
+                    .replace_range(expected_edit_range, &expected_replacement);
+                assert_eq!(
+                    edited_by_expected_variable_edit, case.expected_after_apply,
+                    "expected variable_edit apply mismatch for {}",
+                    case.name
+                );
+            }
+        }
+
+        #[test]
+        fn test_write_cursor_excerpt_section() {
+            let path = Path::new("test.rs");
+            let context = "fn main() {\n    hello();\n}\n";
+            let cursor_offset = 17;
+            let mut prompt = String::new();
+            write_cursor_excerpt_section(&mut prompt, path, context, cursor_offset);
+            assert_eq!(
+                prompt,
+                "<|file_sep|>test.rs\nfn main() {\n    h<|user_cursor|>ello();\n}\n<|fim_prefix|>\n"
+            );
         }
     }
 }
@@ -2735,7 +3989,8 @@ mod tests {
             cursor_offset_in_excerpt: cursor_offset,
             excerpt_start_row: None,
             events: events.into_iter().map(Arc::new).collect(),
-            related_files,
+            related_files: Some(related_files),
+            active_buffer_diagnostics: vec![],
             excerpt_ranges: ExcerptRanges {
                 editable_150: editable_range.clone(),
                 editable_180: editable_range.clone(),
@@ -2745,6 +4000,38 @@ mod tests {
                 editable_350_context_150: context_range,
                 ..Default::default()
             },
+            syntax_ranges: None,
+            experiment: None,
+            in_open_source_repo: false,
+            can_collect_data: false,
+            repo_url: None,
+        }
+    }
+
+    fn make_input_with_context_range(
+        excerpt: &str,
+        editable_range: Range<usize>,
+        context_range: Range<usize>,
+        cursor_offset: usize,
+    ) -> ZetaPromptInput {
+        ZetaPromptInput {
+            cursor_path: Path::new("test.rs").into(),
+            cursor_excerpt: excerpt.into(),
+            cursor_offset_in_excerpt: cursor_offset,
+            excerpt_start_row: None,
+            events: vec![],
+            related_files: Some(vec![]),
+            active_buffer_diagnostics: vec![],
+            excerpt_ranges: ExcerptRanges {
+                editable_150: editable_range.clone(),
+                editable_180: editable_range.clone(),
+                editable_350: editable_range,
+                editable_150_context_350: context_range.clone(),
+                editable_180_context_350: context_range.clone(),
+                editable_350_context_150: context_range,
+                ..Default::default()
+            },
+            syntax_ranges: None,
             experiment: None,
             in_open_source_repo: false,
             can_collect_data: false,
@@ -3310,21 +4597,6 @@ mod tests {
     }
 
     #[test]
-    fn test_seed_coder_clean_output() {
-        let output_with_marker = "new code\n>>>>>>> UPDATED\n";
-        let output_without_marker = "new code\n";
-
-        assert_eq!(
-            clean_zeta2_model_output(output_with_marker, ZetaFormat::V0211SeedCoder),
-            "new code\n"
-        );
-        assert_eq!(
-            clean_zeta2_model_output(output_without_marker, ZetaFormat::V0211SeedCoder),
-            "new code\n"
-        );
-    }
-
-    #[test]
     fn test_format_zeta1_from_input_basic() {
         let excerpt = "fn before() {}\nfn foo() {\n    let x = 1;\n}\nfn after() {}\n";
         let input = ZetaPromptInput {
@@ -3333,7 +4605,8 @@ mod tests {
             cursor_offset_in_excerpt: 30,
             excerpt_start_row: Some(0),
             events: vec![Arc::new(make_event("other.rs", "-old\n+new\n"))],
-            related_files: vec![],
+            related_files: Some(vec![]),
+            active_buffer_diagnostics: vec![],
             excerpt_ranges: ExcerptRanges {
                 editable_150: 15..41,
                 editable_180: 15..41,
@@ -3343,6 +4616,7 @@ mod tests {
                 editable_350_context_150: 0..excerpt.len(),
                 ..Default::default()
             },
+            syntax_ranges: None,
             experiment: None,
             in_open_source_repo: false,
             can_collect_data: false,
@@ -3396,7 +4670,8 @@ mod tests {
             cursor_offset_in_excerpt: 15,
             excerpt_start_row: Some(10),
             events: vec![],
-            related_files: vec![],
+            related_files: Some(vec![]),
+            active_buffer_diagnostics: vec![],
             excerpt_ranges: ExcerptRanges {
                 editable_150: 0..28,
                 editable_180: 0..28,
@@ -3406,6 +4681,7 @@ mod tests {
                 editable_350_context_150: 0..28,
                 ..Default::default()
             },
+            syntax_ranges: None,
             experiment: None,
             in_open_source_repo: false,
             can_collect_data: false,
@@ -3454,7 +4730,8 @@ mod tests {
             cursor_offset_in_excerpt: 25,
             excerpt_start_row: Some(0),
             events: vec![],
-            related_files: vec![],
+            related_files: Some(vec![]),
+            active_buffer_diagnostics: vec![],
             excerpt_ranges: ExcerptRanges {
                 editable_150: editable_range.clone(),
                 editable_180: editable_range.clone(),
@@ -3464,6 +4741,7 @@ mod tests {
                 editable_350_context_150: context_range.clone(),
                 ..Default::default()
             },
+            syntax_ranges: None,
             experiment: None,
             in_open_source_repo: false,
             can_collect_data: false,
@@ -3546,5 +4824,74 @@ mod tests {
         let output = "<|editable_region_start|>\n<|editable_region_end|>\n";
         let cleaned = zeta1::clean_zeta1_model_output(output).unwrap();
         assert_eq!(cleaned, "");
+    }
+
+    fn apply_edit(excerpt: &str, parsed_output: &ParsedOutput) -> String {
+        let mut result = excerpt.to_string();
+        result.replace_range(
+            parsed_output.range_in_excerpt.clone(),
+            &parsed_output.new_editable_region,
+        );
+        result
+    }
+
+    #[test]
+    fn test_parse_zeta2_model_output() {
+        let excerpt = "before ctx\nctx start\neditable old\nctx end\nafter ctx\n";
+        let context_start = excerpt.find("ctx start").unwrap();
+        let context_end = excerpt.find("after ctx").unwrap();
+        let editable_start = excerpt.find("editable old").unwrap();
+        let editable_end = editable_start + "editable old\n".len();
+        let input = make_input_with_context_range(
+            excerpt,
+            editable_start..editable_end,
+            context_start..context_end,
+            editable_start,
+        );
+
+        let output = parse_zeta2_model_output(
+            "editable new\n>>>>>>> UPDATED\n",
+            ZetaFormat::V0131GitMergeMarkersPrefix,
+            &input,
+        )
+        .unwrap();
+
+        assert_eq!(
+            apply_edit(excerpt, &output),
+            "before ctx\nctx start\neditable new\nctx end\nafter ctx\n"
+        );
+    }
+
+    #[test]
+    fn test_parse_zeta2_model_output_identity() {
+        let excerpt = "aaa\nbbb\nccc\nddd\neee\n";
+        let editable_start = excerpt.find("bbb").unwrap();
+        let editable_end = excerpt.find("ddd").unwrap();
+        let input = make_input_with_context_range(
+            excerpt,
+            editable_start..editable_end,
+            0..excerpt.len(),
+            editable_start,
+        );
+
+        let format = ZetaFormat::V0131GitMergeMarkersPrefix;
+        let output =
+            parse_zeta2_model_output("bbb\nccc\n>>>>>>> UPDATED\n", format, &input).unwrap();
+
+        assert_eq!(apply_edit(excerpt, &output), excerpt);
+    }
+
+    #[test]
+    fn test_parse_zeta2_model_output_strips_end_marker() {
+        let excerpt = "hello\nworld\n";
+        let input = make_input_with_context_range(excerpt, 0..excerpt.len(), 0..excerpt.len(), 0);
+
+        let format = ZetaFormat::V0131GitMergeMarkersPrefix;
+        let output1 =
+            parse_zeta2_model_output("new content\n>>>>>>> UPDATED\n", format, &input).unwrap();
+        let output2 = parse_zeta2_model_output("new content\n", format, &input).unwrap();
+
+        assert_eq!(apply_edit(excerpt, &output1), apply_edit(excerpt, &output2));
+        assert_eq!(apply_edit(excerpt, &output1), "new content\n");
     }
 }
