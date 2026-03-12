@@ -1070,11 +1070,7 @@ impl Sidebar {
         });
     }
 
-    fn prune_stale_worktree_workspaces(
-        &mut self,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
+    fn prune_stale_worktree_workspaces(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(multi_workspace) = self.multi_workspace.upgrade() else {
             return;
         };
@@ -1104,11 +1100,12 @@ impl Sidebar {
             if path_list.paths().len() != 1 {
                 continue;
             }
-            let should_prune = root_repository_snapshots(workspace, cx).iter().any(|snapshot| {
-                snapshot.work_directory_abs_path != snapshot.original_repo_abs_path
-                    && !known_worktree_paths
-                        .contains(snapshot.work_directory_abs_path.as_ref())
-            });
+            let should_prune = root_repository_snapshots(workspace, cx)
+                .iter()
+                .any(|snapshot| {
+                    snapshot.work_directory_abs_path != snapshot.original_repo_abs_path
+                        && !known_worktree_paths.contains(snapshot.work_directory_abs_path.as_ref())
+                });
             if should_prune {
                 to_remove.push(workspace.clone());
             }
@@ -4107,7 +4104,9 @@ mod tests {
         // Remove feature-b from the main repo's linked worktrees.
         // The feature-b workspace should be pruned automatically.
         fs.with_git_state(std::path::Path::new("/project/.git"), true, |state| {
-            state.worktrees.retain(|wt| wt.path != std::path::Path::new("/wt-feature-b"));
+            state
+                .worktrees
+                .retain(|wt| wt.path != std::path::Path::new("/wt-feature-b"));
         })
         .unwrap();
 
@@ -4117,10 +4116,7 @@ mod tests {
         // under the main repo.
         assert_eq!(
             visible_entries_as_strings(&sidebar, cx),
-            vec![
-                "v [project]",
-                "  Thread A {wt-feature-a}",
-            ]
+            vec!["v [project]", "  Thread A {wt-feature-a}",]
         );
     }
 }
