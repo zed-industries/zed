@@ -67,7 +67,7 @@ use super::entry_view_state::EntryViewState;
 use super::thread_history::ThreadHistory;
 use crate::ModeSelector;
 use crate::ModelSelectorPopover;
-use crate::agent_connection_store::{AgentConnectionStore, ConnectionEntryEvent};
+use crate::agent_connection_store::{AgentConnectionStore, ConnectedState, ConnectionEntryEvent};
 use crate::agent_diff::AgentDiff;
 use crate::entry_view_state::{EntryViewEvent, ViewEvent};
 use crate::message_editor::{MessageEditor, MessageEditorEvent};
@@ -672,8 +672,11 @@ impl ConnectionView {
 
         let load_session_id = resume_session_id.clone();
         let load_task = cx.spawn_in(window, async move |this, cx| {
-            let connection = match connect_result.await {
-                Ok(connection) => connection,
+            let (connection, history) = match connect_result.await {
+                Ok(ConnectedState {
+                    connection,
+                    history,
+                }) => (connection, history),
                 Err(err) => {
                     this.update_in(cx, |this, window, cx| {
                         this.handle_load_error(load_session_id.clone(), err, window, cx);
@@ -755,13 +758,6 @@ impl ConnectionView {
                             conversation.register_thread(thread.clone(), cx);
                             conversation
                         });
-
-                        //FIXME
-                        let history = connection_entry
-                            .read(cx)
-                            .history()
-                            .expect("Missing history in connected state")
-                            .clone();
 
                         let current = this.new_thread_view(
                             None,

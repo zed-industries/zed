@@ -12,33 +12,34 @@ use watch::Receiver;
 use crate::{ExternalAgent, ThreadHistory};
 use project::ExternalAgentServerName;
 
-pub enum ConnectionEntry {
+pub enum AgentConnectionEntry {
     Connecting {
-        connect_task: Shared<Task<Result<Rc<dyn AgentConnection>, LoadError>>>,
+        connect_task: Shared<Task<Result<ConnectedState, LoadError>>>,
     },
-    Connected {
-        connection: Rc<dyn AgentConnection>,
-        history: Entity<ThreadHistory>,
-    },
+    Connected(ConnectedState),
     Error {
         error: LoadError,
     },
 }
 
-impl ConnectionEntry {
-    pub fn wait_for_connection(&self) -> Shared<Task<Result<Rc<dyn AgentConnection>, LoadError>>> {
+#[derive(Clone)]
+pub struct ConnectedState {
+    pub connection: Rc<dyn AgentConnection>,
+    pub history: Entity<ThreadHistory>,
+}
+
+impl AgentConnectionEntry {
+    pub fn wait_for_connection(&self) -> Shared<Task<Result<ConnectedState, LoadError>>> {
         match self {
-            ConnectionEntry::Connecting { connect_task } => connect_task.clone(),
-            ConnectionEntry::Connected { connection, .. } => {
-                Task::ready(Ok(connection.clone())).shared()
-            }
-            ConnectionEntry::Error { error } => Task::ready(Err(error.clone())).shared(),
+            AgentConnectionEntry::Connecting { connect_task } => connect_task.clone(),
+            AgentConnectionEntry::Connected(state) => Task::ready(Ok(state.clone())).shared(),
+            AgentConnectionEntry::Error { error } => Task::ready(Err(error.clone())).shared(),
         }
     }
 
     pub fn history(&self) -> Option<&Entity<ThreadHistory>> {
         match self {
-            ConnectionEntry::Connected { history, .. } => Some(history),
+            AgentConnectionEntry::Connected(state) => Some(&state.history),
             _ => None,
         }
     }
@@ -48,11 +49,11 @@ pub enum ConnectionEntryEvent {
     NewVersionAvailable(SharedString),
 }
 
-impl EventEmitter<ConnectionEntryEvent> for ConnectionEntry {}
+impl EventEmitter<ConnectionEntryEvent> for AgentConnectionEntry {}
 
 pub struct AgentConnectionStore {
     project: Entity<Project>,
-    entries: HashMap<ExternalAgent, Entity<ConnectionEntry>>,
+    entries: HashMap<ExternalAgent, Entity<AgentConnectionEntry>>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -67,7 +68,7 @@ impl AgentConnectionStore {
         }
     }
 
-    pub fn entry(&self, key: &ExternalAgent) -> Option<&Entity<ConnectionEntry>> {
+    pub fn entry(&self, key: &ExternalAgent) -> Option<&Entity<AgentConnectionEntry>> {
         self.entries.get(key)
     }
 
@@ -76,12 +77,12 @@ impl AgentConnectionStore {
         key: ExternalAgent,
         server: Rc<dyn AgentServer>,
         cx: &mut Context<Self>,
-    ) -> Entity<ConnectionEntry> {
+    ) -> Entity<AgentConnectionEntry> {
         self.entries.get(&key).cloned().unwrap_or_else(|| {
             let (mut new_version_rx, connect_task) = self.start_connection(server.clone(), cx);
             let connect_task = connect_task.shared();
 
-            let entry = cx.new(|_cx| ConnectionEntry::Connecting {
+            let entry = cx.new(|_cx| AgentConnectionEntry::Connecting {
                 connect_task: connect_task.clone(),
             });
 
@@ -91,24 +92,18 @@ impl AgentConnectionStore {
                 let key = key.clone();
                 let entry = entry.clone();
                 async move |this, cx| match connect_task.await {
-                    Ok(connection) => {
+                    Ok(connected_state) => {
                         entry.update(cx, |entry, cx| {
-                            if let ConnectionEntry::Connecting { .. } = entry {
-                                let history = cx
-                                    .new(|cx| ThreadHistory::new(connection.session_list(cx), cx));
-
-                                *entry = ConnectionEntry::Connected {
-                                    connection,
-                                    history,
-                                };
+                            if let AgentConnectionEntry::Connecting { .. } = entry {
+                                *entry = AgentConnectionEntry::Connected(connected_state);
                                 cx.notify();
                             }
                         });
                     }
                     Err(error) => {
                         entry.update(cx, |entry, cx| {
-                            if let ConnectionEntry::Connecting { .. } = entry {
-                                *entry = ConnectionEntry::Error { error };
+                            if let AgentConnectionEntry::Connecting { .. } = entry {
+                                *entry = AgentConnectionEntry::Error { error };
                                 cx.notify();
                             }
                         });
@@ -161,7 +156,7 @@ impl AgentConnectionStore {
         cx: &mut Context<Self>,
     ) -> (
         Receiver<Option<String>>,
-        Task<Result<Rc<dyn AgentConnection>, LoadError>>,
+        Task<Result<ConnectedState, LoadError>>,
     ) {
         let (new_version_tx, new_version_rx) = watch::channel::<Option<String>>(None);
 
@@ -169,8 +164,14 @@ impl AgentConnectionStore {
         let delegate = AgentServerDelegate::new(agent_server_store, Some(new_version_tx));
 
         let connect_task = server.connect(delegate, cx);
-        let connect_task = cx.spawn(async move |_this, _cx| match connect_task.await {
-            Ok(connection) => Ok(connection),
+        let connect_task = cx.spawn(async move |_this, cx| match connect_task.await {
+            Ok(connection) => cx.update(|cx| {
+                let history = cx.new(|cx| ThreadHistory::new(connection.session_list(cx), cx));
+                Ok(ConnectedState {
+                    connection,
+                    history,
+                })
+            }),
             Err(err) => match err.downcast::<LoadError>() {
                 Ok(load_error) => Err(load_error),
                 Err(err) => Err(LoadError::Other(SharedString::from(err.to_string()))),

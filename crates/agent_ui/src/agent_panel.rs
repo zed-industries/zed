@@ -1338,12 +1338,8 @@ impl AgentPanel {
         let connect_task = entry.read(cx).wait_for_connection();
 
         cx.spawn_in(window, async move |this, cx| {
-            connect_task.await?;
+            let history = connect_task.await?.history;
             this.update_in(cx, |this, window, cx| {
-                let history = entry
-                    .read(cx)
-                    .history()
-                    .context("No history for native agent thread")?;
                 let thread = history
                     .read(cx)
                     .session_for_id(&session_id)
