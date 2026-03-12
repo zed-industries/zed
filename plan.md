@@ -331,11 +331,11 @@ The test currently fails because all implementations are stubs.
 
 ## To implement
 
-- [*] Add `initial_scan_complete: (watch::Sender<bool>, watch::Receiver<bool>)` field to `WorktreeStore` — added, but default value and driving logic still TBD
-- [*] Implement `wait_for_initial_scan()` using the watch receiver — implemented, but depends on channel being driven correctly
-- [*] Implement `initial_scan_completed()` by reading the watch channel — implemented, but depends on channel being driven correctly
+- [x] Add `initial_scan_complete: (watch::Sender<bool>, watch::Receiver<bool>)` field to `WorktreeStore` — added, but default value and driving logic still TBD
+- [x] Implement `wait_for_initial_scan()` using the watch receiver — implemented, but depends on channel being driven correctly
+- [x] Implement `initial_scan_completed()` by reading the watch channel — implemented, but depends on channel being driven correctly
 - [x] Add `snapshot_subscriptions` and `wait_for_snapshot(scan_id)` to `LocalWorktree` (mirrors `RemoteWorktree` pattern)
-- [ ] Add unified `Worktree::wait_for_snapshot(scan_id)` on the enum that dispatches to either variant
+- [x] Add unified `Worktree::wait_for_snapshot(scan_id)` on the enum that dispatches to either variant
 - [ ] Implement `spawn_initial_scan_monitor()` on `WorktreeStore` — uses `wait_for_snapshot(1)` for all visible worktrees, then sets watch to `true`
 - [ ] Call `spawn_initial_scan_monitor()` from `WorktreeStore::add()` (when visible) and `remove_worktree()`
 - [ ] Set `initial_scan_complete` to `false` in `WorktreeStore::add()` when the added worktree is visible
