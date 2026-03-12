@@ -1,7 +1,7 @@
 use crate::{
-    Anchor, Autoscroll, BufferSerialization, Capability, Editor, EditorEvent, EditorSettings,
-    ExcerptId, ExcerptRange, FormatTarget, MultiBuffer, MultiBufferSnapshot, NavigationData,
-    ReportEditorEvent, SelectionEffects, ToPoint as _,
+    ActiveDebugLine, Anchor, Autoscroll, BufferSerialization, Capability, Editor, EditorEvent,
+    EditorSettings, ExcerptId, ExcerptRange, FormatTarget, MultiBuffer, MultiBufferSnapshot,
+    NavigationData, ReportEditorEvent, SelectionEffects, ToPoint as _,
     display_map::HighlightKey,
     editor_settings::SeedQuerySetting,
     persistence::{DB, SerializedEditor},
@@ -735,10 +735,13 @@ impl Item for Editor {
         h_flex()
             .gap_2()
             .child(
-                Label::new(self.title(cx).to_string())
-                    .color(label_color)
-                    .when(params.preview, |this| this.italic())
-                    .when(was_deleted, |this| this.strikethrough()),
+                Label::new(util::truncate_and_trailoff(
+                    &self.title(cx),
+                    MAX_TAB_TITLE_LEN,
+                ))
+                .color(label_color)
+                .when(params.preview, |this| this.italic())
+                .when(was_deleted, |this| this.strikethrough()),
             )
             .when_some(description, |this, description| {
                 this.child(
@@ -757,7 +760,7 @@ impl Item for Editor {
     ) {
         self.buffer
             .read(cx)
-            .for_each_buffer(|buffer| f(buffer.entity_id(), buffer.read(cx)));
+            .for_each_buffer(&mut |buffer| f(buffer.entity_id(), buffer.read(cx)));
     }
 
     fn buffer_kind(&self, cx: &App) -> ItemBufferKind {
@@ -989,22 +992,58 @@ impl Item for Editor {
     fn added_to_workspace(
         &mut self,
         workspace: &mut Workspace,
-        _window: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         self.workspace = Some((workspace.weak_handle(), workspace.database_id()));
-        if let Some(workspace) = &workspace.weak_handle().upgrade() {
-            cx.subscribe(workspace, |editor, _, event: &workspace::Event, _cx| {
-                if let workspace::Event::ModalOpened = event {
-                    editor.mouse_context_menu.take();
-                    editor.inline_blame_popover.take();
-                }
-            })
+        if let Some(workspace_entity) = &workspace.weak_handle().upgrade() {
+            cx.subscribe(
+                workspace_entity,
+                |editor, _, event: &workspace::Event, _cx| {
+                    if let workspace::Event::ModalOpened = event {
+                        editor.mouse_context_menu.take();
+                        editor.inline_blame_popover.take();
+                    }
+                },
+            )
             .detach();
+        }
+
+        // Load persisted folds if this editor doesn't already have folds.
+        // This handles manually-opened files (not workspace restoration).
+        let display_snapshot = self
+            .display_map
+            .update(cx, |display_map, cx| display_map.snapshot(cx));
+        let has_folds = display_snapshot
+            .folds_in_range(MultiBufferOffset(0)..display_snapshot.buffer_snapshot().len())
+            .next()
+            .is_some();
+
+        if !has_folds {
+            if let Some(workspace_id) = workspace.database_id()
+                && let Some(file_path) = self.buffer().read(cx).as_singleton().and_then(|buffer| {
+                    project::File::from_dyn(buffer.read(cx).file()).map(|file| file.abs_path(cx))
+                })
+            {
+                self.load_folds_from_db(workspace_id, file_path, window, cx);
+            }
         }
     }
 
-    fn to_item_events(event: &EditorEvent, mut f: impl FnMut(ItemEvent)) {
+    fn pane_changed(&mut self, new_pane_id: EntityId, cx: &mut Context<Self>) {
+        if self
+            .highlighted_rows
+            .get(&TypeId::of::<ActiveDebugLine>())
+            .is_some_and(|lines| !lines.is_empty())
+            && let Some(breakpoint_store) = self.breakpoint_store.as_ref()
+        {
+            breakpoint_store.update(cx, |store, _cx| {
+                store.set_active_debug_pane_id(new_pane_id);
+            });
+        }
+    }
+
+    fn to_item_events(event: &EditorEvent, f: &mut dyn FnMut(ItemEvent)) {
         match event {
             EditorEvent::Saved | EditorEvent::TitleChanged => {
                 f(ItemEvent::UpdateTab);
@@ -1397,6 +1436,7 @@ impl ProjectItem for Editor {
         cx: &mut Context<Self>,
     ) -> Self {
         let mut editor = Self::for_buffer(buffer.clone(), Some(project), window, cx);
+
         if let Some((excerpt_id, _, snapshot)) =
             editor.buffer().read(cx).snapshot(cx).as_singleton()
             && WorkspaceSettings::get(None, cx).restore_on_file_reopen
@@ -1408,12 +1448,14 @@ impl ProjectItem for Editor {
                     data.entries.get(&file.abs_path(cx))
                 })
         {
-            editor.fold_ranges(
-                clip_ranges(&restoration_data.folds, snapshot),
-                false,
-                window,
-                cx,
-            );
+            if !restoration_data.folds.is_empty() {
+                editor.fold_ranges(
+                    clip_ranges(&restoration_data.folds, snapshot),
+                    false,
+                    window,
+                    cx,
+                );
+            }
             if !restoration_data.selections.is_empty() {
                 editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
                     s.select_ranges(clip_ranges(&restoration_data.selections, snapshot));
@@ -1421,7 +1463,7 @@ impl ProjectItem for Editor {
             }
             let (top_row, offset) = restoration_data.scroll_position;
             let anchor =
-                Anchor::in_buffer(*excerpt_id, snapshot.anchor_before(Point::new(top_row, 0)));
+                Anchor::in_buffer(excerpt_id, snapshot.anchor_before(Point::new(top_row, 0)));
             editor.set_scroll_anchor(ScrollAnchor { anchor, offset }, window, cx);
         }
 
@@ -2017,6 +2059,7 @@ fn restore_serialized_buffer_contents(
 mod tests {
     use crate::editor_tests::init_test;
     use fs::Fs;
+    use workspace::MultiWorkspace;
 
     use super::*;
     use fs::MTime;
@@ -2071,8 +2114,10 @@ mod tests {
         // Test case 1: Deserialize with path and contents
         {
             let project = Project::test(fs.clone(), [path!("/file.rs").as_ref()], cx).await;
-            let (workspace, cx) =
-                cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+            let (multi_workspace, cx) = cx.add_window_view(|window, cx| {
+                MultiWorkspace::test_new(project.clone(), window, cx)
+            });
+            let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
             let workspace_id = workspace::WORKSPACE_DB.next_id().await.unwrap();
             let item_id = 1234 as ItemId;
             let mtime = fs
@@ -2108,8 +2153,10 @@ mod tests {
         // Test case 2: Deserialize with only path
         {
             let project = Project::test(fs.clone(), [path!("/file.rs").as_ref()], cx).await;
-            let (workspace, cx) =
-                cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+            let (multi_workspace, cx) = cx.add_window_view(|window, cx| {
+                MultiWorkspace::test_new(project.clone(), window, cx)
+            });
+            let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
 
             let workspace_id = workspace::WORKSPACE_DB.next_id().await.unwrap();
 
@@ -2146,8 +2193,10 @@ mod tests {
                 project.languages().add(languages::rust_lang())
             });
 
-            let (workspace, cx) =
-                cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+            let (multi_workspace, cx) = cx.add_window_view(|window, cx| {
+                MultiWorkspace::test_new(project.clone(), window, cx)
+            });
+            let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
 
             let workspace_id = workspace::WORKSPACE_DB.next_id().await.unwrap();
 
@@ -2182,8 +2231,10 @@ mod tests {
         // Test case 4: Deserialize with path, content, and old mtime
         {
             let project = Project::test(fs.clone(), [path!("/file.rs").as_ref()], cx).await;
-            let (workspace, cx) =
-                cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+            let (multi_workspace, cx) = cx.add_window_view(|window, cx| {
+                MultiWorkspace::test_new(project.clone(), window, cx)
+            });
+            let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
 
             let workspace_id = workspace::WORKSPACE_DB.next_id().await.unwrap();
 
@@ -2212,8 +2263,10 @@ mod tests {
         // Test case 5: Deserialize with no path, no content, no language, and no old mtime (new, empty, unsaved buffer)
         {
             let project = Project::test(fs.clone(), [path!("/file.rs").as_ref()], cx).await;
-            let (workspace, cx) =
-                cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+            let (multi_workspace, cx) = cx.add_window_view(|window, cx| {
+                MultiWorkspace::test_new(project.clone(), window, cx)
+            });
+            let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
 
             let workspace_id = workspace::WORKSPACE_DB.next_id().await.unwrap();
 
@@ -2252,8 +2305,10 @@ mod tests {
 
             // Create an empty project with no worktrees
             let project = Project::test(fs.clone(), [], cx).await;
-            let (workspace, cx) =
-                cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+            let (multi_workspace, cx) = cx.add_window_view(|window, cx| {
+                MultiWorkspace::test_new(project.clone(), window, cx)
+            });
+            let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
 
             let workspace_id = workspace::WORKSPACE_DB.next_id().await.unwrap();
             let item_id = 11000 as ItemId;

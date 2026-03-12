@@ -1,8 +1,15 @@
+---
+title: AI Agent Tools - Zed
+description: Built-in tools for Zed's AI agent including file editing, code search, terminal commands, web search, and diagnostics.
+---
+
 # Tools
 
-Zed's built-in agent has access to these tools for reading, searching, and editing your codebase.
+Zed's built-in agent has access to these tools for reading, searching, and editing your codebase. These tools are used in the [Agent Panel](./agent-panel.md) during conversations with AI agents.
 
 You can configure permissions for tool actions, including situations where they are automatically approved, automatically denied, or require your confirmation on a case-by-case basis. See [Tool Permissions](./tool-permissions.md) for the list of permission-gated tools and details.
+
+To add custom tools beyond these built-in ones, see [MCP servers](./mcp.md).
 
 ## Read & Search Tools
 
@@ -84,6 +91,6 @@ Executes shell commands and returns the combined output, creating a new shell pr
 
 ## Other Tools
 
-### `subagent`
+### `spawn_agent`
 
-Spawns a subagent with its own context window to perform a delegated task. Useful for running parallel investigations, completing self-contained tasks, or performing research where only the outcome matters. Each subagent has access to the same tools as the parent agent.
+Spawns a subagent with its own context window to perform a delegated task. Each subagent has access to the same tools as the parent agent.

@@ -14,7 +14,7 @@ impl PlanDefinitions {
                 "Unlimited prompts with your AI API keys",
             ))
             .child(ListBulletItem::new(
-                "Unlimited use of external agents like Claude Code",
+                "Unlimited use of external agents like Claude Agent",
             ))
     }
 
@@ -34,6 +34,12 @@ impl PlanDefinitions {
             .child(ListBulletItem::new("Unlimited edit predictions"))
             .child(ListBulletItem::new("$5 of tokens"))
             .child(ListBulletItem::new("Usage-based billing beyond $5"))
+    }
+
+    pub fn business_plan(&self) -> impl IntoElement {
+        List::new()
+            .child(ListBulletItem::new("Unlimited edit predictions"))
+            .child(ListBulletItem::new("Usage-based billing"))
     }
 
     pub fn student_plan(&self) -> impl IntoElement {

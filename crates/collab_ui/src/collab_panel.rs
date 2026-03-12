@@ -36,7 +36,8 @@ use ui::{
 };
 use util::{ResultExt, TryFutureExt, maybe};
 use workspace::{
-    CopyRoomId, Deafen, LeaveCall, Mute, OpenChannelNotes, ScreenShare, ShareProject, Workspace,
+    CopyRoomId, Deafen, LeaveCall, MultiWorkspace, Mute, OpenChannelNotes, ScreenShare,
+    ShareProject, Workspace,
     dock::{DockPosition, Panel, PanelEvent},
     notifications::{DetachAndPromptErr, NotifyResultExt},
 };
@@ -44,6 +45,8 @@ use workspace::{
 actions!(
     collab_panel,
     [
+        /// Toggles the collab panel.
+        Toggle,
         /// Toggles focus on the collaboration panel.
         ToggleFocus,
         /// Removes the selected channel or contact.
@@ -92,6 +95,11 @@ pub fn init(cx: &mut App) {
                 })
             }
         });
+        workspace.register_action(|workspace, _: &Toggle, window, cx| {
+            if !workspace.toggle_panel_focus::<CollabPanel>(window, cx) {
+                workspace.close_panel::<CollabPanel>(window, cx);
+            }
+        });
         workspace.register_action(|_, _: &OpenChannelNotes, window, cx| {
             let channel_id = ActiveCall::global(cx)
                 .read(cx)
@@ -120,6 +128,7 @@ pub fn init(cx: &mut App) {
 
             if let Some(room) = ActiveCall::global(cx).read(cx).room() {
                 let romo_id_fut = room.read(cx).room_id();
+                let workspace_handle = cx.weak_entity();
                 cx.spawn(async move |workspace, cx| {
                     let room_id = romo_id_fut.await.context("Failed to get livekit room")?;
                     workspace.update(cx, |workspace, cx| {
@@ -134,7 +143,7 @@ pub fn init(cx: &mut App) {
                         );
                     })
                 })
-                .detach_and_notify_err(window, cx);
+                .detach_and_notify_err(workspace_handle, window, cx);
             } else {
                 workspace.show_error(&"There’s no active call; join one first.", cx);
             }
@@ -2189,12 +2198,13 @@ impl CollabPanel {
                 &["Remove", "Cancel"],
                 cx,
             );
-            cx.spawn_in(window, async move |this, cx| {
+            let workspace = self.workspace.clone();
+            cx.spawn_in(window, async move |this, mut cx| {
                 if answer.await? == 0 {
                     channel_store
                         .update(cx, |channels, _| channels.remove_channel(channel_id))
                         .await
-                        .notify_async_err(cx);
+                        .notify_workspace_async_err(workspace, &mut cx);
                     this.update_in(cx, |_, window, cx| cx.focus_self(window))
                         .ok();
                 }
@@ -2223,12 +2233,13 @@ impl CollabPanel {
             &["Remove", "Cancel"],
             cx,
         );
-        cx.spawn_in(window, async move |_, cx| {
+        let workspace = self.workspace.clone();
+        cx.spawn_in(window, async move |_, mut cx| {
             if answer.await? == 0 {
                 user_store
                     .update(cx, |store, cx| store.remove_contact(user_id, cx))
                     .await
-                    .notify_async_err(cx);
+                    .notify_workspace_async_err(workspace, &mut cx);
             }
             anyhow::Ok(())
         })
@@ -2279,13 +2290,15 @@ impl CollabPanel {
         let Some(workspace) = self.workspace.upgrade() else {
             return;
         };
-        let Some(handle) = window.window_handle().downcast::<Workspace>() else {
+
+        let Some(handle) = window.window_handle().downcast::<MultiWorkspace>() else {
             return;
         };
         workspace::join_channel(
             channel_id,
             workspace.read(cx).app_state().clone(),
             Some(handle),
+            Some(self.workspace.clone()),
             cx,
         )
         .detach_and_prompt_err("Failed to join channel", window, cx, |_, _, _| None)
@@ -2311,6 +2324,12 @@ impl CollabPanel {
 
     fn render_signed_out(&mut self, cx: &mut Context<Self>) -> Div {
         let collab_blurb = "Work with your team in realtime with collaborative editing, voice, shared notes and more.";
+        let is_signing_in = self.client.status().borrow().is_signing_in();
+        let button_label = if is_signing_in {
+            "Signing in…"
+        } else {
+            "Sign in"
+        };
 
         v_flex()
             .gap_6()
@@ -2320,20 +2339,22 @@ impl CollabPanel {
                 v_flex()
                     .gap_2()
                     .child(
-                        Button::new("sign_in", "Sign in")
+                        Button::new("sign_in", button_label)
                             .icon_color(Color::Muted)
                             .icon(IconName::Github)
                             .icon_position(IconPosition::Start)
                             .style(ButtonStyle::Filled)
                             .full_width()
+                            .disabled(is_signing_in)
                             .on_click(cx.listener(|this, _, window, cx| {
                                 let client = this.client.clone();
-                                cx.spawn_in(window, async move |_, cx| {
+                                let workspace = this.workspace.clone();
+                                cx.spawn_in(window, async move |_, mut cx| {
                                     client
-                                        .connect(true, cx)
+                                        .connect(true, &mut cx)
                                         .await
                                         .into_response()
-                                        .notify_async_err(cx);
+                                        .notify_workspace_async_err(workspace, &mut cx);
                                 })
                                 .detach()
                             })),
@@ -3093,6 +3114,8 @@ fn render_participant_name_and_handle(user: &User) -> impl IntoElement {
 
 impl Render for CollabPanel {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let status = *self.client.status().borrow();
+
         v_flex()
             .key_context(self.dispatch_context(window, cx))
             .on_action(cx.listener(CollabPanel::cancel))
@@ -3111,7 +3134,7 @@ impl Render for CollabPanel {
             .on_action(cx.listener(CollabPanel::move_channel_down))
             .track_focus(&self.focus_handle)
             .size_full()
-            .child(if !self.client.status().borrow().is_or_was_connected() {
+            .child(if !status.is_or_was_connected() || status.is_signing_in() {
                 self.render_signed_out(cx)
             } else {
                 self.render_signed_in(window, cx)

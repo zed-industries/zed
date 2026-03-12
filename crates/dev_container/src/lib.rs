@@ -1,3 +1,5 @@
+use std::path::Path;
+
 use gpui::AppContext;
 use gpui::Entity;
 use gpui::Task;
@@ -45,6 +47,7 @@ mod docker;
 mod features;
 mod model;
 
+use devcontainer_api::ensure_devcontainer_cli;
 use devcontainer_api::read_default_devcontainer_configuration;
 
 use crate::devcontainer_api::DevContainerError;
@@ -104,9 +107,35 @@ fn get_safe_id(input: &str) -> String {
     result
 }
 
+pub struct DevContainerContext {
+    pub project_directory: Arc<Path>,
+    pub use_podman: bool,
+    pub node_runtime: node_runtime::NodeRuntime,
+    pub http_client: Arc<dyn HttpClient>,
+}
+
+impl DevContainerContext {
+    pub fn from_workspace(workspace: &Workspace, cx: &App) -> Option<Self> {
+        let project_directory = workspace.project().read(cx).active_project_directory(cx)?;
+        let use_podman = DevContainerSettings::get_global(cx).use_podman;
+        let node_runtime = workspace.app_state().node_runtime.clone();
+        let http_client = cx.http_client().clone();
+        Some(Self {
+            project_directory,
+            use_podman,
+            node_runtime,
+            http_client,
+        })
+    }
+}
+
 #[derive(RegisterSetting)]
 struct DevContainerSettings {
     use_podman: bool,
+}
+
+pub fn use_podman(cx: &App) -> bool {
+    DevContainerSettings::get_global(cx).use_podman
 }
 
 impl Settings for DevContainerSettings {
@@ -327,14 +356,20 @@ impl PickerDelegate for TemplatePickerDelegate {
     ) {
         let fun = &mut self.on_confirm;
 
+        if self.matching_indices.is_empty() {
+            return;
+        }
         self.stateful_modal
             .update(cx, |modal, cx| {
-                fun(
-                    self.candidate_templates[self.matching_indices[self.selected_index]].clone(),
-                    modal,
-                    window,
-                    cx,
-                );
+                let Some(confirmed_entry) = self
+                    .matching_indices
+                    .get(self.selected_index)
+                    .and_then(|ix| self.candidate_templates.get(*ix))
+                else {
+                    log::error!("Selected index not in range of known matches");
+                    return;
+                };
+                fun(confirmed_entry.clone(), modal, window, cx);
             })
             .ok();
     }
@@ -503,7 +538,17 @@ impl PickerDelegate for FeaturePickerDelegate {
                 })
                 .ok();
         } else {
-            let current = &mut self.candidate_features[self.matching_indices[self.selected_index]];
+            if self.matching_indices.is_empty() {
+                return;
+            }
+            let Some(current) = self
+                .matching_indices
+                .get(self.selected_index)
+                .and_then(|ix| self.candidate_features.get_mut(*ix))
+            else {
+                log::error!("Selected index not in range of matches");
+                return;
+            };
             current.toggle_state = match current.toggle_state {
                 ToggleState::Selected => {
                     self.template_entry
@@ -1473,21 +1518,44 @@ fn dispatch_apply_templates(
     cx: &mut Context<DevContainerModal>,
 ) {
     cx.spawn_in(window, async move |this, cx| {
-        if let Some(tree_id) = workspace.update(cx, |workspace, cx| {
-            let project = workspace.project().clone();
-            let worktree = project.read(cx).visible_worktrees(cx).find_map(|tree| {
-                tree.read(cx)
-                    .root_entry()?
-                    .is_dir()
-                    .then_some(tree.read(cx))
-            });
-            worktree.map(|w| w.id())
-        }) {
-            let node_runtime = workspace.read_with(cx, |workspace, _| {
-                workspace.app_state().node_runtime.clone()
-            });
+        let Some((tree_id, context)) = workspace.update(cx, |workspace, cx| {
+            let worktree = workspace
+                .project()
+                .read(cx)
+                .visible_worktrees(cx)
+                .find_map(|tree| {
+                    tree.read(cx)
+                        .root_entry()?
+                        .is_dir()
+                        .then_some(tree.read(cx))
+                });
+            let tree_id = worktree.map(|w| w.id())?;
+            let context = DevContainerContext::from_workspace(workspace, cx)?;
+            Some((tree_id, context))
+        }) else {
+            return;
+        };
 
-            if check_for_existing && read_default_devcontainer_configuration(cx).await.is_ok() {
+        let Ok(cli) = ensure_devcontainer_cli(&context.node_runtime).await else {
+            this.update_in(cx, |this, window, cx| {
+                this.accept_message(
+                    DevContainerMessage::FailedToWriteTemplate(
+                        DevContainerError::DevContainerCliNotAvailable,
+                    ),
+                    window,
+                    cx,
+                );
+            })
+            .log_err();
+            return;
+        };
+
+        {
+            if check_for_existing
+                && read_default_devcontainer_configuration(&context)
+                    .await
+                    .is_ok()
+            {
                 this.update_in(cx, |this, window, cx| {
                     this.accept_message(
                         DevContainerMessage::NeedConfirmWriteDevContainer(template_entry),
@@ -1503,8 +1571,8 @@ fn dispatch_apply_templates(
                 &template_entry.template,
                 &template_entry.options_selected,
                 &template_entry.features_selected,
-                cx,
-                &node_runtime,
+                &context,
+                &cli,
             )
             .await
             {
@@ -1546,8 +1614,6 @@ fn dispatch_apply_templates(
                 this.dismiss(&menu::Cancel, window, cx);
             })
             .ok();
-        } else {
-            return;
         }
     })
     .detach();

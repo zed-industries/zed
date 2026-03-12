@@ -3,12 +3,13 @@
 set -euo pipefail
 
 SCCACHE_VERSION="v0.10.0"
-SCCACHE_DIR="./target/sccache"
+# Use absolute path to avoid issues with working directory changes between steps
+SCCACHE_DIR="$(pwd)/target/sccache"
 
 install_sccache() {
     mkdir -p "$SCCACHE_DIR"
 
-    if [[ -x "${SCCACHE_DIR}/sccache" ]]; then
+    if [[ -x "${SCCACHE_DIR}/sccache" ]] && "${SCCACHE_DIR}/sccache" --version &>/dev/null; then
         echo "sccache already cached: $("${SCCACHE_DIR}/sccache" --version)"
     else
         echo "Installing sccache ${SCCACHE_VERSION} from GitHub releases..."
@@ -43,10 +44,17 @@ install_sccache() {
         echo "Installed sccache: $("${SCCACHE_DIR}/sccache" --version)"
     fi
 
-    if [[ -n "${GITHUB_PATH:-}" ]]; then
-        echo "$(pwd)/${SCCACHE_DIR}" >> "$GITHUB_PATH"
+    # Verify the binary works before adding to path
+    if ! "${SCCACHE_DIR}/sccache" --version &>/dev/null; then
+        echo "ERROR: sccache binary at ${SCCACHE_DIR}/sccache is not executable or corrupted"
+        rm -f "${SCCACHE_DIR}/sccache"
+        exit 1
     fi
-    export PATH="$(pwd)/${SCCACHE_DIR}:${PATH}"
+
+    if [[ -n "${GITHUB_PATH:-}" ]]; then
+        echo "${SCCACHE_DIR}" >> "$GITHUB_PATH"
+    fi
+    export PATH="${SCCACHE_DIR}:${PATH}"
 }
 
 configure_sccache() {
@@ -61,6 +69,10 @@ configure_sccache() {
     local key_prefix="${SCCACHE_KEY_PREFIX:-sccache/}"
     local base_dir="${GITHUB_WORKSPACE:-$(pwd)}"
 
+    # Use the absolute path to sccache binary for RUSTC_WRAPPER to avoid
+    # any PATH race conditions between GITHUB_PATH and GITHUB_ENV
+    local sccache_bin="${SCCACHE_DIR}/sccache"
+
     # Set in current process
     export SCCACHE_ENDPOINT="https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com"
     export SCCACHE_BUCKET="${bucket}"
@@ -69,7 +81,7 @@ configure_sccache() {
     export SCCACHE_BASEDIR="${base_dir}"
     export AWS_ACCESS_KEY_ID="${R2_ACCESS_KEY_ID}"
     export AWS_SECRET_ACCESS_KEY="${R2_SECRET_ACCESS_KEY}"
-    export RUSTC_WRAPPER="sccache"
+    export RUSTC_WRAPPER="${sccache_bin}"
 
     # Also write to GITHUB_ENV for subsequent steps
     if [[ -n "${GITHUB_ENV:-}" ]]; then

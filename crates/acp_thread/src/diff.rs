@@ -36,6 +36,7 @@ impl Diff {
                     .log_err();
 
                 buffer.update(cx, |buffer, cx| buffer.set_language(language.clone(), cx));
+                buffer.update(cx, |buffer, _| buffer.parsing_idle()).await;
 
                 let diff = build_buffer_diff(
                     old_text.unwrap_or("".into()).into(),
@@ -145,6 +146,16 @@ impl Diff {
         match self {
             Self::Pending(PendingDiff { new_buffer, .. }) => new_buffer,
             Self::Finalized(FinalizedDiff { new_buffer, .. }) => new_buffer,
+        }
+    }
+
+    pub fn file_path(&self, cx: &App) -> Option<String> {
+        match self {
+            Self::Pending(PendingDiff { new_buffer, .. }) => new_buffer
+                .read(cx)
+                .file()
+                .map(|file| file.full_path(cx).to_string_lossy().into_owned()),
+            Self::Finalized(FinalizedDiff { path, .. }) => Some(path.clone()),
         }
     }
 
@@ -287,6 +298,7 @@ impl PendingDiff {
         let buffer_diff = cx.spawn({
             let buffer = buffer.clone();
             async move |_this, cx| {
+                buffer.update(cx, |buffer, _| buffer.parsing_idle()).await;
                 build_buffer_diff(base_text, &buffer, language_registry, cx).await
             }
         });
