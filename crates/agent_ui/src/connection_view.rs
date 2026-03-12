@@ -3715,18 +3715,19 @@ pub(crate) mod tests {
         let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
 
         let thread_store = cx.update(|_window, cx| cx.new(|cx| ThreadStore::new(cx)));
-        let history = cx.update(|_window, cx| cx.new(|cx| ThreadHistory::new(None, cx)));
         let connection_store =
             cx.update(|_window, cx| cx.new(|cx| AgentConnectionStore::new(project.clone(), cx)));
+
+        let agent_key = ExternalAgent::Custom {
+            name: "Test".into(),
+        };
 
         let thread_view = cx.update(|window, cx| {
             cx.new(|cx| {
                 ConnectionView::new(
                     Rc::new(agent),
-                    connection_store,
-                    ExternalAgent::Custom {
-                        name: "Test".into(),
-                    },
+                    connection_store.clone(),
+                    agent_key.clone(),
                     None,
                     None,
                     None,
@@ -3741,6 +3742,18 @@ pub(crate) mod tests {
             })
         });
         cx.run_until_parked();
+
+        let history = cx.update(|_window, cx| {
+            connection_store
+                .read(cx)
+                .entry(&agent_key)
+                .expect("Missing connection for agent")
+                .read(cx)
+                .history()
+                .expect("Missing history")
+                .clone()
+        });
+
         (thread_view, history, cx)
     }
 
