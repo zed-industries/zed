@@ -2,7 +2,6 @@ use crate::{
     conflict_view::ConflictAddon,
     git_panel::{GitPanel, GitPanelAddon, GitStatusEntry},
     git_panel_settings::GitPanelSettings,
-    remote_button::{render_publish_button, render_push_button},
     resolve_active_repository,
 };
 use agent_settings::AgentSettings;
@@ -18,8 +17,7 @@ use editor::{
 use git::repository::DiffType;
 
 use git::{
-    Commit, StageAll, StageAndNext, ToggleStaged, UnstageAll, UnstageAndNext,
-    repository::{Branch, RepoPath, Upstream, UpstreamTracking, UpstreamTrackingStatus},
+    Commit, StageAll, StageAndNext, ToggleStaged, UnstageAll, UnstageAndNext, repository::RepoPath,
     status::FileStatus,
 };
 use gpui::{
@@ -1716,132 +1714,6 @@ impl Render for BranchDiffToolbar {
                     ),
                 )
             })
-    }
-}
-
-mod preview {
-    use git::repository::{
-        Branch, CommitSummary, Upstream, UpstreamTracking, UpstreamTrackingStatus,
-    };
-    use ui::prelude::*;
-
-    use super::ProjectDiffEmptyState;
-
-    // View this component preview using `workspace: open component-preview`
-    impl Component for ProjectDiffEmptyState {
-        fn scope() -> ComponentScope {
-            ComponentScope::VersionControl
-        }
-
-        fn preview(_window: &mut Window, _cx: &mut App) -> Option<AnyElement> {
-            let unknown_upstream: Option<UpstreamTracking> = None;
-            let ahead_of_upstream: Option<UpstreamTracking> = Some(
-                UpstreamTrackingStatus {
-                    ahead: 2,
-                    behind: 0,
-                }
-                .into(),
-            );
-
-            let not_ahead_or_behind_upstream: Option<UpstreamTracking> = Some(
-                UpstreamTrackingStatus {
-                    ahead: 0,
-                    behind: 0,
-                }
-                .into(),
-            );
-
-            fn branch(upstream: Option<UpstreamTracking>) -> Branch {
-                Branch {
-                    is_head: true,
-                    ref_name: "some-branch".into(),
-                    upstream: upstream.map(|tracking| Upstream {
-                        ref_name: "origin/some-branch".into(),
-                        tracking,
-                    }),
-                    most_recent_commit: Some(CommitSummary {
-                        sha: "abc123".into(),
-                        subject: "Modify stuff".into(),
-                        commit_timestamp: 1710932954,
-                        author_name: "John Doe".into(),
-                        has_parent: true,
-                    }),
-                }
-            }
-
-            let no_repo_state = ProjectDiffEmptyState {
-                no_repo: true,
-                can_push_and_pull: false,
-                focus_handle: None,
-                current_branch: None,
-            };
-
-            let no_changes_state = ProjectDiffEmptyState {
-                no_repo: false,
-                can_push_and_pull: true,
-                focus_handle: None,
-                current_branch: Some(branch(not_ahead_or_behind_upstream)),
-            };
-
-            let ahead_of_upstream_state = ProjectDiffEmptyState {
-                no_repo: false,
-                can_push_and_pull: true,
-                focus_handle: None,
-                current_branch: Some(branch(ahead_of_upstream)),
-            };
-
-            let unknown_upstream_state = ProjectDiffEmptyState {
-                no_repo: false,
-                can_push_and_pull: true,
-                focus_handle: None,
-                current_branch: Some(branch(unknown_upstream)),
-            };
-
-            let (width, height) = (px(480.), px(320.));
-
-            Some(
-                v_flex()
-                    .gap_6()
-                    .children(vec![
-                        example_group(vec![
-                            single_example(
-                                "No Repo",
-                                div()
-                                    .w(width)
-                                    .h(height)
-                                    .child(no_repo_state)
-                                    .into_any_element(),
-                            ),
-                            single_example(
-                                "No Changes",
-                                div()
-                                    .w(width)
-                                    .h(height)
-                                    .child(no_changes_state)
-                                    .into_any_element(),
-                            ),
-                            single_example(
-                                "Unknown Upstream",
-                                div()
-                                    .w(width)
-                                    .h(height)
-                                    .child(unknown_upstream_state)
-                                    .into_any_element(),
-                            ),
-                            single_example(
-                                "Ahead of Remote",
-                                div()
-                                    .w(width)
-                                    .h(height)
-                                    .child(ahead_of_upstream_state)
-                                    .into_any_element(),
-                            ),
-                        ])
-                        .vertical(),
-                    ])
-                    .into_any_element(),
-            )
-        }
     }
 }
 
