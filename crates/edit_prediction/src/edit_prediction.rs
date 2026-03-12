@@ -100,7 +100,7 @@ actions!(
 );
 
 /// Maximum number of events to track.
-const EVENT_COUNT_MAX: usize = 6;
+const EVENT_COUNT_MAX: usize = 10;
 const CHANGE_GROUPING_LINE_SPAN: u32 = 8;
 const COLLABORATOR_EDIT_LOCALITY_CONTEXT_TOKENS: usize = 512;
 const LAST_CHANGE_GROUPING_TIME: Duration = Duration::from_secs(1);

@@ -683,14 +683,16 @@ async fn test_nearby_collaborator_edits_are_kept_in_history(cx: &mut TestAppCont
 
     let (collaborator, mut collaborator_version) = make_collaborator_replica(&buffer, cx);
 
-    let line_one_start = buffer.read_with(cx, |buffer, _cx| Point::new(1, 0).to_offset(buffer));
+    let (line_one_start, line_one_len) = collaborator.read_with(cx, |buffer, _cx| {
+        (Point::new(1, 0).to_offset(buffer), buffer.line_len(1))
+    });
 
     apply_collaborator_edit(
         &collaborator,
         &buffer,
         &mut collaborator_version,
-        line_one_start..line_one_start,
-        "REMOTE ONE ",
+        line_one_start..line_one_start + line_one_len as usize,
+        "REMOTE ONE",
         cx,
     )
     .await;
@@ -699,17 +701,19 @@ async fn test_nearby_collaborator_edits_are_kept_in_history(cx: &mut TestAppCont
         ep_store.edit_history_for_project(&project, cx)
     });
 
-    assert_eq!(events.len(), 1);
-    let rendered = render_events_with_predicted(&events);
-    assert!(
-        rendered[0].contains("LOCAL ZERO"),
-        "expected local edit to remain in history, got: {}",
-        rendered[0]
-    );
-    assert!(
-        rendered[0].contains("REMOTE ONE"),
-        "expected nearby collaborator edit to remain in history, got: {}",
-        rendered[0]
+    assert_eq!(
+        render_events_with_predicted(&events),
+        vec![indoc! {"
+            manual
+            @@ -1,5 +1,5 @@
+            -line 0
+            -line 1
+            +LOCAL ZERO
+            +REMOTE ONE
+             line 2
+             line 3
+             line 4
+        "}]
     );
 }
 
