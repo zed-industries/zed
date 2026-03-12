@@ -32,7 +32,7 @@ use gpui::{
     MouseUpEvent, Point, ScrollHandle, Stateful, StrikethroughStyle, StyleRefinement, StyledText,
     Task, TextLayout, TextRun, TextStyle, TextStyleRefinement, actions, img, point, quad,
 };
-use language::{CharClassifier, Language, LanguageRegistry, Rope};
+use language::{CharClassifier, CharKind, Language, LanguageRegistry, Rope};
 use parser::CodeBlockMetadata;
 use parser::{MarkdownEvent, MarkdownTag, MarkdownTagEnd, parse_links_only, parse_markdown};
 use pulldown_cmark::Alignment;
@@ -237,6 +237,7 @@ pub struct Markdown {
     source: SharedString,
     selection: Selection,
     pressed_link: Option<RenderedLink>,
+    pressed_code_block_word: Option<SharedString>,
     autoscroll_request: Option<usize>,
     parsed_markdown: ParsedMarkdown,
     images_by_source_offset: HashMap<usize, Arc<Image>>,
@@ -305,6 +306,7 @@ impl Markdown {
             source,
             selection: Selection::default(),
             pressed_link: None,
+            pressed_code_block_word: None,
             autoscroll_request: None,
             should_reparse: false,
             images_by_source_offset: Default::default(),
@@ -330,6 +332,7 @@ impl Markdown {
             source,
             selection: Selection::default(),
             pressed_link: None,
+            pressed_code_block_word: None,
             autoscroll_request: None,
             should_reparse: false,
             parsed_markdown: ParsedMarkdown::default(),
@@ -702,6 +705,8 @@ pub struct MarkdownElement {
     style: MarkdownStyle,
     code_block_renderer: CodeBlockRenderer,
     on_url_click: Option<Box<dyn Fn(SharedString, &mut Window, &mut App)>>,
+    on_code_block_click: Option<Box<dyn Fn(SharedString, &mut Window, &mut App)>>,
+    clickable_code_words: Option<Rc<HashSet<SharedString>>>,
 }
 
 impl MarkdownElement {
@@ -715,6 +720,8 @@ impl MarkdownElement {
                 border: false,
             },
             on_url_click: None,
+            on_code_block_click: None,
+            clickable_code_words: None,
         }
     }
 
@@ -749,6 +756,19 @@ impl MarkdownElement {
         handler: impl Fn(SharedString, &mut Window, &mut App) + 'static,
     ) -> Self {
         self.on_url_click = Some(Box::new(handler));
+        self
+    }
+
+    pub fn on_code_block_click(
+        mut self,
+        handler: impl Fn(SharedString, &mut Window, &mut App) + 'static,
+    ) -> Self {
+        self.on_code_block_click = Some(Box::new(handler));
+        self
+    }
+
+    pub fn clickable_code_words(mut self, words: HashSet<SharedString>) -> Self {
+        self.clickable_code_words = Some(Rc::new(words));
         self
     }
 
@@ -819,6 +839,15 @@ impl MarkdownElement {
         }
     }
 
+    fn is_clickable_code_word(
+        word: &SharedString,
+        clickable_code_words: &Option<Rc<HashSet<SharedString>>>,
+    ) -> bool {
+        clickable_code_words
+            .as_ref()
+            .map_or(true, |set| set.contains(word))
+    }
+
     fn paint_mouse_listeners(
         &mut self,
         hitbox: &Hitbox,
@@ -830,14 +859,23 @@ impl MarkdownElement {
             return;
         }
 
+        let has_code_block_click = self.on_code_block_click.is_some();
+        let clickable_code_words = self.clickable_code_words.take();
         let is_hovering_link = hitbox.is_hovered(window)
             && !self.markdown.read(cx).selection.pending
             && rendered_text
                 .link_for_position(window.mouse_position())
                 .is_some();
+        let is_hovering_code_block_word = has_code_block_click
+            && hitbox.is_hovered(window)
+            && !self.markdown.read(cx).selection.pending
+            && rendered_text
+                .code_block_word_for_position(window.mouse_position())
+                .filter(|word| Self::is_clickable_code_word(word, &clickable_code_words))
+                .is_some();
 
         if !self.style.prevent_mouse_interaction {
-            if is_hovering_link {
+            if is_hovering_link || is_hovering_code_block_word {
                 window.set_cursor_style(CursorStyle::PointingHand, hitbox);
             } else {
                 window.set_cursor_style(CursorStyle::IBeam, hitbox);
@@ -845,6 +883,7 @@ impl MarkdownElement {
         }
 
         let on_open_url = self.on_url_click.take();
+        let on_code_block_click = self.on_code_block_click.take();
 
         self.on_mouse_event(window, cx, {
             let hitbox = hitbox.clone();
@@ -862,11 +901,20 @@ impl MarkdownElement {
         self.on_mouse_event(window, cx, {
             let rendered_text = rendered_text.clone();
             let hitbox = hitbox.clone();
+            let clickable_code_words = clickable_code_words.clone();
             move |markdown, event: &MouseDownEvent, phase, window, cx| {
                 if hitbox.is_hovered(window) {
                     if phase.bubble() {
                         if let Some(link) = rendered_text.link_for_position(event.position) {
                             markdown.pressed_link = Some(link.clone());
+                        } else if has_code_block_click
+                            && let Some(word) = rendered_text
+                                .code_block_word_for_position(event.position)
+                                .filter(|word| {
+                                    Self::is_clickable_code_word(word, &clickable_code_words)
+                                })
+                        {
+                            markdown.pressed_code_block_word = Some(word);
                         } else {
                             let source_index =
                                 match rendered_text.source_index_for_position(event.position) {
@@ -910,6 +958,7 @@ impl MarkdownElement {
                 } else if phase.capture() && event.button == MouseButton::Left {
                     markdown.selection = Selection::default();
                     markdown.pressed_link = None;
+                    markdown.pressed_code_block_word = None;
                     cx.notify();
                 }
             }
@@ -917,7 +966,8 @@ impl MarkdownElement {
         self.on_mouse_event(window, cx, {
             let rendered_text = rendered_text.clone();
             let hitbox = hitbox.clone();
-            let was_hovering_link = is_hovering_link;
+            let clickable_code_words = clickable_code_words.clone();
+            let was_hovering_clickable = is_hovering_link || is_hovering_code_block_word;
             move |markdown, event: &MouseMoveEvent, phase, window, cx| {
                 if phase.capture() {
                     return;
@@ -933,9 +983,16 @@ impl MarkdownElement {
                     markdown.autoscroll_request = Some(source_index);
                     cx.notify();
                 } else {
-                    let is_hovering_link = hitbox.is_hovered(window)
-                        && rendered_text.link_for_position(event.position).is_some();
-                    if is_hovering_link != was_hovering_link {
+                    let is_hovering_clickable = hitbox.is_hovered(window)
+                        && (rendered_text.link_for_position(event.position).is_some()
+                            || (has_code_block_click
+                                && rendered_text
+                                    .code_block_word_for_position(event.position)
+                                    .filter(|word| {
+                                        Self::is_clickable_code_word(word, &clickable_code_words)
+                                    })
+                                    .is_some()));
+                    if is_hovering_clickable != was_hovering_clickable {
                         cx.notify();
                     }
                 }
@@ -952,6 +1009,18 @@ impl MarkdownElement {
                             open_url(pressed_link.destination_url, window, cx);
                         } else {
                             cx.open_url(&pressed_link.destination_url);
+                        }
+                    } else if let Some(pressed_word) = markdown.pressed_code_block_word.take()
+                        && rendered_text
+                            .code_block_word_for_position(event.position)
+                            .filter(|word| {
+                                Self::is_clickable_code_word(word, &clickable_code_words)
+                            })
+                            .as_ref()
+                            == Some(&pressed_word)
+                    {
+                        if let Some(on_click) = on_code_block_click.as_ref() {
+                            on_click(pressed_word, window, cx);
                         }
                     }
                 } else if markdown.selection.pending {
@@ -2223,6 +2292,63 @@ impl RenderedText {
         self.links
             .iter()
             .find(|link| link.source_range.contains(&source_index))
+    }
+
+    fn code_block_word_for_position(&self, position: Point<Pixels>) -> Option<SharedString> {
+        let source_index = self.source_index_for_position(position).ok()?;
+
+        for line in self.lines.iter() {
+            if source_index > line.source_end {
+                continue;
+            }
+
+            // Only return words for code block lines
+            if line.language.is_none() {
+                return None;
+            }
+
+            let line_rendered_start = line.source_mappings.first()?.rendered_index;
+            let rendered_index_in_line =
+                line.rendered_index_for_source_index(source_index) - line_rendered_start;
+            let text = line.layout.text();
+
+            let scope = line.language.as_ref().map(|l| l.default_scope());
+            let classifier = CharClassifier::new(scope);
+
+            // Check that we're on a word character
+            let char_at_cursor = text[rendered_index_in_line..].chars().next()?;
+            if classifier.kind(char_at_cursor) != CharKind::Word {
+                return None;
+            }
+
+            // Find word boundaries
+            let mut start = rendered_index_in_line;
+            for c in text[..rendered_index_in_line].chars().rev() {
+                if classifier.kind(c) == CharKind::Word {
+                    start -= c.len_utf8();
+                } else {
+                    break;
+                }
+            }
+
+            let mut end = rendered_index_in_line;
+            for c in text[rendered_index_in_line..].chars() {
+                if classifier.kind(c) == CharKind::Word {
+                    end += c.len_utf8();
+                } else {
+                    break;
+                }
+            }
+
+            let word = &text[start..end];
+            if word.is_empty() {
+                return None;
+            }
+
+            return Some(SharedString::from(word.to_string()));
+        }
+
+        None
     }
 }
 

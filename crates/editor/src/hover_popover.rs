@@ -1,12 +1,13 @@
 use crate::{
     ActiveDiagnostic, Anchor, AnchorRangeExt, DisplayPoint, DisplayRow, Editor, EditorSettings,
-    EditorSnapshot, GlobalDiagnosticRenderer, HighlightKey, Hover,
+    EditorSnapshot, GlobalDiagnosticRenderer, GotoDefinitionKind, HighlightKey, Hover,
     display_map::{InlayOffset, ToDisplayPoint, is_invisible},
-    hover_links::{InlayHighlight, RangeInEditor},
+    hover_links::{HoverLink, InlayHighlight, RangeInEditor},
     movement::TextLayoutDetails,
     scroll::ScrollAmount,
 };
 use anyhow::Context as _;
+use collections::{HashMap, HashSet};
 use gpui::{
     AnyElement, AsyncWindowContext, Context, Entity, Focusable as _, FontWeight, Hsla,
     InteractiveElement, IntoElement, MouseButton, ParentElement, Pixels, ScrollHandle, Size,
@@ -18,7 +19,7 @@ use language::{DiagnosticEntry, Language, LanguageRegistry};
 use lsp::DiagnosticSeverity;
 use markdown::{Markdown, MarkdownElement, MarkdownStyle};
 use multi_buffer::{MultiBufferOffset, ToOffset, ToPoint};
-use project::{HoverBlock, HoverBlockKind, InlayHintLabelPart};
+use project::{HoverBlock, HoverBlockKind, InlayHintLabelPart, LocationLink};
 use settings::Settings;
 use std::{borrow::Cow, cell::RefCell};
 use std::{ops::Range, sync::Arc, time::Duration};
@@ -187,6 +188,7 @@ pub fn hover_at_inlay(
                     scroll_handle,
                     keyboard_grace: Rc::new(RefCell::new(false)),
                     anchor: None,
+                    type_definitions: Default::default(),
                     _subscription: subscription,
                 };
 
@@ -306,6 +308,9 @@ fn show_hover(
             };
 
             let hover_request = cx.update(|_, cx| provider.hover(&buffer, buffer_position, cx))?;
+            let type_def_request = cx.update(|_, cx| {
+                provider.definitions(&buffer, buffer_position, GotoDefinitionKind::Type, cx)
+            })?;
 
             if let Some(delay) = delay {
                 delay.await;
@@ -438,6 +443,29 @@ fn show_hover(
             } else {
                 Vec::new()
             };
+
+            let type_definitions = if let Some(type_def_request) = type_def_request {
+                type_def_request.await.ok().flatten().unwrap_or_default()
+            } else {
+                Vec::new()
+            };
+            let type_def_map: HashMap<SharedString, LocationLink> = cx.update(|_, cx| {
+                let mut map = HashMap::default();
+                for link in type_definitions {
+                    let name: String = link
+                        .target
+                        .buffer
+                        .read(cx)
+                        .text_for_range(link.target.range.clone())
+                        .collect();
+                    if !name.is_empty() {
+                        map.insert(SharedString::from(name), link);
+                    }
+                }
+                map
+            })?;
+            let type_def_map = Rc::new(type_def_map);
+
             let snapshot = this.update_in(cx, |this, window, cx| this.snapshot(window, cx))?;
             let mut hover_highlights = Vec::with_capacity(hovers_response.len());
             let mut info_popovers = Vec::with_capacity(
@@ -466,6 +494,7 @@ fn show_hover(
                     scroll_handle,
                     keyboard_grace: Rc::new(RefCell::new(ignore_timeout)),
                     anchor: Some(anchor),
+                    type_definitions: Default::default(),
                     _subscription: subscription,
                 })
             }
@@ -507,6 +536,7 @@ fn show_hover(
                     scroll_handle,
                     keyboard_grace: Rc::new(RefCell::new(ignore_timeout)),
                     anchor: Some(anchor),
+                    type_definitions: type_def_map.clone(),
                     _subscription: subscription,
                 });
             }
@@ -772,6 +802,37 @@ pub fn open_markdown_url(link: SharedString, window: &mut Window, cx: &mut App) 
     cx.open_url(&link);
 }
 
+fn navigate_to_hover_type(
+    editor: gpui::WeakEntity<Editor>,
+    type_definitions: &HashMap<SharedString, LocationLink>,
+    word: SharedString,
+    window: &mut Window,
+    cx: &mut App,
+) {
+    let Some(location_link) = type_definitions.get(&word).cloned() else {
+        return;
+    };
+    let Some(editor) = editor.upgrade() else {
+        return;
+    };
+    editor.update(cx, |editor, cx| {
+        let nav_entry = editor
+            .hover_state
+            .triggered_from
+            .and_then(|anchor| editor.navigation_entry(anchor, cx));
+        editor
+            .navigate_to_hover_links(
+                Some(GotoDefinitionKind::Type),
+                vec![HoverLink::Text(location_link)],
+                nav_entry,
+                false,
+                window,
+                cx,
+            )
+            .detach_and_log_err(cx);
+    });
+}
+
 #[derive(Default)]
 pub struct HoverState {
     pub info_popovers: Vec<InfoPopover>,
@@ -887,6 +948,7 @@ pub struct InfoPopover {
     pub scroll_handle: ScrollHandle,
     pub keyboard_grace: Rc<RefCell<bool>>,
     pub anchor: Option<Anchor>,
+    pub type_definitions: Rc<HashMap<SharedString, LocationLink>>,
     _subscription: Option<Subscription>,
 }
 
@@ -911,6 +973,10 @@ impl InfoPopover {
                 cx.stop_propagation();
             })
             .when_some(self.parsed_content.clone(), |this, markdown| {
+                let editor = cx.entity().downgrade();
+                let type_definitions = self.type_definitions.clone();
+                let clickable_words: HashSet<SharedString> =
+                    type_definitions.keys().cloned().collect();
                 this.child(
                     div()
                         .id("info-md-container")
@@ -926,6 +992,16 @@ impl InfoPopover {
                                     border: false,
                                 })
                                 .on_url_click(open_markdown_url)
+                                .clickable_code_words(clickable_words)
+                                .on_code_block_click(move |word, window, cx| {
+                                    navigate_to_hover_type(
+                                        editor.clone(),
+                                        &type_definitions,
+                                        word,
+                                        window,
+                                        cx,
+                                    );
+                                })
                                 .p_2(),
                         ),
                 )
@@ -2004,5 +2080,514 @@ mod tests {
             range,
             InlayOffset(MultiBufferOffset(104))..InlayOffset(MultiBufferOffset(108))
         );
+    }
+
+    #[gpui::test]
+    async fn test_hover_popover_type_definitions_populated(cx: &mut gpui::TestAppContext) {
+        init_test(cx, |_| {});
+
+        let mut cx = EditorLspTestContext::new_rust(
+            lsp::ServerCapabilities {
+                hover_provider: Some(lsp::HoverProviderCapability::Simple(true)),
+                type_definition_provider: Some(lsp::TypeDefinitionProviderCapability::Simple(true)),
+                ..Default::default()
+            },
+            cx,
+        )
+        .await;
+
+        cx.set_state(indoc! {"
+            mod foo {
+                pub struct Baz;
+            }
+            mod bar {
+                pub struct Baz;
+            }
+            let vaˇriable: foo::Baz = foo::Baz;
+        "});
+
+        let hover_point = cx.display_point(indoc! {"
+            mod foo {
+                pub struct Baz;
+            }
+            mod bar {
+                pub struct Baz;
+            }
+            let vaˇriable: foo::Baz = foo::Baz;
+        "});
+
+        cx.update_editor(|editor, window, cx| {
+            let snapshot = editor.snapshot(window, cx);
+            let anchor = snapshot
+                .buffer_snapshot()
+                .anchor_before(hover_point.to_offset(&snapshot, Bias::Left));
+            hover_at(editor, Some(anchor), window, cx)
+        });
+
+        let symbol_range = cx.lsp_range(indoc! {"
+            mod foo {
+                pub struct Baz;
+            }
+            mod bar {
+                pub struct Baz;
+            }
+            let «variable»: foo::Baz = foo::Baz;
+        "});
+        let target_selection_range = cx.lsp_range(indoc! {"
+            mod foo {
+                pub struct «Baz»;
+            }
+            mod bar {
+                pub struct Baz;
+            }
+            let variable: foo::Baz = foo::Baz;
+        "});
+
+        cx.set_request_handler::<lsp::request::HoverRequest, _, _>(move |_, _, _| async move {
+            Ok(Some(lsp::Hover {
+                contents: lsp::HoverContents::Markup(lsp::MarkupContent {
+                    kind: lsp::MarkupKind::Markdown,
+                    value: "```rust\nBaz\n```".to_string(),
+                }),
+                range: Some(symbol_range),
+            }))
+        });
+
+        cx.set_request_handler::<lsp::request::GotoTypeDefinition, _, _>(
+            move |url, _, _| async move {
+                Ok(Some(lsp::GotoTypeDefinitionResponse::Link(vec![
+                    lsp::LocationLink {
+                        origin_selection_range: Some(symbol_range),
+                        target_uri: url.clone(),
+                        target_range: target_selection_range,
+                        target_selection_range,
+                    },
+                ])))
+            },
+        );
+
+        cx.background_executor
+            .advance_clock(Duration::from_millis(get_hover_popover_delay(&cx) + 100));
+        cx.run_until_parked();
+
+        cx.editor(|editor, _, cx| {
+            assert!(editor.hover_state.visible());
+            assert_eq!(
+                editor.hover_state.info_popovers.len(),
+                1,
+                "Expected exactly one hover popover"
+            );
+            let popover = &editor.hover_state.info_popovers[0];
+            assert_eq!(
+                popover.type_definitions.len(),
+                1,
+                "Expected one type definition entry"
+            );
+            assert!(
+                popover.type_definitions.contains_key("Baz"),
+                "Expected type_definitions to contain 'Baz', got keys: {:?}",
+                popover.type_definitions.keys().collect::<Vec<_>>()
+            );
+
+            // Verify the hover text rendered correctly too
+            let rendered_text = popover.get_rendered_text(cx);
+            assert!(
+                rendered_text.contains("Baz"),
+                "Hover text should contain 'Baz', got: {rendered_text}"
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_hover_popover_navigate_to_type(cx: &mut gpui::TestAppContext) {
+        init_test(cx, |_| {});
+
+        let mut cx = EditorLspTestContext::new_rust(
+            lsp::ServerCapabilities {
+                hover_provider: Some(lsp::HoverProviderCapability::Simple(true)),
+                type_definition_provider: Some(lsp::TypeDefinitionProviderCapability::Simple(true)),
+                ..Default::default()
+            },
+            cx,
+        )
+        .await;
+
+        cx.set_state(indoc! {"
+            mod foo {
+                pub struct Baz;
+            }
+            mod bar {
+                pub struct Baz;
+            }
+            let vaˇriable: foo::Baz = foo::Baz;
+        "});
+
+        let hover_point = cx.display_point(indoc! {"
+            mod foo {
+                pub struct Baz;
+            }
+            mod bar {
+                pub struct Baz;
+            }
+            let vaˇriable: foo::Baz = foo::Baz;
+        "});
+
+        cx.update_editor(|editor, window, cx| {
+            let snapshot = editor.snapshot(window, cx);
+            let anchor = snapshot
+                .buffer_snapshot()
+                .anchor_before(hover_point.to_offset(&snapshot, Bias::Left));
+            hover_at(editor, Some(anchor), window, cx)
+        });
+
+        let symbol_range = cx.lsp_range(indoc! {"
+            mod foo {
+                pub struct Baz;
+            }
+            mod bar {
+                pub struct Baz;
+            }
+            let «variable»: foo::Baz = foo::Baz;
+        "});
+        // Point to foo::Baz specifically (line 2), not bar::Baz (line 5)
+        let target_selection_range = cx.lsp_range(indoc! {"
+            mod foo {
+                pub struct «Baz»;
+            }
+            mod bar {
+                pub struct Baz;
+            }
+            let variable: foo::Baz = foo::Baz;
+        "});
+
+        cx.set_request_handler::<lsp::request::HoverRequest, _, _>(move |_, _, _| async move {
+            Ok(Some(lsp::Hover {
+                contents: lsp::HoverContents::Markup(lsp::MarkupContent {
+                    kind: lsp::MarkupKind::Markdown,
+                    value: "```rust\nBaz\n```".to_string(),
+                }),
+                range: Some(symbol_range),
+            }))
+        });
+
+        cx.set_request_handler::<lsp::request::GotoTypeDefinition, _, _>(
+            move |url, _, _| async move {
+                Ok(Some(lsp::GotoTypeDefinitionResponse::Link(vec![
+                    lsp::LocationLink {
+                        origin_selection_range: Some(symbol_range),
+                        target_uri: url.clone(),
+                        target_range: target_selection_range,
+                        target_selection_range,
+                    },
+                ])))
+            },
+        );
+
+        cx.background_executor
+            .advance_clock(Duration::from_millis(get_hover_popover_delay(&cx) + 100));
+        cx.run_until_parked();
+
+        // Verify the hover is visible and has the type definition
+        cx.editor(|editor, _, _| {
+            assert!(editor.hover_state.visible());
+            assert!(
+                editor.hover_state.info_popovers[0]
+                    .type_definitions
+                    .contains_key("Baz")
+            );
+        });
+
+        // Extract the data we need before navigating (navigate_to_hover_type
+        // internally calls editor.update(), so we can't call it from within
+        // update_editor without causing a re-entrant borrow panic).
+        let (type_definitions, editor_weak) = cx.editor(|editor, _, cx| {
+            (
+                editor.hover_state.info_popovers[0].type_definitions.clone(),
+                cx.entity().downgrade(),
+            )
+        });
+
+        let window_handle = cx.window;
+        cx.update_window(window_handle, |_, window, cx| {
+            navigate_to_hover_type(editor_weak, &type_definitions, "Baz".into(), window, cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+
+        // Verify cursor moved to foo::Baz definition, not bar::Baz
+        cx.assert_editor_state(indoc! {"
+            mod foo {
+                pub struct «Bazˇ»;
+            }
+            mod bar {
+                pub struct Baz;
+            }
+            let variable: foo::Baz = foo::Baz;
+        "});
+    }
+
+    #[gpui::test]
+    async fn test_hover_popover_multiple_type_definitions(cx: &mut gpui::TestAppContext) {
+        init_test(cx, |_| {});
+
+        let mut cx = EditorLspTestContext::new_rust(
+            lsp::ServerCapabilities {
+                hover_provider: Some(lsp::HoverProviderCapability::Simple(true)),
+                type_definition_provider: Some(lsp::TypeDefinitionProviderCapability::Simple(true)),
+                ..Default::default()
+            },
+            cx,
+        )
+        .await;
+
+        cx.set_state(indoc! {"
+            mod foo {
+                pub struct Baz;
+            }
+            mod bar {
+                pub struct Baz;
+            }
+            struct Wrapper<T, U>(T, U);
+            let vaˇriable = Wrapper(foo::Baz, bar::Baz);
+        "});
+
+        let hover_point = cx.display_point(indoc! {"
+            mod foo {
+                pub struct Baz;
+            }
+            mod bar {
+                pub struct Baz;
+            }
+            struct Wrapper<T, U>(T, U);
+            let vaˇriable = Wrapper(foo::Baz, bar::Baz);
+        "});
+
+        cx.update_editor(|editor, window, cx| {
+            let snapshot = editor.snapshot(window, cx);
+            let anchor = snapshot
+                .buffer_snapshot()
+                .anchor_before(hover_point.to_offset(&snapshot, Bias::Left));
+            hover_at(editor, Some(anchor), window, cx)
+        });
+
+        let symbol_range = cx.lsp_range(indoc! {"
+            mod foo {
+                pub struct Baz;
+            }
+            mod bar {
+                pub struct Baz;
+            }
+            struct Wrapper<T, U>(T, U);
+            let «variable» = Wrapper(foo::Baz, bar::Baz);
+        "});
+        let wrapper_range = cx.lsp_range(indoc! {"
+            mod foo {
+                pub struct Baz;
+            }
+            mod bar {
+                pub struct Baz;
+            }
+            struct «Wrapper»<T, U>(T, U);
+            let variable = Wrapper(foo::Baz, bar::Baz);
+        "});
+        let foo_baz_range = cx.lsp_range(indoc! {"
+            mod foo {
+                pub struct «Baz»;
+            }
+            mod bar {
+                pub struct Baz;
+            }
+            struct Wrapper<T, U>(T, U);
+            let variable = Wrapper(foo::Baz, bar::Baz);
+        "});
+        let bar_baz_range = cx.lsp_range(indoc! {"
+            mod foo {
+                pub struct Baz;
+            }
+            mod bar {
+                pub struct «Baz»;
+            }
+            struct Wrapper<T, U>(T, U);
+            let variable = Wrapper(foo::Baz, bar::Baz);
+        "});
+
+        cx.set_request_handler::<lsp::request::HoverRequest, _, _>(move |_, _, _| async move {
+            Ok(Some(lsp::Hover {
+                contents: lsp::HoverContents::Markup(lsp::MarkupContent {
+                    kind: lsp::MarkupKind::Markdown,
+                    value: "```rust\nWrapper\n```".to_string(),
+                }),
+                range: Some(symbol_range),
+            }))
+        });
+
+        cx.set_request_handler::<lsp::request::GotoTypeDefinition, _, _>(
+            move |url, _, _| async move {
+                Ok(Some(lsp::GotoTypeDefinitionResponse::Link(vec![
+                    lsp::LocationLink {
+                        origin_selection_range: Some(symbol_range),
+                        target_uri: url.clone(),
+                        target_range: wrapper_range,
+                        target_selection_range: wrapper_range,
+                    },
+                    lsp::LocationLink {
+                        origin_selection_range: Some(symbol_range),
+                        target_uri: url.clone(),
+                        target_range: foo_baz_range,
+                        target_selection_range: foo_baz_range,
+                    },
+                    lsp::LocationLink {
+                        origin_selection_range: Some(symbol_range),
+                        target_uri: url.clone(),
+                        target_range: bar_baz_range,
+                        target_selection_range: bar_baz_range,
+                    },
+                ])))
+            },
+        );
+
+        cx.background_executor
+            .advance_clock(Duration::from_millis(get_hover_popover_delay(&cx) + 100));
+        cx.run_until_parked();
+
+        cx.editor(|editor, _, _| {
+            assert!(editor.hover_state.visible());
+            let popover = &editor.hover_state.info_popovers[0];
+            let type_defs = &popover.type_definitions;
+
+            // "Wrapper" is unique so it must be present
+            assert!(
+                type_defs.contains_key("Wrapper"),
+                "Expected 'Wrapper' in type_definitions, got keys: {:?}",
+                type_defs.keys().collect::<Vec<_>>()
+            );
+
+            // When multiple types share the same short name (e.g., foo::Baz and bar::Baz),
+            // only one entry survives in the HashMap. This is acceptable because the hover
+            // text would typically show qualified paths in this case. A future enhancement
+            // could use Vec<LocationLink> or leverage rust-analyzer's hover actions extension
+            // to handle this precisely.
+            assert!(
+                type_defs.contains_key("Baz"),
+                "Expected 'Baz' in type_definitions (one of the two should survive)"
+            );
+            assert_eq!(
+                type_defs.len(),
+                2,
+                "Expected 2 entries (Wrapper + one Baz), got: {:?}",
+                type_defs.keys().collect::<Vec<_>>()
+            );
+        });
+
+        // Navigation to "Wrapper" should work correctly
+        let (type_definitions, editor_weak) = cx.editor(|editor, _, cx| {
+            (
+                editor.hover_state.info_popovers[0].type_definitions.clone(),
+                cx.entity().downgrade(),
+            )
+        });
+
+        let window_handle = cx.window;
+        cx.update_window(window_handle, |_, window, cx| {
+            navigate_to_hover_type(editor_weak, &type_definitions, "Wrapper".into(), window, cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+
+        cx.assert_editor_state(indoc! {"
+            mod foo {
+                pub struct Baz;
+            }
+            mod bar {
+                pub struct Baz;
+            }
+            struct «Wrapperˇ»<T, U>(T, U);
+            let variable = Wrapper(foo::Baz, bar::Baz);
+        "});
+    }
+
+    #[gpui::test]
+    async fn test_hover_popover_type_definition_request_error(cx: &mut gpui::TestAppContext) {
+        init_test(cx, |_| {});
+
+        let mut cx = EditorLspTestContext::new_rust(
+            lsp::ServerCapabilities {
+                hover_provider: Some(lsp::HoverProviderCapability::Simple(true)),
+                type_definition_provider: Some(lsp::TypeDefinitionProviderCapability::Simple(true)),
+                ..Default::default()
+            },
+            cx,
+        )
+        .await;
+
+        cx.set_state(indoc! {"
+            struct MyStruct;
+            let vaˇriable = MyStruct;
+        "});
+
+        let hover_point = cx.display_point(indoc! {"
+            struct MyStruct;
+            let vaˇriable = MyStruct;
+        "});
+
+        cx.update_editor(|editor, window, cx| {
+            let snapshot = editor.snapshot(window, cx);
+            let anchor = snapshot
+                .buffer_snapshot()
+                .anchor_before(hover_point.to_offset(&snapshot, Bias::Left));
+            hover_at(editor, Some(anchor), window, cx)
+        });
+
+        let symbol_range = cx.lsp_range(indoc! {"
+            struct MyStruct;
+            let «variable» = MyStruct;
+        "});
+
+        // Hover succeeds normally
+        cx.set_request_handler::<lsp::request::HoverRequest, _, _>(move |_, _, _| async move {
+            Ok(Some(lsp::Hover {
+                contents: lsp::HoverContents::Markup(lsp::MarkupContent {
+                    kind: lsp::MarkupKind::Markdown,
+                    value: "some basic docs".to_string(),
+                }),
+                range: Some(symbol_range),
+            }))
+        });
+
+        // Type definition request returns an error
+        cx.set_request_handler::<lsp::request::GotoTypeDefinition, _, _>(
+            move |_, _, _| async move { Err(anyhow::anyhow!("LSP server error: request failed")) },
+        );
+
+        cx.background_executor
+            .advance_clock(Duration::from_millis(get_hover_popover_delay(&cx) + 100));
+        cx.run_until_parked();
+
+        // The hover popover should still be visible with the hover content,
+        // but type_definitions should be empty due to the error
+        cx.editor(|editor, _, cx| {
+            assert!(
+                editor.hover_state.visible(),
+                "Hover should still be visible even when type definition request fails"
+            );
+            assert_eq!(
+                editor.hover_state.info_popovers.len(),
+                1,
+                "Expected exactly one hover popover"
+            );
+            let popover = &editor.hover_state.info_popovers[0];
+            assert!(
+                popover.type_definitions.is_empty(),
+                "type_definitions should be empty when the LSP request errors, got: {:?}",
+                popover.type_definitions.keys().collect::<Vec<_>>()
+            );
+
+            // The hover text should still render correctly
+            let rendered_text = popover.get_rendered_text(cx);
+            assert_eq!(
+                rendered_text, "some basic docs",
+                "Hover content should be unaffected by type definition error"
+            );
+        });
     }
 }
