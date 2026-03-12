@@ -1322,6 +1322,7 @@ impl LocalWorktree {
                         path,
                         disk_state: DiskState::Present {
                             mtime: metadata.mtime,
+                            size: metadata.len,
                         },
                         is_local: true,
                         is_private,
@@ -1378,6 +1379,7 @@ impl LocalWorktree {
                         path,
                         disk_state: DiskState::Present {
                             mtime: metadata.mtime,
+                            size: metadata.len,
                         },
                         is_local: true,
                         is_private,
@@ -1575,6 +1577,7 @@ impl LocalWorktree {
                     path,
                     disk_state: DiskState::Present {
                         mtime: metadata.mtime,
+                        size: metadata.len,
                     },
                     entry_id: None,
                     is_local: true,
@@ -2945,7 +2948,7 @@ impl BackgroundScannerState {
         self.snapshot.check_invariants(false);
     }
 
-    fn remove_path(&mut self, path: &RelPath) {
+    fn remove_path(&mut self, path: &RelPath, watcher: &dyn Watcher) {
         log::trace!("background scanner removing path {path:?}");
         let mut new_entries;
         let removed_entries;
@@ -2961,7 +2964,12 @@ impl BackgroundScannerState {
         self.snapshot.entries_by_path = new_entries;
 
         let mut removed_ids = Vec::with_capacity(removed_entries.summary().count);
+        let mut removed_dir_abs_paths = Vec::new();
         for entry in removed_entries.cursor::<()>(()) {
+            if entry.is_dir() {
+                removed_dir_abs_paths.push(self.snapshot.absolutize(&entry.path));
+            }
+
             match self.removed_entries.entry(entry.inode) {
                 hash_map::Entry::Occupied(mut e) => {
                     let prev_removed_entry = e.get_mut();
@@ -2996,6 +3004,10 @@ impl BackgroundScannerState {
         self.snapshot
             .git_repositories
             .retain(|id, _| removed_ids.binary_search(id).is_err());
+
+        for removed_dir_abs_path in removed_dir_abs_paths {
+            watcher.remove(&removed_dir_abs_path).log_err();
+        }
 
         #[cfg(feature = "test-support")]
         self.snapshot.check_invariants(false);
@@ -3280,7 +3292,10 @@ impl File {
             worktree,
             path: entry.path.clone(),
             disk_state: if let Some(mtime) = entry.mtime {
-                DiskState::Present { mtime }
+                DiskState::Present {
+                    mtime,
+                    size: entry.size,
+                }
             } else {
                 DiskState::New
             },
@@ -3309,7 +3324,7 @@ impl File {
         } else if proto.is_deleted {
             DiskState::Deleted
         } else if let Some(mtime) = proto.mtime.map(&Into::into) {
-            DiskState::Present { mtime }
+            DiskState::Present { mtime, size: 0 }
         } else {
             DiskState::New
         };
@@ -4461,7 +4476,10 @@ impl BackgroundScanner {
 
             if self.settings.is_path_excluded(&child_path) {
                 log::debug!("skipping excluded child entry {child_path:?}");
-                self.state.lock().await.remove_path(&child_path);
+                self.state
+                    .lock()
+                    .await
+                    .remove_path(&child_path, self.watcher.as_ref());
                 continue;
             }
 
@@ -4651,7 +4669,7 @@ impl BackgroundScanner {
         // detected regardless of the order of the paths.
         for (path, metadata) in relative_paths.iter().zip(metadata.iter()) {
             if matches!(metadata, Ok(None)) || doing_recursive_update {
-                state.remove_path(path);
+                state.remove_path(path, self.watcher.as_ref());
             }
         }
 

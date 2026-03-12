@@ -637,6 +637,7 @@ impl EditorElement {
         register_action(editor, window, Editor::accept_edit_prediction);
         register_action(editor, window, Editor::restore_file);
         register_action(editor, window, Editor::git_restore);
+        register_action(editor, window, Editor::restore_and_next);
         register_action(editor, window, Editor::apply_all_diff_hunks);
         register_action(editor, window, Editor::apply_selected_diff_hunks);
         register_action(editor, window, Editor::open_active_item_in_terminal);
@@ -1461,6 +1462,7 @@ impl EditorElement {
         if text_hovered {
             editor.update_hovered_link(
                 point_for_position,
+                Some(event.position),
                 &position_map.snapshot,
                 modifiers,
                 window,
@@ -1472,12 +1474,13 @@ impl EditorElement {
                     .snapshot
                     .buffer_snapshot()
                     .anchor_before(point.to_offset(&position_map.snapshot, Bias::Left));
-                hover_at(editor, Some(anchor), window, cx);
+                hover_at(editor, Some(anchor), Some(event.position), window, cx);
                 Self::update_visible_cursor(editor, point, position_map, window, cx);
             } else {
                 editor.update_inlay_link_and_hover_points(
                     &position_map.snapshot,
                     point_for_position,
+                    Some(event.position),
                     modifiers.secondary(),
                     modifiers.shift,
                     window,
@@ -1486,7 +1489,7 @@ impl EditorElement {
             }
         } else {
             editor.hide_hovered_link(cx);
-            hover_at(editor, None, window, cx);
+            hover_at(editor, None, Some(event.position), window, cx);
         }
     }
 
@@ -3274,9 +3277,9 @@ impl EditorElement {
                 snapshot.display_point_to_point(DisplayPoint::new(range.end, 0), Bias::Right);
 
             editor
-                .tasks
-                .iter()
-                .filter_map(|(_, tasks)| {
+                .runnables
+                .all_runnables()
+                .filter_map(|tasks| {
                     let multibuffer_point = tasks.offset.to_point(&snapshot.buffer_snapshot());
                     if multibuffer_point < offset_range_start
                         || multibuffer_point > offset_range_end
@@ -4157,6 +4160,7 @@ impl EditorElement {
 
         div()
             .id(block_id)
+            .cursor(CursorStyle::Arrow)
             .w_full()
             .h((block_height as f32) * line_height)
             .flex()
@@ -11123,12 +11127,6 @@ impl Element for EditorElement {
                     self.paint_mouse_listeners(layout, window, cx);
                     self.paint_background(layout, window, cx);
 
-                    if !layout.spacer_blocks.is_empty() {
-                        window.with_element_namespace("blocks", |window| {
-                            self.paint_spacer_blocks(layout, window, cx);
-                        });
-                    }
-
                     self.paint_indent_guides(layout, window, cx);
 
                     if layout.gutter_hitbox.size.width > Pixels::ZERO {
@@ -11137,6 +11135,12 @@ impl Element for EditorElement {
                     }
 
                     self.paint_text(layout, window, cx);
+
+                    if !layout.spacer_blocks.is_empty() {
+                        window.with_element_namespace("blocks", |window| {
+                            self.paint_spacer_blocks(layout, window, cx);
+                        });
+                    }
 
                     if layout.gutter_hitbox.size.width > Pixels::ZERO {
                         self.paint_gutter_highlights(layout, window, cx);

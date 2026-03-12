@@ -242,6 +242,7 @@
     "context": "AgentDiff",
     "use_key_equivalents": true,
     "bindings": {
+      "cmd-y": "agent::Keep",
       "cmd-alt-y": "agent::Keep",
       "cmd-alt-z": "agent::Reject",
       "shift-alt-y": "agent::KeepAll",
@@ -252,6 +253,7 @@
     "context": "Editor && editor_agent_diff",
     "use_key_equivalents": true,
     "bindings": {
+      "cmd-y": "agent::Keep",
       "cmd-alt-y": "agent::Keep",
       "cmd-alt-z": "agent::Reject",
       "shift-alt-y": "agent::KeepAll",
@@ -295,6 +297,7 @@
       "cmd-shift-j": "agent::ToggleNavigationMenu",
       "cmd-alt-m": "agent::ToggleOptionsMenu",
       "cmd-alt-shift-n": "agent::ToggleNewThreadMenu",
+      "cmd-shift-t": "agent::CycleStartThreadIn",
       "shift-alt-escape": "agent::ExpandMessageEditor",
       "cmd->": "agent::AddSelectionToThread",
       "cmd-shift-e": "project_panel::ToggleFocus",
@@ -446,6 +449,13 @@
     "bindings": {
       "up": "search::PreviousHistoryQuery",
       "down": "search::NextHistoryQuery",
+    },
+  },
+  {
+    "context": "BufferSearchBar || ProjectSearchBar",
+    "use_key_equivalents": true,
+    "bindings": {
+      "ctrl-enter": "editor::Newline",
     },
   },
   {
@@ -732,6 +742,9 @@
     "use_key_equivalents": true,
     "bindings": {
       "cmd-n": "multi_workspace::NewWorkspaceInWindow",
+      "left": "agents_sidebar::CollapseSelectedEntry",
+      "right": "agents_sidebar::ExpandSelectedEntry",
+      "enter": "menu::Confirm",
     },
   },
   {
@@ -869,7 +882,7 @@
     },
   },
   {
-    "context": "!ContextEditor > Editor && mode == full",
+    "context": "!ContextEditor && !AcpThread > Editor && mode == full",
     "use_key_equivalents": true,
     "bindings": {
       "alt-enter": "editor::OpenExcerpts",
@@ -1021,6 +1034,7 @@
       "cmd-shift-enter": "git::Amend",
       "cmd-ctrl-y": "git::StageAll",
       "cmd-ctrl-shift-y": "git::UnstageAll",
+      "cmd-alt-z": "git::RestoreAndNext",
     },
   },
   {
@@ -1408,6 +1422,7 @@
     "bindings": {
       "ctrl-shift-space": "git::WorktreeFromDefaultOnWindow",
       "ctrl-space": "git::WorktreeFromDefault",
+      "cmd-shift-backspace": "git::DeleteWorktree",
     },
   },
   {

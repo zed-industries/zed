@@ -978,6 +978,7 @@ impl Vim {
         editor.set_clip_at_line_ends(false, cx);
         editor.set_collapse_matches(false);
         editor.set_input_enabled(true);
+        editor.set_expects_character_input(true);
         editor.set_autoindent(true);
         editor.selections.set_line_mode(false);
         editor.unregister_addon::<VimAddon>();
@@ -1346,6 +1347,15 @@ impl Vim {
         }
     }
 
+    fn expects_character_input(&self) -> bool {
+        if let Some(operator) = self.operator_stack.last() {
+            if operator.is_waiting(self.mode) {
+                return true;
+            }
+        }
+        self.editor_input_enabled()
+    }
+
     pub fn editor_input_enabled(&self) -> bool {
         match self.mode {
             Mode::Insert => {
@@ -1367,10 +1377,6 @@ impl Vim {
 
     pub fn should_autoindent(&self) -> bool {
         !(self.mode == Mode::Insert && self.last_mode == Mode::VisualBlock)
-    }
-
-    pub fn should_offset_cursor_on_selection(&self) -> bool {
-        self.mode.is_visual() || self.mode == Mode::HelixNormal
     }
 
     pub fn clip_at_line_ends(&self) -> bool {
@@ -2062,8 +2068,9 @@ impl Vim {
             clip_at_line_ends: self.clip_at_line_ends(),
             collapse_matches: !HelixModeSetting::get_global(cx).0,
             input_enabled: self.editor_input_enabled(),
+            expects_character_input: self.expects_character_input(),
             autoindent: self.should_autoindent(),
-            cursor_offset_on_selection: self.should_offset_cursor_on_selection(),
+            cursor_offset_on_selection: self.mode.is_visual() || self.mode.is_helix(),
             line_mode: matches!(self.mode, Mode::VisualLine),
             hide_edit_predictions: !matches!(self.mode, Mode::Insert | Mode::Replace),
         }
@@ -2079,6 +2086,7 @@ impl Vim {
         editor.set_clip_at_line_ends(state.clip_at_line_ends, cx);
         editor.set_collapse_matches(state.collapse_matches);
         editor.set_input_enabled(state.input_enabled);
+        editor.set_expects_character_input(state.expects_character_input);
         editor.set_autoindent(state.autoindent);
         editor.set_cursor_offset_on_selection(state.cursor_offset_on_selection);
         editor.selections.set_line_mode(state.line_mode);
@@ -2091,6 +2099,7 @@ struct VimEditorSettingsState {
     clip_at_line_ends: bool,
     collapse_matches: bool,
     input_enabled: bool,
+    expects_character_input: bool,
     autoindent: bool,
     cursor_offset_on_selection: bool,
     line_mode: bool,

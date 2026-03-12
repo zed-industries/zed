@@ -2,7 +2,7 @@
 description = "The fast, collaborative code editor."
 edition.workspace = true
 name = "zed"
-version = "0.227.0"
+version = "0.229.0"
 publish.workspace = true
 license = "GPL-3.0-or-later"
 authors = ["Zed Team <hi@zed.dev>"]
@@ -17,7 +17,6 @@ test-support = [
     "gpui/test-support",
     "gpui_platform/screen-capture",
     "dep:image",
-    "dep:semver",
     "workspace/test-support",
     "project/test-support",
     "editor/test-support",
@@ -32,7 +31,6 @@ visual-tests = [
     "gpui_platform/screen-capture",
     "gpui_platform/test-support",
     "dep:image",
-    "dep:semver",
     "dep:tempfile",
     "dep:action_log",
     "dep:agent_servers",
@@ -50,7 +48,6 @@ visual-tests = [
     "language_model/test-support",
     "fs/test-support",
     "recent_projects/test-support",
-    "sidebar/test-support",
     "title_bar/test-support",
 ]
 
@@ -76,7 +73,6 @@ assets.workspace = true
 audio.workspace = true
 auto_update.workspace = true
 auto_update_ui.workspace = true
-bincode.workspace = true
 breadcrumbs.workspace = true
 call.workspace = true
 chrono.workspace = true
@@ -122,7 +118,7 @@ system_specs.workspace = true
 gpui.workspace = true
 gpui_platform = {workspace = true, features=["screen-capture", "font-kit", "wayland", "x11"]}
 image = { workspace = true, optional = true }
-semver = { workspace = true, optional = true }
+semver.workspace = true
 tempfile = { workspace = true, optional = true }
 clock = { workspace = true, optional = true }
 acp_thread.workspace = true
@@ -186,7 +182,6 @@ settings.workspace = true
 settings_profile_selector.workspace = true
 settings_ui.workspace = true
 shellexpand.workspace = true
-sidebar.workspace = true
 smol.workspace = true
 snippet_provider.workspace = true
 snippets_ui.workspace = true
@@ -247,7 +242,6 @@ pkg-config = "0.3.22"
 
 [dev-dependencies]
 call = { workspace = true, features = ["test-support"] }
-dap = { workspace = true, features = ["test-support"] }
 editor = { workspace = true, features = ["test-support"] }
 gpui = { workspace = true, features = ["test-support"] }
 image_viewer = { workspace = true, features = ["test-support"] }
@@ -257,8 +251,6 @@ pretty_assertions.workspace = true
 project = { workspace = true, features = ["test-support"] }
 semver.workspace = true
 terminal_view = { workspace = true, features = ["test-support"] }
-tree-sitter-md.workspace = true
-tree-sitter-rust.workspace = true
 title_bar = { workspace = true, features = ["test-support"] }
 workspace = { workspace = true, features = ["test-support"] }
 image.workspace = true
