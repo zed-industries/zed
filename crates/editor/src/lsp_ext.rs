@@ -39,10 +39,7 @@ where
         .disjoint_anchors_arc()
         .iter()
         .filter_map(|selection| {
-            let text_anchor = selection
-                .head()
-                .text_anchor(&multibuffer_snapshot)?
-                .text_anchor();
+            let text_anchor = selection.head().text_anchor(&multibuffer_snapshot)?;
             Some((selection.head(), text_anchor))
         })
         .unique_by(|(_, buffer_id)| *buffer_id)

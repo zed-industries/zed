@@ -24881,8 +24881,7 @@ async fn assert_highlighted_edits(
         .into_iter()
         .map(|(range, edit)| {
             (
-                snapshot.anchor_after(range.start).excerpt_anchor().unwrap()
-                    ..snapshot.anchor_before(range.end).excerpt_anchor().unwrap(),
+                snapshot.anchor_after(range.start)..snapshot.anchor_before(range.end),
                 edit,
             )
         })
@@ -24893,7 +24892,7 @@ async fn assert_highlighted_edits(
         .into_iter()
         .map(|(range, edit)| {
             (
-                range.start.text_anchor()..range.end.text_anchor(),
+                range.start.expect_text_anchor()..range.end.expect_text_anchor(),
                 edit.into(),
             )
         })
@@ -24917,6 +24916,7 @@ async fn assert_highlighted_edits(
             &edits,
             &edit_preview,
             include_deletions,
+            &snapshot,
             cx,
         );
         assertion_fn(highlighted_edits, cx)

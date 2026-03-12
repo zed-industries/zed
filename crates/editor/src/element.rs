@@ -55,7 +55,7 @@ use itertools::Itertools;
 use language::{IndentGuideSettings, language_settings::ShowWhitespaceSetting};
 use markdown::Markdown;
 use multi_buffer::{
-    Anchor, ExcerptBoundaryInfo, ExcerptId, ExpandExcerptDirection, ExpandInfo, MultiBufferPoint,
+    Anchor, ExcerptBoundaryInfo, ExpandExcerptDirection, ExpandInfo, MultiBufferPoint,
     MultiBufferRow, RowInfo,
 };
 
@@ -1386,13 +1386,17 @@ impl EditorElement {
                 .snapshot
                 .display_point_to_anchor(valid_point, Bias::Left);
 
-            if let Some((buffer_snapshot, file)) = position_map
+            if let Some(buffer_anchor) = position_map
                 .snapshot
                 .buffer_snapshot()
-                .buffer_for_excerpt(buffer_anchor.excerpt_id)
-                .and_then(|buffer| buffer.file().map(|file| (buffer, file)))
+                .anchor_to_buffer_anchor(buffer_anchor)
+                && let Some(buffer_snapshot) = position_map
+                    .snapshot
+                    .buffer_snapshot()
+                    .buffer_for_id(buffer_anchor.buffer_id)
+                && let Some(file) = buffer_snapshot.file()
             {
-                let as_point = text::ToPoint::to_point(&buffer_anchor.text_anchor, buffer_snapshot);
+                let as_point = text::ToPoint::to_point(&buffer_anchor, buffer_snapshot);
 
                 let is_visible = editor
                     .gutter_breakpoint_indicator
@@ -2604,13 +2608,14 @@ impl EditorElement {
                     row: row_candidate,
                     column: 0,
                 };
-                let candidate_excerpt_id = snapshot
+                // move to other row if different excerpt
+                // todo!() now does the wrong thing with deleted hunks
+                if snapshot
                     .display_snapshot
                     .buffer_snapshot()
-                    .excerpt_containing(candidate_point..candidate_point)
-                    .map(|excerpt| excerpt.id());
-                // move to other row if different excerpt
-                if excerpt_id != candidate_excerpt_id {
+                    .range_to_buffer_range(buffer_point..candidate_point)
+                    .is_none()
+                {
                     return false;
                 }
             }
@@ -7872,23 +7877,26 @@ impl EditorElement {
                 return;
             }
             let buffer_snapshot = &display_snapshot.buffer_snapshot();
-            for (buffer, buffer_range, excerpt_id) in
-                buffer_snapshot.range_to_buffer_ranges(anchor_range.start..=anchor_range.end)
+            for (excerpt, buffer_range) in
+                buffer_snapshot.range_to_buffer_ranges(anchor_range.start..anchor_range.end)
             {
-                let buffer_range =
-                    buffer.anchor_after(buffer_range.start)..buffer.anchor_before(buffer_range.end);
+                let buffer_range = excerpt.buffer_snapshot().anchor_after(buffer_range.start)
+                    ..excerpt.buffer_snapshot().anchor_before(buffer_range.end);
                 selections.extend(debug_ranges.ranges.iter().flat_map(|debug_range| {
                     let player_color = theme
                         .players()
                         .color_for_participant(debug_range.occurrence_index as u32 + 1);
                     debug_range.ranges.iter().filter_map(move |range| {
-                        if range.start.buffer_id != Some(buffer.remote_id()) {
+                        if range.start.buffer_id != excerpt.buffer_id() {
                             return None;
                         }
-                        let clipped_start = range.start.max(&buffer_range.start, buffer);
-                        let clipped_end = range.end.min(&buffer_range.end, buffer);
-                        let range = buffer_snapshot
-                            .anchor_range_in_buffer(excerpt_id, *clipped_start..*clipped_end)?;
+                        let clipped_start = range
+                            .start
+                            .max(&buffer_range.start, excerpt.buffer_snapshot());
+                        let clipped_end =
+                            range.end.min(&buffer_range.end, excerpt.buffer_snapshot());
+                        let range =
+                            buffer_snapshot.anchor_range_in_buffer(*clipped_start..*clipped_end)?;
                         let start = range.start.to_display_point(display_snapshot);
                         let end = range.end.to_display_point(display_snapshot);
                         let selection_layout = SelectionLayout {
@@ -8133,12 +8141,14 @@ pub(crate) fn header_jump_data(
 ) -> JumpData {
     let jump_target = if let Some(anchor) =
         latest_selection_anchors.get(&first_excerpt.buffer.remote_id())
-        && let Some(anchor) = anchor.text_anchor(editor_snapshot.buffer_snapshot())
+        && let Some(jump_anchor) = editor_snapshot
+            .buffer_snapshot()
+            .anchor_to_buffer_anchor(*anchor)
     {
         JumpTargetInExcerptInput {
             buffer: &first_excerpt.buffer,
             excerpt_start_anchor: first_excerpt.range.context.start,
-            jump_anchor: anchor.text_anchor(),
+            jump_anchor,
         }
     } else {
         JumpTargetInExcerptInput {

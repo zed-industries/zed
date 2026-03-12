@@ -323,17 +323,12 @@ pub fn show_link_definition(
     }
 
     let anchor = trigger_point.anchor().bias_left(snapshot.buffer_snapshot());
-    let Some(anchor) = anchor.text_anchor(snapshot.buffer_snapshot()) else {
+    let Some(anchor) = snapshot.buffer_snapshot().anchor_to_buffer_anchor(anchor) else {
         return;
     };
-    let Some(buffer) = editor
-        .buffer
-        .read(cx)
-        .buffer(anchor.text_anchor().buffer_id)
-    else {
+    let Some(buffer) = editor.buffer.read(cx).buffer(anchor.buffer_id) else {
         return;
     };
-    let text_anchor = anchor.text_anchor();
     let same_kind = hovered_link_state.preferred_kind == preferred_kind
         || hovered_link_state
             .links
@@ -363,39 +358,35 @@ pub fn show_link_definition(
         async move {
             let result = match &trigger_point {
                 TriggerPoint::Text(_) => {
-                    if let Some((url_range, url)) = find_url(&buffer, text_anchor, cx.clone()) {
+                    if let Some((url_range, url)) = find_url(&buffer, anchor, cx.clone()) {
                         this.read_with(cx, |_, _| {
                             let range = maybe!({
-                                let range = snapshot
-                                    .anchor_range_in_buffer(text_anchor.buffer_id, url_range)?;
+                                let range = snapshot.anchor_range_in_buffer(url_range)?;
                                 Some(RangeInEditor::Text(range))
                             });
                             (range, vec![HoverLink::Url(url)])
                         })
                         .ok()
                     } else if let Some((filename_range, filename)) =
-                        find_file(&buffer, project.clone(), text_anchor, cx).await
+                        find_file(&buffer, project.clone(), anchor, cx).await
                     {
                         let range = maybe!({
-                            let range = snapshot
-                                .anchor_range_in_buffer(text_anchor.buffer_id, filename_range)?;
+                            let range = snapshot.anchor_range_in_buffer(filename_range)?;
                             Some(RangeInEditor::Text(range))
                         });
 
                         Some((range, vec![HoverLink::File(filename)]))
                     } else if let Some(provider) = provider {
                         let task = cx.update(|_, cx| {
-                            provider.definitions(&buffer, text_anchor, preferred_kind, cx)
+                            provider.definitions(&buffer, anchor, preferred_kind, cx)
                         })?;
                         if let Some(task) = task {
                             task.await.ok().flatten().map(|definition_result| {
                                 (
                                     definition_result.iter().find_map(|link| {
                                         link.origin.as_ref().and_then(|origin| {
-                                            let range = snapshot.anchor_range_in_buffer(
-                                                text_anchor.buffer_id,
-                                                origin.range.clone(),
-                                            )?;
+                                            let range = snapshot
+                                                .anchor_range_in_buffer(origin.range.clone())?;
                                             Some(RangeInEditor::Text(range))
                                         })
                                     }),

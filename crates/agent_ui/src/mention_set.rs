@@ -670,7 +670,7 @@ pub(crate) async fn insert_images_as_context(
                 let text_anchor = cursor_anchor.bias_left(&buffer_snapshot);
                 let multibuffer_anchor = snapshot
                     .buffer_snapshot()
-                    .buffer_anchor_to_anchor(excerpt_id, text_anchor);
+                    .buffer_anchor_to_anchor(text_anchor);
                 editor.insert(&format!("{replacement_text} "), window, cx);
                 (excerpt_id, text_anchor, multibuffer_anchor)
             })
@@ -816,7 +816,7 @@ pub(crate) fn insert_crease_for_mention(
     let crease_id = editor.update(cx, |editor, cx| {
         let snapshot = editor.buffer().read(cx).snapshot(cx);
 
-        let start = snapshot.buffer_anchor_to_anchor(excerpt_id, anchor)?;
+        let start = snapshot.buffer_anchor_to_anchor(anchor)?;
 
         let start = start.bias_right(&snapshot);
         let end = snapshot.anchor_before(start.to_offset(&snapshot) + content_len);

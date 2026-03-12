@@ -475,9 +475,7 @@ fn show_hover(
                 let range = hover_result
                     .range
                     .and_then(|range| {
-                        let range = snapshot
-                            .buffer_snapshot()
-                            .anchor_range_in_buffer(excerpt_id, range)?;
+                        let range = snapshot.buffer_snapshot().anchor_range_in_buffer(range)?;
                         Some(range)
                     })
                     .or_else(|| {

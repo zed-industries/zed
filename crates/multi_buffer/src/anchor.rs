@@ -62,6 +62,7 @@ impl From<ExcerptAnchor> for Anchor {
     }
 }
 
+// todo!() make more private
 impl ExcerptAnchor {
     pub fn buffer_id(&self) -> BufferId {
         self.text_anchor.buffer_id
@@ -378,20 +379,23 @@ impl Anchor {
         }
     }
 
-    pub fn text_anchor(&self, buffer_snapshot: &MultiBufferSnapshot) -> Option<text::Anchor> {
-        match self {
-            Anchor::Min => Some(text::Anchor::min_for_buffer(
-                buffer_snapshot.excerpts.first()?.buffer_id,
-            )),
-            Anchor::Excerpt(excerpt_anchor) => Some(excerpt_anchor.text_anchor()),
-            Anchor::Max => Some(text::Anchor::max_for_buffer(
-                buffer_snapshot.excerpts.last()?.buffer_id,
-            )),
-        }
-    }
-
     pub fn diff_base_anchor(&self) -> Option<text::Anchor> {
         self.excerpt_anchor()?.diff_base_anchor
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn expect_text_anchor(&self) -> text::Anchor {
+        self.excerpt_anchor().unwrap().text_anchor
+    }
+
+    pub fn with_diff_base_anchor(mut self, diff_base_anchor: text::Anchor) -> Self {
+        match &mut self {
+            Anchor::Min | Anchor::Max => {}
+            Anchor::Excerpt(excerpt_anchor) => {
+                excerpt_anchor.diff_base_anchor = Some(diff_base_anchor);
+            }
+        }
+        self
     }
 }
 

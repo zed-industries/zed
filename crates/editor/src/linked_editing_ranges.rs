@@ -62,37 +62,15 @@ pub(super) fn refresh_linked_ranges(
         editor
             .update(cx, |editor, cx| {
                 let display_snapshot = editor.display_snapshot(cx);
-                let selections = editor
-                    .selections
-                    .all::<MultiBufferOffset>(&display_snapshot);
+                let selections = editor.selections.all_anchors(&display_snapshot);
                 let snapshot = display_snapshot.buffer_snapshot();
                 let buffer = editor.buffer.read(cx);
-                for selection in selections {
-                    let cursor_position = selection.head();
-                    let Some(start_position) = snapshot
-                        .anchor_before(cursor_position)
-                        .text_anchor(snapshot)
-                    else {
-                        continue;
-                    };
-                    let Some(end_position) = snapshot
-                        .anchor_after(selection.tail())
-                        .text_anchor(snapshot)
-                    else {
-                        continue;
-                    };
-                    if start_position.text_anchor().buffer_id
-                        != end_position.text_anchor().buffer_id
+                for selection in selections.iter() {
+                    if let Some((_, range)) =
+                        snapshot.anchor_range_to_buffer_anchor_range(selection.range())
+                        && let Some(buffer) = buffer.buffer(range.start.buffer_id)
                     {
-                        // Throw away selections spanning multiple buffers.
-                        continue;
-                    }
-                    if let Some(buffer) = buffer.buffer(end_position.text_anchor().buffer_id) {
-                        applicable_selections.push((
-                            buffer,
-                            start_position.text_anchor(),
-                            end_position.text_anchor(),
-                        ));
+                        applicable_selections.push((buffer, range.start, range.end));
                     }
                 }
             })

@@ -348,8 +348,7 @@ impl GitBlame {
         };
         multi_buffer
             .read(cx)
-            .excerpt_buffer_ids()
-            .into_iter()
+            .all_buffer_ids()
             .for_each(|id| self.sync(cx, id));
     }
 

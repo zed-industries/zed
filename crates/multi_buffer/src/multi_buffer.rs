@@ -764,6 +764,7 @@ pub(crate) struct Excerpt {
     pub(crate) has_trailing_newline: bool,
 }
 
+#[derive(Clone, Copy)]
 pub struct MultiBufferExcerpt2<'a> {
     excerpt: &'a Excerpt,
     buffer_snapshot: &'a BufferSnapshot,
@@ -2200,6 +2201,7 @@ impl MultiBuffer {
         self.all_buffers_iter().collect()
     }
 
+    // todo!() look at callers who are collecting this, put it on snapshot instead
     pub fn all_buffer_ids(&self) -> impl Iterator<Item = BufferId> {
         self.buffers.keys().copied()
     }
@@ -3733,6 +3735,7 @@ impl MultiBufferSnapshot {
         result
     }
 
+    // todo!() rethink signature
     #[deprecated(note = "FIXME")]
     pub fn range_to_buffer_ranges<T: ToOffset>(
         &self,
@@ -4169,6 +4172,7 @@ impl MultiBufferSnapshot {
         self.singleton
     }
 
+    // todo!() should probably return just the buffer
     pub fn as_singleton(&self) -> Option<MultiBufferExcerpt2<'_>> {
         todo!()
     }
@@ -4423,7 +4427,6 @@ impl MultiBufferSnapshot {
         Some((region.buffer, buffer_offset))
     }
 
-    #[deprecated(note = "FIXME")]
     pub fn point_to_buffer_point(&self, point: Point) -> Option<(&BufferSnapshot, Point)> {
         let mut cursor = self.cursor::<Point, Point>();
         cursor.seek(&point);
@@ -5323,8 +5326,31 @@ impl MultiBufferSnapshot {
         }
     }
 
-    /// Creates a multibuffer anchor range for the given buffer anchor range, if any excerpt contains both endpoints.
+    /// Creates a multibuffer anchor range for the given buffer anchor range, if any excerpt contains both endpoints
+    /// and there are no intervening deleted hunks
     pub fn anchor_range_in_buffer(
+        &self,
+        text_anchor: Range<text::Anchor>,
+    ) -> Option<Range<Anchor>> {
+        // todo!() handle deleted hunks
+        if text_anchor.start.buffer_id != text_anchor.end.buffer_id {
+            return None;
+        }
+        for excerpt in self.excerpts_for_buffer(text_anchor.start.buffer_id) {
+            let buffer_snapshot = excerpt.buffer_snapshot(self);
+            if excerpt.range.contains(&text_anchor.start, &buffer_snapshot)
+                && excerpt.range.contains(&text_anchor.end, &buffer_snapshot)
+            {
+                return Some(Anchor::range_in_buffer(excerpt.path_key_index, text_anchor));
+            }
+        }
+
+        None
+    }
+
+    /// Creates a multibuffer anchor range for the given buffer anchor range, if any excerpt contains both endpoints
+    /// and there are no intervening deleted hunks. The resulting range may contain deleted hunks
+    pub fn anchor_range_in_buffer_with_deleted_hunks(
         &self,
         text_anchor: Range<text::Anchor>,
     ) -> Option<Range<Anchor>> {
@@ -5356,6 +5382,7 @@ impl MultiBufferSnapshot {
     }
 
     /// Returns a buffer anchor for the given anchor, if it is in the multibuffer.
+    /// todo!() could return the snapshot as well?
     pub fn anchor_to_buffer_anchor(&self, anchor: Anchor) -> Option<text::Anchor> {
         let mut cursor = self.excerpts.cursor::<ExcerptSummary>(());
         cursor.seek(&anchor.seek_target(&self), Bias::Left);
@@ -6564,6 +6591,7 @@ impl MultiBufferSnapshot {
         &self,
         range: Range<Anchor>,
     ) -> Option<(&BufferSnapshot, Range<text::Anchor>)> {
+        // todo!() should this deal with deleted hunks somehow?
         let mut cursor = self.excerpts.cursor::<ExcerptSummary>(());
         cursor.seek(&range.start.seek_target(&self), Bias::Left);
 
@@ -6617,7 +6645,9 @@ impl MultiBufferSnapshot {
         todo!()
     }
 
-    /// Returns all nonempty intersections of the given buffer range with excerpts in the multibuffer in order
+    /// Returns all nonempty intersections of the given buffer range with excerpts in the multibuffer in order.
+    ///
+    /// The multibuffer ranges are split to not intersect deleted hunks.
     pub fn buffer_range_to_excerpt_ranges(
         &self,
         range: Range<text::Anchor>,

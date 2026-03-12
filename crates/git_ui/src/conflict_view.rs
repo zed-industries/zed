@@ -237,7 +237,7 @@ fn conflicts_updated(
                 continue;
             };
             let excerpt_id = *excerpt_id;
-            let Some(range) = snapshot.anchor_range_in_buffer(excerpt_id, conflict_range) else {
+            let Some(range) = snapshot.anchor_range_in_buffer(conflict_range) else {
                 continue;
             };
             removed_highlighted_ranges.push(range.clone());
@@ -282,7 +282,7 @@ fn conflicts_updated(
 
         update_conflict_highlighting(editor, conflict, &snapshot, excerpt_id, cx);
 
-        let Some(anchor) = snapshot.buffer_anchor_to_anchor(excerpt_id, conflict.range.start) else {
+        let Some(anchor) = snapshot.buffer_anchor_to_anchor(conflict.range.start) else {
             continue;
         };
 
@@ -324,9 +324,9 @@ fn update_conflict_highlighting(
 ) -> Option<()> {
     log::debug!("update conflict highlighting for {conflict:?}");
 
-    let outer = buffer.anchor_range_in_buffer(excerpt_id, conflict.range.clone())?;
-    let ours = buffer.anchor_range_in_buffer(excerpt_id, conflict.ours.clone())?;
-    let theirs = buffer.anchor_range_in_buffer(excerpt_id, conflict.theirs.clone())?;
+    let outer = buffer.anchor_range_in_buffer(conflict.range.clone())?;
+    let ours = buffer.anchor_range_in_buffer(conflict.ours.clone())?;
+    let theirs = buffer.anchor_range_in_buffer(conflict.theirs.clone())?;
 
     let ours_background = cx.theme().colors().version_control_conflict_marker_ours;
     let theirs_background = cx.theme().colors().version_control_conflict_marker_theirs;

@@ -2952,8 +2952,8 @@ async fn test_random_multibuffer(cx: &mut TestAppContext, mut rng: StdRng) {
 
                     let start = excerpt.range.start;
                     let end = excerpt.range.end;
-                    let range = snapshot.buffer_anchor_to_anchor(excerpt.info(cx).buffer_id, start).unwrap()
-                        ..snapshot.buffer_anchor_to_anchor(excerpt.info(cx).buffer_id, end).unwrap();
+                    let range = snapshot.buffer_anchor_to_anchor(start).unwrap()
+                        ..snapshot.buffer_anchor_to_anchor(end).unwrap();
 
                     log::info!(
                         "expanding diff hunks in range {:?} (excerpt index {excerpt_ix:?}, buffer id {:?})",

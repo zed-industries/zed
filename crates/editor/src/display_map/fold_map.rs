@@ -184,16 +184,18 @@ impl FoldMapWriter<'_> {
                 continue;
             }
 
+            let fold_range = buffer.anchor_after(range.start)..buffer.anchor_before(range.end);
             // For now, ignore any ranges that span an excerpt boundary.
-            let fold_range =
-                FoldRange(buffer.anchor_after(range.start)..buffer.anchor_before(range.end));
-            if fold_range.0.start.excerpt_id != fold_range.0.end.excerpt_id {
+            if buffer
+                .anchor_range_to_buffer_anchor_range(fold_range.clone())
+                .is_none()
+            {
                 continue;
             }
 
             folds.push(Fold {
                 id: FoldId(post_inc(&mut self.0.next_fold_id.0)),
-                range: fold_range,
+                range: FoldRange(fold_range),
                 placeholder: fold_text,
             });
 
