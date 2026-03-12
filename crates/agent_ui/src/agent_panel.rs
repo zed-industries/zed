@@ -29,12 +29,12 @@ use zed_actions::agent::{
     ResolveConflictedFilesWithAgent, ResolveConflictsWithAgent, ReviewBranchDiff,
 };
 
-use crate::ui::{AcpOnboardingModal, ClaudeCodeOnboardingModal};
+use crate::ui::{AcpOnboardingModal, ClaudeCodeOnboardingModal, HoldForDefault};
 use crate::{
-    AddContextServer, AgentDiffPane, ConnectionView, CopyThreadToClipboard, Follow,
-    InlineAssistant, LoadThreadFromClipboard, NewTextThread, NewThread, OpenActiveThreadAsMarkdown,
-    OpenAgentDiff, OpenHistory, ResetTrialEndUpsell, ResetTrialUpsell, StartThreadIn,
-    ToggleNavigationMenu, ToggleNewThreadMenu, ToggleOptionsMenu, ToggleStartThreadInSelector,
+    AddContextServer, AgentDiffPane, ConnectionView, CopyThreadToClipboard, CycleStartThreadIn,
+    Follow, InlineAssistant, LoadThreadFromClipboard, NewTextThread, NewThread,
+    OpenActiveThreadAsMarkdown, OpenAgentDiff, OpenHistory, ResetTrialEndUpsell, ResetTrialUpsell,
+    StartThreadIn, ToggleNavigationMenu, ToggleNewThreadMenu, ToggleOptionsMenu,
     agent_configuration::{AgentConfiguration, AssistantConfigurationEvent},
     connection_view::{AcpThreadViewEvent, ThreadView},
     slash_command::SlashCommandCompletionProvider,
@@ -312,18 +312,6 @@ pub fn init(cx: &mut App) {
                         });
                     }
                 })
-                .register_action(|workspace, _: &ToggleStartThreadInSelector, window, cx| {
-                    if let Some(panel) = workspace.panel::<AgentPanel>(cx) {
-                        workspace.focus_panel::<AgentPanel>(window, cx);
-                        panel.update(cx, |panel, cx| {
-                            panel.toggle_start_thread_in_selector(
-                                &ToggleStartThreadInSelector,
-                                window,
-                                cx,
-                            );
-                        });
-                    }
-                })
                 .register_action(|workspace, _: &OpenAcpOnboardingModal, window, cx| {
                     AcpOnboardingModal::toggle(workspace, window, cx)
                 })
@@ -474,6 +462,13 @@ pub fn init(cx: &mut App) {
                     if let Some(panel) = workspace.panel::<AgentPanel>(cx) {
                         panel.update(cx, |panel, cx| {
                             panel.set_start_thread_in(action, cx);
+                        });
+                    }
+                })
+                .register_action(|workspace, _: &CycleStartThreadIn, _window, cx| {
+                    if let Some(panel) = workspace.panel::<AgentPanel>(cx) {
+                        panel.update(cx, |panel, cx| {
+                            panel.cycle_start_thread_in(cx);
                         });
                     }
                 })
@@ -1751,15 +1746,6 @@ impl AgentPanel {
         self.new_thread_menu_handle.toggle(window, cx);
     }
 
-    pub fn toggle_start_thread_in_selector(
-        &mut self,
-        _: &ToggleStartThreadInSelector,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        self.start_thread_in_menu_handle.toggle(window, cx);
-    }
-
     pub fn increase_font_size(
         &mut self,
         action: &IncreaseBufferFontSize,
@@ -2388,6 +2374,28 @@ impl AgentPanel {
         cx.notify();
     }
 
+    fn cycle_start_thread_in(&mut self, cx: &mut Context<Self>) {
+        let next = match self.start_thread_in {
+            StartThreadIn::LocalProject => StartThreadIn::NewWorktree,
+            StartThreadIn::NewWorktree => StartThreadIn::LocalProject,
+        };
+        self.set_start_thread_in(&next, cx);
+    }
+
+    fn reset_start_thread_in_to_default(&mut self, cx: &mut Context<Self>) {
+        use settings::{NewThreadLocation, Settings};
+        let default = AgentSettings::get_global(cx).new_thread_location;
+        let start_thread_in = match default {
+            NewThreadLocation::LocalProject => StartThreadIn::LocalProject,
+            NewThreadLocation::NewWorktree => StartThreadIn::NewWorktree,
+        };
+        if self.start_thread_in != start_thread_in {
+            self.start_thread_in = start_thread_in;
+            self.serialize(cx);
+            cx.notify();
+        }
+    }
+
     fn selected_external_agent(&self) -> Option<Agent> {
         match &self.selected_agent {
             AgentType::NativeAgent => Some(Agent::NativeAgent),
@@ -2445,6 +2453,7 @@ impl AgentPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.reset_start_thread_in_to_default(cx);
         self.new_agent_thread_inner(agent, true, window, cx);
     }
 
@@ -3592,9 +3601,12 @@ impl AgentPanel {
     }
 
     fn render_start_thread_in_selector(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        use settings::{NewThreadLocation, Settings};
+
         let focus_handle = self.focus_handle(cx);
         let has_git_repo = self.project_has_git_repository(cx);
         let is_via_collab = self.project.read(cx).is_via_collab();
+        let fs = self.fs.clone();
 
         let is_creating = matches!(
             self.worktree_creation_status,
@@ -3603,6 +3615,10 @@ impl AgentPanel {
 
         let current_target = self.start_thread_in;
         let trigger_label = self.start_thread_in.label();
+
+        let new_thread_location = AgentSettings::get_global(cx).new_thread_location;
+        let is_local_default = new_thread_location == NewThreadLocation::LocalProject;
+        let is_new_worktree_default = new_thread_location == NewThreadLocation::NewWorktree;
 
         let icon = if self.start_thread_in_menu_handle.is_deployed() {
             IconName::ChevronUp
@@ -3631,7 +3647,7 @@ impl AgentPanel {
                 move |_window, cx| {
                     Tooltip::for_action_in(
                         "Start Thread In…",
-                        &ToggleStartThreadInSelector,
+                        &CycleStartThreadIn,
                         &focus_handle,
                         cx,
                     )
@@ -3640,6 +3656,7 @@ impl AgentPanel {
             .menu(move |window, cx| {
                 let is_local_selected = current_target == StartThreadIn::LocalProject;
                 let is_new_worktree_selected = current_target == StartThreadIn::NewWorktree;
+                let fs = fs.clone();
 
                 Some(ContextMenu::build(window, cx, move |menu, _window, _cx| {
                     let new_worktree_disabled = !has_git_repo || is_via_collab;
@@ -3648,18 +3665,53 @@ impl AgentPanel {
                         .item(
                             ContextMenuEntry::new("Current Project")
                                 .toggleable(IconPosition::End, is_local_selected)
-                                .handler(|window, cx| {
-                                    window
-                                        .dispatch_action(Box::new(StartThreadIn::LocalProject), cx);
+                                .documentation_aside(documentation_side, move |_| {
+                                    HoldForDefault::new(is_local_default)
+                                        .more_content(false)
+                                        .into_any_element()
+                                })
+                                .handler({
+                                    let fs = fs.clone();
+                                    move |window, cx| {
+                                        if window.modifiers().secondary() {
+                                            update_settings_file(fs.clone(), cx, |settings, _| {
+                                                settings
+                                                    .agent
+                                                    .get_or_insert_default()
+                                                    .set_new_thread_location(
+                                                        NewThreadLocation::LocalProject,
+                                                    );
+                                            });
+                                        }
+                                        window.dispatch_action(
+                                            Box::new(StartThreadIn::LocalProject),
+                                            cx,
+                                        );
+                                    }
                                 }),
                         )
                         .item({
                             let entry = ContextMenuEntry::new("New Worktree")
                                 .toggleable(IconPosition::End, is_new_worktree_selected)
                                 .disabled(new_worktree_disabled)
-                                .handler(|window, cx| {
-                                    window
-                                        .dispatch_action(Box::new(StartThreadIn::NewWorktree), cx);
+                                .handler({
+                                    let fs = fs.clone();
+                                    move |window, cx| {
+                                        if window.modifiers().secondary() {
+                                            update_settings_file(fs.clone(), cx, |settings, _| {
+                                                settings
+                                                    .agent
+                                                    .get_or_insert_default()
+                                                    .set_new_thread_location(
+                                                        NewThreadLocation::NewWorktree,
+                                                    );
+                                            });
+                                        }
+                                        window.dispatch_action(
+                                            Box::new(StartThreadIn::NewWorktree),
+                                            cx,
+                                        );
+                                    }
                                 });
 
                             if new_worktree_disabled {
@@ -3675,7 +3727,11 @@ impl AgentPanel {
                                         .into_any_element()
                                 })
                             } else {
-                                entry
+                                entry.documentation_aside(documentation_side, move |_| {
+                                    HoldForDefault::new(is_new_worktree_default)
+                                        .more_content(false)
+                                        .into_any_element()
+                                })
                             }
                         })
                 }))
@@ -4849,7 +4905,6 @@ impl Render for AgentPanel {
             .on_action(cx.listener(Self::go_back))
             .on_action(cx.listener(Self::toggle_navigation_menu))
             .on_action(cx.listener(Self::toggle_options_menu))
-            .on_action(cx.listener(Self::toggle_start_thread_in_selector))
             .on_action(cx.listener(Self::increase_font_size))
             .on_action(cx.listener(Self::decrease_font_size))
             .on_action(cx.listener(Self::reset_font_size))
