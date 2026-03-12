@@ -188,35 +188,3 @@ Rules emerge from validated patterns, not one-off observations. The workflow is:
 1. Agent notes a pattern during a session.
 2. Team validates the pattern in code review.
 3. A dedicated commit adds the rule with context on *why* it exists.
-
-# TODO: Initial Scan Completion Feature
-
-See `plan.md` at repo root for full design. Test is at `crates/project/tests/integration/project_tests.rs` → `test_initial_scan_complete`.
-
-The test currently fails because all implementations are stubs.
-
-## Done
-- [x] Stub `WorktreeStore::wait_for_initial_scan()` → returns `async {}` (in `worktree_store.rs`)
-- [x] Stub `WorktreeStore::initial_scan_completed()` → returns `false` (in `worktree_store.rs`)
-- [x] Stub `TaskStore::pending_updates_completed()` → returns `async {}` (in `task_store.rs`)
-- [x] Thin wrapper `Project::wait_for_initial_scan()` → delegates to `WorktreeStore` (in `project.rs`)
-- [x] Failing integration test covering scan completion, git repo detection (`observe_new<Repository>`), and task inventory
-
-## To implement
-- [ ] Add `initial_scan_complete: (watch::Sender<bool>, watch::Receiver<bool>)` and `_initial_scan_monitor: Task<()>` fields to `WorktreeStore`
-- [ ] Implement `wait_for_initial_scan()` using the watch receiver (same pattern as `LocalWorktree::scan_complete()`)
-- [ ] Implement `initial_scan_completed()` by reading the watch channel
-- [ ] Implement `spawn_initial_scan_monitor()` on `WorktreeStore` — joins `scan_complete()` for all visible worktrees, then sets watch to `true`
-- [ ] Call `spawn_initial_scan_monitor()` from `WorktreeStore::add()` (when visible) and `remove_worktree()`
-- [ ] Set `initial_scan_complete` to `false` in `WorktreeStore::add()` when the added worktree is visible
-- [ ] Add `pending_update_barriers: Vec<postage::barrier::Receiver>` to `TaskStore::StoreState`
-- [ ] Implement `TaskStore::register_pending_update()` → returns `barrier::Sender`
-- [ ] Implement `TaskStore::pending_updates_completed()` — drains barriers, joins them
-- [ ] In `SettingsObserver::update_local_worktree_settings()`, call `register_pending_update()` before spawning the async task, pass the sender into the spawned closure
-- [ ] Make the test pass
-
-## Edge-case tests to add after initial implementation
-- [ ] Adding a new visible worktree resets `initial_scan_completed` to false and makes `wait_for_initial_scan` wait for the new tree
-- [ ] Removing a visible worktree makes the future resolve without waiting for the removed tree
-- [ ] Adding a non-visible worktree does NOT reset scan completion
-- [ ] Rapid add/remove before scan completes still resolves correctly
