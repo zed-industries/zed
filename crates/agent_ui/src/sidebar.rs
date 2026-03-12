@@ -174,11 +174,24 @@ fn fuzzy_match_positions(query: &str, candidate: &str) -> Option<Vec<usize>> {
 // querying (which PathList is used to read threads back). All of these need
 // to agree on how repos are resolved for a given workspace, especially in
 // multi-root and nested-repo configurations.
-fn is_root_repo(snapshot: &project::git_store::RepositorySnapshot, path_list: &PathList) -> bool {
-    path_list
-        .paths()
-        .iter()
-        .any(|p| p.as_path() == snapshot.work_directory_abs_path.as_ref())
+fn root_repository_snapshots(
+    workspace: &Entity<Workspace>,
+    cx: &App,
+) -> Vec<project::git_store::RepositorySnapshot> {
+    let (path_list, _) = workspace_path_list_and_label(workspace, cx);
+    let project = workspace.read(cx).project().read(cx);
+    project
+        .repositories(cx)
+        .values()
+        .filter_map(|repo| {
+            let snapshot = repo.read(cx).snapshot();
+            let is_root = path_list
+                .paths()
+                .iter()
+                .any(|p| p.as_path() == snapshot.work_directory_abs_path.as_ref());
+            is_root.then_some(snapshot)
+        })
+        .collect()
 }
 
 fn workspace_path_list_and_label(
@@ -355,7 +368,7 @@ impl Sidebar {
         cx.subscribe_in(
             &git_store,
             window,
-            |this, _, event: &project::git_store::GitStoreEvent, _window, cx| {
+            |this, _, event: &project::git_store::GitStoreEvent, window, cx| {
                 if matches!(
                     event,
                     project::git_store::GitStoreEvent::RepositoryUpdated(
@@ -364,6 +377,7 @@ impl Sidebar {
                         _,
                     )
                 ) {
+                    this.prune_stale_worktree_workspaces(window, cx);
                     this.update_entries(cx);
                 }
             },
@@ -503,13 +517,7 @@ impl Sidebar {
         let mut pending: HashMap<Arc<Path>, Vec<(usize, SharedString)>> = HashMap::new();
 
         for (i, workspace) in workspaces.iter().enumerate() {
-            let (ws_path_list, _) = workspace_path_list_and_label(workspace, cx);
-            let project = workspace.read(cx).project().read(cx);
-            for repo in project.repositories(cx).values() {
-                let snapshot = repo.read(cx).snapshot();
-                if !is_root_repo(&snapshot, &ws_path_list) {
-                    continue;
-                }
+            for snapshot in root_repository_snapshots(workspace, cx) {
                 if snapshot.work_directory_abs_path == snapshot.original_repo_abs_path {
                     main_repo_workspace
                         .entry(snapshot.work_directory_abs_path.clone())
@@ -578,13 +586,8 @@ impl Sidebar {
                 // Load threads from linked git worktrees of this workspace's repos.
                 if let Some(ref thread_store) = thread_store {
                     let mut linked_worktree_queries: Vec<(PathList, SharedString)> = Vec::new();
-                    let project = workspace.read(cx).project().read(cx);
-                    for repo in project.repositories(cx).values() {
-                        let snapshot = repo.read(cx).snapshot();
+                    for snapshot in root_repository_snapshots(workspace, cx) {
                         if snapshot.work_directory_abs_path != snapshot.original_repo_abs_path {
-                            continue;
-                        }
-                        if !is_root_repo(&snapshot, &path_list) {
                             continue;
                         }
                         for git_worktree in snapshot.linked_worktrees() {
@@ -1065,6 +1068,55 @@ impl Sidebar {
         multi_workspace.update(cx, |multi_workspace, cx| {
             multi_workspace.focus_active_workspace(window, cx);
         });
+    }
+
+    fn prune_stale_worktree_workspaces(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(multi_workspace) = self.multi_workspace.upgrade() else {
+            return;
+        };
+        let workspaces = multi_workspace.read(cx).workspaces().to_vec();
+
+        // Collect all worktree paths that are currently listed by any main
+        // repo open in any workspace.
+        let mut known_worktree_paths: HashSet<std::path::PathBuf> = HashSet::new();
+        for workspace in &workspaces {
+            for snapshot in root_repository_snapshots(workspace, cx) {
+                if snapshot.work_directory_abs_path != snapshot.original_repo_abs_path {
+                    continue;
+                }
+                for git_worktree in snapshot.linked_worktrees() {
+                    known_worktree_paths.insert(git_worktree.path.to_path_buf());
+                }
+            }
+        }
+
+        // Find workspaces that consist of exactly one root folder which is a
+        // stale worktree checkout. Multi-root workspaces are never pruned —
+        // losing one worktree shouldn't destroy a workspace that also
+        // contains other folders.
+        let mut to_remove: Vec<Entity<Workspace>> = Vec::new();
+        for workspace in &workspaces {
+            let (path_list, _) = workspace_path_list_and_label(workspace, cx);
+            if path_list.paths().len() != 1 {
+                continue;
+            }
+            let should_prune = root_repository_snapshots(workspace, cx).iter().any(|snapshot| {
+                snapshot.work_directory_abs_path != snapshot.original_repo_abs_path
+                    && !known_worktree_paths
+                        .contains(snapshot.work_directory_abs_path.as_ref())
+            });
+            if should_prune {
+                to_remove.push(workspace.clone());
+            }
+        }
+
+        for workspace in &to_remove {
+            self.remove_workspace(workspace, window, cx);
+        }
     }
 
     fn remove_workspace(
@@ -4049,6 +4101,25 @@ mod tests {
                 "v [project]",
                 "  Thread A {wt-feature-a}",
                 "  Thread B {wt-feature-b}",
+            ]
+        );
+
+        // Remove feature-b from the main repo's linked worktrees.
+        // The feature-b workspace should be pruned automatically.
+        fs.with_git_state(std::path::Path::new("/project/.git"), true, |state| {
+            state.worktrees.retain(|wt| wt.path != std::path::Path::new("/wt-feature-b"));
+        })
+        .unwrap();
+
+        cx.run_until_parked();
+
+        // feature-b's workspace is pruned; feature-a remains absorbed
+        // under the main repo.
+        assert_eq!(
+            visible_entries_as_strings(&sidebar, cx),
+            vec![
+                "v [project]",
+                "  Thread A {wt-feature-a}",
             ]
         );
     }
