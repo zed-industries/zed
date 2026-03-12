@@ -34,8 +34,17 @@ jobs:
       uses: taiki-e/install-action@nextest
     - name: steps::clear_target_dir_if_large
       run: ./script/clear-target-dir-if-larger-than 300
+    - name: steps::setup_sccache
+      run: ./script/setup-sccache
+      env:
+        R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+        R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+        R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+        SCCACHE_BUCKET: sccache-zed
     - name: steps::cargo_nextest
-      run: cargo nextest run --workspace --no-fail-fast
+      run: cargo nextest run --workspace --no-fail-fast --no-tests=warn
+    - name: steps::show_sccache_stats
+      run: sccache --show-stats || true
     - name: steps::cleanup_cargo_config
       if: always()
       run: |
@@ -44,6 +53,9 @@ jobs:
   run_tests_linux:
     if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions')
     runs-on: namespace-profile-16x32-ubuntu-2204
+    env:
+      CC: clang
+      CXX: clang++
     steps:
     - name: steps::checkout_repo
       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
@@ -72,8 +84,17 @@ jobs:
       uses: taiki-e/install-action@nextest
     - name: steps::clear_target_dir_if_large
       run: ./script/clear-target-dir-if-larger-than 250
+    - name: steps::setup_sccache
+      run: ./script/setup-sccache
+      env:
+        R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+        R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+        R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+        SCCACHE_BUCKET: sccache-zed
     - name: steps::cargo_nextest
-      run: cargo nextest run --workspace --no-fail-fast
+      run: cargo nextest run --workspace --no-fail-fast --no-tests=warn
+    - name: steps::show_sccache_stats
+      run: sccache --show-stats || true
     - name: steps::cleanup_cargo_config
       if: always()
       run: |
@@ -107,8 +128,19 @@ jobs:
     - name: steps::clear_target_dir_if_large
       run: ./script/clear-target-dir-if-larger-than.ps1 250
       shell: pwsh
+    - name: steps::setup_sccache
+      run: ./script/setup-sccache.ps1
+      shell: pwsh
+      env:
+        R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+        R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+        R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+        SCCACHE_BUCKET: sccache-zed
     - name: steps::cargo_nextest
-      run: cargo nextest run --workspace --no-fail-fast
+      run: cargo nextest run --workspace --no-fail-fast --no-tests=warn
+      shell: pwsh
+    - name: steps::show_sccache_stats
+      run: if ($env:RUSTC_WRAPPER) { & $env:RUSTC_WRAPPER --show-stats }; exit 0
       shell: pwsh
     - name: steps::cleanup_cargo_config
       if: always()
@@ -133,12 +165,24 @@ jobs:
       with:
         cache: rust
         path: ~/.rustup
+    - name: steps::setup_sccache
+      run: ./script/setup-sccache
+      env:
+        R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+        R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+        R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+        SCCACHE_BUCKET: sccache-zed
     - name: steps::clippy
       run: ./script/clippy
+    - name: steps::show_sccache_stats
+      run: sccache --show-stats || true
     timeout-minutes: 60
   clippy_linux:
     if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions')
     runs-on: namespace-profile-16x32-ubuntu-2204
+    env:
+      CC: clang
+      CXX: clang++
     steps:
     - name: steps::checkout_repo
       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
@@ -159,8 +203,17 @@ jobs:
       run: ./script/install-mold
     - name: steps::download_wasi_sdk
       run: ./script/download-wasi-sdk
+    - name: steps::setup_sccache
+      run: ./script/setup-sccache
+      env:
+        R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+        R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+        R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+        SCCACHE_BUCKET: sccache-zed
     - name: steps::clippy
       run: ./script/clippy
+    - name: steps::show_sccache_stats
+      run: sccache --show-stats || true
     timeout-minutes: 60
   clippy_windows:
     if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions')
@@ -175,8 +228,19 @@ jobs:
         New-Item -ItemType Directory -Path "./../.cargo" -Force
         Copy-Item -Path "./.cargo/ci-config.toml" -Destination "./../.cargo/config.toml"
       shell: pwsh
+    - name: steps::setup_sccache
+      run: ./script/setup-sccache.ps1
+      shell: pwsh
+      env:
+        R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+        R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+        R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+        SCCACHE_BUCKET: sccache-zed
     - name: steps::clippy
       run: ./script/clippy.ps1
+      shell: pwsh
+    - name: steps::show_sccache_stats
+      run: if ($env:RUSTC_WRAPPER) { & $env:RUSTC_WRAPPER --show-stats }; exit 0
       shell: pwsh
     timeout-minutes: 60
   check_scripts:
@@ -193,8 +257,14 @@ jobs:
       name: run_tests::check_scripts::download_actionlint
       run: bash <(curl https://raw.githubusercontent.com/rhysd/actionlint/main/scripts/download-actionlint.bash)
     - name: run_tests::check_scripts::run_actionlint
-      run: |
-        ${{ steps.get_actionlint.outputs.executable }} -color
+      run: '"$ACTIONLINT_BIN" -color'
+      env:
+        ACTIONLINT_BIN: ${{ steps.get_actionlint.outputs.executable }}
+    - name: steps::cache_rust_dependencies_namespace
+      uses: namespacelabs/nscloud-cache-action@v1
+      with:
+        cache: rust
+        path: ~/.rustup
     - name: run_tests::check_scripts::check_xtask_workflows
       run: |
         cargo xtask workflows
@@ -235,6 +305,8 @@ jobs:
       CARGO_INCREMENTAL: 0
       ZED_CLIENT_CHECKSUM_SEED: ${{ secrets.ZED_CLIENT_CHECKSUM_SEED }}
       ZED_MINIDUMP_ENDPOINT: ${{ secrets.ZED_SENTRY_MINIDUMP_ENDPOINT }}
+      CC: clang-18
+      CXX: clang++-18
     steps:
     - name: steps::checkout_repo
       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
@@ -275,6 +347,8 @@ jobs:
       CARGO_INCREMENTAL: 0
       ZED_CLIENT_CHECKSUM_SEED: ${{ secrets.ZED_CLIENT_CHECKSUM_SEED }}
       ZED_MINIDUMP_ENDPOINT: ${{ secrets.ZED_SENTRY_MINIDUMP_ENDPOINT }}
+      CC: clang-18
+      CXX: clang++-18
     steps:
     - name: steps::checkout_repo
       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
@@ -586,12 +660,7 @@ jobs:
     - id: generate-webhook-message
       name: release::generate_slack_message
       run: |
-        MESSAGE=$(DRAFT_RESULT="${{ needs.create_draft_release.result }}"
-        UPLOAD_RESULT="${{ needs.upload_release_assets.result }}"
-        VALIDATE_RESULT="${{ needs.validate_release_assets.result }}"
-        AUTO_RELEASE_RESULT="${{ needs.auto_release_preview.result }}"
-        TAG="$GITHUB_REF_NAME"
-        RUN_URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+        MESSAGE=$(TAG="$GITHUB_REF_NAME"
 
         if [ "$DRAFT_RESULT" == "failure" ]; then
             echo "❌ Draft release creation failed for $TAG: $RUN_URL"
@@ -601,19 +670,19 @@ jobs:
                 echo "❌ Release asset upload failed for $TAG: $RELEASE_URL"
             elif [ "$UPLOAD_RESULT" == "cancelled" ] || [ "$UPLOAD_RESULT" == "skipped" ]; then
                 FAILED_JOBS=""
-                if [ "${{ needs.run_tests_mac.result }}" == "failure" ];then FAILED_JOBS="$FAILED_JOBS run_tests_mac"; fi
-                if [ "${{ needs.run_tests_linux.result }}" == "failure" ];then FAILED_JOBS="$FAILED_JOBS run_tests_linux"; fi
-                if [ "${{ needs.run_tests_windows.result }}" == "failure" ];then FAILED_JOBS="$FAILED_JOBS run_tests_windows"; fi
-                if [ "${{ needs.clippy_mac.result }}" == "failure" ];then FAILED_JOBS="$FAILED_JOBS clippy_mac"; fi
-                if [ "${{ needs.clippy_linux.result }}" == "failure" ];then FAILED_JOBS="$FAILED_JOBS clippy_linux"; fi
-                if [ "${{ needs.clippy_windows.result }}" == "failure" ];then FAILED_JOBS="$FAILED_JOBS clippy_windows"; fi
-                if [ "${{ needs.check_scripts.result }}" == "failure" ];then FAILED_JOBS="$FAILED_JOBS check_scripts"; fi
-                if [ "${{ needs.bundle_linux_aarch64.result }}" == "failure" ];then FAILED_JOBS="$FAILED_JOBS bundle_linux_aarch64"; fi
-                if [ "${{ needs.bundle_linux_x86_64.result }}" == "failure" ];then FAILED_JOBS="$FAILED_JOBS bundle_linux_x86_64"; fi
-                if [ "${{ needs.bundle_mac_aarch64.result }}" == "failure" ];then FAILED_JOBS="$FAILED_JOBS bundle_mac_aarch64"; fi
-                if [ "${{ needs.bundle_mac_x86_64.result }}" == "failure" ];then FAILED_JOBS="$FAILED_JOBS bundle_mac_x86_64"; fi
-                if [ "${{ needs.bundle_windows_aarch64.result }}" == "failure" ];then FAILED_JOBS="$FAILED_JOBS bundle_windows_aarch64"; fi
-                if [ "${{ needs.bundle_windows_x86_64.result }}" == "failure" ];then FAILED_JOBS="$FAILED_JOBS bundle_windows_x86_64"; fi
+                if [ "$RESULT_RUN_TESTS_MAC" == "failure" ];then FAILED_JOBS="$FAILED_JOBS run_tests_mac"; fi
+                if [ "$RESULT_RUN_TESTS_LINUX" == "failure" ];then FAILED_JOBS="$FAILED_JOBS run_tests_linux"; fi
+                if [ "$RESULT_RUN_TESTS_WINDOWS" == "failure" ];then FAILED_JOBS="$FAILED_JOBS run_tests_windows"; fi
+                if [ "$RESULT_CLIPPY_MAC" == "failure" ];then FAILED_JOBS="$FAILED_JOBS clippy_mac"; fi
+                if [ "$RESULT_CLIPPY_LINUX" == "failure" ];then FAILED_JOBS="$FAILED_JOBS clippy_linux"; fi
+                if [ "$RESULT_CLIPPY_WINDOWS" == "failure" ];then FAILED_JOBS="$FAILED_JOBS clippy_windows"; fi
+                if [ "$RESULT_CHECK_SCRIPTS" == "failure" ];then FAILED_JOBS="$FAILED_JOBS check_scripts"; fi
+                if [ "$RESULT_BUNDLE_LINUX_AARCH64" == "failure" ];then FAILED_JOBS="$FAILED_JOBS bundle_linux_aarch64"; fi
+                if [ "$RESULT_BUNDLE_LINUX_X86_64" == "failure" ];then FAILED_JOBS="$FAILED_JOBS bundle_linux_x86_64"; fi
+                if [ "$RESULT_BUNDLE_MAC_AARCH64" == "failure" ];then FAILED_JOBS="$FAILED_JOBS bundle_mac_aarch64"; fi
+                if [ "$RESULT_BUNDLE_MAC_X86_64" == "failure" ];then FAILED_JOBS="$FAILED_JOBS bundle_mac_x86_64"; fi
+                if [ "$RESULT_BUNDLE_WINDOWS_AARCH64" == "failure" ];then FAILED_JOBS="$FAILED_JOBS bundle_windows_aarch64"; fi
+                if [ "$RESULT_BUNDLE_WINDOWS_X86_64" == "failure" ];then FAILED_JOBS="$FAILED_JOBS bundle_windows_x86_64"; fi
                 FAILED_JOBS=$(echo "$FAILED_JOBS" | xargs)
                 if [ "$UPLOAD_RESULT" == "cancelled" ]; then
                     if [ -n "$FAILED_JOBS" ]; then
@@ -642,12 +711,29 @@ jobs:
         echo "message=$MESSAGE" >> "$GITHUB_OUTPUT"
       env:
         GH_TOKEN: ${{ github.token }}
+        DRAFT_RESULT: ${{ needs.create_draft_release.result }}
+        UPLOAD_RESULT: ${{ needs.upload_release_assets.result }}
+        VALIDATE_RESULT: ${{ needs.validate_release_assets.result }}
+        AUTO_RELEASE_RESULT: ${{ needs.auto_release_preview.result }}
+        RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        RESULT_RUN_TESTS_MAC: ${{ needs.run_tests_mac.result }}
+        RESULT_RUN_TESTS_LINUX: ${{ needs.run_tests_linux.result }}
+        RESULT_RUN_TESTS_WINDOWS: ${{ needs.run_tests_windows.result }}
+        RESULT_CLIPPY_MAC: ${{ needs.clippy_mac.result }}
+        RESULT_CLIPPY_LINUX: ${{ needs.clippy_linux.result }}
+        RESULT_CLIPPY_WINDOWS: ${{ needs.clippy_windows.result }}
+        RESULT_CHECK_SCRIPTS: ${{ needs.check_scripts.result }}
+        RESULT_BUNDLE_LINUX_AARCH64: ${{ needs.bundle_linux_aarch64.result }}
+        RESULT_BUNDLE_LINUX_X86_64: ${{ needs.bundle_linux_x86_64.result }}
+        RESULT_BUNDLE_MAC_AARCH64: ${{ needs.bundle_mac_aarch64.result }}
+        RESULT_BUNDLE_MAC_X86_64: ${{ needs.bundle_mac_x86_64.result }}
+        RESULT_BUNDLE_WINDOWS_AARCH64: ${{ needs.bundle_windows_aarch64.result }}
+        RESULT_BUNDLE_WINDOWS_X86_64: ${{ needs.bundle_windows_x86_64.result }}
     - name: release::send_slack_message
-      run: |
-        curl -X POST -H 'Content-type: application/json'\
-         --data '{"text":"${{ steps.generate-webhook-message.outputs.message }}"}' "$SLACK_WEBHOOK"
+      run: 'curl -X POST -H ''Content-type: application/json'' --data "$(jq -n --arg text "$SLACK_MESSAGE" ''{"text": $text}'')" "$SLACK_WEBHOOK"'
       env:
         SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK_WORKFLOW_FAILURES }}
+        SLACK_MESSAGE: ${{ steps.generate-webhook-message.outputs.message }}
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref_name }}-${{ github.ref_name == 'main' && github.sha || 'anysha' }}
   cancel-in-progress: true

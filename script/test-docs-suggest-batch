@@ -1,0 +1,139 @@
+#!/usr/bin/env bash
+#
+# Test docs-suggest on multiple PRs and generate a summary report.
+#
+# Usage:
+#   script/test-docs-suggest-batch [--limit N] [--output FILE]
+#
+# This script runs docs-suggest in dry-run mode on recent merged PRs
+# to validate the context assembly and help tune the prompt.
+
+set -euo pipefail
+
+LIMIT=50
+OUTPUT="docs-suggest-batch-results.md"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        --limit)
+            LIMIT="$2"
+            shift 2
+            ;;
+        --output)
+            OUTPUT="$2"
+            shift 2
+            ;;
+        *)
+            echo "Unknown option: $1"
+            exit 1
+            ;;
+    esac
+done
+
+echo "Testing docs-suggest on $LIMIT recent merged PRs..."
+echo "Output: $OUTPUT"
+echo ""
+
+# Get list of PRs
+PRS=$(gh pr list --state merged --limit "$LIMIT" --json number,title --jq '.[] | "\(.number)|\(.title)"')
+
+# Initialize output file
+cat > "$OUTPUT" << HEADER
+# docs-suggest Batch Test Results
+
+**Date**: $(date +%Y-%m-%d)
+**PRs tested**: $LIMIT
+
+## Summary
+
+| PR | Title | Result | Source Files | Notes |
+|----|-------|--------|--------------|-------|
+HEADER
+
+# Track stats
+total=0
+has_source=0
+no_source=0
+errors=0
+
+while IFS='|' read -r pr_num title; do
+    total=$((total + 1))
+    echo -n "[$total/$LIMIT] PR #$pr_num: "
+    
+    # Run dry-run and capture output
+    tmpfile=$(mktemp)
+    if "$SCRIPT_DIR/docs-suggest" --pr "$pr_num" --dry-run 2>"$tmpfile.err" >"$tmpfile.out"; then
+        # Check if it found source files
+        if grep -q "No documentation-relevant changes" "$tmpfile.out"; then
+            result="No source changes"
+            no_source=$((no_source + 1))
+            source_count="0"
+            echo "skipped (no source)"
+        else
+            # Extract source file count from verbose output
+            source_count=$(grep -oE '[0-9]+ source' "$tmpfile.err" 2>/dev/null | grep -oE '[0-9]+' || echo "?")
+            result="Has source changes"
+            has_source=$((has_source + 1))
+            echo "has $source_count source files"
+        fi
+        notes=""
+    else
+        result="Error"
+        errors=$((errors + 1))
+        source_count="-"
+        notes=$(head -1 "$tmpfile.err" 2>/dev/null || echo "unknown error")
+        echo "error"
+    fi
+    
+    # Escape title for markdown table
+    title_escaped=$(echo "$title" | sed 's/|/\\|/g' | cut -c1-60)
+    
+    # Add row to table
+    echo "| [#$pr_num](https://github.com/zed-industries/zed/pull/$pr_num) | $title_escaped | $result | $source_count | $notes |" >> "$OUTPUT"
+    
+    rm -f "$tmpfile" "$tmpfile.out" "$tmpfile.err"
+done <<< "$PRS"
+
+# Add summary stats
+cat >> "$OUTPUT" << STATS
+
+## Statistics
+
+- **Total PRs**: $total
+- **With source changes**: $has_source ($(( has_source * 100 / total ))%)
+- **No source changes**: $no_source ($(( no_source * 100 / total ))%)
+- **Errors**: $errors
+
+## Observations
+
+_Add manual observations here after reviewing results._
+
+## Sample Contexts
+
+STATS
+
+# Add 3 sample contexts from PRs with source changes
+echo "" >> "$OUTPUT"
+echo "### Sample 1: PR with source changes" >> "$OUTPUT"
+echo "" >> "$OUTPUT"
+
+sample_pr=$(gh pr list --state merged --limit 20 --json number --jq '.[].number' | while read pr; do
+    if "$SCRIPT_DIR/docs-suggest" --pr "$pr" --dry-run 2>/dev/null | grep -q "## Code Diff"; then
+        echo "$pr"
+        break
+    fi
+done)
+
+if [[ -n "$sample_pr" ]]; then
+    echo "PR #$sample_pr:" >> "$OUTPUT"
+    echo "" >> "$OUTPUT"
+    echo '```' >> "$OUTPUT"
+    "$SCRIPT_DIR/docs-suggest" --pr "$sample_pr" --dry-run 2>/dev/null | head -100 >> "$OUTPUT"
+    echo '```' >> "$OUTPUT"
+fi
+
+echo ""
+echo "Done! Results written to: $OUTPUT"
+echo ""
+echo "Stats: $has_source with source changes, $no_source without, $errors errors"

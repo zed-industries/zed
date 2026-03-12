@@ -4,7 +4,7 @@ use serde_json::Value;
 use crate::migrations::migrate_settings;
 
 pub fn migrate_experimental_sweep_mercury(value: &mut Value) -> Result<()> {
-    migrate_settings(value, |obj| {
+    migrate_settings(value, &mut |obj| {
         migrate_one(obj);
         Ok(())
     })

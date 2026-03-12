@@ -4,7 +4,7 @@ use anyhow::Context as _;
 use aws_sdk_s3::presigning::PresigningConfig;
 use axum::{
     Extension, Json, Router,
-    extract::{Path, Query, RawQuery},
+    extract::{Path, Query},
     http::StatusCode,
     response::Redirect,
     routing::get,
@@ -19,7 +19,6 @@ use util::{ResultExt, maybe};
 
 pub fn router() -> Router {
     Router::new()
-        .route("/extensions", get(get_extensions))
         .route("/extensions/updates", get(get_extension_updates))
         .route("/extensions/:extension_id", get(get_extension_versions))
         .route(
@@ -30,52 +29,6 @@ pub fn router() -> Router {
             "/extensions/:extension_id/:version/download",
             get(download_extension),
         )
-}
-
-const UPSTREAM_EXTENSIONS_URL: &str = "https://cloud.zed.dev/extensions";
-
-async fn get_extensions(RawQuery(query): RawQuery) -> Result<Json<GetExtensionsResponse>> {
-    let upstream_url = match query {
-        Some(query) => format!("{UPSTREAM_EXTENSIONS_URL}?{query}"),
-        None => UPSTREAM_EXTENSIONS_URL.to_string(),
-    };
-
-    let response = reqwest::get(&upstream_url).await.map_err(|error| {
-        tracing::error!(
-            ?error,
-            "failed to proxy request to upstream extensions service"
-        );
-        Error::http(
-            StatusCode::BAD_GATEWAY,
-            "upstream extensions service unavailable".into(),
-        )
-    })?;
-
-    let status = response.status();
-    if !status.is_success() {
-        let upstream_status =
-            StatusCode::from_u16(status.as_u16()).unwrap_or(StatusCode::BAD_GATEWAY);
-        let body = response.text().await.unwrap_or_default();
-        tracing::error!(
-            status = status.as_u16(),
-            body,
-            "upstream extensions service returned an error"
-        );
-        return Err(Error::http(upstream_status, body));
-    }
-
-    let body: GetExtensionsResponse = response.json().await.map_err(|error| {
-        tracing::error!(
-            ?error,
-            "failed to parse response from upstream extensions service"
-        );
-        Error::http(
-            StatusCode::BAD_GATEWAY,
-            "failed to parse upstream response".into(),
-        )
-    })?;
-
-    Ok(Json(body))
 }
 
 #[derive(Debug, Deserialize)]

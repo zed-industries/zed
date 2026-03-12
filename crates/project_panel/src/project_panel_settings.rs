@@ -35,6 +35,7 @@ pub struct ProjectPanelSettings {
     pub drag_and_drop: bool,
     pub auto_open: AutoOpenSettings,
     pub sort_mode: ProjectPanelSortMode,
+    pub diagnostic_badges: bool,
 }
 
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
@@ -96,6 +97,7 @@ impl Settings for ProjectPanelSettings {
             git_status: project_panel.git_status.unwrap()
                 && content
                     .git
+                    .as_ref()
                     .unwrap()
                     .enabled
                     .unwrap()
@@ -124,9 +126,8 @@ impl Settings for ProjectPanelSettings {
                     on_drop: auto_open.on_drop.unwrap(),
                 }
             },
-            sort_mode: project_panel
-                .sort_mode
-                .unwrap_or(ProjectPanelSortMode::DirectoriesFirst),
+            sort_mode: project_panel.sort_mode.unwrap(),
+            diagnostic_badges: project_panel.diagnostic_badges.unwrap(),
         }
     }
 }

@@ -508,7 +508,8 @@ impl ExtensionImports for WasmState {
 
             let destination_path = self
                 .host
-                .writeable_path_from_extension(&self.manifest.id, &path)?;
+                .writeable_path_from_extension(&self.manifest.id, &path)
+                .await?;
 
             let mut response = self
                 .host
@@ -565,7 +566,8 @@ impl ExtensionImports for WasmState {
     async fn make_file_executable(&mut self, path: String) -> wasmtime::Result<Result<(), String>> {
         let path = self
             .host
-            .writeable_path_from_extension(&self.manifest.id, Path::new(&path))?;
+            .writeable_path_from_extension(&self.manifest.id, Path::new(&path))
+            .await?;
 
         make_file_executable(&path)
             .await

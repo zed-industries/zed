@@ -1,8 +1,12 @@
 use crate::{PlatformDispatcher, Priority, RunnableVariant};
+use scheduler::Instant;
 use scheduler::{Clock, Scheduler, SessionId, TestScheduler, TestSchedulerConfig, Yield};
 use std::{
-    sync::Arc,
-    time::{Duration, Instant},
+    sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    },
+    time::Duration,
 };
 
 /// TestDispatcher provides deterministic async execution for tests.
@@ -13,6 +17,7 @@ use std::{
 pub struct TestDispatcher {
     session_id: SessionId,
     scheduler: Arc<TestScheduler>,
+    num_cpus_override: Arc<AtomicUsize>,
 }
 
 impl TestDispatcher {
@@ -31,6 +36,7 @@ impl TestDispatcher {
         TestDispatcher {
             session_id,
             scheduler,
+            num_cpus_override: Arc::new(AtomicUsize::new(0)),
         }
     }
 
@@ -40,6 +46,10 @@ impl TestDispatcher {
 
     pub fn session_id(&self) -> SessionId {
         self.session_id
+    }
+
+    pub fn drain_tasks(&self) {
+        self.scheduler.drain_tasks();
     }
 
     pub fn advance_clock(&self, by: Duration) {
@@ -65,6 +75,20 @@ impl TestDispatcher {
     pub fn run_until_parked(&self) {
         while self.tick(false) {}
     }
+
+    /// Override the value returned by `BackgroundExecutor::num_cpus()` in tests.
+    /// A value of 0 means no override (the default of 4 is used).
+    pub fn set_num_cpus(&self, count: usize) {
+        self.num_cpus_override.store(count, Ordering::SeqCst);
+    }
+
+    /// Returns the overridden CPU count, or `None` if no override is set.
+    pub fn num_cpus_override(&self) -> Option<usize> {
+        match self.num_cpus_override.load(Ordering::SeqCst) {
+            0 => None,
+            n => Some(n),
+        }
+    }
 }
 
 impl Clone for TestDispatcher {
@@ -73,6 +97,7 @@ impl Clone for TestDispatcher {
         Self {
             session_id,
             scheduler: self.scheduler.clone(),
+            num_cpus_override: self.num_cpus_override.clone(),
         }
     }
 }
@@ -82,8 +107,13 @@ impl PlatformDispatcher for TestDispatcher {
         Vec::new()
     }
 
-    fn get_current_thread_timings(&self) -> Vec<crate::TaskTiming> {
-        Vec::new()
+    fn get_current_thread_timings(&self) -> crate::ThreadTaskTimings {
+        crate::ThreadTaskTimings {
+            thread_name: None,
+            thread_id: std::thread::current().id(),
+            timings: Vec::new(),
+            total_pushed: 0,
+        }
     }
 
     fn is_main_thread(&self) -> bool {

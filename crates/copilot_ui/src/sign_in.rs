@@ -35,7 +35,7 @@ pub fn initiate_sign_out(copilot: Entity<Copilot>, window: &mut Window, cx: &mut
                 cx.update(|window, cx| copilot_toast(Some("Signed out of Copilot"), window, cx))
             }
             Err(err) => cx.update(|window, cx| {
-                if let Some(workspace) = window.root::<Workspace>().flatten() {
+                if let Some(workspace) = Workspace::for_window(window, cx) {
                     workspace.update(cx, |workspace, cx| {
                         workspace.show_error(&err, cx);
                     })
@@ -82,7 +82,7 @@ fn open_copilot_code_verification_window(copilot: &Entity<Copilot>, window: &Win
 fn copilot_toast(message: Option<&'static str>, window: &Window, cx: &mut App) {
     const NOTIFICATION_ID: NotificationId = NotificationId::unique::<CopilotStatusToast>();
 
-    let Some(workspace) = window.root::<Workspace>().flatten() else {
+    let Some(workspace) = Workspace::for_window(window, cx) else {
         return;
     };
 
