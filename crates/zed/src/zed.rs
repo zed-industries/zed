@@ -1071,38 +1071,48 @@ fn register_actions(
                     return;
                 };
                 if let Some(app_state) = app_state.upgrade() {
-                    let remove_task = workspace.remove_from_session(window, cx);
-                    cx.spawn_in(window, async move |_, cx| {
-                        remove_task.await;
-                        let task = cx.update(|_window, cx| {
-                            open_new(
-                                workspace::OpenOptions {
-                                    replace_window: Some(window_handle),
-                                    ..Default::default()
-                                },
-                                app_state,
-                                cx,
-                                |workspace, window, cx| {
-                                    cx.activate(true);
-                                    // Create buffer synchronously to avoid flicker
-                                    let project = workspace.project().clone();
-                                    let buffer = project.update(cx, |project, cx| {
-                                        project.create_local_buffer("", None, true, cx)
-                                    });
-                                    let editor = cx.new(|cx| {
-                                        Editor::for_buffer(buffer, Some(project), window, cx)
-                                    });
-                                    workspace.add_item_to_active_pane(
-                                        Box::new(editor),
-                                        None,
-                                        true,
-                                        window,
-                                        cx,
-                                    );
-                                },
-                            )
-                        })?;
-                        task.await
+                    cx.spawn_in(window, async move |this, cx| {
+                        let should_continue = this
+                            .update_in(cx, |workspace, window, cx| {
+                                workspace.prepare_to_close(
+                                    CloseIntent::ReplaceWindow,
+                                    window,
+                                    cx,
+                                )
+                            })?
+                            .await?;
+                        if should_continue {
+                            let task = cx.update(|_window, cx| {
+                                open_new(
+                                    workspace::OpenOptions {
+                                        replace_window: Some(window_handle),
+                                        ..Default::default()
+                                    },
+                                    app_state,
+                                    cx,
+                                    |workspace, window, cx| {
+                                        cx.activate(true);
+                                        let project = workspace.project().clone();
+                                        let buffer = project.update(cx, |project, cx| {
+                                            project.create_local_buffer("", None, true, cx)
+                                        });
+                                        let editor = cx.new(|cx| {
+                                            Editor::for_buffer(buffer, Some(project), window, cx)
+                                        });
+                                        workspace.add_item_to_active_pane(
+                                            Box::new(editor),
+                                            None,
+                                            true,
+                                            window,
+                                            cx,
+                                        );
+                                    },
+                                )
+                            })?;
+                            task.await
+                        } else {
+                            Ok(())
+                        }
                     })
                     .detach_and_log_err(cx);
                 }
