@@ -15,6 +15,9 @@ The path referencing the snippet must be relative to the `extensions.toml`.
 
 A given extension may provide one or more snippets. Each snippet must be registered in the `extension.toml`.
 
+Zed matches snippet files based on the lowercase name of the language (e.g. `rust.json` for Rust).
+You can use the `snippets.json` file to define global snippets.
+
 For example, here is an extension that provides two snippets for `rust` and `typescript`:
 
 ```toml
