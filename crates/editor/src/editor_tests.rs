@@ -13637,6 +13637,85 @@ async fn setup_range_format_test(
     (project, editor, cx, fake_server)
 }
 
+async fn setup_css_format_test(
+    capabilities: lsp::ServerCapabilities,
+    cx: &mut TestAppContext,
+) -> (
+    Entity<Project>,
+    Entity<Editor>,
+    &mut gpui::VisualTestContext,
+    lsp::FakeLanguageServer,
+) {
+    init_test(cx, |settings| {
+        settings.defaults.formatter = Some(FormatterList::Single(Formatter::LanguageServer(
+            settings::LanguageServerFormatterSpecifier::Current,
+        )))
+    });
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_file(path!("/file.css"), Default::default()).await;
+
+    let project = Project::test(fs, [path!("/").as_ref()], cx).await;
+
+    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+    language_registry.add(Arc::new(Language::new(
+        LanguageConfig {
+            name: "CSS".into(),
+            matcher: LanguageMatcher {
+                path_suffixes: vec!["css".to_string()],
+                ..Default::default()
+            },
+            ..LanguageConfig::default()
+        },
+        None,
+    )));
+
+    let mut fake_servers = language_registry.register_fake_lsp(
+        "CSS",
+        FakeLspAdapter {
+            name: "vscode-css-language-server",
+            capabilities,
+            ..Default::default()
+        },
+    );
+
+    update_test_project_settings(cx, &|project_settings| {
+        project_settings.lsp.0.insert(
+            "vscode-css-language-server".into(),
+            LspSettings {
+                binary: None,
+                initialization_options: None,
+                settings: Some(json!({
+                    "css": {
+                        "format": {
+                            "spaceAroundSelectorSeparator": true,
+                            "newlineBetweenSelectors": false,
+                        }
+                    }
+                })),
+                enable_lsp_tasks: true,
+                fetch: None,
+            },
+        );
+    });
+
+    let buffer = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer(path!("/file.css"), cx)
+        })
+        .await
+        .unwrap();
+
+    let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
+    let (editor, cx) = cx.add_window_view(|window, cx| {
+        build_editor_with_project(project.clone(), buffer, window, cx)
+    });
+
+    let fake_server = fake_servers.next().await.unwrap();
+
+    (project, editor, cx, fake_server)
+}
+
 #[gpui::test]
 async fn test_range_format_on_save_success(cx: &mut TestAppContext) {
     let (project, editor, cx, fake_server) = setup_range_format_test(cx).await;
@@ -13916,6 +13995,104 @@ async fn test_document_format_manual_trigger(cx: &mut TestAppContext) {
         editor.update(cx, |editor, cx| editor.text(cx)),
         "one\ntwo\nthree\n"
     );
+}
+
+#[gpui::test]
+async fn test_css_document_formatting_forwards_server_format_settings(cx: &mut TestAppContext) {
+    let (project, editor, cx, fake_server) = setup_css_format_test(
+        lsp::ServerCapabilities {
+            document_formatting_provider: Some(lsp::OneOf::Left(true)),
+            ..Default::default()
+        },
+        cx,
+    )
+    .await;
+
+    editor.update_in(cx, |editor, window, cx| {
+        editor.set_text("body>main {}\n", window, cx)
+    });
+
+    let format = editor
+        .update_in(cx, |editor, window, cx| {
+            editor.perform_format(
+                project,
+                FormatTrigger::Manual,
+                FormatTarget::Buffers(editor.buffer().read(cx).all_buffers()),
+                window,
+                cx,
+            )
+        })
+        .unwrap();
+
+    fake_server
+        .set_request_handler::<lsp::request::Formatting, _, _>(move |params, _| async move {
+            assert_eq!(params.options.tab_size, 4);
+            assert_eq!(
+                params
+                    .options
+                    .properties
+                    .get("spaceAroundSelectorSeparator"),
+                Some(&lsp::FormattingProperty::Bool(true))
+            );
+            assert_eq!(
+                params.options.properties.get("newlineBetweenSelectors"),
+                Some(&lsp::FormattingProperty::Bool(false))
+            );
+            Ok(Some(Vec::new()))
+        })
+        .next()
+        .await;
+
+    format.await;
+}
+
+#[gpui::test]
+async fn test_css_range_formatting_forwards_server_format_settings(cx: &mut TestAppContext) {
+    let (project, editor, cx, fake_server) = setup_css_format_test(
+        lsp::ServerCapabilities {
+            document_range_formatting_provider: Some(lsp::OneOf::Left(true)),
+            ..Default::default()
+        },
+        cx,
+    )
+    .await;
+
+    editor.update_in(cx, |editor, window, cx| {
+        editor.set_text("body>main {}\n", window, cx)
+    });
+
+    let format = editor
+        .update_in(cx, |editor, window, cx| {
+            editor.perform_format(
+                project,
+                FormatTrigger::Manual,
+                FormatTarget::Buffers(editor.buffer().read(cx).all_buffers()),
+                window,
+                cx,
+            )
+        })
+        .unwrap();
+
+    fake_server
+        .set_request_handler::<lsp::request::RangeFormatting, _, _>(move |params, _| async move {
+            assert_eq!(params.options.tab_size, 4);
+            assert_eq!(
+                params
+                    .options
+                    .properties
+                    .get("spaceAroundSelectorSeparator"),
+                Some(&lsp::FormattingProperty::Bool(true))
+            );
+            assert_eq!(
+                params.options.properties.get("newlineBetweenSelectors"),
+                Some(&lsp::FormattingProperty::Bool(false))
+            );
+            Ok(Some(Vec::new()))
+        })
+        .next()
+        .await;
+
+    format.await;
 }
 
 #[gpui::test]
