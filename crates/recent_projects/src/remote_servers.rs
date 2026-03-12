@@ -499,11 +499,30 @@ impl ProjectPicker {
                         })
                         .log_err()?;
 
+                    let connection_opts_for_release = connection.clone();
                     let items = open_remote_project_with_existing_connection(
                         connection, project, paths, app_state, window, cx,
                     )
                     .await
                     .log_err();
+
+                    // Register an on_release hook so that closing the workspace window
+                    // decrements the ConnectionPool workspace_count (or removes the
+                    // persistent entry when the count reaches zero).  Without this,
+                    // workspace_count grows monotonically because release() is only
+                    // called from the "Disconnect" UI button or on_app_quit.
+                    window
+                        .update(cx, |multi_workspace, _, cx| {
+                            multi_workspace.workspace().update(cx, |_, cx| {
+                                cx.on_release(move |_, cx| {
+                                    cx.update_global(|pool: &mut ConnectionPool, _| {
+                                        pool.release(&connection_opts_for_release);
+                                    });
+                                })
+                                .detach();
+                            });
+                        })
+                        .log_err();
 
                     if let Some(items) = items {
                         for (item, path) in items.into_iter().zip(paths_with_positions) {
@@ -748,7 +767,7 @@ enum ViewServerOptionsState {
     Wsl {
         connection: WslConnectionOptions,
         server_index: WslServerIndex,
-        entries: [NavigableEntry; 3],
+        entries: Vec<NavigableEntry>,
     },
 }
 
@@ -1118,10 +1137,20 @@ impl RemoteServerProjects {
                 }
             }
             (ServerIndex::Wsl(server_index), RemoteConnectionOptions::Wsl(connection)) => {
+                // Allocate 3 entries when persistent (Remove + Disconnect + Go Back),
+                // 2 otherwise (Remove + Go Back).  This prevents an invisible focus
+                // target from existing in the Navigable keyboard sequence when the
+                // distro is not yet persistent.
+                let is_persistent = cx.try_global::<ConnectionPool>().is_some_and(|pool| {
+                    pool.is_persistent(&RemoteConnectionOptions::Wsl(connection.clone()))
+                });
+                let entry_count = if is_persistent { 3 } else { 2 };
                 ViewServerOptionsState::Wsl {
                     connection,
                     server_index,
-                    entries: std::array::from_fn(|_| NavigableEntry::focusable(cx)),
+                    entries: (0..entry_count)
+                        .map(|_| NavigableEntry::focusable(cx))
+                        .collect(),
                 }
             }
             _ => {
