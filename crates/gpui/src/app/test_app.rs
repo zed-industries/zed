@@ -367,7 +367,7 @@ impl<V: 'static + Render> TestAppWindow<V> {
             .and_then(|w| w.root.clone())
             .and_then(|r| r.downcast::<V>().ok())
             .expect("window or root view not found");
-        f(view.read(&*app), &*app)
+        f(view.read(&app), &app)
     }
 
     /// Get the window title.

@@ -1481,20 +1481,6 @@ impl MetalRenderer {
     }
 }
 
-fn new_command_encoder<'a>(
-    command_buffer: &'a metal::CommandBufferRef,
-    drawable: &'a metal::MetalDrawableRef,
-    viewport_size: Size<DevicePixels>,
-    configure_color_attachment: impl Fn(&RenderPassColorAttachmentDescriptorRef),
-) -> &'a metal::RenderCommandEncoderRef {
-    new_command_encoder_for_texture(
-        command_buffer,
-        drawable.texture(),
-        viewport_size,
-        configure_color_attachment,
-    )
-}
-
 fn new_command_encoder_for_texture<'a>(
     command_buffer: &'a metal::CommandBufferRef,
     texture: &'a metal::TextureRef,
