@@ -2900,6 +2900,56 @@ fn test_language_at_for_markdown_code_block(cx: &mut App) {
 }
 
 #[gpui::test]
+fn test_runnable_ranges_skip_markdown_code_blocks(cx: &mut App) {
+    init_settings(cx, |_| {});
+
+    cx.new(|cx| {
+        let rust_source = indoc! {r#"
+            #[test]
+            fn foo() {}
+        "#};
+        let rust_buffer = Buffer::local(rust_source, cx).with_language(rust_lang(), cx);
+        let rust_snapshot = rust_buffer.snapshot();
+        assert_eq!(
+            rust_snapshot.runnable_ranges(0..rust_source.len()).count(),
+            1
+        );
+
+        let markdown_source = indoc! {r#"
+            ```rust
+            #[test]
+            fn foo() {}
+            ```
+        "#};
+        let language_registry = Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
+        language_registry.add(markdown_lang());
+        language_registry.add(Arc::new(markdown_inline_lang()));
+        language_registry.add(rust_lang());
+
+        let mut markdown_buffer = Buffer::local(markdown_source, cx);
+        markdown_buffer.set_language_registry(language_registry.clone());
+        markdown_buffer.set_language(
+            language_registry
+                .language_for_name("Markdown")
+                .now_or_never()
+                .unwrap()
+                .ok(),
+            cx,
+        );
+
+        let markdown_snapshot = markdown_buffer.snapshot();
+        assert_eq!(
+            markdown_snapshot
+                .runnable_ranges(0..markdown_source.len())
+                .count(),
+            0
+        );
+
+        markdown_buffer
+    });
+}
+
+#[gpui::test]
 fn test_syntax_layer_at_for_combined_injections(cx: &mut App) {
     init_settings(cx, |_| {});
 
