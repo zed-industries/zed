@@ -20,7 +20,7 @@ use std::collections::{HashMap, HashSet};
 use std::mem;
 use std::path::Path;
 use std::sync::Arc;
-use theme::{ActiveTheme, ThemeSettings};
+use theme::ActiveTheme;
 use ui::{
     AgentThreadStatus, ButtonStyle, HighlightedLabel, IconButtonShape, ListItem, Tab, ThreadItem,
     Tooltip, WithScrollbar, prelude::*,
