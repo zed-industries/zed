@@ -55,7 +55,7 @@ impl WebSearchProvider for CloudWebSearchProvider {
             .user_store
             .read(cx)
             .current_organization()
-            .map(|o| o.id.clone());
+            .map(|organization| organization.id.clone());
         let body = WebSearchBody { query };
         cx.background_spawn(async move {
             perform_web_search(client, llm_api_token, organization_id, body).await
