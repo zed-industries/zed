@@ -364,8 +364,9 @@ impl Anchor {
         }
     }
 
-    // todo!() this could be replaced by to_excerpt_anchor
-    pub fn to_singleton_anchor(&self, buffer: &BufferSnapshot) -> text::Anchor {
+    /// Returns the text anchor for this anchor.
+    /// Panics if the anchor is from a different buffer.
+    pub fn text_anchor_in(&self, buffer: &BufferSnapshot) -> text::Anchor {
         match self {
             Anchor::Min => text::Anchor::min_for_buffer(buffer.remote_id()),
             Anchor::Excerpt(excerpt_anchor) => {
@@ -377,11 +378,20 @@ impl Anchor {
         }
     }
 
-    pub fn to_excerpt_anchor(
-        &self,
-        buffer_snapshot: &MultiBufferSnapshot,
-    ) -> Option<ExcerptAnchor> {
-        todo!()
+    pub fn text_anchor(&self, buffer_snapshot: &MultiBufferSnapshot) -> Option<text::Anchor> {
+        match self {
+            Anchor::Min => Some(text::Anchor::min_for_buffer(
+                buffer_snapshot.excerpts.first()?.buffer_id,
+            )),
+            Anchor::Excerpt(excerpt_anchor) => Some(excerpt_anchor.text_anchor()),
+            Anchor::Max => Some(text::Anchor::max_for_buffer(
+                buffer_snapshot.excerpts.last()?.buffer_id,
+            )),
+        }
+    }
+
+    pub fn diff_base_anchor(&self) -> Option<text::Anchor> {
+        self.excerpt_anchor()?.diff_base_anchor
     }
 }
 

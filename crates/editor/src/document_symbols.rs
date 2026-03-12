@@ -75,9 +75,7 @@ impl Editor {
         cx: &Context<Self>,
     ) -> Option<(BufferId, Vec<OutlineItem<Anchor>>)> {
         let excerpt = multi_buffer_snapshot.excerpt_for_position(cursor)?;
-        let cursor_text_anchor = cursor
-            .to_excerpt_anchor(multi_buffer_snapshot)?
-            .text_anchor();
+        let cursor_text_anchor = cursor.text_anchor(multi_buffer_snapshot)?.text_anchor();
         let all_items = self.lsp_document_symbols.get(&excerpt.buffer_id())?;
         if all_items.is_empty() {
             return None;

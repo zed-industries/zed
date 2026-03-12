@@ -71,13 +71,13 @@ pub(super) fn refresh_linked_ranges(
                     let cursor_position = selection.head();
                     let Some(start_position) = snapshot
                         .anchor_before(cursor_position)
-                        .to_excerpt_anchor(snapshot)
+                        .text_anchor(snapshot)
                     else {
                         continue;
                     };
                     let Some(end_position) = snapshot
                         .anchor_after(selection.tail())
-                        .to_excerpt_anchor(snapshot)
+                        .text_anchor(snapshot)
                     else {
                         continue;
                     };

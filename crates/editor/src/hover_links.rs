@@ -323,7 +323,7 @@ pub fn show_link_definition(
     }
 
     let anchor = trigger_point.anchor().bias_left(snapshot.buffer_snapshot());
-    let Some(anchor) = anchor.to_excerpt_anchor(snapshot.buffer_snapshot()) else {
+    let Some(anchor) = anchor.text_anchor(snapshot.buffer_snapshot()) else {
         return;
     };
     let Some(buffer) = editor

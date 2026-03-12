@@ -2001,10 +2001,10 @@ impl Editor {
         };
 
         let buffer = excerpt.buffer_snapshot().clone();
-        let Some(buffer_visible_start) = scroll_anchor.to_excerpt_anchor(multi_buffer) else {
+        let Some(buffer_visible_start) = scroll_anchor.text_anchor(multi_buffer) else {
             return;
         };
-        let buffer_visible_start = buffer_visible_start.text_anchor().to_point(buffer);
+        let buffer_visible_start = buffer_visible_start.text_anchor().to_point(&buffer);
         let max_row = buffer.max_point().row;
         let start_row = buffer_visible_start.row.min(max_row);
         let end_row = (buffer_visible_start.row + 10).min(max_row);
@@ -3652,11 +3652,8 @@ impl Editor {
             let inmemory_selections = selections
                 .iter()
                 .map(|s| {
-                    let start = s
-                        .range()
-                        .start
-                        .to_singleton_anchor(excerpt.buffer_snapshot());
-                    let end = s.range().end.to_singleton_anchor(excerpt.buffer_snapshot());
+                    let start = s.range().start.text_anchor_in(excerpt.buffer_snapshot());
+                    let end = s.range().end.text_anchor_in(excerpt.buffer_snapshot());
                     (start..end).to_point(excerpt.buffer_snapshot())
                 })
                 .collect();
@@ -3724,14 +3721,8 @@ impl Editor {
         let inmemory_folds = display_snapshot
             .folds_in_range(MultiBufferOffset(0)..display_snapshot.buffer_snapshot().len())
             .map(|fold| {
-                let start = fold
-                    .range
-                    .start
-                    .to_singleton_anchor(singleton.buffer_snapshot());
-                let end = fold
-                    .range
-                    .end
-                    .to_singleton_anchor(singleton.buffer_snapshot());
+                let start = fold.range.start.text_anchor_in(singleton.buffer_snapshot());
+                let end = fold.range.end.text_anchor_in(singleton.buffer_snapshot());
                 (start..end).to_point(singleton.buffer_snapshot())
             })
             .collect();
@@ -3759,12 +3750,12 @@ impl Editor {
                 let start = fold
                     .range
                     .start
-                    .to_singleton_anchor(singleton.buffer_snapshot())
+                    .text_anchor_in(singleton.buffer_snapshot())
                     .to_offset(singleton.buffer_snapshot());
                 let end = fold
                     .range
                     .end
-                    .to_singleton_anchor(singleton.buffer_snapshot())
+                    .text_anchor_in(singleton.buffer_snapshot())
                     .to_offset(singleton.buffer_snapshot());
 
                 // Extract fingerprints - content at fold boundaries for validation on restore
@@ -4587,10 +4578,10 @@ impl Editor {
                 continue;
             }
             if self.selections.disjoint_anchor_ranges().any(|s| {
-                let Some(selection_start) = s.start.to_excerpt_anchor(&multibuffer_snapshot) else {
+                let Some(selection_start) = s.start.text_anchor(&multibuffer_snapshot) else {
                     return false;
                 };
-                let Some(selection_end) = s.end.to_excerpt_anchor(&multibuffer_snapshot) else {
+                let Some(selection_end) = s.end.text_anchor(&multibuffer_snapshot) else {
                     return false;
                 };
                 if selection_start.text_anchor().buffer_id != query_range.start.buffer_id
@@ -4922,8 +4913,8 @@ impl Editor {
                     .char_classifier_at(start_anchor)
                     .scope_context(Some(CharScopeContext::LinkedEdit));
 
-                if let Some(start_anchor) = start_anchor.to_excerpt_anchor(&snapshot)
-                    && let Some(anchor) = anchor.to_excerpt_anchor(&snapshot)
+                if let Some(start_anchor) = start_anchor.text_anchor(&snapshot)
+                    && let Some(anchor) = anchor.text_anchor(&snapshot)
                 {
                     let is_word_char = text
                         .chars()
@@ -5540,19 +5531,12 @@ impl Editor {
         let mut linked_edits = LinkedEdits::new();
         if !self.linked_edit_ranges.is_empty() {
             for selection in self.selections.disjoint_anchors() {
-                // todo!() a way to get these selections as excerpt anchor directly?
-                let Some(start) = selection.start.to_excerpt_anchor(&multibuffer_snapshot) else {
+                let Some((_, range)) =
+                    multibuffer_snapshot.anchor_range_to_buffer_anchor_range(selection.range())
+                else {
                     continue;
                 };
-                let Some(end) = selection.end.to_excerpt_anchor(&multibuffer_snapshot) else {
-                    continue;
-                };
-                linked_edits.push(
-                    self,
-                    start.text_anchor()..end.text_anchor(),
-                    text.clone(),
-                    cx,
-                );
+                linked_edits.push(self, range, text.clone(), cx);
             }
         }
         linked_edits
@@ -5968,9 +5952,7 @@ impl Editor {
             .start
             .bias_right(&multibuffer_snapshot);
 
-        if let Some(position) = position.to_excerpt_anchor(&multibuffer_snapshot)
-            && position.diff_base_anchor().is_some()
-        {
+        if position.diff_base_anchor().is_some() {
             return;
         }
         let buffer_position = multibuffer_snapshot.anchor_before(position);
@@ -6501,42 +6483,42 @@ impl Editor {
         cx.stop_propagation();
 
         let buffer_handle = completions_menu.buffer.clone();
+        let multibuffer_snapshot = self.buffer.read(cx).snapshot(cx);
+        let initial_position =
+            multibuffer_snapshot.anchor_to_buffer_anchor(completions_menu.initial_position)?;
 
         let CompletionEdit {
             new_text,
             snippet,
             replace_range,
-        } = process_completion_for_edit(
-            &completion,
-            intent,
-            &buffer_handle,
-            &completions_menu.initial_position.text_anchor,
-            cx,
-        );
+        } = process_completion_for_edit(&completion, intent, &buffer_handle, &initial_position, cx);
 
         let buffer = buffer_handle.read(cx);
-        let snapshot = self.buffer.read(cx).snapshot(cx);
-        let newest_anchor = self.selections.newest_anchor();
-        let replace_range_multibuffer = {
-            let mut excerpt = snapshot.excerpt_containing(newest_anchor.range()).unwrap();
-            excerpt.map_range_from_buffer(replace_range.clone())
-        };
-        if snapshot.buffer_id_for_anchor(newest_anchor.head()) != Some(buffer.remote_id()) {
+        let newest_selection = self.selections.newest_anchor();
+
+        let Some(replace_range_multibuffer) =
+            multibuffer_snapshot.anchor_range_in_buffer(replace_range)
+        else {
             return None;
-        }
+        };
+
+        let Some((buffer_snapshot, newest_range_buffer)) =
+            multibuffer_snapshot.anchor_range_to_buffer_anchor_range(newest_selection.range())
+        else {
+            return None;
+        };
 
         let old_text = buffer
             .text_for_range(replace_range.clone())
             .collect::<String>();
-        let lookbehind = newest_anchor
+        let lookbehind = newest_range_buffer
             .start
-            .text_anchor
-            .to_offset(buffer)
-            .saturating_sub(replace_range.start.0);
+            .to_offset(buffer_snapshot)
+            .saturating_sub(replace_range.start.to_offset(&buffer_snapshot));
         let lookahead = replace_range
             .end
-            .0
-            .saturating_sub(newest_anchor.end.text_anchor.to_offset(buffer));
+            .to_offset(&buffer_snapshot)
+            .saturating_sub(newest_range_buffer.end.to_offset(buffer));
         let prefix = &old_text[..old_text.len().saturating_sub(lookahead)];
         let suffix = &old_text[lookbehind.min(old_text.len())..];
 
@@ -6548,32 +6530,36 @@ impl Editor {
 
         let text: Arc<str> = new_text.clone().into();
         for selection in &selections {
-            let range = if selection.id == newest_anchor.id {
+            let range = if selection.id == newest_selection.id {
                 replace_range_multibuffer.clone()
             } else {
                 let mut range = selection.range();
 
                 // if prefix is present, don't duplicate it
-                if snapshot.contains_str_at(range.start.saturating_sub_usize(lookbehind), prefix) {
+                if multibuffer_snapshot
+                    .contains_str_at(range.start.saturating_sub_usize(lookbehind), prefix)
+                {
                     range.start = range.start.saturating_sub_usize(lookbehind);
 
                     // if suffix is also present, mimic the newest cursor and replace it
-                    if selection.id != newest_anchor.id
-                        && snapshot.contains_str_at(range.end, suffix)
+                    if selection.id != newest_selection.id
+                        && multibuffer_snapshot.contains_str_at(range.end, suffix)
                     {
                         range.end += lookahead;
                     }
                 }
-                range
+                range.to_anchors(&multibuffer_snapshot)
             };
 
             ranges.push(range.clone());
 
             if !self.linked_edit_ranges.is_empty() {
-                let start_anchor = snapshot.anchor_before(range.start);
-                let end_anchor = snapshot.anchor_after(range.end);
-                let anchor_range = start_anchor.text_anchor..end_anchor.text_anchor;
-                linked_edits.push(&self, anchor_range, text.clone(), cx);
+                if let Some((buffer_snapshot_2, anchor_range)) =
+                    multibuffer_snapshot.anchor_range_to_buffer_anchor_range(range)
+                    && buffer_snapshot_2.remote_id() == buffer_snapshot.remote_id()
+                {
+                    linked_edits.push(&self, anchor_range, text.clone(), cx);
+                }
             }
         }
 
@@ -6592,8 +6578,12 @@ impl Editor {
         self.transact(window, cx, |editor, window, cx| {
             if let Some(mut snippet) = snippet {
                 snippet.text = new_text.to_string();
+                let offset_ranges = ranges
+                    .iter()
+                    .map(|range| range.to_offset(&multibuffer_snapshot))
+                    .collect::<Vec<_>>();
                 editor
-                    .insert_snippet(&ranges, snippet, window, cx)
+                    .insert_snippet(&offset_ranges, snippet, window, cx)
                     .log_err();
             } else {
                 editor.buffer.update(cx, |multi_buffer, cx| {
@@ -6608,7 +6598,10 @@ impl Editor {
             linked_edits.apply(cx);
             editor.refresh_edit_prediction(true, false, window, cx);
         });
-        self.invalidate_autoclose_regions(&self.selections.disjoint_anchors_arc(), &snapshot);
+        self.invalidate_autoclose_regions(
+            &self.selections.disjoint_anchors_arc(),
+            &multibuffer_snapshot,
+        );
 
         let show_new_completions_on_confirm = completion
             .confirm
@@ -6644,7 +6637,7 @@ impl Editor {
             if available_commands.contains(&lsp_command.command) {
                 Some(CodeAction {
                     server_id: *server_id,
-                    range: language::Anchor::min_min_range_for_buffer(buffer_id),
+                    range: language::Anchor::min_min_range_for_buffer(buffer.remote_id()),
                     lsp_action: LspAction::Command(lsp_command.clone()),
                     resolved: false,
                 })
@@ -7064,27 +7057,21 @@ impl Editor {
         // avoid opening a new editor to display them.
 
         if let [(buffer, transaction)] = &*entries {
-            let excerpt = editor.update(cx, |editor, cx| {
-                editor
-                    .buffer()
-                    .read(cx)
-                    .excerpt_containing(editor.selections.newest_anchor().head(), cx)
-            })?;
-            if let Some(excerpt) = excerpt
-                && excerpt.buffer_id == buffer.read_with(cx, |buffer, _| buffer.remote_id())
-            {
-                let all_edits_within_excerpt = buffer.read_with(cx, |buffer, _| {
-                    let excerpt_range = excerpt.range.to_offset(buffer);
-                    buffer
-                        .edited_ranges_for_transaction::<usize>(transaction)
-                        .all(|range| {
-                            excerpt_range.start <= range.start && excerpt_range.end >= range.end
-                        })
-                });
+            let multibuffer_snapshot =
+                editor.update(cx, |editor, cx| editor.buffer().read(cx).snapshot(cx))?;
+            let all_edits_within_excerpt = buffer.read_with(cx, |buffer, _| {
+                let buffer_snapshot = buffer.snapshot();
+                buffer
+                    .edited_ranges_for_transaction::<usize>(transaction)
+                    .all(|range| {
+                        multibuffer_snapshot
+                            .excerpt_for_range(buffer_snapshot.anchor_range_around(range))
+                            .is_some()
+                    })
+            });
 
-                if all_edits_within_excerpt {
-                    return Ok(());
-                }
+            if all_edits_within_excerpt {
+                return Ok(());
             }
         }
 
@@ -7231,7 +7218,7 @@ impl Editor {
             let (start_buffer, start, _, end, newest_selection) = this
                 .update(cx, |this, cx| {
                     let newest_selection = this.selections.newest_anchor().clone();
-                    if newest_selection.head().diff_base_anchor.is_some() {
+                    if newest_selection.head().diff_base_anchor().is_some() {
                         return None;
                     }
                     let display_snapshot = this.display_snapshot(cx);
@@ -8302,15 +8289,11 @@ impl Editor {
             .selections
             .newest_anchor()
             .head()
-            .to_excerpt_anchor(&buffer_snapshot)
+            .text_anchor(&buffer_snapshot)
         else {
             return;
         };
-        let Some(buffer) = self
-            .buffer
-            .read(cx)
-            .buffer(position.text_anchor().buffer_id)
-        else {
+        let Some(buffer) = self.buffer.read(cx).buffer(position.buffer_id) else {
             return;
         };
 
@@ -8566,11 +8549,9 @@ impl Editor {
 
         let selection = self.selections.newest_anchor();
         let multibuffer = self.buffer.read(cx).snapshot(cx);
-        let cursor = selection.head().to_excerpt_anchor(&multibuffer)?;
-        let buffer = self
-            .buffer
-            .read(cx)
-            .buffer(cursor.text_anchor().buffer_id)?;
+        let cursor = selection.head();
+        let (buffer_snapshot, cursor_text_anchor) = multibuffer.anchor_to_buffer_anchor(cursor)?;
+        let buffer = self.buffer.read(cx).buffer(cursor_text_anchor.buffer_id)?;
 
         // Check project-level disable_ai setting for the current buffer
         if DisableAiSettings::is_ai_disabled_for_buffer(Some(&buffer), cx) {
@@ -8608,10 +8589,9 @@ impl Editor {
         };
 
         self.edit_prediction_settings =
-            self.edit_prediction_settings_at_position(&buffer, cursor.text_anchor(), cx);
+            self.edit_prediction_settings_at_position(&buffer, cursor_text_anchor, cx);
 
-        self.edit_prediction_indent_conflict =
-            multibuffer.is_line_whitespace_upto(Anchor::from(cursor));
+        self.edit_prediction_indent_conflict = multibuffer.is_line_whitespace_upto(cursor);
 
         if self.edit_prediction_indent_conflict {
             let cursor_point = cursor.to_point(&multibuffer);
@@ -8632,7 +8612,7 @@ impl Editor {
             }
         }
 
-        let edit_prediction = provider.suggest(&buffer, cursor.text_anchor(), cx)?;
+        let edit_prediction = provider.suggest(&buffer, cursor_text_anchor, cx)?;
 
         let (completion_id, edits, predicted_cursor_position, edit_preview) = match edit_prediction
         {
@@ -8673,7 +8653,7 @@ impl Editor {
         }
 
         let cursor_position = predicted_cursor_position.and_then(|predicted| {
-            let anchor = multibuffer.anchor_in_buffer(predicted.anchor)?;
+            let anchor = multibuffer.buffer_anchor_to_anchor(predicted.anchor)?;
             Some((anchor, predicted.offset))
         });
 
@@ -8687,7 +8667,7 @@ impl Editor {
 
         let cursor_row = cursor.to_point(&multibuffer).row;
 
-        let snapshot = multibuffer.buffer_for_excerpt(excerpt_id).cloned()?;
+        let snapshot = multibuffer.buffer(cursor_text_anchor.buffer_id).cloned()?;
 
         let mut inlay_ids = Vec::new();
         let invalidation_row_range;
@@ -9262,7 +9242,7 @@ impl Editor {
             .selections
             .newest_anchor()
             .head()
-            .to_excerpt_anchor(&snapshot)?;
+            .text_anchor(&snapshot)?;
         let buffer = snapshot.buffer_for_id(position.buffer_id())?;
         let offset = position.text_anchor().to_offset(&buffer);
         let layer = buffer.syntax_layer_at(offset)?;
@@ -10172,7 +10152,8 @@ impl Editor {
                             .child(div().px_1p5().child(match &prediction.completion {
                                 EditPrediction::MoveWithin { target, snapshot } => {
                                     use text::ToPoint as _;
-                                    if target.text_anchor.to_point(snapshot).row > cursor_point.row
+                                    if target.text_anchor_in(&snapshot).to_point(snapshot).row
+                                        > cursor_point.row
                                     {
                                         Icon::new(icons.down)
                                     } else {
@@ -10373,21 +10354,18 @@ impl Editor {
                 if !supports_jump {
                     return None;
                 }
-                let target =
-                    target.to_excerpt_anchor(self.display_snapshot(cx).buffer_snapshot())?;
+                let target = target.text_anchor(self.display_snapshot(cx).buffer_snapshot())?;
 
                 Some(
                     h_flex()
                         .px_2()
                         .gap_2()
                         .flex_1()
-                        .child(
-                            if target.text_anchor().to_point(snapshot).row > cursor_point.row {
-                                Icon::new(icons.down)
-                            } else {
-                                Icon::new(icons.up)
-                            },
-                        )
+                        .child(if target.to_point(snapshot).row > cursor_point.row {
+                            Icon::new(icons.down)
+                        } else {
+                            Icon::new(icons.up)
+                        })
                         .child(Label::new("Jump to Edit")),
                 )
             }
@@ -10415,7 +10393,7 @@ impl Editor {
                     .first()?
                     .0
                     .start
-                    .to_excerpt_anchor(&self.display_snapshot(cx))?
+                    .text_anchor(&self.display_snapshot(cx))?
                     .text_anchor()
                     .to_point(snapshot)
                     .row;
@@ -11852,8 +11830,12 @@ impl Editor {
         snapshot: &EditorSnapshot,
         cx: &mut Context<Self>,
     ) -> Option<(Anchor, Breakpoint)> {
-        let breakpoint_position =
-            breakpoint_position.to_excerpt_anchor(snapshot.buffer_snapshot())?;
+        let Some(breakpoint_position) = snapshot
+            .buffer_snapshot()
+            .anchor_to_buffer_anchor(breakpoint_position)
+        else {
+            return None;
+        };
         let buffer = self
             .buffer
             .read(cx)
@@ -11869,7 +11851,7 @@ impl Editor {
         let anchor_end = snapshot
             .buffer_snapshot()
             .anchor_after(Point::new(row, line_len))
-            .to_excerpt_anchor(snapshot.buffer_snapshot())?;
+            .text_anchor(snapshot.buffer_snapshot())?;
 
         self.breakpoint_store
             .as_ref()?
@@ -11890,7 +11872,7 @@ impl Editor {
                         if breakpoint_row == row {
                             snapshot
                                 .buffer_snapshot()
-                                .anchor_in_buffer(bp.position)
+                                .buffer_anchor_to_anchor(bp.position)
                                 .map(|position| (position, bp.bp.clone()))
                         } else {
                             None
@@ -12075,7 +12057,7 @@ impl Editor {
             return;
         };
         let buffer_snapshot = self.buffer.read(cx).snapshot(cx);
-        let Some(excerpt_anchor) = breakpoint_position.to_excerpt_anchor(&buffer_snapshot) else {
+        let Some(excerpt_anchor) = breakpoint_position.text_anchor(&buffer_snapshot) else {
             return;
         };
         let Some(buffer) = self.buffer.read(cx).buffer(excerpt_anchor.buffer_id()) else {
@@ -16866,45 +16848,40 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let old_selections: Box<[_]> = self
-            .selections
-            .all::<MultiBufferOffset>(&self.display_snapshot(cx))
-            .into();
-        if old_selections.is_empty() {
-            return;
-        }
+        let old_selections: Box<[_]> = self.selections.disjoint_anchors().into();
 
         self.hide_mouse_cursor(HideMouseCursorOrigin::MovementAction, cx);
 
-        let buffer = self.buffer.read(cx).snapshot(cx);
+        let multibuffer_snapshot = self.buffer.read(cx).snapshot(cx);
         let mut selected_sibling = false;
 
         let new_selections = old_selections
             .iter()
             .map(|selection| {
-                let old_range = selection.start..selection.end;
-                let old_range =
-                    old_range.start.to_offset(&buffer)..old_range.end.to_offset(&buffer);
-                let excerpt = buffer.excerpt_containing(old_range.clone());
+                let Some((buffer, buffer_range)) =
+                    multibuffer_snapshot.anchor_range_to_buffer_anchor_range(selection.range())
+                else {
+                    return selection.clone();
+                };
 
-                if let Some(mut excerpt) = excerpt
-                    && let Some(node) = excerpt
-                        .buffer()
-                        .syntax_prev_sibling(excerpt.map_range_to_buffer(old_range))
-                {
-                    let new_range = excerpt.map_range_from_buffer(
-                        BufferOffset(node.byte_range().start)..BufferOffset(node.byte_range().end),
-                    );
-                    selected_sibling = true;
-                    Selection {
-                        id: selection.id,
-                        start: new_range.start,
-                        end: new_range.end,
-                        goal: SelectionGoal::None,
-                        reversed: selection.reversed,
-                    }
-                } else {
-                    selection.clone()
+                let Some(node) = buffer.syntax_prev_sibling(buffer_range) else {
+                    return selection.clone();
+                };
+                let new_buffer_range = buffer.anchor_range_around(
+                    BufferOffset(node.byte_range().start)..BufferOffset(node.byte_range().end),
+                );
+                let Some(new_range) =
+                    multibuffer_snapshot.buffer_range_to_anchor_range(new_buffer_range)
+                else {
+                    return selection.clone();
+                };
+                selected_sibling = true;
+                Selection {
+                    id: selection.id,
+                    start: new_range.start,
+                    end: new_range.end,
+                    goal: SelectionGoal::None,
+                    reversed: selection.reversed,
                 }
             })
             .collect::<Vec<_>>();
@@ -17152,7 +17129,7 @@ impl Editor {
                         let buffer_snapshot = buffer.read(cx).snapshot();
                         let offset = display_snapshot
                             .buffer_snapshot()
-                            .anchor_in_buffer(location.target.range.start);
+                            .buffer_anchor_to_anchor(location.target.range.start);
                         if let Some(offset) = offset {
                             let task_buffer_range =
                                 location.target.range.to_point(&buffer_snapshot);
@@ -22862,7 +22839,7 @@ impl Editor {
             let buffer_id = position.buffer_id;
 
             let snapshot = self.buffer.read(cx).snapshot(cx);
-            let multibuffer_anchor = snapshot.anchor_in_buffer(position)?;
+            let multibuffer_anchor = snapshot.buffer_anchor_to_anchor(position)?;
 
             self.clear_row_highlights::<ActiveDebugLine>();
 
@@ -24477,8 +24454,7 @@ impl Editor {
                         .range_to_buffer_ranges_with_deleted_hunks(selection.range())
                     {
                         if let Some(anchor) = anchor {
-                            let Some(excerpt_anchor) =
-                                anchor.to_excerpt_anchor(&multi_buffer_snapshot)
+                            let Some(excerpt_anchor) = anchor.text_anchor(&multi_buffer_snapshot)
                             else {
                                 continue;
                             };
@@ -25799,17 +25775,16 @@ fn process_completion_for_edit(
         range_to_replace.end = *cursor_position;
     }
 
-    let replace_range = range_to_replace.to_offset(buffer);
     CompletionEdit {
         new_text,
-        replace_range: BufferOffset(replace_range.start)..BufferOffset(replace_range.end),
+        replace_range: range_to_replace,
         snippet,
     }
 }
 
 struct CompletionEdit {
     new_text: String,
-    replace_range: Range<BufferOffset>,
+    replace_range: Range<text::Anchor>,
     snippet: Option<Snippet>,
 }
 

@@ -8133,7 +8133,7 @@ pub(crate) fn header_jump_data(
 ) -> JumpData {
     let jump_target = if let Some(anchor) =
         latest_selection_anchors.get(&first_excerpt.buffer.remote_id())
-        && let Some(anchor) = anchor.to_excerpt_anchor(editor_snapshot.buffer_snapshot())
+        && let Some(anchor) = anchor.text_anchor(editor_snapshot.buffer_snapshot())
     {
         JumpTargetInExcerptInput {
             buffer: &first_excerpt.buffer,

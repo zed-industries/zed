@@ -5344,7 +5344,7 @@ impl MultiBufferSnapshot {
     }
 
     /// Creates a multibuffer anchor for the given buffer anchor, if it is contained in any excerpt.
-    pub fn anchor_in_buffer(&self, text_anchor: text::Anchor) -> Option<Anchor> {
+    pub fn buffer_anchor_to_anchor(&self, text_anchor: text::Anchor) -> Option<Anchor> {
         for excerpt in self.excerpts_for_buffer(text_anchor.buffer_id) {
             let buffer_snapshot = excerpt.buffer_snapshot(self);
             if excerpt.range.contains(&text_anchor, &buffer_snapshot) {
@@ -5353,6 +5353,24 @@ impl MultiBufferSnapshot {
         }
 
         None
+    }
+
+    /// Returns a buffer anchor for the given anchor, if it is in the multibuffer.
+    pub fn anchor_to_buffer_anchor(&self, anchor: Anchor) -> Option<text::Anchor> {
+        let mut cursor = self.excerpts.cursor::<ExcerptSummary>(());
+        cursor.seek(&anchor.seek_target(&self), Bias::Left);
+
+        let excerpt = cursor.item()?;
+
+        if let Anchor::Excerpt(excerpt_anchor) = anchor
+            && (excerpt_anchor.path != excerpt.path_key_index
+                || excerpt_anchor.buffer_id() != excerpt.buffer_id)
+        {
+            return None;
+        }
+
+        let buffer_snapshot = excerpt.buffer_snapshot(&self);
+        Some(anchor.text_anchor_in(buffer_snapshot))
     }
 
     pub fn can_resolve(&self, anchor: &Anchor) -> bool {
@@ -6546,7 +6564,34 @@ impl MultiBufferSnapshot {
         &self,
         range: Range<Anchor>,
     ) -> Option<(&BufferSnapshot, Range<text::Anchor>)> {
-        todo!()
+        let mut cursor = self.excerpts.cursor::<ExcerptSummary>(());
+        cursor.seek(&range.start.seek_target(&self), Bias::Left);
+
+        let start_excerpt = cursor.item()?;
+
+        let snapshot = start_excerpt.buffer_snapshot(&self);
+
+        cursor.seek(&range.end.seek_target(&self), Bias::Left);
+
+        let end_excerpt = cursor.item()?;
+
+        if let Anchor::Excerpt(excerpt_anchor) = range.start
+            && (excerpt_anchor.path != start_excerpt.path_key_index
+                || excerpt_anchor.buffer_id() != snapshot.remote_id())
+        {
+            return None;
+        }
+        if let Anchor::Excerpt(excerpt_anchor) = range.end
+            && (excerpt_anchor.path != end_excerpt.path_key_index
+                || excerpt_anchor.buffer_id() != snapshot.remote_id())
+        {
+            return None;
+        }
+
+        Some((
+            snapshot,
+            range.start.text_anchor_in(snapshot)..range.end.text_anchor_in(snapshot),
+        ))
     }
 
     /// Returns the excerpt containing the given multibuffer anchor.
@@ -6560,6 +6605,15 @@ impl MultiBufferSnapshot {
         &self,
         selection: Range<text::Anchor>,
     ) -> Option<MultiBufferExcerpt2<'_>> {
+        todo!()
+    }
+
+    /// Returns all nonempty intersections of the given buffer range with excerpts in the multibuffer in order
+    pub fn buffer_range_to_range<T: text::ToOffset>(
+        &self,
+        range: Range<T>,
+        buffer: &BufferSnapshot,
+    ) -> Option<Range<MultiBufferOffset>> {
         todo!()
     }
 
@@ -7202,7 +7256,7 @@ impl<'a> MultiBufferExcerpt<'a> {
         self.buffer_offset + offset_in_excerpt
     }
 
-    /// Map an offset within the [`Buffer`] to an offset within the [`MultiBuffer`]
+    /// Map an et within the [`Buffer`] to an offset within the [`MultiBuffer`]
     pub fn map_offset_from_buffer(&mut self, buffer_offset: BufferOffset) -> MultiBufferOffset {
         self.map_range_from_buffer(buffer_offset..buffer_offset)
             .start

@@ -41,7 +41,7 @@ where
         .filter_map(|selection| {
             let text_anchor = selection
                 .head()
-                .to_excerpt_anchor(&multibuffer_snapshot)?
+                .text_anchor(&multibuffer_snapshot)?
                 .text_anchor();
             Some((selection.head(), text_anchor))
         })

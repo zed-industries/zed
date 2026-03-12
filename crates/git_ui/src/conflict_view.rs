@@ -282,7 +282,7 @@ fn conflicts_updated(
 
         update_conflict_highlighting(editor, conflict, &snapshot, excerpt_id, cx);
 
-        let Some(anchor) = snapshot.anchor_in_buffer(excerpt_id, conflict.range.start) else {
+        let Some(anchor) = snapshot.buffer_anchor_to_anchor(excerpt_id, conflict.range.start) else {
             continue;
         };
 

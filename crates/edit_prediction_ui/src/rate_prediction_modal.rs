@@ -378,7 +378,7 @@ impl RatePredictionsModal {
                         let cursor_anchor = buffer_snapshot.anchor_after(cursor_offset);
 
                         if let Some(anchor) =
-                            multibuffer_snapshot.anchor_in_buffer(excerpt_id, cursor_anchor)
+                            multibuffer_snapshot.buffer_anchor_to_anchor(excerpt_id, cursor_anchor)
                         {
                             editor.splice_inlays(
                                 &[InlayId::EditPrediction(0)],
