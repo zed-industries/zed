@@ -1249,6 +1249,11 @@ impl App {
         self.platform.compositor_name()
     }
 
+    /// Returns true when the application is exporting its menus to a system-managed global menu.
+    pub fn is_global_menu_active(&self) -> bool {
+        self.platform.is_global_menu_active()
+    }
+
     /// Returns the file URL of the executable with the specified name in the application bundle
     pub fn path_for_auxiliary_executable(&self, name: &str) -> Result<PathBuf> {
         self.platform.path_for_auxiliary_executable(name)

@@ -200,6 +200,14 @@ pub trait Platform: 'static {
     fn compositor_name(&self) -> &'static str {
         ""
     }
+
+    /// Returns true when the application is exporting its menus to a system-managed global menu.
+    ///
+    /// This is used by cross-platform UI code to hide the in-window menu bar when the desktop
+    /// environment provides an app menu (e.g. KDE Plasma's global menu).
+    fn is_global_menu_active(&self) -> bool {
+        false
+    }
     fn app_path(&self) -> Result<PathBuf>;
     fn path_for_auxiliary_executable(&self, name: &str) -> Result<PathBuf>;
 

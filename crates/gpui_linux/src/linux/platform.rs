@@ -117,7 +117,7 @@ pub(crate) struct LinuxCommon {
     pub(crate) callbacks: PlatformHandlers,
     pub(crate) signal: LoopSignal,
     pub(crate) menus: Vec<OwnedMenu>,
-    #[cfg(feature = "wayland")]
+    #[cfg(all(feature = "wayland", feature = "global-menu"))]
     pub(crate) dbus_menu_server: Option<crate::linux::dbusmenu::DBusMenuServer>,
 }
 
@@ -145,7 +145,7 @@ impl LinuxCommon {
             callbacks,
             signal,
             menus: Vec::new(),
-            #[cfg(feature = "wayland")]
+            #[cfg(all(feature = "wayland", feature = "global-menu"))]
             dbus_menu_server: None,
         };
 
@@ -210,6 +210,22 @@ impl<P: LinuxClient + 'static> Platform for LinuxPlatform<P> {
 
     fn compositor_name(&self) -> &'static str {
         self.inner.compositor_name()
+    }
+
+    fn is_global_menu_active(&self) -> bool {
+        #[cfg(all(feature = "wayland", feature = "global-menu"))]
+        {
+            self.inner.with_common(|common| {
+                common
+                    .dbus_menu_server
+                    .as_ref()
+                    .is_some_and(|server| server.is_connected())
+            })
+        }
+        #[cfg(not(all(feature = "wayland", feature = "global-menu")))]
+        {
+            false
+        }
     }
 
     fn restart(&self, binary_path: Option<PathBuf>) {
@@ -507,12 +523,12 @@ impl<P: LinuxClient + 'static> Platform for LinuxPlatform<P> {
         Ok(app_path)
     }
 
-    fn set_menus(&self, menus: Vec<Menu>, _keymap: &Keymap) {
+    fn set_menus(&self, menus: Vec<Menu>, keymap: &Keymap) {
         self.inner.with_common(|common| {
             common.menus = menus.into_iter().map(|menu| menu.owned()).collect();
-            #[cfg(feature = "wayland")]
+            #[cfg(all(feature = "wayland", feature = "global-menu"))]
             if let Some(server) = &common.dbus_menu_server {
-                server.set_menus(common.menus.clone());
+                server.set_menus(common.menus.clone(), keymap);
             }
         })
     }

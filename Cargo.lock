@@ -7658,6 +7658,7 @@ dependencies = [
  "anyhow",
  "as-raw-xcb-connection",
  "ashpd",
+ "async-channel 2.5.0",
  "bitflags 2.10.0",
  "bytemuck",
  "calloop",
@@ -7682,7 +7683,6 @@ dependencies = [
  "smol",
  "strum 0.27.2",
  "swash",
- "tokio",
  "url",
  "util",
  "uuid",
@@ -17695,7 +17695,6 @@ dependencies = [
  "signal-hook-registry",
  "socket2 0.6.1",
  "tokio-macros",
- "tracing",
  "windows-sys 0.61.2",
 ]
 
@@ -21722,7 +21721,6 @@ dependencies = [
  "rustix 1.1.2",
  "serde",
  "serde_repr",
- "tokio",
  "tracing",
  "uds_windows",
  "uuid",
