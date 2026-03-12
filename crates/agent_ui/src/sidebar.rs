@@ -1555,7 +1555,7 @@ impl Sidebar {
         let id = SharedString::from(format!("view-more-{}", ix));
 
         let (icon, label) = if is_fully_expanded {
-            (IconName::ListCollapse, "Collapse List")
+            (IconName::ListCollapse, "Collapse")
         } else {
             (IconName::Plus, "View More")
         };
@@ -1685,7 +1685,7 @@ impl Sidebar {
         h_flex()
             .p_1p5()
             .border_t_1()
-            .border_color(cx.theme().colors().border)
+            .border_color(cx.theme().colors().border_variant)
             .child(
                 Button::new("view-archive", "Archive")
                     .full_width()
