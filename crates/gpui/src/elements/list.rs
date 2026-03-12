@@ -1103,6 +1103,7 @@ impl Element for List {
             );
 
             state.items = new_items;
+            state.measuring_behavior.reset();
         }
 
         let padding = style
