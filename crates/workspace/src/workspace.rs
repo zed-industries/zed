@@ -51,12 +51,13 @@ use futures::{
     future::{Shared, try_join_all},
 };
 use gpui::{
-    Action, AnyElement, AnyEntity, AnyView, AnyWeakView, App, AsyncApp, AsyncWindowContext, Bounds,
-    Context, CursorStyle, Decorations, DragMoveEvent, Entity, EntityId, EventEmitter, FocusHandle,
-    Focusable, Global, HitboxBehavior, Hsla, KeyContext, Keystroke, ManagedView, MouseButton,
-    PathPromptOptions, Point, PromptLevel, Render, ResizeEdge, Size, Stateful, Subscription,
-    SystemWindowTabController, Task, Tiling, WeakEntity, WindowBounds, WindowHandle, WindowId,
-    WindowOptions, actions, canvas, point, relative, size, transparent_black,
+    Action, AnyElement, AnyEntity, AnyView, AnyWeakView, App, AsyncApp, AsyncWindowContext, Axis,
+    Bounds, Context, CursorStyle, Decorations, DragMoveEvent, Entity, EntityId, EventEmitter,
+    FocusHandle, Focusable, Global, HitboxBehavior, Hsla, KeyContext, Keystroke, ManagedView,
+    MouseButton, PathPromptOptions, Point, PromptLevel, Render, ResizeEdge, Size, Stateful,
+    StyleRefinement, Subscription, SystemWindowTabController, Task, Tiling, WeakEntity,
+    WindowBounds, WindowHandle, WindowId, WindowOptions, actions, canvas, point, relative, size,
+    transparent_black,
 };
 pub use history_manager::*;
 pub use item::{
@@ -148,7 +149,7 @@ pub use workspace_settings::{
 };
 use zed_actions::{Spawn, feedback::FileBugReport};
 
-use crate::{item::ItemBufferKind, notifications::NotificationId};
+use crate::{dock::DockPart, item::ItemBufferKind, notifications::NotificationId};
 use crate::{
     persistence::{
         SerializedAxis,
@@ -6973,7 +6974,7 @@ impl Workspace {
         position: DockPosition,
         dock: &Entity<Dock>,
         window: &mut Window,
-        cx: &mut App,
+        cx: &mut Context<Self>,
     ) -> impl Iterator<Item = AnyElement> {
         let mut results = [None, None];
 
@@ -6987,12 +6988,57 @@ impl Workspace {
             leader_border_for_pane(follower_states, &pane, window, cx)
         });
 
+        let fixed_content = {
+            let dispatch_context = Dock::dispatch_context();
+            if let Some(panel) = dock
+                .read(cx)
+                .visible_panel()
+                .filter(|panel| panel.has_panel_content(window, cx))
+            {
+                let size = panel.size(window, cx);
+
+                let panel_content = panel
+                    .to_any()
+                    .cached(StyleRefinement::default().v_flex().size_full());
+
+                div()
+                    .key_context(dispatch_context)
+                    .track_focus(&self.focus_handle(cx))
+                    .flex()
+                    .bg(cx.theme().colors().panel_background)
+                    .border_color(cx.theme().colors().border)
+                    .overflow_hidden()
+                    .map(|this| match position.axis() {
+                        Axis::Horizontal => this
+                            .h_full()
+                            .flex_row()
+                            .child(div().w(size).h_full().child(panel_content)),
+                        Axis::Vertical => this
+                            .w_full()
+                            .flex_col()
+                            .child(div().h(size).w_full().child(panel_content)),
+                    })
+                    .map(|this| match position {
+                        DockPosition::Left => this.border_r_1(),
+                        DockPosition::Right => this.border_l_1(),
+                        DockPosition::Bottom => this.border_t_1(),
+                    })
+                    .when(dock.read(cx).resizable(cx), |this| {
+                        this.child(dock::create_resize_handle(position, DockPart::Fixed, cx))
+                    })
+            } else {
+                div()
+                    .key_context(dispatch_context)
+                    .track_focus(&self.focus_handle(cx))
+            }
+        };
+
         results[0] = Some(
             div()
                 .flex()
                 .flex_none()
                 .overflow_hidden()
-                .child(dock.clone())
+                .child(fixed_content)
                 .children(leader_border)
                 .into_any_element(),
         );
@@ -7008,7 +7054,13 @@ impl Workspace {
                     .flex_1()
                     .min_w(px(10.))
                     .flex_grow()
+                    .when(position == DockPosition::Right, |this| {
+                        this.child(dock::create_resize_handle(position, DockPart::Flexible, cx))
+                    })
                     .child(flex_content)
+                    .when(position == DockPosition::Left, |this| {
+                        this.child(dock::create_resize_handle(position, DockPart::Flexible, cx))
+                    })
                     .into_any_element()
             });
 
@@ -7244,6 +7296,11 @@ impl Workspace {
             }
         }
     }
+}
+
+fn render_resize_handle() -> impl IntoElement {
+    // FIXME: actually render the handle and wire it up.
+    div().debug_bg_magenta()
 }
 
 pub trait AnyActiveCall {
@@ -7590,6 +7647,7 @@ impl Focusable for Workspace {
 #[derive(Clone)]
 struct DraggedDock {
     position: DockPosition,
+    part: DockPart,
 }
 
 impl Render for DraggedDock {
@@ -7723,39 +7781,74 @@ impl Render for Workspace {
                             .when(self.zoomed.is_none(), |this| {
                                 this.on_drag_move(cx.listener(
                                     move |workspace, e: &DragMoveEvent<DraggedDock>, window, cx| {
-                                        if workspace.previous_dock_drag_coordinates
-                                            != Some(e.event.position)
-                                        {
-                                            workspace.previous_dock_drag_coordinates =
-                                                Some(e.event.position);
+                                        let drag = e.drag(cx);
+                                        match drag.part {
+                                            DockPart::Fixed => {
+                                                if workspace.previous_dock_drag_coordinates
+                                                    != Some(e.event.position)
+                                                {
+                                                    workspace.previous_dock_drag_coordinates =
+                                                        Some(e.event.position);
 
-                                            match e.drag(cx).position {
-                                                DockPosition::Left => {
-                                                    workspace.resize_left_dock(
-                                                        e.event.position.x
-                                                            - workspace.bounds.left(),
-                                                        window,
-                                                        cx,
-                                                    );
+                                                    match e.drag(cx).position {
+                                                        DockPosition::Left => {
+                                                            workspace.resize_left_dock(
+                                                                e.event.position.x
+                                                                    - workspace.bounds.left(),
+                                                                window,
+                                                                cx,
+                                                            );
+                                                        }
+                                                        DockPosition::Right => {
+                                                            workspace.resize_right_dock(
+                                                                workspace.bounds.right()
+                                                                    - e.event.position.x,
+                                                                window,
+                                                                cx,
+                                                            );
+                                                        }
+                                                        DockPosition::Bottom => {
+                                                            workspace.resize_bottom_dock(
+                                                                workspace.bounds.bottom()
+                                                                    - e.event.position.y,
+                                                                window,
+                                                                cx,
+                                                            );
+                                                        }
+                                                    };
+                                                    workspace.serialize_workspace(window, cx);
                                                 }
-                                                DockPosition::Right => {
-                                                    workspace.resize_right_dock(
-                                                        workspace.bounds.right()
-                                                            - e.event.position.x,
-                                                        window,
-                                                        cx,
-                                                    );
+                                            }
+                                            DockPart::Flexible => {
+                                                match drag.position {
+                                                    DockPosition::Left => {
+                                                        let fixed_width = workspace
+                                                            .left_dock
+                                                            .read(cx)
+                                                            .active_panel()
+                                                            .map_or(px(0.0), |p| {
+                                                                p.size(window, cx)
+                                                            });
+                                                        let start_x =
+                                                            workspace.bounds.left() + fixed_width;
+                                                        let new_width =
+                                                            e.event.position.x - start_x;
+
+                                                        dbg!(&e.event.position);
+                                                        dbg!(&workspace.bounds);
+                                                        dbg!(&fixed_width);
+                                                        dbg!(&start_x);
+                                                        dbg!(new_width);
+                                                        //
+                                                    }
+                                                    DockPosition::Right => {
+                                                        //
+                                                    }
+                                                    DockPosition::Bottom => unreachable!(
+                                                        "bottom dock cannot have flex content"
+                                                    ),
                                                 }
-                                                DockPosition::Bottom => {
-                                                    workspace.resize_bottom_dock(
-                                                        workspace.bounds.bottom()
-                                                            - e.event.position.y,
-                                                        window,
-                                                        cx,
-                                                    );
-                                                }
-                                            };
-                                            workspace.serialize_workspace(window, cx);
+                                            }
                                         }
                                     },
                                 ))

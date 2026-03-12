@@ -7,7 +7,7 @@ use client::proto;
 use gpui::{
     Action, AnyElement, AnyView, App, Axis, Context, Corner, Entity, EntityId, EventEmitter,
     FocusHandle, Focusable, IntoElement, KeyContext, MouseButton, MouseDownEvent, MouseUpEvent,
-    ParentElement, Render, SharedString, StyleRefinement, Styled, Subscription, WeakEntity, Window,
+    ParentElement, Render, SharedString, Styled, Subscription, WeakEntity, Window,
     deferred, div, px,
 };
 use settings::SettingsStore;
@@ -257,6 +257,12 @@ pub enum DockPosition {
     Right,
 }
 
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum DockPart {
+    Fixed,
+    Flexible,
+}
+
 impl From<settings::DockPosition> for DockPosition {
     fn from(value: settings::DockPosition) -> Self {
         match value {
@@ -392,7 +398,7 @@ impl Dock {
         self.is_open
     }
 
-    fn resizable(&self, cx: &App) -> bool {
+    pub fn resizable(&self, cx: &App) -> bool {
         !(self.zoom_layer_open || self.modal_layer.read(cx).has_active_modal())
     }
 
@@ -797,10 +803,9 @@ impl Dock {
         }
     }
 
-    fn dispatch_context() -> KeyContext {
+    pub fn dispatch_context() -> KeyContext {
         let mut dispatch_context = KeyContext::new_with_defaults();
         dispatch_context.add("Dock");
-
         dispatch_context
     }
 
@@ -814,110 +819,68 @@ impl Dock {
     }
 }
 
-impl Render for Dock {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let dispatch_context = Self::dispatch_context();
-        if let Some(entry) = self
-            .visible_entry()
-            .filter(|entry| entry.panel.has_panel_content(window, cx))
-        {
-            let size = entry.panel.size(window, cx);
-
-            let panel_content = entry
-                .panel
-                .to_any()
-                .cached(StyleRefinement::default().v_flex().size_full());
-
-            let position = self.position;
-            let create_resize_handle = || {
-                let handle = div()
-                    .id("resize-handle")
-                    .on_drag(DraggedDock { position }, |dock, _, _, cx| {
-                        cx.stop_propagation();
-                        cx.new(|_| dock.clone())
-                    })
-                    .on_mouse_down(
-                        MouseButton::Left,
-                        cx.listener(|_, _: &MouseDownEvent, _, cx| {
-                            cx.stop_propagation();
-                        }),
-                    )
-                    .on_mouse_up(
-                        MouseButton::Left,
-                        cx.listener(|dock, e: &MouseUpEvent, window, cx| {
-                            if e.click_count == 2 {
-                                dock.resize_active_panel(None, window, cx);
-                                dock.workspace
-                                    .update(cx, |workspace, cx| {
-                                        workspace.serialize_workspace(window, cx);
-                                    })
-                                    .ok();
-                                cx.stop_propagation();
-                            }
-                        }),
-                    )
-                    .occlude();
-                match self.position() {
-                    DockPosition::Left => deferred(
-                        handle
-                            .absolute()
-                            .right(-RESIZE_HANDLE_SIZE / 2.)
-                            .top(px(0.))
-                            .h_full()
-                            .w(RESIZE_HANDLE_SIZE)
-                            .cursor_col_resize(),
-                    ),
-                    DockPosition::Bottom => deferred(
-                        handle
-                            .absolute()
-                            .top(-RESIZE_HANDLE_SIZE / 2.)
-                            .left(px(0.))
-                            .w_full()
-                            .h(RESIZE_HANDLE_SIZE)
-                            .cursor_row_resize(),
-                    ),
-                    DockPosition::Right => deferred(
-                        handle
-                            .absolute()
-                            .top(px(0.))
-                            .left(-RESIZE_HANDLE_SIZE / 2.)
-                            .h_full()
-                            .w(RESIZE_HANDLE_SIZE)
-                            .cursor_col_resize(),
-                    ),
+pub fn create_resize_handle(
+    position: DockPosition,
+    part: DockPart,
+    cx: &mut Context<Workspace>,
+) -> gpui::Deferred {
+    let handle = div()
+        .id(match part {
+            DockPart::Fixed => "resize-handle",
+            DockPart::Flexible => "flexible-resize-handle",
+        })
+        .on_drag(DraggedDock { position, part }, |dock, _, _, cx| {
+            cx.stop_propagation();
+            cx.new(|_| dock.clone())
+        })
+        .on_mouse_down(
+            MouseButton::Left,
+            cx.listener(|_, _: &MouseDownEvent, _, cx| {
+                cx.stop_propagation();
+            }),
+        )
+        .on_mouse_up(
+            MouseButton::Left,
+            cx.listener(move |workspace, e: &MouseUpEvent, window, cx| {
+                if e.click_count == 2 {
+                    let dock = workspace.dock_at_position(position);
+                    dock.update(cx, |dock, cx| {
+                        dock.resize_active_panel(None, window, cx);
+                    });
+                    workspace.serialize_workspace(window, cx);
+                    cx.stop_propagation();
                 }
-            };
-
-            div()
-                .key_context(dispatch_context)
-                .track_focus(&self.focus_handle(cx))
-                .flex()
-                .bg(cx.theme().colors().panel_background)
-                .border_color(cx.theme().colors().border)
-                .overflow_hidden()
-                .map(|this| match self.position().axis() {
-                    Axis::Horizontal => this
-                        .h_full()
-                        .flex_row()
-                        .child(div().w(size).h_full().child(panel_content)),
-                    Axis::Vertical => this
-                        .w_full()
-                        .flex_col()
-                        .child(div().h(size).w_full().child(panel_content)),
-                })
-                .map(|this| match self.position() {
-                    DockPosition::Left => this.border_r_1(),
-                    DockPosition::Right => this.border_l_1(),
-                    DockPosition::Bottom => this.border_t_1(),
-                })
-                .when(self.resizable(cx), |this| {
-                    this.child(create_resize_handle())
-                })
-        } else {
-            div()
-                .key_context(dispatch_context)
-                .track_focus(&self.focus_handle(cx))
-        }
+            }),
+        )
+        .occlude();
+    match position {
+        DockPosition::Left => deferred(
+            handle
+                .absolute()
+                .right(-RESIZE_HANDLE_SIZE / 2.)
+                .top(px(0.))
+                .h_full()
+                .w(RESIZE_HANDLE_SIZE)
+                .cursor_col_resize(),
+        ),
+        DockPosition::Bottom => deferred(
+            handle
+                .absolute()
+                .top(-RESIZE_HANDLE_SIZE / 2.)
+                .left(px(0.))
+                .w_full()
+                .h(RESIZE_HANDLE_SIZE)
+                .cursor_row_resize(),
+        ),
+        DockPosition::Right => deferred(
+            handle
+                .absolute()
+                .top(px(0.))
+                .left(-RESIZE_HANDLE_SIZE / 2.)
+                .h_full()
+                .w(RESIZE_HANDLE_SIZE)
+                .cursor_col_resize(),
+        ),
     }
 }
 
