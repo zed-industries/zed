@@ -5,6 +5,7 @@ use http_client::{AsyncBody, HttpClient, Method, Request};
 use indoc::indoc;
 use serde::Deserialize;
 use serde_json::{Value as JsonValue, json};
+use std::collections::HashMap;
 use std::fmt::Write as _;
 use std::io::Read;
 use std::sync::Arc;
@@ -20,6 +21,7 @@ use edit_prediction::example_spec::{ExampleSpec, TelemetrySource};
 
 pub(crate) const SNOWFLAKE_SUCCESS_CODE: &str = "090001";
 pub(crate) const SNOWFLAKE_ASYNC_IN_PROGRESS_CODE: &str = "333334";
+const SNOWFLAKE_TIMEOUT_CODE: &str = "000630";
 const PREDICTIVE_EDIT_REQUESTED_EVENT: &str = "Predictive Edit Requested";
 const PREDICTIVE_EDIT_REJECTED_EVENT: &str = "Predictive Edit Rejected";
 const EDIT_PREDICTION_RATED_EVENT: &str = "Edit Prediction Rated";
@@ -152,11 +154,14 @@ async fn fetch_examples_with_query(
     step_progress: &crate::progress::StepProgress,
     background_executor: BackgroundExecutor,
     statement: &str,
-    bindings: JsonValue,
+    mut bindings: JsonValue,
+    timestamp_binding_key: &str,
+    limit_binding_key: &str,
+    offset_binding_key: &str,
     required_columns: &[&str],
     parse_response: for<'a> fn(
         &'a SnowflakeStatementResponse,
-        &'a std::collections::HashMap<String, usize>,
+        &'a HashMap<String, usize>,
     ) -> Result<Box<dyn Iterator<Item = Example> + 'a>>,
 ) -> Result<Vec<Example>> {
     let snowflake = SnowflakeConfig {
@@ -167,74 +172,155 @@ async fn fetch_examples_with_query(
         )?,
         role: std::env::var("EP_SNOWFLAKE_ROLE").ok(),
     };
-    let request = json!({
-        "statement": statement,
-        // "timeout": timeout_seconds,
-        "database": "EVENTS",
-        "schema": "PUBLIC",
-        "warehouse": "DBT",
-        "role": snowflake.role.as_deref(),
-        "bindings": bindings
-    });
 
-    let response = run_sql_with_polling(
-        http_client.clone(),
-        &snowflake.base_url,
-        &snowflake.token,
-        &request,
-        step_progress,
-        background_executor,
-    )
-    .await?;
-
-    let total_rows = response
-        .result_set_meta_data
-        .as_ref()
-        .and_then(|meta| meta.num_rows)
-        .unwrap_or(response.data.len() as i64);
-    let partition_count = response
-        .result_set_meta_data
-        .as_ref()
-        .map(|meta| meta.partition_info.len())
-        .unwrap_or(1)
-        .max(1);
-
-    step_progress.set_info(format!("{} rows", total_rows), InfoStyle::Normal);
-    step_progress.set_substatus("parsing");
-
-    let column_indices = get_column_indices(&response.result_set_meta_data, required_columns);
-
-    let mut parsed_examples = Vec::with_capacity(total_rows as usize);
-    parsed_examples.extend(parse_response(&response, &column_indices)?);
-
-    if partition_count > 1 {
-        let statement_handle = response
-            .statement_handle
-            .as_ref()
-            .context("response has multiple partitions but no statementHandle")?;
-
-        for partition in 1..partition_count {
-            step_progress.set_substatus(format!(
-                "fetching partition {}/{}",
-                partition + 1,
-                partition_count
-            ));
-
-            let partition_response = fetch_partition(
-                http_client.clone(),
-                &snowflake.base_url,
-                &snowflake.token,
-                statement_handle,
-                partition,
-            )
-            .await?;
-
-            parsed_examples.extend(parse_response(&partition_response, &column_indices)?);
-        }
+    let mut requested_columns = required_columns.to_vec();
+    if !requested_columns.contains(&"continuation_time") {
+        requested_columns.push("continuation_time");
     }
 
-    step_progress.set_substatus("done");
-    Ok(parsed_examples)
+    let mut parsed_examples = Vec::new();
+    let mut resume_timestamp =
+        binding_value(&bindings, "resume timestamp", timestamp_binding_key)?.to_string();
+    let mut remaining_limit =
+        binding_optional_fixed_usize(&bindings, "remaining limit", limit_binding_key)?;
+    let initial_offset = binding_fixed_usize(&bindings, "initial offset", offset_binding_key)?;
+    let mut current_offset = initial_offset;
+    let mut retry_count = 0usize;
+
+    loop {
+        set_text_binding(&mut bindings, timestamp_binding_key, &resume_timestamp)?;
+        set_fixed_optional_usize_binding(&mut bindings, remaining_limit, limit_binding_key)?;
+        set_fixed_usize_binding(&mut bindings, current_offset, offset_binding_key)?;
+
+        let request = json!({
+            "statement": statement,
+            "database": "EVENTS",
+            "schema": "PUBLIC",
+            "warehouse": "DBT",
+            "role": snowflake.role.as_deref(),
+            "bindings": bindings
+        });
+
+        let response = match run_sql_with_polling(
+            http_client.clone(),
+            &snowflake.base_url,
+            &snowflake.token,
+            &request,
+            step_progress,
+            background_executor.clone(),
+        )
+        .await
+        {
+            Ok(response) => response,
+            Err(error) => {
+                if is_snowflake_timeout_error(&error) && !parsed_examples.is_empty() {
+                    retry_count += 1;
+                    step_progress
+                        .set_substatus(format!("retrying from {resume_timestamp} ({retry_count})"));
+                    continue;
+                }
+
+                return Err(error);
+            }
+        };
+
+        let total_rows = response
+            .result_set_meta_data
+            .as_ref()
+            .and_then(|meta| meta.num_rows)
+            .unwrap_or(response.data.len() as i64);
+        let partition_count = response
+            .result_set_meta_data
+            .as_ref()
+            .map(|meta| meta.partition_info.len())
+            .unwrap_or(1)
+            .max(1);
+
+        step_progress.set_info(format!("{} rows", total_rows), InfoStyle::Normal);
+        step_progress.set_substatus("parsing");
+
+        let column_indices = get_column_indices(&response.result_set_meta_data, &requested_columns);
+        let mut rows_fetched_this_attempt = 0usize;
+        let mut timed_out_fetching_partition = false;
+
+        parsed_examples.extend(parse_response(&response, &column_indices)?);
+        rows_fetched_this_attempt += response.data.len();
+        let mut last_continuation_time_this_attempt =
+            last_continuation_timestamp_from_response(&response, &column_indices);
+
+        if partition_count > 1 {
+            let statement_handle = response
+                .statement_handle
+                .as_ref()
+                .context("response has multiple partitions but no statementHandle")?;
+
+            for partition in 1..partition_count {
+                step_progress.set_substatus(format!(
+                    "fetching partition {}/{}",
+                    partition + 1,
+                    partition_count
+                ));
+
+                let partition_response = match fetch_partition(
+                    http_client.clone(),
+                    &snowflake.base_url,
+                    &snowflake.token,
+                    statement_handle,
+                    partition,
+                )
+                .await
+                {
+                    Ok(response) => response,
+                    Err(error) => {
+                        if is_snowflake_timeout_error(&error) && rows_fetched_this_attempt > 0 {
+                            timed_out_fetching_partition = true;
+                            break;
+                        }
+
+                        return Err(error);
+                    }
+                };
+
+                parsed_examples.extend(parse_response(&partition_response, &column_indices)?);
+                rows_fetched_this_attempt += partition_response.data.len();
+
+                if let Some(partition_continuation_time) =
+                    last_continuation_timestamp_from_response(&partition_response, &column_indices)
+                {
+                    last_continuation_time_this_attempt = Some(partition_continuation_time);
+                }
+            }
+        }
+
+        if rows_fetched_this_attempt == 0 {
+            step_progress.set_substatus("done");
+            return Ok(parsed_examples);
+        }
+
+        if let Some(remaining_limit_value) = &mut remaining_limit {
+            *remaining_limit_value =
+                remaining_limit_value.saturating_sub(rows_fetched_this_attempt);
+            if *remaining_limit_value == 0 {
+                step_progress.set_substatus("done");
+                return Ok(parsed_examples);
+            }
+        }
+
+        if !timed_out_fetching_partition {
+            step_progress.set_substatus("done");
+            return Ok(parsed_examples);
+        }
+
+        let Some(last_continuation_time_this_attempt) = last_continuation_time_this_attempt else {
+            step_progress.set_substatus("done");
+            return Ok(parsed_examples);
+        };
+
+        resume_timestamp = last_continuation_time_this_attempt;
+        current_offset = 0;
+        retry_count += 1;
+        step_progress.set_substatus(format!("retrying from {resume_timestamp} ({retry_count})"));
+    }
 }
 
 pub(crate) async fn fetch_partition(
@@ -367,13 +453,26 @@ pub(crate) async fn run_sql(
         bytes
     };
 
-    if !status.is_success() && status.as_u16() != 202 {
+    let snowflake_response = serde_json::from_slice::<SnowflakeStatementResponse>(&body_bytes)
+        .context("failed to parse Snowflake SQL API response JSON")?;
+
+    if !status.is_success() && status.as_u16() != 202 && !is_timeout_response(&snowflake_response) {
         let body_text = String::from_utf8_lossy(&body_bytes);
         anyhow::bail!("snowflake sql api http {}: {}", status.as_u16(), body_text);
     }
 
-    serde_json::from_slice::<SnowflakeStatementResponse>(&body_bytes)
-        .context("failed to parse Snowflake SQL API response JSON")
+    if is_timeout_response(&snowflake_response) {
+        anyhow::bail!(
+            "snowflake sql api timed out code={} message={}",
+            snowflake_response.code.as_deref().unwrap_or("<no code>"),
+            snowflake_response
+                .message
+                .as_deref()
+                .unwrap_or("<no message>")
+        );
+    }
+
+    Ok(snowflake_response)
 }
 
 pub async fn fetch_rejected_examples_after(
@@ -406,6 +505,7 @@ pub async fn fetch_rejected_examples_after(
             SELECT
                 req.event_properties:request_id::string AS request_id,
                 req.device_id::string AS device_id,
+                req.time::string AS continuation_time,
                 req.time::string AS time,
                 req.event_properties:input AS input,
                 req.event_properties:prompt::string AS prompt,
@@ -418,10 +518,10 @@ pub async fn fetch_rejected_examples_after(
                 ON req.event_properties:request_id = rej.event_properties:request_id
             WHERE req.event_type = ?
                 AND rej.event_type = ?
+                AND req.time > TRY_TO_TIMESTAMP_NTZ(?)
                 AND req.event_properties:version = 'V3'
                 AND rej.event_properties:was_shown = true
                 AND req.event_properties:input:can_collect_data = true
-                AND req.time > TRY_TO_TIMESTAMP_NTZ(?)
                 AND (? IS NULL OR (
                     TRY_CAST(SPLIT_PART(req.event_properties:zed_version::string, '.', 2) AS INTEGER) > ?
                     OR (
@@ -452,6 +552,9 @@ pub async fn fetch_rejected_examples_after(
             background_executor.clone(),
             statement,
             bindings,
+            "3",
+            "8",
+            "9",
             &[
                 "request_id",
                 "device_id",
@@ -507,14 +610,15 @@ pub async fn fetch_requested_examples_after(
             SELECT
                 req.event_properties:request_id::string AS request_id,
                 req.device_id::string AS device_id,
+                req.time::string AS continuation_time,
                 req.time::string AS time,
                 req.event_properties:input AS input,
                 req.event_properties:zed_version::string AS zed_version
             FROM events req
             WHERE req.event_type = ?
+                AND req.time > TRY_TO_TIMESTAMP_NTZ(?)
                 AND req.event_properties:version = 'V3'
                 AND req.event_properties:input:can_collect_data = true
-                AND req.time > TRY_TO_TIMESTAMP_NTZ(?)
                 AND (? IS NULL OR (
                     TRY_CAST(SPLIT_PART(req.event_properties:zed_version::string, '.', 2) AS INTEGER) > ?
                     OR (
@@ -544,6 +648,9 @@ pub async fn fetch_requested_examples_after(
             background_executor.clone(),
             statement,
             bindings,
+            "2",
+            "7",
+            "8",
             &["request_id", "device_id", "time", "input", "zed_version"],
             requested_examples_from_response,
         )
@@ -585,6 +692,7 @@ pub async fn fetch_captured_examples_after(
             SELECT
                 settled.event_properties:request_id::string AS request_id,
                 settled.device_id::string AS device_id,
+                settled.time::string AS continuation_time,
                 settled.time::string AS time,
                 req.event_properties:input AS input,
                 settled.event_properties:settled_editable_region::string AS settled_editable_region,
@@ -595,11 +703,11 @@ pub async fn fetch_captured_examples_after(
                 ON settled.event_properties:request_id::string = req.event_properties:request_id::string
             WHERE settled.event_type = ?
                 AND req.event_type = ?
+                AND settled.time > TRY_TO_TIMESTAMP_NTZ(?)
                 AND req.event_properties:version = 'V3'
                 AND req.event_properties:input:can_collect_data = true
                 AND settled.event_properties:example IS NOT NULL
                 AND TYPEOF(settled.event_properties:example) != 'NULL_VALUE'
-                AND settled.time > TRY_TO_TIMESTAMP_NTZ(?)
                 AND (? IS NULL OR (
                     TRY_CAST(SPLIT_PART(req.event_properties:zed_version::string, '.', 2) AS INTEGER) > ?
                     OR (
@@ -630,6 +738,9 @@ pub async fn fetch_captured_examples_after(
             background_executor.clone(),
             statement,
             bindings,
+            "3",
+            "8",
+            "9",
             &[
                 "request_id",
                 "device_id",
@@ -677,7 +788,7 @@ pub async fn fetch_settled_examples_after(
                 SELECT
                     req.event_properties:request_id::string AS request_id,
                     req.device_id::string AS device_id,
-                    req.time AS req_time,
+                    req.time AS continuation_time,
                     req.time::string AS time,
                     req.event_properties:input AS input,
                     req.event_properties:format::string AS requested_format,
@@ -685,13 +796,14 @@ pub async fn fetch_settled_examples_after(
                     req.event_properties:zed_version::string AS zed_version
                 FROM events req
                 WHERE req.event_type = ?
+                    AND req.time > TRY_TO_TIMESTAMP_NTZ(?)
                     AND req.event_properties:version = 'V3'
                     AND req.event_properties:input:can_collect_data = true
-                    AND req.time > TRY_TO_TIMESTAMP_NTZ(?)
             )
             SELECT
                 req.request_id AS request_id,
                 req.device_id AS device_id,
+                req.continuation_time::string AS continuation_time,
                 req.time AS time,
                 req.input AS input,
                 req.requested_output AS requested_output,
@@ -702,7 +814,7 @@ pub async fn fetch_settled_examples_after(
             INNER JOIN events settled
                 ON req.request_id = settled.event_properties:request_id::string
             WHERE settled.event_type = ?
-            ORDER BY req.req_time ASC
+            ORDER BY req.continuation_time ASC
             LIMIT ?
             OFFSET ?
         "#};
@@ -721,6 +833,9 @@ pub async fn fetch_settled_examples_after(
             background_executor.clone(),
             statement,
             bindings,
+            "2",
+            "4",
+            "5",
             &[
                 "request_id",
                 "device_id",
@@ -780,6 +895,7 @@ pub async fn fetch_rated_examples_after(
                 rated.event_properties:rating::string AS rating,
                 rated.event_properties:feedback::string AS feedback,
                 rated.device_id::string AS device_id,
+                rated.time::string AS continuation_time,
                 rated.time::string AS time,
                 deploy.event_properties:experiment_name::string AS experiment_name,
                 deploy.event_properties:environment::string AS environment,
@@ -821,6 +937,9 @@ pub async fn fetch_rated_examples_after(
             background_executor.clone(),
             statement,
             bindings,
+            "6",
+            "7",
+            "8",
             &[
                 "request_id",
                 "inputs",
@@ -1622,11 +1741,123 @@ fn build_output_patch(
     patch
 }
 
+fn binding_entry_mut<'a>(
+    bindings: &'a mut JsonValue,
+    key: &str,
+) -> Result<&'a mut serde_json::Map<String, JsonValue>> {
+    bindings
+        .as_object_mut()
+        .context("snowflake bindings must be a JSON object")?
+        .get_mut(key)
+        .context(format!("missing Snowflake binding {key}"))?
+        .as_object_mut()
+        .context(format!("Snowflake binding {key} must be a JSON object"))
+}
+
+fn binding_value<'a>(bindings: &'a JsonValue, label: &str, key: &str) -> Result<&'a str> {
+    bindings
+        .as_object()
+        .context("snowflake bindings must be a JSON object")?
+        .get(key)
+        .context(format!("missing Snowflake binding for {label}"))?
+        .get("value")
+        .context(format!("missing Snowflake binding value for {label}"))?
+        .as_str()
+        .context(format!(
+            "Snowflake binding value for {label} must be a string"
+        ))
+}
+
+fn binding_fixed_usize(bindings: &JsonValue, label: &str, key: &str) -> Result<usize> {
+    binding_value(bindings, label, key)?
+        .parse()
+        .with_context(|| format!("invalid Snowflake binding value for {label}"))
+}
+
+fn binding_optional_fixed_usize(
+    bindings: &JsonValue,
+    label: &str,
+    key: &str,
+) -> Result<Option<usize>> {
+    let value = binding_value(bindings, label, key)?;
+    if value.eq_ignore_ascii_case("NULL") {
+        Ok(None)
+    } else {
+        value
+            .parse()
+            .map(Some)
+            .with_context(|| format!("invalid Snowflake binding value for {label}"))
+    }
+}
+
+fn set_text_binding(bindings: &mut JsonValue, key: &str, value: &str) -> Result<()> {
+    let binding = binding_entry_mut(bindings, key)?;
+    binding.insert("type".to_string(), JsonValue::String("TEXT".to_string()));
+    binding.insert("value".to_string(), JsonValue::String(value.to_string()));
+    Ok(())
+}
+
+fn set_fixed_usize_binding(bindings: &mut JsonValue, value: usize, key: &str) -> Result<()> {
+    let binding = binding_entry_mut(bindings, key)?;
+    binding.insert("type".to_string(), JsonValue::String("FIXED".to_string()));
+    binding.insert("value".to_string(), JsonValue::String(value.to_string()));
+    Ok(())
+}
+
+fn set_fixed_optional_usize_binding(
+    bindings: &mut JsonValue,
+    value: Option<usize>,
+    key: &str,
+) -> Result<()> {
+    let binding = binding_entry_mut(bindings, key)?;
+    binding.insert("type".to_string(), JsonValue::String("FIXED".to_string()));
+    binding.insert(
+        "value".to_string(),
+        JsonValue::String(
+            value
+                .map(|value| value.to_string())
+                .unwrap_or_else(|| "NULL".to_string()),
+        ),
+    );
+    Ok(())
+}
+
+fn is_timeout_response(response: &SnowflakeStatementResponse) -> bool {
+    response.code.as_deref() == Some(SNOWFLAKE_TIMEOUT_CODE)
+        && response
+            .message
+            .as_deref()
+            .map(|message| message.to_ascii_lowercase().contains("timeout"))
+            .unwrap_or(false)
+}
+
+fn is_snowflake_timeout_error(error: &anyhow::Error) -> bool {
+    error
+        .chain()
+        .any(|cause| cause.to_string().contains(SNOWFLAKE_TIMEOUT_CODE))
+}
+
+fn last_continuation_timestamp_from_response(
+    response: &SnowflakeStatementResponse,
+    column_indices: &HashMap<String, usize>,
+) -> Option<String> {
+    let continuation_time_index = column_indices.get("continuation_time").copied()?;
+    response
+        .data
+        .iter()
+        .rev()
+        .find_map(|row| match row.get(continuation_time_index)? {
+            JsonValue::String(value) => Some(value.clone()),
+            JsonValue::Null => None,
+            other => Some(other.to_string()),
+        })
+}
+
 pub(crate) fn get_column_indices(
     meta: &Option<SnowflakeResultSetMetaData>,
     names: &[&str],
-) -> std::collections::HashMap<String, usize> {
-    let mut indices = std::collections::HashMap::new();
+) -> HashMap<String, usize> {
+    let mut indices = HashMap::new();
     if let Some(meta) = meta {
         for (index, col) in meta.row_type.iter().enumerate() {
             for &name in names {
