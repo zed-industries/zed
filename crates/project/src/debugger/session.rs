@@ -2187,29 +2187,27 @@ impl Session {
             self.capabilities.supports_restart_request.unwrap_or(false) && !self.is_terminated();
 
         self.restart_task = Some(cx.spawn(async move |this, cx| {
-            let task = this.update(cx, |session, cx| {
+            this.update(cx, |session, cx| {
                 if supports_dap_restart {
-                    let task = session.request(
+                    session.request(
                         RestartCommand {
                             raw: args.unwrap_or(Value::Null),
                         },
                         Self::fallback_to_manual_restart,
                         cx,
-                    );
-                    Some(task)
+                    )
                 } else {
                     cx.emit(SessionStateEvent::Restart);
-                    None
+                    Task::ready(None)
                 }
-            });
+            })
+            .unwrap_or_else(|_| Task::ready(None))
+            .await;
 
-            if let Ok(Some(task)) = task {
-                task.await;
-            }
-
-            let _ = this.update(cx, |session, _cx| {
+            this.update(cx, |session, _cx| {
                 session.restart_task = None;
-            });
+            })
+            .ok();
         }));
     }
 
