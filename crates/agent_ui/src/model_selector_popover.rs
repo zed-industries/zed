@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use acp_thread::{AgentModelIcon, AgentModelInfo, AgentModelSelector};
 use fs::Fs;
-use gpui::{Entity, FocusHandle};
+use gpui::{AnyView, Entity, FocusHandle};
 use picker::popover_menu::PickerPopoverMenu;
 use ui::{ButtonLike, PopoverMenuHandle, TintColor, Tooltip, prelude::*};
 
@@ -78,14 +78,19 @@ impl Render for ModelSelectorPopover {
         };
 
         let show_cycle_row = selector.delegate.favorites_count() > 1;
+        let disabled = self.disabled;
 
-        let tooltip = Tooltip::element({
-            move |_, _cx| {
-                ModelSelectorTooltip::new()
-                    .show_cycle_row(show_cycle_row)
-                    .into_any_element()
-            }
-        });
+        let tooltip: Box<dyn Fn(&mut Window, &mut App) -> AnyView> = if disabled {
+            Box::new(Tooltip::text("Disabled until generation is done"))
+        } else {
+            Box::new(Tooltip::element({
+                move |_, _cx| {
+                    ModelSelectorTooltip::new()
+                        .show_cycle_row(show_cycle_row)
+                        .into_any_element()
+                }
+            }))
+        };
 
         PickerPopoverMenu::new(
             self.selector.clone(),

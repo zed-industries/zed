@@ -5,8 +5,8 @@ use agent_settings::{
 use fs::Fs;
 use fuzzy::{StringMatch, StringMatchCandidate, match_strings};
 use gpui::{
-    Action, AnyElement, App, BackgroundExecutor, Context, DismissEvent, Entity, FocusHandle,
-    Focusable, ForegroundExecutor, SharedString, Subscription, Task, Window,
+    Action, AnyElement, AnyView, App, BackgroundExecutor, Context, DismissEvent, Entity,
+    FocusHandle, Focusable, ForegroundExecutor, SharedString, Subscription, Task, Window,
 };
 use picker::{Picker, PickerDelegate, popover_menu::PickerPopoverMenu};
 use settings::{Settings as _, SettingsStore, update_settings_file};
@@ -198,10 +198,12 @@ impl Render for ProfileSelector {
             .icon_color(Color::Muted)
             .selected_style(ButtonStyle::Tinted(TintColor::Accent));
 
-        PickerPopoverMenu::new(
-            picker,
-            trigger_button,
-            Tooltip::element({
+        let disabled = self.disabled;
+
+        let tooltip: Box<dyn Fn(&mut Window, &mut App) -> AnyView> = if disabled {
+            Box::new(Tooltip::text("Disabled until generation is done"))
+        } else {
+            Box::new(Tooltip::element({
                 move |_window, cx| {
                     let container = || h_flex().gap_1().justify_between();
                     v_flex()
@@ -221,7 +223,13 @@ impl Render for ProfileSelector {
                         )
                         .into_any()
                 }
-            }),
+            }))
+        };
+
+        PickerPopoverMenu::new(
+            picker,
+            trigger_button,
+            tooltip,
             gpui::Corner::BottomRight,
             cx,
         )

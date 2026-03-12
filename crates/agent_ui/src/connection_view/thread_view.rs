@@ -3254,8 +3254,12 @@ impl ThreadView {
             .icon_size(IconSize::Small)
             .icon_color(color)
             .disabled(is_generating)
-            .tooltip(move |_, cx| {
-                Tooltip::for_action_in(tooltip_label, &ToggleThinkingMode, &focus_handle, cx)
+            .tooltip(move |window, cx| {
+                if is_generating {
+                    Tooltip::text("Disabled until generation is done")(window, cx)
+                } else {
+                    Tooltip::for_action_in(tooltip_label, &ToggleThinkingMode, &focus_handle, cx)
+                }
             })
             .on_click(cx.listener(move |this, _, _window, cx| {
                 if let Some(thread) = this.as_native_thread(cx) {
