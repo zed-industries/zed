@@ -134,6 +134,7 @@ impl From<ThreadEntry> for ListEntry {
 struct SidebarContents {
     entries: Vec<ListEntry>,
     notified_threads: HashSet<acp::SessionId>,
+    project_header_indices: Vec<usize>,
 }
 
 impl SidebarContents {
@@ -663,10 +664,17 @@ impl Sidebar {
         // the build pass (no extra scan needed).
         notified_threads.retain(|id| current_session_ids.contains(id));
 
+        let project_header_indices = entries
+            .iter()
+            .enumerate()
+            .filter_map(|(i, e)| matches!(e, ListEntry::ProjectHeader { .. }).then_some(i))
+            .collect();
+
         self.active_entry_index = active_entry_index;
         self.contents = SidebarContents {
             entries,
             notified_threads,
+            project_header_indices,
         };
     }
 
@@ -724,6 +732,7 @@ impl Sidebar {
                 has_threads,
             } => self.render_project_header(
                 ix,
+                false,
                 path_list,
                 label,
                 workspace,
@@ -769,6 +778,7 @@ impl Sidebar {
     fn render_project_header(
         &self,
         ix: usize,
+        is_sticky: bool,
         path_list: &PathList,
         label: &SharedString,
         workspace: &Entity<Workspace>,
@@ -778,9 +788,10 @@ impl Sidebar {
         docked_right: bool,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let id = SharedString::from(format!("project-header-{}", ix));
-        let group_name = SharedString::from(format!("header-group-{}", ix));
-        let ib_id = SharedString::from(format!("project-header-new-thread-{}", ix));
+        let id_prefix = if is_sticky { "sticky-" } else { "" };
+        let id = SharedString::from(format!("{id_prefix}project-header-{ix}"));
+        let group_name = SharedString::from(format!("{id_prefix}header-group-{ix}"));
+        let ib_id = SharedString::from(format!("{id_prefix}project-header-new-thread-{ix}"));
 
         let is_collapsed = self.collapsed_groups.contains(path_list);
         let disclosure_icon = if is_collapsed {
@@ -842,7 +853,9 @@ impl Sidebar {
                     .when(workspace_count > 1, |this| {
                         this.child(
                             IconButton::new(
-                                SharedString::from(format!("project-header-remove-{}", ix)),
+                                SharedString::from(format!(
+                                    "{id_prefix}project-header-remove-{ix}",
+                                )),
                                 IconName::Close,
                             )
                             .icon_size(IconSize::Small)
@@ -858,7 +871,9 @@ impl Sidebar {
                     .when(view_more_expanded && !is_collapsed, |this| {
                         this.child(
                             IconButton::new(
-                                SharedString::from(format!("project-header-collapse-{}", ix)),
+                                SharedString::from(format!(
+                                    "{id_prefix}project-header-collapse-{ix}",
+                                )),
                                 IconName::ListCollapse,
                             )
                             .icon_size(IconSize::Small)
@@ -897,6 +912,84 @@ impl Sidebar {
             //     this.activate_workspace(&workspace_for_activate, window, cx);
             // }))
             .into_any_element()
+    }
+
+    fn render_sticky_header(
+        &self,
+        docked_right: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<AnyElement> {
+        let scroll_top = self.list_state.logical_scroll_top();
+
+        let &header_idx = self
+            .contents
+            .project_header_indices
+            .iter()
+            .rev()
+            .find(|&&idx| idx <= scroll_top.item_ix)?;
+
+        let needs_sticky = header_idx < scroll_top.item_ix
+            || (header_idx == scroll_top.item_ix && scroll_top.offset_in_item > px(0.));
+
+        if !needs_sticky {
+            return None;
+        }
+
+        let ListEntry::ProjectHeader {
+            path_list,
+            label,
+            workspace,
+            highlight_positions,
+            has_threads,
+        } = self.contents.entries.get(header_idx)?
+        else {
+            return None;
+        };
+
+        let is_focused = self.focus_handle.is_focused(window)
+            || self.filter_editor.focus_handle(cx).is_focused(window);
+        let is_selected = is_focused && self.selection == Some(header_idx);
+
+        let header_element = self.render_project_header(
+            header_idx,
+            true,
+            &path_list,
+            &label,
+            &workspace,
+            &highlight_positions,
+            *has_threads,
+            is_selected,
+            docked_right,
+            cx,
+        );
+
+        let top_offset = self
+            .contents
+            .project_header_indices
+            .iter()
+            .find(|&&idx| idx > header_idx)
+            .and_then(|&next_idx| {
+                let bounds = self.list_state.bounds_for_item(next_idx)?;
+                let viewport = self.list_state.viewport_bounds();
+                let y_in_viewport = bounds.origin.y - viewport.origin.y;
+                let header_height = bounds.size.height;
+                (y_in_viewport < header_height).then_some(y_in_viewport - header_height)
+            })
+            .unwrap_or(px(0.));
+
+        let element = v_flex()
+            .absolute()
+            .top(top_offset)
+            .left_0()
+            .w_full()
+            .bg(cx.theme().colors().surface_background)
+            .border_b_1()
+            .border_color(cx.theme().colors().border_variant)
+            .child(header_element)
+            .into_any_element();
+
+        Some(element)
     }
 
     fn activate_workspace(
@@ -1466,6 +1559,8 @@ impl Render for Sidebar {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let ui_font = theme::setup_ui_font(window, cx);
         let has_query = self.has_filter_query(cx);
+        let docked_right = AgentSettings::get_global(cx).dock == settings::DockPosition::Right;
+        let sticky_header = self.render_sticky_header(docked_right, window, cx);
 
         v_flex()
             .id("workspace-sidebar")
@@ -1484,10 +1579,7 @@ impl Render for Sidebar {
             .font(ui_font)
             .size_full()
             .bg(cx.theme().colors().surface_background)
-            .child({
-                let docked_right =
-                    AgentSettings::get_global(cx).dock == settings::DockPosition::Right;
-
+            .child(
                 h_flex()
                     .h(Tab::container_height(cx))
                     .flex_none()
@@ -1513,10 +1605,11 @@ impl Render for Sidebar {
                         this.pl_2()
                             .pr_0p5()
                             .child(self.render_sidebar_toggle_button(true, cx))
-                    })
-            })
+                    }),
+            )
             .child(
                 v_flex()
+                    .relative()
                     .flex_1()
                     .overflow_hidden()
                     .child(
@@ -1527,6 +1620,7 @@ impl Render for Sidebar {
                         .flex_1()
                         .size_full(),
                     )
+                    .when_some(sticky_header, |this, header| this.child(header))
                     .vertical_scrollbar_for(&self.list_state, window, cx),
             )
     }
