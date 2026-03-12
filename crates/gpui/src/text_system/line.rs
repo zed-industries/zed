@@ -279,15 +279,15 @@ impl ShapedLine {
                     len: left_len,
                     color: decoration.color,
                     background_color: decoration.background_color,
-                    underline: decoration.underline.clone(),
-                    strikethrough: decoration.strikethrough.clone(),
+                    underline: decoration.underline,
+                    strikethrough: decoration.strikethrough,
                 });
                 right_decorations.push(DecorationRun {
                     len: right_len,
                     color: decoration.color,
                     background_color: decoration.background_color,
-                    underline: decoration.underline.clone(),
-                    strikethrough: decoration.strikethrough.clone(),
+                    underline: decoration.underline,
+                    strikethrough: decoration.strikethrough,
                 });
             }
 
