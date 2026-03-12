@@ -802,6 +802,7 @@ impl VsCodeSettings {
             sticky_scroll: None,
             auto_open: None,
             diagnostic_badges: None,
+            case_sensitive: None,
         };
 
         if let (Some(false), Some(false)) = (

@@ -609,7 +609,7 @@ impl Search {
                 (None, None) => a.remote_id().cmp(&b.remote_id()),
                 (None, Some(_)) => std::cmp::Ordering::Less,
                 (Some(_), None) => std::cmp::Ordering::Greater,
-                (Some(a), Some(b)) => compare_rel_paths((a.path(), true), (b.path(), true)),
+                (Some(a), Some(b)) => compare_rel_paths((a.path(), true), (b.path(), true), false),
             }
         });
 

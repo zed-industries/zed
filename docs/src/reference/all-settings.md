@@ -3019,7 +3019,6 @@ Configuration object for defining settings profiles. Example:
 - Description:
   Preview tabs allow you to open files in preview mode, where they close automatically when you switch to another file unless you explicitly pin them. This is useful for quickly viewing files without cluttering your workspace. Preview tabs display their file names in italics. \
    There are several ways to convert a preview tab into a regular tab:
-
   - Double-clicking on the file
   - Double-clicking on the tab header
   - Using the {#action project_panel::OpenPermanent} action
@@ -5017,6 +5016,34 @@ Run the {#action theme_selector::Toggle} action in the command palette to see a 
 {
   "project_panel": {
     "sort_mode": "files_first"
+  }
+}
+```
+
+### Case-Sensitive
+
+- Description: Whether to sort files and directories case-sensitive in the project panel.
+- Setting: `case_sensitive`
+- Default: `false`
+
+**Options**
+
+1. Natural sorting
+
+```json [settings]
+{
+  "project_panel": {
+    "case_sensitive": false
+  }
+}
+```
+
+2. Lexicographic sorting
+
+```json [settings]
+{
+  "project_panel": {
+    "case_sensitive": true
   }
 }
 ```
