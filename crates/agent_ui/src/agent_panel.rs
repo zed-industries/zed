@@ -84,7 +84,7 @@ use ui::{
     KeyBinding, PopoverMenu, PopoverMenuHandle, SpinnerLabel, Tab, TintColor, Tooltip, prelude::*,
     utils::WithRemSize,
 };
-use util::ResultExt as _;
+use util::{ResultExt as _, debug_panic};
 use workspace::{
     CollaboratorId, DraggedSelection, DraggedSidebar, DraggedTab, FocusWorkspaceSidebar,
     MultiWorkspace, SIDEBAR_RESIZE_HANDLE_SIZE, ToggleWorkspaceSidebar, ToggleZoom,
@@ -1346,18 +1346,19 @@ impl AgentPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let agent = Agent::NativeAgent;
-
-        let server = agent.server(self.fs.clone(), self.thread_store.clone());
         let session_id = action.from_session_id.clone();
 
-        let entry = self.connection_store.update(cx, |store, cx| {
-            store.request_connection(agent.clone(), server, cx)
-        });
-        let connect_task = entry.read(cx).wait_for_connection();
+        let Some(history) = self
+            .connection_store
+            .read(cx)
+            .entry(&Agent::NativeAgent)
+            .and_then(|e| e.read(cx).history().cloned())
+        else {
+            debug_panic!("Native agent is not registered");
+            return;
+        };
 
         cx.spawn_in(window, async move |this, cx| {
-            let history = connect_task.await?.history;
             this.update_in(cx, |this, window, cx| {
                 let thread = history
                     .read(cx)
@@ -1365,7 +1366,7 @@ impl AgentPanel {
                     .context("Session not found")?;
 
                 this.external_thread(
-                    Some(agent),
+                    Some(Agent::NativeAgent),
                     None,
                     None,
                     None,
