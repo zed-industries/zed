@@ -404,6 +404,7 @@ impl ThreadsArchiveView {
 
                 ListItem::new(id)
                     .toggle_state(is_selected)
+                    .disabled(true)
                     .child(
                         h_flex()
                             .min_w_0()
@@ -531,7 +532,7 @@ impl ThreadsArchiveView {
                                 entry = entry.icon(IconName::ZedAgent);
                             }
 
-                            entry = entry.disabled(true).icon_color(Color::Muted).handler({
+                            entry = entry.icon_color(Color::Muted).handler({
                                 let this = this.clone();
                                 let agent = Agent::Custom {
                                     name: item.id.0.clone(),

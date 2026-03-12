@@ -1,6 +1,6 @@
 use crate::threads_archive_view::{ThreadsArchiveView, ThreadsArchiveViewEvent};
 use crate::{AgentPanel, AgentPanelEvent, NewThread};
-use acp_thread::{AgentSessionInfo, ThreadStatus};
+use acp_thread::{ThreadStatus};
 use action_log::DiffStats;
 use agent::ThreadStore;
 use agent_client_protocol as acp;
@@ -1491,42 +1491,12 @@ impl Sidebar {
                     .style(ButtonStyle::Outlined)
                     .icon(IconName::Archive)
                     .icon_color(Color::Muted)
-                    .icon_size(IconSize::Small)
+                    .icon_size(IconSize::XSmall)
                     .icon_position(IconPosition::Start)
                     .on_click(cx.listener(|this, _, window, cx| {
                         this.show_archive(window, cx);
                     })),
             )
-    }
-
-    fn open_archive_thread(
-        &mut self,
-        session_info: AgentSessionInfo,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let Some(multi_workspace) = self.multi_workspace.upgrade() else {
-            return;
-        };
-        let workspace = multi_workspace.read(cx).workspace().clone();
-
-        workspace.update(cx, |workspace, cx| {
-            workspace.open_panel::<AgentPanel>(window, cx);
-        });
-
-        if let Some(agent_panel) = workspace.read(cx).panel::<AgentPanel>(cx) {
-            agent_panel.update(cx, |panel, cx| {
-                panel.load_agent_thread(
-                    session_info.session_id,
-                    session_info.cwd,
-                    session_info.title,
-                    window,
-                    cx,
-                );
-            });
-        }
-
-        self.show_thread_list(window, cx);
     }
 
     fn render_sidebar_toggle_button(
@@ -1610,8 +1580,8 @@ impl Sidebar {
                 ThreadsArchiveViewEvent::Close => {
                     this.show_thread_list(window, cx);
                 }
-                ThreadsArchiveViewEvent::OpenThread(session_info) => {
-                    this.open_archive_thread(session_info.clone(), window, cx);
+                ThreadsArchiveViewEvent::OpenThread(_session_info) => {
+                    //TODO: Actually open thread once we support it
                 }
             },
         );
