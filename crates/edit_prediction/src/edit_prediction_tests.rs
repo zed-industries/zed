@@ -1,5 +1,5 @@
 use super::*;
-use crate::{compute_diff_between_snapshots, udiff::apply_diff_to_string};
+use crate::udiff::apply_diff_to_string;
 use client::{UserStore, test::FakeServer};
 use clock::FakeSystemClock;
 use clock::ReplicaId;
@@ -2662,74 +2662,6 @@ async fn test_unauthenticated_without_custom_url_blocks_prediction_impl(cx: &mut
     assert!(
         result.is_err(),
         "Without authentication and without custom URL, prediction should fail"
-    );
-}
-
-#[gpui::test]
-fn test_compute_diff_between_snapshots(cx: &mut TestAppContext) {
-    let buffer = cx.new(|cx| {
-        Buffer::local(
-            indoc! {"
-                zero
-                one
-                two
-                three
-                four
-                five
-                six
-                seven
-                eight
-                nine
-                ten
-                eleven
-                twelve
-                thirteen
-                fourteen
-                fifteen
-                sixteen
-                seventeen
-                eighteen
-                nineteen
-                twenty
-                twenty-one
-                twenty-two
-                twenty-three
-                twenty-four
-            "},
-            cx,
-        )
-    });
-
-    let old_snapshot = buffer.read_with(cx, |buffer, _| buffer.text_snapshot());
-
-    buffer.update(cx, |buffer, cx| {
-        let point = Point::new(12, 0);
-        buffer.edit([(point..point, "SECOND INSERTION\n")], None, cx);
-        let point = Point::new(8, 0);
-        buffer.edit([(point..point, "FIRST INSERTION\n")], None, cx);
-    });
-
-    let new_snapshot = buffer.read_with(cx, |buffer, _| buffer.text_snapshot());
-
-    let (diff, _) = compute_diff_between_snapshots(&old_snapshot, &new_snapshot).unwrap();
-
-    assert_eq!(
-        diff,
-        indoc! {"
-            @@ -6,10 +6,12 @@
-             five
-             six
-             seven
-            +FIRST INSERTION
-             eight
-             nine
-             ten
-             eleven
-            +SECOND INSERTION
-             twelve
-             thirteen
-             fourteen
-            "}
     );
 }
 

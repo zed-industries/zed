@@ -631,15 +631,6 @@ impl LastEvent {
     }
 }
 
-#[cfg_attr(not(test), allow(dead_code))]
-pub(crate) fn compute_diff_between_snapshots(
-    old_snapshot: &TextBufferSnapshot,
-    new_snapshot: &TextBufferSnapshot,
-) -> Option<(String, Range<Point>)> {
-    let total_edit_range = compute_total_edit_range_between_snapshots(old_snapshot, new_snapshot)?;
-    compute_diff_between_snapshots_in_range(old_snapshot, new_snapshot, &total_edit_range)
-}
-
 fn compute_total_edit_range_between_snapshots(
     old_snapshot: &TextBufferSnapshot,
     new_snapshot: &TextBufferSnapshot,
