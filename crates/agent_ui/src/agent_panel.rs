@@ -1262,6 +1262,10 @@ impl AgentPanel {
         &self.thread_store
     }
 
+    pub fn connection_store(&self) -> &Entity<AgentConnectionStore> {
+        &self.connection_store
+    }
+
     pub fn open_thread(
         &mut self,
         session_id: acp::SessionId,
@@ -2567,7 +2571,6 @@ impl AgentPanel {
                 project,
                 thread_store,
                 self.prompt_store.clone(),
-                cx.new(|cx| ThreadHistory::new(None, cx)), //FIXME figure out how pass thread history here
                 window,
                 cx,
             )
@@ -4439,7 +4442,10 @@ impl AgentPanel {
                 false
             }
             ActiveView::AgentThread { server_view } => {
-                let history_is_empty = server_view.read(cx).history().read(cx).is_empty();
+                let history_is_empty = server_view
+                    .read(cx)
+                    .history()
+                    .is_none_or(|h| h.read(cx).is_empty());
                 history_is_empty || !has_configured_non_zed_providers
             }
             ActiveView::TextThread { .. } => {
@@ -4932,18 +4938,26 @@ impl rules_library::InlineAssistDelegate for PromptLibraryInlineAssist {
             let Some(panel) = workspace.read(cx).panel::<AgentPanel>(cx) else {
                 return;
             };
+            let Some(history) = panel
+                .read(cx)
+                .connection_store()
+                .read(cx)
+                .entry(&crate::ExternalAgent::NativeAgent)
+                .and_then(|s| s.read(cx).history())
+            else {
+                log::error!("No connection entry found for native agent");
+                return;
+            };
             let project = workspace.read(cx).project().downgrade();
             let panel = panel.read(cx);
             let thread_store = panel.thread_store().clone();
-            //FIXME
-            let history = cx.new(|cx| ThreadHistory::new(None, cx)).downgrade();
             assistant.assist(
                 prompt_editor,
                 self.workspace.clone(),
                 project,
                 thread_store,
                 None,
-                history,
+                history.downgrade(),
                 initial_prompt,
                 window,
                 cx,

@@ -314,7 +314,6 @@ pub struct ConnectionView {
     thread_store: Option<Entity<ThreadStore>>,
     prompt_store: Option<Entity<PromptStore>>,
     server_state: ServerState,
-    history: Entity<ThreadHistory>,
     focus_handle: FocusHandle,
     notifications: Vec<WindowHandle<AgentNotification>>,
     notification_subscriptions: HashMap<WindowHandle<AgentNotification>, Vec<Subscription>>,
@@ -418,6 +417,7 @@ pub struct ConnectedServerState {
     active_id: Option<acp::SessionId>,
     threads: HashMap<acp::SessionId, Entity<ThreadView>>,
     connection: Rc<dyn AgentConnection>,
+    history: Entity<ThreadHistory>,
     conversation: Entity<Conversation>,
     _connection_entry_subscription: Subscription,
 }
@@ -484,7 +484,6 @@ impl ConnectionView {
         project: Entity<Project>,
         thread_store: Option<Entity<ThreadStore>>,
         prompt_store: Option<Entity<PromptStore>>,
-        history: Entity<ThreadHistory>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -537,7 +536,6 @@ impl ConnectionView {
             notifications: Vec::new(),
             notification_subscriptions: HashMap::default(),
             auth_task: None,
-            history,
             _subscriptions: subscriptions,
             focus_handle: cx.focus_handle(),
         }
@@ -758,12 +756,20 @@ impl ConnectionView {
                             conversation
                         });
 
+                        //FIXME
+                        let history = connection_entry
+                            .read(cx)
+                            .history()
+                            .expect("Missing history in connected state")
+                            .clone();
+
                         let current = this.new_thread_view(
                             None,
                             thread,
                             conversation.clone(),
                             resumed_without_history,
                             initial_content,
+                            history.clone(),
                             window,
                             cx,
                         );
@@ -784,6 +790,7 @@ impl ConnectionView {
                                 active_id: Some(id.clone()),
                                 threads: HashMap::from_iter([(id, current)]),
                                 conversation,
+                                history,
                                 _connection_entry_subscription: connection_entry_subscription,
                             }),
                             cx,
@@ -817,6 +824,7 @@ impl ConnectionView {
         conversation: Entity<Conversation>,
         resumed_without_history: bool,
         initial_content: Option<AgentInitialContent>,
+        history: Entity<ThreadHistory>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Entity<ThreadView> {
@@ -833,7 +841,7 @@ impl ConnectionView {
                 self.workspace.clone(),
                 self.project.downgrade(),
                 self.thread_store.clone(),
-                self.history.downgrade(),
+                history.downgrade(),
                 self.prompt_store.clone(),
                 prompt_capabilities.clone(),
                 available_commands.clone(),
@@ -1000,7 +1008,7 @@ impl ConnectionView {
                 resumed_without_history,
                 self.project.downgrade(),
                 self.thread_store.clone(),
-                self.history.clone(),
+                history,
                 self.prompt_store.clone(),
                 initial_content,
                 subscriptions,
@@ -1082,6 +1090,7 @@ impl ConnectionView {
                         threads: HashMap::default(),
                         connection,
                         conversation: cx.new(|_cx| Conversation::default()),
+                        history: cx.new(|cx| ThreadHistory::new(None, cx)),
                         _connection_entry_subscription: Subscription::new(|| {}),
                     }),
                     cx,
@@ -1686,10 +1695,10 @@ impl ConnectionView {
         cx.spawn_in(window, async move |this, cx| {
             let subagent_thread = subagent_thread_task.await?;
             this.update_in(cx, |this, window, cx| {
-                let conversation = this
+                let Some((conversation, history)) = this
                     .as_connected()
-                    .map(|connected| connected.conversation.clone());
-                let Some(conversation) = conversation else {
+                    .map(|connected| (connected.conversation.clone(), connected.history.clone()))
+                else {
                     return;
                 };
                 conversation.update(cx, |conversation, cx| {
@@ -1701,6 +1710,7 @@ impl ConnectionView {
                     conversation,
                     false,
                     None,
+                    history,
                     window,
                     cx,
                 );
@@ -2207,9 +2217,11 @@ impl ConnectionView {
         let agent_name = self.agent.name();
         let workspace = self.workspace.clone();
         let project = self.project.downgrade();
-        let history = self.history.downgrade();
-
-        let Some(thread) = self.active_thread() else {
+        let Some(connected) = self.as_connected() else {
+            return;
+        };
+        let history = connected.history.downgrade();
+        let Some(thread) = connected.active_view() else {
             return;
         };
         let prompt_capabilities = thread.read(cx).prompt_capabilities.clone();
@@ -2602,12 +2614,16 @@ impl ConnectionView {
         })
     }
 
-    pub fn history(&self) -> &Entity<ThreadHistory> {
-        &self.history
+    pub fn history(&self) -> Option<&Entity<ThreadHistory>> {
+        self.as_connected().map(|c| &c.history)
     }
 
     pub fn delete_history_entry(&mut self, session_id: &acp::SessionId, cx: &mut Context<Self>) {
-        let task = self
+        let Some(connected) = self.as_connected() else {
+            return;
+        };
+
+        let task = connected
             .history
             .update(cx, |history, cx| history.delete_session(&session_id, cx));
         task.detach_and_log_err(cx);
@@ -2917,7 +2933,6 @@ pub(crate) mod tests {
                     project,
                     Some(thread_store),
                     None,
-                    history.clone(),
                     window,
                     cx,
                 )
@@ -3003,7 +3018,6 @@ pub(crate) mod tests {
         let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
 
         let thread_store = cx.update(|_window, cx| cx.new(|cx| ThreadStore::new(cx)));
-        let history = cx.update(|_window, cx| cx.new(|cx| ThreadHistory::new(None, cx)));
         let connection_store =
             cx.update(|_window, cx| cx.new(|cx| AgentConnectionStore::new(project.clone(), cx)));
 
@@ -3023,7 +3037,6 @@ pub(crate) mod tests {
                     project,
                     Some(thread_store),
                     None,
-                    history,
                     window,
                     cx,
                 )
@@ -3062,7 +3075,6 @@ pub(crate) mod tests {
         let captured_cwd = connection.captured_cwd.clone();
 
         let thread_store = cx.update(|_window, cx| cx.new(|cx| ThreadStore::new(cx)));
-        let history = cx.update(|_window, cx| cx.new(|cx| ThreadHistory::new(None, cx)));
         let connection_store =
             cx.update(|_window, cx| cx.new(|cx| AgentConnectionStore::new(project.clone(), cx)));
 
@@ -3082,7 +3094,6 @@ pub(crate) mod tests {
                     project,
                     Some(thread_store),
                     None,
-                    history,
                     window,
                     cx,
                 )
@@ -3119,7 +3130,6 @@ pub(crate) mod tests {
         let captured_cwd = connection.captured_cwd.clone();
 
         let thread_store = cx.update(|_window, cx| cx.new(|cx| ThreadStore::new(cx)));
-        let history = cx.update(|_window, cx| cx.new(|cx| ThreadHistory::new(None, cx)));
         let connection_store =
             cx.update(|_window, cx| cx.new(|cx| AgentConnectionStore::new(project.clone(), cx)));
 
@@ -3139,7 +3149,6 @@ pub(crate) mod tests {
                     project,
                     Some(thread_store),
                     None,
-                    history,
                     window,
                     cx,
                 )
@@ -3176,7 +3185,6 @@ pub(crate) mod tests {
         let captured_cwd = connection.captured_cwd.clone();
 
         let thread_store = cx.update(|_window, cx| cx.new(|cx| ThreadStore::new(cx)));
-        let history = cx.update(|_window, cx| cx.new(|cx| ThreadHistory::new(None, cx)));
         let connection_store =
             cx.update(|_window, cx| cx.new(|cx| AgentConnectionStore::new(project.clone(), cx)));
 
@@ -3196,7 +3204,6 @@ pub(crate) mod tests {
                     project,
                     Some(thread_store),
                     None,
-                    history,
                     window,
                     cx,
                 )
@@ -3494,7 +3501,6 @@ pub(crate) mod tests {
 
         // Set up thread view in workspace 1
         let thread_store = cx.update(|_window, cx| cx.new(|cx| ThreadStore::new(cx)));
-        let history = cx.update(|_window, cx| cx.new(|cx| ThreadHistory::new(None, cx)));
         let connection_store =
             cx.update(|_window, cx| cx.new(|cx| AgentConnectionStore::new(project1.clone(), cx)));
 
@@ -3515,7 +3521,6 @@ pub(crate) mod tests {
                     project1.clone(),
                     Some(thread_store),
                     None,
-                    history,
                     window,
                     cx,
                 )
@@ -3734,7 +3739,6 @@ pub(crate) mod tests {
                     project,
                     Some(thread_store),
                     None,
-                    history.clone(),
                     window,
                     cx,
                 )
@@ -4450,7 +4454,6 @@ pub(crate) mod tests {
         let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
 
         let thread_store = cx.update(|_window, cx| cx.new(|cx| ThreadStore::new(cx)));
-        let history = cx.update(|_window, cx| cx.new(|cx| ThreadHistory::new(None, cx)));
         let connection_store =
             cx.update(|_window, cx| cx.new(|cx| AgentConnectionStore::new(project.clone(), cx)));
 
@@ -4471,7 +4474,6 @@ pub(crate) mod tests {
                     project.clone(),
                     Some(thread_store.clone()),
                     None,
-                    history,
                     window,
                     cx,
                 )
