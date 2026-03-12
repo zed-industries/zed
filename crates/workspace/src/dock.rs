@@ -829,19 +829,13 @@ impl Render for Dock {
                 .cached(StyleRefinement::default().v_flex().size_full());
 
             let position = self.position;
-            let create_resize_handle = |is_flex_content: bool| {
+            let create_resize_handle = || {
                 let handle = div()
                     .id("resize-handle")
-                    .on_drag(
-                        DraggedDock {
-                            position,
-                            is_flex_content,
-                        },
-                        |dock, _, _, cx| {
-                            cx.stop_propagation();
-                            cx.new(|_| dock.clone())
-                        },
-                    )
+                    .on_drag(DraggedDock { position }, |dock, _, _, cx| {
+                        cx.stop_propagation();
+                        cx.new(|_| dock.clone())
+                    })
                     .on_mouse_down(
                         MouseButton::Left,
                         cx.listener(|_, _: &MouseDownEvent, _, cx| {
@@ -917,7 +911,7 @@ impl Render for Dock {
                     DockPosition::Bottom => this.border_t_1(),
                 })
                 .when(self.resizable(cx), |this| {
-                    this.child(create_resize_handle(false))
+                    this.child(create_resize_handle())
                 })
         } else {
             div()

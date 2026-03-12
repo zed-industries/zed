@@ -7590,7 +7590,6 @@ impl Focusable for Workspace {
 #[derive(Clone)]
 struct DraggedDock {
     position: DockPosition,
-    is_flex_content: bool,
 }
 
 impl Render for DraggedDock {

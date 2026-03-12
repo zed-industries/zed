@@ -895,9 +895,9 @@ impl PaneAxis {
         };
 
         if ix + 1 == state.entries.len() {
-            apply_changes(ix - 1, -1.0 * amount, &mut *state);
+            apply_changes(ix - 1, -1.0 * amount, &mut state);
         } else {
-            apply_changes(ix, amount, &mut *state);
+            apply_changes(ix, amount, &mut state);
         }
         Some(true)
     }
@@ -1200,6 +1200,8 @@ pub mod element {
                 Axis::Horizontal => px(HORIZONTAL_MIN_SIZE),
                 Axis::Vertical => px(VERTICAL_MIN_SIZE),
             };
+
+            #[cfg(debug_assertions)]
             check_flex_values_in_bounds(entries);
 
             // Math to convert a flex value to a pixel value
@@ -1367,6 +1369,8 @@ pub mod element {
 
             let len = self.children.len();
             debug_assert!(entries.len() == len);
+
+            #[cfg(debug_assertions)]
             check_flex_values_in_bounds(entries);
 
             let total_flex = len as f32;
@@ -1574,8 +1578,8 @@ pub mod element {
         }
     }
 
+    #[cfg(debug_assertions)]
     fn check_flex_values_in_bounds(inner: &[PaneAxisStateEntry]) {
-        #[cfg(debug_assertions)]
         if (inner.iter().map(|e| e.flex).sum::<f32>() - inner.len() as f32).abs() >= 0.001 {
             panic!(
                 "flex values out of bounds: {:?}",
