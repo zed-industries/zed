@@ -5,7 +5,10 @@ use clock::FakeSystemClock;
 use cloud_api_types::{CreateLlmTokenResponse, LlmToken};
 use cloud_llm_client::{
     EditPredictionRejectReason, EditPredictionRejection, RejectEditPredictionsBody,
-    predict_edits_v3::{PredictEditsV3Request, PredictEditsV3Response},
+    predict_edits_v3::{
+        PredictEditsV3Request, PredictEditsV3Response, RawCompletionChoice,
+        RawCompletionRequest, RawCompletionResponse, RawCompletionUsage,
+    },
 };
 use futures::{
     AsyncReadExt, FutureExt, StreamExt,
@@ -2243,6 +2246,24 @@ async fn run_edit_prediction(
     prediction_task.await.unwrap().unwrap().prediction.unwrap()
 }
 
+async fn request_edit_prediction(
+    buffer: &Entity<Buffer>,
+    project: &Entity<Project>,
+    ep_store: &Entity<EditPredictionStore>,
+    cursor: Point,
+    cx: &mut TestAppContext,
+) -> Result<Option<EditPredictionResult>, anyhow::Error> {
+    let anchor = buffer.read_with(cx, |buffer, _| buffer.anchor_before(cursor));
+    ep_store.update(cx, |ep_store, cx| {
+        ep_store.register_buffer(buffer, &project, cx)
+    });
+    cx.background_executor.run_until_parked();
+    let prediction_task = ep_store.update(cx, |ep_store, cx| {
+        ep_store.request_prediction(&project, buffer, anchor, Default::default(), cx)
+    });
+    prediction_task.await
+}
+
 async fn make_test_ep_store(
     project: &Entity<Project>,
     cx: &mut TestAppContext,
@@ -2325,6 +2346,116 @@ async fn make_test_ep_store(
     });
 
     (ep_store, completion_response)
+}
+
+async fn make_sweep_prompt_test_ep_store(
+    project: &Entity<Project>,
+    cx: &mut TestAppContext,
+) -> (
+    Entity<EditPredictionStore>,
+    Arc<Mutex<String>>,
+    Arc<Mutex<Vec<RawCompletionRequest>>>,
+) {
+    cx.update(|cx| {
+        cx.update_global::<SettingsStore, _>(|store: &mut SettingsStore, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.project.all_languages.edit_predictions =
+                    Some(settings::EditPredictionSettingsContent {
+                        provider: Some(settings::EditPredictionProvider::OpenAiCompatibleApi),
+                        open_ai_compatible_api: Some(
+                            settings::CustomEditPredictionProviderSettingsContent {
+                                api_url: Some(
+                                    "http://localhost:8080/v1/completions".to_string(),
+                                ),
+                                model: Some("sweep-next-edit-1.5b".to_string()),
+                                prompt_format: Some(settings::EditPredictionPromptFormat::Sweep),
+                                max_output_tokens: Some(64),
+                            },
+                        ),
+                        ..Default::default()
+                    });
+            });
+        });
+    });
+
+    let default_response = String::new();
+    let completion_response = Arc::new(Mutex::new(default_response));
+    let requests = Arc::new(Mutex::new(Vec::new()));
+    let http_client = FakeHttpClient::create({
+        let completion_response = completion_response.clone();
+        let requests = requests.clone();
+        let mut next_request_id = 0;
+        move |request| {
+            let completion_response = completion_response.clone();
+            let requests = requests.clone();
+            let method = request.method().clone();
+            let uri = request.uri().path().to_string();
+            let mut body = request.into_body();
+            async move {
+                match (method, uri.as_str()) {
+                    (Method::POST, "/v1/completions") => {
+                        let mut body_bytes = Vec::new();
+                        body.read_to_end(&mut body_bytes)
+                            .await
+                            .expect("fake completion server should read request body");
+                        let request: RawCompletionRequest =
+                            serde_json::from_slice(&body_bytes).unwrap();
+                        requests.lock().push(request);
+
+                        next_request_id += 1;
+                        let response = RawCompletionResponse {
+                            id: format!("request-{next_request_id}"),
+                            object: "text_completion".to_string(),
+                            created: 0,
+                            model: "sweep-next-edit-1.5b".to_string(),
+                            choices: vec![RawCompletionChoice {
+                                text: completion_response.lock().clone(),
+                                finish_reason: Some("stop".to_string()),
+                            }],
+                            usage: RawCompletionUsage {
+                                prompt_tokens: 0,
+                                completion_tokens: 0,
+                                total_tokens: 0,
+                            },
+                        };
+
+                        Ok(http_client::Response::builder()
+                            .status(200)
+                            .body(serde_json::to_string(&response).unwrap().into())
+                            .unwrap())
+                    }
+                    _ => Ok(http_client::Response::builder()
+                        .status(404)
+                        .body("Not Found".to_string().into())
+                        .unwrap()),
+                }
+            }
+        }
+    });
+
+    cx.update(|cx| {
+        cx.set_http_client(http_client.clone());
+    });
+    let client = cx.update(|cx| {
+        Client::new(
+            Arc::new(FakeSystemClock::new()),
+            http_client.clone(),
+            cx,
+        )
+    });
+    let user_store = cx.update(|cx| cx.new(|cx| client::UserStore::new(client.clone(), cx)));
+    cx.update(|cx| {
+        RefreshLlmTokenListener::register(client.clone(), user_store.clone(), cx);
+    });
+    let _server = FakeServer::for_client(42, &client, cx).await;
+
+    let ep_store = cx.new(|cx| {
+        let mut ep_store = EditPredictionStore::new(client, project.read(cx).user_store(), cx);
+        ep_store.set_edit_prediction_model(EditPredictionModel::SweepPrompt);
+        ep_store
+    });
+
+    (ep_store, completion_response, requests)
 }
 
 fn to_completion_edits(
@@ -2417,6 +2548,110 @@ async fn test_unauthenticated_without_custom_url_blocks_prediction_impl(cx: &mut
     assert!(
         result.is_err(),
         "Without authentication and without custom URL, prediction should fail"
+    );
+}
+
+#[gpui::test]
+async fn test_sweep_prompt_request_prediction_diffs_rewritten_window_into_anchored_edits(
+    cx: &mut TestAppContext,
+) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        "/project",
+        serde_json::json!({
+            "main.rs": "line 0\nline 1\nline 2\n"
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
+    let buffer = project
+        .update(cx, |project, cx| {
+            let path = project
+                .find_project_path(path!("/project/main.rs"), cx)
+                .unwrap();
+            project.open_buffer(path, cx)
+        })
+        .await
+        .unwrap();
+
+    let (ep_store, completion_response, requests) =
+        make_sweep_prompt_test_ep_store(&project, cx).await;
+    *completion_response.lock() = "line 0\nline 1 updated\nline 2\n".to_string();
+
+    let result = request_edit_prediction(&buffer, &project, &ep_store, Point::new(1, 0), cx)
+        .await
+        .unwrap()
+        .expect("expected a sweep prompt prediction");
+    let prediction = result.prediction.expect("expected prediction edits");
+
+    let edits = cx.update(|cx| from_completion_edits(&prediction.edits, &buffer, cx));
+    assert_eq!(edits, vec![(13..13, " updated".into())]);
+
+    buffer.update(cx, |buffer, cx| {
+        buffer.edit(prediction.edits.iter().cloned(), None, cx)
+    });
+    assert_eq!(
+        buffer.read_with(cx, |buffer, _| buffer.text()),
+        "line 0\nline 1 updated\nline 2\n"
+    );
+
+    let requests = requests.lock();
+    assert_eq!(requests.len(), 1);
+    let stop_tokens = requests[0]
+        .stop
+        .iter()
+        .map(|token| token.as_ref())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        stop_tokens,
+        vec!["<|file_sep|>", "</s>"]
+    );
+}
+
+#[gpui::test]
+async fn test_sweep_prompt_request_prediction_returns_none_for_identical_rewrite(
+    cx: &mut TestAppContext,
+) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        "/project",
+        serde_json::json!({
+            "main.rs": "line 0\nline 1\nline 2\n"
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
+    let buffer = project
+        .update(cx, |project, cx| {
+            let path = project
+                .find_project_path(path!("/project/main.rs"), cx)
+                .unwrap();
+            project.open_buffer(path, cx)
+        })
+        .await
+        .unwrap();
+
+    let (ep_store, completion_response, requests) =
+        make_sweep_prompt_test_ep_store(&project, cx).await;
+    *completion_response.lock() = "line 0\nline 1\nline 2\n".to_string();
+
+    let result = request_edit_prediction(&buffer, &project, &ep_store, Point::new(1, 0), cx)
+        .await
+        .unwrap();
+
+    assert!(result.is_none(), "identical rewrites should produce no prediction");
+
+    let requests = requests.lock();
+    assert_eq!(requests.len(), 1);
+    assert!(
+        requests[0].prompt.contains("<|file_sep|>updated/"),
+        "expected Sweep-style rewrite prompt"
     );
 }
 

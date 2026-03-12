@@ -434,6 +434,7 @@ The `prompt_format` setting controls how code context is formatted for the model
 - `qwen` - Qwen/CodeGemma format: `<|fim_prefix|>prefix<|fim_suffix|>suffix<|fim_middle|>`
 - `codestral` - Codestral format: `[SUFFIX]suffix[PREFIX]prefix`
 - `glm` - GLM-4 format with code markers
+- `sweep` - [Sweep rewrite-window](https://blog.sweep.dev/posts/oss-next-edit) format using `<|file_sep|>` file blocks for related files, `original/...`, `current/...`, and `updated/...`.
 - `infer` - Auto-detect from model name (default)
 
 Your server must implement the OpenAI `/v1/completions` endpoint. Edit predictions will send POST requests with this format:

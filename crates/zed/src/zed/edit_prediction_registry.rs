@@ -135,6 +135,10 @@ fn edit_prediction_provider_config_for_settings(cx: &App) -> Option<EditPredicti
                 EditPredictionPromptFormat::Zeta | EditPredictionPromptFormat::Zeta2
             ) {
                 Some(EditPredictionProviderConfig::Zed(EditPredictionModel::Zeta))
+            } else if format == EditPredictionPromptFormat::Sweep {
+                Some(EditPredictionProviderConfig::Zed(
+                    EditPredictionModel::SweepPrompt,
+                ))
             } else {
                 Some(EditPredictionProviderConfig::Zed(
                     EditPredictionModel::Fim { format },
@@ -155,6 +159,12 @@ fn infer_prompt_format(model: &str) -> Option<EditPredictionPromptFormat> {
     let model_base = model.split(':').next().unwrap_or(model);
 
     Some(match model_base {
+        model_base if model_base
+            .to_ascii_lowercase()
+            .contains("sweep-next-edit") =>
+        {
+            EditPredictionPromptFormat::Sweep
+        }
         "codellama" | "code-llama" => EditPredictionPromptFormat::CodeLlama,
         "starcoder" | "starcoder2" | "starcoderbase" => EditPredictionPromptFormat::StarCoder,
         "deepseek-coder" | "deepseek-coder-v2" => EditPredictionPromptFormat::DeepseekCoder,
@@ -184,6 +194,7 @@ impl EditPredictionProviderConfig {
                 EditPredictionModel::Zeta => "Zeta",
                 EditPredictionModel::Fim { .. } => "FIM",
                 EditPredictionModel::Sweep => "Sweep",
+                EditPredictionModel::SweepPrompt => "Sweep Prompt",
                 EditPredictionModel::Mercury => "Mercury",
             },
         }
@@ -306,8 +317,56 @@ mod tests {
     use super::*;
     use editor::MultiBuffer;
     use gpui::{BorrowAppContext, TestAppContext};
-    use settings::{EditPredictionProvider, SettingsStore};
+    use settings::{EditPredictionPromptFormat, EditPredictionProvider, SettingsStore};
     use workspace::AppState;
+
+    #[gpui::test]
+    async fn test_sweep_prompt_format_routes_to_sweep_prompt_model(cx: &mut TestAppContext) {
+        let app_state = cx.update(|cx| {
+            let app_state = AppState::test(cx);
+            client::init(&app_state.client, cx);
+            language_model::init(app_state.user_store.clone(), app_state.client.clone(), cx);
+            app_state
+        });
+
+        cx.update(|cx| {
+            cx.update_global::<SettingsStore, _>(|store: &mut SettingsStore, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings.project.all_languages.edit_predictions =
+                        Some(settings::EditPredictionSettingsContent {
+                            provider: Some(EditPredictionProvider::OpenAiCompatibleApi),
+                            open_ai_compatible_api: Some(
+                                settings::CustomEditPredictionProviderSettingsContent {
+                                    api_url: Some(
+                                        "http://localhost:8080/v1/completions".to_string(),
+                                    ),
+                                    model: Some("sweep-next-edit-1.5b".to_string()),
+                                    prompt_format: Some(EditPredictionPromptFormat::Sweep),
+                                    ..Default::default()
+                                },
+                            ),
+                            ..Default::default()
+                        });
+                });
+            });
+        });
+
+        let config = cx.update(|cx| edit_prediction_provider_config_for_settings(cx));
+        assert!(
+            matches!(
+                config,
+                Some(EditPredictionProviderConfig::Zed(
+                    EditPredictionModel::SweepPrompt,
+                ))
+            ),
+            "expected self-hosted sweep prompt format to route to SweepPrompt"
+        );
+
+        let provider_name = config.map(|config| config.name());
+        assert_eq!(provider_name, Some("Sweep Prompt"));
+
+        drop(app_state);
+    }
 
     #[gpui::test]
     async fn test_subscribe_uses_stale_provider_config_after_settings_change(
