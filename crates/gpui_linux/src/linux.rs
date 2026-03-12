@@ -1,4 +1,4 @@
-#[cfg(all(feature = "wayland", feature = "global-menu"))]
+#[cfg(feature = "global-menu")]
 pub mod dbusmenu;
 mod dispatcher;
 mod headless;

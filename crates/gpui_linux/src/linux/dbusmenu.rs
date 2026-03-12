@@ -8,7 +8,7 @@ use std::sync::{
 use std::time::Duration;
 
 use calloop::channel::Sender as CalloopSender;
-use gpui::{Action, KeyContext, Keymap, KeybindingKeystroke, OwnedMenu, OwnedMenuItem};
+use gpui::{Action, KeyContext, KeybindingKeystroke, Keymap, OsAction, OwnedMenu, OwnedMenuItem};
 use zbus::zvariant::{OwnedValue, Value};
 
 pub const DBUSMENU_OBJECT_PATH: &str = "/MenuBar";
@@ -35,6 +35,7 @@ pub enum DBusMenuCommand {
     Unexport {
         object_path: String,
     },
+    Shutdown,
 }
 
 pub struct ValidateRequest {
@@ -286,6 +287,23 @@ impl DBusMenuServer {
         }
     }
 
+    pub fn shutdown(&self) {
+        let sender = match self.command_sender.lock() {
+            Ok(sender) => sender.clone(),
+            Err(error) => {
+                log::error!("Failed to read DBusMenu command sender: {error}");
+                return;
+            }
+        };
+        let Some(sender) = sender else {
+            return;
+        };
+
+        if let Err(error) = sender.try_send(DBusMenuCommand::Shutdown) {
+            log::error!("Failed to queue DBusMenu shutdown request: {error}");
+        }
+    }
+
     pub fn refresh_enabled_states(&self, validate: &mut dyn FnMut(&dyn Action) -> bool) {
         let mut updated_props: Vec<(i32, HashMap<String, OwnedValue>)> = Vec::new();
 
@@ -313,7 +331,9 @@ impl DBusMenuServer {
 
                 entry.enabled = Some(enabled);
                 if let Some(value) = owned_bool(enabled) {
-                    entry.properties.insert("enabled".to_string(), value.clone());
+                    entry
+                        .properties
+                        .insert("enabled".to_string(), value.clone());
                     let mut props = HashMap::new();
                     props.insert("enabled".to_string(), value);
                     updated_props.push((*id, props));
@@ -631,7 +651,9 @@ impl DBusMenuServer {
                     if let Ok(mut state) = self.state.lock() {
                         if let Some(entry) = state.items.get_mut(&id) {
                             entry.enabled = Some(enabled);
-                            entry.properties.insert("enabled".to_string(), value.clone());
+                            entry
+                                .properties
+                                .insert("enabled".to_string(), value.clone());
                         }
                     }
                     return Ok(value);
@@ -639,9 +661,10 @@ impl DBusMenuServer {
             }
         }
 
-        let state = self.state.lock().map_err(|_| {
-            zbus::fdo::Error::Failed("Failed to access DBusMenu state".to_string())
-        })?;
+        let state = self
+            .state
+            .lock()
+            .map_err(|_| zbus::fdo::Error::Failed("Failed to access DBusMenu state".to_string()))?;
         state
             .items
             .get(&id)
@@ -699,6 +722,7 @@ fn root_properties() -> HashMap<String, OwnedValue> {
     } else {
         log::error!("Failed to build DBusMenu root properties");
     }
+    insert_visible_property(&mut props);
     props
 }
 
@@ -722,6 +746,7 @@ fn build_menu_tree(
     } else {
         log::error!("Failed to encode DBusMenu children-display property");
     }
+    insert_visible_property(&mut properties);
 
     let mut child_ids = Vec::new();
 
@@ -738,6 +763,7 @@ fn build_menu_tree(
                 } else {
                     log::error!("Failed to encode DBusMenu separator type");
                 }
+                insert_visible_property(&mut props);
                 items.insert(
                     child_id,
                     MenuItemEntry {
@@ -753,6 +779,7 @@ fn build_menu_tree(
                 name,
                 action,
                 checked,
+                os_action,
                 ..
             } => {
                 let mut props = HashMap::new();
@@ -766,11 +793,29 @@ fn build_menu_tree(
                 if let Some(value) = owned_bool(true) {
                     props.insert("enabled".to_string(), value);
                 } else {
-                    log::error!("Failed to encode DBusMenu enabled state for menu item {}", name);
+                    log::error!(
+                        "Failed to encode DBusMenu enabled state for menu item {}",
+                        name
+                    );
                 }
 
                 if let Some(shortcut) = dbus_shortcut_for_action(action.as_ref(), keymap) {
                     props.insert("shortcut".to_string(), shortcut);
+                }
+
+                if let Some(os_action) = os_action {
+                    if let Some(icon_name) = icon_name_for_os_action(*os_action) {
+                        match Value::Str(icon_name.into()).try_into() {
+                            Ok(value) => {
+                                props.insert("icon-name".to_string(), value);
+                            }
+                            Err(error) => {
+                                log::error!(
+                                    "Failed to encode DBusMenu icon-name for {icon_name}: {error}"
+                                );
+                            }
+                        }
+                    }
                 }
 
                 if *checked {
@@ -787,6 +832,7 @@ fn build_menu_tree(
                         log::error!("Failed to encode DBusMenu toggle-state");
                     }
                 }
+                insert_visible_property(&mut props);
                 items.insert(
                     child_id,
                     MenuItemEntry {
@@ -821,8 +867,41 @@ pub fn object_path_for_window(window_id: u32) -> String {
     format!("{DBUSMENU_OBJECT_PATH}/window_{window_id}")
 }
 
+pub fn global_menu_env_override() -> Option<bool> {
+    match std::env::var("ZED_GLOBAL_MENU").ok().as_deref() {
+        None => None,
+        Some("1" | "true" | "TRUE" | "yes" | "YES" | "on" | "ON") => Some(true),
+        Some("0" | "false" | "FALSE" | "no" | "NO" | "off" | "OFF") => Some(false),
+        Some(value) => {
+            log::warn!(
+                "Ignoring invalid ZED_GLOBAL_MENU value {value:?}. Expected 0/1, true/false, yes/no, or on/off."
+            );
+            None
+        }
+    }
+}
+
 fn owned_bool(value: bool) -> Option<OwnedValue> {
     Value::Bool(value).try_into().ok()
+}
+
+fn insert_visible_property(props: &mut HashMap<String, OwnedValue>) {
+    if let Some(value) = owned_bool(true) {
+        props.insert("visible".to_string(), value);
+    } else {
+        log::error!("Failed to encode DBusMenu visible property");
+    }
+}
+
+fn icon_name_for_os_action(action: OsAction) -> Option<&'static str> {
+    match action {
+        OsAction::Cut => Some("edit-cut"),
+        OsAction::Copy => Some("edit-copy"),
+        OsAction::Paste => Some("edit-paste"),
+        OsAction::SelectAll => Some("edit-select-all"),
+        OsAction::Undo => Some("edit-undo"),
+        OsAction::Redo => Some("edit-redo"),
+    }
 }
 
 fn dbus_shortcut_for_action(action: &dyn Action, keymap: &Keymap) -> Option<OwnedValue> {
@@ -843,7 +922,11 @@ fn dbus_shortcut_for_action(action: &dyn Action, keymap: &Keymap) -> Option<Owne
 
     let binding = keymap
         .bindings_for_action(action)
-        .find(|binding| binding.predicate().is_none_or(|predicate| predicate.eval(contexts)))
+        .find(|binding| {
+            binding
+                .predicate()
+                .is_none_or(|predicate| predicate.eval(contexts))
+        })
         .or_else(|| keymap.bindings_for_action(action).next());
 
     let keystrokes = binding?.keystrokes();

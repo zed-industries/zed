@@ -107,21 +107,6 @@ use wayland_protocols::wp::linux_dmabuf::zv1::client::{
     zwp_linux_dmabuf_feedback_v1, zwp_linux_dmabuf_v1,
 };
 
-#[cfg(feature = "global-menu")]
-fn global_menu_env_override() -> Option<bool> {
-    match std::env::var("ZED_GLOBAL_MENU").ok().as_deref() {
-        None => None,
-        Some("1" | "true" | "TRUE" | "yes" | "YES" | "on" | "ON") => Some(true),
-        Some("0" | "false" | "FALSE" | "no" | "NO" | "off" | "OFF") => Some(false),
-        Some(value) => {
-            log::warn!(
-                "Ignoring invalid ZED_GLOBAL_MENU value {value:?}. Expected 0/1, true/false, yes/no, or on/off."
-            );
-            None
-        }
-    }
-}
-
 /// Used to convert evdev scancode to xkb scancode
 const MIN_KEYCODE: u32 = 8;
 
@@ -281,6 +266,8 @@ pub(crate) struct WaylandClientState {
     event_loop: Option<EventLoop<'static, WaylandClientStatePtr>>,
     #[cfg(feature = "global-menu")]
     dbus_service_name: Option<String>,
+    #[cfg(feature = "global-menu")]
+    dbus_menu_thread: Option<std::thread::JoinHandle<()>>,
     pub common: LinuxCommon,
 }
 
@@ -445,6 +432,26 @@ pub struct WaylandClient(Rc<RefCell<WaylandClientState>>);
 
 impl Drop for WaylandClient {
     fn drop(&mut self) {
+        #[cfg(feature = "global-menu")]
+        {
+            let (dbus_menu_server, dbus_menu_thread) = match self.0.try_borrow_mut() {
+                Ok(mut state) => (
+                    state.common.dbus_menu_server.clone(),
+                    state.dbus_menu_thread.take(),
+                ),
+                Err(_) => (None, None),
+            };
+
+            if let Some(dbus_menu_server) = dbus_menu_server {
+                dbus_menu_server.shutdown();
+            }
+            if let Some(thread) = dbus_menu_thread {
+                if let Err(error) = thread.join() {
+                    log::error!("Failed to join DBusMenu thread: {error:?}");
+                }
+            }
+        }
+
         let mut state = self.0.borrow_mut();
         state.windows.clear();
 
@@ -687,6 +694,8 @@ impl WaylandClient {
             event_loop: Some(event_loop),
             #[cfg(feature = "global-menu")]
             dbus_service_name: None,
+            #[cfg(feature = "global-menu")]
+            dbus_menu_thread: None,
         }));
 
         WaylandSource::new(conn, event_queue)
@@ -697,8 +706,8 @@ impl WaylandClient {
         #[cfg(feature = "global-menu")]
         {
             let has_appmenu = state.borrow().globals.appmenu_manager.is_some();
-            let enabled = match global_menu_env_override() {
-                Some(true) => has_appmenu,
+            let enabled = match crate::linux::dbusmenu::global_menu_env_override() {
+                Some(true) => true,
                 Some(false) => false,
                 None => has_appmenu,
             };
@@ -763,18 +772,37 @@ impl WaylandClient {
                         move |event, _, _| {
                             if let calloop::channel::Event::Msg(()) = event {
                                 if let Some(client) = client.upgrade() {
-                                    let mut state = client.borrow_mut();
-                                    let dbus_menu_server = state.common.dbus_menu_server.clone();
-                                    if let Some(callback) =
-                                        state.common.callbacks.will_open_app_menu.as_mut()
-                                    {
+                                    let (
+                                        dbus_menu_server,
+                                        mut validate_app_menu_command,
+                                        mut will_open_app_menu,
+                                    ) = {
+                                        let mut state = client.borrow_mut();
+                                        (
+                                            state.common.dbus_menu_server.clone(),
+                                            state.common.callbacks.validate_app_menu_command.take(),
+                                            state.common.callbacks.will_open_app_menu.take(),
+                                        )
+                                    };
+
+                                    if let Some(callback) = will_open_app_menu.as_mut() {
                                         callback();
                                     }
                                     if let (Some(dbus_menu_server), Some(validate_callback)) = (
                                         dbus_menu_server.as_ref(),
-                                        state.common.callbacks.validate_app_menu_command.as_mut(),
+                                        validate_app_menu_command.as_mut(),
                                     ) {
                                         dbus_menu_server.refresh_enabled_states(validate_callback);
+                                    }
+
+                                    let mut state = client.borrow_mut();
+                                    if state.common.callbacks.validate_app_menu_command.is_none() {
+                                        state.common.callbacks.validate_app_menu_command =
+                                            validate_app_menu_command;
+                                    }
+                                    if state.common.callbacks.will_open_app_menu.is_none() {
+                                        state.common.callbacks.will_open_app_menu =
+                                            will_open_app_menu;
                                     }
                                 }
                             }
@@ -814,13 +842,48 @@ impl WaylandClient {
                     })
                     .log_err();
 
+                let refresh_interval = Duration::from_millis(250);
+                state
+                    .borrow()
+                    .loop_handle
+                    .insert_source(Timer::from_duration(refresh_interval), {
+                        let client = Rc::downgrade(&state);
+                        move |event_timestamp, _, _| {
+                            let Some(client) = client.upgrade() else {
+                                return TimeoutAction::Drop;
+                            };
+                            let (dbus_menu_server, mut validate_app_menu_command) = {
+                                let mut state = client.borrow_mut();
+                                (
+                                    state.common.dbus_menu_server.clone(),
+                                    state.common.callbacks.validate_app_menu_command.take(),
+                                )
+                            };
+
+                            if let (Some(dbus_menu_server), Some(validate_callback)) = (
+                                dbus_menu_server.as_ref(),
+                                validate_app_menu_command.as_mut(),
+                            ) {
+                                dbus_menu_server.refresh_enabled_states(validate_callback);
+                            }
+
+                            let mut state = client.borrow_mut();
+                            if state.common.callbacks.validate_app_menu_command.is_none() {
+                                state.common.callbacks.validate_app_menu_command =
+                                    validate_app_menu_command;
+                            }
+                            TimeoutAction::ToInstant(event_timestamp + refresh_interval)
+                        }
+                    })
+                    .log_err();
+
                 state.borrow_mut().common.dbus_menu_server = Some(dbus_menu_server.clone());
                 state.borrow_mut().dbus_service_name = Some(service_name.clone());
 
                 let object_path = crate::linux::dbusmenu::DBUSMENU_OBJECT_PATH.to_string();
                 let (dbus_command_tx, dbus_command_rx) = async_channel::unbounded();
                 dbus_menu_server.set_command_sender(dbus_command_tx);
-                std::thread::Builder::new()
+                let dbus_menu_thread = std::thread::Builder::new()
                     .name("dbus-menu".into())
                     .spawn(move || {
                         smol::block_on(async move {
@@ -953,11 +1016,18 @@ impl WaylandClient {
                                             }
                                         }
                                     }
+                                    crate::linux::dbusmenu::DBusMenuCommand::Shutdown => {
+                                        break;
+                                    }
                                 }
                             }
                         });
                     })
                     .log_err();
+
+                if let Some(thread) = dbus_menu_thread {
+                    state.borrow_mut().dbus_menu_thread = Some(thread);
+                }
             }
         }
 
