@@ -555,6 +555,20 @@ pub trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     }
 }
 
+/// A renderer for headless windows that can produce real rendered output.
+#[cfg(any(test, feature = "test-support"))]
+pub trait PlatformHeadlessRenderer {
+    /// Render a scene and return the result as an RGBA image.
+    fn render_scene_to_image(
+        &mut self,
+        scene: &Scene,
+        size: Size<DevicePixels>,
+    ) -> Result<RgbaImage>;
+
+    /// Returns the sprite atlas used by this renderer.
+    fn sprite_atlas(&self) -> Arc<dyn PlatformAtlas>;
+}
+
 /// Type alias for runnables with metadata.
 /// Previously an enum with a single variant, now simplified to a direct type alias.
 #[doc(hidden)]
@@ -573,6 +587,7 @@ pub trait PlatformDispatcher: Send + Sync {
     fn dispatch(&self, runnable: RunnableVariant, priority: Priority);
     fn dispatch_on_main_thread(&self, runnable: RunnableVariant, priority: Priority);
     fn dispatch_after(&self, duration: Duration, runnable: RunnableVariant);
+
     fn spawn_realtime(&self, f: Box<dyn FnOnce() + Send>);
 
     fn now(&self) -> Instant {
@@ -592,19 +607,29 @@ pub trait PlatformDispatcher: Send + Sync {
 #[expect(missing_docs)]
 pub trait PlatformTextSystem: Send + Sync {
     fn add_fonts(&self, fonts: Vec<Cow<'static, [u8]>>) -> Result<()>;
+    /// Get all available font names.
     fn all_font_names(&self) -> Vec<String>;
+    /// Get the font ID for a font descriptor.
     fn font_id(&self, descriptor: &Font) -> Result<FontId>;
+    /// Get metrics for a font.
     fn font_metrics(&self, font_id: FontId) -> FontMetrics;
+    /// Get typographic bounds for a glyph.
     fn typographic_bounds(&self, font_id: FontId, glyph_id: GlyphId) -> Result<Bounds<f32>>;
+    /// Get the advance width for a glyph.
     fn advance(&self, font_id: FontId, glyph_id: GlyphId) -> Result<Size<f32>>;
+    /// Get the glyph ID for a character.
     fn glyph_for_char(&self, font_id: FontId, ch: char) -> Option<GlyphId>;
+    /// Get raster bounds for a glyph.
     fn glyph_raster_bounds(&self, params: &RenderGlyphParams) -> Result<Bounds<DevicePixels>>;
+    /// Rasterize a glyph.
     fn rasterize_glyph(
         &self,
         params: &RenderGlyphParams,
         raster_bounds: Bounds<DevicePixels>,
     ) -> Result<(Size<DevicePixels>, Vec<u8>)>;
+    /// Layout a line of text with the given font runs.
     fn layout_line(&self, text: &str, font_size: Pixels, runs: &[FontRun]) -> LineLayout;
+    /// Returns the recommended text rendering mode for the given font and size.
     fn recommended_rendering_mode(&self, _font_id: FontId, _font_size: Pixels)
     -> TextRenderingMode;
 }
