@@ -40,10 +40,11 @@ So there's a gap: `scan_complete()` resolves, but the `SettingsObserver`'s spawn
 ```rust
 // In WorktreeStore struct
 initial_scan_complete: (watch::Sender<bool>, watch::Receiver<bool>),
-_initial_scan_monitor: Task<()>,
 ```
 
-The `watch::Receiver` is `Clone`, so multiple callers can subscribe. Adding/removing worktrees writes to the `Sender`, and all awaiting futures automatically see the change.
+The channel defaults to `false`. The `watch::Receiver` is `Clone`, so multiple callers can subscribe. Adding/removing worktrees writes to the `Sender`, and all awaiting futures automatically see the change.
+
+Note: There is no `_initial_scan_monitor: Task<()>` field. Instead, `spawn_initial_scan_monitor` stores its task transiently — the caller (e.g. `add()` / `remove_worktree()`) is responsible for spawning and detaching the monitor task as needed. This avoids an extra field on the struct.
 
 ### 2. Add `WorktreeStore::wait_for_initial_scan(&self) -> impl Future<Output = ()>`
 
@@ -116,17 +117,30 @@ fn spawn_initial_scan_monitor(&mut self, cx: &mut Context<Self>) {
 
 Replacing `_initial_scan_monitor` drops the old task (the old set of worktrees is stale).
 
-### 5. Remote worktree support
+### 5. Unified `wait_for_snapshot` on both worktree variants
 
-`RemoteWorktree` has no `scan_complete()` but has `wait_for_snapshot(scan_id)`. For the initial scan, we'd wait for `scan_id: 1` (since remote worktrees start with `scan_id: 1, completed_scan_id: 0`). We can add a `scan_complete()` equivalent on `Worktree` (the enum) that dispatches:
+`LocalWorktree` now has `snapshot_subscriptions: VecDeque<(usize, oneshot::Sender<()>)>` and `wait_for_snapshot(scan_id)`, matching the existing `RemoteWorktree` pattern. Subscriptions are drained in `set_snapshot()` when `completed_scan_id` catches up. This means both variants support the same `wait_for_snapshot(scan_id)` API.
+
+The `WorktreeStore` scan monitor can use `wait_for_snapshot(1)` on any worktree (local or remote) to await the initial scan, since `scan_id` starts at `1` and `completed_scan_id` starts at `0`.
+
+A unified `Worktree::wait_for_snapshot` on the enum can dispatch to either variant:
 
 ```rust
 // On Worktree enum
-pub fn scan_complete(&self) -> impl Future<Output = ()> {
+pub fn wait_for_snapshot(&mut self, scan_id: usize) -> impl Future<Output = Result<()>> {
     match self {
-        Worktree::Local(local) => local.scan_complete().boxed(),
-        Worktree::Remote(remote) => {
-            remote.wait_for_snapshot(remote.scan_id)
+        Worktree::Local(local) => local.wait_for_snapshot(scan_id).boxed(),
+        Worktree::Remote(remote) => remote.wait_for_snapshot(scan_id).boxed(),
+    }
+}
+```
+
+Previously only `RemoteWorktree` had this. The old plan mentioned adding a `scan_complete()` on the enum, but `wait_for_snapshot` is more general and already proven in the codebase:
+
+```rust
+// Old plan reference (no longer needed)
+// Worktree::Local(local) => local.scan_complete().boxed(),
+// Worktree::Remote(remote) => remote.wait_for_snapshot(remote.scan_id)
                 .map(|_| ())
                 .boxed()
         }
@@ -300,3 +314,40 @@ async fn test_initial_scan_complete(cx: &mut gpui::TestAppContext) {
 | Add non-visible worktree                    | No effect on `initial_scan_complete`                                      |
 | Rapid add then remove before scan completes | Monitor is replaced on each event; final state reflects current worktrees |
 | No visible worktrees                        | `initial_scan_complete` is `true` (vacuously — nothing to scan)           |
+
+# TODO: Initial Scan Completion Feature
+
+See `plan.md` at repo root for full design. Test is at `crates/project/tests/integration/project_tests.rs` → `test_initial_scan_complete`.
+
+The test currently fails because all implementations are stubs.
+
+## Done
+
+- [x] Stub `WorktreeStore::wait_for_initial_scan()` → returns `async {}` (in `worktree_store.rs`)
+- [x] Stub `WorktreeStore::initial_scan_completed()` → returns `false` (in `worktree_store.rs`)
+- [x] Stub `TaskStore::pending_updates_completed()` → returns `async {}` (in `task_store.rs`)
+- [x] Thin wrapper `Project::wait_for_initial_scan()` → delegates to `WorktreeStore` (in `project.rs`)
+- [x] Failing integration test covering scan completion, git repo detection (`observe_new<Repository>`), and task inventory
+
+## To implement
+
+- [*] Add `initial_scan_complete: (watch::Sender<bool>, watch::Receiver<bool>)` field to `WorktreeStore` — added, but default value and driving logic still TBD
+- [*] Implement `wait_for_initial_scan()` using the watch receiver — implemented, but depends on channel being driven correctly
+- [*] Implement `initial_scan_completed()` by reading the watch channel — implemented, but depends on channel being driven correctly
+- [x] Add `snapshot_subscriptions` and `wait_for_snapshot(scan_id)` to `LocalWorktree` (mirrors `RemoteWorktree` pattern)
+- [ ] Add unified `Worktree::wait_for_snapshot(scan_id)` on the enum that dispatches to either variant
+- [ ] Implement `spawn_initial_scan_monitor()` on `WorktreeStore` — uses `wait_for_snapshot(1)` for all visible worktrees, then sets watch to `true`
+- [ ] Call `spawn_initial_scan_monitor()` from `WorktreeStore::add()` (when visible) and `remove_worktree()`
+- [ ] Set `initial_scan_complete` to `false` in `WorktreeStore::add()` when the added worktree is visible
+- [ ] Add `pending_update_barriers: Vec<postage::barrier::Receiver>` to `TaskStore::StoreState`
+- [ ] Implement `TaskStore::register_pending_update()` → returns `barrier::Sender`
+- [ ] Implement `TaskStore::pending_updates_completed()` — drains barriers, joins them
+- [ ] In `SettingsObserver::update_local_worktree_settings()`, call `register_pending_update()` before spawning the async task, pass the sender into the spawned closure
+- [ ] Make the test pass
+
+## Edge-case tests to add after initial implementation
+
+- [ ] Adding a new visible worktree resets `initial_scan_completed` to false and makes `wait_for_initial_scan` wait for the new tree
+- [ ] Removing a visible worktree makes the future resolve without waiting for the removed tree
+- [ ] Adding a non-visible worktree does NOT reset scan completion
+- [ ] Rapid add/remove before scan completes still resolves correctly

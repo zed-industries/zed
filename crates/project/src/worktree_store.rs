@@ -16,6 +16,7 @@ use gpui::{
     WeakEntity,
 };
 use itertools::Either;
+use postage::{prelude::Stream as _, watch};
 use rpc::{
     AnyProtoClient, ErrorExt, TypedEnvelope,
     proto::{self, REMOTE_SERVER_PROJECT_ID},
@@ -76,6 +77,7 @@ pub struct WorktreeStore {
     #[allow(clippy::type_complexity)]
     loading_worktrees:
         HashMap<Arc<SanitizedPath>, Shared<Task<Result<Entity<Worktree>, Arc<anyhow::Error>>>>>,
+    initial_scan_complete: (watch::Sender<bool>, watch::Receiver<bool>),
     state: WorktreeStoreState,
 }
 
@@ -120,6 +122,7 @@ impl WorktreeStore {
             worktrees_reordered: false,
             scanning_enabled: true,
             retain_worktrees,
+            initial_scan_complete: watch::channel_with(false),
             state: WorktreeStoreState::Local { fs },
         }
     }
@@ -140,6 +143,7 @@ impl WorktreeStore {
             worktrees_reordered: false,
             scanning_enabled: true,
             retain_worktrees,
+            initial_scan_complete: watch::channel_with(false),
             state: WorktreeStoreState::Remote {
                 upstream_client,
                 upstream_project_id,
@@ -180,12 +184,22 @@ impl WorktreeStore {
     /// Returns a future that resolves when all visible worktrees have completed
     /// their initial scan (entries populated, git repos detected).
     pub fn wait_for_initial_scan(&self) -> impl Future<Output = ()> + use<> {
-        async {}
+        let mut rx = self.initial_scan_complete.1.clone();
+        async move {
+            let mut done = *rx.borrow();
+            while !done {
+                if let Some(value) = rx.recv().await {
+                    done = value;
+                } else {
+                    break;
+                }
+            }
+        }
     }
 
     /// Returns whether all visible worktrees have completed their initial scan.
     pub fn initial_scan_completed(&self) -> bool {
-        false
+        *self.initial_scan_complete.1.borrow()
     }
 
     /// Iterates through all worktrees, including ones that don't appear in the project panel
