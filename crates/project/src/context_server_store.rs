@@ -1216,7 +1216,8 @@ impl ContextServerStore {
         .context("Failed to exchange authorization code for tokens")?;
 
         let session = OAuthSession {
-            discovery: discovery.as_ref().clone(),
+            token_endpoint: discovery.auth_server_metadata.token_endpoint.clone(),
+            resource: discovery.resource_metadata.resource.clone(),
             client_registration,
             tokens,
         };

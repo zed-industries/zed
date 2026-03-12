@@ -82,13 +82,15 @@ pub struct OAuthDiscovery {
     pub scopes: Vec<String>,
 }
 
-/// The full persisted OAuth session for a context server.
+/// The persisted OAuth session for a context server.
 ///
-/// This is what we store in the keychain so startup can restore a
-/// refresh-capable provider without falling back to an access-token-only mode.
+/// Stored in the keychain so startup can restore a refresh-capable provider
+/// without another browser flow. Deliberately excludes the full discovery
+/// metadata to keep the serialized size well within keychain item limits.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OAuthSession {
-    pub discovery: OAuthDiscovery,
+    pub token_endpoint: Url,
+    pub resource: Url,
     pub client_registration: OAuthClientRegistration,
     pub tokens: OAuthTokens,
 }
@@ -746,13 +748,13 @@ pub async fn exchange_code(
 /// Refresh tokens using a refresh token.
 pub async fn refresh_tokens(
     http_client: &Arc<dyn HttpClient>,
-    auth_server_metadata: &AuthServerMetadata,
+    token_endpoint: &Url,
     refresh_token: &str,
     client_id: &str,
     resource: &str,
 ) -> Result<OAuthTokens> {
     let params = token_refresh_params(refresh_token, client_id, resource);
-    post_token_request(http_client, &auth_server_metadata.token_endpoint, &params).await
+    post_token_request(http_client, token_endpoint, &params).await
 }
 
 /// POST form-encoded parameters to a token endpoint and parse the response.
@@ -1060,26 +1062,27 @@ impl OAuthTokenProvider for McpOAuthTokenProvider {
     }
 
     async fn try_refresh(&self) -> Result<bool> {
-        let (refresh_token, discovery, client_registration) = {
+        let (refresh_token, token_endpoint, resource, client_id) = {
             let session = self.session.lock();
             match session.tokens.refresh_token.clone() {
                 Some(refresh_token) => (
                     refresh_token,
-                    session.discovery.clone(),
-                    session.client_registration.clone(),
+                    session.token_endpoint.clone(),
+                    session.resource.clone(),
+                    session.client_registration.client_id.clone(),
                 ),
                 None => return Ok(false),
             }
         };
 
-        let resource = canonical_server_uri(&discovery.resource_metadata.resource);
+        let resource_str = canonical_server_uri(&resource);
 
         match refresh_tokens(
             &self.http_client,
-            &discovery.auth_server_metadata,
+            &token_endpoint,
             &refresh_token,
-            &client_registration.client_id,
-            &resource,
+            &client_id,
+            &resource_str,
         )
         .await
         {
@@ -1088,17 +1091,15 @@ impl OAuthTokenProvider for McpOAuthTokenProvider {
                     new_tokens.refresh_token = Some(refresh_token);
                 }
 
-                let new_session = OAuthSession {
-                    discovery,
-                    client_registration,
-                    tokens: new_tokens,
-                };
+                {
+                    let mut session = self.session.lock();
+                    session.tokens = new_tokens;
 
-                if let Some(ref tx) = self.token_refresh_tx {
-                    tx.unbounded_send(new_session.clone()).ok();
+                    if let Some(ref tx) = self.token_refresh_tx {
+                        tx.unbounded_send(session.clone()).ok();
+                    }
                 }
 
-                *self.session.lock() = new_session;
                 Ok(true)
             }
             Err(err) => {
@@ -2025,19 +2026,11 @@ mod tests {
                 })
             });
 
-            let metadata = AuthServerMetadata {
-                issuer: Url::parse("https://auth.example.com").unwrap(),
-                authorization_endpoint: Url::parse("https://auth.example.com/authorize").unwrap(),
-                token_endpoint: Url::parse("https://auth.example.com/token").unwrap(),
-                registration_endpoint: None,
-                scopes_supported: None,
-                code_challenge_methods_supported: Some(vec!["S256".into()]),
-                client_id_metadata_document_supported: true,
-            };
+            let token_endpoint = Url::parse("https://auth.example.com/token").unwrap();
 
             let tokens = refresh_tokens(
                 &client,
-                &metadata,
+                &token_endpoint,
                 "old_refresh_token",
                 CIMD_URL,
                 "https://mcp.example.com",
@@ -2197,24 +2190,8 @@ mod tests {
         expires_at: Option<SystemTime>,
     ) -> OAuthSession {
         OAuthSession {
-            discovery: OAuthDiscovery {
-                resource_metadata: ProtectedResourceMetadata {
-                    resource: Url::parse("https://mcp.example.com").unwrap(),
-                    authorization_servers: vec![Url::parse("https://auth.example.com").unwrap()],
-                    scopes_supported: None,
-                },
-                auth_server_metadata: AuthServerMetadata {
-                    issuer: Url::parse("https://auth.example.com").unwrap(),
-                    authorization_endpoint: Url::parse("https://auth.example.com/authorize")
-                        .unwrap(),
-                    token_endpoint: Url::parse("https://auth.example.com/token").unwrap(),
-                    registration_endpoint: None,
-                    scopes_supported: None,
-                    code_challenge_methods_supported: Some(vec!["S256".into()]),
-                    client_id_metadata_document_supported: true,
-                },
-                scopes: vec![],
-            },
+            token_endpoint: Url::parse("https://auth.example.com/token").unwrap(),
+            resource: Url::parse("https://mcp.example.com").unwrap(),
             client_registration: OAuthClientRegistration {
                 client_id: "test-client".into(),
                 client_secret: None,
