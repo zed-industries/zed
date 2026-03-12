@@ -411,7 +411,7 @@ impl ThreadsArchiveView {
                             .py_1()
                             .pl_0p5()
                             .pr_1p5()
-                            .gap_1()
+                            .gap_2()
                             .justify_between()
                             .child(title_label)
                             .when_some(timestamp, |this, ts| {
@@ -531,7 +531,7 @@ impl ThreadsArchiveView {
                                 entry = entry.icon(IconName::ZedAgent);
                             }
 
-                            entry = entry.icon_color(Color::Muted).handler({
+                            entry = entry.disabled(true).icon_color(Color::Muted).handler({
                                 let this = this.clone();
                                 let agent = Agent::Custom {
                                     name: item.id.0.clone(),
