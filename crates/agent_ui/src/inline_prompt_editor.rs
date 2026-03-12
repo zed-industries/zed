@@ -1,4 +1,4 @@
-use crate::acp::AcpThreadHistory;
+use crate::ThreadHistory;
 use agent::ThreadStore;
 use agent_settings::AgentSettings;
 use collections::{HashMap, VecDeque};
@@ -64,7 +64,7 @@ pub struct PromptEditor<T> {
     pub editor: Entity<Editor>,
     mode: PromptEditorMode,
     mention_set: Entity<MentionSet>,
-    history: WeakEntity<AcpThreadHistory>,
+    history: WeakEntity<ThreadHistory>,
     prompt_store: Option<Entity<PromptStore>>,
     workspace: WeakEntity<Workspace>,
     model_selector: Entity<AgentModelSelector>,
@@ -417,8 +417,13 @@ impl<T: 'static> PromptEditor<T> {
 
     fn paste(&mut self, _: &Paste, window: &mut Window, cx: &mut Context<Self>) {
         if inline_assistant_model_supports_images(cx)
-            && let Some(task) =
-                paste_images_as_context(self.editor.clone(), self.mention_set.clone(), window, cx)
+            && let Some(task) = paste_images_as_context(
+                self.editor.clone(),
+                self.mention_set.clone(),
+                self.workspace.clone(),
+                window,
+                cx,
+            )
         {
             task.detach();
         }
@@ -438,7 +443,7 @@ impl<T: 'static> PromptEditor<T> {
                 self.mention_set
                     .update(cx, |mention_set, _cx| mention_set.remove_invalid(&snapshot));
 
-                if let Some(workspace) = window.root::<Workspace>().flatten() {
+                if let Some(workspace) = Workspace::for_window(window, cx) {
                     workspace.update(cx, |workspace, cx| {
                         let is_via_ssh = workspace.project().read(cx).is_via_remote_server();
 
@@ -1118,14 +1123,13 @@ impl<T: 'static> PromptEditor<T> {
             .child({
                 let settings = ThemeSettings::get_global(cx);
                 let font_size = settings.buffer_font_size(cx);
-                let line_height = font_size * 1.2;
 
                 let text_style = TextStyle {
                     color: colors.editor_foreground,
                     font_family: settings.buffer_font.family.clone(),
                     font_features: settings.buffer_font.features.clone(),
                     font_size: font_size.into(),
-                    line_height: line_height.into(),
+                    line_height: relative(settings.buffer_line_height.value()),
                     ..Default::default()
                 };
 
@@ -1221,7 +1225,7 @@ impl PromptEditor<BufferCodegen> {
         fs: Arc<dyn Fs>,
         thread_store: Entity<ThreadStore>,
         prompt_store: Option<Entity<PromptStore>>,
-        history: WeakEntity<AcpThreadHistory>,
+        history: WeakEntity<ThreadHistory>,
         project: WeakEntity<Project>,
         workspace: WeakEntity<Workspace>,
         window: &mut Window,
@@ -1380,7 +1384,7 @@ impl PromptEditor<TerminalCodegen> {
         fs: Arc<dyn Fs>,
         thread_store: Entity<ThreadStore>,
         prompt_store: Option<Entity<PromptStore>>,
-        history: WeakEntity<AcpThreadHistory>,
+        history: WeakEntity<ThreadHistory>,
         project: WeakEntity<Project>,
         workspace: WeakEntity<Workspace>,
         window: &mut Window,
@@ -1628,6 +1632,7 @@ fn insert_message_creases(
             crease_for_mention(
                 crease.label.clone(),
                 crease.icon_path.clone(),
+                None,
                 start..end,
                 cx.weak_entity(),
             )

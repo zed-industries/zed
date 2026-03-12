@@ -162,22 +162,33 @@ message UpdateUserSettings {
 }
 
 message TrustWorktrees {
-    uint64 project_id = 1;
-    repeated PathTrust trusted_paths = 2;
+  uint64 project_id = 1;
+  repeated PathTrust trusted_paths = 2;
 }
 
 message PathTrust {
-    oneof content {
-        uint64 worktree_id = 2;
-        string abs_path = 3;
-    }
+  oneof content {
+    uint64 worktree_id = 2;
+    string abs_path = 3;
+  }
 
-    reserved 1;
+  reserved 1;
 }
 
 message RestrictWorktrees {
-    uint64 project_id = 1;
-    repeated uint64 worktree_ids = 3;
+  uint64 project_id = 1;
+  repeated uint64 worktree_ids = 3;
 
-    reserved 2;
+  reserved 2;
+}
+
+// Request from the remote server to the client to allocate a new worktree ID.
+// This allows the client to maintain a single WorktreeIdCounter that prevents
+// ID collisions when connected to multiple remote servers.
+message AllocateWorktreeId {
+  uint64 project_id = 1;
+}
+
+message AllocateWorktreeIdResponse {
+  uint64 worktree_id = 1;
 }

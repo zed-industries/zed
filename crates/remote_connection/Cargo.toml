@@ -1,0 +1,34 @@
+[package]
+name = "remote_connection"
+version = "0.1.0"
+edition.workspace = true
+publish.workspace = true
+license = "GPL-3.0-or-later"
+
+[lints]
+workspace = true
+
+[lib]
+path = "src/remote_connection.rs"
+
+[features]
+default = []
+test-support = ["remote/test-support"]
+
+[dependencies]
+anyhow.workspace = true
+askpass.workspace = true
+auto_update.workspace = true
+futures.workspace = true
+gpui.workspace = true
+log.workspace = true
+markdown.workspace = true
+menu.workspace = true
+release_channel.workspace = true
+remote.workspace = true
+semver.workspace = true
+settings.workspace = true
+theme.workspace = true
+ui.workspace = true
+ui_input.workspace = true
+workspace.workspace = true

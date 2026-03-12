@@ -151,6 +151,7 @@
       "cmd-\"": "editor::ExpandAllDiffHunks",
       "cmd-alt-g b": "git::Blame",
       "cmd-alt-g m": "git::OpenModifiedFiles",
+      "cmd-alt-g r": "git::ReviewDiff",
       "cmd-i": "editor::ShowSignatureHelp",
       "f9": "editor::ToggleBreakpoint",
       "shift-f9": "editor::EditLogBreakpoint",
@@ -241,6 +242,7 @@
     "context": "AgentDiff",
     "use_key_equivalents": true,
     "bindings": {
+      "cmd-y": "agent::Keep",
       "cmd-alt-y": "agent::Keep",
       "cmd-alt-z": "agent::Reject",
       "shift-alt-y": "agent::KeepAll",
@@ -251,6 +253,7 @@
     "context": "Editor && editor_agent_diff",
     "use_key_equivalents": true,
     "bindings": {
+      "cmd-y": "agent::Keep",
       "cmd-alt-y": "agent::Keep",
       "cmd-alt-z": "agent::Reject",
       "shift-alt-y": "agent::KeepAll",
@@ -288,11 +291,13 @@
       "cmd-alt-l": "agent::OpenRulesLibrary",
       "cmd-alt-p": "agent::ManageProfiles",
       "cmd-i": "agent::ToggleProfileSelector",
+      "shift-tab": "agent::CycleModeSelector",
       "cmd-alt-/": "agent::ToggleModelSelector",
       "alt-tab": "agent::CycleFavoriteModels",
       "cmd-shift-j": "agent::ToggleNavigationMenu",
       "cmd-alt-m": "agent::ToggleOptionsMenu",
       "cmd-alt-shift-n": "agent::ToggleNewThreadMenu",
+      "cmd-alt-shift-t": "agent::ToggleStartThreadInSelector",
       "shift-alt-escape": "agent::ExpandMessageEditor",
       "cmd->": "agent::AddSelectionToThread",
       "cmd-shift-e": "project_panel::ToggleFocus",
@@ -347,6 +352,12 @@
     },
   },
   {
+    "context": "AcpThread",
+    "bindings": {
+      "ctrl--": "pane::GoBack",
+    },
+  },
+  {
     "context": "AcpThread > Editor",
     "use_key_equivalents": true,
     "bindings": {
@@ -354,6 +365,7 @@
       "shift-ctrl-d": "git::Diff",
       "shift-alt-y": "agent::KeepAll",
       "shift-alt-z": "agent::RejectAll",
+      "shift-alt-u": "agent::UndoLastReject",
       "cmd-enter": "agent::ChatWithFollow",
       "cmd-shift-enter": "agent::SendImmediately",
       "cmd-shift-alt-enter": "agent::SendNextQueuedMessage",
@@ -364,6 +376,11 @@
       "cmd-i": "agent::ToggleProfileSelector",
       "shift-tab": "agent::CycleModeSelector",
       "alt-tab": "agent::CycleFavoriteModels",
+      "ctrl-;": "agent::OpenAddContextMenu",
+      "cmd-alt-k": "agent::ToggleThinkingMode",
+      "cmd-alt-'": "agent::ToggleThinkingEffortMenu",
+      "ctrl-'": "agent::CycleThinkingEffort",
+      "cmd-alt-.": "agent::ToggleFastMode",
     },
   },
   {
@@ -432,6 +449,13 @@
     "bindings": {
       "up": "search::PreviousHistoryQuery",
       "down": "search::NextHistoryQuery",
+    },
+  },
+  {
+    "context": "BufferSearchBar || ProjectSearchBar",
+    "use_key_equivalents": true,
+    "bindings": {
+      "ctrl-enter": "editor::Newline",
     },
   },
   {
@@ -632,7 +656,6 @@
       "ctrl-cmd-o": ["projects::OpenRemote", { "from_existing_connection": false, "create_new_window": false }],
       "ctrl-cmd-shift-o": ["projects::OpenRemote", { "from_existing_connection": true, "create_new_window": false }],
       "cmd-ctrl-b": "branches::OpenRecent",
-      "cmd-alt-p": "workspace::SwitchProject",
       "ctrl-~": "workspace::NewTerminal",
       "cmd-s": "workspace::Save",
       "cmd-k s": "workspace::SaveWithoutFormat",
@@ -653,6 +676,8 @@
       "cmd-alt-b": "workspace::ToggleRightDock",
       "cmd-r": "workspace::ToggleRightDock",
       "cmd-j": "workspace::ToggleBottomDock",
+      "cmd-alt-j": "multi_workspace::ToggleWorkspaceSidebar",
+      "cmd-alt-;": "multi_workspace::FocusWorkspaceSidebar",
       "alt-cmd-y": "workspace::ToggleAllDocks",
       // For 0px parameter, uses UI font size value.
       "ctrl-alt-0": "workspace::ResetActiveDockSize",
@@ -679,6 +704,7 @@
       "cmd-shift-d": "debug_panel::ToggleFocus",
       "cmd-?": "agent::ToggleFocus",
       "cmd-alt-s": "workspace::SaveAll",
+      "cmd-k n": "encoding_selector::Toggle",
       "cmd-k m": "language_selector::Toggle",
       "cmd-k cmd-m": "toolchain::AddToolchain",
       "escape": "workspace::Unfollow",
@@ -709,6 +735,16 @@
       // "foo-bar": ["task::Spawn", { "task_name": "MyTask", "reveal_target": "dock" }]
       // or by tag:
       // "foo-bar": ["task::Spawn", { "task_tag": "MyTag" }],
+    },
+  },
+  {
+    "context": "WorkspaceSidebar",
+    "use_key_equivalents": true,
+    "bindings": {
+      "cmd-n": "multi_workspace::NewWorkspaceInWindow",
+      "left": "agents_sidebar::CollapseSelectedEntry",
+      "right": "agents_sidebar::ExpandSelectedEntry",
+      "enter": "menu::Confirm",
     },
   },
   {
@@ -846,7 +882,7 @@
     },
   },
   {
-    "context": "!ContextEditor > Editor && mode == full",
+    "context": "!ContextEditor && !AcpThread > Editor && mode == full",
     "use_key_equivalents": true,
     "bindings": {
       "alt-enter": "editor::OpenExcerpts",
@@ -998,6 +1034,7 @@
       "cmd-shift-enter": "git::Amend",
       "cmd-ctrl-y": "git::StageAll",
       "cmd-ctrl-shift-y": "git::UnstageAll",
+      "cmd-alt-z": "git::RestoreAndNext",
     },
   },
   {
@@ -1137,6 +1174,14 @@
     },
   },
   {
+    "context": "RecentProjects || (RecentProjects > Picker > Editor)",
+    "use_key_equivalents": true,
+    "bindings": {
+      "cmd-k": "recent_projects::ToggleActionsMenu",
+      "cmd-shift-a": "workspace::AddFolderToProject",
+    },
+  },
+  {
     "context": "TabSwitcher",
     "use_key_equivalents": true,
     "bindings": {
@@ -1208,6 +1253,7 @@
       "ctrl-alt-right": "pane::SplitRight",
       "cmd-d": "pane::SplitRight",
       "cmd-alt-r": "terminal::RerunTask",
+      "cmd->": "agent::AddSelectionToThread",
     },
   },
   {
@@ -1376,6 +1422,7 @@
     "bindings": {
       "ctrl-shift-space": "git::WorktreeFromDefaultOnWindow",
       "ctrl-space": "git::WorktreeFromDefault",
+      "cmd-shift-backspace": "git::DeleteWorktree",
     },
   },
   {
@@ -1474,9 +1521,17 @@
     },
   },
   {
-    "context": "MultiProjectDropdown",
+    "context": "NotebookEditor",
     "bindings": {
-      "shift-backspace": "project_dropdown::RemoveSelectedFolder",
+      "shift-enter": "notebook::Run",
+      "cmd-enter": "notebook::Run",
+      "cmd-shift-enter": "notebook::RunAll",
+      "alt-up": "notebook::MoveCellUp",
+      "alt-down": "notebook::MoveCellDown",
+      "cmd-m": "notebook::AddCodeBlock",
+      "cmd-shift-m": "notebook::AddMarkdownBlock",
+      "cmd-shift-r": "notebook::RestartKernel",
+      "cmd-c": "notebook::InterruptKernel",
     },
   },
   {

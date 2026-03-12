@@ -1,10 +1,15 @@
+---
+title: Themes
+description: "Themes for Zed extensions."
+---
+
 # Themes
 
 The `themes` directory in an extension should contain one or more theme files.
 
 Each theme file should adhere to the JSON schema specified at [`https://zed.dev/schema/themes/v0.2.0.json`](https://zed.dev/schema/themes/v0.2.0.json).
 
-See [this blog post](https://zed.dev/blog/user-themes-now-in-preview) for more details about creating themes.
+See [this blog post](https://zed.dev/blog/user-themes-now-in-preview) for additional background on creating themes.
 
 ## Theme JSON Structure
 
@@ -16,7 +21,7 @@ A Zed theme consists of a Theme Family object including:
 - `author`: The name of the author of the theme family
 - `themes`: An array of Themes belonging to the theme family
 
-The core components a Theme object include:
+The core components of a Theme object include:
 
 1. Theme Metadata:
 
@@ -50,4 +55,9 @@ The core components a Theme object include:
 6. Terminal Colors:
    - ANSI color definitions for the integrated terminal
 
-We recommend looking at our [existing themes](https://github.com/zed-industries/zed/tree/main/assets/themes) to get a more comprehensive idea of what can be styled.
+## Designing Your Theme
+
+You can use [Zed's Theme Builder](https://zed.dev/theme-builder) to design your own custom theme based on an existing one.
+
+This tool lets you fine-tune and preview how surfaces in Zed will look.
+You can then export the JSON and publish it in Zed's extension store.

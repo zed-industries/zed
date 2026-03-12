@@ -855,12 +855,18 @@ impl ChannelStore {
             if let OpenEntityHandle::Open(buffer) = buffer
                 && let Some(buffer) = buffer.upgrade()
             {
-                let channel_buffer = buffer.read(cx);
-                let buffer = channel_buffer.buffer().read(cx);
-                buffer_versions.push(proto::ChannelBufferVersion {
-                    channel_id: channel_buffer.channel_id.0,
-                    epoch: channel_buffer.epoch(),
-                    version: language::proto::serialize_version(&buffer.version()),
+                buffer.update(cx, |channel_buffer, cx| {
+                    // Block on_buffer_update from sending UpdateChannelBuffer messages
+                    // until the rejoin completes. This prevents a race condition where
+                    // edits made during the rejoin async gap could inflate the server
+                    // version, causing offline edits to be filtered out by serialize_ops.
+                    channel_buffer.set_rejoining(true);
+                    let inner_buffer = channel_buffer.buffer().read(cx);
+                    buffer_versions.push(proto::ChannelBufferVersion {
+                        channel_id: channel_buffer.channel_id.0,
+                        epoch: channel_buffer.epoch(),
+                        version: language::proto::serialize_version(&inner_buffer.version()),
+                    });
                 });
             }
         }
@@ -874,7 +880,26 @@ impl ChannelStore {
         });
 
         cx.spawn(async move |this, cx| {
-            let mut response = response.await?;
+            let response = match response.await {
+                Ok(response) => response,
+                Err(err) => {
+                    // Clear rejoining flag on all buffers since the rejoin failed
+                    this.update(cx, |this, cx| {
+                        for buffer in this.opened_buffers.values() {
+                            if let OpenEntityHandle::Open(buffer) = buffer {
+                                if let Some(buffer) = buffer.upgrade() {
+                                    buffer.update(cx, |channel_buffer, _| {
+                                        channel_buffer.set_rejoining(false);
+                                    });
+                                }
+                            }
+                        }
+                    })
+                    .ok();
+                    return Err(err);
+                }
+            };
+            let mut response = response;
 
             this.update(cx, |this, cx| {
                 this.opened_buffers.retain(|_, buffer| match buffer {
@@ -948,6 +973,22 @@ impl ChannelStore {
     fn handle_disconnect(&mut self, wait_for_reconnect: bool, cx: &mut Context<Self>) {
         cx.notify();
         self.did_subscribe = false;
+
+        // If we're waiting for reconnect, set rejoining=true on all buffers immediately.
+        // This prevents operations from being sent during the reconnection window,
+        // before handle_connect has a chance to run and capture the version.
+        if wait_for_reconnect {
+            for buffer in self.opened_buffers.values() {
+                if let OpenEntityHandle::Open(buffer) = buffer {
+                    if let Some(buffer) = buffer.upgrade() {
+                        buffer.update(cx, |channel_buffer, _| {
+                            channel_buffer.set_rejoining(true);
+                        });
+                    }
+                }
+            }
+        }
+
         self.disconnect_channel_buffers_task.get_or_insert_with(|| {
             cx.spawn(async move |this, cx| {
                 if wait_for_reconnect {

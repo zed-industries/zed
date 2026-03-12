@@ -1,5 +1,6 @@
 use std::ops::Range;
 
+use client::zed_urls;
 use collections::HashMap;
 use editor::{Editor, EditorElement, EditorStyle};
 use fs::Fs;
@@ -13,17 +14,13 @@ use project::{AgentRegistryStore, RegistryAgent};
 use settings::{Settings, SettingsStore, update_settings_file};
 use theme::ThemeSettings;
 use ui::{
-    ButtonStyle, Chip, ScrollableHandle, ToggleButtonGroup, ToggleButtonGroupSize,
+    ButtonStyle, ScrollableHandle, ToggleButtonGroup, ToggleButtonGroupSize,
     ToggleButtonGroupStyle, ToggleButtonSimple, Tooltip, WithScrollbar, prelude::*,
 };
 use workspace::{
     Workspace,
     item::{Item, ItemEvent},
 };
-
-/// Registry IDs for built-in agents that Zed already provides first-class support for.
-/// These are filtered out of the ACP Agent Registry UI to avoid showing duplicates.
-const BUILT_IN_REGISTRY_IDS: [&str; 4] = ["claude-acp", "claude-code-acp", "codex-acp", "gemini"];
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum RegistryFilter {
@@ -63,10 +60,10 @@ impl RenderOnce for AgentRegistryCard {
     fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
         div().w_full().child(
             v_flex()
+                .p_3()
                 .mt_4()
                 .w_full()
-                .min_h(rems_from_px(110.))
-                .p_3()
+                .min_h(rems_from_px(86.))
                 .gap_2()
                 .bg(cx.theme().colors().elevated_surface_background.opacity(0.5))
                 .border_1()
@@ -135,8 +132,14 @@ impl AgentRegistryPage {
         self.registry_agents.sort_by(|left, right| {
             left.name()
                 .as_ref()
-                .cmp(right.name().as_ref())
-                .then_with(|| left.id().as_ref().cmp(right.id().as_ref()))
+                .to_lowercase()
+                .cmp(&right.name().as_ref().to_lowercase())
+                .then_with(|| {
+                    left.id()
+                        .as_ref()
+                        .to_lowercase()
+                        .cmp(&right.id().as_ref().to_lowercase())
+                })
         });
         self.filter_registry_agents(cx);
     }
@@ -146,7 +149,7 @@ impl AgentRegistryPage {
             .global::<SettingsStore>()
             .get::<AllAgentServersSettings>(None);
         self.installed_statuses.clear();
-        for (id, settings) in &settings.custom {
+        for (id, settings) in settings.iter() {
             let status = match settings {
                 CustomAgentServerSettings::Registry { .. } => {
                     RegistryInstallStatus::InstalledRegistry
@@ -187,12 +190,6 @@ impl AgentRegistryPage {
             .iter()
             .enumerate()
             .filter(|(_, agent)| {
-                // Filter out built-in agents since they already appear in the main
-                // agent configuration UI and don't need to be installed from the registry.
-                if BUILT_IN_REGISTRY_IDS.contains(&agent.id().as_ref()) {
-                    return false;
-                }
-
                 let matches_search = search.as_ref().is_none_or(|query| {
                     let query = query.as_str();
                     agent.id().as_ref().to_lowercase().contains(query)
@@ -385,15 +382,24 @@ impl AgentRegistryPage {
             self.install_button(agent, install_status, supports_current_platform, cx);
 
         let repository_button = agent.repository().map(|repository| {
-            let repository = repository.clone();
+            let repository_for_tooltip: SharedString = repository.to_string().into();
+            let repository_for_click = repository.to_string();
+
             IconButton::new(
                 SharedString::from(format!("agent-repo-{}", agent.id())),
-                IconName::Link,
+                IconName::Github,
             )
             .icon_size(IconSize::Small)
-            .tooltip(Tooltip::text("Visit agent repository"))
+            .tooltip(move |_, cx| {
+                Tooltip::with_meta(
+                    "Visit Agent Repository",
+                    None,
+                    repository_for_tooltip.clone(),
+                    cx,
+                )
+            })
             .on_click(move |_, _, cx| {
-                cx.open_url(repository.as_ref());
+                cx.open_url(&repository_for_click);
             })
         });
 
@@ -401,23 +407,19 @@ impl AgentRegistryPage {
             .child(
                 h_flex()
                     .justify_between()
-                    .items_start()
                     .child(
-                        h_flex().gap_2().items_center().child(icon).child(
-                            v_flex().gap_0p5().child(
-                                h_flex()
-                                    .gap_2()
-                                    .items_end()
-                                    .child(
-                                        Headline::new(agent.name().clone())
-                                            .size(HeadlineSize::Small),
-                                    )
-                                    .child(
-                                        Headline::new(format!("v{}", agent.version()))
-                                            .size(HeadlineSize::XSmall),
-                                    ),
-                            ),
-                        ),
+                        h_flex()
+                            .gap_2()
+                            .child(icon)
+                            .child(Headline::new(agent.name().clone()).size(HeadlineSize::Small))
+                            .child(Label::new(format!("v{}", agent.version())).color(Color::Muted))
+                            .when(!supports_current_platform, |this| {
+                                this.child(
+                                    Label::new("Not supported on this platform")
+                                        .size(LabelSize::Small)
+                                        .color(Color::Warning),
+                                )
+                            }),
                     )
                     .child(install_button),
             )
@@ -428,28 +430,19 @@ impl AgentRegistryPage {
                     .child(
                         Label::new(agent.description().clone())
                             .size(LabelSize::Small)
-                            .color(Color::Default)
                             .truncate(),
                     )
-                    .when_some(repository_button, |this, button| this.child(button)),
-            )
-            .child(
-                h_flex()
-                    .gap_2()
-                    .justify_between()
                     .child(
-                        Label::new(format!("ID: {}", agent.id()))
-                            .size(LabelSize::Small)
-                            .color(Color::Muted)
-                            .truncate(),
-                    )
-                    .when(!supports_current_platform, |this| {
-                        this.child(
-                            Label::new("Not supported on this platform")
-                                .size(LabelSize::Small)
-                                .color(Color::Warning),
-                        )
-                    }),
+                        h_flex()
+                            .gap_1()
+                            .child(
+                                Label::new(format!("ID: {}", agent.id()))
+                                    .size(LabelSize::Small)
+                                    .color(Color::Muted)
+                                    .truncate(),
+                            )
+                            .when_some(repository_button, |this, button| this.child(button)),
+                    ),
             )
     }
 
@@ -482,7 +475,7 @@ impl AgentRegistryPage {
                         let agent_id = agent_id.clone();
                         update_settings_file(fs.clone(), cx, move |settings, _| {
                             let agent_servers = settings.agent_servers.get_or_insert_default();
-                            agent_servers.custom.entry(agent_id).or_insert_with(|| {
+                            agent_servers.entry(agent_id).or_insert_with(|| {
                                 settings::CustomAgentServerSettings::Registry {
                                     default_mode: None,
                                     default_model: None,
@@ -506,13 +499,13 @@ impl AgentRegistryPage {
                             let Some(agent_servers) = settings.agent_servers.as_mut() else {
                                 return;
                             };
-                            if let Some(entry) = agent_servers.custom.get(agent_id.as_str())
+                            if let Some(entry) = agent_servers.get(agent_id.as_str())
                                 && matches!(
                                     entry,
                                     settings::CustomAgentServerSettings::Registry { .. }
                                 )
                             {
-                                agent_servers.custom.remove(agent_id.as_str());
+                                agent_servers.remove(agent_id.as_str());
                             }
                         });
                     })
@@ -534,24 +527,27 @@ impl Render for AgentRegistryPage {
             .bg(cx.theme().colors().editor_background)
             .child(
                 v_flex()
+                    .p_4()
                     .gap_4()
-                    .pt_4()
-                    .px_4()
-                    .bg(cx.theme().colors().editor_background)
+                    .border_b_1()
+                    .border_color(cx.theme().colors().border_variant)
                     .child(
-                        h_flex().w_full().gap_1p5().justify_between().child(
-                            h_flex()
-                                .gap_2()
-                                .items_baseline()
-                                .child(
-                                    Headline::new("ACP Agent Registry").size(HeadlineSize::XLarge),
-                                )
-                                .child(div().id("beta-chip").child(Chip::new("Beta")).tooltip(
-                                    Tooltip::text(
-                                        "The ACP Agent Registry is still in an beta testing phase. For more information, visit https://github.com/agentclientprotocol/registry",
-                                    ),
-                                )),
-                        ),
+                        h_flex()
+                            .w_full()
+                            .gap_1p5()
+                            .justify_between()
+                            .child(Headline::new("ACP Registry").size(HeadlineSize::Large))
+                            .child(
+                                Button::new("learn-more", "Learn More")
+                                    .style(ButtonStyle::Outlined)
+                                    .size(ButtonSize::Medium)
+                                    .icon(IconName::ArrowUpRight)
+                                    .icon_color(Color::Muted)
+                                    .icon_size(IconSize::Small)
+                                    .on_click(move |_, _, cx| {
+                                        cx.open_url(&zed_urls::acp_registry_blog(cx))
+                                    }),
+                            ),
                     )
                     .child(
                         h_flex()
@@ -635,18 +631,18 @@ impl Item for AgentRegistryPage {
     type Event = ItemEvent;
 
     fn tab_content_text(&self, _detail: usize, _cx: &App) -> SharedString {
-        "ACP Agent Registry".into()
+        "ACP Registry".into()
     }
 
     fn telemetry_event_text(&self) -> Option<&'static str> {
-        Some("ACP Agent Registry Page Opened")
+        Some("ACP Registry Page Opened")
     }
 
     fn show_toolbar(&self) -> bool {
         false
     }
 
-    fn to_item_events(event: &Self::Event, mut f: impl FnMut(workspace::item::ItemEvent)) {
+    fn to_item_events(event: &Self::Event, f: &mut dyn FnMut(workspace::item::ItemEvent)) {
         f(*event)
     }
 }

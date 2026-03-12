@@ -6,6 +6,7 @@ use crate::{
     WrappedLineLayout, register_tooltip_mouse_handlers, set_tooltip_on_window,
 };
 use anyhow::Context as _;
+use gpui_util::ResultExt;
 use itertools::Itertools;
 use smallvec::SmallVec;
 use std::{
@@ -16,7 +17,6 @@ use std::{
     rc::Rc,
     sync::Arc,
 };
-use util::ResultExt;
 
 impl Element for &'static str {
     type RequestLayoutState = TextLayout;
@@ -77,6 +77,14 @@ impl IntoElement for &'static str {
 }
 
 impl IntoElement for String {
+    type Element = SharedString;
+
+    fn into_element(self) -> Self::Element {
+        self.into()
+    }
+}
+
+impl IntoElement for Cow<'static, str> {
     type Element = SharedString;
 
     fn into_element(self) -> Self::Element {
@@ -238,7 +246,12 @@ impl StyledText {
     pub fn with_runs(mut self, runs: Vec<TextRun>) -> Self {
         let mut text = &**self.text;
         for run in &runs {
-            text = text.get(run.len..).expect("invalid text run");
+            text = text.get(run.len..).unwrap_or_else(|| {
+                #[cfg(debug_assertions)]
+                panic!("invalid text run. Text: '{text}', run: {run:?}");
+                #[cfg(not(debug_assertions))]
+                panic!("invalid text run");
+            });
         }
         assert!(text.is_empty(), "invalid text run");
         self.runs = Some(runs);
@@ -922,5 +935,19 @@ impl IntoElement for InteractiveText {
 
     fn into_element(self) -> Self::Element {
         self
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn test_into_element_for() {
+        use crate::{ParentElement as _, SharedString, div};
+        use std::borrow::Cow;
+
+        let _ = div().child("static str");
+        let _ = div().child("String".to_string());
+        let _ = div().child(Cow::Borrowed("Cow"));
+        let _ = div().child(SharedString::from("SharedString"));
     }
 }

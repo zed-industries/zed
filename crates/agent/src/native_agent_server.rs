@@ -1,4 +1,4 @@
-use std::{any::Any, path::Path, rc::Rc, sync::Arc};
+use std::{any::Any, rc::Rc, sync::Arc};
 
 use agent_client_protocol as acp;
 use agent_servers::{AgentServer, AgentServerDelegate};
@@ -35,20 +35,10 @@ impl AgentServer for NativeAgentServer {
 
     fn connect(
         &self,
-        _root_dir: Option<&Path>,
-        delegate: AgentServerDelegate,
+        _delegate: AgentServerDelegate,
         cx: &mut App,
-    ) -> Task<
-        Result<(
-            Rc<dyn acp_thread::AgentConnection>,
-            Option<task::SpawnInTerminal>,
-        )>,
-    > {
-        log::debug!(
-            "NativeAgentServer::connect called for path: {:?}",
-            _root_dir
-        );
-        let project = delegate.project().clone();
+    ) -> Task<Result<Rc<dyn acp_thread::AgentConnection>>> {
+        log::debug!("NativeAgentServer::connect");
         let fs = self.fs.clone();
         let thread_store = self.thread_store.clone();
         let prompt_store = PromptStore::global(cx);
@@ -58,18 +48,14 @@ impl AgentServer for NativeAgentServer {
             let prompt_store = prompt_store.await?;
 
             log::debug!("Creating native agent entity");
-            let agent =
-                NativeAgent::new(project, thread_store, templates, Some(prompt_store), fs, cx)
-                    .await?;
+            let agent = cx
+                .update(|cx| NativeAgent::new(thread_store, templates, Some(prompt_store), fs, cx));
 
             // Create the connection wrapper
             let connection = NativeAgentConnection(agent);
             log::debug!("NativeAgentServer connection established successfully");
 
-            Ok((
-                Rc::new(connection) as Rc<dyn acp_thread::AgentConnection>,
-                None,
-            ))
+            Ok(Rc::new(connection) as Rc<dyn acp_thread::AgentConnection>)
         })
     }
 
@@ -107,6 +93,8 @@ fn model_id_to_selection(model_id: &acp::ModelId) -> LanguageModelSelection {
     LanguageModelSelection {
         provider: provider.to_owned().into(),
         model: model.to_owned(),
+        enable_thinking: false,
+        effort: None,
     }
 }
 

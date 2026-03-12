@@ -28,7 +28,6 @@ jobs:
             bump_type="patch"
         fi
         echo "bump_type=$bump_type" >> $GITHUB_OUTPUT
-      shell: bash -euxo pipefail {0}
       env:
         HAS_MAJOR_LABEL: |-
           ${{ (github.event.action == 'labeled' && github.event.label.name == 'major') ||
@@ -53,7 +52,10 @@ jobs:
       app-secret: ${{ secrets.ZED_ZIPPY_APP_PRIVATE_KEY }}
     with:
       bump-type: ${{ needs.determine_bump_type.outputs.bump_type }}
-      force-bump: true
+      force-bump: ${{ github.event_name != 'push' }}
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref_name }}-${{ github.ref_name == 'main' && github.sha || 'anysha' }}labels
   cancel-in-progress: true
+defaults:
+  run:
+    shell: bash -euxo pipefail {0}

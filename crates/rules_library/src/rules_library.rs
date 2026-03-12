@@ -4,8 +4,8 @@ use editor::{CompletionProvider, SelectionEffects};
 use editor::{CurrentLineHighlight, Editor, EditorElement, EditorEvent, EditorStyle, actions::Tab};
 use gpui::{
     App, Bounds, DEFAULT_ADDITIONAL_WINDOW_SIZE, Entity, EventEmitter, Focusable, PromptLevel,
-    Subscription, Task, TextStyle, TitlebarOptions, WindowBounds, WindowHandle, WindowOptions,
-    actions, point, size, transparent_black,
+    Subscription, Task, TextStyle, Tiling, TitlebarOptions, WindowBounds, WindowHandle,
+    WindowOptions, actions, point, size, transparent_black,
 };
 use language::{Buffer, LanguageRegistry, language_settings::SoftWrap};
 use language_model::{
@@ -24,7 +24,7 @@ use theme::ThemeSettings;
 use ui::{Divider, ListItem, ListItemSpacing, ListSubHeader, Tooltip, prelude::*};
 use ui_input::ErasedEditor;
 use util::{ResultExt, TryFutureExt};
-use workspace::{Workspace, WorkspaceSettings, client_side_decorations};
+use workspace::{MultiWorkspace, Workspace, WorkspaceSettings, client_side_decorations};
 use zed_actions::assistant::InlineAssist;
 
 use prompt_store::*;
@@ -222,7 +222,7 @@ impl PickerDelegate for RulePickerDelegate {
         cx.notify();
     }
 
-    fn can_select(&mut self, ix: usize, _: &mut Window, _: &mut Context<Picker<Self>>) -> bool {
+    fn can_select(&self, ix: usize, _: &mut Window, _: &mut Context<Picker<Self>>) -> bool {
         match self.filtered_entries.get(ix) {
             Some(RulePickerEntry::Rule(_)) => true,
             Some(RulePickerEntry::Header(_)) | Some(RulePickerEntry::Separator) | None => false,
@@ -968,12 +968,14 @@ impl RulesLibrary {
                 .assist(rule_editor, initial_prompt, window, cx);
         } else {
             for window in cx.windows() {
-                if let Some(workspace) = window.downcast::<Workspace>() {
-                    let panel = workspace
-                        .update(cx, |workspace, window, cx| {
+                if let Some(multi_workspace) = window.downcast::<MultiWorkspace>() {
+                    let panel = multi_workspace
+                        .update(cx, |multi_workspace, window, cx| {
                             window.activate_window();
-                            self.inline_assist_delegate
-                                .focus_agent_panel(workspace, window, cx)
+                            multi_workspace.workspace().update(cx, |workspace, cx| {
+                                self.inline_assist_delegate
+                                    .focus_agent_panel(workspace, window, cx)
+                            })
                         })
                         .ok();
                     if panel == Some(true) {
@@ -1103,6 +1105,8 @@ impl RulesLibrary {
                                     stop: Vec::new(),
                                     temperature: None,
                                     thinking_allowed: true,
+                                    thinking_effort: None,
+                                    speed: None,
                                 },
                                 cx,
                             )
@@ -1426,6 +1430,7 @@ impl Render for RulesLibrary {
                 ),
             window,
             cx,
+            Tiling::default(),
         )
     }
 }

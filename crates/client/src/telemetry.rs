@@ -49,7 +49,7 @@ struct TelemetryState {
     installation_id: Option<Arc<str>>, // Per app installation (different for dev, nightly, preview, and stable)
     session_id: Option<String>,        // Per app launch
     metrics_id: Option<Arc<str>>,      // Per logged-in user
-    release_channel: Option<&'static str>,
+    release_channel: Option<ReleaseChannel>,
     architecture: &'static str,
     events_queue: Vec<EventWrapper>,
     flush_events_task: Option<Task<()>>,
@@ -191,13 +191,10 @@ impl Telemetry {
         client: Arc<HttpClientWithUrl>,
         cx: &mut App,
     ) -> Arc<Self> {
-        let release_channel =
-            ReleaseChannel::try_global(cx).map(|release_channel| release_channel.display_name());
-
         let state = Arc::new(Mutex::new(TelemetryState {
             settings: *TelemetrySettings::get_global(cx),
             architecture: env::consts::ARCH,
-            release_channel,
+            release_channel: ReleaseChannel::try_global(cx),
             system_id: None,
             installation_id: None,
             session_id: None,
@@ -490,16 +487,12 @@ impl Telemetry {
                 continue;
             };
 
-            let project_type = if file_name == "pnpm-lock.yaml" {
-                Some("pnpm")
-            } else if file_name == "yarn.lock" {
-                Some("yarn")
-            } else if file_name == "package.json" {
-                Some("node")
-            } else if DOTNET_PROJECT_FILES_REGEX.is_match(file_name) {
-                Some("dotnet")
-            } else {
-                None
+            let project_type = match file_name {
+                "pnpm-lock.yaml" => Some("pnpm"),
+                "yarn.lock" => Some("yarn"),
+                "package.json" => Some("node"),
+                _ if DOTNET_PROJECT_FILES_REGEX.is_match(file_name) => Some("dotnet"),
+                _ => None,
             };
 
             if let Some(project_type) = project_type {
@@ -646,7 +639,9 @@ impl Telemetry {
                     os_version: state.os_version.clone(),
                     architecture: state.architecture.to_string(),
 
-                    release_channel: state.release_channel.map(Into::into),
+                    release_channel: state
+                        .release_channel
+                        .map(|channel| channel.display_name().to_owned()),
                     events,
                 },
             )
@@ -670,9 +665,7 @@ impl Telemetry {
 }
 
 pub fn calculate_json_checksum(json: &impl AsRef<[u8]>) -> Option<String> {
-    let Some(checksum_seed) = &*ZED_CLIENT_CHECKSUM_SEED else {
-        return None;
-    };
+    let checksum_seed = ZED_CLIENT_CHECKSUM_SEED.as_ref()?;
 
     let mut summer = Sha256::new();
     summer.update(checksum_seed);

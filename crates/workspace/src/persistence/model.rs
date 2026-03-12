@@ -10,7 +10,7 @@ use db::sqlez::{
     bindable::{Bind, Column, StaticColumnCount},
     statement::Statement,
 };
-use gpui::{AsyncWindowContext, Entity, WeakEntity};
+use gpui::{AsyncWindowContext, Entity, WeakEntity, WindowId};
 
 use language::{Toolchain, ToolchainScope};
 use project::{Project, debugger::breakpoint_store::SourceBreakpoint};
@@ -49,6 +49,33 @@ impl SerializedWorkspaceLocation {
     }
 }
 
+/// A workspace entry from a previous session, containing all the info needed
+/// to restore it including which window it belonged to (for MultiWorkspace grouping).
+#[derive(Debug, PartialEq, Clone)]
+pub struct SessionWorkspace {
+    pub workspace_id: WorkspaceId,
+    pub location: SerializedWorkspaceLocation,
+    pub paths: PathList,
+    pub window_id: Option<WindowId>,
+}
+
+/// Per-window state for a MultiWorkspace, persisted to KVP.
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+pub struct MultiWorkspaceState {
+    pub active_workspace_id: Option<WorkspaceId>,
+}
+
+/// The serialized state of a single MultiWorkspace window from a previous session.
+#[derive(Debug, Clone)]
+pub struct SerializedMultiWorkspace {
+    pub id: Option<MultiWorkspaceId>,
+    pub workspaces: Vec<SessionWorkspace>,
+    pub state: MultiWorkspaceState,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct MultiWorkspaceId(pub u64);
+
 #[derive(Debug, PartialEq, Clone)]
 pub(crate) struct SerializedWorkspace {
     pub(crate) id: WorkspaceId,
@@ -67,9 +94,9 @@ pub(crate) struct SerializedWorkspace {
 
 #[derive(Debug, PartialEq, Clone, Default, Serialize, Deserialize)]
 pub struct DockStructure {
-    pub(crate) left: DockData,
-    pub(crate) right: DockData,
-    pub(crate) bottom: DockData,
+    pub left: DockData,
+    pub right: DockData,
+    pub bottom: DockData,
 }
 
 impl RemoteConnectionKind {
@@ -117,9 +144,9 @@ impl Bind for DockStructure {
 
 #[derive(Debug, PartialEq, Clone, Default, Serialize, Deserialize)]
 pub struct DockData {
-    pub(crate) visible: bool,
-    pub(crate) active_panel: Option<String>,
-    pub(crate) zoom: bool,
+    pub visible: bool,
+    pub active_panel: Option<String>,
+    pub zoom: bool,
 }
 
 impl Column for DockData {

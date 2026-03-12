@@ -1,12 +1,9 @@
-#[cfg(target_os = "macos")]
-mod mac_watcher;
-
-#[cfg(not(target_os = "macos"))]
 pub mod fs_watcher;
 
 use parking_lot::Mutex;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicU8, AtomicUsize, Ordering};
 use std::time::Instant;
+use util::maybe;
 
 use anyhow::{Context as _, Result, anyhow};
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
@@ -18,10 +15,14 @@ use gpui::Global;
 use gpui::ReadGlobal as _;
 use gpui::SharedString;
 use std::borrow::Cow;
-use util::command::new_smol_command;
+#[cfg(unix)]
+use std::ffi::CString;
+use util::command::new_command;
 
 #[cfg(unix)]
 use std::os::fd::{AsFd, AsRawFd};
+#[cfg(unix)]
+use std::os::unix::ffi::OsStrExt;
 
 #[cfg(unix)]
 use std::os::unix::fs::{FileTypeExt, MetadataExt};
@@ -36,9 +37,11 @@ use is_executable::IsExecutable;
 use rope::Rope;
 use serde::{Deserialize, Serialize};
 use smol::io::AsyncWriteExt;
+#[cfg(any(target_os = "windows", feature = "test-support"))]
+use std::path::Component;
 use std::{
     io::{self, Write},
-    path::{Component, Path, PathBuf},
+    path::{Path, PathBuf},
     pin::Pin,
     sync::Arc,
     time::{Duration, SystemTime, UNIX_EPOCH},
@@ -149,7 +152,7 @@ pub trait Fs: Send + Sync {
     -> Result<()>;
     async fn git_clone(&self, repo_url: &str, abs_work_directory: &Path) -> Result<()>;
     fn is_fake(&self) -> bool;
-    async fn is_case_sensitive(&self) -> Result<bool>;
+    async fn is_case_sensitive(&self) -> bool;
     fn subscribe_to_jobs(&self) -> JobEventReceiver;
 
     #[cfg(feature = "test-support")]
@@ -314,6 +317,7 @@ pub struct RealFs {
     executor: BackgroundExecutor,
     next_job_id: Arc<AtomicUsize>,
     job_event_subscribers: Arc<Mutex<Vec<JobEventSender>>>,
+    is_case_sensitive: AtomicU8,
 }
 
 pub trait FileHandle: Send + Sync + std::fmt::Debug {
@@ -421,6 +425,7 @@ impl RealFs {
             executor,
             next_job_id: Arc::new(AtomicUsize::new(0)),
             job_event_subscribers: Arc::new(Mutex::new(Vec::new())),
+            is_case_sensitive: Default::default(),
         }
     }
 
@@ -505,6 +510,63 @@ impl RealFs {
     }
 }
 
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+fn rename_without_replace(source: &Path, target: &Path) -> io::Result<()> {
+    let source = path_to_c_string(source)?;
+    let target = path_to_c_string(target)?;
+
+    #[cfg(target_os = "macos")]
+    let result = unsafe { libc::renamex_np(source.as_ptr(), target.as_ptr(), libc::RENAME_EXCL) };
+
+    #[cfg(target_os = "linux")]
+    let result = unsafe {
+        libc::syscall(
+            libc::SYS_renameat2,
+            libc::AT_FDCWD,
+            source.as_ptr(),
+            libc::AT_FDCWD,
+            target.as_ptr(),
+            libc::RENAME_NOREPLACE,
+        )
+    };
+
+    if result == 0 {
+        Ok(())
+    } else {
+        Err(io::Error::last_os_error())
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn rename_without_replace(source: &Path, target: &Path) -> io::Result<()> {
+    use std::os::windows::ffi::OsStrExt;
+
+    use windows::Win32::Storage::FileSystem::{MOVE_FILE_FLAGS, MoveFileExW};
+    use windows::core::PCWSTR;
+
+    let source: Vec<u16> = source.as_os_str().encode_wide().chain(Some(0)).collect();
+    let target: Vec<u16> = target.as_os_str().encode_wide().chain(Some(0)).collect();
+
+    unsafe {
+        MoveFileExW(
+            PCWSTR(source.as_ptr()),
+            PCWSTR(target.as_ptr()),
+            MOVE_FILE_FLAGS::default(),
+        )
+    }
+    .map_err(|_| io::Error::last_os_error())
+}
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+fn path_to_c_string(path: &Path) -> io::Result<CString> {
+    CString::new(path.as_os_str().as_bytes()).map_err(|_| {
+        io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!("path contains interior NUL: {}", path.display()),
+        )
+    })
+}
+
 #[async_trait::async_trait]
 impl Fs for RealFs {
     async fn create_dir(&self, path: &Path) -> Result<()> {
@@ -517,7 +579,7 @@ impl Fs for RealFs {
 
         #[cfg(windows)]
         if smol::fs::metadata(&target).await?.is_dir() {
-            let status = new_smol_command("cmd")
+            let status = new_command("cmd")
                 .args(["/C", "mklink", "/J"])
                 .args([path, target.as_path()])
                 .status()
@@ -587,17 +649,60 @@ impl Fs for RealFs {
     }
 
     async fn rename(&self, source: &Path, target: &Path, options: RenameOptions) -> Result<()> {
-        if !options.overwrite && smol::fs::metadata(target).await.is_ok() {
+        if options.create_parents {
+            if let Some(parent) = target.parent() {
+                self.create_dir(parent).await?;
+            }
+        }
+
+        if options.overwrite {
+            smol::fs::rename(source, target).await?;
+            return Ok(());
+        }
+
+        let use_metadata_fallback = {
+            #[cfg(any(target_os = "macos", target_os = "linux", target_os = "windows"))]
+            {
+                let source = source.to_path_buf();
+                let target = target.to_path_buf();
+                match self
+                    .executor
+                    .spawn(async move { rename_without_replace(&source, &target) })
+                    .await
+                {
+                    Ok(()) => return Ok(()),
+                    Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
+                        if options.ignore_if_exists {
+                            return Ok(());
+                        }
+                        return Err(error.into());
+                    }
+                    Err(error)
+                        if error.raw_os_error().is_some_and(|code| {
+                            code == libc::ENOSYS
+                                || code == libc::ENOTSUP
+                                || code == libc::EOPNOTSUPP
+                        }) =>
+                    {
+                        // For case when filesystem or kernel does not support atomic no-overwrite rename.
+                        true
+                    }
+                    Err(error) => return Err(error.into()),
+                }
+            }
+
+            #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
+            {
+                // For platforms which do not have an atomic no-overwrite rename yet.
+                true
+            }
+        };
+
+        if use_metadata_fallback && smol::fs::metadata(target).await.is_ok() {
             if options.ignore_if_exists {
                 return Ok(());
             } else {
                 anyhow::bail!("{target:?} already exists");
-            }
-        }
-
-        if options.create_parents {
-            if let Some(parent) = target.parent() {
-                self.create_dir(parent).await?;
             }
         }
 
@@ -976,62 +1081,6 @@ impl Fs for RealFs {
         Ok(Box::pin(result))
     }
 
-    #[cfg(target_os = "macos")]
-    async fn watch(
-        &self,
-        path: &Path,
-        latency: Duration,
-    ) -> (
-        Pin<Box<dyn Send + Stream<Item = Vec<PathEvent>>>>,
-        Arc<dyn Watcher>,
-    ) {
-        use fsevent::StreamFlags;
-
-        let (events_tx, events_rx) = smol::channel::unbounded();
-        let handles = Arc::new(parking_lot::Mutex::new(collections::BTreeMap::default()));
-        let watcher = Arc::new(mac_watcher::MacWatcher::new(
-            events_tx,
-            Arc::downgrade(&handles),
-            latency,
-        ));
-        watcher.add(path).expect("handles can't be dropped");
-
-        (
-            Box::pin(
-                events_rx
-                    .map(|events| {
-                        events
-                            .into_iter()
-                            .map(|event| {
-                                log::trace!("fs path event: {event:?}");
-                                let kind = if event.flags.contains(StreamFlags::ITEM_REMOVED) {
-                                    Some(PathEventKind::Removed)
-                                } else if event.flags.contains(StreamFlags::ITEM_CREATED) {
-                                    Some(PathEventKind::Created)
-                                } else if event.flags.contains(StreamFlags::ITEM_MODIFIED)
-                                    | event.flags.contains(StreamFlags::ITEM_RENAMED)
-                                {
-                                    Some(PathEventKind::Changed)
-                                } else {
-                                    None
-                                };
-                                PathEvent {
-                                    path: event.path,
-                                    kind,
-                                }
-                            })
-                            .collect()
-                    })
-                    .chain(futures::stream::once(async move {
-                        drop(handles);
-                        vec![]
-                    })),
-            ),
-            watcher,
-        )
-    }
-
-    #[cfg(not(target_os = "macos"))]
     async fn watch(
         &self,
         path: &Path,
@@ -1114,7 +1163,7 @@ impl Fs for RealFs {
         abs_work_directory_path: &Path,
         fallback_branch_name: String,
     ) -> Result<()> {
-        let config = new_smol_command("git")
+        let config = new_command("git")
             .current_dir(abs_work_directory_path)
             .args(&["config", "--global", "--get", "init.defaultBranch"])
             .output()
@@ -1128,7 +1177,7 @@ impl Fs for RealFs {
             branch_name = Cow::Borrowed(fallback_branch_name.as_str());
         }
 
-        new_smol_command("git")
+        new_command("git")
             .current_dir(abs_work_directory_path)
             .args(&["init", "-b"])
             .arg(branch_name.trim())
@@ -1148,7 +1197,7 @@ impl Fs for RealFs {
 
         let _job_tracker = JobTracker::new(job_info, self.job_event_subscribers.clone());
 
-        let output = new_smol_command("git")
+        let output = new_command("git")
             .current_dir(abs_work_directory)
             .args(&["clone", repo_url])
             .output()
@@ -1178,37 +1227,63 @@ impl Fs for RealFs {
     /// that have the same name except for the casing.
     ///
     /// It creates both files in a temporary directory it removes at the end.
-    async fn is_case_sensitive(&self) -> Result<bool> {
-        let temp_dir = TempDir::new()?;
-        let test_file_1 = temp_dir.path().join("case_sensitivity_test.tmp");
-        let test_file_2 = temp_dir.path().join("CASE_SENSITIVITY_TEST.TMP");
+    async fn is_case_sensitive(&self) -> bool {
+        const UNINITIALIZED: u8 = 0;
+        const CASE_SENSITIVE: u8 = 1;
+        const NOT_CASE_SENSITIVE: u8 = 2;
 
-        let create_opts = CreateOptions {
-            overwrite: false,
-            ignore_if_exists: false,
-        };
+        // Note we could CAS here, but really, if we race we do this work twice at worst which isn't a big deal.
+        let load = self.is_case_sensitive.load(Ordering::Acquire);
+        if load != UNINITIALIZED {
+            return load == CASE_SENSITIVE;
+        }
+        let temp_dir = self.executor.spawn(async { TempDir::new() });
+        let res = maybe!(async {
+            let temp_dir = temp_dir.await?;
+            let test_file_1 = temp_dir.path().join("case_sensitivity_test.tmp");
+            let test_file_2 = temp_dir.path().join("CASE_SENSITIVITY_TEST.TMP");
 
-        // Create file1
-        self.create_file(&test_file_1, create_opts).await?;
+            let create_opts = CreateOptions {
+                overwrite: false,
+                ignore_if_exists: false,
+            };
 
-        // Now check whether it's possible to create file2
-        let case_sensitive = match self.create_file(&test_file_2, create_opts).await {
-            Ok(_) => Ok(true),
-            Err(e) => {
-                if let Some(io_error) = e.downcast_ref::<io::Error>() {
-                    if io_error.kind() == io::ErrorKind::AlreadyExists {
-                        Ok(false)
+            // Create file1
+            self.create_file(&test_file_1, create_opts).await?;
+
+            // Now check whether it's possible to create file2
+            let case_sensitive = match self.create_file(&test_file_2, create_opts).await {
+                Ok(_) => Ok(true),
+                Err(e) => {
+                    if let Some(io_error) = e.downcast_ref::<io::Error>() {
+                        if io_error.kind() == io::ErrorKind::AlreadyExists {
+                            Ok(false)
+                        } else {
+                            Err(e)
+                        }
                     } else {
                         Err(e)
                     }
-                } else {
-                    Err(e)
                 }
-            }
-        };
+            };
 
-        temp_dir.close()?;
-        case_sensitive
+            temp_dir.close()?;
+            case_sensitive
+        }).await.unwrap_or_else(|e| {
+            log::error!(
+                "Failed to determine whether filesystem is case sensitive (falling back to true) due to error: {e:#}"
+            );
+            true
+        });
+        self.is_case_sensitive.store(
+            if res {
+                CASE_SENSITIVE
+            } else {
+                NOT_CASE_SENSITIVE
+            },
+            Ordering::Release,
+        );
+        res
     }
 }
 
@@ -2100,6 +2175,13 @@ impl FakeFs {
         .unwrap();
     }
 
+    pub fn set_create_worktree_error(&self, dot_git: &Path, message: Option<String>) {
+        self.with_git_state(dot_git, true, |state| {
+            state.simulated_create_worktree_error = message;
+        })
+        .unwrap();
+    }
+
     pub fn paths(&self, include_dot_git: bool) -> Vec<PathBuf> {
         let mut result = Vec::new();
         let mut queue = collections::VecDeque::new();
@@ -2798,6 +2880,7 @@ impl Fs for FakeFs {
                     repository_dir_path: repository_dir_path.to_owned(),
                     common_dir_path: common_dir_path.to_owned(),
                     checkpoints: Arc::default(),
+                    is_trusted: Arc::default(),
                 }) as _
             },
         )
@@ -2820,8 +2903,8 @@ impl Fs for FakeFs {
         true
     }
 
-    async fn is_case_sensitive(&self) -> Result<bool> {
-        Ok(true)
+    async fn is_case_sensitive(&self) -> bool {
+        true
     }
 
     fn subscribe_to_jobs(&self) -> JobEventReceiver {
@@ -2837,30 +2920,7 @@ impl Fs for FakeFs {
 }
 
 pub fn normalize_path(path: &Path) -> PathBuf {
-    let mut components = path.components().peekable();
-    let mut ret = if let Some(c @ Component::Prefix(..)) = components.peek().cloned() {
-        components.next();
-        PathBuf::from(c.as_os_str())
-    } else {
-        PathBuf::new()
-    };
-
-    for component in components {
-        match component {
-            Component::Prefix(..) => unreachable!(),
-            Component::RootDir => {
-                ret.push(component.as_os_str());
-            }
-            Component::CurDir => {}
-            Component::ParentDir => {
-                ret.pop();
-            }
-            Component::Normal(c) => {
-                ret.push(c);
-            }
-        }
-    }
-    ret
+    util::normalize_path(path)
 }
 
 pub async fn copy_recursive<'a>(

@@ -1,7 +1,7 @@
 use anyhow::Result;
 use async_recursion::async_recursion;
 use collections::HashSet;
-use futures::{StreamExt as _, stream::FuturesUnordered};
+use futures::future::join_all;
 use gpui::{AppContext as _, AsyncWindowContext, Axis, Entity, Task, WeakEntity};
 use project::Project;
 use serde::{Deserialize, Serialize};
@@ -242,7 +242,7 @@ async fn deserialize_pane_group(
 
                     let items = pane.update_in(cx, |pane, window, cx| {
                         populate_pane_items(pane, new_items, active_item, window, cx);
-                        pane.set_pinned_count(pinned_count);
+                        pane.set_pinned_count(pinned_count.min(pane.items_len()));
                         pane.items_len()
                     });
                     // Avoid blank panes in splits
@@ -290,30 +290,25 @@ fn deserialize_terminal_views(
     item_ids: &[u64],
     cx: &mut AsyncWindowContext,
 ) -> impl Future<Output = Vec<Entity<TerminalView>>> + use<> {
-    let mut deserialized_items = item_ids
-        .iter()
-        .map(|item_id| {
-            cx.update(|window, cx| {
-                TerminalView::deserialize(
-                    project.clone(),
-                    workspace.clone(),
-                    workspace_id,
-                    *item_id,
-                    window,
-                    cx,
-                )
-            })
-            .unwrap_or_else(|e| Task::ready(Err(e.context("no window present"))))
+    let deserialized_items = join_all(item_ids.iter().filter_map(|item_id| {
+        cx.update(|window, cx| {
+            TerminalView::deserialize(
+                project.clone(),
+                workspace.clone(),
+                workspace_id,
+                *item_id,
+                window,
+                cx,
+            )
         })
-        .collect::<FuturesUnordered<_>>();
+        .ok()
+    }));
     async move {
-        let mut items = Vec::with_capacity(deserialized_items.len());
-        while let Some(item) = deserialized_items.next().await {
-            if let Some(item) = item.log_err() {
-                items.push(item);
-            }
-        }
-        items
+        deserialized_items
+            .await
+            .into_iter()
+            .filter_map(|item| item.log_err())
+            .collect()
     }
 }
 
@@ -424,6 +419,9 @@ impl Domain for TerminalDb {
             ALTER TABLE terminals ADD COLUMN working_directory_path TEXT;
             UPDATE terminals SET working_directory_path = CAST(working_directory AS TEXT);
         ),
+        sql! (
+            ALTER TABLE terminals ADD COLUMN custom_title TEXT;
+        ),
     ];
 }
 
@@ -477,6 +475,40 @@ impl TerminalDb {
     query! {
         pub fn get_working_directory(item_id: ItemId, workspace_id: WorkspaceId) -> Result<Option<PathBuf>> {
             SELECT working_directory
+            FROM terminals
+            WHERE item_id = ? AND workspace_id = ?
+        }
+    }
+
+    pub async fn save_custom_title(
+        &self,
+        item_id: ItemId,
+        workspace_id: WorkspaceId,
+        custom_title: Option<String>,
+    ) -> Result<()> {
+        log::debug!(
+            "Saving custom title {:?} for item {} in workspace {:?}",
+            custom_title,
+            item_id,
+            workspace_id
+        );
+        self.write(move |conn| {
+            let query = "INSERT INTO terminals (item_id, workspace_id, custom_title)
+                VALUES (?1, ?2, ?3)
+                ON CONFLICT (workspace_id, item_id) DO UPDATE SET
+                    custom_title = excluded.custom_title";
+            let mut statement = Statement::prepare(conn, query)?;
+            let mut next_index = statement.bind(&item_id, 1)?;
+            next_index = statement.bind(&workspace_id, next_index)?;
+            statement.bind(&custom_title, next_index)?;
+            statement.exec()
+        })
+        .await
+    }
+
+    query! {
+        pub fn get_custom_title(item_id: ItemId, workspace_id: WorkspaceId) -> Result<Option<String>> {
+            SELECT custom_title
             FROM terminals
             WHERE item_id = ? AND workspace_id = ?
         }
