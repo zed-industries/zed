@@ -2,7 +2,7 @@ pub mod cursor_position;
 
 use cursor_position::UserCaretPosition;
 use editor::{
-    Anchor, Editor, MultiBufferSnapshot, RowHighlightOptions, SelectionEffects, ToOffset, ToPoint,
+    Anchor, Editor, MultiBufferSnapshot, RowHighlightOptions, SelectionEffects, ToPoint,
     actions::Tab,
     scroll::{Autoscroll, ScrollOffset},
 };
@@ -227,32 +227,8 @@ impl GoToLine {
 
         let row = query_row.saturating_sub(1);
         let character = query_char.unwrap_or(0).saturating_sub(1);
-
-        let start_offset = Point::new(row, 0).to_offset(snapshot);
-        const MAX_BYTES_IN_UTF_8: u32 = 4;
-        let max_end_offset = snapshot
-            .clip_point(
-                Point::new(row, character * MAX_BYTES_IN_UTF_8 + 1),
-                Bias::Right,
-            )
-            .to_offset(snapshot);
-
-        let mut chars_to_iterate = character;
-        let mut end_offset = start_offset;
-        'outer: for text_chunk in snapshot.text_for_range(start_offset..max_end_offset) {
-            let mut offset_increment = 0;
-            for c in text_chunk.chars() {
-                if chars_to_iterate == 0 {
-                    end_offset += offset_increment;
-                    break 'outer;
-                } else {
-                    chars_to_iterate -= 1;
-                    offset_increment += c.len_utf8();
-                }
-            }
-            end_offset += offset_increment;
-        }
-        Some(snapshot.anchor_before(snapshot.clip_offset(end_offset, Bias::Left)))
+        let point = snapshot.point_for_row_and_column_from_external_source(row, character);
+        Some(snapshot.anchor_before(point))
     }
 
     fn relative_line_from_query(&self, cx: &App) -> Option<i32> {

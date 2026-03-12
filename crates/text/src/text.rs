@@ -2254,22 +2254,35 @@ impl BufferSnapshot {
         (row_end_offset - row_start_offset) as u32
     }
 
-    pub fn point_for_row_and_column_from_external_source(&self, row: u32, column: u32) -> Point {
-        let row = row.min(self.max_point().row);
-        let mut byte_column = 0;
+    pub fn point_for_column_in_range_from_external_source<'a>(
+        range: Range<Point>,
+        text_chunks: impl Iterator<Item = &'a str>,
+        column: u32,
+    ) -> Point {
+        let mut point = range.start;
         let mut remaining_columns = column;
 
-        for chunk in self.text_for_range(Point::new(row, 0)..Point::new(row, self.line_len(row))) {
+        for chunk in text_chunks {
             for character in chunk.chars() {
                 if remaining_columns == 0 {
-                    return Point::new(row, byte_column);
+                    return point;
                 }
                 remaining_columns -= 1;
-                byte_column += character.len_utf8() as u32;
+                point.column += character.len_utf8() as u32;
             }
         }
 
-        Point::new(row, byte_column)
+        point
+    }
+
+    pub fn point_for_row_and_column_from_external_source(&self, row: u32, column: u32) -> Point {
+        let row = row.min(self.max_point().row);
+        let range = Point::new(row, 0)..Point::new(row, self.line_len(row));
+        Self::point_for_column_in_range_from_external_source(
+            range.clone(),
+            self.text_for_range(range),
+            column,
+        )
     }
 
     pub fn line_indents_in_row_range(
