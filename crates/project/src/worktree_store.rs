@@ -122,7 +122,7 @@ impl WorktreeStore {
             worktrees_reordered: false,
             scanning_enabled: true,
             retain_worktrees,
-            initial_scan_complete: watch::channel_with(false),
+            initial_scan_complete: watch::channel_with(true),
             state: WorktreeStoreState::Local { fs },
         }
     }
@@ -143,7 +143,7 @@ impl WorktreeStore {
             worktrees_reordered: false,
             scanning_enabled: true,
             retain_worktrees,
-            initial_scan_complete: watch::channel_with(false),
+            initial_scan_complete: watch::channel_with(true),
             state: WorktreeStoreState::Remote {
                 upstream_client,
                 upstream_project_id,
@@ -179,6 +179,7 @@ impl WorktreeStore {
 
     pub fn disable_scanner(&mut self) {
         self.scanning_enabled = false;
+        *self.initial_scan_complete.0.borrow_mut() = true;
     }
 
     /// Returns a future that resolves when all visible worktrees have completed
@@ -200,6 +201,35 @@ impl WorktreeStore {
     /// Returns whether all visible worktrees have completed their initial scan.
     pub fn initial_scan_completed(&self) -> bool {
         *self.initial_scan_complete.1.borrow()
+    }
+
+    /// Checks whether all visible worktrees have completed their initial scan
+    /// and no worktree creations are pending, and updates the watch channel accordingly.
+    fn update_initial_scan_state(&mut self, cx: &App) {
+        let complete = self.loading_worktrees.is_empty()
+            && self
+                .visible_worktrees(cx)
+                .all(|wt| wt.read(cx).completed_scan_id() >= 1);
+        *self.initial_scan_complete.0.borrow_mut() = complete;
+    }
+
+    /// Spawns a detached task that waits for a worktree's initial scan to complete,
+    /// then rechecks and updates the aggregate initial scan state.
+    fn observe_worktree_scan_completion(
+        &mut self,
+        worktree: &Entity<Worktree>,
+        cx: &mut Context<Self>,
+    ) {
+        let await_scan = worktree.update(cx, |worktree, _cx| worktree.wait_for_snapshot(1));
+        cx.spawn(async move |this, cx| {
+            await_scan.await.ok();
+            this.update(cx, |this, cx| {
+                this.update_initial_scan_state(cx);
+            })
+            .ok();
+            anyhow::Ok(())
+        })
+        .detach();
     }
 
     /// Iterates through all worktrees, including ones that don't appear in the project panel
@@ -580,12 +610,22 @@ impl WorktreeStore {
 
             self.loading_worktrees
                 .insert(abs_path.clone(), task.shared());
+
+            if visible && self.scanning_enabled {
+                *self.initial_scan_complete.0.borrow_mut() = false;
+            }
         }
         let task = self.loading_worktrees.get(&abs_path).unwrap().clone();
         cx.spawn(async move |this, cx| {
             let result = task.await;
-            this.update(cx, |this, _| this.loading_worktrees.remove(&abs_path))
-                .ok();
+            this.update(cx, |this, cx| {
+                this.loading_worktrees.remove(&abs_path);
+                if !visible || !this.scanning_enabled || result.is_err() {
+                    this.update_initial_scan_state(cx);
+                }
+            })
+            .ok();
+
             match result {
                 Ok(worktree) => {
                     if !is_via_collab {
@@ -604,6 +644,13 @@ impl WorktreeStore {
                                 );
                             });
                         }
+
+                        this.update(cx, |this, cx| {
+                            if this.scanning_enabled && visible {
+                                this.observe_worktree_scan_completion(&worktree, cx);
+                            }
+                        })
+                        .ok();
                     }
                     Ok(worktree)
                 }

@@ -710,7 +710,10 @@ impl Worktree {
         }
     }
 
-    pub fn wait_for_snapshot(&mut self, scan_id: usize) -> impl Future<Output = Result<()>> {
+    pub fn wait_for_snapshot(
+        &mut self,
+        scan_id: usize,
+    ) -> impl Future<Output = Result<()>> + use<> {
         match self {
             Worktree::Local(this) => this.wait_for_snapshot(scan_id).boxed(),
             Worktree::Remote(this) => this.wait_for_snapshot(scan_id).boxed(),
