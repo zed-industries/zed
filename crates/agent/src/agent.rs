@@ -870,7 +870,6 @@ impl NativeAgent {
         project: Entity<Project>,
         cx: &mut Context<Self>,
     ) -> Task<Result<Entity<Thread>>> {
-        let project_id = self.get_or_create_project_state(&project, cx);
         let database_future = ThreadsDatabase::connect(cx);
         cx.spawn(async move |this, cx| {
             let database = database_future.await.map_err(|err| anyhow!(err))?;
@@ -880,6 +879,7 @@ impl NativeAgent {
                 .with_context(|| format!("no thread found with ID: {id:?}"))?;
 
             this.update(cx, |this, cx| {
+                let project_id = this.get_or_create_project_state(&project, cx);
                 let project_state = this
                     .projects
                     .get(&project_id)
@@ -915,11 +915,11 @@ impl NativeAgent {
             return Task::ready(Ok(session.acp_thread.clone()));
         }
 
-        let project_id = self.get_or_create_project_state(&project, cx);
-        let task = self.load_thread(id, project, cx);
+        let task = self.load_thread(id, project.clone(), cx);
         cx.spawn(async move |this, cx| {
             let thread = task.await?;
             let acp_thread = this.update(cx, |this, cx| {
+                let project_id = this.get_or_create_project_state(&project, cx);
                 this.register_session(thread.clone(), project_id, cx)
             })?;
             let events = thread.update(cx, |thread, cx| thread.replay(cx));

@@ -1,3 +1,4 @@
+use crate::threads_archive_view::{ThreadsArchiveView, ThreadsArchiveViewEvent};
 use crate::{AgentPanel, AgentPanelEvent, NewThread};
 use acp_thread::ThreadStatus;
 use action_log::DiffStats;
@@ -6,12 +7,11 @@ use agent_client_protocol as acp;
 use agent_settings::AgentSettings;
 use chrono::Utc;
 use db::kvp::KEY_VALUE_STORE;
-use editor::{Editor, EditorElement, EditorStyle};
+use editor::Editor;
 use feature_flags::{AgentV2FeatureFlag, FeatureFlagViewExt as _};
 use gpui::{
-    Action as _, AnyElement, App, Context, Entity, FocusHandle, Focusable, FontStyle, ListState,
-    Pixels, Render, SharedString, TextStyle, WeakEntity, Window, actions, list, prelude::*, px,
-    relative, rems,
+    Action as _, AnyElement, App, Context, Entity, FocusHandle, Focusable, ListState, Pixels,
+    Render, SharedString, WeakEntity, Window, actions, list, prelude::*, px,
 };
 use menu::{Cancel, Confirm, SelectFirst, SelectLast, SelectNext, SelectPrevious};
 use project::Event as ProjectEvent;
@@ -47,6 +47,13 @@ const MIN_WIDTH: Pixels = px(200.0);
 const MAX_WIDTH: Pixels = px(800.0);
 const DEFAULT_THREADS_SHOWN: usize = 5;
 const SIDEBAR_STATE_KEY: &str = "sidebar_state";
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+enum SidebarView {
+    #[default]
+    ThreadList,
+    Archive,
+}
 
 fn read_sidebar_open_state(multi_workspace_id: u64) -> bool {
     KEY_VALUE_STORE
@@ -138,6 +145,7 @@ impl From<ThreadEntry> for ListEntry {
 struct SidebarContents {
     entries: Vec<ListEntry>,
     notified_threads: HashSet<acp::SessionId>,
+    project_header_indices: Vec<usize>,
 }
 
 impl SidebarContents {
@@ -241,6 +249,9 @@ pub struct Sidebar {
     active_entry_index: Option<usize>,
     collapsed_groups: HashSet<PathList>,
     expanded_groups: HashMap<PathList, usize>,
+    view: SidebarView,
+    archive_view: Option<Entity<ThreadsArchiveView>>,
+    _subscriptions: Vec<gpui::Subscription>,
 }
 
 impl Sidebar {
@@ -340,6 +351,9 @@ impl Sidebar {
             active_entry_index: None,
             collapsed_groups: HashSet::new(),
             expanded_groups: HashMap::new(),
+            view: SidebarView::default(),
+            archive_view: None,
+            _subscriptions: Vec::new(),
         }
     }
 
@@ -815,10 +829,17 @@ impl Sidebar {
         // the build pass (no extra scan needed).
         notified_threads.retain(|id| current_session_ids.contains(id));
 
+        let project_header_indices = entries
+            .iter()
+            .enumerate()
+            .filter_map(|(i, e)| matches!(e, ListEntry::ProjectHeader { .. }).then_some(i))
+            .collect();
+
         self.active_entry_index = active_entry_index;
         self.contents = SidebarContents {
             entries,
             notified_threads,
+            project_header_indices,
         };
     }
 
@@ -876,6 +897,7 @@ impl Sidebar {
                 has_threads,
             } => self.render_project_header(
                 ix,
+                false,
                 path_list,
                 label,
                 workspace,
@@ -921,6 +943,7 @@ impl Sidebar {
     fn render_project_header(
         &self,
         ix: usize,
+        is_sticky: bool,
         path_list: &PathList,
         label: &SharedString,
         workspace: &Entity<Workspace>,
@@ -930,9 +953,10 @@ impl Sidebar {
         docked_right: bool,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let id = SharedString::from(format!("project-header-{}", ix));
-        let group_name = SharedString::from(format!("header-group-{}", ix));
-        let ib_id = SharedString::from(format!("project-header-new-thread-{}", ix));
+        let id_prefix = if is_sticky { "sticky-" } else { "" };
+        let id = SharedString::from(format!("{id_prefix}project-header-{ix}"));
+        let group_name = SharedString::from(format!("{id_prefix}header-group-{ix}"));
+        let ib_id = SharedString::from(format!("{id_prefix}project-header-new-thread-{ix}"));
 
         let is_collapsed = self.collapsed_groups.contains(path_list);
         let disclosure_icon = if is_collapsed {
@@ -994,7 +1018,9 @@ impl Sidebar {
                     .when(workspace_count > 1, |this| {
                         this.child(
                             IconButton::new(
-                                SharedString::from(format!("project-header-remove-{}", ix)),
+                                SharedString::from(format!(
+                                    "{id_prefix}project-header-remove-{ix}",
+                                )),
                                 IconName::Close,
                             )
                             .icon_size(IconSize::Small)
@@ -1010,7 +1036,9 @@ impl Sidebar {
                     .when(view_more_expanded && !is_collapsed, |this| {
                         this.child(
                             IconButton::new(
-                                SharedString::from(format!("project-header-collapse-{}", ix)),
+                                SharedString::from(format!(
+                                    "{id_prefix}project-header-collapse-{ix}",
+                                )),
                                 IconName::ListCollapse,
                             )
                             .icon_size(IconSize::Small)
@@ -1049,6 +1077,84 @@ impl Sidebar {
             //     this.activate_workspace(&workspace_for_activate, window, cx);
             // }))
             .into_any_element()
+    }
+
+    fn render_sticky_header(
+        &self,
+        docked_right: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<AnyElement> {
+        let scroll_top = self.list_state.logical_scroll_top();
+
+        let &header_idx = self
+            .contents
+            .project_header_indices
+            .iter()
+            .rev()
+            .find(|&&idx| idx <= scroll_top.item_ix)?;
+
+        let needs_sticky = header_idx < scroll_top.item_ix
+            || (header_idx == scroll_top.item_ix && scroll_top.offset_in_item > px(0.));
+
+        if !needs_sticky {
+            return None;
+        }
+
+        let ListEntry::ProjectHeader {
+            path_list,
+            label,
+            workspace,
+            highlight_positions,
+            has_threads,
+        } = self.contents.entries.get(header_idx)?
+        else {
+            return None;
+        };
+
+        let is_focused = self.focus_handle.is_focused(window)
+            || self.filter_editor.focus_handle(cx).is_focused(window);
+        let is_selected = is_focused && self.selection == Some(header_idx);
+
+        let header_element = self.render_project_header(
+            header_idx,
+            true,
+            &path_list,
+            &label,
+            &workspace,
+            &highlight_positions,
+            *has_threads,
+            is_selected,
+            docked_right,
+            cx,
+        );
+
+        let top_offset = self
+            .contents
+            .project_header_indices
+            .iter()
+            .find(|&&idx| idx > header_idx)
+            .and_then(|&next_idx| {
+                let bounds = self.list_state.bounds_for_item(next_idx)?;
+                let viewport = self.list_state.viewport_bounds();
+                let y_in_viewport = bounds.origin.y - viewport.origin.y;
+                let header_height = bounds.size.height;
+                (y_in_viewport < header_height).then_some(y_in_viewport - header_height)
+            })
+            .unwrap_or(px(0.));
+
+        let element = v_flex()
+            .absolute()
+            .top(top_offset)
+            .left_0()
+            .w_full()
+            .bg(cx.theme().colors().surface_background)
+            .border_b_1()
+            .border_color(cx.theme().colors().border_variant)
+            .child(header_element)
+            .into_any_element();
+
+        Some(element)
     }
 
     fn activate_workspace(
@@ -1432,28 +1538,8 @@ impl Sidebar {
             .into_any_element()
     }
 
-    fn render_filter_input(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let settings = ThemeSettings::get_global(cx);
-        let text_style = TextStyle {
-            color: cx.theme().colors().text,
-            font_family: settings.ui_font.family.clone(),
-            font_features: settings.ui_font.features.clone(),
-            font_fallbacks: settings.ui_font.fallbacks.clone(),
-            font_size: rems(0.875).into(),
-            font_weight: settings.ui_font.weight,
-            font_style: FontStyle::Normal,
-            line_height: relative(1.3),
-            ..Default::default()
-        };
-
-        EditorElement::new(
-            &self.filter_editor,
-            EditorStyle {
-                local_player: cx.theme().players().local(),
-                text: text_style,
-                ..Default::default()
-            },
-        )
+    fn render_filter_input(&self) -> impl IntoElement {
+        self.filter_editor.clone()
     }
 
     fn render_view_more(
@@ -1560,6 +1646,61 @@ impl Sidebar {
             .into_any_element()
     }
 
+    fn render_thread_list_header(
+        &self,
+        docked_right: bool,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let has_query = self.has_filter_query(cx);
+
+        h_flex()
+            .h(Tab::container_height(cx))
+            .flex_none()
+            .gap_1p5()
+            .border_b_1()
+            .border_color(cx.theme().colors().border)
+            .when(!docked_right, |this| {
+                this.child(self.render_sidebar_toggle_button(false, cx))
+            })
+            .child(self.render_filter_input())
+            .when(has_query, |this| {
+                this.when(!docked_right, |this| this.pr_1p5()).child(
+                    IconButton::new("clear_filter", IconName::Close)
+                        .shape(IconButtonShape::Square)
+                        .tooltip(Tooltip::text("Clear Search"))
+                        .on_click(cx.listener(|this, _, window, cx| {
+                            this.reset_filter_editor_text(window, cx);
+                            this.update_entries(cx);
+                        })),
+                )
+            })
+            .when(docked_right, |this| {
+                this.pl_2()
+                    .pr_0p5()
+                    .child(self.render_sidebar_toggle_button(true, cx))
+            })
+    }
+
+    fn render_thread_list_footer(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        h_flex()
+            .p_1p5()
+            .border_t_1()
+            .border_color(cx.theme().colors().border)
+            .child(
+                Button::new("view-archive", "Archive")
+                    .full_width()
+                    .label_size(LabelSize::Small)
+                    .style(ButtonStyle::Outlined)
+                    .icon(IconName::Archive)
+                    .icon_color(Color::Muted)
+                    .icon_size(IconSize::XSmall)
+                    .icon_position(IconPosition::Start)
+                    .on_click(cx.listener(|this, _, window, cx| {
+                        this.show_archive(window, cx);
+                    })),
+            )
+    }
+
     fn render_sidebar_toggle_button(
         &self,
         docked_right: bool,
@@ -1598,6 +1739,67 @@ impl Sidebar {
 impl Sidebar {
     pub fn is_open(&self) -> bool {
         self.is_open
+    }
+
+    fn show_archive(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(active_workspace) = self.multi_workspace.upgrade().and_then(|w| {
+            w.read(cx)
+                .workspaces()
+                .get(w.read(cx).active_workspace_index())
+                .cloned()
+        }) else {
+            return;
+        };
+
+        let Some(agent_panel) = active_workspace.read(cx).panel::<AgentPanel>(cx) else {
+            return;
+        };
+
+        let thread_store = agent_panel.read(cx).thread_store().clone();
+        let fs = active_workspace.read(cx).project().read(cx).fs().clone();
+        let agent_connection_store = agent_panel.read(cx).connection_store().clone();
+        let agent_server_store = active_workspace
+            .read(cx)
+            .project()
+            .read(cx)
+            .agent_server_store()
+            .clone();
+
+        let archive_view = cx.new(|cx| {
+            ThreadsArchiveView::new(
+                agent_connection_store,
+                agent_server_store,
+                thread_store,
+                fs,
+                window,
+                cx,
+            )
+        });
+        let subscription = cx.subscribe_in(
+            &archive_view,
+            window,
+            |this, _, event: &ThreadsArchiveViewEvent, window, cx| match event {
+                ThreadsArchiveViewEvent::Close => {
+                    this.show_thread_list(window, cx);
+                }
+                ThreadsArchiveViewEvent::OpenThread(_session_info) => {
+                    //TODO: Actually open thread once we support it
+                }
+            },
+        );
+
+        self._subscriptions.push(subscription);
+        self.archive_view = Some(archive_view);
+        self.view = SidebarView::Archive;
+        cx.notify();
+    }
+
+    fn show_thread_list(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.view = SidebarView::ThreadList;
+        self.archive_view = None;
+        self._subscriptions.clear();
+        window.focus(&self.focus_handle, cx);
+        cx.notify();
     }
 
     pub fn set_open(&mut self, open: bool, cx: &mut Context<Self>) {
@@ -1667,7 +1869,8 @@ impl Focusable for Sidebar {
 impl Render for Sidebar {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let ui_font = theme::setup_ui_font(window, cx);
-        let has_query = self.has_filter_query(cx);
+        let docked_right = AgentSettings::get_global(cx).dock == settings::DockPosition::Right;
+        let sticky_header = self.render_sticky_header(docked_right, window, cx);
 
         v_flex()
             .id("workspace-sidebar")
@@ -1686,51 +1889,34 @@ impl Render for Sidebar {
             .font(ui_font)
             .size_full()
             .bg(cx.theme().colors().surface_background)
-            .child({
-                let docked_right =
-                    AgentSettings::get_global(cx).dock == settings::DockPosition::Right;
-
-                h_flex()
-                    .h(Tab::container_height(cx))
-                    .flex_none()
-                    .gap_1p5()
-                    .border_b_1()
-                    .border_color(cx.theme().colors().border)
-                    .when(!docked_right, |this| {
-                        this.child(self.render_sidebar_toggle_button(false, cx))
-                    })
-                    .child(self.render_filter_input(cx))
-                    .when(has_query, |this| {
-                        this.when(!docked_right, |this| this.pr_1p5()).child(
-                            IconButton::new("clear_filter", IconName::Close)
-                                .shape(IconButtonShape::Square)
-                                .tooltip(Tooltip::text("Clear Search"))
-                                .on_click(cx.listener(|this, _, window, cx| {
-                                    this.reset_filter_editor_text(window, cx);
-                                    this.update_entries(cx);
-                                })),
-                        )
-                    })
-                    .when(docked_right, |this| {
-                        this.pl_2()
-                            .pr_0p5()
-                            .child(self.render_sidebar_toggle_button(true, cx))
-                    })
-            })
-            .child(
-                v_flex()
-                    .flex_1()
-                    .overflow_hidden()
+            .map(|this| match self.view {
+                SidebarView::ThreadList => this
+                    .child(self.render_thread_list_header(docked_right, cx))
                     .child(
-                        list(
-                            self.list_state.clone(),
-                            cx.processor(Self::render_list_entry),
-                        )
-                        .flex_1()
-                        .size_full(),
+                        v_flex()
+                            .relative()
+                            .flex_1()
+                            .overflow_hidden()
+                            .child(
+                                list(
+                                    self.list_state.clone(),
+                                    cx.processor(Self::render_list_entry),
+                                )
+                                .flex_1()
+                                .size_full(),
+                            )
+                            .when_some(sticky_header, |this, header| this.child(header))
+                            .vertical_scrollbar_for(&self.list_state, window, cx),
                     )
-                    .vertical_scrollbar_for(&self.list_state, window, cx),
-            )
+                    .child(self.render_thread_list_footer(cx)),
+                SidebarView::Archive => {
+                    if let Some(archive_view) = &self.archive_view {
+                        this.child(archive_view.clone())
+                    } else {
+                        this
+                    }
+                }
+            })
     }
 }
 

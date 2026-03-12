@@ -73,6 +73,10 @@ impl Mode {
             Self::Normal | Self::Insert | Self::Replace | Self::HelixNormal => false,
         }
     }
+
+    pub fn is_helix(&self) -> bool {
+        matches!(self, Self::HelixNormal | Self::HelixSelect)
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]
