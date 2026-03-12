@@ -67,7 +67,9 @@ use super::entry_view_state::EntryViewState;
 use super::thread_history::ThreadHistory;
 use crate::ModeSelector;
 use crate::ModelSelectorPopover;
-use crate::agent_connection_store::{AgentConnectionStore, ConnectedState, ConnectionEntryEvent};
+use crate::agent_connection_store::{
+    AgentConnectedState, AgentConnectionEntryEvent, AgentConnectionStore,
+};
 use crate::agent_diff::AgentDiff;
 use crate::entry_view_state::{EntryViewEvent, ViewEvent};
 use crate::message_editor::{MessageEditor, MessageEditorEvent};
@@ -658,7 +660,7 @@ impl ConnectionView {
 
         let connection_entry_subscription =
             cx.subscribe(&connection_entry, |this, _entry, event, cx| match event {
-                ConnectionEntryEvent::NewVersionAvailable(version) => {
+                AgentConnectionEntryEvent::NewVersionAvailable(version) => {
                     if let Some(thread) = this.active_thread() {
                         thread.update(cx, |thread, cx| {
                             thread.new_server_version_available = Some(version.clone());
@@ -673,7 +675,7 @@ impl ConnectionView {
         let load_session_id = resume_session_id.clone();
         let load_task = cx.spawn_in(window, async move |this, cx| {
             let (connection, history) = match connect_result.await {
-                Ok(ConnectedState {
+                Ok(AgentConnectedState {
                     connection,
                     history,
                 }) => (connection, history),

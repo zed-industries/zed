@@ -14,22 +14,22 @@ use project::ExternalAgentServerName;
 
 pub enum AgentConnectionEntry {
     Connecting {
-        connect_task: Shared<Task<Result<ConnectedState, LoadError>>>,
+        connect_task: Shared<Task<Result<AgentConnectedState, LoadError>>>,
     },
-    Connected(ConnectedState),
+    Connected(AgentConnectedState),
     Error {
         error: LoadError,
     },
 }
 
 #[derive(Clone)]
-pub struct ConnectedState {
+pub struct AgentConnectedState {
     pub connection: Rc<dyn AgentConnection>,
     pub history: Entity<ThreadHistory>,
 }
 
 impl AgentConnectionEntry {
-    pub fn wait_for_connection(&self) -> Shared<Task<Result<ConnectedState, LoadError>>> {
+    pub fn wait_for_connection(&self) -> Shared<Task<Result<AgentConnectedState, LoadError>>> {
         match self {
             AgentConnectionEntry::Connecting { connect_task } => connect_task.clone(),
             AgentConnectionEntry::Connected(state) => Task::ready(Ok(state.clone())).shared(),
@@ -45,11 +45,11 @@ impl AgentConnectionEntry {
     }
 }
 
-pub enum ConnectionEntryEvent {
+pub enum AgentConnectionEntryEvent {
     NewVersionAvailable(SharedString),
 }
 
-impl EventEmitter<ConnectionEntryEvent> for AgentConnectionEntry {}
+impl EventEmitter<AgentConnectionEntryEvent> for AgentConnectionEntry {}
 
 pub struct AgentConnectionStore {
     project: Entity<Project>,
@@ -119,7 +119,7 @@ impl AgentConnectionStore {
                     while let Ok(version) = new_version_rx.recv().await {
                         if let Some(version) = version {
                             entry.update(cx, |_entry, cx| {
-                                cx.emit(ConnectionEntryEvent::NewVersionAvailable(
+                                cx.emit(AgentConnectionEntryEvent::NewVersionAvailable(
                                     version.clone().into(),
                                 ));
                             });
@@ -156,7 +156,7 @@ impl AgentConnectionStore {
         cx: &mut Context<Self>,
     ) -> (
         Receiver<Option<String>>,
-        Task<Result<ConnectedState, LoadError>>,
+        Task<Result<AgentConnectedState, LoadError>>,
     ) {
         let (new_version_tx, new_version_rx) = watch::channel::<Option<String>>(None);
 
@@ -167,7 +167,7 @@ impl AgentConnectionStore {
         let connect_task = cx.spawn(async move |_this, cx| match connect_task.await {
             Ok(connection) => cx.update(|cx| {
                 let history = cx.new(|cx| ThreadHistory::new(connection.session_list(cx), cx));
-                Ok(ConnectedState {
+                Ok(AgentConnectedState {
                     connection,
                     history,
                 })
