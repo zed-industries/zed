@@ -630,7 +630,7 @@ impl Render for ThreadsArchiveView {
             .size_full()
             .bg(cx.theme().colors().surface_background)
             .child(self.render_header(cx))
-            .child(if has_query {
+            .child(if is_empty && has_query {
                 empty_state_container("No threads match your search.".into()).into_any_element()
             } else if is_empty {
                 empty_state_container("No archived threads yet.".into()).into_any_element()
