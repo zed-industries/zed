@@ -1190,6 +1190,7 @@ pub struct Editor {
     show_breakpoints: Option<bool>,
     show_diff_review_button: bool,
     show_wrap_guides: Option<bool>,
+    show_wrap_guides_toggle: bool,
     show_indent_guides: Option<bool>,
     buffers_with_disabled_indent_guides: HashSet<BufferId>,
     highlight_order: usize,
@@ -2423,6 +2424,7 @@ impl Editor {
             show_breakpoints: None,
             show_diff_review_button: false,
             show_wrap_guides: None,
+            show_wrap_guides_toggle: false,
             show_indent_guides,
             buffers_with_disabled_indent_guides: HashSet::default(),
             highlight_order: 0,
@@ -21017,12 +21019,12 @@ impl Editor {
     pub fn wrap_guides(&self, cx: &App) -> SmallVec<[(usize, bool); 2]> {
         let mut wrap_guides = smallvec![];
 
-        let settings = self.buffer.read(cx).language_settings(cx);
-        let currently_enabled = self.show_wrap_guides.unwrap_or_else(|| {
-                settings.show_wrap_guides
-        });
+        if self.show_wrap_guides == Some(false) {
+            return wrap_guides;
+        }
 
-        if currently_enabled {
+        let settings = self.buffer.read(cx).language_settings(cx);
+        if settings.show_wrap_guides != self.show_wrap_guides_toggle {
             match self.soft_wrap_mode(cx) {
                 SoftWrap::Column(soft_wrap) => {
                     wrap_guides.push((soft_wrap as usize, true));
@@ -21135,13 +21137,7 @@ impl Editor {
     }
 
     pub fn toggle_wrap_guides(&mut self, _: &ToggleWrapGuides, _: &mut Window, cx: &mut Context<Self>) {
-        let currently_enabled = self.show_wrap_guides.unwrap_or_else(|| {
-            self.buffer
-                .read(cx)
-                .language_settings(cx)
-                .show_wrap_guides
-        });
-        self.show_wrap_guides = Some(!currently_enabled);
+        self.show_wrap_guides_toggle = !self.show_wrap_guides_toggle;
         cx.notify();
     }
 
