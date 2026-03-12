@@ -1066,7 +1066,7 @@ fn register_actions(
         })
         .register_action({
             let app_state = Arc::downgrade(&app_state);
-            move |workspace, _: &CloseProject, window, cx| {
+            move |_workspace, _: &CloseProject, window, cx| {
                 let Some(window_handle) = window.window_handle().downcast::<MultiWorkspace>() else {
                     return;
                 };
