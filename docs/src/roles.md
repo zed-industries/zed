@@ -1,17 +1,11 @@
 ---
-title: Organizations and Roles - Zed
-description: Manage your Zed organization, invite members, and assign roles to control access to billing, models, and data sharing settings.
+title: Roles - Zed
+description: Understand Zed's organization roles and what each role can access, manage, and configure.
 ---
 
-# Organizations and Roles
+# Roles
 
-Zed Business plans let you create an organization, invite members, and
-control what they can access. This page covers how roles work and what
-each role can do.
-
-> For details on Business plan pricing, see
-> [Plans and Usage](./ai/plans-and-usage.md). For billing management,
-> see [Billing](./ai/billing.md).
+This page covers how roles work and what each role can do.
 
 ## Role Types {#roles}
 
