@@ -26,7 +26,6 @@ use crate::{
 
 /**
  * What's needed next:
- * - Create a DevContainer manifest
  * - Load the features up front (and put them in that manifest)
  * - Move merged stuff into that struct
  * - Move variable expansion into that struct
@@ -80,7 +79,8 @@ pub(crate) struct DevContainer {
     build: Option<ContainerBuild>,
     #[serde(default, deserialize_with = "deserialize_string_or_int")]
     app_port: Option<String>,
-    workspace_mount: Option<String>,
+    #[serde(default, deserialize_with = "deserialize_mount_definition")]
+    workspace_mount: Option<MountDefinition>,
     workspace_folder: Option<String>,
     run_args: Option<Vec<String>>,
     // Docker compose stuff:
@@ -102,15 +102,23 @@ pub(crate) struct DevContainer {
 #[derive(Debug, Eq, PartialEq, Default)]
 struct DevContainerManifest {
     config: DevContainer,
-    directory: PathBuf,
+    local_project_directory: PathBuf,
+    config_directory: PathBuf,
     file_name: String,
     root_image: Option<DockerInspect>,
     features_build_info: Option<FeaturesBuildInfo>,
     features: Vec<FeatureManifest>,
 }
 impl DevContainerManifest {
-    fn new(config_path: &Path) -> Result<Self, DevContainerErrorV2> {
+    fn new(
+        local_config: DevContainerConfig,
+        local_project_path: Arc<&Path>,
+    ) -> Result<Self, DevContainerErrorV2> {
+        let config_path = local_project_path.join(local_config.config_path.clone());
         log::info!("parsing devcontainer json found in {:?}", &config_path);
+        // SO basically everywhere we read_to_string, we want to do it with appropriate variable substitution
+        // Let's confirm on the spec about that though
+        // Actually ok - so the spec says _only_ the devcontainer.json file can have this substitution. That makes things a bit easier
         let devcontainer_contents = std::fs::read_to_string(&config_path).map_err(|e| {
             log::error!("Unable to read devcontainer contents: {e}");
             DevContainerErrorV2::UnmappedError
@@ -132,7 +140,8 @@ impl DevContainerManifest {
 
         Ok(Self {
             config: devcontainer,
-            directory: devcontainer_directory.to_path_buf(),
+            local_project_directory: local_project_path.to_path_buf(),
+            config_directory: devcontainer_directory.to_path_buf(),
             file_name: file_name.to_string(),
             root_image: None,
             features_build_info: None,
@@ -140,12 +149,39 @@ impl DevContainerManifest {
         })
     }
 
+    fn identifying_labels(&self) -> Vec<(&str, String)> {
+        let labels = vec![
+            (
+                "devcontainer.local_folder",
+                (self.local_project_directory.display()).to_string(),
+            ),
+            (
+                "devcontainer.config_file",
+                (self.config_file().display()).to_string(),
+            ),
+        ];
+        labels
+    }
+
+    // Replaces the following values in devcontainer.json (TODO, probably needs a replacement status)
+    // --> ${localEnv:VARIABLE_NAME} -- pull from local env and replace
+    // --> ${localWorkspaceFolder} -- the project directory full path
+    // --> ${containerWorkspaceFolder} -- the container directory full path (TODO when do I know this?)
+    // --> ${containerWorkspaceFolder} -- the project directory name
+    // --> ${containerWorkspaceFolderBasename} -- the container directory name
+    // --> ${devcontainerId} -- the hash of what we've been calling "labels" up until now, probably shortened
+    //             - looks like cli pads by 52 chars
+    fn _replace_nonremote_vars(&mut self) {}
+
+    // Replaces the remote_env vars in devcontainer.json
+    fn _replace_remote_env_vars(&mut self) {}
+
     fn validate_config(&self) -> Result<(), DevContainerErrorV2> {
         // TODO
         Ok(())
     }
     fn config_file(&self) -> PathBuf {
-        self.directory.join(&self.file_name).clone()
+        self.config_directory.join(&self.file_name).clone()
     }
 
     // Ugh don't let this out. Needs simplification
@@ -156,7 +192,7 @@ impl DevContainerManifest {
                 .config
                 .build
                 .as_ref()
-                .map(|build| self.directory.join(&build.dockerfile)),
+                .map(|build| self.config_directory.join(&build.dockerfile)),
             DevContainerBuildType::DockerCompose => {
                 let Ok(docker_compose_manifest) = self.docker_compose_manifest().await else {
                     return None;
@@ -168,7 +204,7 @@ impl DevContainerManifest {
                 main_service
                     .build
                     .and_then(|b| b.dockerfile)
-                    .map(|dockerfile| self.directory.join(dockerfile))
+                    .map(|dockerfile| self.config_directory.join(dockerfile))
             }
             DevContainerBuildType::None => None,
         }
@@ -408,10 +444,7 @@ impl DevContainerManifest {
         }
     }
 
-    async fn build_resources(
-        &self,
-        labels: &Vec<(&str, String)>,
-    ) -> Result<DevContainerBuildResources, DevContainerErrorV2> {
+    async fn build_resources(&self) -> Result<DevContainerBuildResources, DevContainerErrorV2> {
         match self.config.build_type() {
             DevContainerBuildType::Image | DevContainerBuildType::Dockerfile => {
                 let built_docker_image = self.build_docker_image().await?;
@@ -421,7 +454,7 @@ impl DevContainerManifest {
             }
             DevContainerBuildType::DockerCompose => {
                 log::info!("Using docker compose. Building extended compose files");
-                let docker_compose_resources = self.build_and_extend_compose_files(&labels).await?;
+                let docker_compose_resources = self.build_and_extend_compose_files().await?;
 
                 return Ok(DevContainerBuildResources::DockerCompose(
                     docker_compose_resources,
@@ -433,6 +466,36 @@ impl DevContainerManifest {
         }
     }
 
+    async fn run_dev_container(
+        &self,
+        build_resources: DevContainerBuildResources,
+    ) -> Result<DevContainerUp, DevContainerErrorV2> {
+        let running_container = match build_resources {
+            DevContainerBuildResources::DockerCompose(resources) => {
+                dbg!(&resources);
+                self.run_docker_compose(resources).await?
+            }
+            DevContainerBuildResources::Docker(resources) => {
+                dbg!(&resources);
+                self.run_docker_image(resources).await?
+            }
+        };
+
+        dbg!(&running_container);
+        let remote_user = get_remote_user_from_config(&running_container, self)?;
+        let remote_workspace_folder = get_remote_dir_from_config(
+            &running_container,
+            (&self.local_project_directory.display()).to_string(),
+        )?;
+
+        Ok(DevContainerUp {
+            _outcome: "todo".to_string(),
+            container_id: running_container.id,
+            remote_user,
+            remote_workspace_folder,
+        })
+    }
+
     // TODO this could be done earlier in the process
     async fn docker_compose_manifest(&self) -> Result<DockerComposeResources, DevContainerErrorV2> {
         let Some(docker_compose_files) = self.config.docker_compose_file.clone() else {
@@ -440,7 +503,7 @@ impl DevContainerManifest {
         };
         let docker_compose_full_paths = docker_compose_files
             .iter()
-            .map(|relative| self.directory.join(relative))
+            .map(|relative| self.config_directory.join(relative))
             .collect::<Vec<PathBuf>>();
         let docker_compose_config_command =
             create_docker_compose_config_command(&docker_compose_full_paths)?;
@@ -459,7 +522,6 @@ impl DevContainerManifest {
 
     async fn build_and_extend_compose_files(
         &self,
-        labels: &Vec<(&str, String)>,
     ) -> Result<DockerComposeResources, DevContainerErrorV2> {
         let Some(features_build_info) = &self.features_build_info else {
             log::error!(
@@ -608,13 +670,137 @@ impl DevContainerManifest {
         let resources = self.build_merged_resources(built_service_image);
 
         let runtime_override_file =
-            build_runtime_override_file(&main_service_name, resources, labels)?;
+            self.build_runtime_override_file(&main_service_name, resources)?;
 
         dbg!(&runtime_override_file);
 
         docker_compose_resources.files.push(runtime_override_file);
 
         Ok(docker_compose_resources)
+    }
+
+    fn build_runtime_override_file(
+        &self,
+        main_service_name: &str,
+        resources: DockerBuildResources,
+    ) -> Result<PathBuf, DevContainerErrorV2> {
+        let config = self.build_runtime_override(main_service_name, resources)?;
+        let temp_base = std::env::temp_dir().join("devcontainer-zed");
+        let config_location = temp_base.join("docker_compose_runtime.json");
+
+        let config_json = serde_json_lenient::to_string(&config).map_err(|e| {
+            log::error!("Error serializing docker compose runtime override: {e}");
+            DevContainerErrorV2::UnmappedError
+        })?;
+
+        std::fs::write(&config_location, config_json).map_err(|e| {
+            log::error!("Error writing the runtime override file: {e}");
+            DevContainerErrorV2::UnmappedError
+        })?;
+
+        Ok(config_location)
+    }
+
+    fn build_runtime_override(
+        &self,
+        main_service_name: &str,
+        resources: DockerBuildResources,
+    ) -> Result<DockerComposeConfig, DevContainerErrorV2> {
+        let mut runtime_labels = vec![];
+
+        if let Some(metadata) = &resources.image.config.labels.metadata {
+            let serialized_metadata = serde_json_lenient::to_string(metadata).map_err(|e| {
+                log::error!("Error serializing docker image metadata: {e}");
+                DevContainerErrorV2::UnmappedError
+            })?;
+
+            runtime_labels.push(format!(
+                "{}={}",
+                "devcontainer.metadata", serialized_metadata
+            ));
+        }
+
+        for (k, v) in self.identifying_labels() {
+            runtime_labels.push(format!("{}={}", k, v));
+        }
+
+        let config_volumes: HashMap<String, DockerComposeVolume> = resources
+            .additional_mounts
+            .iter()
+            .filter_map(|mount| {
+                if let Some(mount_type) = &mount.mount_type
+                    && mount_type.to_lowercase() == "volume"
+                {
+                    Some((
+                        mount
+                            .source
+                            .clone()
+                            .replace("${devcontainerId}", "devcontainer123"),
+                        DockerComposeVolume {
+                            name: mount
+                                .source
+                                .clone()
+                                .replace("${devcontainerId}", "devcontainer123"),
+                        },
+                    ))
+                } else {
+                    None
+                }
+            })
+            .collect();
+        // TODO Probably worth its own method
+        let mut entrypoint_script_lines = vec![
+            "echo Container started".to_string(),
+            "trap \"exit 0\" 15".to_string(),
+        ];
+        for entrypoint in resources.entrypoints {
+            entrypoint_script_lines.push(entrypoint.clone());
+        }
+        entrypoint_script_lines.append(&mut vec![
+            "exec \"$@\"".to_string(),
+            "while sleep 1 & wait $!; do :; done".to_string(),
+        ]);
+
+        let volumes: Vec<MountDefinition> = resources
+            .additional_mounts
+            .iter()
+            .map(|v| MountDefinition {
+                source: v
+                    .source
+                    .clone()
+                    .replace("${devcontainerId}", "devcontainer123"),
+                target: v
+                    .target
+                    .clone()
+                    .replace("${devcontainerId}", "devcontainer123"),
+                mount_type: v.mount_type.clone(),
+            })
+            .collect();
+
+        let new_docker_compose_config = DockerComposeConfig {
+            name: None,
+            services: HashMap::from([(
+                main_service_name.to_string(),
+                DockerComposeService {
+                    entrypoint: Some(vec![
+                        "/bin/sh".to_string(),
+                        "-c".to_string(),
+                        entrypoint_script_lines.join("\n").trim().to_string(),
+                        "-".to_string(),
+                    ]),
+                    cap_add: Some(vec!["SYS_PTRACE".to_string()]),
+                    security_opt: Some(vec!["seccomp=unconfined".to_string()]),
+                    labels: Some(runtime_labels),
+                    volumes,
+                    privileged: Some(resources.privileged),
+                    ..Default::default()
+                },
+            )]),
+            volumes: config_volumes,
+            ..Default::default()
+        };
+
+        Ok(new_docker_compose_config)
     }
 
     async fn build_docker_image(&self) -> Result<DockerInspect, DevContainerErrorV2> {
@@ -733,7 +919,7 @@ impl DevContainerManifest {
         command.args(["-t", &features_build_info.image_tag]);
 
         if self.config.build_type() == DevContainerBuildType::Dockerfile {
-            command.arg(self.directory.display().to_string());
+            command.arg(self.config_directory.display().to_string());
         } else {
             // Use an empty folder as the build context to avoid pulling in unneeded files.
             // The actual feature content is supplied via the BuildKit build context above.
@@ -741,6 +927,154 @@ impl DevContainerManifest {
         }
 
         dbg!(&command);
+
+        Ok(command)
+    }
+
+    // TODO it would be nice if these two functions actually just created the commands and shipped the command to a devcontainer-agnostic docker interface
+    async fn run_docker_compose(
+        &self,
+        resources: DockerComposeResources,
+    ) -> Result<DockerInspect, DevContainerErrorV2> {
+        let mut command = Command::new(docker_cli());
+        // TODO project name how
+        command.args(&["compose", "--project-name", "rustwebstarter_devcontainer"]);
+        for docker_compose_file in resources.files {
+            command.args(&["-f", &docker_compose_file.display().to_string()]);
+        }
+        command.args(&["up", "-d"]);
+
+        dbg!(&command);
+
+        let output = command.output().await.map_err(|e| {
+            log::error!("Error running docker compose up: {e}");
+            DevContainerErrorV2::UnmappedError
+        })?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            log::error!("Non-success status from docker compose up: {}", stderr);
+            return Err(DevContainerErrorV2::UnmappedError);
+        }
+
+        if let Some(docker_ps) = check_for_existing_container(&self.identifying_labels()).await? {
+            log::info!("Found newly created dev container");
+            return inspect_image(&docker_ps.id).await;
+        }
+
+        log::error!("Could not find existing container after docker compose up");
+
+        Err(DevContainerErrorV2::UnmappedError)
+    }
+
+    async fn run_docker_image(
+        &self,
+        build_resources: DockerBuildResources,
+    ) -> Result<DockerInspect, DevContainerErrorV2> {
+        let mut docker_run_command = self.create_docker_run_command(build_resources)?;
+
+        let output = docker_run_command.output().await.map_err(|e| {
+            log::error!("Error running docker run: {e}");
+            DevContainerErrorV2::UnmappedError
+        })?;
+
+        if !output.status.success() {
+            let std_err = String::from_utf8_lossy(&output.stderr);
+            log::error!("Non-success status from docker run. StdErr: {std_err}");
+            return Err(DevContainerErrorV2::UnmappedError);
+        }
+
+        log::info!("Checking for container that was started");
+        let Some(docker_ps) = check_for_existing_container(&self.identifying_labels()).await?
+        else {
+            log::error!("Could not locate container just created");
+            return Err(DevContainerErrorV2::UnmappedError);
+        };
+        inspect_image(&docker_ps.id).await
+    }
+    fn remote_workspace_mount(&self) -> Result<PathBuf, DevContainerErrorV2> {
+        if let Some(mount) = &self.config.workspace_mount {
+            return Ok(PathBuf::from(&mount.target));
+        }
+        let Some(project_directory_name) = self.local_project_directory.file_name() else {
+            return Err(DevContainerErrorV2::UnmappedError);
+        };
+
+        Ok(PathBuf::from(format!(
+            "/workspaces/{}",
+            project_directory_name.display()
+        )))
+    }
+
+    fn create_docker_run_command(
+        &self,
+        build_resources: DockerBuildResources,
+    ) -> Result<Command, DevContainerErrorV2> {
+        let remote_workspace_folder = self.remote_workspace_mount()?;
+
+        let mut command = Command::new(docker_cli());
+
+        command.arg("run");
+
+        if build_resources.privileged {
+            command.arg("--privileged");
+        }
+
+        command.arg("--sig-proxy=false");
+        command.arg("-d");
+        command.arg("--mount");
+        // TODO I think we have to grab the local_project from workspace mount if it's in place as well
+        command.arg(format!(
+            "type=bind,source={},target={},consistency=cached",
+            self.local_project_directory.display(),
+            remote_workspace_folder.display(),
+        ));
+
+        for mount in &build_resources.additional_mounts {
+            command.arg("--mount");
+            command.arg(
+                mount
+                    .to_string()
+                    .replace("${devcontainerId}", "devcontainer123"), // TODO So this is what we're doing tomorrow
+            );
+        }
+
+        for (key, val) in self.identifying_labels() {
+            command.arg("-l");
+            command.arg(format!("{}={}", key, val));
+        }
+
+        if let Some(metadata) = &build_resources.image.config.labels.metadata {
+            let serialized_metadata = serde_json_lenient::to_string(metadata).map_err(|e| {
+                log::error!("Problem serializing image metadata: {e}");
+                DevContainerErrorV2::UnmappedError
+            })?;
+            command.arg("-l");
+            command.arg(format!(
+                "{}={}",
+                "devcontainer.metadata", serialized_metadata
+            ));
+        }
+
+        command.arg("--entrypoint");
+        command.arg("/bin/sh");
+        command.arg(&build_resources.image.id);
+        command.arg("-c");
+        // TODO Probably worth its own method
+        let mut entrypoint_script_lines = vec![
+            "echo Container started".to_string(),
+            "trap \"exit 0\" 15".to_string(),
+        ];
+        for entrypoint in build_resources.entrypoints {
+            entrypoint_script_lines.push(entrypoint.clone());
+        }
+        entrypoint_script_lines.append(&mut vec![
+            "exec \"$@\"".to_string(),
+            "while sleep 1 & wait $!; do :; done".to_string(),
+        ]);
+
+        command.arg(entrypoint_script_lines.join("\n").trim());
+        command.arg("-");
 
         Ok(command)
     }
@@ -819,6 +1153,58 @@ where
         StringOrInt::String(s) => Ok(Some(s)),
         StringOrInt::Int(b) => Ok(Some(b.to_string())),
     }
+}
+fn deserialize_mount_definition<'de, D>(
+    deserializer: D,
+) -> Result<Option<MountDefinition>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    use serde::Deserialize;
+    use serde::de::Error;
+
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum MountItem {
+        Object(MountDefinition),
+        String(String),
+    }
+
+    let item = MountItem::deserialize(deserializer)?;
+
+    let mount = match item {
+        MountItem::Object(mount) => mount,
+        MountItem::String(s) => {
+            let mut source = None;
+            let mut target = None;
+            let mut mount_type = None;
+
+            for part in s.split(',') {
+                let part = part.trim();
+                if let Some((key, value)) = part.split_once('=') {
+                    match key.trim() {
+                        "source" => source = Some(value.trim().to_string()),
+                        "target" => target = Some(value.trim().to_string()),
+                        "type" => mount_type = Some(value.trim().to_string()),
+                        _ => {} // Ignore unknown keys
+                    }
+                }
+            }
+
+            let source = source
+                .ok_or_else(|| D::Error::custom(format!("mount string missing 'source': {}", s)))?;
+            let target = target
+                .ok_or_else(|| D::Error::custom(format!("mount string missing 'target': {}", s)))?;
+
+            MountDefinition {
+                source,
+                target,
+                mount_type,
+            }
+        }
+    };
+
+    Ok(Some(mount))
 }
 
 fn deserialize_mount_definitions<'de, D>(
@@ -1228,29 +1614,17 @@ pub(crate) async fn spawn_dev_container(
     config: DevContainerConfig,
     local_project_path: Arc<&Path>,
 ) -> Result<DevContainerUp, DevContainerErrorV2> {
-    // 1. parse the devcontainer file
-    let config_path = local_project_path.join(config.config_path.clone());
-
-    let mut devcontainer_manifest = DevContainerManifest::new(&config_path)?;
+    let mut devcontainer_manifest = DevContainerManifest::new(config, local_project_path.clone())?; // TODO kill this clone
     // 2. ensure that object is valid
     devcontainer_manifest.validate_config()?;
 
     // 4. run any initializeCommands
     log::info!("TODO, run initialze commands");
 
-    let labels = vec![
-        (
-            "devcontainer.local_folder",
-            (&local_project_path.display()).to_string(),
-        ),
-        (
-            "devcontainer.config_file",
-            (&devcontainer_manifest.config_file().display()).to_string(),
-        ),
-    ];
-
     log::info!("Checking for existing container");
-    if let Some(docker_ps) = check_for_existing_container(&labels).await? {
+    if let Some(docker_ps) =
+        check_for_existing_container(&devcontainer_manifest.identifying_labels()).await?
+    {
         log::info!("Dev container already found. Proceeding with it");
         //     2. If exists and running, return it
         //
@@ -1278,15 +1652,11 @@ pub(crate) async fn spawn_dev_container(
             .download_feature_and_dockerfile_resources(&http_client)
             .await?;
 
-        let build_resources = devcontainer_manifest.build_resources(&labels).await?;
+        let build_resources = devcontainer_manifest.build_resources().await?;
 
-        run_dev_container(
-            build_resources,
-            &devcontainer_manifest,
-            &local_project_path,
-            &labels,
-        )
-        .await
+        devcontainer_manifest
+            .run_dev_container(build_resources)
+            .await
     }
 }
 
@@ -1302,73 +1672,6 @@ struct DockerBuildResources {
 enum DevContainerBuildResources {
     DockerCompose(DockerComposeResources),
     Docker(DockerBuildResources),
-}
-
-async fn run_dev_container(
-    build_resources: DevContainerBuildResources,
-    dev_container: &DevContainerManifest,
-    local_project_path: &Arc<&Path>,
-    labels: &Vec<(&str, String)>,
-) -> Result<DevContainerUp, DevContainerErrorV2> {
-    let running_container = match build_resources {
-        DevContainerBuildResources::DockerCompose(resources) => {
-            dbg!(&resources);
-            run_docker_compose(resources, &labels).await?
-        }
-        DevContainerBuildResources::Docker(resources) => {
-            dbg!(&resources);
-            run_docker_image(resources, &labels, &local_project_path).await?
-        }
-    };
-
-    dbg!(&running_container);
-    let remote_user = get_remote_user_from_config(&running_container, dev_container)?;
-    let remote_workspace_folder = get_remote_dir_from_config(
-        &running_container,
-        (&local_project_path.display()).to_string(),
-    )?;
-
-    Ok(DevContainerUp {
-        _outcome: "todo".to_string(),
-        container_id: running_container.id,
-        remote_user,
-        remote_workspace_folder,
-    })
-}
-
-async fn run_docker_compose(
-    resources: DockerComposeResources,
-    labels: &Vec<(&str, String)>,
-) -> Result<DockerInspect, DevContainerErrorV2> {
-    let mut command = Command::new(docker_cli());
-    // TODO project name how
-    command.args(&["compose", "--project-name", "rustwebstarter_devcontainer"]);
-    for docker_compose_file in resources.files {
-        command.args(&["-f", &docker_compose_file.display().to_string()]);
-    }
-    command.args(&["up", "-d"]);
-
-    dbg!(&command);
-
-    let output = command.output().await.map_err(|e| {
-        log::error!("Error running docker compose up: {e}");
-        DevContainerErrorV2::UnmappedError
-    })?;
-
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        log::error!("Non-success status from docker compose up: {}", stderr);
-        return Err(DevContainerErrorV2::UnmappedError);
-    }
-
-    if let Some(docker_ps) = check_for_existing_container(&labels).await? {
-        log::info!("Found newly created dev container");
-        return inspect_image(&docker_ps.id).await;
-    }
-
-    log::error!("Could not find existing container after docker compose up");
-
-    Err(DevContainerErrorV2::UnmappedError)
 }
 
 async fn run_docker_compose_build(
@@ -1398,132 +1701,6 @@ async fn run_docker_compose_build(
     Ok(())
 }
 
-// TODO the mounts have to make it here
-fn build_runtime_override_file(
-    main_service_name: &str,
-    resources: DockerBuildResources,
-    // docker_image: &DockerInspect,
-    labels: &Vec<(&str, String)>,
-) -> Result<PathBuf, DevContainerErrorV2> {
-    let config = build_runtime_override(main_service_name, resources, labels)?;
-    let temp_base = std::env::temp_dir().join("devcontainer-zed");
-    let config_location = temp_base.join("docker_compose_runtime.json");
-
-    let config_json = serde_json_lenient::to_string(&config).map_err(|e| {
-        log::error!("Error serializing docker compose runtime override: {e}");
-        DevContainerErrorV2::UnmappedError
-    })?;
-
-    std::fs::write(&config_location, config_json).map_err(|e| {
-        log::error!("Error writing the runtime override file: {e}");
-        DevContainerErrorV2::UnmappedError
-    })?;
-
-    Ok(config_location)
-}
-
-fn build_runtime_override(
-    main_service_name: &str,
-    resources: DockerBuildResources,
-    labels: &Vec<(&str, String)>,
-) -> Result<DockerComposeConfig, DevContainerErrorV2> {
-    let mut runtime_labels = vec![];
-
-    if let Some(metadata) = &resources.image.config.labels.metadata {
-        let serialized_metadata = serde_json_lenient::to_string(metadata).map_err(|e| {
-            log::error!("Error serializing docker image metadata: {e}");
-            DevContainerErrorV2::UnmappedError
-        })?;
-
-        runtime_labels.push(format!(
-            "{}={}",
-            "devcontainer.metadata", serialized_metadata
-        ));
-    }
-
-    for (k, v) in labels {
-        runtime_labels.push(format!("{}={}", k, v));
-    }
-
-    let config_volumes: HashMap<String, DockerComposeVolume> = resources
-        .additional_mounts
-        .iter()
-        .filter_map(|mount| {
-            if let Some(mount_type) = &mount.mount_type
-                && mount_type.to_lowercase() == "volume"
-            {
-                Some((
-                    mount
-                        .source
-                        .clone()
-                        .replace("${devcontainerId}", "devcontainer123"),
-                    DockerComposeVolume {
-                        name: mount
-                            .source
-                            .clone()
-                            .replace("${devcontainerId}", "devcontainer123"),
-                    },
-                ))
-            } else {
-                None
-            }
-        })
-        .collect();
-    // TODO Probably worth its own method
-    let mut entrypoint_script_lines = vec![
-        "echo Container started".to_string(),
-        "trap \"exit 0\" 15".to_string(),
-    ];
-    for entrypoint in resources.entrypoints {
-        entrypoint_script_lines.push(entrypoint.clone());
-    }
-    entrypoint_script_lines.append(&mut vec![
-        "exec \"$@\"".to_string(),
-        "while sleep 1 & wait $!; do :; done".to_string(),
-    ]);
-
-    let volumes: Vec<MountDefinition> = resources
-        .additional_mounts
-        .iter()
-        .map(|v| MountDefinition {
-            source: v
-                .source
-                .clone()
-                .replace("${devcontainerId}", "devcontainer123"),
-            target: v
-                .target
-                .clone()
-                .replace("${devcontainerId}", "devcontainer123"),
-            mount_type: v.mount_type.clone(),
-        })
-        .collect();
-
-    let new_docker_compose_config = DockerComposeConfig {
-        name: None,
-        services: HashMap::from([(
-            main_service_name.to_string(),
-            DockerComposeService {
-                entrypoint: Some(vec![
-                    "/bin/sh".to_string(),
-                    "-c".to_string(),
-                    entrypoint_script_lines.join("\n").trim().to_string(),
-                    "-".to_string(),
-                ]),
-                cap_add: Some(vec!["SYS_PTRACE".to_string()]),
-                security_opt: Some(vec!["seccomp=unconfined".to_string()]),
-                labels: Some(runtime_labels),
-                volumes,
-                privileged: Some(resources.privileged),
-                ..Default::default()
-            },
-        )]),
-        volumes: config_volumes,
-        ..Default::default()
-    };
-
-    Ok(new_docker_compose_config)
-}
-
 fn find_primary_service(
     docker_compose: &DockerComposeResources,
     devcontainer: &DevContainerManifest,
@@ -1548,33 +1725,6 @@ fn create_docker_compose_config_command(
     }
     command.args(&["config", "--format", "json"]);
     Ok(command)
-}
-
-async fn run_docker_image(
-    build_resources: DockerBuildResources,
-    labels: &Vec<(&str, String)>,
-    local_project_path: &Arc<&Path>,
-) -> Result<DockerInspect, DevContainerErrorV2> {
-    let mut docker_run_command =
-        create_docker_run_command(build_resources, local_project_path, Some(labels))?;
-
-    let output = docker_run_command.output().await.map_err(|e| {
-        log::error!("Error running docker run: {e}");
-        DevContainerErrorV2::UnmappedError
-    })?;
-
-    if !output.status.success() {
-        let std_err = String::from_utf8_lossy(&output.stderr);
-        log::error!("Non-success status from docker run. StdErr: {std_err}");
-        return Err(DevContainerErrorV2::UnmappedError);
-    }
-
-    log::info!("Checking for container that was started");
-    let Some(docker_ps) = check_for_existing_container(labels).await? else {
-        log::error!("Could not locate container just created");
-        return Err(DevContainerErrorV2::UnmappedError);
-    };
-    inspect_image(&docker_ps.id).await
 }
 
 /// Destination folder inside the container where feature content is staged during build.
@@ -1923,84 +2073,6 @@ fn create_docker_query_containers(
     Ok(command)
 }
 
-fn create_docker_run_command(
-    build_resources: DockerBuildResources,
-    local_project_directory: &Arc<&Path>,
-    labels: Option<&Vec<(&str, String)>>,
-) -> Result<Command, DevContainerErrorV2> {
-    let Some(project_directory) = local_project_directory.file_name() else {
-        return Err(DevContainerErrorV2::UnmappedError);
-    };
-    let remote_workspace_folder = format!("/workspaces/{}", project_directory.display()); // TODO workspaces should be overridable
-
-    let mut command = Command::new(docker_cli());
-
-    command.arg("run");
-
-    if build_resources.privileged {
-        command.arg("--privileged");
-    }
-
-    command.arg("--sig-proxy=false");
-    command.arg("-d");
-    command.arg("--mount");
-    command.arg(format!(
-        "type=bind,source={},target={},consistency=cached",
-        local_project_directory.display(),
-        remote_workspace_folder
-    ));
-
-    for mount in &build_resources.additional_mounts {
-        command.arg("--mount");
-        command.arg(
-            mount
-                .to_string()
-                .replace("${devcontainerId}", "devcontainer123"), // TODO So this is what we're doing tomorrow
-        );
-    }
-
-    if let Some(labels) = labels {
-        for (key, val) in labels {
-            command.arg("-l");
-            command.arg(format!("{}={}", key, val));
-        }
-    }
-
-    if let Some(metadata) = &build_resources.image.config.labels.metadata {
-        let serialized_metadata = serde_json_lenient::to_string(metadata).map_err(|e| {
-            log::error!("Problem serializing image metadata: {e}");
-            DevContainerErrorV2::UnmappedError
-        })?;
-        command.arg("-l");
-        command.arg(format!(
-            "{}={}",
-            "devcontainer.metadata", serialized_metadata
-        ));
-    }
-
-    command.arg("--entrypoint");
-    command.arg("/bin/sh");
-    command.arg(&build_resources.image.id);
-    command.arg("-c");
-    // TODO Probably worth its own method
-    let mut entrypoint_script_lines = vec![
-        "echo Container started".to_string(),
-        "trap \"exit 0\" 15".to_string(),
-    ];
-    for entrypoint in build_resources.entrypoints {
-        entrypoint_script_lines.push(entrypoint.clone());
-    }
-    entrypoint_script_lines.append(&mut vec![
-        "exec \"$@\"".to_string(),
-        "while sleep 1 & wait $!; do :; done".to_string(),
-    ]);
-
-    command.arg(entrypoint_script_lines.join("\n").trim());
-    command.arg("-");
-
-    Ok(command)
-}
-
 // Ok this needs some work, because we should be able to find a mount that works as an ancestor to this remote dir
 // E.g. it might be /Source/myproject:workspaces/myproject
 // But it might also be Source/:workspaces/
@@ -2052,11 +2124,13 @@ async fn get_base_image_from_config(
         return Ok(image.to_string());
     }
     if let Some(dockerfile) = devcontainer.config.build.as_ref().map(|b| &b.dockerfile) {
-        let dockerfile_contents = std::fs::read_to_string(devcontainer.directory.join(dockerfile))
-            .map_err(|e| {
-                log::error!("Error reading dockerfile: {e}");
-                DevContainerErrorV2::UnmappedError
-            })?;
+        let dockerfile_contents = std::fs::read_to_string(
+            devcontainer.config_directory.join(dockerfile),
+        )
+        .map_err(|e| {
+            log::error!("Error reading dockerfile: {e}");
+            DevContainerErrorV2::UnmappedError
+        })?;
         return image_from_dockerfile(devcontainer, dockerfile_contents);
     }
     if devcontainer.config.docker_compose_file.is_some() {
@@ -2068,11 +2142,13 @@ async fn get_base_image_from_config(
             .as_ref()
             .and_then(|b| b.dockerfile.as_ref())
         {
-            let dockerfile_contents =
-                std::fs::read_to_string(devcontainer.directory.join(dockerfile)).map_err(|e| {
-                    log::error!("Error reading dockerfile: {e}");
-                    DevContainerErrorV2::UnmappedError
-                })?;
+            let dockerfile_contents = std::fs::read_to_string(
+                devcontainer.config_directory.join(dockerfile),
+            )
+            .map_err(|e| {
+                log::error!("Error reading dockerfile: {e}");
+                DevContainerErrorV2::UnmappedError
+            })?;
             return image_from_dockerfile(devcontainer, dockerfile_contents);
         }
         if let Some(image) = &main_service.image {
@@ -2174,7 +2250,7 @@ mod test {
     use std::{
         collections::HashMap,
         ffi::OsStr,
-        path::{Path, PathBuf},
+        path::PathBuf,
         process::{ExitStatus, Output},
         sync::Arc,
     };
@@ -2192,10 +2268,9 @@ mod test {
             DockerComposeService, DockerInspect, DockerPs, FeatureOptions, ForwardPort,
             HostRequirements, LifecycleCommand, LifecyleScript, MountDefinition, OnAutoForward,
             PortAttributeProtocol, PortAttributes, ShutdownAction, UserEnvProbe,
-            build_runtime_override, create_docker_compose_config_command,
-            create_docker_run_command, deserialize_devcontainer_json, extract_feature_id,
-            find_primary_service, generate_dockerfile_extended, get_remote_dir_from_config,
-            get_remote_user_from_config,
+            create_docker_compose_config_command, deserialize_devcontainer_json,
+            extract_feature_id, find_primary_service, generate_dockerfile_extended,
+            get_remote_dir_from_config, get_remote_user_from_config,
         },
         safe_id_upper,
     };
@@ -2496,7 +2571,11 @@ mod test {
                 shutdown_action: Some(ShutdownAction::StopContainer),
                 override_command: Some(true),
                 workspace_folder: Some("/workspaces".to_string()),
-                workspace_mount: Some("/workspaces/app".to_string()),
+                workspace_mount: Some(MountDefinition {
+                    source: "/".to_string(),
+                    target: "/".to_string(),
+                    mount_type: Some("bind".to_string())
+                }),
                 ..Default::default()
             }
         );
@@ -2795,7 +2874,7 @@ mod test {
                 "shutdownAction": "stopContainer",
                 "overrideCommand": true,
                 "workspaceFolder": "/workspaces",
-                "workspaceMount": "/workspaces/app",
+                "workspaceMount": "source=/folder,target=/workspace,type=bind,consistency=cached",
                 "build": {
                    	"dockerfile": "DockerFile",
                    	"context": "..",
@@ -2936,7 +3015,11 @@ mod test {
                 shutdown_action: Some(ShutdownAction::StopContainer),
                 override_command: Some(true),
                 workspace_folder: Some("/workspaces".to_string()),
-                workspace_mount: Some("/workspaces/app".to_string()),
+                workspace_mount: Some(MountDefinition {
+                    source: "/".to_string(),
+                    target: "/".to_string(),
+                    mount_type: Some("bind".to_string())
+                }),
                 build: Some(ContainerBuild {
                     dockerfile: "DockerFile".to_string(),
                     context: Some("..".to_string()),
@@ -3411,10 +3494,13 @@ mod test {
             "remoteUser".to_string(),
             serde_json_lenient::Value::String("vsCode".to_string()),
         );
-        let labels = vec![
-            ("label1", "value1".to_string()),
-            ("label2", "value2".to_string()),
-        ];
+
+        let devcontainer_manifest = DevContainerManifest {
+            local_project_directory: PathBuf::from("/path/to/local/project"),
+            config_directory: PathBuf::from("/path/to/local/project/.devcontainer"),
+            file_name: "devcontainer.json".to_string(),
+            ..Default::default()
+        };
 
         let build_resources = DockerBuildResources {
             image: DockerInspect {
@@ -3429,11 +3515,7 @@ mod test {
             privileged: false,
             entrypoints: vec![],
         };
-        let docker_run_command = create_docker_run_command(
-            build_resources,
-            &Arc::new(Path::new("/local/project_app")),
-            Some(&labels),
-        );
+        let docker_run_command = devcontainer_manifest.create_docker_run_command(build_resources);
 
         assert!(docker_run_command.is_ok());
         let docker_run_command = docker_run_command.expect("ok");
@@ -4118,6 +4200,13 @@ USER $_DEV_CONTAINERS_IMAGE_USER
 
     #[test]
     fn should_build_runtime_override() {
+        let devcontainer_manifest = DevContainerManifest {
+            local_project_directory: PathBuf::from("/path/to/project"),
+            config_directory: PathBuf::from("/path/to/project/.devcontainer"),
+            file_name: "devcontainer.json".to_string(),
+            ..Default::default()
+        };
+
         let docker_image = DockerInspect {
             id: "id".to_string(),
             // Todo add some labels and make this test pass
@@ -4128,8 +4217,6 @@ USER $_DEV_CONTAINERS_IMAGE_USER
             mounts: None,
         };
 
-        let given_labels = vec![("label1", "label1val".to_string())];
-
         let resources = DockerBuildResources {
             image: docker_image,
             additional_mounts: vec![],
@@ -4137,7 +4224,9 @@ USER $_DEV_CONTAINERS_IMAGE_USER
             entrypoints: vec![],
         };
 
-        let runtime_override = build_runtime_override("app", resources, &given_labels).unwrap();
+        let runtime_override = devcontainer_manifest
+            .build_runtime_override("app", resources)
+            .unwrap();
 
         // ugh how are we going to do labels
         let expected_runtime_override = DockerComposeConfig {
@@ -4188,5 +4277,41 @@ while sleep 1 & wait $!; do :; done"
             || feature_manifests.iter().any(|f| f.privileged());
 
         assert!(privileged);
+    }
+
+    // Ok, let's get the docker run stuff into DevContainerManifest and then go from here
+    #[test]
+    fn test_remote_workspace_folder() {
+        let devcontainer_manifest = DevContainerManifest {
+            config: DevContainer::default(),
+            config_directory: PathBuf::from("/path/to/local/project/.devcontainer"),
+            local_project_directory: PathBuf::from("/path/to/local/project"),
+            ..Default::default()
+        };
+
+        assert_eq!(
+            devcontainer_manifest.remote_workspace_mount(),
+            Ok(PathBuf::from("/workspaces/project")),
+        );
+
+        let devcontainer_manifest = DevContainerManifest {
+            config: DevContainer {
+                workspace_mount: Some(MountDefinition {
+                    source: "/path/to/local/project/subfolder".to_string(),
+                    target: "/specialworkspace".to_string(),
+                    mount_type: Some("bind".to_string()),
+                }),
+                workspace_folder: Some("/specialworkspace/subfolder".to_string()),
+                ..Default::default()
+            },
+            config_directory: PathBuf::from("/path/to/local/project/.devcontainer"),
+            local_project_directory: PathBuf::from("/path/to/local/project"),
+            ..Default::default()
+        };
+
+        assert_eq!(
+            devcontainer_manifest.remote_workspace_mount(),
+            Ok(PathBuf::from("/specialworkspace"))
+        )
     }
 }
