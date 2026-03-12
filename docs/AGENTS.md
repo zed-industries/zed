@@ -147,6 +147,7 @@ Images are hosted externally. Reference format:
 ## Examples of Good Copy
 
 ### Good: Direct and actionable
+
 ```
 To format on save, open the Settings Editor (`Cmd+,`) and search for `format_on_save`. Set it to `on`.
 
@@ -157,11 +158,13 @@ Or add this to your settings.json:
 ```
 
 ### Bad: Wordy and promotional
+
 ```
 Zed provides a powerful and seamless formatting experience. Simply navigate to the settings and you'll find the format_on_save option which enables Zed's incredible auto-formatting capabilities.
 ```
 
 ### Good: Honest about limitations
+
 ```
 Zed doesn't index your project like IntelliJ does. You open a folder and start working immediately—no waiting. The trade-off: cross-project analysis relies on language servers, which may not go as deep.
 
@@ -171,6 +174,7 @@ Zed doesn't index your project like IntelliJ does. You open a folder and start w
 ```
 
 ### Bad: Defensive or dismissive
+
 ```
 While some users might miss indexing, Zed's approach is actually better because it's faster.
 ```
@@ -253,15 +257,14 @@ Inherit all conventions from `docs/.rules`. Key points:
 
 ### Terminology
 
-| Use             | Instead of                             |
-| --------------- | -------------------------------------- |
-| folder          | directory                              |
-| project         | workspace                              |
-| Settings Editor | settings UI                            |
-| command palette | command bar                            |
-| panel  | tool window, sidebar (be specific: "Project Panel," "Terminal Panel") |
-| language server | LSP (spell out first use, then LSP is fine) |
-
+| Use             | Instead of                                                            |
+| --------------- | --------------------------------------------------------------------- |
+| folder          | directory                                                             |
+| project         | workspace                                                             |
+| Settings Editor | settings UI                                                           |
+| command palette | command bar                                                           |
+| panel           | tool window, sidebar (be specific: "Project Panel," "Terminal Panel") |
+| language server | LSP (spell out first use, then LSP is fine)                           |
 
 ## Zed-Specific Conventions
 
