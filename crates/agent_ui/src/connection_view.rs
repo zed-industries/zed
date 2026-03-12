@@ -2908,8 +2908,6 @@ pub(crate) mod tests {
         let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
 
         let thread_store = cx.update(|_window, cx| cx.new(|cx| ThreadStore::new(cx)));
-        // Create history without an initial session list - it will be set after connection
-        let history = cx.update(|_window, cx| cx.new(|cx| ThreadHistory::new(None, cx)));
         let connection_store =
             cx.update(|_window, cx| cx.new(|cx| AgentConnectionStore::new(project.clone(), cx)));
 
@@ -2937,6 +2935,14 @@ pub(crate) mod tests {
 
         // Wait for connection to establish
         cx.run_until_parked();
+
+        let history = cx.update(|_window, cx| {
+            thread_view
+                .read(cx)
+                .history()
+                .expect("Missing history")
+                .clone()
+        });
 
         // Initially empty because StubAgentConnection.session_list() returns None
         active_thread(&thread_view, cx).read_with(cx, |view, _cx| {
@@ -3673,7 +3679,8 @@ pub(crate) mod tests {
         agent: impl AgentServer + 'static,
         cx: &mut TestAppContext,
     ) -> (Entity<ConnectionView>, &mut VisualTestContext) {
-        let (thread_view, _history, cx) = setup_thread_view_with_history(agent, cx).await;
+        let (thread_view, _history, cx) =
+            setup_thread_view_with_history_and_initial_content(agent, None, cx).await;
         (thread_view, cx)
     }
 
@@ -3685,7 +3692,9 @@ pub(crate) mod tests {
         Entity<ThreadHistory>,
         &mut VisualTestContext,
     ) {
-        setup_thread_view_with_history_and_initial_content(agent, None, cx).await
+        let (thread_view, history, cx) =
+            setup_thread_view_with_history_and_initial_content(agent, None, cx).await;
+        (thread_view, history.expect("Missing history"), cx)
     }
 
     async fn setup_thread_view_with_initial_content(
@@ -3705,7 +3714,7 @@ pub(crate) mod tests {
         cx: &mut TestAppContext,
     ) -> (
         Entity<ConnectionView>,
-        Entity<ThreadHistory>,
+        Option<Entity<ThreadHistory>>,
         &mut VisualTestContext,
     ) {
         let fs = FakeFs::new(cx.executor());
@@ -3747,11 +3756,7 @@ pub(crate) mod tests {
             connection_store
                 .read(cx)
                 .entry(&agent_key)
-                .expect("Missing connection for agent")
-                .read(cx)
-                .history()
-                .expect("Missing history")
-                .clone()
+                .and_then(|e| e.read(cx).history().cloned())
         });
 
         (thread_view, history, cx)
