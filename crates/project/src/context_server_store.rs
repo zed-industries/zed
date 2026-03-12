@@ -493,19 +493,6 @@ impl ContextServerStore {
         self.servers.get(id).map(ContextServerStatus::from_state)
     }
 
-    /// Returns true if the given server is in a state where OAuth credentials
-    /// may exist (Running, AuthRequired, or Authenticating).
-    pub fn server_may_have_oauth_credentials(&self, id: &ContextServerId) -> bool {
-        matches!(
-            self.servers.get(id),
-            Some(
-                ContextServerState::Running { .. }
-                    | ContextServerState::AuthRequired { .. }
-                    | ContextServerState::Authenticating { .. }
-            )
-        )
-    }
-
     pub fn configuration_for_server(
         &self,
         id: &ContextServerId,

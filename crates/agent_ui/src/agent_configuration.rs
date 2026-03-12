@@ -712,11 +712,10 @@ impl AgentConfiguration {
             .as_ref()
             .map(|config| matches!(config.as_ref(), ContextServerConfiguration::Http { .. }))
             .unwrap_or(false);
-        let may_have_oauth_credentials = is_remote
-            && self
-                .context_server_store
-                .read(cx)
-                .server_may_have_oauth_credentials(&context_server_id);
+        let may_have_oauth_credentials = server_configuration.as_ref().is_some_and(|config| {
+            matches!(config.as_ref(), ContextServerConfiguration::Http { .. })
+                && !config.has_static_auth_header()
+        });
         let context_server_configuration_menu = PopoverMenu::new("context-server-config-menu")
             .trigger_with_tooltip(
                 IconButton::new("context-server-config-menu", IconName::Settings)
