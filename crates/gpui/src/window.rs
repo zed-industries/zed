@@ -3507,54 +3507,6 @@ impl Window {
         Ok(())
     }
 
-    /// Pre-warm the raster bounds cache for a batch of glyphs.
-    ///
-    /// This is an optimization for rendering many glyphs: instead of acquiring
-    /// the cache lock once per glyph during paint, call this once with all glyphs
-    /// to batch the cache lookups under a single lock acquisition.
-    ///
-    /// Each tuple is (origin, font_id, glyph_id, font_size, is_emoji).
-    pub fn warm_glyph_cache(
-        &self,
-        glyphs: &[(Point<Pixels>, FontId, GlyphId, Pixels, bool)],
-    ) -> Result<()> {
-        if glyphs.is_empty() {
-            return Ok(());
-        }
-
-        let scale_factor = self.scale_factor();
-
-        // Build RenderGlyphParams for each glyph
-        let params_list: Vec<RenderGlyphParams> = glyphs
-            .iter()
-            .map(|(origin, font_id, glyph_id, font_size, is_emoji)| {
-                let glyph_origin = origin.scale(scale_factor);
-                let subpixel_variant = if *is_emoji {
-                    Point::default()
-                } else {
-                    Point {
-                        x: (glyph_origin.x.0.fract() * SUBPIXEL_VARIANTS_X as f32).floor() as u8,
-                        y: (glyph_origin.y.0.fract() * SUBPIXEL_VARIANTS_Y as f32).floor() as u8,
-                    }
-                };
-                RenderGlyphParams {
-                    font_id: *font_id,
-                    glyph_id: *glyph_id,
-                    font_size: *font_size,
-                    subpixel_variant,
-                    scale_factor,
-                    is_emoji: *is_emoji,
-                    subpixel_rendering: false,
-                }
-            })
-            .collect();
-
-        // Batch lookup - this acquires the lock once for all glyphs
-        let _ = self.text_system().raster_bounds_batch(&params_list)?;
-
-        Ok(())
-    }
-
     /// Paint a monochrome SVG into the scene for the next frame at the current stacking context.
     ///
     /// This method should only be called as part of the paint phase of element drawing.
