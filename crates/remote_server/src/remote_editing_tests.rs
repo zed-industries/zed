@@ -2240,17 +2240,15 @@ async fn test_remote_custom_agent_settings_forwarded_to_server(
                 store
                     .get_external_agent(&"my-agent".into())
                     .unwrap()
-                    .get_command(
-                        HashMap::default(),
-                        None,
-                        None,
-                        &mut cx.to_async(),
-                    )
+                    .get_command(HashMap::default(), None, None, &mut cx.to_async())
             })
         })
         .await
         .unwrap();
-    assert_eq!(command.args, vec!["/usr/bin/my-agent".to_string(), "--serve".to_string()]);
+    assert_eq!(
+        command.args,
+        vec!["/usr/bin/my-agent".to_string(), "--serve".to_string()]
+    );
     let env = command.env.unwrap();
     assert_eq!(env.get("MY_VAR").map(|s| s.as_str()), Some("my-val"));
 }
