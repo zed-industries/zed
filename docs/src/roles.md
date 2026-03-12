@@ -67,4 +67,4 @@ dashboard within the Members page.
 1. On the Members page, find the member.
 2. Select **Remove** and confirm.
 
-Removing a member revokes their access to Zed-hosted models and organization-managed features at the end of the current billing cycle.
+Removing a member revokes their access to an organization's instance of Zed.
