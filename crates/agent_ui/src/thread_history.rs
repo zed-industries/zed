@@ -19,11 +19,20 @@ impl ThreadHistory {
             _refresh_task: Task::ready(()),
             _watch_task: None,
         };
-        this.set_session_list(session_list, cx);
+        this.set_session_list_impl(session_list, cx);
         this
     }
 
+    #[cfg(any(test, feature = "test-support"))]
     pub fn set_session_list(
+        &mut self,
+        session_list: Option<Rc<dyn AgentSessionList>>,
+        cx: &mut Context<Self>,
+    ) {
+        self.set_session_list_impl(session_list, cx);
+    }
+
+    fn set_session_list_impl(
         &mut self,
         session_list: Option<Rc<dyn AgentSessionList>>,
         cx: &mut Context<Self>,
