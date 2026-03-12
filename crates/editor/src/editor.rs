@@ -12645,7 +12645,7 @@ impl Editor {
     }
 
     fn convert_text_case(text: &str, case: Case) -> String {
-        text.split('\n')
+        text.lines()
             .map(|line| {
                 let trimmed_start = line.trim_start();
                 let leading = &line[..line.len() - trimmed_start.len()];
