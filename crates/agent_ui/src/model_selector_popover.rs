@@ -73,6 +73,8 @@ impl Render for ModelSelectorPopover {
 
         let (color, icon) = if self.menu_handle.is_deployed() {
             (Color::Accent, IconName::ChevronUp)
+        } else if self.disabled {
+            (Color::Disabled, IconName::ChevronDown)
         } else {
             (Color::Muted, IconName::ChevronDown)
         };
@@ -113,7 +115,17 @@ impl Render for ModelSelectorPopover {
                         .size(LabelSize::Small)
                         .ml_0p5(),
                 )
-                .child(Icon::new(icon).color(Color::Muted).size(IconSize::XSmall)),
+                .child(
+                    Icon::new(icon)
+                        .map(|this| {
+                            if self.disabled {
+                                this.color(Color::Disabled)
+                            } else {
+                                this.color(Color::Muted)
+                            }
+                        })
+                        .size(IconSize::XSmall),
+                ),
             tooltip,
             gpui::Corner::BottomRight,
             cx,
