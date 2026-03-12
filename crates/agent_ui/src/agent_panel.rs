@@ -2642,6 +2642,12 @@ impl AgentPanel {
         }
     }
 
+    // TODO: The mapping from workspace root paths to git repositories needs a
+    // unified approach across the codebase: this method, `sidebar::is_root_repo`,
+    // thread persistence (which PathList is saved to the database), and thread
+    // querying (which PathList is used to read threads back). All of these need
+    // to agree on how repos are resolved for a given workspace, especially in
+    // multi-root and nested-repo configurations.
     /// Partitions the project's visible worktrees into git-backed repositories
     /// and plain (non-git) paths. Git repos will have worktrees created for
     /// them; non-git paths are carried over to the new workspace as-is.
