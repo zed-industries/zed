@@ -1578,13 +1578,31 @@ impl Sidebar {
         }) else {
             return;
         };
+
         let Some(agent_panel) = active_workspace.read(cx).panel::<AgentPanel>(cx) else {
             return;
         };
 
+        let thread_store = agent_panel.read(cx).thread_store().clone();
+        let fs = active_workspace.read(cx).project().read(cx).fs().clone();
         let agent_connection_store = agent_panel.read(cx).connection_store().clone();
+        let agent_server_store = active_workspace
+            .read(cx)
+            .project()
+            .read(cx)
+            .agent_server_store()
+            .clone();
 
-        let archive_view = cx.new(|cx| ThreadsArchiveView::new(agent_connection_store, window, cx));
+        let archive_view = cx.new(|cx| {
+            ThreadsArchiveView::new(
+                agent_connection_store,
+                agent_server_store,
+                thread_store,
+                fs,
+                window,
+                cx,
+            )
+        });
         let subscription = cx.subscribe_in(
             &archive_view,
             window,

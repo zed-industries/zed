@@ -1,15 +1,25 @@
+use std::sync::Arc;
+
 use crate::{Agent, agent_connection_store::AgentConnectionStore, thread_history::ThreadHistory};
 use acp_thread::AgentSessionInfo;
-use agent_settings::AgentSettings;
+use agent::ThreadStore;
 use chrono::{Datelike as _, Local, NaiveDate, TimeDelta, Utc};
 use editor::Editor;
+use fs::Fs;
 use gpui::{
     AnyElement, App, Context, Entity, EventEmitter, FocusHandle, Focusable, ListState, Render,
-    SharedString, Window, list, prelude::*, px,
+    SharedString, Subscription, Task, Window, list, prelude::*, px,
 };
-use settings::Settings;
+use itertools::Itertools as _;
+use menu::{Confirm, SelectFirst, SelectLast, SelectNext, SelectPrevious};
+use project::{AgentServerStore, ExternalAgentServerName};
 use theme::ActiveTheme;
-use ui::{HighlightedLabel, ListItem, Tab, Tooltip, WithScrollbar, prelude::*};
+use ui::{
+    ButtonLike, ContextMenu, ContextMenuEntry, HighlightedLabel, ListItem, PopoverMenu,
+    PopoverMenuHandle, Tab, TintColor, Tooltip, WithScrollbar, prelude::*,
+};
+use util::ResultExt as _;
+use zed_actions::editor::{MoveDown, MoveUp};
 
 #[derive(Clone)]
 enum ArchiveListItem {
@@ -86,6 +96,11 @@ impl EventEmitter<ThreadsArchiveViewEvent> for ThreadsArchiveView {}
 
 pub struct ThreadsArchiveView {
     agent_connection_store: Entity<AgentConnectionStore>,
+    agent_server_store: Entity<AgentServerStore>,
+    thread_store: Entity<ThreadStore>,
+    fs: Arc<dyn Fs>,
+    history: Option<Entity<ThreadHistory>>,
+    _history_subscription: Subscription,
     selected_agent: Agent,
     focus_handle: FocusHandle,
     list_state: ListState,
@@ -93,11 +108,16 @@ pub struct ThreadsArchiveView {
     selection: Option<usize>,
     filter_editor: Entity<Editor>,
     _subscriptions: Vec<gpui::Subscription>,
+    selected_agent_menu: PopoverMenuHandle<ContextMenu>,
+    _refresh_history_task: Task<()>,
 }
 
 impl ThreadsArchiveView {
     pub fn new(
         agent_connection_store: Entity<AgentConnectionStore>,
+        agent_server_store: Entity<AgentServerStore>,
+        thread_store: Entity<ThreadStore>,
+        fs: Arc<dyn Fs>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -105,7 +125,7 @@ impl ThreadsArchiveView {
 
         let filter_editor = cx.new(|cx| {
             let mut editor = Editor::single_line(window, cx);
-            editor.set_placeholder_text("Search threads archive…", window, cx);
+            editor.set_placeholder_text("Search archive…", window, cx);
             editor
         });
 
@@ -116,16 +136,13 @@ impl ThreadsArchiveView {
                 }
             });
 
-        // let history_subscription = cx.observe(&history, |this, _, cx| {
-        //     this.update_items(cx);
-        // });
-
-        // history.update(cx, |history, cx| {
-        //     history.refresh_full_history(cx);
-        // });
-
         let mut this = Self {
             agent_connection_store,
+            agent_server_store,
+            thread_store,
+            fs,
+            history: None,
+            _history_subscription: Subscription::new(|| {}),
             selected_agent: Agent::NativeAgent,
             focus_handle,
             list_state: ListState::new(0, gpui::ListAlignment::Top, px(1000.)),
@@ -133,24 +150,50 @@ impl ThreadsArchiveView {
             selection: None,
             filter_editor,
             _subscriptions: vec![filter_editor_subscription],
+            selected_agent_menu: PopoverMenuHandle::default(),
+            _refresh_history_task: Task::ready(()),
         };
-        this.update_items(cx);
+        this.set_selected_agent(Agent::NativeAgent, cx);
         this
     }
 
-    fn history(&self, cx: &mut Context<Self>) -> Entity<ThreadHistory> {
-        self.agent_connection_store
-            .read(cx)
-            .entry(&self.selected_agent)
-            .unwrap()
-            .read(cx)
-            .history()
-            .unwrap()
-            .clone()
+    fn set_selected_agent(&mut self, agent: Agent, cx: &mut Context<Self>) {
+        self.selected_agent = agent.clone();
+
+        let server = agent.server(self.fs.clone(), self.thread_store.clone());
+        let connection = self
+            .agent_connection_store
+            .update(cx, |store, cx| store.request_connection(agent, server, cx));
+
+        let task = connection.read(cx).wait_for_connection();
+        self._refresh_history_task = cx.spawn(async move |this, cx| {
+            if let Some(state) = task.await.log_err() {
+                this.update(cx, |this, cx| this.set_history(state.history, cx))
+                    .ok();
+            }
+        });
+
+        cx.notify();
+    }
+
+    fn set_history(&mut self, history: Entity<ThreadHistory>, cx: &mut Context<Self>) {
+        self._history_subscription = cx.observe(&history, |this, _, cx| {
+            this.update_items(cx);
+        });
+        history.update(cx, |history, cx| {
+            history.refresh_full_history(cx);
+        });
+        self.history = Some(history);
+        self.update_items(cx);
+        cx.notify();
     }
 
     fn update_items(&mut self, cx: &mut Context<Self>) {
-        let sessions = self.history(cx).read(cx).sessions().to_vec();
+        let Some(history) = self.history.as_ref() else {
+            return;
+        };
+
+        let sessions = history.read(cx).sessions().to_vec();
         let query = self.filter_editor.read(cx).text(cx).to_lowercase();
         let today = Local::now().naive_local().date();
 
@@ -187,8 +230,8 @@ impl ThreadsArchiveView {
             });
         }
 
+        self.list_state.reset(items.len());
         self.items = items;
-        self.list_state = ListState::new(self.items.len(), gpui::ListAlignment::Top, px(1000.));
         cx.notify();
     }
 
@@ -214,35 +257,82 @@ impl ThreadsArchiveView {
         cx.emit(ThreadsArchiveViewEvent::OpenThread(session_info));
     }
 
-    fn render_header(&self, docked_right: bool, cx: &mut Context<Self>) -> impl IntoElement {
-        let has_query = !self.filter_editor.read(cx).text(cx).is_empty();
+    fn is_selectable_item(&self, ix: usize) -> bool {
+        matches!(self.items.get(ix), Some(ArchiveListItem::Entry { .. }))
+    }
 
-        h_flex()
-            .h(Tab::container_height(cx))
-            .px_1()
-            .gap_1p5()
-            .border_b_1()
-            .border_color(cx.theme().colors().border)
-            .child(
-                IconButton::new("back", IconName::ArrowLeft)
-                    .icon_size(IconSize::Small)
-                    .tooltip(Tooltip::text("Back to Sidebar"))
-                    .on_click(cx.listener(|this, _, window, cx| {
-                        this.go_back(window, cx);
-                    })),
-            )
-            .child(self.filter_editor.clone())
-            .when(has_query, |this| {
-                this.when(!docked_right, |this| this.pr_1p5()).child(
-                    IconButton::new("clear_archive_filter", IconName::Close)
-                        .icon_size(IconSize::Small)
-                        .tooltip(Tooltip::text("Clear Search"))
-                        .on_click(cx.listener(|this, _, window, cx| {
-                            this.reset_filter_editor_text(window, cx);
-                            this.update_items(cx);
-                        })),
-                )
-            })
+    fn find_next_selectable(&self, start: usize) -> Option<usize> {
+        (start..self.items.len()).find(|&i| self.is_selectable_item(i))
+    }
+
+    fn find_previous_selectable(&self, start: usize) -> Option<usize> {
+        (0..=start).rev().find(|&i| self.is_selectable_item(i))
+    }
+
+    fn editor_move_down(&mut self, _: &MoveDown, window: &mut Window, cx: &mut Context<Self>) {
+        self.select_next(&SelectNext, window, cx);
+    }
+
+    fn editor_move_up(&mut self, _: &MoveUp, window: &mut Window, cx: &mut Context<Self>) {
+        self.select_previous(&SelectPrevious, window, cx);
+    }
+
+    fn select_next(&mut self, _: &SelectNext, _window: &mut Window, cx: &mut Context<Self>) {
+        let next = match self.selection {
+            Some(ix) => self.find_next_selectable(ix + 1),
+            None => self.find_next_selectable(0),
+        };
+        if let Some(next) = next {
+            self.selection = Some(next);
+            self.list_state.scroll_to_reveal_item(next);
+            cx.notify();
+        }
+    }
+
+    fn select_previous(
+        &mut self,
+        _: &SelectPrevious,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let prev = match self.selection {
+            Some(ix) if ix > 0 => self.find_previous_selectable(ix - 1),
+            None => {
+                let last = self.items.len().saturating_sub(1);
+                self.find_previous_selectable(last)
+            }
+            _ => return,
+        };
+        if let Some(prev) = prev {
+            self.selection = Some(prev);
+            self.list_state.scroll_to_reveal_item(prev);
+            cx.notify();
+        }
+    }
+
+    fn select_first(&mut self, _: &SelectFirst, _window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(first) = self.find_next_selectable(0) {
+            self.selection = Some(first);
+            self.list_state.scroll_to_reveal_item(first);
+            cx.notify();
+        }
+    }
+
+    fn select_last(&mut self, _: &SelectLast, _window: &mut Window, cx: &mut Context<Self>) {
+        let last = self.items.len().saturating_sub(1);
+        if let Some(last) = self.find_previous_selectable(last) {
+            self.selection = Some(last);
+            self.list_state.scroll_to_reveal_item(last);
+            cx.notify();
+        }
+    }
+
+    fn confirm(&mut self, _: &Confirm, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(ix) = self.selection else { return };
+        let Some(ArchiveListItem::Entry { session, .. }) = self.items.get(ix) else {
+            return;
+        };
+        self.open_thread(session.clone(), window, cx);
     }
 
     fn render_list_entry(
@@ -319,7 +409,8 @@ impl ThreadsArchiveView {
                             .min_w_0()
                             .w_full()
                             .py_1()
-                            .px_0p5()
+                            .pl_0p5()
+                            .pr_1p5()
                             .gap_1()
                             .justify_between()
                             .child(title_label)
@@ -336,6 +427,175 @@ impl ThreadsArchiveView {
             }
         }
     }
+
+    fn render_agent_picker(&self, cx: &mut Context<Self>) -> PopoverMenu<ContextMenu> {
+        let agent_server_store = self.agent_server_store.clone();
+
+        let (chevron_icon, icon_color) = if self.selected_agent_menu.is_deployed() {
+            (IconName::ChevronUp, Color::Accent)
+        } else {
+            (IconName::ChevronDown, Color::Muted)
+        };
+
+        let selected_agent_icon = if let Agent::Custom { name } = &self.selected_agent {
+            let store = agent_server_store.read(cx);
+            let icon = store.agent_icon(&ExternalAgentServerName(name.clone()));
+
+            if let Some(icon) = icon {
+                Icon::from_external_svg(icon)
+            } else {
+                Icon::new(IconName::Sparkle)
+            }
+            .color(Color::Muted)
+            .size(IconSize::Small)
+        } else {
+            Icon::new(IconName::ZedAgent)
+                .color(Color::Muted)
+                .size(IconSize::Small)
+        };
+
+        let this = cx.weak_entity();
+
+        PopoverMenu::new("agent_history_menu")
+            .trigger(
+                ButtonLike::new("selected_agent")
+                    .selected_style(ButtonStyle::Tinted(TintColor::Accent))
+                    .child(
+                        h_flex().gap_1().child(selected_agent_icon).child(
+                            Icon::new(chevron_icon)
+                                .color(icon_color)
+                                .size(IconSize::XSmall),
+                        ),
+                    ),
+            )
+            .menu(move |window, cx| {
+                Some(ContextMenu::build(window, cx, |menu, _window, cx| {
+                    menu.item(
+                        ContextMenuEntry::new("Zed Agent")
+                            .icon(IconName::ZedAgent)
+                            .icon_color(Color::Muted)
+                            .handler({
+                                let this = this.clone();
+                                move |_, cx| {
+                                    this.update(cx, |this, cx| {
+                                        this.set_selected_agent(Agent::NativeAgent, cx)
+                                    })
+                                    .ok();
+                                }
+                            }),
+                    )
+                    .separator()
+                    .map(|mut menu| {
+                        let agent_server_store = agent_server_store.read(cx);
+                        let registry_store = project::AgentRegistryStore::try_global(cx);
+                        let registry_store_ref = registry_store.as_ref().map(|s| s.read(cx));
+
+                        struct AgentMenuItem {
+                            id: ExternalAgentServerName,
+                            display_name: SharedString,
+                        }
+
+                        let agent_items = agent_server_store
+                            .external_agents()
+                            .map(|name| {
+                                let display_name = agent_server_store
+                                    .agent_display_name(name)
+                                    .or_else(|| {
+                                        registry_store_ref
+                                            .as_ref()
+                                            .and_then(|store| store.agent(name.0.as_ref()))
+                                            .map(|a| a.name().clone())
+                                    })
+                                    .unwrap_or_else(|| name.0.clone());
+                                AgentMenuItem {
+                                    id: name.clone(),
+                                    display_name,
+                                }
+                            })
+                            .sorted_unstable_by_key(|e| e.display_name.to_lowercase())
+                            .collect::<Vec<_>>();
+
+                        for item in &agent_items {
+                            let mut entry = ContextMenuEntry::new(item.display_name.clone());
+
+                            let icon_path = agent_server_store.agent_icon(&item.id).or_else(|| {
+                                registry_store_ref
+                                    .as_ref()
+                                    .and_then(|store| store.agent(item.id.0.as_str()))
+                                    .and_then(|a| a.icon_path().cloned())
+                            });
+
+                            if let Some(icon_path) = icon_path {
+                                entry = entry.custom_icon_svg(icon_path);
+                            } else {
+                                entry = entry.icon(IconName::ZedAgent);
+                            }
+
+                            entry = entry.icon_color(Color::Muted).handler({
+                                let this = this.clone();
+                                let agent = Agent::Custom {
+                                    name: item.id.0.clone(),
+                                };
+                                move |_, cx| {
+                                    this.update(cx, |this, cx| {
+                                        this.set_selected_agent(agent.clone(), cx)
+                                    })
+                                    .ok();
+                                }
+                            });
+
+                            menu = menu.item(entry);
+                        }
+                        menu
+                    })
+                }))
+            })
+            .with_handle(self.selected_agent_menu.clone())
+            .anchor(gpui::Corner::TopRight)
+            .offset(gpui::Point {
+                x: px(1.0),
+                y: px(1.0),
+            })
+    }
+
+    fn render_header(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let has_query = !self.filter_editor.read(cx).text(cx).is_empty();
+
+        h_flex()
+            .h(Tab::container_height(cx))
+            .px_1()
+            .gap_1p5()
+            .justify_between()
+            .border_b_1()
+            .border_color(cx.theme().colors().border)
+            .child(
+                h_flex()
+                    .flex_1()
+                    .w_full()
+                    .gap_1p5()
+                    .child(
+                        IconButton::new("back", IconName::ArrowLeft)
+                            .icon_size(IconSize::Small)
+                            .tooltip(Tooltip::text("Back to Sidebar"))
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.go_back(window, cx);
+                            })),
+                    )
+                    .child(self.filter_editor.clone())
+                    .when(has_query, |this| {
+                        this.border_r_1().child(
+                            IconButton::new("clear_archive_filter", IconName::Close)
+                                .icon_size(IconSize::Small)
+                                .tooltip(Tooltip::text("Clear Search"))
+                                .on_click(cx.listener(|this, _, window, cx| {
+                                    this.reset_filter_editor_text(window, cx);
+                                    this.update_items(cx);
+                                })),
+                        )
+                    }),
+            )
+            .child(self.render_agent_picker(cx))
+    }
 }
 
 impl Focusable for ThreadsArchiveView {
@@ -346,9 +606,6 @@ impl Focusable for ThreadsArchiveView {
 
 impl Render for ThreadsArchiveView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let docked_right = AgentSettings::get_global(cx).dock == settings::DockPosition::Right;
-
-        let has_session_list = self.history(cx).read(cx).has_session_list();
         let is_empty = self.items.is_empty();
         let has_query = !self.filter_editor.read(cx).text(cx).is_empty();
 
@@ -363,13 +620,17 @@ impl Render for ThreadsArchiveView {
         v_flex()
             .key_context("ThreadsArchiveView")
             .track_focus(&self.focus_handle)
+            .on_action(cx.listener(Self::select_next))
+            .on_action(cx.listener(Self::select_previous))
+            .on_action(cx.listener(Self::editor_move_down))
+            .on_action(cx.listener(Self::editor_move_up))
+            .on_action(cx.listener(Self::select_first))
+            .on_action(cx.listener(Self::select_last))
+            .on_action(cx.listener(Self::confirm))
             .size_full()
             .bg(cx.theme().colors().surface_background)
-            .child(self.render_header(docked_right, cx))
-            .child(if !has_session_list {
-                empty_state_container("Start a thread to see your archive.".into())
-                    .into_any_element()
-            } else if is_empty && has_query {
+            .child(self.render_header(cx))
+            .child(if has_query {
                 empty_state_container("No threads match your search.".into()).into_any_element()
             } else if is_empty {
                 empty_state_container("No archived threads yet.".into()).into_any_element()
