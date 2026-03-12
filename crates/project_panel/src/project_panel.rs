@@ -2371,6 +2371,11 @@ impl ProjectPanel {
             }
             let answer = if !skip_prompt {
                 let operation = if trash { "Trash" } else { "Delete" };
+                let message_start = if trash {
+                    "Do you want to trash"
+                } else {
+                    "Are you sure you want to permanently delete"
+                };
                 let prompt = match file_paths.first() {
                     Some((_, path)) if file_paths.len() == 1 => {
                         let unsaved_warning = if dirty_buffers > 0 {
@@ -2379,7 +2384,7 @@ impl ProjectPanel {
                             ""
                         };
 
-                        format!("{operation} {path}?{unsaved_warning}")
+                        format!("{message_start} {path}?{unsaved_warning}")
                     }
                     _ => {
                         const CUTOFF_POINT: usize = 10;
@@ -2411,14 +2416,20 @@ impl ProjectPanel {
                         };
 
                         format!(
-                            "Do you want to {} the following {} files?\n{}{unsaved_warning}",
-                            operation.to_lowercase(),
+                            "{message_start} the following {} files?\n{}{unsaved_warning}",
                             file_paths.len(),
                             names.join("\n")
                         )
                     }
                 };
-                Some(window.prompt(PromptLevel::Info, &prompt, None, &[operation, "Cancel"], cx))
+                let detail = (!trash).then_some("This cannot be undone.");
+                Some(window.prompt(
+                    PromptLevel::Info,
+                    &prompt,
+                    detail,
+                    &[operation, "Cancel"],
+                    cx,
+                ))
             } else {
                 None
             };
