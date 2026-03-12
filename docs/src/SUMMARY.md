@@ -182,7 +182,7 @@
 # Account & Privacy
 
 - [Authenticate](./authentication.md)
-- [Organizations and Roles](./organizations.md)
+- [Roles](./roles.md)
 - [Privacy and Security](./ai/privacy-and-security.md)
   - [Worktree Trust](./worktree-trust.md)
   - [AI Improvement](./ai/ai-improvement.md)

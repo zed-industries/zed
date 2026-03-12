@@ -26,7 +26,8 @@ An owner has full control over the organization, including:
 - Assign and change member roles
 - Manage billing, payment methods, and invoices
 - Configure data-sharing policies
-- Control which Zed-hosted models are available to members
+- Disable Zed's collaborative features
+- Control whether members can use Zed-hosted models and Zed's edit predictions
 - Transfer ownership to another member
 
 ### Admin {#role-admin}
@@ -67,4 +68,4 @@ dashboard within the Members page.
 1. On the Members page, find the member.
 2. Select **Remove** and confirm.
 
-Removing a member revokes their access to an organization's instance of Zed.
+Removing a member removes their access to organization settings and any organization-managed features. They can continue using Zed on their own.
