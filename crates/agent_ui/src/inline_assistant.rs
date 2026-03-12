@@ -281,7 +281,7 @@ impl InlineAssistant {
         let Some(history) = agent_panel
             .connection_store()
             .read(cx)
-            .entry(&crate::ExternalAgent::NativeAgent)
+            .entry(&crate::Agent::NativeAgent)
             .and_then(|s| s.read(cx).history().cloned())
         else {
             log::error!("No connection entry found for native agent");
@@ -1981,7 +1981,7 @@ impl CodeActionProvider for AssistantCodeActionProvider {
                 let history = panel
                     .connection_store()
                     .read(cx)
-                    .entry(&crate::ExternalAgent::NativeAgent)
+                    .entry(&crate::Agent::NativeAgent)
                     .and_then(|e| e.read(cx).history())
                     .context("no history found for native agent")?
                     .downgrade();

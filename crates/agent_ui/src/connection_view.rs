@@ -76,9 +76,9 @@ use crate::message_editor::{MessageEditor, MessageEditorEvent};
 use crate::profile_selector::{ProfileProvider, ProfileSelector};
 use crate::ui::{AgentNotification, AgentNotificationEvent};
 use crate::{
-    AgentDiffPane, AgentInitialContent, AgentPanel, AllowAlways, AllowOnce, AuthorizeToolCall,
-    ClearMessageQueue, CycleFavoriteModels, CycleModeSelector, CycleThinkingEffort,
-    EditFirstQueuedMessage, ExpandMessageEditor, ExternalAgent, Follow, KeepAll, NewThread,
+    Agent, AgentDiffPane, AgentInitialContent, AgentPanel, AllowAlways, AllowOnce,
+    AuthorizeToolCall, ClearMessageQueue, CycleFavoriteModels, CycleModeSelector,
+    CycleThinkingEffort, EditFirstQueuedMessage, ExpandMessageEditor, Follow, KeepAll, NewThread,
     OpenAddContextMenu, OpenAgentDiff, OpenHistory, RejectAll, RejectOnce,
     RemoveFirstQueuedMessage, SendImmediately, SendNextQueuedMessage, ToggleFastMode,
     ToggleProfileSelector, ToggleThinkingEffortMenu, ToggleThinkingMode, UndoLastReject,
@@ -307,9 +307,9 @@ pub enum AcpServerViewEvent {
 impl EventEmitter<AcpServerViewEvent> for ConnectionView {}
 
 pub struct ConnectionView {
-    agent: Rc<dyn AgentServer>,
+    agent_server: Rc<dyn AgentServer>,
     connection_store: Entity<AgentConnectionStore>,
-    connection_key: ExternalAgent,
+    agent: Agent,
     agent_server_store: Entity<AgentServerStore>,
     workspace: WeakEntity<Workspace>,
     project: Entity<Project>,
@@ -475,9 +475,9 @@ impl ConnectedServerState {
 
 impl ConnectionView {
     pub fn new(
-        agent: Rc<dyn AgentServer>,
+        agent_server: Rc<dyn AgentServer>,
         connection_store: Entity<AgentConnectionStore>,
-        connection_key: ExternalAgent,
+        agent: Agent,
         resume_session_id: Option<acp::SessionId>,
         cwd: Option<PathBuf>,
         title: Option<SharedString>,
@@ -515,18 +515,18 @@ impl ConnectionView {
         .detach();
 
         Self {
-            agent: agent.clone(),
+            agent_server: agent_server.clone(),
             connection_store: connection_store.clone(),
-            connection_key: connection_key.clone(),
+            agent: agent.clone(),
             agent_server_store,
             workspace,
             project: project.clone(),
             thread_store,
             prompt_store,
             server_state: Self::initial_state(
-                agent.clone(),
+                agent_server.clone(),
                 connection_store,
-                connection_key,
+                agent,
                 resume_session_id,
                 cwd,
                 title,
@@ -567,9 +567,9 @@ impl ConnectionView {
             .unwrap_or((None, None, None));
 
         let state = Self::initial_state(
-            self.agent.clone(),
+            self.agent_server.clone(),
             self.connection_store.clone(),
-            self.connection_key.clone(),
+            self.agent.clone(),
             resume_session_id,
             cwd,
             title,
@@ -595,9 +595,9 @@ impl ConnectionView {
     }
 
     fn initial_state(
-        agent: Rc<dyn AgentServer>,
+        agent_server: Rc<dyn AgentServer>,
         connection_store: Entity<AgentConnectionStore>,
-        connection_key: ExternalAgent,
+        agent: Agent,
         resume_session_id: Option<acp::SessionId>,
         cwd: Option<PathBuf>,
         title: Option<SharedString>,
@@ -607,7 +607,10 @@ impl ConnectionView {
         cx: &mut Context<Self>,
     ) -> ServerState {
         if project.read(cx).is_via_collab()
-            && agent.clone().downcast::<NativeAgentServer>().is_none()
+            && agent_server
+                .clone()
+                .downcast::<NativeAgentServer>()
+                .is_none()
         {
             return ServerState::LoadError {
                 error: LoadError::Other(
@@ -655,7 +658,7 @@ impl ConnectionView {
             .unwrap_or_else(|| paths::home_dir().as_path().into());
 
         let connection_entry =
-            connection_store.update(cx, |store, cx| store.request_connection(connection_key, cx));
+            connection_store.update(cx, |store, cx| store.request_connection(agent, cx));
 
         let connection_entry_subscription =
             cx.subscribe(&connection_entry, |this, _entry, event, cx| match event {
@@ -737,7 +740,7 @@ impl ConnectionView {
                             Self::handle_auth_required(
                                 this,
                                 err,
-                                agent.name(),
+                                agent_server.name(),
                                 connection,
                                 window,
                                 cx,
@@ -825,7 +828,7 @@ impl ConnectionView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Entity<ThreadView> {
-        let agent_name = self.agent.name();
+        let agent_name = self.agent_server.name();
         let prompt_capabilities = Rc::new(RefCell::new(acp::PromptCapabilities::default()));
         let available_commands = Rc::new(RefCell::new(vec![]));
 
@@ -842,7 +845,7 @@ impl ConnectionView {
                 self.prompt_store.clone(),
                 prompt_capabilities.clone(),
                 available_commands.clone(),
-                self.agent.name(),
+                self.agent_server.name(),
             )
         });
 
@@ -877,7 +880,7 @@ impl ConnectionView {
         let model_selector;
         if let Some(config_options) = config_options_provider {
             // Use config options - don't create mode_selector or model_selector
-            let agent_server = self.agent.clone();
+            let agent_server = self.agent_server.clone();
             let fs = self.project.read(cx).fs().clone();
             config_options_view =
                 Some(cx.new(|cx| {
@@ -889,7 +892,7 @@ impl ConnectionView {
             // Fall back to legacy mode/model selectors
             config_options_view = None;
             model_selector = connection.model_selector(&session_id).map(|selector| {
-                let agent_server = self.agent.clone();
+                let agent_server = self.agent_server.clone();
                 let fs = self.project.read(cx).fs().clone();
                 cx.new(|cx| {
                     ModelSelectorPopover::new(
@@ -908,7 +911,7 @@ impl ConnectionView {
                 .session_modes(&session_id, cx)
                 .map(|session_modes| {
                     let fs = self.project.read(cx).fs().clone();
-                    cx.new(|_cx| ModeSelector::new(session_modes, self.agent.clone(), fs))
+                    cx.new(|_cx| ModeSelector::new(session_modes, self.agent_server.clone(), fs))
                 });
         }
 
@@ -968,16 +971,16 @@ impl ConnectionView {
             .agent_display_name(&ExternalAgentServerName(agent_name.clone()))
             .unwrap_or_else(|| agent_name.clone());
 
-        let agent_icon = self.agent.logo();
+        let agent_icon = self.agent_server.logo();
         let agent_icon_from_external_svg = self
             .agent_server_store
             .read(cx)
-            .agent_icon(&ExternalAgentServerName(self.agent.name()))
+            .agent_icon(&ExternalAgentServerName(self.agent_server.name()))
             .or_else(|| {
                 project::AgentRegistryStore::try_global(cx).and_then(|store| {
                     store
                         .read(cx)
-                        .agent(self.agent.name().as_ref())
+                        .agent(self.agent_server.name().as_ref())
                         .and_then(|a| a.icon_path().cloned())
                 })
             });
@@ -1162,12 +1165,14 @@ impl ConnectionView {
             ServerState::Connected(_) => "New Thread".into(),
             ServerState::Loading(_) => "Loading…".into(),
             ServerState::LoadError { error, .. } => match error {
-                LoadError::Unsupported { .. } => format!("Upgrade {}", self.agent.name()).into(),
-                LoadError::FailedToInstall(_) => {
-                    format!("Failed to Install {}", self.agent.name()).into()
+                LoadError::Unsupported { .. } => {
+                    format!("Upgrade {}", self.agent_server.name()).into()
                 }
-                LoadError::Exited { .. } => format!("{} Exited", self.agent.name()).into(),
-                LoadError::Other(_) => format!("Error Loading {}", self.agent.name()).into(),
+                LoadError::FailedToInstall(_) => {
+                    format!("Failed to Install {}", self.agent_server.name()).into()
+                }
+                LoadError::Exited { .. } => format!("{} Exited", self.agent_server.name()).into(),
+                LoadError::Other(_) => format!("Error Loading {}", self.agent_server.name()).into(),
             },
         }
     }
@@ -1445,8 +1450,8 @@ impl ConnectionView {
                 let agent_display_name = self
                     .agent_server_store
                     .read(cx)
-                    .agent_display_name(&ExternalAgentServerName(self.agent.name()))
-                    .unwrap_or_else(|| self.agent.name());
+                    .agent_display_name(&ExternalAgentServerName(self.agent_server.name()))
+                    .unwrap_or_else(|| self.agent_server.name());
 
                 if let Some(active) = self.active_thread() {
                     let new_placeholder =
@@ -1870,8 +1875,8 @@ impl ConnectionView {
         let agent_display_name = self
             .agent_server_store
             .read(cx)
-            .agent_display_name(&ExternalAgentServerName(self.agent.name()))
-            .unwrap_or_else(|| self.agent.name());
+            .agent_display_name(&ExternalAgentServerName(self.agent_server.name()))
+            .unwrap_or_else(|| self.agent_server.name());
 
         let show_fallback_description = auth_methods.len() > 1
             && configuration_view.is_none()
@@ -2032,7 +2037,7 @@ impl ConnectionView {
             LoadError::Other(_) => "other",
         };
 
-        let agent_name = self.agent.name();
+        let agent_name = self.agent_server.name();
 
         telemetry::event!(
             "Agent Panel Error Shown",
@@ -2091,7 +2096,7 @@ impl ConnectionView {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let (heading_label, description_label) = (
-            format!("Upgrade {} to work with Zed", self.agent.name()),
+            format!("Upgrade {} to work with Zed", self.agent_server.name()),
             if version.is_empty() {
                 format!(
                     "Currently using {}, which does not report a valid --version",
@@ -2211,7 +2216,7 @@ impl ConnectionView {
         let needed_count = self.queued_messages_len(cx);
         let queued_messages = self.queued_message_contents(cx);
 
-        let agent_name = self.agent.name();
+        let agent_name = self.agent_server.name();
         let workspace = self.workspace.clone();
         let project = self.project.downgrade();
         let Some(connected) = self.as_connected() else {
@@ -2390,7 +2395,7 @@ impl ConnectionView {
         }
 
         // TODO: Change this once we have title summarization for external agents.
-        let title = self.agent.name();
+        let title = self.agent_server.name();
 
         match settings.notify_when_agent_waiting {
             NotifyWhenAgentWaiting::PrimaryScreen => {
@@ -2579,7 +2584,7 @@ impl ConnectionView {
                 .unwrap_or_else(|| SharedString::from("The model"))
         } else {
             // ACP agent - use the agent name (e.g., "Claude Agent", "Gemini CLI")
-            self.agent.name()
+            self.agent_server.name()
         }
     }
 
@@ -2590,7 +2595,7 @@ impl ConnectionView {
     }
 
     pub(crate) fn reauthenticate(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let agent_name = self.agent.name();
+        let agent_name = self.agent_server.name();
         if let Some(active) = self.active_thread() {
             active.update(cx, |active, cx| active.clear_thread_error(cx));
         }
@@ -2918,7 +2923,7 @@ pub(crate) mod tests {
                 ConnectionView::new(
                     Rc::new(StubAgentServer::default_response()),
                     connection_store,
-                    ExternalAgent::Custom {
+                    Agent::Custom {
                         name: "Test".into(),
                     },
                     None,
@@ -3031,7 +3036,7 @@ pub(crate) mod tests {
                 ConnectionView::new(
                     Rc::new(StubAgentServer::new(ResumeOnlyAgentConnection)),
                     connection_store,
-                    ExternalAgent::Custom {
+                    Agent::Custom {
                         name: "Test".into(),
                     },
                     Some(SessionId::new("resume-session")),
@@ -3089,7 +3094,7 @@ pub(crate) mod tests {
                 ConnectionView::new(
                     Rc::new(StubAgentServer::new(connection)),
                     connection_store,
-                    ExternalAgent::Custom {
+                    Agent::Custom {
                         name: "Test".into(),
                     },
                     Some(SessionId::new("session-1")),
@@ -3145,7 +3150,7 @@ pub(crate) mod tests {
                 ConnectionView::new(
                     Rc::new(StubAgentServer::new(connection)),
                     connection_store,
-                    ExternalAgent::Custom {
+                    Agent::Custom {
                         name: "Test".into(),
                     },
                     Some(SessionId::new("session-1")),
@@ -3201,7 +3206,7 @@ pub(crate) mod tests {
                 ConnectionView::new(
                     Rc::new(StubAgentServer::new(connection)),
                     connection_store,
-                    ExternalAgent::Custom {
+                    Agent::Custom {
                         name: "Test".into(),
                     },
                     Some(SessionId::new("session-1")),
@@ -3519,7 +3524,7 @@ pub(crate) mod tests {
                 ConnectionView::new(
                     Rc::new(agent),
                     connection_store,
-                    ExternalAgent::Custom {
+                    Agent::Custom {
                         name: "Test".into(),
                     },
                     None,
@@ -3735,7 +3740,7 @@ pub(crate) mod tests {
             cx.new(|cx| AgentConnectionStore::new(project.clone(), thread_store.clone(), cx))
         });
 
-        let agent_key = ExternalAgent::Custom {
+        let agent_key = Agent::Custom {
             name: "Test".into(),
         };
 
@@ -4486,7 +4491,7 @@ pub(crate) mod tests {
                 ConnectionView::new(
                     Rc::new(StubAgentServer::new(connection.as_ref().clone())),
                     connection_store,
-                    ExternalAgent::Custom {
+                    Agent::Custom {
                         name: "Test".into(),
                     },
                     None,
