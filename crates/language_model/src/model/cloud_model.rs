@@ -159,7 +159,7 @@ impl RefreshLlmTokenListener {
             .user_store
             .read(cx)
             .current_organization()
-            .map(|o| o.id.clone());
+            .map(|organization| organization.id.clone());
         cx.spawn(async move |this, cx| {
             llm_api_token.refresh(&client, organization_id).await?;
             this.update(cx, |_this, cx| cx.emit(LlmTokenRefreshedEvent))
