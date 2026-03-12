@@ -66,7 +66,7 @@ pub struct Lamport {
 }
 
 /// A [version vector](https://en.wikipedia.org/wiki/Version_vector).
-#[derive(Default, Hash, Eq, PartialEq)]
+#[derive(Default, Hash, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Global {
     // 4 is chosen as it is the biggest count that does not increase the size of the field itself.
     // Coincidentally, it also covers all the important non-collab replica ids.
