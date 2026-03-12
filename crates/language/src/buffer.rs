@@ -2303,6 +2303,88 @@ impl Buffer {
         self.edit([(offset..len, "\n")], None, cx);
     }
 
+    /// Like [`remove_trailing_whitespace`](Self::remove_trailing_whitespace), but only removes
+    /// trailing whitespace on lines whose row falls within one of the given `modified_rows` ranges.
+    pub fn remove_trailing_whitespace_in_ranges(
+        &self,
+        modified_rows: &[Range<u32>],
+        cx: &App,
+    ) -> Task<Diff> {
+        let old_text = self.as_rope().clone();
+        let line_ending = self.line_ending();
+        let base_version = self.version();
+        let modified_rows = modified_rows.to_vec();
+        cx.background_spawn(async move {
+            let all_ranges = trailing_whitespace_ranges(&old_text);
+            let empty = Arc::<str>::from("");
+            let edits = all_ranges
+                .into_iter()
+                .filter(|range| {
+                    let row = old_text.offset_to_point(range.start).row;
+                    modified_rows.iter().any(|modified| modified.contains(&row))
+                })
+                .map(|range| (range, empty.clone()))
+                .collect();
+            Diff {
+                base_version,
+                line_ending,
+                edits,
+            }
+        })
+    }
+
+    /// Like [`ensure_final_newline`](Self::ensure_final_newline), but only applies the fix when
+    /// the last line's row falls within one of the given `modified_rows` ranges. Returns an empty
+    /// [`Diff`] when the last line is not in any modified range.
+    pub fn ensure_final_newline_in_range(
+        &self,
+        modified_rows: &[Range<u32>],
+        cx: &App,
+    ) -> Task<Diff> {
+        let len = self.len();
+        let line_ending = self.line_ending();
+        let base_version = self.version();
+        let last_row = self.max_point().row;
+
+        let last_row_is_modified = modified_rows.iter().any(|r| r.contains(&last_row));
+        if len == 0 || !last_row_is_modified {
+            return Task::ready(Diff {
+                base_version,
+                line_ending,
+                edits: Vec::new(),
+            });
+        }
+
+        let old_text = self.as_rope().clone();
+        cx.background_spawn(async move {
+            let mut offset = len;
+            for chunk in old_text.reversed_chunks_in_range(0..len) {
+                let non_whitespace_len = chunk
+                    .trim_end_matches(|c: char| c.is_ascii_whitespace())
+                    .len();
+                offset -= chunk.len();
+                offset += non_whitespace_len;
+                if non_whitespace_len != 0 {
+                    if offset == len - 1 && chunk.get(non_whitespace_len..) == Some("\n") {
+                        // Buffer already ends with exactly one newline.
+                        return Diff {
+                            base_version,
+                            line_ending,
+                            edits: Vec::new(),
+                        };
+                    }
+                    break;
+                }
+            }
+            let newline: Arc<str> = Arc::from("\n");
+            Diff {
+                base_version,
+                line_ending,
+                edits: vec![(offset..len, newline)],
+            }
+        })
+    }
+
     /// Applies a diff to the buffer. If the buffer has changed since the given diff was
     /// calculated, then adjust the diff to account for those changes, and discard any
     /// parts of the diff that conflict with those changes.

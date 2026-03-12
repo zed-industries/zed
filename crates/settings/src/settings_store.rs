@@ -1985,6 +1985,107 @@ mod tests {
             .unindent(),
             cx,
         );
+        // formatOnSaveMode: modificationsIfAvailable
+        check_vscode_import(
+            &mut store,
+            r#"{
+            }
+            "#
+            .unindent(),
+            r#"{ "editor.formatOnSaveMode": "modificationsIfAvailable" }"#.to_owned(),
+            r#"{
+              "base_keymap": "VSCode",
+              "format_on_save": "modificationsIfAvailable"
+            }
+            "#
+            .unindent(),
+            cx,
+        );
+
+        // formatOnSaveMode: modifications
+        check_vscode_import(
+            &mut store,
+            r#"{
+            }
+            "#
+            .unindent(),
+            r#"{ "editor.formatOnSaveMode": "modifications" }"#.to_owned(),
+            r#"{
+              "base_keymap": "VSCode",
+              "format_on_save": "modifications"
+            }
+            "#
+            .unindent(),
+            cx,
+        );
+
+        // formatOnSaveMode: file
+        check_vscode_import(
+            &mut store,
+            r#"{
+            }
+            "#
+            .unindent(),
+            r#"{ "editor.formatOnSaveMode": "file" }"#.to_owned(),
+            r#"{
+              "base_keymap": "VSCode",
+              "format_on_save": "on"
+            }
+            "#
+            .unindent(),
+            cx,
+        );
+
+        // formatOnSaveMode: file with formatOnSave: true (mode takes precedence)
+        check_vscode_import(
+            &mut store,
+            r#"{
+            }
+            "#
+            .unindent(),
+            r#"{ "editor.formatOnSaveMode": "file", "editor.formatOnSave": true }"#.to_owned(),
+            r#"{
+              "base_keymap": "VSCode",
+              "format_on_save": "on"
+            }
+            "#
+            .unindent(),
+            cx,
+        );
+
+        // formatOnSaveMode not set, formatOnSave: true
+        check_vscode_import(
+            &mut store,
+            r#"{
+            }
+            "#
+            .unindent(),
+            r#"{ "editor.formatOnSave": true }"#.to_owned(),
+            r#"{
+              "base_keymap": "VSCode",
+              "format_on_save": "on"
+            }
+            "#
+            .unindent(),
+            cx,
+        );
+
+        // formatOnSaveMode not set, formatOnSave: false
+        check_vscode_import(
+            &mut store,
+            r#"{
+            }
+            "#
+            .unindent(),
+            r#"{ "editor.formatOnSave": false }"#.to_owned(),
+            r#"{
+              "base_keymap": "VSCode",
+              "format_on_save": "off"
+            }
+            "#
+            .unindent(),
+            cx,
+        );
     }
 
     #[track_caller]
