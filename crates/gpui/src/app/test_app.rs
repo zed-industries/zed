@@ -552,6 +552,9 @@ mod tests {
         window.read(|counter, _| {
             assert_eq!(counter.count, 1);
         });
+
+        drop(window);
+        app.update(|cx| cx.shutdown());
     }
 
     #[test]
