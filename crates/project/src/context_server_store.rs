@@ -571,9 +571,10 @@ impl ContextServerStore {
     pub fn start_server(&mut self, server: Arc<ContextServer>, cx: &mut Context<Self>) {
         cx.spawn(async move |this, cx| {
             let this = this.upgrade().context("Context server store dropped")?;
+            let id = server.id();
             let settings = this
                 .update(cx, |this, _| {
-                    this.context_server_settings.get(&server.id().0).cloned()
+                    this.context_server_settings.get(&id.0).cloned()
                 })
                 .context("Failed to get context server settings")?;
 
@@ -586,7 +587,7 @@ impl ContextServerStore {
             });
             let configuration = ContextServerConfiguration::from_settings(
                 settings,
-                server.id(),
+                id.clone(),
                 registry,
                 worktree_store,
                 cx,
@@ -594,9 +595,11 @@ impl ContextServerStore {
             .await
             .context("Failed to create context server configuration")?;
 
-            this.update(cx, |this, cx| {
-                this.run_server(server, Arc::new(configuration), cx)
-            });
+            let config = Arc::new(configuration);
+            let (new_server, config) =
+                Self::create_context_server(this.downgrade(), id.clone(), config, cx).await?;
+
+            this.update(cx, |this, cx| this.run_server(new_server, config, cx));
             Ok(())
         })
         .detach_and_log_err(cx);
