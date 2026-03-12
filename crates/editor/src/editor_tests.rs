@@ -5,6 +5,7 @@ use crate::{
     edit_prediction_tests::FakeEditPredictionDelegate,
     element::StickyHeader,
     linked_editing_ranges::LinkedEditingRanges,
+    runnables::RunnableTasks,
     scroll::{ScrollBehavior, scroll_amount::ScrollAmount},
     test::{
         assert_text_with_selections, build_editor, editor_content_with_blocks,
@@ -2312,28 +2313,37 @@ async fn test_scroll_page_up_page_down(cx: &mut TestAppContext) {
             editor.snapshot(window, cx).scroll_position(),
             gpui::Point::new(0., 0.)
         );
+
         editor.scroll_screen(&ScrollAmount::Page(1.), window, cx);
+        editor.flush_scroll_animation(window, cx);
         assert_eq!(
             editor.snapshot(window, cx).scroll_position(),
             gpui::Point::new(0., 3.)
         );
+
         editor.scroll_screen(&ScrollAmount::Page(1.), window, cx);
+        editor.flush_scroll_animation(window, cx);
         assert_eq!(
             editor.snapshot(window, cx).scroll_position(),
             gpui::Point::new(0., 6.)
         );
+
         editor.scroll_screen(&ScrollAmount::Page(-1.), window, cx);
+        editor.flush_scroll_animation(window, cx);
         assert_eq!(
             editor.snapshot(window, cx).scroll_position(),
             gpui::Point::new(0., 3.)
         );
 
         editor.scroll_screen(&ScrollAmount::Page(-0.5), window, cx);
+        editor.flush_scroll_animation(window, cx);
         assert_eq!(
             editor.snapshot(window, cx).scroll_position(),
             gpui::Point::new(0., 1.)
         );
+
         editor.scroll_screen(&ScrollAmount::Page(0.5), window, cx);
+        editor.flush_scroll_animation(window, cx);
         assert_eq!(
             editor.snapshot(window, cx).scroll_position(),
             gpui::Point::new(0., 3.)
@@ -24409,20 +24419,24 @@ async fn test_find_enclosing_node_with_task(cx: &mut TestAppContext) {
 
     editor.update_in(cx, |editor, window, cx| {
         let snapshot = editor.buffer().read(cx).snapshot(cx);
-        editor.tasks.insert(
-            (buffer.read(cx).remote_id(), 3),
+        editor.runnables.insert(
+            buffer.read(cx).remote_id(),
+            3,
+            buffer.read(cx).version(),
             RunnableTasks {
-                templates: vec![],
+                templates: Vec::new(),
                 offset: snapshot.anchor_before(MultiBufferOffset(43)),
                 column: 0,
                 extra_variables: HashMap::default(),
                 context_range: BufferOffset(43)..BufferOffset(85),
             },
         );
-        editor.tasks.insert(
-            (buffer.read(cx).remote_id(), 8),
+        editor.runnables.insert(
+            buffer.read(cx).remote_id(),
+            8,
+            buffer.read(cx).version(),
             RunnableTasks {
-                templates: vec![],
+                templates: Vec::new(),
                 offset: snapshot.anchor_before(MultiBufferOffset(86)),
                 column: 0,
                 extra_variables: HashMap::default(),

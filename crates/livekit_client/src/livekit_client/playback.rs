@@ -29,7 +29,7 @@ use std::cell::RefCell;
 use std::sync::Weak;
 use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
 use std::time::Duration;
-use std::{borrow::Cow, collections::VecDeque, sync::Arc, thread};
+use std::{borrow::Cow, collections::VecDeque, sync::Arc};
 use util::{ResultExt as _, maybe};
 
 mod source;
@@ -111,7 +111,7 @@ impl AudioStack {
             source.num_channels as i32,
         );
 
-        let receive_task = self.executor.spawn({
+        let receive_task = self.executor.spawn_with_priority(Priority::RealtimeAudio, {
             let source = source.clone();
             async move {
                 while let Some(frame) = stream.next().await {
@@ -139,8 +139,10 @@ impl AudioStack {
         let task = Arc::new(self.executor.spawn({
             let apm = self.apm.clone();
             let mixer = self.mixer.clone();
+            let executor = self.executor.clone();
             async move {
                 Self::play_output(
+                    executor,
                     apm,
                     mixer,
                     LEGACY_SAMPLE_RATE.get(),
@@ -200,7 +202,7 @@ impl AudioStack {
         let apm = self.apm.clone();
 
         let (frame_tx, mut frame_rx) = futures::channel::mpsc::unbounded();
-        let transmit_task = self.executor.spawn({
+        let transmit_task = self.executor.spawn_with_priority(Priority::RealtimeAudio, {
             async move {
                 while let Some(frame) = frame_rx.next().await {
                     source.capture_frame(&frame).await.log_err();
@@ -225,8 +227,10 @@ impl AudioStack {
             let input_audio_device =
                 AudioSettings::try_read_global(cx, |settings| settings.input_audio_device.clone())
                     .flatten();
+            let executor = self.executor.clone();
             self.executor.spawn(async move {
                 Self::capture_input(
+                    executor,
                     apm,
                     frame_tx,
                     LEGACY_SAMPLE_RATE.get(),
@@ -250,10 +254,11 @@ impl AudioStack {
     }
 
     async fn play_output(
+        executor: BackgroundExecutor,
         apm: Arc<Mutex<apm::AudioProcessingModule>>,
         mixer: Arc<Mutex<audio_mixer::AudioMixer>>,
         sample_rate: u32,
-        num_channels: u32,
+        _num_channels: u32,
         output_audio_device: Option<DeviceId>,
     ) -> Result<()> {
         // Prevent App Nap from throttling audio playback on macOS.
@@ -265,15 +270,15 @@ impl AudioStack {
             let mut device_change_listener = DeviceChangeListener::new(false)?;
             let (output_device, output_config) =
                 crate::default_device(false, output_audio_device.as_ref())?;
+            info!("Output config: {output_config:?}");
             let (end_on_drop_tx, end_on_drop_rx) = std::sync::mpsc::channel::<()>();
             let mixer = mixer.clone();
             let apm = apm.clone();
             let mut resampler = audio_resampler::AudioResampler::default();
             let mut buf = Vec::new();
 
-            thread::Builder::new()
-                .name("AudioPlayback".to_owned())
-                .spawn(move || {
+            executor
+                .spawn_with_priority(Priority::RealtimeAudio, async move {
                     let output_stream = output_device.build_output_stream(
                         &output_config.config(),
                         {
@@ -296,7 +301,12 @@ impl AudioStack {
                                     let sampled = resampler.remix_and_resample(
                                         mixed,
                                         sample_rate / 100,
-                                        num_channels,
+                                        // We need to assume output number of channels as otherwise we will
+                                        // crash in process_reverse_stream otherwise as livekit's audio resampler
+                                        // does not seem to support non-matching channel counts.
+                                        // NOTE: you can verify this by debug printing buf.len() after this stage.
+                                        // For 2->4 channel upmix, we should see buf.len=1920, buf we get only 960.
+                                        output_config.channels() as u32,
                                         sample_rate,
                                         output_config.channels() as u32,
                                         output_config.sample_rate(),
@@ -324,7 +334,7 @@ impl AudioStack {
                     // Block forever to keep the output stream alive
                     end_on_drop_rx.recv().ok();
                 })
-                .unwrap();
+                .detach();
 
             device_change_listener.next().await;
             drop(end_on_drop_tx)
@@ -332,6 +342,7 @@ impl AudioStack {
     }
 
     async fn capture_input(
+        executor: BackgroundExecutor,
         apm: Arc<Mutex<apm::AudioProcessingModule>>,
         frame_tx: UnboundedSender<AudioFrame<'static>>,
         sample_rate: u32,
@@ -346,9 +357,8 @@ impl AudioStack {
             let frame_tx = frame_tx.clone();
             let mut resampler = audio_resampler::AudioResampler::default();
 
-            thread::Builder::new()
-                .name("AudioCapture".to_owned())
-                .spawn(move || {
+            executor
+                .spawn_with_priority(Priority::RealtimeAudio, async move {
                     maybe!({
                         if let Some(desc) = device.description().ok() {
                             log::info!("Using microphone: {}", desc.name())
@@ -420,7 +430,7 @@ impl AudioStack {
                     })
                     .log_err();
                 })
-                .unwrap();
+                .detach();
 
             device_change_listener.next().await;
             drop(end_on_drop_tx)

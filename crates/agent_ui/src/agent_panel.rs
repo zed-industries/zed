@@ -13,6 +13,7 @@ use acp_thread::{AcpThread, MentionUri, ThreadStatus};
 use agent::{ContextServerRegistry, SharedThread, ThreadStore};
 use agent_client_protocol as acp;
 use agent_servers::AgentServer;
+use collections::HashSet;
 use db::kvp::{Dismissable, KEY_VALUE_STORE};
 use itertools::Itertools;
 use project::{
@@ -23,9 +24,13 @@ use serde::{Deserialize, Serialize};
 use settings::{LanguageModelProviderSetting, LanguageModelSelection};
 
 use feature_flags::{AgentV2FeatureFlag, FeatureFlagAppExt as _};
-use zed_actions::agent::{OpenClaudeAgentOnboardingModal, ReauthenticateAgent, ReviewBranchDiff};
+use zed_actions::agent::{
+    ConflictContent, OpenClaudeAgentOnboardingModal, ReauthenticateAgent,
+    ResolveConflictedFilesWithAgent, ResolveConflictsWithAgent, ReviewBranchDiff,
+};
 
 use crate::ManageProfiles;
+use crate::agent_connection_store::AgentConnectionStore;
 use crate::ui::{AcpOnboardingModal, ClaudeCodeOnboardingModal};
 use crate::{
     AddContextServer, AgentDiffPane, ConnectionView, CopyThreadToClipboard, Follow,
@@ -43,7 +48,7 @@ use crate::{
     NewNativeAgentThreadFromSummary,
 };
 use crate::{
-    ExpandMessageEditor, ThreadHistory, ThreadHistoryEvent,
+    ExpandMessageEditor, ThreadHistory, ThreadHistoryView, ThreadHistoryViewEvent,
     text_thread_history::{TextThreadHistory, TextThreadHistoryEvent},
 };
 use agent_settings::AgentSettings;
@@ -60,9 +65,10 @@ use extension_host::ExtensionStore;
 use fs::Fs;
 use git::repository::validate_worktree_directory;
 use gpui::{
-    Action, Animation, AnimationExt, AnyElement, App, AsyncWindowContext, ClipboardItem, Corner,
-    DismissEvent, Entity, EventEmitter, ExternalPaths, FocusHandle, Focusable, KeyContext, Pixels,
-    Subscription, Task, UpdateGlobal, WeakEntity, prelude::*, pulsating_between,
+    Action, Animation, AnimationExt, AnyElement, AnyView, App, AsyncWindowContext, ClipboardItem,
+    Corner, DismissEvent, DragMoveEvent, Entity, EventEmitter, ExternalPaths, FocusHandle,
+    Focusable, KeyContext, MouseButton, Pixels, Subscription, Task, UpdateGlobal, WeakEntity,
+    deferred, prelude::*, pulsating_between,
 };
 use language::LanguageRegistry;
 use language_model::{ConfigurationError, LanguageModelRegistry};
@@ -74,15 +80,17 @@ use search::{BufferSearchBar, buffer_search};
 use settings::{Settings, update_settings_file};
 use theme::ThemeSettings;
 use ui::{
-    Button, ButtonLike, Callout, ContextMenu, ContextMenuEntry, DocumentationSide, KeyBinding,
-    PopoverMenu, PopoverMenuHandle, SpinnerLabel, Tab, TintColor, Tooltip, prelude::*,
+    Button, ButtonLike, Callout, ContextMenu, ContextMenuEntry, DocumentationSide, Indicator,
+    KeyBinding, PopoverMenu, PopoverMenuHandle, SpinnerLabel, Tab, TintColor, Tooltip, prelude::*,
     utils::WithRemSize,
 };
 use util::ResultExt as _;
 use workspace::{
-    CollaboratorId, DraggedSelection, DraggedTab, ToggleZoom, ToolbarItemView, Workspace,
-    WorkspaceId,
+    CollaboratorId, DraggedSelection, DraggedSidebar, DraggedTab, FocusWorkspaceSidebar,
+    MultiWorkspace, SIDEBAR_RESIZE_HANDLE_SIZE, ToggleWorkspaceSidebar, ToggleZoom,
+    ToolbarItemView, Workspace, WorkspaceId,
     dock::{DockPosition, Panel, PanelEvent},
+    multi_workspace_enabled,
 };
 use zed_actions::{
     DecreaseBufferFontSize, IncreaseBufferFontSize, ResetBufferFontSize,
@@ -93,6 +101,55 @@ use zed_actions::{
 const AGENT_PANEL_KEY: &str = "agent_panel";
 const RECENTLY_UPDATED_MENU_LIMIT: usize = 6;
 const DEFAULT_THREAD_TITLE: &str = "New Thread";
+
+#[derive(Default)]
+struct SidebarsByWindow(
+    collections::HashMap<gpui::WindowId, gpui::WeakEntity<crate::sidebar::Sidebar>>,
+);
+
+impl gpui::Global for SidebarsByWindow {}
+
+pub(crate) fn sidebar_is_open(window: &Window, cx: &App) -> bool {
+    if !multi_workspace_enabled(cx) {
+        return false;
+    }
+    let window_id = window.window_handle().window_id();
+    cx.try_global::<SidebarsByWindow>()
+        .and_then(|sidebars| sidebars.0.get(&window_id)?.upgrade())
+        .is_some_and(|sidebar| sidebar.read(cx).is_open())
+}
+
+fn find_or_create_sidebar_for_window(
+    window: &mut Window,
+    cx: &mut App,
+) -> Option<Entity<crate::sidebar::Sidebar>> {
+    let window_id = window.window_handle().window_id();
+    let multi_workspace = window.root::<MultiWorkspace>().flatten()?;
+
+    if !cx.has_global::<SidebarsByWindow>() {
+        cx.set_global(SidebarsByWindow::default());
+    }
+
+    cx.global_mut::<SidebarsByWindow>()
+        .0
+        .retain(|_, weak| weak.upgrade().is_some());
+
+    let existing = cx
+        .global::<SidebarsByWindow>()
+        .0
+        .get(&window_id)
+        .and_then(|weak| weak.upgrade());
+
+    if let Some(sidebar) = existing {
+        return Some(sidebar);
+    }
+
+    let sidebar = cx.new(|cx| crate::sidebar::Sidebar::new(multi_workspace, window, cx));
+    cx.global_mut::<SidebarsByWindow>()
+        .0
+        .insert(window_id, sidebar.downgrade());
+    Some(sidebar)
+}
 
 fn read_serialized_panel(workspace_id: workspace::WorkspaceId) -> Option<SerializedAgentPanel> {
     let scope = KEY_VALUE_STORE.scoped(AGENT_PANEL_KEY);
@@ -358,16 +415,210 @@ pub fn init(cx: &mut App) {
                         );
                     });
                 })
+                .register_action(
+                    |workspace, action: &ResolveConflictsWithAgent, window, cx| {
+                        let Some(panel) = workspace.panel::<AgentPanel>(cx) else {
+                            return;
+                        };
+
+                        let content_blocks = build_conflict_resolution_prompt(&action.conflicts);
+
+                        workspace.focus_panel::<AgentPanel>(window, cx);
+
+                        panel.update(cx, |panel, cx| {
+                            panel.external_thread(
+                                None,
+                                None,
+                                None,
+                                None,
+                                Some(AgentInitialContent::ContentBlock {
+                                    blocks: content_blocks,
+                                    auto_submit: true,
+                                }),
+                                true,
+                                window,
+                                cx,
+                            );
+                        });
+                    },
+                )
+                .register_action(
+                    |workspace, action: &ResolveConflictedFilesWithAgent, window, cx| {
+                        let Some(panel) = workspace.panel::<AgentPanel>(cx) else {
+                            return;
+                        };
+
+                        let content_blocks =
+                            build_conflicted_files_resolution_prompt(&action.conflicted_file_paths);
+
+                        workspace.focus_panel::<AgentPanel>(window, cx);
+
+                        panel.update(cx, |panel, cx| {
+                            panel.external_thread(
+                                None,
+                                None,
+                                None,
+                                None,
+                                Some(AgentInitialContent::ContentBlock {
+                                    blocks: content_blocks,
+                                    auto_submit: true,
+                                }),
+                                true,
+                                window,
+                                cx,
+                            );
+                        });
+                    },
+                )
                 .register_action(|workspace, action: &StartThreadIn, _window, cx| {
                     if let Some(panel) = workspace.panel::<AgentPanel>(cx) {
                         panel.update(cx, |panel, cx| {
                             panel.set_start_thread_in(action, cx);
                         });
                     }
+                })
+                .register_action(|workspace, _: &ToggleWorkspaceSidebar, window, cx| {
+                    if !multi_workspace_enabled(cx) {
+                        return;
+                    }
+                    if let Some(panel) = workspace.panel::<AgentPanel>(cx) {
+                        if let Some(sidebar) = panel.read(cx).sidebar.clone() {
+                            let was_open = sidebar.read(cx).is_open();
+                            sidebar.update(cx, |sidebar, cx| {
+                                sidebar.toggle(window, cx);
+                            });
+                            // When closing the sidebar, restore focus to the active pane
+                            // to avoid "zombie focus" on the now-hidden sidebar elements
+                            if was_open {
+                                let active_pane = workspace.active_pane().clone();
+                                let pane_focus = active_pane.read(cx).focus_handle(cx);
+                                window.focus(&pane_focus, cx);
+                            }
+                        }
+                    }
+                })
+                .register_action(|workspace, _: &FocusWorkspaceSidebar, window, cx| {
+                    if !multi_workspace_enabled(cx) {
+                        return;
+                    }
+                    if let Some(panel) = workspace.panel::<AgentPanel>(cx) {
+                        if let Some(sidebar) = panel.read(cx).sidebar.clone() {
+                            sidebar.update(cx, |sidebar, cx| {
+                                sidebar.focus_or_unfocus(workspace, window, cx);
+                            });
+                        }
+                    }
                 });
         },
     )
     .detach();
+}
+
+fn conflict_resource_block(conflict: &ConflictContent) -> acp::ContentBlock {
+    let mention_uri = MentionUri::MergeConflict {
+        file_path: conflict.file_path.clone(),
+    };
+    acp::ContentBlock::Resource(acp::EmbeddedResource::new(
+        acp::EmbeddedResourceResource::TextResourceContents(acp::TextResourceContents::new(
+            conflict.conflict_text.clone(),
+            mention_uri.to_uri().to_string(),
+        )),
+    ))
+}
+
+fn build_conflict_resolution_prompt(conflicts: &[ConflictContent]) -> Vec<acp::ContentBlock> {
+    if conflicts.is_empty() {
+        return Vec::new();
+    }
+
+    let mut blocks = Vec::new();
+
+    if conflicts.len() == 1 {
+        let conflict = &conflicts[0];
+
+        blocks.push(acp::ContentBlock::Text(acp::TextContent::new(
+            "Please resolve the following merge conflict in ",
+        )));
+        let mention = MentionUri::File {
+            abs_path: PathBuf::from(conflict.file_path.clone()),
+        };
+        blocks.push(acp::ContentBlock::ResourceLink(acp::ResourceLink::new(
+            mention.name(),
+            mention.to_uri(),
+        )));
+
+        blocks.push(acp::ContentBlock::Text(acp::TextContent::new(
+            indoc::formatdoc!(
+                "\nThe conflict is between branch `{ours}` (ours) and `{theirs}` (theirs).
+
+                Analyze both versions carefully and resolve the conflict by editing \
+                the file directly. Choose the resolution that best preserves the intent \
+                of both changes, or combine them if appropriate.
+
+                ",
+                ours = conflict.ours_branch_name,
+                theirs = conflict.theirs_branch_name,
+            ),
+        )));
+    } else {
+        let n = conflicts.len();
+        let unique_files: HashSet<&str> = conflicts.iter().map(|c| c.file_path.as_str()).collect();
+        let ours = &conflicts[0].ours_branch_name;
+        let theirs = &conflicts[0].theirs_branch_name;
+        blocks.push(acp::ContentBlock::Text(acp::TextContent::new(
+            indoc::formatdoc!(
+                "Please resolve all {n} merge conflicts below.
+
+                The conflicts are between branch `{ours}` (ours) and `{theirs}` (theirs).
+
+                For each conflict, analyze both versions carefully and resolve them \
+                by editing the file{suffix} directly. Choose resolutions that best preserve \
+                the intent of both changes, or combine them if appropriate.
+
+                ",
+                suffix = if unique_files.len() > 1 { "s" } else { "" },
+            ),
+        )));
+    }
+
+    for conflict in conflicts {
+        blocks.push(conflict_resource_block(conflict));
+    }
+
+    blocks
+}
+
+fn build_conflicted_files_resolution_prompt(
+    conflicted_file_paths: &[String],
+) -> Vec<acp::ContentBlock> {
+    if conflicted_file_paths.is_empty() {
+        return Vec::new();
+    }
+
+    let instruction = indoc::indoc!(
+        "The following files have unresolved merge conflicts. Please open each \
+         file, find the conflict markers (`<<<<<<<` / `=======` / `>>>>>>>`), \
+         and resolve every conflict by editing the files directly.
+
+         Choose resolutions that best preserve the intent of both changes, \
+         or combine them if appropriate.
+
+         Files with conflicts:
+         ",
+    );
+
+    let mut content = vec![acp::ContentBlock::Text(acp::TextContent::new(instruction))];
+    for path in conflicted_file_paths {
+        let mention = MentionUri::File {
+            abs_path: PathBuf::from(path),
+        };
+        content.push(acp::ContentBlock::ResourceLink(acp::ResourceLink::new(
+            mention.name(),
+            mention.to_uri(),
+        )));
+        content.push(acp::ContentBlock::Text(acp::TextContent::new("\n")));
+    }
+    content
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -620,10 +871,12 @@ pub struct AgentPanel {
     fs: Arc<dyn Fs>,
     language_registry: Arc<LanguageRegistry>,
     acp_history: Entity<ThreadHistory>,
+    acp_history_view: Entity<ThreadHistoryView>,
     text_thread_history: Entity<TextThreadHistory>,
     thread_store: Entity<ThreadStore>,
     text_thread_store: Entity<assistant_text_thread::TextThreadStore>,
     prompt_store: Option<Entity<PromptStore>>,
+    connection_store: Entity<AgentConnectionStore>,
     context_server_registry: Entity<ContextServerRegistry>,
     configuration: Option<Entity<AgentConfiguration>>,
     configuration_subscription: Option<Subscription>,
@@ -652,6 +905,7 @@ pub struct AgentPanel {
     last_configuration_error_telemetry: Option<String>,
     on_boarding_upsell_dismissed: AtomicBool,
     _active_view_observation: Option<Subscription>,
+    pub(crate) sidebar: Option<Entity<crate::sidebar::Sidebar>>,
 }
 
 impl AgentPanel {
@@ -823,19 +1077,19 @@ impl AgentPanel {
         let client = workspace.client().clone();
         let workspace_id = workspace.database_id();
         let workspace = workspace.weak_handle();
-
         let context_server_registry =
             cx.new(|cx| ContextServerRegistry::new(project.read(cx).context_server_store(), cx));
 
         let thread_store = ThreadStore::global(cx);
-        let acp_history = cx.new(|cx| ThreadHistory::new(None, window, cx));
+        let acp_history = cx.new(|cx| ThreadHistory::new(None, cx));
+        let acp_history_view = cx.new(|cx| ThreadHistoryView::new(acp_history.clone(), window, cx));
         let text_thread_history =
             cx.new(|cx| TextThreadHistory::new(text_thread_store.clone(), window, cx));
         cx.subscribe_in(
-            &acp_history,
+            &acp_history_view,
             window,
             |this, _, event, window, cx| match event {
-                ThreadHistoryEvent::Open(thread) => {
+                ThreadHistoryViewEvent::Open(thread) => {
                     this.load_agent_thread(
                         thread.session_id.clone(),
                         thread.cwd.clone(),
@@ -950,6 +1204,7 @@ impl AgentPanel {
             language_registry,
             text_thread_store,
             prompt_store,
+            connection_store: cx.new(|cx| AgentConnectionStore::new(project.clone(), cx)),
             configuration: None,
             configuration_subscription: None,
             focus_handle: cx.focus_handle(),
@@ -968,6 +1223,7 @@ impl AgentPanel {
             pending_serialization: None,
             onboarding,
             acp_history,
+            acp_history_view,
             text_thread_history,
             thread_store,
             selected_agent: AgentType::default(),
@@ -980,10 +1236,17 @@ impl AgentPanel {
             last_configuration_error_telemetry: None,
             on_boarding_upsell_dismissed: AtomicBool::new(OnboardingUpsell::dismissed()),
             _active_view_observation: None,
+            sidebar: None,
         };
 
         // Initial sync of agent servers from extensions
         panel.sync_agent_servers_from_extensions(cx);
+
+        cx.defer_in(window, move |this, window, cx| {
+            this.sidebar = find_or_create_sidebar_for_window(window, cx);
+            cx.notify();
+        });
+
         panel
     }
 
@@ -2229,7 +2492,7 @@ impl AgentPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let selected_agent = AgentType::from(ext_agent);
+        let selected_agent = AgentType::from(ext_agent.clone());
         if self.selected_agent != selected_agent {
             self.selected_agent = selected_agent;
             self.serialize(cx);
@@ -2240,9 +2503,13 @@ impl AgentPanel {
             .is_some()
             .then(|| self.thread_store.clone());
 
+        let connection_store = self.connection_store.clone();
+
         let server_view = cx.new(|cx| {
             crate::ConnectionView::new(
                 server,
+                connection_store,
+                ext_agent,
                 resume_session_id,
                 cwd,
                 title,
@@ -2790,7 +3057,7 @@ impl Focusable for AgentPanel {
             ActiveView::Uninitialized => self.focus_handle.clone(),
             ActiveView::AgentThread { server_view, .. } => server_view.focus_handle(cx),
             ActiveView::History { kind } => match kind {
-                HistoryKind::AgentThreads => self.acp_history.focus_handle(cx),
+                HistoryKind::AgentThreads => self.acp_history_view.focus_handle(cx),
                 HistoryKind::TextThreads => self.text_thread_history.focus_handle(cx),
             },
             ActiveView::TextThread {
@@ -3353,9 +3620,130 @@ impl AgentPanel {
             })
     }
 
+    fn sidebar_info(&self, cx: &App) -> Option<(AnyView, Pixels, bool)> {
+        if !multi_workspace_enabled(cx) {
+            return None;
+        }
+        let sidebar = self.sidebar.as_ref()?;
+        let is_open = sidebar.read(cx).is_open();
+        let width = sidebar.read(cx).width(cx);
+        let view: AnyView = sidebar.clone().into();
+        Some((view, width, is_open))
+    }
+
+    fn render_sidebar_toggle(&self, docked_right: bool, cx: &Context<Self>) -> Option<AnyElement> {
+        if !multi_workspace_enabled(cx) {
+            return None;
+        }
+        let sidebar = self.sidebar.as_ref()?;
+        let sidebar_read = sidebar.read(cx);
+        if sidebar_read.is_open() {
+            return None;
+        }
+        let has_notifications = sidebar_read.has_notifications(cx);
+
+        let icon = if docked_right {
+            IconName::ThreadsSidebarRightClosed
+        } else {
+            IconName::ThreadsSidebarLeftClosed
+        };
+
+        Some(
+            h_flex()
+                .h_full()
+                .px_1()
+                .map(|this| {
+                    if docked_right {
+                        this.border_l_1()
+                    } else {
+                        this.border_r_1()
+                    }
+                })
+                .border_color(cx.theme().colors().border_variant)
+                .child(
+                    IconButton::new("toggle-workspace-sidebar", icon)
+                        .icon_size(IconSize::Small)
+                        .when(has_notifications, |button| {
+                            button
+                                .indicator(Indicator::dot().color(Color::Accent))
+                                .indicator_border_color(Some(
+                                    cx.theme().colors().tab_bar_background,
+                                ))
+                        })
+                        .tooltip(move |_, cx| {
+                            Tooltip::for_action("Open Threads Sidebar", &ToggleWorkspaceSidebar, cx)
+                        })
+                        .on_click(|_, window, cx| {
+                            window.dispatch_action(ToggleWorkspaceSidebar.boxed_clone(), cx);
+                        }),
+                )
+                .into_any_element(),
+        )
+    }
+
+    fn render_sidebar(&self, cx: &Context<Self>) -> Option<AnyElement> {
+        let (sidebar_view, sidebar_width, is_open) = self.sidebar_info(cx)?;
+        if !is_open {
+            return None;
+        }
+
+        let docked_right = agent_panel_dock_position(cx) == DockPosition::Right;
+        let sidebar = self.sidebar.as_ref()?.downgrade();
+
+        let resize_handle = deferred(
+            div()
+                .id("sidebar-resize-handle")
+                .absolute()
+                .when(docked_right, |this| {
+                    this.left(-SIDEBAR_RESIZE_HANDLE_SIZE / 2.)
+                })
+                .when(!docked_right, |this| {
+                    this.right(-SIDEBAR_RESIZE_HANDLE_SIZE / 2.)
+                })
+                .top(px(0.))
+                .h_full()
+                .w(SIDEBAR_RESIZE_HANDLE_SIZE)
+                .cursor_col_resize()
+                .on_drag(DraggedSidebar, |dragged, _, _, cx| {
+                    cx.stop_propagation();
+                    cx.new(|_| dragged.clone())
+                })
+                .on_mouse_down(MouseButton::Left, |_, _, cx| {
+                    cx.stop_propagation();
+                })
+                .on_mouse_up(MouseButton::Left, move |event, _, cx| {
+                    if event.click_count == 2 {
+                        sidebar
+                            .update(cx, |sidebar, cx| {
+                                sidebar.set_width(None, cx);
+                            })
+                            .ok();
+                        cx.stop_propagation();
+                    }
+                })
+                .occlude(),
+        );
+
+        Some(
+            div()
+                .id("sidebar-container")
+                .relative()
+                .h_full()
+                .w(sidebar_width)
+                .flex_shrink_0()
+                .when(docked_right, |this| this.border_l_1())
+                .when(!docked_right, |this| this.border_r_1())
+                .border_color(cx.theme().colors().border)
+                .child(sidebar_view)
+                .child(resize_handle)
+                .into_any_element(),
+        )
+    }
+
     fn render_toolbar(&self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let agent_server_store = self.project.read(cx).agent_server_store().clone();
         let focus_handle = self.focus_handle(cx);
+        let docked_right = agent_panel_dock_position(cx) == DockPosition::Right;
 
         let (selected_agent_custom_icon, selected_agent_label) =
             if let AgentType::Custom { name, .. } = &self.selected_agent {
@@ -3743,7 +4131,27 @@ impl AgentPanel {
             ActiveView::History { .. } | ActiveView::Configuration
         );
 
-        let use_v2_empty_toolbar = has_v2_flag && is_empty_state && !is_in_history_or_config;
+        let is_text_thread = matches!(&self.active_view, ActiveView::TextThread { .. });
+
+        let use_v2_empty_toolbar =
+            has_v2_flag && is_empty_state && !is_in_history_or_config && !is_text_thread;
+
+        let is_sidebar_open = self
+            .sidebar
+            .as_ref()
+            .map(|s| s.read(cx).is_open())
+            .unwrap_or(false);
+
+        let base_container = h_flex()
+            .id("agent-panel-toolbar")
+            .h(Tab::container_height(cx))
+            .max_w_full()
+            .flex_none()
+            .justify_between()
+            .gap_2()
+            .bg(cx.theme().colors().tab_bar_background)
+            .border_b_1()
+            .border_color(cx.theme().colors().border);
 
         if use_v2_empty_toolbar {
             let (chevron_icon, icon_color, label_color) =
@@ -3803,38 +4211,36 @@ impl AgentPanel {
                     y: px(1.0),
                 });
 
-            h_flex()
-                .id("agent-panel-toolbar")
-                .h(Tab::container_height(cx))
-                .max_w_full()
-                .flex_none()
-                .justify_between()
-                .gap_2()
-                .bg(cx.theme().colors().tab_bar_background)
-                .border_b_1()
-                .border_color(cx.theme().colors().border)
+            base_container
                 .child(
                     h_flex()
                         .size_full()
-                        .gap(DynamicSpacing::Base04.rems(cx))
-                        .pl(DynamicSpacing::Base04.rems(cx))
+                        .gap_1()
+                        .when(is_sidebar_open || docked_right, |this| this.pl_1())
+                        .when(!docked_right, |this| {
+                            this.children(self.render_sidebar_toggle(false, cx))
+                        })
                         .child(agent_selector_menu)
                         .child(self.render_start_thread_in_selector(cx)),
                 )
                 .child(
                     h_flex()
+                        .h_full()
                         .flex_none()
-                        .gap(DynamicSpacing::Base02.rems(cx))
-                        .pl(DynamicSpacing::Base04.rems(cx))
-                        .pr(DynamicSpacing::Base06.rems(cx))
-                        .when(show_history_menu, |this| {
+                        .gap_1()
+                        .pl_1()
+                        .pr_1()
+                        .when(show_history_menu && !has_v2_flag, |this| {
                             this.child(self.render_recent_entries_menu(
                                 IconName::MenuAltTemp,
                                 Corner::TopRight,
                                 cx,
                             ))
                         })
-                        .child(self.render_panel_options_menu(window, cx)),
+                        .child(self.render_panel_options_menu(window, cx))
+                        .when(docked_right, |this| {
+                            this.children(self.render_sidebar_toggle(true, cx))
+                        }),
                 )
                 .into_any_element()
         } else {
@@ -3857,21 +4263,20 @@ impl AgentPanel {
                 .with_handle(self.new_thread_menu_handle.clone())
                 .menu(move |window, cx| new_thread_menu_builder(window, cx));
 
-            h_flex()
-                .id("agent-panel-toolbar")
-                .h(Tab::container_height(cx))
-                .max_w_full()
-                .flex_none()
-                .justify_between()
-                .gap_2()
-                .bg(cx.theme().colors().tab_bar_background)
-                .border_b_1()
-                .border_color(cx.theme().colors().border)
+            base_container
                 .child(
                     h_flex()
                         .size_full()
-                        .gap(DynamicSpacing::Base04.rems(cx))
-                        .pl(DynamicSpacing::Base04.rems(cx))
+                        .map(|this| {
+                            if is_sidebar_open || docked_right {
+                                this.pl_1().gap_1()
+                            } else {
+                                this.pl_0().gap_0p5()
+                            }
+                        })
+                        .when(!docked_right, |this| {
+                            this.children(self.render_sidebar_toggle(false, cx))
+                        })
                         .child(match &self.active_view {
                             ActiveView::History { .. } | ActiveView::Configuration => {
                                 self.render_toolbar_back_button(cx).into_any_element()
@@ -3882,19 +4287,23 @@ impl AgentPanel {
                 )
                 .child(
                     h_flex()
+                        .h_full()
                         .flex_none()
-                        .gap(DynamicSpacing::Base02.rems(cx))
-                        .pl(DynamicSpacing::Base04.rems(cx))
-                        .pr(DynamicSpacing::Base06.rems(cx))
+                        .gap_1()
+                        .pl_1()
+                        .pr_1()
                         .child(new_thread_menu)
-                        .when(show_history_menu, |this| {
+                        .when(show_history_menu && !has_v2_flag, |this| {
                             this.child(self.render_recent_entries_menu(
                                 IconName::MenuAltTemp,
                                 Corner::TopRight,
                                 cx,
                             ))
                         })
-                        .child(self.render_panel_options_menu(window, cx)),
+                        .child(self.render_panel_options_menu(window, cx))
+                        .when(docked_right, |this| {
+                            this.children(self.render_sidebar_toggle(true, cx))
+                        }),
                 )
                 .into_any_element()
         }
@@ -4395,7 +4804,7 @@ impl Render for AgentPanel {
                         .child(server_view.clone())
                         .child(self.render_drag_target(cx)),
                     ActiveView::History { kind } => match kind {
-                        HistoryKind::AgentThreads => parent.child(self.acp_history.clone()),
+                        HistoryKind::AgentThreads => parent.child(self.acp_history_view.clone()),
                         HistoryKind::TextThreads => parent.child(self.text_thread_history.clone()),
                     },
                     ActiveView::TextThread {
@@ -4434,14 +4843,44 @@ impl Render for AgentPanel {
             })
             .children(self.render_trial_end_upsell(window, cx));
 
+        let sidebar = self.render_sidebar(cx);
+        let has_sidebar = sidebar.is_some();
+        let docked_right = agent_panel_dock_position(cx) == DockPosition::Right;
+
+        let panel = h_flex()
+            .size_full()
+            .when(has_sidebar, |this| {
+                this.on_drag_move(cx.listener(
+                    move |this, e: &DragMoveEvent<DraggedSidebar>, _window, cx| {
+                        if let Some(sidebar) = &this.sidebar {
+                            let width = if docked_right {
+                                e.bounds.right() - e.event.position.x
+                            } else {
+                                e.event.position.x
+                            };
+                            sidebar.update(cx, |sidebar, cx| {
+                                sidebar.set_width(Some(width), cx);
+                            });
+                        }
+                    },
+                ))
+            })
+            .map(|this| {
+                if docked_right {
+                    this.child(content).children(sidebar)
+                } else {
+                    this.children(sidebar).child(content)
+                }
+            });
+
         match self.active_view.which_font_size_used() {
             WhichFontSize::AgentFont => {
                 WithRemSize::new(ThemeSettings::get_global(cx).agent_ui_font_size(cx))
                     .size_full()
-                    .child(content)
+                    .child(panel)
                     .into_any()
             }
-            _ => content.into_any(),
+            _ => panel.into_any(),
         }
     }
 }
@@ -4918,6 +5357,286 @@ mod tests {
         });
 
         cx.run_until_parked();
+    }
+
+    /// Extracts the text from a Text content block, panicking if it's not Text.
+    fn expect_text_block(block: &acp::ContentBlock) -> &str {
+        match block {
+            acp::ContentBlock::Text(t) => t.text.as_str(),
+            other => panic!("expected Text block, got {:?}", other),
+        }
+    }
+
+    /// Extracts the (text_content, uri) from a Resource content block, panicking
+    /// if it's not a TextResourceContents resource.
+    fn expect_resource_block(block: &acp::ContentBlock) -> (&str, &str) {
+        match block {
+            acp::ContentBlock::Resource(r) => match &r.resource {
+                acp::EmbeddedResourceResource::TextResourceContents(t) => {
+                    (t.text.as_str(), t.uri.as_str())
+                }
+                other => panic!("expected TextResourceContents, got {:?}", other),
+            },
+            other => panic!("expected Resource block, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_build_conflict_resolution_prompt_single_conflict() {
+        let conflicts = vec![ConflictContent {
+            file_path: "src/main.rs".to_string(),
+            conflict_text: "<<<<<<< HEAD\nlet x = 1;\n=======\nlet x = 2;\n>>>>>>> feature"
+                .to_string(),
+            ours_branch_name: "HEAD".to_string(),
+            theirs_branch_name: "feature".to_string(),
+        }];
+
+        let blocks = build_conflict_resolution_prompt(&conflicts);
+        // 2 Text blocks + 1 ResourceLink + 1 Resource for the conflict
+        assert_eq!(
+            blocks.len(),
+            4,
+            "expected 2 text + 1 resource link + 1 resource block"
+        );
+
+        let intro_text = expect_text_block(&blocks[0]);
+        assert!(
+            intro_text.contains("Please resolve the following merge conflict in"),
+            "prompt should include single-conflict intro text"
+        );
+
+        match &blocks[1] {
+            acp::ContentBlock::ResourceLink(link) => {
+                assert!(
+                    link.uri.contains("file://"),
+                    "resource link URI should use file scheme"
+                );
+                assert!(
+                    link.uri.contains("main.rs"),
+                    "resource link URI should reference file path"
+                );
+            }
+            other => panic!("expected ResourceLink block, got {:?}", other),
+        }
+
+        let body_text = expect_text_block(&blocks[2]);
+        assert!(
+            body_text.contains("`HEAD` (ours)"),
+            "prompt should mention ours branch"
+        );
+        assert!(
+            body_text.contains("`feature` (theirs)"),
+            "prompt should mention theirs branch"
+        );
+        assert!(
+            body_text.contains("editing the file directly"),
+            "prompt should instruct the agent to edit the file"
+        );
+
+        let (resource_text, resource_uri) = expect_resource_block(&blocks[3]);
+        assert!(
+            resource_text.contains("<<<<<<< HEAD"),
+            "resource should contain the conflict text"
+        );
+        assert!(
+            resource_uri.contains("merge-conflict"),
+            "resource URI should use the merge-conflict scheme"
+        );
+        assert!(
+            resource_uri.contains("main.rs"),
+            "resource URI should reference the file path"
+        );
+    }
+
+    #[test]
+    fn test_build_conflict_resolution_prompt_multiple_conflicts_same_file() {
+        let conflicts = vec![
+            ConflictContent {
+                file_path: "src/lib.rs".to_string(),
+                conflict_text: "<<<<<<< main\nfn a() {}\n=======\nfn a_v2() {}\n>>>>>>> dev"
+                    .to_string(),
+                ours_branch_name: "main".to_string(),
+                theirs_branch_name: "dev".to_string(),
+            },
+            ConflictContent {
+                file_path: "src/lib.rs".to_string(),
+                conflict_text: "<<<<<<< main\nfn b() {}\n=======\nfn b_v2() {}\n>>>>>>> dev"
+                    .to_string(),
+                ours_branch_name: "main".to_string(),
+                theirs_branch_name: "dev".to_string(),
+            },
+        ];
+
+        let blocks = build_conflict_resolution_prompt(&conflicts);
+        // 1 Text instruction + 2 Resource blocks
+        assert_eq!(blocks.len(), 3, "expected 1 text + 2 resource blocks");
+
+        let text = expect_text_block(&blocks[0]);
+        assert!(
+            text.contains("all 2 merge conflicts"),
+            "prompt should mention the total count"
+        );
+        assert!(
+            text.contains("`main` (ours)"),
+            "prompt should mention ours branch"
+        );
+        assert!(
+            text.contains("`dev` (theirs)"),
+            "prompt should mention theirs branch"
+        );
+        // Single file, so "file" not "files"
+        assert!(
+            text.contains("file directly"),
+            "single file should use singular 'file'"
+        );
+
+        let (resource_a, _) = expect_resource_block(&blocks[1]);
+        let (resource_b, _) = expect_resource_block(&blocks[2]);
+        assert!(
+            resource_a.contains("fn a()"),
+            "first resource should contain first conflict"
+        );
+        assert!(
+            resource_b.contains("fn b()"),
+            "second resource should contain second conflict"
+        );
+    }
+
+    #[test]
+    fn test_build_conflict_resolution_prompt_multiple_conflicts_different_files() {
+        let conflicts = vec![
+            ConflictContent {
+                file_path: "src/a.rs".to_string(),
+                conflict_text: "<<<<<<< main\nA\n=======\nB\n>>>>>>> dev".to_string(),
+                ours_branch_name: "main".to_string(),
+                theirs_branch_name: "dev".to_string(),
+            },
+            ConflictContent {
+                file_path: "src/b.rs".to_string(),
+                conflict_text: "<<<<<<< main\nC\n=======\nD\n>>>>>>> dev".to_string(),
+                ours_branch_name: "main".to_string(),
+                theirs_branch_name: "dev".to_string(),
+            },
+        ];
+
+        let blocks = build_conflict_resolution_prompt(&conflicts);
+        // 1 Text instruction + 2 Resource blocks
+        assert_eq!(blocks.len(), 3, "expected 1 text + 2 resource blocks");
+
+        let text = expect_text_block(&blocks[0]);
+        assert!(
+            text.contains("files directly"),
+            "multiple files should use plural 'files'"
+        );
+
+        let (_, uri_a) = expect_resource_block(&blocks[1]);
+        let (_, uri_b) = expect_resource_block(&blocks[2]);
+        assert!(
+            uri_a.contains("a.rs"),
+            "first resource URI should reference a.rs"
+        );
+        assert!(
+            uri_b.contains("b.rs"),
+            "second resource URI should reference b.rs"
+        );
+    }
+
+    #[test]
+    fn test_build_conflicted_files_resolution_prompt_file_paths_only() {
+        let file_paths = vec![
+            "src/main.rs".to_string(),
+            "src/lib.rs".to_string(),
+            "tests/integration.rs".to_string(),
+        ];
+
+        let blocks = build_conflicted_files_resolution_prompt(&file_paths);
+        // 1 instruction Text block + (ResourceLink + newline Text) per file
+        assert_eq!(
+            blocks.len(),
+            1 + (file_paths.len() * 2),
+            "expected instruction text plus resource links and separators"
+        );
+
+        let text = expect_text_block(&blocks[0]);
+        assert!(
+            text.contains("unresolved merge conflicts"),
+            "prompt should describe the task"
+        );
+        assert!(
+            text.contains("conflict markers"),
+            "prompt should mention conflict markers"
+        );
+
+        for (index, path) in file_paths.iter().enumerate() {
+            let link_index = 1 + (index * 2);
+            let newline_index = link_index + 1;
+
+            match &blocks[link_index] {
+                acp::ContentBlock::ResourceLink(link) => {
+                    assert!(
+                        link.uri.contains("file://"),
+                        "resource link URI should use file scheme"
+                    );
+                    assert!(
+                        link.uri.contains(path),
+                        "resource link URI should reference file path: {path}"
+                    );
+                }
+                other => panic!(
+                    "expected ResourceLink block at index {}, got {:?}",
+                    link_index, other
+                ),
+            }
+
+            let separator = expect_text_block(&blocks[newline_index]);
+            assert_eq!(
+                separator, "\n",
+                "expected newline separator after each file"
+            );
+        }
+    }
+
+    #[test]
+    fn test_build_conflict_resolution_prompt_empty_conflicts() {
+        let blocks = build_conflict_resolution_prompt(&[]);
+        assert!(
+            blocks.is_empty(),
+            "empty conflicts should produce no blocks, got {} blocks",
+            blocks.len()
+        );
+    }
+
+    #[test]
+    fn test_build_conflicted_files_resolution_prompt_empty_paths() {
+        let blocks = build_conflicted_files_resolution_prompt(&[]);
+        assert!(
+            blocks.is_empty(),
+            "empty paths should produce no blocks, got {} blocks",
+            blocks.len()
+        );
+    }
+
+    #[test]
+    fn test_conflict_resource_block_structure() {
+        let conflict = ConflictContent {
+            file_path: "src/utils.rs".to_string(),
+            conflict_text: "<<<<<<< HEAD\nold code\n=======\nnew code\n>>>>>>> branch".to_string(),
+            ours_branch_name: "HEAD".to_string(),
+            theirs_branch_name: "branch".to_string(),
+        };
+
+        let block = conflict_resource_block(&conflict);
+        let (text, uri) = expect_resource_block(&block);
+
+        assert_eq!(
+            text, conflict.conflict_text,
+            "resource text should be the raw conflict"
+        );
+        assert!(
+            uri.starts_with("zed:///agent/merge-conflict"),
+            "URI should use the zed merge-conflict scheme, got: {uri}"
+        );
+        assert!(uri.contains("utils.rs"), "URI should encode the file path");
     }
 
     async fn setup_panel(cx: &mut TestAppContext) -> (Entity<AgentPanel>, VisualTestContext) {

@@ -835,10 +835,6 @@ impl ScrollManager {
         }
     }
 
-    pub(crate) fn scroll_animation(&self) -> Option<&ScrollAnimation> {
-        self.scroll_animation.as_ref()
-    }
-
     pub(crate) fn update_animation(&mut self) -> Option<ScrollAnimation> {
         self.scroll_animation.as_mut()?.advance();
         self.scroll_animation
@@ -1175,6 +1171,13 @@ impl Editor {
                 anchor: top_anchor,
             };
             self.set_scroll_anchor(scroll_anchor, window, cx);
+        }
+    }
+
+    #[cfg(test)]
+    pub fn flush_scroll_animation(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(animation) = self.scroll_manager.update_animation() {
+            self.set_scroll_position(animation.position(), window, cx);
         }
     }
 }

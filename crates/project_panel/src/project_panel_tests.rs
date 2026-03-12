@@ -8671,6 +8671,55 @@ async fn test_compare_files_context_menu(cx: &mut gpui::TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_reveal_in_file_manager_path_falls_back_to_worktree_root(
+    cx: &mut gpui::TestAppContext,
+) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        "/root",
+        json!({
+            "file.txt": "content",
+            "dir": {},
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), ["/root".as_ref()], cx).await;
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let workspace = window
+        .read_with(cx, |mw, _| mw.workspace().clone())
+        .unwrap();
+    let cx = &mut VisualTestContext::from_window(window.into(), cx);
+    let panel = workspace.update_in(cx, ProjectPanel::new);
+    cx.run_until_parked();
+
+    select_path(&panel, "root/file.txt", cx);
+    let selected_reveal_path = panel
+        .update(cx, |panel, cx| panel.reveal_in_file_manager_path(cx))
+        .expect("selected entry should produce a reveal path");
+    assert!(
+        selected_reveal_path.ends_with(Path::new("file.txt")),
+        "Expected selected file path, got {:?}",
+        selected_reveal_path
+    );
+
+    panel.update(cx, |panel, _| {
+        panel.selection = None;
+        panel.marked_entries.clear();
+    });
+    let fallback_reveal_path = panel
+        .update(cx, |panel, cx| panel.reveal_in_file_manager_path(cx))
+        .expect("project root should be used when selection is empty");
+    assert!(
+        fallback_reveal_path.ends_with(Path::new("root")),
+        "Expected worktree root path, got {:?}",
+        fallback_reveal_path
+    );
+}
+
+#[gpui::test]
 async fn test_hide_hidden_entries(cx: &mut gpui::TestAppContext) {
     init_test(cx);
 

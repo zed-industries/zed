@@ -31,6 +31,9 @@ pub struct ListItem {
     /// A slot for content that appears on hover after the children
     /// It will obscure the `end_slot` when visible.
     end_hover_slot: Option<AnyElement>,
+    /// When true, renders a gradient fade overlay before the `end_hover_slot`
+    /// to smoothly truncate overflowing content.
+    end_hover_gradient_overlay: bool,
     toggle: Option<bool>,
     inset: bool,
     on_click: Option<Box<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>>,
@@ -45,6 +48,7 @@ pub struct ListItem {
     rounded: bool,
     overflow_x: bool,
     focused: Option<bool>,
+    docked_right: bool,
 }
 
 impl ListItem {
@@ -60,6 +64,7 @@ impl ListItem {
             start_slot: None,
             end_slot: None,
             end_hover_slot: None,
+            end_hover_gradient_overlay: false,
             toggle: None,
             inset: false,
             on_click: None,
@@ -74,6 +79,7 @@ impl ListItem {
             rounded: false,
             overflow_x: false,
             focused: None,
+            docked_right: false,
         }
     }
 
@@ -166,6 +172,11 @@ impl ListItem {
         self
     }
 
+    pub fn end_hover_gradient_overlay(mut self, show: bool) -> Self {
+        self.end_hover_gradient_overlay = show;
+        self
+    }
+
     pub fn outlined(mut self) -> Self {
         self.outlined = true;
         self
@@ -183,6 +194,11 @@ impl ListItem {
 
     pub fn focused(mut self, focused: bool) -> Self {
         self.focused = Some(focused);
+        self
+    }
+
+    pub fn docked_right(mut self, docked_right: bool) -> Self {
+        self.docked_right = docked_right;
         self
     }
 }
@@ -238,6 +254,7 @@ impl RenderOnce for ListItem {
                 this.when_some(self.focused, |this, focused| {
                     if focused {
                         this.border_1()
+                            .when(self.docked_right, |this| this.border_r_2())
                             .border_color(cx.theme().colors().border_focused)
                     } else {
                         this.border_1()
@@ -362,7 +379,9 @@ impl RenderOnce for ListItem {
                                 .right(DynamicSpacing::Base06.rems(cx))
                                 .top_0()
                                 .visible_on_hover("list_item")
-                                .child(end_hover_gradient_overlay)
+                                .when(self.end_hover_gradient_overlay, |this| {
+                                    this.child(end_hover_gradient_overlay)
+                                })
                                 .child(end_hover_slot),
                         )
                     }),
