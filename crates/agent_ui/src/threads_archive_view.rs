@@ -16,8 +16,7 @@ use project::{AgentServerStore, ExternalAgentServerName};
 use theme::ActiveTheme;
 use ui::{
     ButtonLike, CommonAnimationExt, ContextMenu, ContextMenuEntry, HighlightedLabel, ListItem,
-    PopoverMenu, PopoverMenuHandle, SpinnerLabel, Tab, TintColor, Tooltip, WithScrollbar,
-    prelude::*,
+    PopoverMenu, PopoverMenuHandle, Tab, TintColor, Tooltip, WithScrollbar, prelude::*,
 };
 use util::ResultExt as _;
 use zed_actions::editor::{MoveDown, MoveUp};
