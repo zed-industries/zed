@@ -1907,7 +1907,7 @@ impl ProjectPanel {
                 project.create_entry(new_project_path.clone(), is_dir, cx)
             });
         } else {
-            let new_path = if let Some(parent) = entry.path.clone().parent() {
+            let new_path = if let Some(parent) = entry.path.parent() {
                 parent.join(&filename)
             } else {
                 filename.clone()
