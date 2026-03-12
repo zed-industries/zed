@@ -56,56 +56,18 @@ dashboard within the Members page.
 
 ### Inviting Members {#inviting-members}
 
-1. Navigate to the Members page on your organization's dashboard.
-2. Select **+ Invite Member**.
-3. Enter the member's company email address and choose a role.
-4. The invitee will receive an email with instructions to join (they'll be asked post-acceptance to authenticate via GitHub).
+1. On the Members page, select **+ Invite Member**.
+2. Enter the member's company email address and choose a role.
+3. The invitee will receive an email with instructions to join (they'll be asked post-acceptance to authenticate via GitHub).
 
 ### Changing a Member's Role {#changing-roles}
 
-1. Navigate to the Members page on your organization's dashboard.
-2. Find the member in the member list. You can filter by role or search by name.
-3. In the three-dot menu, you can update the member's role.
+1. On the Members page, find the member in the member list. You can filter by role or search by name.
+2. In the three-dot menu, update the member's role.
 
 ### Removing a Member {#removing-members}
 
-1. Navigate to your organization settings on the dashboard.
-2. Find the member in the member list.
-3. Select **Remove** and confirm.
+1. On the Members page, find the member in the member list.
+2. Select **Remove** and confirm.
 
-Removing a member revokes their access to Zed-hosted models and
-organization-managed features at the end of the current billing cycle.
-
-## Organization Policies {#policies}
-
-Owners and Admins can configure organization-wide policies that apply
-to all members.
-
-### Model Access {#model-access}
-
-Control which Zed-hosted models are available to organization members.
-Members can only use models that the organization has enabled.
-
-### Data Sharing {#data-sharing}
-
-Organizations can restrict data sharing with Zed for all members. When
-restricted, members cannot:
-
-- Submit agent thread feedback
-- Rate Edit Predictions
-
-For more on Zed's data practices, see
-[Privacy and Security](./ai/privacy-and-security.md).
-
-## Permissions Reference {#permissions-reference}
-
-| Action                          | Owner | Admin | Member |
-| ------------------------------- | :---: | :---: | :----: |
-| Use Zed-hosted models           |   ✓   |   ✓   |   ✓    |
-| Use Edit Predictions            |   ✓   |   ✓   |   ✓    |
-| Invite and remove members       |   ✓   |   ✓   |        |
-| Assign and change roles         |   ✓   |   ✓   |        |
-| Manage model availability       |   ✓   |   ✓   |        |
-| Configure data-sharing policies |   ✓   |   ✓   |        |
-| Manage billing and payment      |   ✓   |       |        |
-| Transfer ownership              |   ✓   |       |        |
+Removing a member revokes their access to Zed-hosted models and organization-managed features at the end of the current billing cycle.
