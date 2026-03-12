@@ -22,7 +22,8 @@ pub struct TestAppContext {
     pub background_executor: BackgroundExecutor,
     #[doc(hidden)]
     pub foreground_executor: ForegroundExecutor,
-    dispatcher: TestDispatcher,
+    #[doc(hidden)]
+    pub dispatcher: TestDispatcher,
     test_platform: Rc<TestPlatform>,
     text_system: Arc<TextSystem>,
     fn_name: Option<&'static str>,
