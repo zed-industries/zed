@@ -390,7 +390,7 @@ impl ProjectPicker {
     ) -> Entity<Self> {
         let (tx, rx) = oneshot::channel();
         let lister = project::DirectoryLister::Project(project.clone());
-        let delegate = open_path_prompt::OpenPathDelegate::new(tx, lister, false, cx);
+        let delegate = open_path_prompt::OpenPathDelegate::new(tx, lister, false, cx).show_hidden();
 
         let picker = cx.new(|cx| {
             let picker = Picker::uniform_list(delegate, window, cx)
@@ -1656,7 +1656,9 @@ impl RemoteServerProjects {
 
     fn delete_ssh_server(&mut self, server: SshServerIndex, cx: &mut Context<Self>) {
         self.update_settings_file(cx, move |setting, _| {
-            if let Some(connections) = setting.ssh_connections.as_mut() {
+            if let Some(connections) = setting.ssh_connections.as_mut()
+                && connections.get(server.0).is_some()
+            {
                 connections.remove(server.0);
             }
         });

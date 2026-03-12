@@ -465,6 +465,60 @@ impl Extension {
         }
     }
 
+    pub async fn call_language_server_initialization_options_schema(
+        &self,
+        store: &mut Store<WasmState>,
+        language_server_id: &LanguageServerName,
+        resource: Resource<Arc<dyn WorktreeDelegate>>,
+    ) -> Result<Option<String>> {
+        match self {
+            Extension::V0_8_0(ext) => {
+                ext.call_language_server_initialization_options_schema(
+                    store,
+                    &language_server_id.0,
+                    resource,
+                )
+                .await
+            }
+            Extension::V0_6_0(_)
+            | Extension::V0_5_0(_)
+            | Extension::V0_4_0(_)
+            | Extension::V0_3_0(_)
+            | Extension::V0_2_0(_)
+            | Extension::V0_1_0(_)
+            | Extension::V0_0_6(_)
+            | Extension::V0_0_4(_)
+            | Extension::V0_0_1(_) => Ok(None),
+        }
+    }
+
+    pub async fn call_language_server_workspace_configuration_schema(
+        &self,
+        store: &mut Store<WasmState>,
+        language_server_id: &LanguageServerName,
+        resource: Resource<Arc<dyn WorktreeDelegate>>,
+    ) -> Result<Option<String>> {
+        match self {
+            Extension::V0_8_0(ext) => {
+                ext.call_language_server_workspace_configuration_schema(
+                    store,
+                    &language_server_id.0,
+                    resource,
+                )
+                .await
+            }
+            Extension::V0_6_0(_)
+            | Extension::V0_5_0(_)
+            | Extension::V0_4_0(_)
+            | Extension::V0_3_0(_)
+            | Extension::V0_2_0(_)
+            | Extension::V0_1_0(_)
+            | Extension::V0_0_6(_)
+            | Extension::V0_0_4(_)
+            | Extension::V0_0_1(_) => Ok(None),
+        }
+    }
+
     pub async fn call_language_server_additional_initialization_options(
         &self,
         store: &mut Store<WasmState>,

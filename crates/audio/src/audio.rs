@@ -384,17 +384,29 @@ pub fn open_input_stream(
     Ok(stream)
 }
 
-pub fn open_output_stream(device_id: Option<DeviceId>) -> anyhow::Result<MixerDeviceSink> {
-    let output_handle = if let Some(id) = device_id {
-        if let Some(device) = default_host().device_by_id(&id) {
-            DeviceSinkBuilder::from_device(device)?.open_stream()
-        } else {
-            DeviceSinkBuilder::open_default_sink()
+pub fn resolve_device(device_id: Option<&DeviceId>, input: bool) -> anyhow::Result<cpal::Device> {
+    if let Some(id) = device_id {
+        if let Some(device) = default_host().device_by_id(id) {
+            return Ok(device);
         }
+        log::warn!("Selected audio device not found, falling back to default");
+    }
+    if input {
+        default_host()
+            .default_input_device()
+            .context("no audio input device available")
     } else {
-        DeviceSinkBuilder::open_default_sink()
-    };
-    let mut output_handle = output_handle.context("Could not open output stream")?;
+        default_host()
+            .default_output_device()
+            .context("no audio output device available")
+    }
+}
+
+pub fn open_output_stream(device_id: Option<DeviceId>) -> anyhow::Result<MixerDeviceSink> {
+    let device = resolve_device(device_id.as_ref(), false)?;
+    let mut output_handle = DeviceSinkBuilder::from_device(device)?
+        .open_stream()
+        .context("Could not open output stream")?;
     output_handle.log_on_drop(false);
     log::info!("Output stream: {:?}", output_handle);
     Ok(output_handle)

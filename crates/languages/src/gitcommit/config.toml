@@ -7,7 +7,7 @@ path_suffixes = [
   "NOTES_EDITMSG",
   "EDIT_DESCRIPTION",
 ]
-line_comments = ["#"]
+line_comments = ["# "]
 brackets = [
   { start = "(", end = ")", close = true, newline = false },
   { start = "`", end = "`", close = true, newline = false },

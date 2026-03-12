@@ -560,6 +560,7 @@ mod tests {
             message_editor_min_lines: 1,
             tool_permissions,
             show_turn_stats: false,
+            new_thread_location: Default::default(),
         }
     }
 

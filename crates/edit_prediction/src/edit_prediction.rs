@@ -23,14 +23,14 @@ use futures::{
 use gpui::BackgroundExecutor;
 use gpui::http_client::Url;
 use gpui::{
-    App, AsyncApp, Entity, EntityId, Global, SharedString, Subscription, Task, WeakEntity, actions,
+    App, AsyncApp, Entity, EntityId, Global, SharedString, Task, WeakEntity, actions,
     http_client::{self, AsyncBody, Method},
     prelude::*,
 };
 use language::language_settings::all_language_settings;
 use language::{Anchor, Buffer, File, Point, TextBufferSnapshot, ToOffset, ToPoint};
 use language::{BufferSnapshot, OffsetRangeExt};
-use language_model::{LlmApiToken, NeedsLlmTokenRefresh, RefreshLlmTokenListener};
+use language_model::{LlmApiToken, NeedsLlmTokenRefresh};
 use project::{DisableAiSettings, Project, ProjectPath, WorktreeId};
 use release_channel::AppVersion;
 use semver::Version;
@@ -133,7 +133,6 @@ pub struct EditPredictionStore {
     client: Arc<Client>,
     user_store: Entity<UserStore>,
     llm_token: LlmApiToken,
-    _llm_token_subscription: Subscription,
     _fetch_experiments_task: Task<()>,
     projects: HashMap<EntityId, ProjectState>,
     update_required: bool,
@@ -674,10 +673,9 @@ impl EditPredictionStore {
     }
 
     pub fn new(client: Arc<Client>, user_store: Entity<UserStore>, cx: &mut Context<Self>) -> Self {
-        let refresh_llm_token_listener = RefreshLlmTokenListener::global(cx);
         let data_collection_choice = Self::load_data_collection_choice();
 
-        let llm_token = LlmApiToken::default();
+        let llm_token = LlmApiToken::global(cx);
 
         let (reject_tx, reject_rx) = mpsc::unbounded();
         cx.background_spawn({
@@ -721,23 +719,6 @@ impl EditPredictionStore {
             user_store,
             llm_token,
             _fetch_experiments_task: fetch_experiments_task,
-            _llm_token_subscription: cx.subscribe(
-                &refresh_llm_token_listener,
-                |this, _listener, _event, cx| {
-                    let client = this.client.clone();
-                    let llm_token = this.llm_token.clone();
-                    let organization_id = this
-                        .user_store
-                        .read(cx)
-                        .current_organization()
-                        .map(|organization| organization.id.clone());
-                    cx.spawn(async move |_this, _cx| {
-                        llm_token.refresh(&client, organization_id).await?;
-                        anyhow::Ok(())
-                    })
-                    .detach_and_log_err(cx);
-                },
-            ),
             update_required: false,
             edit_prediction_model: EditPredictionModel::Zeta,
             zeta2_raw_config: Self::zeta2_raw_config_from_env(),
@@ -1217,7 +1198,7 @@ impl EditPredictionStore {
                         cx.subscribe(buffer, {
                             let project = project.downgrade();
                             move |this, buffer, event, cx| {
-                                if let language::BufferEvent::Edited = event
+                                if let language::BufferEvent::Edited { .. } = event
                                     && let Some(project) = project.upgrade()
                                 {
                                     this.report_changes_for_buffer(&buffer, &project, false, cx);

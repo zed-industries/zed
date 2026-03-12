@@ -524,6 +524,65 @@ async fn test_rename(executor: BackgroundExecutor) {
 }
 
 #[gpui::test]
+#[cfg(any(target_os = "macos", target_os = "linux", target_os = "windows"))]
+async fn test_realfs_parallel_rename_without_overwrite_preserves_losing_source(
+    executor: BackgroundExecutor,
+) {
+    let temp_dir = TempDir::new().unwrap();
+    let root = temp_dir.path();
+    let source_a = root.join("dir_a/shared.txt");
+    let source_b = root.join("dir_b/shared.txt");
+    let target = root.join("shared.txt");
+
+    std::fs::create_dir_all(source_a.parent().unwrap()).unwrap();
+    std::fs::create_dir_all(source_b.parent().unwrap()).unwrap();
+    std::fs::write(&source_a, "from a").unwrap();
+    std::fs::write(&source_b, "from b").unwrap();
+
+    let fs = RealFs::new(None, executor);
+    let (first_result, second_result) = futures::future::join(
+        fs.rename(&source_a, &target, RenameOptions::default()),
+        fs.rename(&source_b, &target, RenameOptions::default()),
+    )
+    .await;
+
+    assert_ne!(first_result.is_ok(), second_result.is_ok());
+    assert!(target.exists());
+    assert_eq!(source_a.exists() as u8 + source_b.exists() as u8, 1);
+}
+
+#[gpui::test]
+#[cfg(any(target_os = "macos", target_os = "linux", target_os = "windows"))]
+async fn test_realfs_rename_ignore_if_exists_leaves_source_and_target_unchanged(
+    executor: BackgroundExecutor,
+) {
+    let temp_dir = TempDir::new().unwrap();
+    let root = temp_dir.path();
+    let source = root.join("source.txt");
+    let target = root.join("target.txt");
+
+    std::fs::write(&source, "from source").unwrap();
+    std::fs::write(&target, "from target").unwrap();
+
+    let fs = RealFs::new(None, executor);
+    let result = fs
+        .rename(
+            &source,
+            &target,
+            RenameOptions {
+                ignore_if_exists: true,
+                ..Default::default()
+            },
+        )
+        .await;
+
+    assert!(result.is_ok());
+
+    assert_eq!(std::fs::read_to_string(&source).unwrap(), "from source");
+    assert_eq!(std::fs::read_to_string(&target).unwrap(), "from target");
+}
+
+#[gpui::test]
 #[cfg(unix)]
 async fn test_realfs_broken_symlink_metadata(executor: BackgroundExecutor) {
     let tempdir = TempDir::new().unwrap();

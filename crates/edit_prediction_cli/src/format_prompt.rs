@@ -13,7 +13,7 @@ use std::ops::Range;
 use std::sync::Arc;
 use zeta_prompt::{
     ZetaFormat, encode_patch_as_output_for_format, excerpt_range_for_format, format_zeta_prompt,
-    output_end_marker_for_format, resolve_cursor_region,
+    multi_region, output_end_marker_for_format, resolve_cursor_region,
 };
 
 pub async fn run_format_prompt(
@@ -41,6 +41,24 @@ pub async fn run_format_prompt(
                 excerpt_range_for_format(zeta_format, &prompt_inputs.excerpt_ranges);
 
             let prompt = TeacherPrompt::format_prompt(example, editable_range, context_range);
+            example.prompt = Some(ExamplePrompt {
+                input: prompt,
+                expected_output: String::new(),
+                rejected_output: None,
+                prefill: None,
+                provider: args.provider,
+            });
+        }
+        PredictionProvider::TeacherMultiRegion(_)
+        | PredictionProvider::TeacherMultiRegionNonBatching(_) => {
+            step_progress.set_substatus("formatting teacher multi-region prompt");
+
+            let zeta_format = ZetaFormat::default();
+            let (editable_range, context_range) =
+                excerpt_range_for_format(zeta_format, &prompt_inputs.excerpt_ranges);
+
+            let prompt =
+                TeacherMultiRegionPrompt::format_prompt(example, editable_range, context_range);
             example.prompt = Some(ExamplePrompt {
                 input: prompt,
                 expected_output: String::new(),
@@ -108,7 +126,7 @@ pub fn zeta2_output_for_patch(
         return Ok(encoded_output);
     }
 
-    let (mut result, first_hunk_offset) =
+    let (result, first_hunk_offset) =
         udiff::apply_diff_to_string_with_hunk_offset(patch, &old_editable_region).with_context(
             || {
                 format!(
@@ -118,6 +136,22 @@ pub fn zeta2_output_for_patch(
             },
         )?;
 
+    if version == ZetaFormat::V0306SeedMultiRegions {
+        let cursor_in_new = cursor_offset.map(|cursor_offset| {
+            let hunk_start = first_hunk_offset.unwrap_or(0);
+            result.floor_char_boundary((hunk_start + cursor_offset).min(result.len()))
+        });
+        return multi_region::encode_from_old_and_new(
+            &old_editable_region,
+            &result,
+            cursor_in_new,
+            zeta_prompt::CURSOR_MARKER,
+            zeta_prompt::seed_coder::END_MARKER,
+            zeta_prompt::seed_coder::NO_EDITS,
+        );
+    }
+
+    let mut result = result;
     if let Some(cursor_offset) = cursor_offset {
         // The cursor_offset is relative to the start of the hunk's new text (context + additions).
         // We need to add where the hunk context matched in the editable region to compute
@@ -211,7 +245,6 @@ impl TeacherPrompt {
             .context("editable region not found in prompt content")?;
         let editable_region_start_line = excerpt[..editable_region_offset].matches('\n').count();
 
-        // Use full context so cursor offset (relative to editable region start) aligns with diff content
         let editable_region_lines = old_editable_region.lines().count() as u32;
         let diff = language::unified_diff_with_context(
             &old_editable_region,
@@ -259,7 +292,11 @@ impl TeacherPrompt {
     }
 
     pub fn format_context(example: &Example) -> String {
-        let related_files = example.prompt_inputs.as_ref().map(|pi| &pi.related_files);
+        let related_files = example
+            .prompt_inputs
+            .as_ref()
+            .and_then(|pi| pi.related_files.as_deref());
+
         let Some(related_files) = related_files else {
             return "(No context)".to_string();
         };
@@ -311,6 +348,202 @@ impl TeacherPrompt {
 
         let region = &text[start..end];
         Ok(region.strip_suffix('\n').unwrap_or(region).to_string())
+    }
+}
+
+pub struct TeacherMultiRegionPrompt;
+
+impl TeacherMultiRegionPrompt {
+    pub(crate) const USER_CURSOR_MARKER: &str = "<|user_cursor|>";
+    pub(crate) const NO_EDITS: &str = "NO_EDITS";
+
+    /// Truncate edit history to this number of last lines
+    const MAX_HISTORY_LINES: usize = 128;
+
+    pub fn format_prompt(
+        example: &Example,
+        editable_range: Range<usize>,
+        context_range: Range<usize>,
+    ) -> String {
+        let edit_history = Self::format_edit_history(&example.spec.edit_history);
+        let context = Self::format_context(example);
+        let cursor_excerpt = Self::format_cursor_excerpt(example, editable_range, context_range);
+
+        let prompt_template = crate::prompt_assets::get_prompt("teacher_multi_region.md");
+        let prompt = prompt_template
+            .replace("{{context}}", &context)
+            .replace("{{edit_history}}", &edit_history)
+            .replace("{{cursor_excerpt}}", &cursor_excerpt);
+
+        prompt
+    }
+
+    pub fn parse(example: &Example, response: &str) -> Result<(String, Option<ActualCursor>)> {
+        let no_edits = (String::new(), None);
+        if let Some(last_codeblock) = extract_last_codeblock(&response) {
+            if last_codeblock.trim() == Self::NO_EDITS {
+                return Ok(no_edits);
+            }
+        }
+
+        if response.trim().ends_with(Self::NO_EDITS) {
+            return Ok(no_edits);
+        }
+
+        let prompt_inputs = example
+            .prompt_inputs
+            .as_ref()
+            .context("example is missing prompt inputs")?;
+
+        let zeta_format = ZetaFormat::default();
+        let (editable_range, _) =
+            excerpt_range_for_format(zeta_format, &prompt_inputs.excerpt_ranges);
+        let excerpt = prompt_inputs.cursor_excerpt.as_ref();
+        let old_editable_region = &excerpt[editable_range.clone()];
+        let marker_offsets = multi_region::compute_marker_offsets(old_editable_region);
+
+        let codeblock =
+            extract_last_codeblock(&response).context("no codeblock found in model response")?;
+        let (start_num, end_num, raw_new_span) = multi_region::extract_marker_span(&codeblock)?;
+
+        let start_idx = start_num
+            .checked_sub(1)
+            .context("marker numbers are 1-indexed")?;
+        let end_idx = end_num
+            .checked_sub(1)
+            .context("marker numbers are 1-indexed")?;
+        let start_byte = *marker_offsets
+            .get(start_idx)
+            .context("start marker number out of range")?;
+        let end_byte = *marker_offsets
+            .get(end_idx)
+            .context("end marker number out of range")?;
+
+        if start_byte > end_byte {
+            return Err(anyhow!("start marker must come before end marker"));
+        }
+
+        let cursor_in_span = raw_new_span.find(Self::USER_CURSOR_MARKER);
+        let new_span = raw_new_span.replace(Self::USER_CURSOR_MARKER, "");
+
+        let old_span = &old_editable_region[start_byte..end_byte];
+        let mut new_span = new_span;
+        if old_span.ends_with('\n') && !new_span.ends_with('\n') && !new_span.is_empty() {
+            new_span.push('\n');
+        }
+        if !old_span.ends_with('\n') && new_span.ends_with('\n') {
+            new_span.pop();
+        }
+
+        let mut new_editable_region = String::new();
+        new_editable_region.push_str(&old_editable_region[..start_byte]);
+        new_editable_region.push_str(&new_span);
+        new_editable_region.push_str(&old_editable_region[end_byte..]);
+
+        let cursor_offset = cursor_in_span.map(|pos| start_byte + pos);
+
+        if old_editable_region.starts_with('\n') && !new_editable_region.starts_with('\n') {
+            new_editable_region.insert(0, '\n');
+        }
+
+        let editable_region_offset = editable_range.start;
+        let editable_region_start_line = excerpt[..editable_region_offset].matches('\n').count();
+
+        let editable_region_lines = old_editable_region.lines().count() as u32;
+        let diff = language::unified_diff_with_context(
+            old_editable_region,
+            &new_editable_region,
+            editable_region_start_line as u32,
+            editable_region_start_line as u32,
+            editable_region_lines,
+        );
+
+        let diff = indoc::formatdoc! {"
+            --- a/{path}
+            +++ b/{path}
+            {diff}",
+            path = example.spec.cursor_path.to_string_lossy(),
+            diff = diff,
+        };
+
+        let actual_cursor = cursor_offset.map(|editable_region_cursor_offset| {
+            ActualCursor::from_editable_region(
+                &example.spec.cursor_path,
+                editable_region_cursor_offset,
+                &new_editable_region,
+                excerpt,
+                editable_region_offset,
+                editable_region_start_line,
+            )
+        });
+
+        Ok((diff, actual_cursor))
+    }
+
+    fn format_edit_history(edit_history: &str) -> String {
+        let lines: Vec<&str> = edit_history.lines().collect();
+
+        if lines.is_empty() {
+            return "(No edit history)".to_string();
+        }
+
+        if lines.len() > Self::MAX_HISTORY_LINES {
+            let truncated = lines[lines.len() - Self::MAX_HISTORY_LINES..].join("\n");
+            format!("{truncated}\n[...truncated...]")
+        } else {
+            lines.join("\n")
+        }
+    }
+
+    pub fn format_context(example: &Example) -> String {
+        let related_files = example
+            .prompt_inputs
+            .as_ref()
+            .and_then(|pi| pi.related_files.as_deref());
+        let Some(related_files) = related_files else {
+            return "(No context)".to_string();
+        };
+
+        if related_files.is_empty() {
+            return "(No context)".to_string();
+        }
+
+        let prefix = "`````";
+        let suffix = "`````\n\n";
+        let max_tokens = 1024;
+        zeta_prompt::format_related_files_within_budget(related_files, &prefix, &suffix, max_tokens)
+    }
+
+    fn format_cursor_excerpt(
+        example: &Example,
+        editable_range: Range<usize>,
+        context_range: Range<usize>,
+    ) -> String {
+        let mut result = String::new();
+
+        let prompt_inputs = example.prompt_inputs.as_ref().unwrap();
+        let excerpt = prompt_inputs.cursor_excerpt.as_ref();
+        let cursor_offset = prompt_inputs.cursor_offset_in_excerpt;
+
+        let editable_text = &excerpt[editable_range.clone()];
+        let cursor_in_editable = cursor_offset - editable_range.start;
+
+        let path_str = example.spec.cursor_path.to_string_lossy();
+        result.push_str(&format!("`````{path_str}\n"));
+
+        result.push_str(&excerpt[context_range.start..editable_range.start]);
+
+        multi_region::write_editable_with_markers(
+            &mut result,
+            editable_text,
+            cursor_in_editable,
+            Self::USER_CURSOR_MARKER,
+        );
+
+        result.push_str(&excerpt[editable_range.end..context_range.end]);
+        result.push_str("\n`````");
+
+        result
     }
 }
 
@@ -458,7 +691,7 @@ mod tests {
     }
 
     #[test]
-    fn test_extract_editable_region() {
+    fn test_extract_editable_region_old_format() {
         let text = indoc::indoc! {"
             some lines
             are
@@ -478,6 +711,38 @@ mod tests {
             one
             two three"}
         );
+    }
+
+    #[test]
+    fn test_extract_editable_region_marker_format() {
+        let text = indoc::indoc! {"
+            some context
+            <|marker_1|>
+            one
+            two three
+            <|marker_2|>
+            more context
+            "};
+        let parsed = multi_region::extract_editable_region_from_markers(text).unwrap();
+        assert_eq!(parsed, "one\ntwo three");
+    }
+
+    #[test]
+    fn test_extract_editable_region_multi_markers() {
+        let text = indoc::indoc! {"
+            prefix
+            <|marker_1|>
+            aaa
+            bbb
+            <|marker_2|>
+            ccc
+            ddd
+            <|marker_3|>
+            suffix
+            "};
+        let parsed = multi_region::extract_editable_region_from_markers(text).unwrap();
+        // Intermediate marker and its trailing \n are stripped
+        assert_eq!(parsed, "aaa\nbbb\nccc\nddd");
     }
 
     #[test]

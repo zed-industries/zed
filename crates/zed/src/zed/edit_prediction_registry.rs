@@ -316,7 +316,7 @@ mod tests {
         let app_state = cx.update(|cx| {
             let app_state = AppState::test(cx);
             client::init(&app_state.client, cx);
-            language_model::init(app_state.client.clone(), cx);
+            language_model::init(app_state.user_store.clone(), app_state.client.clone(), cx);
             editor::init(cx);
             app_state
         });
