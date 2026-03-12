@@ -6972,7 +6972,7 @@ fn ai_page() -> SettingsPage {
         ]
     }
 
-    fn agent_configuration_section() -> [SettingsPageItem; 12] {
+    fn agent_configuration_section() -> [SettingsPageItem; 13] {
         [
             SettingsPageItem::SectionHeader("Agent Configuration"),
             SettingsPageItem::SubPageLink(SubPageLink {
@@ -6983,6 +6983,28 @@ fn ai_page() -> SettingsPage {
                 in_json: true,
                 files: USER,
                 render: render_tool_permissions_setup_page,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "New Thread Location",
+                description: "Whether to start a new thread in the current local project or in a new Git worktree.",
+                field: Box::new(SettingField {
+                    json_path: Some("agent.default_start_thread_in"),
+                    pick: |settings_content| {
+                        settings_content
+                            .agent
+                            .as_ref()?
+                            .new_thread_location
+                            .as_ref()
+                    },
+                    write: |settings_content, value| {
+                        settings_content
+                            .agent
+                            .get_or_insert_default()
+                            .new_thread_location = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
             }),
             SettingsPageItem::SettingItem(SettingItem {
                 title: "Single File Review",
