@@ -231,6 +231,33 @@ impl TestAppContext {
         .unwrap()
     }
 
+    /// Opens a new window with a specific size.
+    ///
+    /// Unlike `add_window` which uses maximized bounds, this allows controlling
+    /// the window dimensions, which is important for layout-sensitive tests.
+    pub fn open_window<F, V>(
+        &mut self,
+        window_size: Size<Pixels>,
+        build_window: F,
+    ) -> WindowHandle<V>
+    where
+        F: FnOnce(&mut Window, &mut Context<V>) -> V,
+        V: 'static + Render,
+    {
+        let mut cx = self.app.borrow_mut();
+        cx.open_window(
+            WindowOptions {
+                window_bounds: Some(WindowBounds::Windowed(Bounds {
+                    origin: Point::default(),
+                    size: window_size,
+                })),
+                ..Default::default()
+            },
+            |window, cx| cx.new(|cx| build_window(window, cx)),
+        )
+        .unwrap()
+    }
+
     /// Adds a new window with no content.
     pub fn add_empty_window(&mut self) -> &mut VisualTestContext {
         let mut cx = self.app.borrow_mut();
