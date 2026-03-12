@@ -37,8 +37,8 @@ use gpui::{
 };
 use http_client::{AsyncBody, HttpClient, HttpClientWithUrl};
 use language::{
-    LanguageConfig, LanguageMatcher, LanguageName, LanguageQueries, LoadedLanguage,
-    QUERY_FILENAME_PREFIXES, Rope,
+    LanguageConfig, LanguageMatcher, LanguageName, LanguageQueries, LanguageQuery, LoadedLanguage,
+    Rope,
 };
 use node_runtime::NodeRuntime;
 use project::ContextProviderWithTasks;
@@ -1877,26 +1877,14 @@ impl ExtensionStore {
 
 fn load_plugin_queries(root_path: &Path) -> LanguageQueries {
     let mut result = LanguageQueries::default();
-    if let Some(entries) = std::fs::read_dir(root_path).log_err() {
-        for entry in entries {
-            let Some(entry) = entry.log_err() else {
-                continue;
-            };
-            let path = entry.path();
-            if let Some(remainder) = path.strip_prefix(root_path).ok().and_then(|p| p.to_str()) {
-                if !remainder.ends_with(".scm") {
-                    continue;
-                }
-                for (name, query) in QUERY_FILENAME_PREFIXES {
-                    if remainder.starts_with(name) {
-                        if let Some(contents) = std::fs::read_to_string(&path).log_err() {
-                            match query(&mut result) {
-                                None => *query(&mut result) = Some(contents.into()),
-                                Some(r) => r.to_mut().push_str(contents.as_ref()),
-                            }
-                        }
-                        break;
-                    }
+    if std::fs::metadata(root_path).is_ok_and(|metadata| metadata.is_dir()) {
+        for query in LanguageQuery::variants() {
+            let query_path = query.query_path(&root_path);
+            if let Some(contents) = std::fs::read_to_string(&query_path).log_err() {
+                let query = query.query_mut(&mut result);
+                match query {
+                    None => *query = Some(contents.into()),
+                    Some(r) => r.to_mut().push_str(contents.as_ref()),
                 }
             }
         }

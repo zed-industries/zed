@@ -20,6 +20,7 @@ pub mod time;
 use anyhow::Result;
 use itertools::Either;
 use regex::Regex;
+use rust_embed::EmbeddedFile;
 use std::path::{Path, PathBuf};
 use std::sync::LazyLock;
 use std::{
@@ -594,7 +595,12 @@ pub use rng::RandomCharIter;
 
 /// Get an embedded file as a string.
 pub fn asset_str<A: rust_embed::RustEmbed>(path: &str) -> Cow<'static, str> {
-    match A::get(path).expect(path).data {
+    let asset = A::get(path).expect(path);
+    embedded_file_to_str(asset)
+}
+
+pub fn embedded_file_to_str(file: EmbeddedFile) -> Cow<'static, str> {
+    match file.data {
         Cow::Borrowed(bytes) => Cow::Borrowed(std::str::from_utf8(bytes).unwrap()),
         Cow::Owned(bytes) => Cow::Owned(String::from_utf8(bytes).unwrap()),
     }

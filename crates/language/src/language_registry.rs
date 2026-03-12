@@ -232,22 +232,53 @@ impl std::fmt::Display for LanguageNotFound {
     }
 }
 
-pub const QUERY_FILENAME_PREFIXES: &[(
-    &str,
-    fn(&mut LanguageQueries) -> &mut Option<Cow<'static, str>>,
-)] = &[
-    ("highlights", |q| &mut q.highlights),
-    ("brackets", |q| &mut q.brackets),
-    ("outline", |q| &mut q.outline),
-    ("indents", |q| &mut q.indents),
-    ("injections", |q| &mut q.injections),
-    ("overrides", |q| &mut q.overrides),
-    ("redactions", |q| &mut q.redactions),
-    ("runnables", |q| &mut q.runnables),
-    ("debugger", |q| &mut q.debugger),
-    ("textobjects", |q| &mut q.text_objects),
-    ("imports", |q| &mut q.imports),
-];
+#[derive(Copy, Clone, PartialEq, Eq, strum::Display, strum::EnumIter)]
+#[strum(serialize_all = "snake_case")]
+pub enum LanguageQuery {
+    Highlights,
+    Brackets,
+    Outline,
+    Indents,
+    Injections,
+    Overrides,
+    Runnables,
+    Debugger,
+    Textobjects,
+    Imports,
+}
+
+impl LanguageQuery {
+    pub fn variants() -> impl Iterator<Item = Self> {
+        use strum::IntoEnumIterator;
+        Self::iter()
+    }
+
+    pub fn query_mut<'a>(
+        &self,
+        queries: &'a mut LanguageQueries,
+    ) -> &'a mut Option<Cow<'static, str>> {
+        match self {
+            LanguageQuery::Highlights => &mut queries.highlights,
+            LanguageQuery::Brackets => &mut queries.brackets,
+            LanguageQuery::Outline => &mut queries.outline,
+            LanguageQuery::Indents => &mut queries.indents,
+            LanguageQuery::Injections => &mut queries.injections,
+            LanguageQuery::Overrides => &mut queries.overrides,
+            LanguageQuery::Runnables => &mut queries.runnables,
+            LanguageQuery::Debugger => &mut queries.debugger,
+            LanguageQuery::Textobjects => &mut queries.text_objects,
+            LanguageQuery::Imports => &mut queries.imports,
+        }
+    }
+
+    pub fn query_path(&self, folder_path: &Path) -> PathBuf {
+        folder_path.join(self.file_name())
+    }
+
+    pub fn file_name(&self) -> String {
+        format!("{self}.scm")
+    }
+}
 
 /// Tree-sitter language queries for a given language.
 #[derive(Debug, Default)]

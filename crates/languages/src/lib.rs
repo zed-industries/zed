@@ -8,7 +8,7 @@ use rust_embed::RustEmbed;
 use settings::{SemanticTokenRules, SettingsStore};
 use smol::stream::StreamExt;
 use std::{str, sync::Arc};
-use util::{ResultExt, asset_str};
+use util::{ResultExt, embedded_file_to_str};
 
 pub use language::*;
 
@@ -435,20 +435,19 @@ fn load_config(name: &str) -> LanguageConfig {
 
 fn load_queries(name: &str) -> LanguageQueries {
     let mut result = LanguageQueries::default();
-    for path in LanguageDir::iter() {
-        if let Some(remainder) = path.strip_prefix(name).and_then(|p| p.strip_prefix('/')) {
-            if !remainder.ends_with(".scm") {
-                continue;
-            }
-            for (name, query) in QUERY_FILENAME_PREFIXES {
-                if remainder.starts_with(name) {
-                    let contents = asset_str::<LanguageDir>(path.as_ref());
-                    match query(&mut result) {
-                        None => *query(&mut result) = Some(contents),
-                        Some(r) => r.to_mut().push_str(contents.as_ref()),
-                    }
-                }
-            }
+    for query in LanguageQuery::variants() {
+        let Some(contents) = LanguageDir::get(&format!(
+            "{name}/{query_filename}",
+            query_filename = query.file_name()
+        ))
+        .map(embedded_file_to_str) else {
+            continue;
+        };
+
+        let query = query.query_mut(&mut result);
+        match query {
+            None => *query = Some(contents),
+            Some(r) => r.to_mut().push_str(contents.as_ref()),
         }
     }
     result

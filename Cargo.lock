@@ -9314,6 +9314,7 @@ dependencies = [
  "smol",
  "streaming-iterator",
  "strsim",
+ "strum 0.27.2",
  "sum_tree",
  "task",
  "text",
