@@ -84,7 +84,7 @@ use ui::{
     KeyBinding, PopoverMenu, PopoverMenuHandle, SpinnerLabel, Tab, TintColor, Tooltip, prelude::*,
     utils::WithRemSize,
 };
-use util::ResultExt as _;
+use util::{ResultExt as _, debug_panic};
 use workspace::{
     CollaboratorId, DraggedSelection, DraggedSidebar, DraggedTab, FocusWorkspaceSidebar,
     MultiWorkspace, SIDEBAR_RESIZE_HANDLE_SIZE, ToggleWorkspaceSidebar, ToggleZoom,
@@ -1178,6 +1178,17 @@ impl AgentPanel {
             None
         };
 
+        let connection_store = cx.new(|cx| {
+            let mut store = AgentConnectionStore::new(project.clone(), cx);
+            // Register the native agent right away, so that it is available for
+            // the inline assistant etc.
+            store.request_connection(
+                Agent::NativeAgent,
+                Agent::NativeAgent.server(fs.clone(), thread_store.clone()),
+                cx,
+            );
+            store
+        });
         let mut panel = Self {
             workspace_id,
             active_view,
@@ -1188,7 +1199,7 @@ impl AgentPanel {
             language_registry,
             text_thread_store,
             prompt_store,
-            connection_store: cx.new(|cx| AgentConnectionStore::new(project.clone(), cx)),
+            connection_store,
             configuration: None,
             configuration_subscription: None,
             focus_handle: cx.focus_handle(),
@@ -1335,18 +1346,19 @@ impl AgentPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let agent = Agent::NativeAgent;
-
-        let server = agent.server(self.fs.clone(), self.thread_store.clone());
         let session_id = action.from_session_id.clone();
 
-        let entry = self.connection_store.update(cx, |store, cx| {
-            store.request_connection(agent.clone(), server, cx)
-        });
-        let connect_task = entry.read(cx).wait_for_connection();
+        let Some(history) = self
+            .connection_store
+            .read(cx)
+            .entry(&Agent::NativeAgent)
+            .and_then(|e| e.read(cx).history().cloned())
+        else {
+            debug_panic!("Native agent is not registered");
+            return;
+        };
 
         cx.spawn_in(window, async move |this, cx| {
-            let history = connect_task.await?.history;
             this.update_in(cx, |this, window, cx| {
                 let thread = history
                     .read(cx)
@@ -1354,7 +1366,7 @@ impl AgentPanel {
                     .context("Session not found")?;
 
                 this.external_thread(
-                    Some(agent),
+                    Some(Agent::NativeAgent),
                     None,
                     None,
                     None,
