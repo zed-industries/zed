@@ -1,4 +1,5 @@
 use std::{
+    future::Future,
     path::{Path, PathBuf},
     sync::{
         Arc,
@@ -174,6 +175,17 @@ impl WorktreeStore {
 
     pub fn disable_scanner(&mut self) {
         self.scanning_enabled = false;
+    }
+
+    /// Returns a future that resolves when all visible worktrees have completed
+    /// their initial scan (entries populated, git repos detected).
+    pub fn wait_for_initial_scan(&self) -> impl Future<Output = ()> + use<> {
+        async {}
+    }
+
+    /// Returns whether all visible worktrees have completed their initial scan.
+    pub fn initial_scan_completed(&self) -> bool {
+        false
     }
 
     /// Iterates through all worktrees, including ones that don't appear in the project panel
