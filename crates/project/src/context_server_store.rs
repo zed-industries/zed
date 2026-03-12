@@ -158,6 +158,15 @@ impl ContextServerConfiguration {
         }
     }
 
+    pub fn has_static_auth_header(&self) -> bool {
+        match self {
+            ContextServerConfiguration::Http { headers, .. } => headers
+                .keys()
+                .any(|k| k.eq_ignore_ascii_case("authorization")),
+            _ => false,
+        }
+    }
+
     pub fn remote(&self) -> bool {
         match self {
             ContextServerConfiguration::Custom { remote, .. } => *remote,
@@ -669,10 +678,32 @@ impl ContextServerStore {
                         Err(err) => {
                             // Check if the error is an OAuth 401 — if so, run
                             // discovery and transition to AuthRequired instead of
-                            // the generic Error state.
+                            // the generic Error state. Skip this when the user
+                            // configured a static Authorization header, since
+                            // that means they're managing auth themselves.
                             if let Some(TransportError::AuthRequired { www_authenticate }) =
                                 err.downcast_ref::<TransportError>()
                             {
+                                if configuration.has_static_auth_header() {
+                                    log::warn!(
+                                        "{} received 401 with a static Authorization header configured",
+                                        id,
+                                    );
+                                    this.update(cx, |this, cx| {
+                                        this.update_server_state(
+                                            id.clone(),
+                                            ContextServerState::Error {
+                                                configuration,
+                                                server,
+                                                error: "Server returned 401 Unauthorized. Check your configured Authorization header.".into(),
+                                            },
+                                            cx,
+                                        )
+                                    })
+                                    .log_err();
+                                    return;
+                                }
+
                                 let server_url = match &configuration.as_ref() {
                                     ContextServerConfiguration::Http { url, .. } => url.clone(),
                                     _ => {
@@ -898,25 +929,30 @@ impl ContextServerStore {
 
         let cached_token_provider: Option<Arc<dyn oauth::OAuthTokenProvider>> =
             if let ContextServerConfiguration::Http { url, .. } = configuration.as_ref() {
-                let credentials_provider = cx.update(|cx| <dyn CredentialsProvider>::global(cx));
-                let http_client = cx.update(|cx| cx.http_client());
+                if configuration.has_static_auth_header() {
+                    None
+                } else {
+                    let credentials_provider =
+                        cx.update(|cx| <dyn CredentialsProvider>::global(cx));
+                    let http_client = cx.update(|cx| cx.http_client());
 
-                match Self::load_session(&credentials_provider, url, &cx).await {
-                    Ok(Some(session)) => {
-                        log::info!("{} loaded cached OAuth session from keychain", id);
-                        Some(Self::create_oauth_token_provider(
-                            &id,
-                            url,
-                            session,
-                            http_client,
-                            credentials_provider,
-                            cx,
-                        ))
-                    }
-                    Ok(None) => None,
-                    Err(err) => {
-                        log::warn!("{} failed to load cached OAuth session: {}", id, err);
-                        None
+                    match Self::load_session(&credentials_provider, url, &cx).await {
+                        Ok(Some(session)) => {
+                            log::info!("{} loaded cached OAuth session from keychain", id);
+                            Some(Self::create_oauth_token_provider(
+                                &id,
+                                url,
+                                session,
+                                http_client,
+                                credentials_provider,
+                                cx,
+                            ))
+                        }
+                        Ok(None) => None,
+                        Err(err) => {
+                            log::warn!("{} failed to load cached OAuth session: {}", id, err);
+                            None
+                        }
                     }
                 }
             } else {
