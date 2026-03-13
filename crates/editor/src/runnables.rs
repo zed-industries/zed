@@ -702,7 +702,7 @@ impl Editor {
 mod tests {
     use std::{sync::Arc, time::Duration};
 
-    use gpui::{AppContext as _, Task, TestAppContext};
+    use gpui::{AppContext as _, Entity, Task, TestAppContext};
     use indoc::indoc;
     use language::ContextProvider;
     use languages::rust_lang;
@@ -722,7 +722,7 @@ mod tests {
     impl ContextProvider for TestRustContextProvider {
         fn associated_tasks(
             &self,
-            _: Option<Arc<dyn language::File>>,
+            _: Option<Entity<language::Buffer>>,
             _: &gpui::App,
         ) -> Task<Option<TaskTemplates>> {
             Task::ready(Some(TaskTemplates(vec![
