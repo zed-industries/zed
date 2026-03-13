@@ -2692,6 +2692,66 @@ async fn test_repo_exclude(executor: BackgroundExecutor, cx: &mut TestAppContext
     });
 }
 
+#[gpui::test]
+async fn test_repo_exclude_anchored_pattern(executor: BackgroundExecutor, cx: &mut TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(executor);
+    let project_dir = Path::new(path!("/project"));
+    fs.insert_tree(
+        project_dir,
+        json!({
+            ".git": {
+                "info": {
+                    // Anchored pattern: must match at repo root, not relative to .git/info/
+                    "exclude": "/build\n"
+                }
+            },
+            "build": {
+                "output.o": ""
+            },
+            "src": {
+                "main.rs": "",
+                "build": {
+                    "helper.rs": ""
+                }
+            },
+        }),
+    )
+    .await;
+
+    let worktree = Worktree::local(
+        project_dir,
+        true,
+        fs.clone(),
+        Default::default(),
+        true,
+        WorktreeId::from_proto(0),
+        &mut cx.to_async(),
+    )
+    .await
+    .unwrap();
+    worktree
+        .update(cx, |worktree, _| {
+            worktree.as_local().unwrap().scan_complete()
+        })
+        .await;
+    cx.run_until_parked();
+
+    // The anchored pattern "/build" should ignore the top-level "build" directory
+    // but not "src/build". With the wrong root (.git/info/), the pattern would
+    // look for .git/info/build and neither directory would be ignored.
+    worktree.update(cx, |worktree, _cx| {
+        check_worktree_entries(
+            worktree,
+            &[],
+            &["build"],
+            &["src/main.rs", "src/build/helper.rs"],
+            &[],
+        );
+    });
+}
+
 #[track_caller]
 fn check_worktree_entries(
     tree: &Worktree,

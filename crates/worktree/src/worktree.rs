@@ -3233,12 +3233,20 @@ async fn is_git_dir(path: &Path, fs: &dyn Fs) -> bool {
 }
 
 async fn build_gitignore(abs_path: &Path, fs: &dyn Fs) -> Result<Gitignore> {
+    let root = abs_path.parent().unwrap_or_else(|| Path::new("/"));
+    build_gitignore_from_root(root, abs_path, fs).await
+}
+
+// Like `build_gitignore`, but allows specifying the root directory against
+// which patterns are matched. This is needed for `info/exclude`, whose
+// patterns are relative to the working-tree root rather than to the
+// `.git/info/` directory that contains the file.
+async fn build_gitignore_from_root(root: &Path, abs_path: &Path, fs: &dyn Fs) -> Result<Gitignore> {
     let contents = fs
         .load(abs_path)
         .await
         .with_context(|| format!("failed to load gitignore file at {}", abs_path.display()))?;
-    let parent = abs_path.parent().unwrap_or_else(|| Path::new("/"));
-    let mut builder = GitignoreBuilder::new(parent);
+    let mut builder = GitignoreBuilder::new(root);
     for line in contents.lines() {
         builder.add_line(Some(abs_path.into()), line)?;
     }
@@ -5074,7 +5082,9 @@ impl BackgroundScanner {
         // Load gitignores asynchronously (outside the lock)
         let mut loaded_excludes: Vec<(Arc<Path>, Arc<Gitignore>)> = Vec::new();
         for (work_dir_abs_path, exclude_abs_path) in excludes_to_load {
-            if let Ok(current_exclude) = build_gitignore(&exclude_abs_path, self.fs.as_ref()).await
+            if let Ok(current_exclude) =
+                build_gitignore_from_root(&work_dir_abs_path, &exclude_abs_path, self.fs.as_ref())
+                    .await
             {
                 loaded_excludes.push((work_dir_abs_path, Arc::new(current_exclude)));
             }
@@ -5395,7 +5405,9 @@ async fn discover_ancestor_git_repo(
             }
 
             let repo_exclude_abs_path = ancestor_dot_git.join(REPO_EXCLUDE);
-            if let Ok(repo_exclude) = build_gitignore(&repo_exclude_abs_path, fs.as_ref()).await {
+            if let Ok(repo_exclude) =
+                build_gitignore_from_root(ancestor, &repo_exclude_abs_path, fs.as_ref()).await
+            {
                 exclude = Some(Arc::new(repo_exclude));
             }
 
