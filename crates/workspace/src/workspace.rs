@@ -2689,6 +2689,7 @@ impl Workspace {
                     ..
                 } = task.await?;
                 multi_workspace_window.update(cx, |multi_workspace, window, cx| {
+                    window.activate_window();
                     let workspace = multi_workspace.workspace().clone();
                     workspace.update(cx, |workspace, cx| callback(workspace, window, cx))
                 })
@@ -2714,12 +2715,11 @@ impl Workspace {
         if project.is_local() || project.is_via_wsl_with_host_interop(cx) {
             Task::ready(Ok(callback(self, window, cx)))
         } else {
-            let env = self.project.read(cx).cli_environment(cx);
             let task = Self::new_local(
                 Vec::new(),
                 self.app_state.clone(),
                 None,
-                env,
+                None,
                 None,
                 true,
                 cx,
@@ -2730,6 +2730,7 @@ impl Workspace {
                     ..
                 } = task.await?;
                 multi_workspace_window.update(cx, |multi_workspace, window, cx| {
+                    window.activate_window();
                     let workspace = multi_workspace.workspace().clone();
                     workspace.update(cx, |workspace, cx| callback(workspace, window, cx))
                 })
