@@ -351,6 +351,7 @@ impl AgentServer for CustomAgentServer {
             }
         }
         let store = delegate.store.downgrade();
+        let startup_cwd = delegate.startup_cwd.clone();
         cx.spawn(async move |cx| {
             if is_registry_agent && agent_id.as_ref() == GEMINI_ID {
                 if let Some(api_key) = cx.update(api_key_for_gemini_cli).await.ok() {
@@ -373,6 +374,7 @@ impl AgentServer for CustomAgentServer {
                 agent_id,
                 display_name,
                 command,
+                startup_cwd,
                 default_mode,
                 default_model,
                 default_config_options,
