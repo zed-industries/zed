@@ -144,7 +144,7 @@ jobs:
         token: ${{ steps.generate-token.outputs.token }}
         sign-commits: true
         assignees: ${{ github.actor }}
-    timeout-minutes: 3
+    timeout-minutes: 5
     defaults:
       run:
         shell: bash -euxo pipefail {0}

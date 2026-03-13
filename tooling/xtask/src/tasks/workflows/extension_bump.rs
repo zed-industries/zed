@@ -233,7 +233,7 @@ fn bump_extension_version(
             version_changed = version_changed_output.expr(),
         )))
         .runs_on(runners::LINUX_SMALL)
-        .timeout_minutes(3u32)
+        .timeout_minutes(5u32)
         .add_step(generate_token)
         .add_step(steps::checkout_repo())
         .add_step(cache_rust_dependencies_namespace())
