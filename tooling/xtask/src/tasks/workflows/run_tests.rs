@@ -1,9 +1,10 @@
 use gh_workflow::{
-    Concurrency, Container, Event, Expression, Job, Port, PullRequest, Push, Run, Step, Use,
-    Workflow,
+    Concurrency, Container, Event, Expression, Input, Job, Level, Permissions, Port, PullRequest,
+    Push, Run, Step, Strategy, Use, UsesJob, Workflow,
 };
 use indexmap::IndexMap;
 use indoc::formatdoc;
+use serde_json::json;
 
 use crate::tasks::workflows::{
     steps::{
@@ -24,9 +25,10 @@ pub(crate) fn run_tests() -> Workflow {
     // - script/update_top_ranking_issues/
     // - .github/ISSUE_TEMPLATE/
     // - .github/workflows/  (except .github/workflows/ci.yml)
+    // - extensions/  (these have their own test workflow)
     let should_run_tests = PathCondition::inverted(
         "run_tests",
-        r"^(docs/|script/update_top_ranking_issues/|\.github/(ISSUE_TEMPLATE|workflows/(?!run_tests)))",
+        r"^(docs/|script/update_top_ranking_issues/|\.github/(ISSUE_TEMPLATE|workflows/(?!run_tests))|extensions/)",
     );
     let should_check_docs = PathCondition::new("run_docs", r"^(docs/|crates/.*\.rs)");
     let should_check_scripts = PathCondition::new(
@@ -60,7 +62,8 @@ pub(crate) fn run_tests() -> Workflow {
         should_check_licences.guard(check_licenses()),
         should_check_scripts.guard(check_scripts()),
     ];
-    let tests_pass = tests_pass(&jobs);
+    let ext_tests = extension_tests_matrix();
+    let tests_pass = tests_pass(&jobs, &[&ext_tests.name]);
 
     jobs.push(should_run_tests.guard(check_postgres_and_protobuf_migrations())); // could be more specific here?
 
@@ -91,23 +94,25 @@ pub(crate) fn run_tests() -> Workflow {
             }
             workflow
         })
+        .add_job(ext_tests.name, ext_tests.job)
         .add_job(tests_pass.name, tests_pass.job)
 }
 
 // Generates a bash script that checks changed files against regex patterns
 // and sets GitHub output variables accordingly
 pub fn orchestrate(rules: &[&PathCondition]) -> NamedJob {
-    orchestrate_impl(rules, true, false)
+    orchestrate_impl(rules, true, false, true)
 }
 
 pub fn orchestrate_for_extension(rules: &[&PathCondition]) -> NamedJob {
-    orchestrate_impl(rules, false, true)
+    orchestrate_impl(rules, false, true, false)
 }
 
 fn orchestrate_impl(
     rules: &[&PathCondition],
     include_package_filter: bool,
     filter_by_working_directory: bool,
+    include_extension_filter: bool,
 ) -> NamedJob {
     let name = "orchestrate".to_owned();
     let step_name = "filter".to_owned();
@@ -241,6 +246,24 @@ fn orchestrate_impl(
         ));
     }
 
+    if include_extension_filter {
+        script.push_str(indoc::indoc! {r#"
+        # Detect changed extension directories (excluding extensions/workflows)
+        CHANGED_EXTENSIONS=$(echo "$CHANGED_FILES" | grep -oP '^extensions/[^/]+(?=/)' | sort -u | grep -v '^extensions/workflows$' || true)
+        if [ -n "$CHANGED_EXTENSIONS" ]; then
+            EXTENSIONS_JSON=$(echo "$CHANGED_EXTENSIONS" | jq -R -s -c 'split("\n") | map(select(length > 0))')
+        else
+            EXTENSIONS_JSON="[]"
+        fi
+        echo "changed_extensions=$EXTENSIONS_JSON" >> "$GITHUB_OUTPUT"
+        "#});
+
+        outputs.insert(
+            "changed_extensions".to_owned(),
+            format!("${{{{ steps.{}.outputs.changed_extensions }}}}", step_name),
+        );
+    }
+
     let job = Job::default()
         .runs_on(runners::LINUX_SMALL)
         .with_repository_owner_guard()
@@ -251,7 +274,7 @@ fn orchestrate_impl(
     NamedJob { name, job }
 }
 
-pub fn tests_pass(jobs: &[NamedJob]) -> NamedJob {
+pub fn tests_pass(jobs: &[NamedJob], extra_job_names: &[&str]) -> NamedJob {
     let mut script = String::from(indoc::indoc! {r#"
         set +x
         EXIT_CODE=0
@@ -263,20 +286,26 @@ pub fn tests_pass(jobs: &[NamedJob]) -> NamedJob {
 
     "#});
 
-    let env_entries: Vec<_> = jobs
+    let all_names: Vec<&str> = jobs
         .iter()
-        .map(|job| {
-            let env_name = format!("RESULT_{}", job.name.to_uppercase());
-            let env_value = format!("${{{{ needs.{}.result }}}}", job.name);
+        .map(|job| job.name.as_str())
+        .chain(extra_job_names.iter().copied())
+        .collect();
+
+    let env_entries: Vec<_> = all_names
+        .iter()
+        .map(|name| {
+            let env_name = format!("RESULT_{}", name.to_uppercase());
+            let env_value = format!("${{{{ needs.{}.result }}}}", name);
             (env_name, env_value)
         })
         .collect();
 
     script.push_str(
-        &jobs
+        &all_names
             .iter()
             .zip(env_entries.iter())
-            .map(|(job, (env_name, _))| format!("check_result \"{}\" \"${}\"", job.name, env_name))
+            .map(|(name, (env_name, _))| format!("check_result \"{}\" \"${}\"", name, env_name))
             .collect::<Vec<_>>()
             .join("\n"),
     );
@@ -286,8 +315,9 @@ pub fn tests_pass(jobs: &[NamedJob]) -> NamedJob {
     let job = Job::default()
         .runs_on(runners::LINUX_SMALL)
         .needs(
-            jobs.iter()
-                .map(|j| j.name.to_string())
+            all_names
+                .iter()
+                .map(|name| name.to_string())
                 .collect::<Vec<String>>(),
         )
         .cond(repository_owner_guard_expression(true))
@@ -711,4 +741,25 @@ pub(crate) fn check_scripts() -> NamedJob {
             .add_step(cache_rust_dependencies_namespace())
             .add_step(check_xtask_workflows()),
     )
+}
+
+fn extension_tests_matrix() -> NamedJob<UsesJob> {
+    let job = Job::default()
+        .needs(vec!["orchestrate".to_owned()])
+        .cond(Expression::new(
+            "needs.orchestrate.outputs.changed_extensions != '[]'",
+        ))
+        .permissions(Permissions::default().contents(Level::Read))
+        .strategy(Strategy::default().fail_fast(false).matrix(json!({
+            "extension": "${{ fromJson(needs.orchestrate.outputs.changed_extensions) }}"
+        })))
+        .uses(
+            "zed-industries",
+            "zed",
+            ".github/workflows/extension_tests.yml",
+            "main",
+        )
+        .with(Input::default().add("working-directory", "${{ matrix.extension }}"));
+
+    named::job(job)
 }
