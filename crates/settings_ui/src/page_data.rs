@@ -4010,7 +4010,7 @@ fn window_and_layout_page() -> SettingsPage {
         ]
     }
 
-    fn layout_section() -> [SettingsPageItem; 4] {
+    fn layout_section() -> [SettingsPageItem; 5] {
         [
             SettingsPageItem::SectionHeader("Layout"),
             SettingsPageItem::SettingItem(SettingItem {
@@ -4073,6 +4073,21 @@ fn window_and_layout_page() -> SettingsPage {
                     },
                 }),
                 metadata: None,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Focus Follows Mouse",
+                description: "Whether to change focus to a pane when the mouse hovers over it.",
+                field: Box::new(SettingField {
+                    json_path: Some("focus_follows_mouse"),
+                    pick: |settings_content| {
+                        settings_content.workspace.focus_follows_mouse.as_ref()
+                    },
+                    write: |settings_content, value| {
+                        settings_content.workspace.focus_follows_mouse = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
             }),
         ]
     }
