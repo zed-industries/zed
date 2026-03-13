@@ -12575,6 +12575,16 @@ impl Editor {
         })
     }
 
+    fn convert_text_case(text: &str, case: Case) -> String {
+        text.split('\n')
+            .map(|line| {
+                let indent_len = line.len() - line.trim_start().len();
+                let (indent, code) = line.split_at(indent_len);
+                format!("{}{}", indent, code.to_case(case))
+            })
+            .join("\n")
+    }
+
     fn manipulate_text<Fn>(&mut self, window: &mut Window, cx: &mut Context<Self>, mut callback: Fn)
     where
         Fn: FnMut(&str) -> String,
