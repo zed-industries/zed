@@ -1,6 +1,6 @@
 use crate::{
-    ExtensionLibraryKind, ExtensionManifest, GrammarManifestEntry, build_debug_adapter_schema_path,
-    parse_wasm_extension_version,
+    ExtensionLibraryKind, ExtensionManifest, GrammarManifestEntry, GrammarRepositorySource,
+    build_debug_adapter_schema_path, parse_wasm_extension_version,
 };
 use ::fs::Fs;
 use anyhow::{Context as _, Result, bail};
@@ -15,6 +15,7 @@ use std::{
     str::FromStr,
     sync::Arc,
 };
+use url::Url;
 use util::command::Stdio;
 use wasm_encoder::{ComponentSectionId, Encode as _, RawSection, Section as _};
 use wasmparser::Parser;
@@ -232,19 +233,33 @@ impl ExtensionBuilder {
     ) -> Result<()> {
         let clang_path = self.install_wasi_sdk_if_needed().await?;
 
-        let mut grammar_repo_dir = extension_dir.to_path_buf();
-        grammar_repo_dir.extend(["grammars", grammar_name]);
+        let mut grammar_output_dir = extension_dir.to_path_buf();
+        grammar_output_dir.extend(["grammars", grammar_name]);
 
-        let mut grammar_wasm_path = grammar_repo_dir.clone();
+        let mut grammar_wasm_path = grammar_output_dir.clone();
         grammar_wasm_path.set_extension("wasm");
 
-        log::info!("checking out {grammar_name} parser");
-        self.checkout_repo(
-            &grammar_repo_dir,
-            &grammar_metadata.repository,
-            &grammar_metadata.rev,
-        )
-        .await?;
+        let grammar_repo_dir = match &grammar_metadata.source {
+            GrammarRepositorySource::Remote { repository, rev } => {
+                log::info!("checking out {grammar_name} parser");
+                self.checkout_repo(&grammar_output_dir, repository, rev)
+                    .await?;
+                grammar_output_dir
+            }
+            GrammarRepositorySource::Local { repository } => {
+                log::info!("using local grammar source for {grammar_name} parser");
+                Self::local_grammar_repository_path(grammar_name, repository)?
+            }
+        };
+
+        if let Some(parent_directory) = grammar_wasm_path.parent() {
+            fs::create_dir_all(parent_directory).with_context(|| {
+                format!(
+                    "failed to create grammar output directory {}",
+                    parent_directory.display()
+                )
+            })?;
+        }
 
         let base_grammar_path = grammar_metadata
             .path
@@ -287,6 +302,27 @@ impl ExtensionBuilder {
         }
 
         Ok(())
+    }
+
+    fn local_grammar_repository_path(grammar_name: &str, repository: &str) -> Result<PathBuf> {
+        let repository_url = Url::parse(repository).with_context(|| {
+            format!("failed to parse local grammar repository URL for `{grammar_name}`")
+        })?;
+
+        let grammar_repo_dir = repository_url.to_file_path().map_err(|()| {
+            anyhow::anyhow!(
+                "local grammar repository for `{grammar_name}` must be an absolute `file://` URL"
+            )
+        })?;
+
+        if !grammar_repo_dir.exists() {
+            bail!(
+                "local grammar repository for `{grammar_name}` does not exist: {}",
+                grammar_repo_dir.display()
+            );
+        }
+
+        Ok(grammar_repo_dir)
     }
 
     async fn checkout_repo(&self, directory: &Path, url: &str, rev: &str) -> Result<()> {
@@ -670,9 +706,11 @@ async fn populate_defaults(
                         manifest.grammars.insert(
                             grammar_name.into(),
                             GrammarManifestEntry {
-                                repository: grammar_config.repository,
-                                rev: grammar_config.commit,
                                 path: grammar_config.path,
+                                source: crate::GrammarRepositorySource::Remote {
+                                    repository: grammar_config.repository,
+                                    rev: grammar_config.commit,
+                                },
                             },
                         );
                     }
@@ -719,6 +757,7 @@ mod tests {
     use gpui::TestAppContext;
     use indoc::indoc;
 
+    use super::ExtensionBuilder;
     use crate::{
         ExtensionManifest, ExtensionSnippets,
         extension_builder::{file_newer_than_deps, populate_defaults},
@@ -759,6 +798,52 @@ mod tests {
             "target is newer than dependencies (target {:?}, dep2 {:?})",
             target.metadata().unwrap().modified().unwrap(),
             dep2.metadata().unwrap().modified().unwrap(),
+        );
+    }
+
+    #[test]
+    fn local_grammar_repository_path_returns_existing_directory() {
+        let tempdir = tempfile::tempdir().unwrap();
+        let repository = format!("file://{}", tempdir.path().display());
+
+        let path = ExtensionBuilder::local_grammar_repository_path("rust", &repository).unwrap();
+
+        assert_eq!(path, tempdir.path());
+    }
+
+    #[test]
+    fn local_grammar_repository_path_rejects_missing_directory() {
+        let tempdir = tempfile::tempdir().unwrap();
+        let missing_path = tempdir.path().join("missing");
+        let repository = format!("file://{}", missing_path.display());
+
+        let error = ExtensionBuilder::local_grammar_repository_path("rust", &repository)
+            .expect_err("missing local grammar repository should fail");
+
+        assert!(error.to_string().contains("does not exist"));
+    }
+
+    #[test]
+    fn local_grammar_repository_path_rejects_invalid_url() {
+        let error = ExtensionBuilder::local_grammar_repository_path("rust", "not a url")
+            .expect_err("invalid local grammar repository URL should fail");
+
+        assert!(
+            error
+                .to_string()
+                .contains("failed to parse local grammar repository URL")
+        );
+    }
+
+    #[test]
+    fn local_grammar_repository_path_requires_absolute_file_url() {
+        let error = ExtensionBuilder::local_grammar_repository_path("rust", "https://example.com")
+            .expect_err("non-file local grammar repository URL should fail");
+
+        assert!(
+            error
+                .to_string()
+                .contains("must be an absolute `file://` URL")
         );
     }
 
