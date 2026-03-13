@@ -8,10 +8,10 @@ pub struct ReplSettings {
     ///
     /// Default: 32
     pub max_lines: usize,
-    /// Maximum number of columns to keep in REPL's scrollback buffer.
-    /// Clamped with [20, 512] range.
+    /// Maximum number of columns for REPL terminal output.
+    /// Set to 0 to automatically size columns to the window width.
     ///
-    /// Default: 128
+    /// Default: 0
     pub max_columns: usize,
     /// Whether to show small single-line outputs inline instead of in a block.
     ///
@@ -25,7 +25,7 @@ pub struct ReplSettings {
     /// Maximum number of lines of output to display before scrolling.
     /// Set to 0 to disable output height limits.
     ///
-    /// Default: 0
+    /// Default: 24
     pub output_max_height_lines: usize,
 }
 
@@ -38,7 +38,7 @@ impl Settings for ReplSettings {
             max_columns: repl.max_columns.unwrap(),
             inline_output: repl.inline_output.unwrap_or(true),
             inline_output_max_length: repl.inline_output_max_length.unwrap_or(50),
-            output_max_height_lines: repl.output_max_height_lines.unwrap_or(0),
+            output_max_height_lines: repl.output_max_height_lines.unwrap_or(24),
         }
     }
 }
