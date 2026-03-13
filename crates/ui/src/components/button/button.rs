@@ -332,7 +332,7 @@ impl ButtonCommon for Button {
     /// use ui::{Tooltip, prelude::*};
     ///
     /// Button::new("tooltip_button", "Hover Me")
-    ///     .tooltip(|window, cx| Tooltip::text("This is a tooltip"));
+    ///     .tooltip(Tooltip::text("This is a tooltip"));
     /// ```
     fn tooltip(mut self, tooltip: impl Fn(&mut Window, &mut App) -> AnyView + 'static) -> Self {
         self.base = self.base.tooltip(tooltip);
