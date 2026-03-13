@@ -17,6 +17,10 @@ on:
         description: force-bump
         required: true
         type: boolean
+      working-directory:
+        description: working-directory
+        type: string
+        default: .
     secrets:
       app-id:
         description: The app ID used to create the PR
@@ -42,8 +46,6 @@ jobs:
         if [[ "$GITHUB_EVENT_NAME" == "pull_request" ]]; then
             PR_FORK_POINT="$(git merge-base origin/main HEAD)"
             git checkout "$PR_FORK_POINT"
-        elif BRANCH_PARENT_SHA="$(git merge-base origin/main origin/zed-zippy-autobump)"; then
-            git checkout "$BRANCH_PARENT_SHA"
         else
             git checkout "$(git log -1 --format=%H)"~1
         fi
@@ -59,6 +61,10 @@ jobs:
       version_changed: ${{ steps.compare-versions-check.outputs.version_changed }}
       current_version: ${{ steps.compare-versions-check.outputs.current_version }}
     timeout-minutes: 1
+    defaults:
+      run:
+        shell: bash -euxo pipefail {0}
+        working-directory: ${{ inputs.working-directory }}
   bump_extension_version:
     needs:
     - check_version_changed
@@ -98,18 +104,35 @@ jobs:
         fi
 
         NEW_VERSION="$(sed -n 's/^version = \"\(.*\)\"/\1/p' < extension.toml | tr -d '[:space:]')"
+        EXTENSION_ID="$(sed -n 's/^id = "\(.*\)"/\1/p' < extension.toml | head -1 | tr -d '[:space:]')"
+        EXTENSION_NAME="$(sed -n 's/^name = "\(.*\)"/\1/p' < extension.toml | head -1 | tr -d '[:space:]')"
+
+        if [[ "$WORKING_DIR" == "." || -z "$WORKING_DIR" ]]; then
+            {
+                echo "title=Bump version to ${NEW_VERSION}";
+                echo "body=This PR bumps the version of this extension to v${NEW_VERSION}";
+                echo "branch_name=zed-zippy-autobump";
+            } >> "$GITHUB_OUTPUT"
+        else
+            {
+                echo "title=${EXTENSION_ID}: Bump to v${NEW_VERSION}";
+                echo "body=This PR bumps the version of the ${EXTENSION_NAME} extension to v${NEW_VERSION}";
+                echo "branch_name=zed-zippy-${EXTENSION_ID}-autobump";
+            } >> "$GITHUB_OUTPUT"
+        fi
 
         echo "new_version=${NEW_VERSION}" >> "$GITHUB_OUTPUT"
       env:
         OLD_VERSION: ${{ needs.check_version_changed.outputs.current_version }}
         BUMP_TYPE: ${{ inputs.bump-type }}
+        WORKING_DIR: ${{ inputs.working-directory }}
     - name: extension_bump::create_pull_request
       uses: peter-evans/create-pull-request@v7
       with:
-        title: Bump version to ${{ steps.bump-version.outputs.new_version }}
-        body: This PR bumps the version of this extension to v${{ steps.bump-version.outputs.new_version }}
-        commit-message: Bump version to v${{ steps.bump-version.outputs.new_version }}
-        branch: zed-zippy-autobump
+        title: ${{ steps.bump-version.outputs.title }}
+        body: ${{ steps.bump-version.outputs.body }}
+        commit-message: ${{ steps.bump-version.outputs.title }}
+        branch: ${{ steps.bump-version.outputs.branch_name }}
         committer: zed-zippy[bot] <234243425+zed-zippy[bot]@users.noreply.github.com>
         base: main
         delete-branch: true
@@ -117,6 +140,10 @@ jobs:
         sign-commits: true
         assignees: ${{ github.actor }}
     timeout-minutes: 3
+    defaults:
+      run:
+        shell: bash -euxo pipefail {0}
+        working-directory: ${{ inputs.working-directory }}
   create_version_label:
     needs:
     - check_version_changed
@@ -145,6 +172,10 @@ jobs:
           })
         github-token: ${{ steps.generate-token.outputs.token }}
     timeout-minutes: 1
+    defaults:
+      run:
+        shell: bash -euxo pipefail {0}
+        working-directory: ${{ inputs.working-directory }}
   trigger_release:
     needs:
     - check_version_changed
@@ -178,6 +209,10 @@ jobs:
         tag: v${{ needs.check_version_changed.outputs.current_version }}
       env:
         COMMITTER_TOKEN: ${{ steps.generate-token.outputs.token }}
+    defaults:
+      run:
+        shell: bash -euxo pipefail {0}
+        working-directory: ${{ inputs.working-directory }}
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref_name }}-${{ github.ref_name == 'main' && github.sha || 'anysha' }}
   cancel-in-progress: true
