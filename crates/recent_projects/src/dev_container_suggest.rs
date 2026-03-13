@@ -74,7 +74,9 @@ pub fn suggest_on_worktree_updated(
                     .worktrees(cx)
                     .any(|wt| !find_configs_in_snapshot(wt.read(cx)).is_empty());
                 if has_configs {
-                    window.dispatch_action(Box::new(zed_actions::OpenDevContainer), cx);
+                    cx.on_next_frame(window, move |_workspace, window, cx| {
+                        window.dispatch_action(Box::new(zed_actions::OpenDevContainer), cx);
+                    });
                 } else {
                     log::warn!(
                         "--dev-container: no devcontainer configuration found in project"
