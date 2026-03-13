@@ -821,11 +821,13 @@ impl GitStore {
                             )
                         })
                         .await?;
-                    let unstaged_diff = this
-                        .update(cx, |this, cx| this.open_unstaged_diff(buffer.clone(), cx))?
+                    let uncommitted_diff = this
+                        .update(cx, |this, cx| {
+                            this.open_uncommitted_diff(buffer.clone(), cx)
+                        })?
                         .await?;
                     buffer_diff.update(cx, |buffer_diff, _| {
-                        buffer_diff.set_secondary_diff(unstaged_diff);
+                        buffer_diff.set_secondary_diff(uncommitted_diff);
                     });
 
                     this.update(cx, |this, cx| {
