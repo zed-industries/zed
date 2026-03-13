@@ -822,11 +822,15 @@ impl AgentPanel {
                                     // the previous generation completed.
                                     let should_follow = active_thread.read(cx).should_be_following;
                                     if should_follow {
+                                        eprintln!("🔄 [AGENT_PANEL] Activating auto-follow for follow-up message (same entity path)");
                                         if let Some(workspace) = this.workspace.upgrade() {
                                             workspace.update(cx, |workspace, cx| {
                                                 workspace.follow(CollaboratorId::Agent, window, cx);
                                             });
+                                            eprintln!("✅ [AGENT_PANEL] workspace.follow(Agent) called successfully (follow-up)");
                                         }
+                                    } else {
+                                        eprintln!("⏸️ [AGENT_PANEL] Auto-follow disabled by user, skipping follow (follow-up)");
                                     }
 
                                     return;
@@ -885,12 +889,18 @@ impl AgentPanel {
                             if let Some(active_thread) = server_view.read(cx).active_thread() {
                                 let should_follow = active_thread.read(cx).should_be_following;
                                 if should_follow {
+                                    eprintln!("🔄 [AGENT_PANEL] Activating auto-follow for new external thread");
                                     if let Some(workspace) = this.workspace.upgrade() {
                                         workspace.update(cx, |workspace, cx| {
                                             workspace.follow(CollaboratorId::Agent, window, cx);
                                         });
+                                        eprintln!("✅ [AGENT_PANEL] workspace.follow(Agent) called successfully (new thread)");
                                     }
+                                } else {
+                                    eprintln!("⏸️ [AGENT_PANEL] Auto-follow disabled by user, skipping follow (new thread)");
                                 }
+                            } else {
+                                eprintln!("⚠️ [AGENT_PANEL] No active_thread found after set_active_view, cannot activate follow");
                             }
                         }
 
