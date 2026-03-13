@@ -478,8 +478,6 @@ impl FoldedAncestors {
 }
 
 pub fn init(cx: &mut App) {
-    ProjectPanelClipboardStore::global(cx);
-
     cx.observe_new(|workspace: &mut Workspace, _, _| {
         workspace.register_action(|workspace, _: &ToggleFocus, window, cx| {
             workspace.toggle_panel_focus::<ProjectPanel>(window, cx);
@@ -862,11 +860,6 @@ impl ProjectPanel {
             .detach();
 
             cx.observe_global::<FileIcons>(|_, cx| {
-                cx.notify();
-            })
-            .detach();
-
-            cx.observe(&clipboard_store, |_, _, cx| {
                 cx.notify();
             })
             .detach();
@@ -3042,20 +3035,20 @@ impl ProjectPanel {
     fn cut(&mut self, _: &Cut, _: &mut Window, cx: &mut Context<Self>) {
         let entries = self.disjoint_effective_entries(cx);
         if let Some(clipboard_data) = self.build_clipboard_data(entries, cx) {
-            self.clipboard_store.update(cx, |clipboard_store, cx| {
+            self.clipboard_store.update(cx, |clipboard_store, _| {
                 clipboard_store.clipboard = Some(ClipboardEntry::Cut(clipboard_data));
-                cx.notify();
             });
+            cx.notify();
         }
     }
 
     fn copy(&mut self, _: &Copy, _: &mut Window, cx: &mut Context<Self>) {
         let entries = self.disjoint_effective_entries(cx);
         if let Some(clipboard_data) = self.build_clipboard_data(entries, cx) {
-            self.clipboard_store.update(cx, |clipboard_store, cx| {
+            self.clipboard_store.update(cx, |clipboard_store, _| {
                 clipboard_store.clipboard = Some(ClipboardEntry::Copied(clipboard_data));
-                cx.notify();
             });
+            cx.notify();
         }
     }
 
@@ -3484,12 +3477,11 @@ impl ProjectPanel {
         }
 
         if clip_is_cut {
-            self.clipboard_store.update(cx, |clipboard_store, cx| {
+            self.clipboard_store.update(cx, |clipboard_store, _| {
                 clipboard_store.clipboard = clipboard_store
                     .clipboard
                     .take()
                     .map(ClipboardEntry::into_copy_entry);
-                cx.notify();
             });
         }
 
