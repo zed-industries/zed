@@ -7932,7 +7932,7 @@ pub(crate) fn open_link(
         return;
     };
 
-    if let Some(mention) = MentionUri::parse(&url, workspace.read(cx).path_style(cx)).log_err() {
+    if let Some(mention) = MentionUri::parse(&url, workspace.read(cx).path_style(cx)).ok() {
         workspace.update(cx, |workspace, cx| match mention {
             MentionUri::File { abs_path } => {
                 let project = workspace.project();
@@ -8034,7 +8034,152 @@ pub(crate) fn open_link(
             MentionUri::GitDiff { .. } => {}
             MentionUri::MergeConflict { .. } => {}
         })
+    } else if !url.contains("://") {
+        open_relative_path(&url, workspace, window, cx);
+    } else if url.starts_with("zed://") && !url.starts_with("zed:///") {
+        if let Ok(parsed) = url::Url::parse(&url) {
+            let host = parsed.host_str().unwrap_or("");
+            let raw_path = parsed.path().trim_start_matches('/');
+            let (file_part, line_number) = if let Some(colon_pos) = raw_path.rfind(':') {
+                let suffix = &raw_path[colon_pos + 1..];
+                if let Ok(line) = suffix.parse::<u32>() {
+                    (&raw_path[..colon_pos], Some(line.saturating_sub(1)))
+                } else {
+                    (raw_path, None)
+                }
+            } else {
+                (raw_path, None)
+            };
+
+            let project = workspace.read(cx).project().clone();
+            let project_path = project.update(cx, |project, cx| {
+                let path_style = project.path_style(cx);
+                let worktree_store = project.worktree_store().read(cx);
+
+                let matched = worktree_store
+                    .visible_worktrees(cx)
+                    .find(|wt| wt.read(cx).root_name().as_unix_str() == host);
+                if let Some(worktree) = matched {
+                    let rel = util::rel_path::RelPath::new(
+                        std::path::Path::new(file_part),
+                        path_style,
+                    )
+                    .ok()?;
+                    return Some(project::ProjectPath {
+                        worktree_id: worktree.read(cx).id(),
+                        path: rel.into_owned().into(),
+                    });
+                }
+
+                let full = format!("{}/{}", host, file_part);
+                let full_path = std::path::Path::new(&full);
+                if let Some(found) = project.find_project_path(full_path, cx) {
+                    return Some(found);
+                }
+
+                let worktree = worktree_store.visible_worktrees(cx).next()?;
+                let rel = util::rel_path::RelPath::new(full_path, path_style).ok()?;
+                Some(project::ProjectPath {
+                    worktree_id: worktree.read(cx).id(),
+                    path: rel.into_owned().into(),
+                })
+            });
+
+            let Some(project_path) = project_path else {
+                return;
+            };
+
+            let item = workspace.update(cx, |workspace, cx| {
+                workspace.open_path(project_path, None, true, window, cx)
+            });
+
+            if let Some(line) = line_number {
+                window
+                    .spawn(cx, async move |cx| {
+                        let Some(editor) = item.await?.downcast::<Editor>() else {
+                            return Ok(());
+                        };
+                        let range = Point::new(line, 0)..Point::new(line, 0);
+                        editor
+                            .update_in(cx, |editor, window, cx| {
+                                editor.change_selections(
+                                    SelectionEffects::scroll(Autoscroll::center()),
+                                    window,
+                                    cx,
+                                    |s| s.select_ranges(vec![range]),
+                                );
+                            })
+                            .ok();
+                        anyhow::Ok(())
+                    })
+                    .detach_and_log_err(cx);
+            } else {
+                item.detach_and_log_err(cx);
+            }
+        }
     } else {
         cx.open_url(&url);
+    }
+}
+
+fn open_relative_path(raw: &str, workspace: Entity<Workspace>, window: &mut Window, cx: &mut App) {
+    // Strip an optional trailing `:line` or `:line:col` suffix (e.g. "src/main.rs:42").
+    let (file_part, line_number) = if let Some(colon_pos) = raw.rfind(':') {
+        let suffix = &raw[colon_pos + 1..];
+        if let Ok(line) = suffix.parse::<u32>() {
+            (&raw[..colon_pos], Some(line.saturating_sub(1)))
+        } else {
+            (raw, None)
+        }
+    } else {
+        (raw, None)
+    };
+
+    let path = std::path::Path::new(file_part);
+    let project = workspace.read(cx).project().clone();
+    let project_path = project.update(cx, |project, cx| project.find_project_path(path, cx));
+    let project_path = if let Some(found) = project_path {
+        found
+    } else {
+        let project = project.read(cx);
+        let path_style = project.path_style(cx);
+        let Some(worktree) = project.visible_worktrees(cx).next() else {
+            return;
+        };
+        let Ok(rel_path) = util::rel_path::RelPath::new(path, path_style) else {
+            return;
+        };
+        project::ProjectPath {
+            worktree_id: worktree.read(cx).id(),
+            path: rel_path.into_owned().into(),
+        }
+    };
+
+    let item = workspace.update(cx, |workspace, cx| {
+        workspace.open_path(project_path, None, true, window, cx)
+    });
+
+    if let Some(line) = line_number {
+        window
+            .spawn(cx, async move |cx| {
+                let Some(editor) = item.await?.downcast::<Editor>() else {
+                    return Ok(());
+                };
+                let range = Point::new(line, 0)..Point::new(line, 0);
+                editor
+                    .update_in(cx, |editor, window, cx| {
+                        editor.change_selections(
+                            SelectionEffects::scroll(Autoscroll::center()),
+                            window,
+                            cx,
+                            |s| s.select_ranges(vec![range]),
+                        );
+                    })
+                    .ok();
+                anyhow::Ok(())
+            })
+            .detach_and_log_err(cx);
+    } else {
+        item.detach_and_log_err(cx);
     }
 }
