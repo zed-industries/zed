@@ -5220,6 +5220,7 @@ impl ProjectPanel {
                 false
             }
         };
+        let git_indicator = git_status_indicator(details.git_status);
 
         let id: ElementId = if is_sticky {
             SharedString::from(format!("project_panel_sticky_item_{}", entry_id.to_usize())).into()
@@ -5564,7 +5565,7 @@ impl ProjectPanel {
                     })
                     .selectable(false)
                     .when(
-                        canonical_path.is_some() || diagnostic_count.is_some(),
+                        canonical_path.is_some() || diagnostic_count.is_some() || git_indicator.is_some(),
                         |this| {
                             let symlink_element = canonical_path.map(|path| {
                                 div()
@@ -5605,6 +5606,13 @@ impl ProjectPanel {
                                                         .color(Color::Warning),
                                                 )
                                             },
+                                        )
+                                    })
+                                    .when_some(git_indicator, |this, (label, color)| {
+                                        this.child(
+                                            Label::new(label)
+                                                .size(LabelSize::Small)
+                                                .color(color)
                                         )
                                     })
                                     .when_some(symlink_element, |this, el| this.child(el))
@@ -7149,6 +7157,31 @@ pub fn par_sort_worktree_entries_with_mode(
     mode: settings::ProjectPanelSortMode,
 ) {
     entries.par_sort_by(|lhs, rhs| cmp_with_mode(lhs, rhs, &mode));
+}
+
+fn git_status_indicator(git_status: GitSummary) -> Option<(&'static str, Color)> {
+    if git_status.conflict > 0 {
+        return Some(("!", Color::Conflict));
+    }
+    if git_status.untracked > 0 {
+        return Some(("U", Color::Created));
+    }
+    if git_status.worktree.deleted > 0 {
+        return Some(("D", Color::Deleted));
+    }
+    if git_status.worktree.modified > 0 {
+        return Some(("M", Color::Warning));
+    }
+    if git_status.index.deleted > 0 {
+        return Some(("D", Color::Deleted));
+    }
+    if git_status.index.modified > 0 {
+        return Some(("M", Color::Modified));
+    }
+    if git_status.index.added > 0 {
+        return Some(("A", Color::Created));
+    }
+    None
 }
 
 #[cfg(test)]
