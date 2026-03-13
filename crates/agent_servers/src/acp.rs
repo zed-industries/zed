@@ -9,8 +9,8 @@ use anyhow::anyhow;
 use collections::HashMap;
 use futures::AsyncBufReadExt as _;
 use futures::io::BufReader;
-use project::Project;
-use project::agent_server_store::{AgentServerCommand, GEMINI_NAME};
+use project::agent_server_store::{AgentServerCommand, GEMINI_ID};
+use project::{AgentId, Project};
 use serde::Deserialize;
 use settings::Settings as _;
 use task::ShellBuilder;
@@ -35,7 +35,7 @@ use terminal::terminal_settings::{AlternateScroll, CursorShape, TerminalSettings
 pub struct UnsupportedVersion;
 
 pub struct AcpConnection {
-    server_name: SharedString,
+    id: AgentId,
     display_name: SharedString,
     telemetry_id: SharedString,
     connection: Rc<acp::ClientSideConnection>,
@@ -158,7 +158,7 @@ impl AgentSessionList for AcpSessionList {
 }
 
 pub async fn connect(
-    server_name: SharedString,
+    agent_id: AgentId,
     display_name: SharedString,
     command: AgentServerCommand,
     default_mode: Option<acp::SessionModeId>,
@@ -167,7 +167,7 @@ pub async fn connect(
     cx: &mut AsyncApp,
 ) -> Result<Rc<dyn AgentConnection>> {
     let conn = AcpConnection::stdio(
-        server_name,
+        agent_id,
         display_name,
         command.clone(),
         default_mode,
@@ -183,7 +183,7 @@ const MINIMUM_SUPPORTED_VERSION: acp::ProtocolVersion = acp::ProtocolVersion::V1
 
 impl AcpConnection {
     pub async fn stdio(
-        server_name: SharedString,
+        agent_id: AgentId,
         display_name: SharedString,
         command: AgentServerCommand,
         default_mode: Option<acp::SessionModeId>,
@@ -270,7 +270,7 @@ impl AcpConnection {
 
         cx.update(|cx| {
             AcpConnectionRegistry::default_global(cx).update(cx, |registry, cx| {
-                registry.set_active_connection(server_name.clone(), &connection, cx)
+                registry.set_active_connection(agent_id.clone(), &connection, cx)
             });
         });
 
@@ -305,7 +305,7 @@ impl AcpConnection {
             // Use the one the agent provides if we have one
             .map(|info| info.name.into())
             // Otherwise, just use the name
-            .unwrap_or_else(|| server_name.clone());
+            .unwrap_or_else(|| agent_id.0.to_string().into());
 
         let session_list = if response
             .agent_capabilities
@@ -321,7 +321,7 @@ impl AcpConnection {
         };
 
         // TODO: Remove this override once Google team releases their official auth methods
-        let auth_methods = if server_name == GEMINI_NAME {
+        let auth_methods = if agent_id.0.as_ref() == GEMINI_ID {
             let mut args = command.args.clone();
             args.retain(|a| a != "--experimental-acp");
             let value = serde_json::json!({
@@ -340,9 +340,9 @@ impl AcpConnection {
             response.auth_methods
         };
         Ok(Self {
+            id: agent_id,
             auth_methods,
             connection,
-            server_name,
             display_name,
             telemetry_id,
             sessions,
@@ -370,6 +370,10 @@ impl Drop for AcpConnection {
 }
 
 impl AgentConnection for AcpConnection {
+    fn agent_id(&self) -> AgentId {
+        self.id.clone()
+    }
+
     fn telemetry_id(&self) -> SharedString {
         self.telemetry_id.clone()
     }
@@ -380,7 +384,7 @@ impl AgentConnection for AcpConnection {
         cwd: &Path,
         cx: &mut App,
     ) -> Task<Result<Entity<AcpThread>>> {
-        let name = self.server_name.clone();
+        let name = self.id.0.clone();
         let cwd = cwd.to_path_buf();
         let mcp_servers = mcp_servers_for_project(&project, cx);
 

@@ -2682,7 +2682,7 @@ mod tests {
     use futures::{channel::mpsc, future::LocalBoxFuture, select};
     use gpui::{App, AsyncApp, TestAppContext, WeakEntity};
     use indoc::indoc;
-    use project::{FakeFs, Fs};
+    use project::{AgentId, FakeFs, Fs};
     use rand::{distr, prelude::*};
     use serde_json::json;
     use settings::SettingsStore;
@@ -3982,6 +3982,10 @@ mod tests {
     }
 
     impl AgentConnection for FakeAgentConnection {
+        fn agent_id(&self) -> AgentId {
+            AgentId::new("fake")
+        }
+
         fn telemetry_id(&self) -> SharedString {
             "fake".into()
         }

@@ -44,7 +44,7 @@ use crate::{
 };
 pub use agent_registry_store::{AgentRegistryStore, RegistryAgent};
 pub use agent_server_store::{
-    AgentServerStore, AgentServersUpdated, ExternalAgentServerName, ExternalAgentSource,
+    AgentServerStore, AgentServersUpdated, AgentId, ExternalAgentSource,
 };
 pub use git_store::{
     ConflictRegion, ConflictSet, ConflictSetSnapshot, ConflictSetUpdate,

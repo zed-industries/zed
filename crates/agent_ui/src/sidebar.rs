@@ -2,7 +2,7 @@ use crate::threads_archive_view::{ThreadsArchiveView, ThreadsArchiveViewEvent};
 use crate::{Agent, AgentPanel, AgentPanelEvent, NewThread};
 use acp_thread::ThreadStatus;
 use action_log::DiffStats;
-use agent::ThreadStore;
+use agent::ZED_AGENT_ID;
 use agent_client_protocol::{self as acp, SessionId};
 use agent_settings::AgentSettings;
 use chrono::{DateTime, Utc};
@@ -21,7 +21,7 @@ use gpui::{
     Pixels, Render, SharedString, Subscription, WeakEntity, Window, actions, list, prelude::*, px,
 };
 use menu::{Cancel, Confirm, SelectFirst, SelectLast, SelectNext, SelectPrevious};
-use project::Event as ProjectEvent;
+use project::{AgentId, Event as ProjectEvent};
 use settings::Settings;
 use std::collections::{HashMap, HashSet};
 use std::mem;
@@ -107,15 +107,12 @@ impl ThreadMetadataStore {
         let title = thread_ref.title();
         let updated_at = Utc::now();
 
-        let agent_name = if thread_ref
-            .connection()
-            .clone()
-            .downcast::<agent::NativeAgentConnection>()
-            .is_some()
-        {
+        let agent_id = thread_ref.connection().agent_id();
+
+        let agent_id = if agent_id.as_ref() == ZED_AGENT_ID.as_ref() {
             None
         } else {
-            Some(thread_ref.connection().telemetry_id().to_string())
+            Some(agent_id)
         };
 
         let folder_paths = {
@@ -131,7 +128,7 @@ impl ThreadMetadataStore {
             THREAD_METADATA_DB
                 .save(&ThreadMetadata {
                     session_id,
-                    agent_name,
+                    agent_id,
                     title,
                     updated_at,
                     created_at: None,
@@ -152,7 +149,7 @@ impl Global for ThreadMetadataStore {}
 pub struct ThreadMetadata {
     pub session_id: acp::SessionId,
     /// `None` for native Zed threads, `Some("claude-code")` etc. for ACP agents.
-    pub agent_name: Option<String>,
+    pub agent_id: Option<AgentId>,
     pub title: SharedString,
     pub updated_at: DateTime<Utc>,
     pub created_at: Option<DateTime<Utc>>,
@@ -167,7 +164,7 @@ impl Domain for ThreadMetadataDb {
     const MIGRATIONS: &[&str] = &[sql!(
         CREATE TABLE IF NOT EXISTS sidebar_threads(
             session_id TEXT PRIMARY KEY,
-            agent_name TEXT,
+            agent_id TEXT,
             title TEXT NOT NULL,
             updated_at TEXT NOT NULL,
             created_at TEXT,
@@ -183,7 +180,7 @@ impl ThreadMetadataDb {
     /// Upsert metadata for a thread (native or ACP).
     pub async fn save(&self, row: &ThreadMetadata) -> anyhow::Result<()> {
         let id = row.session_id.0.clone();
-        let agent_name = row.agent_name.clone();
+        let agent_id = row.agent_id.as_ref().map(|id| id.0.to_string());
         let title = row.title.to_string();
         let updated_at = row.updated_at.to_rfc3339();
         let created_at = row.created_at.map(|dt| dt.to_rfc3339());
@@ -195,17 +192,17 @@ impl ThreadMetadataDb {
         };
 
         self.write(move |conn| {
-            let sql = "INSERT INTO sidebar_threads(session_id, agent_name, title, updated_at, created_at, folder_paths, folder_paths_order) \
+            let sql = "INSERT INTO sidebar_threads(session_id, agent_id, title, updated_at, created_at, folder_paths, folder_paths_order) \
                        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7) \
                        ON CONFLICT(session_id) DO UPDATE SET \
-                           agent_name = excluded.agent_name, \
+                           agent_id = excluded.agent_id, \
                            title = excluded.title, \
                            updated_at = excluded.updated_at, \
                            folder_paths = excluded.folder_paths, \
                            folder_paths_order = excluded.folder_paths_order";
             let mut stmt = Statement::prepare(conn, sql)?;
             let mut i = stmt.bind(&id, 1)?;
-            i = stmt.bind(&agent_name, i)?;
+            i = stmt.bind(&agent_id, i)?;
             i = stmt.bind(&title, i)?;
             i = stmt.bind(&updated_at, i)?;
             i = stmt.bind(&created_at, i)?;
@@ -219,7 +216,7 @@ impl ThreadMetadataDb {
     /// List all sidebar thread metadata, ordered by updated_at descending.
     pub fn list(&self) -> anyhow::Result<Vec<ThreadMetadata>> {
         self.select::<ThreadMetadata>(
-            "SELECT session_id, agent_name, title, updated_at, created_at, folder_paths, folder_paths_order \
+            "SELECT session_id, agent_id, title, updated_at, created_at, folder_paths, folder_paths_order \
              FROM sidebar_threads \
              ORDER BY updated_at DESC"
         )?()
@@ -228,7 +225,7 @@ impl ThreadMetadataDb {
     /// Look up a single thread by session ID.
     pub fn get(&self, session_id: &acp::SessionId) -> anyhow::Result<Option<ThreadMetadata>> {
         self.select_row_bound::<&str, ThreadMetadata>(
-            "SELECT session_id, agent_name, title, updated_at, created_at, folder_paths, folder_paths_order \
+            "SELECT session_id, agent_id, title, updated_at, created_at, folder_paths, folder_paths_order \
              FROM sidebar_threads \
              WHERE session_id = ?"
         )?(session_id.0.as_ref())
@@ -259,7 +256,7 @@ impl ThreadMetadataDb {
 impl Column for ThreadMetadata {
     fn column(statement: &mut Statement, start_index: i32) -> anyhow::Result<(Self, i32)> {
         let (id, next): (Arc<str>, i32) = Column::column(statement, start_index)?;
-        let (agent_name, next): (Option<String>, i32) = Column::column(statement, next)?;
+        let (agent_id, next): (Option<String>, i32) = Column::column(statement, next)?;
         let (title, next): (String, i32) = Column::column(statement, next)?;
         let (updated_at_str, next): (String, i32) = Column::column(statement, next)?;
         let (created_at_str, next): (Option<String>, i32) = Column::column(statement, next)?;
@@ -286,7 +283,7 @@ impl Column for ThreadMetadata {
         Ok((
             ThreadMetadata {
                 session_id: acp::SessionId::new(id),
-                agent_name,
+                agent_id: agent_id.map(|id| AgentId::new(id)),
                 title: title.into(),
                 updated_at,
                 created_at,
@@ -856,18 +853,16 @@ impl Sidebar {
                 if let Some(rows) = threads_by_paths.get(&path_list) {
                     for row in rows {
                         seen_session_ids.insert(row.session_id.clone());
-                        let (agent, icon, icon_from_external_svg) = match &row.agent_name {
+                        let (agent, icon, icon_from_external_svg) = match &row.agent_id {
                             None => (Agent::NativeAgent, IconName::ZedAgent, None),
                             Some(name) => {
-                                use project::agent_server_store::ExternalAgentServerName;
+                                use project::agent_server_store::AgentId;
                                 let custom_icon = agent_server_store.as_ref().and_then(|store| {
-                                    store
-                                        .read(cx)
-                                        .agent_icon(&ExternalAgentServerName(name.clone().into()))
+                                    store.read(cx).agent_icon(&AgentId(name.clone().into()))
                                 });
                                 (
                                     Agent::Custom {
-                                        name: name.clone().into(),
+                                        id: name.clone().into(),
                                     },
                                     IconName::Terminal,
                                     custom_icon,
@@ -935,19 +930,19 @@ impl Sidebar {
                                 if !seen_session_ids.insert(row.session_id.clone()) {
                                     continue;
                                 }
-                                let (agent, icon, icon_from_external_svg) = match &row.agent_name {
+                                let (agent, icon, icon_from_external_svg) = match &row.agent_id {
                                     None => (Agent::NativeAgent, IconName::ZedAgent, None),
                                     Some(name) => {
-                                        use project::agent_server_store::ExternalAgentServerName;
+                                        use project::agent_server_store::AgentId;
                                         let custom_icon =
                                             agent_server_store.as_ref().and_then(|store| {
-                                                store.read(cx).agent_icon(&ExternalAgentServerName(
-                                                    name.clone().into(),
-                                                ))
+                                                store
+                                                    .read(cx)
+                                                    .agent_icon(&AgentId(name.clone().into()))
                                             });
                                         (
                                             Agent::Custom {
-                                                name: name.clone().into(),
+                                                id: AgentId::new(name.clone()),
                                             },
                                             IconName::Terminal,
                                             custom_icon,

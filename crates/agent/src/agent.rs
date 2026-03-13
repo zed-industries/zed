@@ -41,7 +41,7 @@ use gpui::{
     WeakEntity,
 };
 use language_model::{IconOrSvg, LanguageModel, LanguageModelProvider, LanguageModelRegistry};
-use project::{Project, ProjectItem, ProjectPath, Worktree};
+use project::{AgentId, Project, ProjectItem, ProjectPath, Worktree};
 use prompt_store::{
     ProjectContext, PromptStore, RULES_FILE_NAMES, RulesFileContext, UserRulesContext,
     WorktreeContext,
@@ -51,7 +51,7 @@ use settings::{LanguageModelSelection, update_settings_file};
 use std::any::Any;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
 use util::ResultExt;
 use util::path_list::PathList;
 use util::rel_path::RelPath;
@@ -1381,7 +1381,13 @@ impl acp_thread::AgentModelSelector for NativeAgentModelSelector {
     }
 }
 
+pub static ZED_AGENT_ID: LazyLock<AgentId> = LazyLock::new(|| AgentId::new("Zed Agent"));
+
 impl acp_thread::AgentConnection for NativeAgentConnection {
+    fn agent_id(&self) -> AgentId {
+        ZED_AGENT_ID.clone()
+    }
+
     fn telemetry_id(&self) -> SharedString {
         "zed".into()
     }

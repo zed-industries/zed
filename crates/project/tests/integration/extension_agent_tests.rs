@@ -9,14 +9,14 @@ use std::{any::Any, path::PathBuf, sync::Arc};
 #[test]
 fn extension_agent_constructs_proper_display_names() {
     // Verify the display name format for extension-provided agents
-    let name1 = ExternalAgentServerName(SharedString::from("Extension: Agent"));
+    let name1 = AgentId(SharedString::from("Extension: Agent"));
     assert!(name1.0.contains(": "));
 
-    let name2 = ExternalAgentServerName(SharedString::from("MyExt: MyAgent"));
+    let name2 = AgentId(SharedString::from("MyExt: MyAgent"));
     assert_eq!(name2.0, "MyExt: MyAgent");
 
     // Non-extension agents shouldn't have the separator
-    let custom = ExternalAgentServerName(SharedString::from("custom"));
+    let custom = AgentId(SharedString::from("custom"));
     assert!(!custom.0.contains(": "));
 }
 
@@ -47,7 +47,7 @@ fn sync_removes_only_extension_provided_agents() {
 
     // Seed with extension agents (contain ": ") and custom agents (don't contain ": ")
     store.external_agents.insert(
-        ExternalAgentServerName(SharedString::from("Ext1: Agent1")),
+        AgentId(SharedString::from("Ext1: Agent1")),
         ExternalAgentEntry::new(
             Box::new(NoopExternalAgent) as Box<dyn ExternalAgentServer>,
             ExternalAgentSource::Extension,
@@ -56,7 +56,7 @@ fn sync_removes_only_extension_provided_agents() {
         ),
     );
     store.external_agents.insert(
-        ExternalAgentServerName(SharedString::from("Ext2: Agent2")),
+        AgentId(SharedString::from("Ext2: Agent2")),
         ExternalAgentEntry::new(
             Box::new(NoopExternalAgent) as Box<dyn ExternalAgentServer>,
             ExternalAgentSource::Extension,
@@ -65,7 +65,7 @@ fn sync_removes_only_extension_provided_agents() {
         ),
     );
     store.external_agents.insert(
-        ExternalAgentServerName(SharedString::from("custom-agent")),
+        AgentId(SharedString::from("custom-agent")),
         ExternalAgentEntry::new(
             Box::new(NoopExternalAgent) as Box<dyn ExternalAgentServer>,
             ExternalAgentSource::Custom,
@@ -84,7 +84,7 @@ fn sync_removes_only_extension_provided_agents() {
     assert!(
         store
             .external_agents
-            .contains_key(&ExternalAgentServerName(SharedString::from("custom-agent")))
+            .contains_key(&AgentId(SharedString::from("custom-agent")))
     );
 }
 
@@ -117,7 +117,7 @@ fn archive_launcher_constructs_with_all_fields() {
     };
 
     // Verify display name construction
-    let expected_name = ExternalAgentServerName(SharedString::from("GitHub Agent"));
+    let expected_name = AgentId(SharedString::from("GitHub Agent"));
     assert_eq!(expected_name.0, "GitHub Agent");
 }
 
@@ -170,7 +170,7 @@ async fn archive_agent_uses_extension_and_agent_id_for_cache_key(cx: &mut TestAp
 fn sync_extension_agents_registers_archive_launcher() {
     use extension::AgentServerManifestEntry;
 
-    let expected_name = ExternalAgentServerName(SharedString::from("Release Agent"));
+    let expected_name = AgentId(SharedString::from("Release Agent"));
     assert_eq!(expected_name.0, "Release Agent");
 
     // Verify the manifest entry structure for archive-based installation

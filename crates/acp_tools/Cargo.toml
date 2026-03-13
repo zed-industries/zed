@@ -14,6 +14,7 @@ path = "src/acp_tools.rs"
 doctest = false
 
 [dependencies]
+acp_thread.workspace = true
 agent-client-protocol.workspace = true
 collections.workspace = true
 gpui.workspace = true

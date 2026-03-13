@@ -5,7 +5,7 @@ use chrono::{DateTime, Utc};
 use collections::IndexMap;
 use gpui::{Entity, SharedString, Task};
 use language_model::LanguageModelProviderId;
-use project::Project;
+use project::{AgentId, Project};
 use serde::{Deserialize, Serialize};
 use std::{
     any::Any,
@@ -28,6 +28,8 @@ impl UserMessageId {
 }
 
 pub trait AgentConnection {
+    fn agent_id(&self) -> AgentId;
+
     fn telemetry_id(&self) -> SharedString;
 
     fn new_session(
@@ -609,6 +611,10 @@ mod test_support {
     }
 
     impl AgentConnection for StubAgentConnection {
+        fn agent_id(&self) -> AgentId {
+            AgentId::new("stub")
+        }
+
         fn telemetry_id(&self) -> SharedString {
             "stub".into()
         }

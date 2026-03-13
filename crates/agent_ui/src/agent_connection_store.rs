@@ -10,7 +10,6 @@ use project::{AgentServerStore, AgentServersUpdated, Project};
 use watch::Receiver;
 
 use crate::{Agent, ThreadHistory};
-use project::ExternalAgentServerName;
 
 pub enum AgentConnectionEntry {
     Connecting {
@@ -143,9 +142,7 @@ impl AgentConnectionStore {
         let store = store.read(cx);
         self.entries.retain(|key, _| match key {
             Agent::NativeAgent => true,
-            Agent::Custom { name } => store
-                .external_agents
-                .contains_key(&ExternalAgentServerName(name.clone())),
+            Agent::Custom { id } => store.external_agents.contains_key(id),
         });
         cx.notify();
     }
