@@ -19,6 +19,7 @@ pub enum ParsedMarkdownElement {
     Paragraph(MarkdownParagraph),
     HorizontalRule(Range<usize>),
     Image(Image),
+    Details(ParsedMarkdownDetails),
 }
 
 impl ParsedMarkdownElement {
@@ -36,6 +37,7 @@ impl ParsedMarkdownElement {
             },
             Self::HorizontalRule(range) => range.clone(),
             Self::Image(image) => image.source_range.clone(),
+            Self::Details(details) => details.source_range.clone(),
         })
     }
 
@@ -176,6 +178,27 @@ impl ParsedMarkdownTableRow {
 pub struct ParsedMarkdownBlockQuote {
     pub source_range: Range<usize>,
     pub children: Vec<ParsedMarkdownElement>,
+}
+
+/// The content model of a `<summary>` tag, per the HTML5.2 spec:
+/// either phrasing content (inline text, images) or exactly one heading element.
+#[derive(Debug)]
+#[cfg_attr(test, derive(PartialEq))]
+pub enum ParsedMarkdownSummaryContent {
+    Phrasing(MarkdownParagraph),
+    Heading(ParsedMarkdownHeading),
+}
+
+#[derive(Debug)]
+#[cfg_attr(test, derive(PartialEq))]
+pub struct ParsedMarkdownDetails {
+    pub source_range: Range<usize>,
+    /// The content of the `<summary>` child tag, if present.
+    pub summary: Option<ParsedMarkdownSummaryContent>,
+    /// All other children of the `<details>` tag.
+    pub body: Vec<ParsedMarkdownElement>,
+    /// Whether the `open` attribute is present, meaning the block starts expanded.
+    pub open: bool,
 }
 
 #[derive(Debug, Clone)]

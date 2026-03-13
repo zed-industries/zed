@@ -1,9 +1,10 @@
 use crate::{
     markdown_elements::{
         HeadingLevel, Image, Link, MarkdownParagraph, MarkdownParagraphChunk, ParsedMarkdown,
-        ParsedMarkdownBlockQuote, ParsedMarkdownCodeBlock, ParsedMarkdownElement,
-        ParsedMarkdownHeading, ParsedMarkdownListItem, ParsedMarkdownListItemType,
-        ParsedMarkdownMermaidDiagram, ParsedMarkdownMermaidDiagramContents, ParsedMarkdownTable,
+        ParsedMarkdownBlockQuote, ParsedMarkdownCodeBlock, ParsedMarkdownDetails,
+        ParsedMarkdownElement, ParsedMarkdownHeading, ParsedMarkdownListItem,
+        ParsedMarkdownListItemType, ParsedMarkdownMermaidDiagram,
+        ParsedMarkdownMermaidDiagramContents, ParsedMarkdownSummaryContent, ParsedMarkdownTable,
         ParsedMarkdownTableAlignment, ParsedMarkdownTableRow,
     },
     markdown_preview_view::MarkdownPreviewView,
@@ -14,7 +15,8 @@ use gpui::{
     AbsoluteLength, Animation, AnimationExt, AnyElement, App, AppContext as _, Context, Div,
     Element, ElementId, Entity, HighlightStyle, Hsla, ImageSource, InteractiveText, IntoElement,
     Keystroke, Modifiers, ParentElement, Render, RenderImage, Resource, SharedString, Styled,
-    StyledText, Task, TextStyle, WeakEntity, Window, div, img, pulsating_between, rems,
+    StyledText, Task, TextStyle, Transformation, WeakEntity, Window, div, img, pulsating_between,
+    radians, rems,
 };
 use settings::Settings;
 use std::{
@@ -43,6 +45,13 @@ impl CheckboxClickedEvent {
 }
 
 type CheckboxClickedCallback = Arc<Box<dyn Fn(&CheckboxClickedEvent, &mut Window, &mut App)>>;
+
+pub struct DetailsToggleEvent {
+    pub source_range_start: usize,
+    pub expanded: bool,
+}
+
+type DetailsToggleCallback = Arc<Box<dyn Fn(&DetailsToggleEvent, &mut Window, &mut App)>>;
 
 type MermaidDiagramCache = HashMap<ParsedMarkdownMermaidDiagramContents, CachedMermaidDiagram>;
 
@@ -189,6 +198,8 @@ pub struct RenderContext<'a> {
     syntax_theme: Arc<SyntaxTheme>,
     indent: usize,
     checkbox_clicked_callback: Option<CheckboxClickedCallback>,
+    expanded_details: Option<Arc<HashMap<usize, bool>>>,
+    details_toggle_callback: Option<DetailsToggleCallback>,
     is_last_child: bool,
     mermaid_state: &'a MermaidState,
 }
@@ -228,6 +239,8 @@ impl<'a> RenderContext<'a> {
             code_block_background_color: theme.colors().surface_background,
             code_span_background_color: theme.colors().editor_document_highlight_read_background,
             checkbox_clicked_callback: None,
+            expanded_details: None,
+            details_toggle_callback: None,
             is_last_child: false,
             mermaid_state,
         }
@@ -238,6 +251,19 @@ impl<'a> RenderContext<'a> {
         callback: impl Fn(&CheckboxClickedEvent, &mut Window, &mut App) + 'static,
     ) -> Self {
         self.checkbox_clicked_callback = Some(Arc::new(Box::new(callback)));
+        self
+    }
+
+    pub fn with_expanded_details(mut self, expanded: Arc<HashMap<usize, bool>>) -> Self {
+        self.expanded_details = Some(expanded);
+        self
+    }
+
+    pub fn with_details_toggle_callback(
+        mut self,
+        callback: impl Fn(&DetailsToggleEvent, &mut Window, &mut App) + 'static,
+    ) -> Self {
+        self.details_toggle_callback = Some(Arc::new(Box::new(callback)));
         self
     }
 
@@ -320,6 +346,7 @@ pub fn render_markdown_block(block: &ParsedMarkdownElement, cx: &mut RenderConte
         MermaidDiagram(mermaid) => render_mermaid_diagram(mermaid, cx),
         HorizontalRule(_) => render_markdown_rule(cx),
         Image(image) => render_markdown_image(image, cx),
+        Details(details) => render_markdown_details(details, cx),
     }
 }
 
@@ -741,6 +768,86 @@ fn render_markdown_block_quote(
                 .children(children),
         )
         .into_any()
+}
+
+fn details_is_expanded(
+    source_range_start: usize,
+    open: bool,
+    expanded_details: Option<&HashMap<usize, bool>>,
+) -> bool {
+    expanded_details
+        .and_then(|map| map.get(&source_range_start))
+        .copied()
+        .unwrap_or(open)
+}
+
+fn render_markdown_details(parsed: &ParsedMarkdownDetails, cx: &mut RenderContext) -> AnyElement {
+    let is_expanded = details_is_expanded(
+        parsed.source_range.start,
+        parsed.open,
+        cx.expanded_details.as_deref(),
+    );
+
+    let summary_content = match &parsed.summary {
+        Some(ParsedMarkdownSummaryContent::Phrasing(paragraph)) => {
+            render_markdown_paragraph(paragraph, cx)
+        }
+        Some(ParsedMarkdownSummaryContent::Heading(heading)) => {
+            render_markdown_heading(heading, cx)
+        }
+        None => div().child(SharedString::from("Details")).into_any(),
+    };
+
+    let triangle = ui::Icon::new(ui::IconName::TriangleRight)
+        .size(ui::IconSize::Medium)
+        .color(ui::Color::Muted)
+        .when(is_expanded, |icon| {
+            icon.transform(Transformation::rotate(radians(std::f32::consts::PI / 2.0)))
+        });
+
+    let new_expanded = !is_expanded;
+    let source_range_start = parsed.source_range.start;
+    let summary_row = h_flex()
+        .id(cx.next_id(&parsed.source_range))
+        .gap_1()
+        .items_center()
+        .cursor_pointer()
+        .child(triangle)
+        .child(summary_content)
+        .when_some(cx.details_toggle_callback.clone(), |this, callback| {
+            this.on_click(move |_, window, cx| {
+                callback(
+                    &DetailsToggleEvent {
+                        source_range_start,
+                        expanded: new_expanded,
+                    },
+                    window,
+                    cx,
+                )
+            })
+        });
+
+    if is_expanded {
+        cx.indent += 1;
+        let body_children: Vec<AnyElement> = parsed
+            .body
+            .iter()
+            .enumerate()
+            .map(|(ix, child)| {
+                cx.with_last_child(ix + 1 == parsed.body.len(), |cx| {
+                    render_markdown_block(child, cx)
+                })
+            })
+            .collect();
+        cx.indent -= 1;
+
+        cx.with_common_p(div())
+            .child(summary_row)
+            .child(div().pl(cx.scaled_rems(1.5)).children(body_children))
+            .into_any()
+    } else {
+        cx.with_common_p(div()).child(summary_row).into_any()
+    }
 }
 
 fn render_markdown_code_block(
@@ -1494,5 +1601,30 @@ mod tests {
             Arc::ptr_eq(&fallback.unwrap(), &svg_a),
             "Fallback should be the old duplicate diagram's image"
         );
+    }
+
+    #[test]
+    fn test_details_is_expanded_defaults_to_open_attribute() {
+        assert!(!details_is_expanded(0, false, None));
+        assert!(details_is_expanded(0, true, None));
+    }
+
+    #[test]
+    fn test_details_is_expanded_no_entry_falls_back_to_open_attribute() {
+        let map: HashMap<usize, bool> = HashMap::default();
+        assert!(!details_is_expanded(42, false, Some(&map)));
+        assert!(details_is_expanded(42, true, Some(&map)));
+    }
+
+    #[test]
+    fn test_details_is_expanded_explicit_toggle_overrides_open_attribute() {
+        let mut map: HashMap<usize, bool> = HashMap::default();
+        map.insert(10, false);
+        map.insert(20, true);
+
+        // open=true but user toggled closed
+        assert!(!details_is_expanded(10, true, Some(&map)));
+        // open=false but user toggled open
+        assert!(details_is_expanded(20, false, Some(&map)));
     }
 }

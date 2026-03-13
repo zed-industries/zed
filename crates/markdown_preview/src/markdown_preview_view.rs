@@ -19,7 +19,7 @@ use workspace::item::{Item, ItemHandle};
 use workspace::{Pane, Workspace};
 
 use crate::markdown_elements::ParsedMarkdownElement;
-use crate::markdown_renderer::{CheckboxClickedEvent, MermaidState};
+use crate::markdown_renderer::{CheckboxClickedEvent, DetailsToggleEvent, MermaidState};
 use crate::{
     OpenFollowingPreview, OpenPreview, OpenPreviewToTheSide, ScrollPageDown, ScrollPageUp,
     markdown_elements::ParsedMarkdown,
@@ -27,6 +27,7 @@ use crate::{
     markdown_renderer::{RenderContext, render_markdown_block},
 };
 use crate::{ScrollDown, ScrollDownByItem, ScrollUp, ScrollUpByItem};
+use collections::HashMap;
 
 const REPARSE_DEBOUNCE: Duration = Duration::from_millis(200);
 
@@ -40,6 +41,7 @@ pub struct MarkdownPreviewView {
     list_state: ListState,
     language_registry: Arc<LanguageRegistry>,
     mermaid_state: MermaidState,
+    expanded_details: Arc<HashMap<usize, bool>>,
     parsing_markdown_task: Option<Task<Result<()>>>,
     mode: MarkdownPreviewMode,
 }
@@ -216,6 +218,7 @@ impl MarkdownPreviewView {
                 list_state,
                 language_registry,
                 mermaid_state: Default::default(),
+                expanded_details: Arc::new(HashMap::default()),
                 parsing_markdown_task: None,
                 image_cache: RetainAllImageCache::new(cx),
                 mode,
@@ -575,12 +578,21 @@ impl Render for MarkdownPreviewView {
                                 return div().into_any();
                             };
 
+                            let expanded_details = this.expanded_details.clone();
                             let mut render_cx = RenderContext::new(
                                 Some(this.workspace.clone()),
                                 &this.mermaid_state,
                                 window,
                                 cx,
                             )
+                            .with_expanded_details(expanded_details)
+                            .with_details_toggle_callback(cx.listener(
+                                move |this, event: &DetailsToggleEvent, _window, cx| {
+                                    Arc::make_mut(&mut this.expanded_details)
+                                        .insert(event.source_range_start, event.expanded);
+                                    cx.notify();
+                                },
+                            ))
                             .with_checkbox_clicked_callback(cx.listener(
                                 move |this, e: &CheckboxClickedEvent, window, cx| {
                                     if let Some(editor) =

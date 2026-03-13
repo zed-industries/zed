@@ -856,6 +856,27 @@ impl<'a> MarkdownParser<'a> {
         })
     }
 
+    /// Count the net number of unclosed `<details>` tags in `html`.
+    /// Returns a positive value when there are more opens than closes.
+    fn count_unclosed_details(html: &str) -> i32 {
+        let mut depth = 0i32;
+        let mut remaining = html;
+        while let Some(pos) = remaining.find('<') {
+            remaining = &remaining[pos..];
+            if let Some(after) = remaining.strip_prefix("</details") {
+                if after.is_empty() || after.starts_with(|c: char| c == '>' || c.is_whitespace()) {
+                    depth -= 1;
+                }
+            } else if let Some(after) = remaining.strip_prefix("<details") {
+                if after.is_empty() || after.starts_with(|c: char| c == '>' || c.is_whitespace()) {
+                    depth += 1;
+                }
+            }
+            remaining = &remaining[1..];
+        }
+        depth
+    }
+
     async fn parse_html_block(&mut self) -> Vec<ParsedMarkdownElement> {
         let mut elements = Vec::new();
         let Some((_event, _source_range)) = self.previous() else {
@@ -878,6 +899,12 @@ impl<'a> MarkdownParser<'a> {
                     html_buffer.push_str(html);
                     self.cursor += 1;
                 }
+                // pulldown_cmark emits a Text event (zero-length range) for any
+                // leading whitespace before the first HTML tag in an HTML block.
+                // Skip it so we don't bail out before collecting any HTML content.
+                Event::Text(_) if html_buffer.is_empty() => {
+                    self.cursor += 1;
+                }
                 Event::End(TagEnd::CodeBlock) => {
                     self.cursor += 1;
                     break;
@@ -885,6 +912,19 @@ impl<'a> MarkdownParser<'a> {
                 _ => {
                     break;
                 }
+            }
+        }
+
+        // CommonMark type-6 HTML blocks (which include <details>) are terminated
+        // by blank lines. When a blank line appears inside a <details> block,
+        // pulldown-cmark ends the HTML block early and emits the body as separate
+        // markdown events (Paragraph, List, etc.). Detect this and parse those
+        // events as proper markdown elements rather than feeding raw source to html5ever.
+        if let Some(start) = html_source_range_start {
+            if Self::count_unclosed_details(&html_buffer) > 0 {
+                return self
+                    .parse_details_with_markdown_body(start, html_source_range_end, html_buffer)
+                    .await;
             }
         }
 
@@ -905,6 +945,98 @@ impl<'a> MarkdownParser<'a> {
         }
 
         elements
+    }
+
+    /// Handles `<details>` blocks split across multiple events by blank lines.
+    /// CommonMark type-6 HTML blocks end at blank lines, so pulldown-cmark emits
+    /// the body content as proper markdown events (Paragraph, List, etc.) rather
+    /// than as HTML. This method parses the `<summary>` from the initial HTML chunk,
+    /// then uses `parse_block` for the body, stopping at the closing `</details>`.
+    async fn parse_details_with_markdown_body(
+        &mut self,
+        range_start: usize,
+        initial_range_end: Option<usize>,
+        initial_html: String,
+    ) -> Vec<ParsedMarkdownElement> {
+        // Synthetically close the element so html5ever gets a complete tree from
+        // which we can extract the `open` attribute and `<summary>` content.
+        let mut synthetic_html = initial_html;
+        synthetic_html.push_str("</details>");
+
+        let partial_end = initial_range_end.unwrap_or(range_start);
+        let mut partial_elements = Vec::new();
+        let bytes = cleanup_html(&synthetic_html);
+        let mut io_cursor = std::io::Cursor::new(bytes);
+        if let Ok(dom) = parse_document(RcDom::default(), ParseOpts::default())
+            .from_utf8()
+            .read_from(&mut io_cursor)
+        {
+            self.parse_html_node(
+                range_start..partial_end,
+                &dom.document,
+                &mut partial_elements,
+                &ParseHtmlNodeContext::default(),
+            );
+        }
+
+        let (details_open, summary_content) = partial_elements
+            .into_iter()
+            .find_map(|e| {
+                if let ParsedMarkdownElement::Details(d) = e {
+                    Some((d.open, d.summary))
+                } else {
+                    None
+                }
+            })
+            .unwrap_or((false, None));
+
+        // Parse remaining events as markdown body elements, stopping when we
+        // encounter an HtmlBlock that closes the <details>.
+        let mut body = Vec::new();
+        let mut range_end = partial_end;
+
+        while !self.eof() {
+            // Before calling parse_block, check if the upcoming HtmlBlock is the
+            // closing </details> (delta < 0 means net closing tags in that block).
+            if let Some((Event::Start(Tag::HtmlBlock), _)) = self.current() {
+                let closing_end = self.peek(1).and_then(|(e, r)| {
+                    if let Event::Html(html) = e {
+                        (Self::count_unclosed_details(html.as_ref()) < 0).then_some(r.end)
+                    } else {
+                        None
+                    }
+                });
+
+                if let Some(end) = closing_end {
+                    // Consume Start(HtmlBlock), Html(...), End(HtmlBlock)
+                    while !self.eof() {
+                        let is_end = matches!(
+                            self.current().map(|(e, _)| e),
+                            Some(Event::End(TagEnd::HtmlBlock))
+                        );
+                        self.cursor += 1;
+                        if is_end {
+                            break;
+                        }
+                    }
+                    range_end = end;
+                    break;
+                }
+            }
+
+            if let Some(block_elements) = self.parse_block().await {
+                body.extend(block_elements);
+            } else {
+                self.cursor += 1;
+            }
+        }
+
+        vec![ParsedMarkdownElement::Details(ParsedMarkdownDetails {
+            source_range: range_start..range_end,
+            summary: summary_content,
+            body,
+            open: details_open,
+        })]
     }
 
     fn parse_html_node(
@@ -1004,6 +1136,10 @@ impl<'a> MarkdownParser<'a> {
                 } else if local_name!("table") == name.local {
                     if let Some(table) = self.extract_html_table(node, source_range) {
                         elements.push(ParsedMarkdownElement::Table(table));
+                    }
+                } else if local_name!("details") == name.local {
+                    if let Some(details) = self.extract_html_details(node, source_range, attrs) {
+                        elements.push(ParsedMarkdownElement::Details(details));
                     }
                 } else {
                     self.consume_children(source_range, node, elements, context);
@@ -1452,6 +1588,103 @@ impl<'a> MarkdownParser<'a> {
                 source_range,
             })
         }
+    }
+
+    fn extract_html_details(
+        &self,
+        node: &Rc<markup5ever_rcdom::Node>,
+        source_range: Range<usize>,
+        attrs: &RefCell<Vec<html5ever::Attribute>>,
+    ) -> Option<ParsedMarkdownDetails> {
+        let open = Self::attr_value(attrs, local_name!("open")).is_some();
+        let mut summary = None;
+        let mut body = Vec::new();
+
+        for child in node.children.borrow().iter() {
+            if let markup5ever_rcdom::NodeData::Element { name, .. } = &child.data {
+                if local_name!("summary") == name.local {
+                    if summary.is_none() {
+                        summary = Some(self.parse_summary_content(source_range.clone(), child));
+                    }
+                    continue;
+                }
+            }
+            self.parse_html_node(
+                source_range.clone(),
+                child,
+                &mut body,
+                &ParseHtmlNodeContext::default(),
+            );
+        }
+
+        Some(ParsedMarkdownDetails {
+            source_range,
+            summary,
+            body,
+            open,
+        })
+    }
+
+    fn parse_summary_content(
+        &self,
+        source_range: Range<usize>,
+        node: &Rc<markup5ever_rcdom::Node>,
+    ) -> ParsedMarkdownSummaryContent {
+        // Per HTML5.2, <summary> contains either phrasing content or exactly one heading.
+        // We check by looking for the first element child.
+        for child in node.children.borrow().iter() {
+            match &child.data {
+                markup5ever_rcdom::NodeData::Element { name, .. } => {
+                    if matches!(
+                        name.local,
+                        local_name!("h1")
+                            | local_name!("h2")
+                            | local_name!("h3")
+                            | local_name!("h4")
+                            | local_name!("h5")
+                            | local_name!("h6")
+                    ) {
+                        let mut paragraph = MarkdownParagraph::new();
+                        self.consume_paragraph(
+                            source_range.clone(),
+                            child,
+                            &mut paragraph,
+                            &mut Vec::new(),
+                            &mut Vec::new(),
+                        );
+                        let level = match name.local {
+                            local_name!("h1") => HeadingLevel::H1,
+                            local_name!("h2") => HeadingLevel::H2,
+                            local_name!("h3") => HeadingLevel::H3,
+                            local_name!("h4") => HeadingLevel::H4,
+                            local_name!("h5") => HeadingLevel::H5,
+                            local_name!("h6") => HeadingLevel::H6,
+                            _ => unreachable!(),
+                        };
+                        return ParsedMarkdownSummaryContent::Heading(ParsedMarkdownHeading {
+                            source_range,
+                            level,
+                            contents: paragraph,
+                        });
+                    }
+                    // First element child is not a heading — fall through to phrasing.
+                    break;
+                }
+                // Skip whitespace text nodes before the first element child.
+                markup5ever_rcdom::NodeData::Text { .. } => continue,
+                _ => break,
+            }
+        }
+
+        let mut paragraph = MarkdownParagraph::new();
+        self.consume_paragraph(
+            source_range,
+            node,
+            &mut paragraph,
+            &mut Vec::new(),
+            &mut Vec::new(),
+        );
+        ParsedMarkdownSummaryContent::Phrasing(paragraph)
     }
 
     fn extract_html_table(
@@ -3270,6 +3503,161 @@ fn main() {
             children,
             alignment,
         }
+    }
+
+    fn details(
+        source_range: Range<usize>,
+        summary: Option<ParsedMarkdownSummaryContent>,
+        body: Vec<ParsedMarkdownElement>,
+        open: bool,
+    ) -> ParsedMarkdownElement {
+        ParsedMarkdownElement::Details(ParsedMarkdownDetails {
+            source_range,
+            summary,
+            body,
+            open,
+        })
+    }
+
+    #[gpui::test]
+    async fn test_html_details_collapsed() {
+        let parsed =
+            parse("<details>\n<summary>Click to expand</summary>\n<p>Body content</p>\n</details>")
+                .await;
+
+        assert_eq!(
+            parsed,
+            ParsedMarkdown {
+                children: vec![details(
+                    0..75,
+                    Some(ParsedMarkdownSummaryContent::Phrasing(text(
+                        "Click to expand",
+                        0..75
+                    ))),
+                    vec![p("Body content", 0..75)],
+                    false,
+                )]
+            }
+        );
+    }
+
+    #[gpui::test]
+    async fn test_html_details_open() {
+        let parsed = parse("<details open>\n<summary>Open summary</summary>\n</details>").await;
+
+        assert_eq!(
+            parsed,
+            ParsedMarkdown {
+                children: vec![details(
+                    0..57,
+                    Some(ParsedMarkdownSummaryContent::Phrasing(text(
+                        "Open summary",
+                        0..57
+                    ))),
+                    vec![],
+                    true,
+                )]
+            }
+        );
+    }
+
+    #[gpui::test]
+    async fn test_html_details_without_summary() {
+        let parsed = parse("<details>\n<p>No summary</p>\n</details>").await;
+
+        assert_eq!(
+            parsed,
+            ParsedMarkdown {
+                children: vec![details(0..38, None, vec![p("No summary", 0..38)], false,)]
+            }
+        );
+    }
+
+    #[gpui::test]
+    async fn test_html_details_heading_summary() {
+        let parsed = parse(
+            "<details>\n<summary><h2>Heading Summary</h2></summary>\n<p>Body</p>\n</details>",
+        )
+        .await;
+
+        assert_eq!(
+            parsed,
+            ParsedMarkdown {
+                children: vec![details(
+                    0..76,
+                    Some(ParsedMarkdownSummaryContent::Heading(
+                        ParsedMarkdownHeading {
+                            source_range: 0..76,
+                            level: HeadingLevel::H2,
+                            contents: text("Heading Summary", 0..76),
+                        }
+                    )),
+                    vec![p("Body", 0..76)],
+                    false,
+                )]
+            }
+        );
+    }
+
+    #[gpui::test]
+    async fn test_html_details_with_leading_space() {
+        // pulldown-cmark emits a leading Text event for HTML blocks with a leading space.
+        // Verify this does not prevent the block from being parsed.
+        let parsed = parse(" <details>\n<summary>Indented</summary>\n</details>").await;
+
+        assert_eq!(parsed.children.len(), 1);
+        let ParsedMarkdownElement::Details(details) = &parsed.children[0] else {
+            panic!("expected Details element");
+        };
+        assert!(!details.open);
+        assert!(matches!(
+            &details.summary,
+            Some(ParsedMarkdownSummaryContent::Phrasing(_))
+        ));
+    }
+
+    #[gpui::test]
+    async fn test_html_details_with_blank_lines_inside() {
+        // CommonMark type-6 HTML blocks are terminated by blank lines, so pulldown-cmark
+        // splits the block into multiple events when blank lines appear inside <details>.
+        // Verify the parser reassembles the full block so the body is hidden, not visible.
+        let parsed =
+            parse("<details>\n<summary>Click</summary>\n\nHidden content\n\n</details>").await;
+
+        assert_eq!(parsed.children.len(), 1);
+        let ParsedMarkdownElement::Details(details) = &parsed.children[0] else {
+            panic!("expected Details element, got {:?}", parsed.children[0]);
+        };
+        assert!(!details.open);
+        assert!(matches!(
+            &details.summary,
+            Some(ParsedMarkdownSummaryContent::Phrasing(_))
+        ));
+        assert!(
+            !details.body.is_empty(),
+            "body should contain 'Hidden content'"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_html_details_body_with_markdown_list() {
+        // Body uses markdown list syntax — pulldown-cmark parses it as a proper List
+        // (not plain text), so the rendered body should contain ListItem elements.
+        let parsed =
+            parse("<details>\n<summary>Items</summary>\n\n- Item 1\n- Item 2\n\n</details>").await;
+
+        assert_eq!(parsed.children.len(), 1);
+        let ParsedMarkdownElement::Details(details) = &parsed.children[0] else {
+            panic!("expected Details element, got {:?}", parsed.children[0]);
+        };
+        assert!(
+            details
+                .body
+                .iter()
+                .any(|e| matches!(e, ParsedMarkdownElement::ListItem(_))),
+            "body should contain ListItem elements, got: {:?}",
+            details.body
+        );
     }
 
     impl PartialEq for ParsedMarkdownTable {
