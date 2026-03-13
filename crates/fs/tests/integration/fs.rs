@@ -450,6 +450,16 @@ async fn test_realfs_atomic_write_non_existing_file(executor: BackgroundExecutor
 }
 
 #[gpui::test]
+async fn test_realfs_metadata_after_executor_close(executor: BackgroundExecutor) {
+    let fs = RealFs::new(None, executor.clone());
+    let temp_dir = TempDir::new().unwrap();
+    executor.close();
+
+    let result = fs.metadata(temp_dir.path()).await;
+    assert!(result.is_err());
+}
+
+#[gpui::test]
 #[cfg(target_os = "windows")]
 async fn test_realfs_canonicalize(executor: BackgroundExecutor) {
     use util::paths::SanitizedPath;

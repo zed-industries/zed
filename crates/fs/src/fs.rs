@@ -988,14 +988,20 @@ impl Fs for RealFs {
         let symlink_metadata = match self
             .executor
             .spawn(async move { std::fs::symlink_metadata(&path_buf) })
+            .fallible()
             .await
         {
-            Ok(metadata) => metadata,
-            Err(err) => {
+            Some(Ok(metadata)) => metadata,
+            Some(Err(err)) => {
                 return match err.kind() {
                     io::ErrorKind::NotFound | io::ErrorKind::NotADirectory => Ok(None),
                     _ => Err(anyhow::Error::new(err)),
                 };
+            }
+            None => {
+                return Err(anyhow!(
+                    "metadata task was cancelled before completion for path {path:?}"
+                ));
             }
         };
 
@@ -1006,10 +1012,11 @@ impl Fs for RealFs {
             match self
                 .executor
                 .spawn(async move { std::fs::metadata(path_buf) })
+                .fallible()
                 .await
             {
-                Ok(target_metadata) => target_metadata,
-                Err(err) => {
+                Some(Ok(target_metadata)) => target_metadata,
+                Some(Err(err)) => {
                     if err.kind() != io::ErrorKind::NotFound {
                         // TODO: Also FilesystemLoop when that's stable
                         log::warn!(
@@ -1020,6 +1027,11 @@ impl Fs for RealFs {
                     // as edge cases, a symlink into a directory we can't read, which is hard
                     // to distinguish from just being broken.)
                     symlink_metadata
+                }
+                None => {
+                    return Err(anyhow!(
+                        "metadata task was cancelled before completion for path {path:?}"
+                    ));
                 }
             }
         } else {
@@ -1042,7 +1054,11 @@ impl Fs for RealFs {
         let is_executable = self
             .executor
             .spawn(async move { path_buf.is_executable() })
-            .await;
+            .fallible()
+            .await
+            .ok_or_else(|| {
+                anyhow!("metadata task was cancelled before completion for path {path:?}")
+            })?;
 
         Ok(Some(Metadata {
             inode,
