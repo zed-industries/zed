@@ -2,14 +2,26 @@ use std::rc::Rc;
 
 use crate::{
     Action, AsKeystroke, DummyKeyboardMapper, InvalidKeystrokeError, KeyBindingContextPredicate,
-    KeybindingKeystroke, Keystroke, PlatformKeyboardMapper, SharedString,
+    KeybindingKeystroke, Keystroke, Modifiers, MouseButton, MouseStroke, PlatformKeyboardMapper,
+    ScrollDirection, ScrollStroke, SharedString,
 };
 use smallvec::SmallVec;
+
+/// The type of input that triggers a binding
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub enum BindingInputKind {
+    /// A sequence of keystrokes (e.g., "ctrl-k ctrl-c")
+    Keystrokes(SmallVec<[KeybindingKeystroke; 2]>),
+    /// A mouse click with modifiers
+    Mouse(MouseStroke),
+    /// A scroll event with modifiers
+    Scroll(ScrollStroke),
+}
 
 /// A keybinding and its associated metadata, from the keymap.
 pub struct KeyBinding {
     pub(crate) action: Box<dyn Action>,
-    pub(crate) keystrokes: SmallVec<[KeybindingKeystroke; 2]>,
+    pub(crate) input: BindingInputKind,
     pub(crate) context_predicate: Option<Rc<KeyBindingContextPredicate>>,
     pub(crate) meta: Option<KeyBindingMetaIndex>,
     /// The json input string used when building the keybinding, if any
@@ -20,7 +32,7 @@ impl Clone for KeyBinding {
     fn clone(&self) -> Self {
         KeyBinding {
             action: self.action.boxed_clone(),
-            keystrokes: self.keystrokes.clone(),
+            input: self.input.clone(),
             context_predicate: self.context_predicate.clone(),
             meta: self.meta,
             action_input: self.action_input.clone(),
@@ -42,6 +54,34 @@ impl KeyBinding {
             &DummyKeyboardMapper,
         )
         .unwrap()
+    }
+
+    /// Construct a new mouse binding. Panics on parse error.
+    pub fn new_mouse<A: Action>(input: &str, action: A, context: Option<&str>) -> Self {
+        let context_predicate =
+            context.map(|context| KeyBindingContextPredicate::parse(context).unwrap().into());
+        let mouse_stroke = MouseStroke::parse(input).expect("Invalid mouse stroke");
+        Self {
+            action: Box::new(action),
+            input: BindingInputKind::Mouse(mouse_stroke),
+            context_predicate,
+            meta: None,
+            action_input: None,
+        }
+    }
+
+    /// Construct a new scroll binding. Panics on parse error.
+    pub fn new_scroll<A: Action>(input: &str, action: A, context: Option<&str>) -> Self {
+        let context_predicate =
+            context.map(|context| KeyBindingContextPredicate::parse(context).unwrap().into());
+        let scroll_stroke = ScrollStroke::parse(input).expect("Invalid scroll stroke");
+        Self {
+            action: Box::new(action),
+            input: BindingInputKind::Scroll(scroll_stroke),
+            context_predicate,
+            meta: None,
+            action_input: None,
+        }
     }
 
     /// Load a keybinding from the given raw data.
@@ -66,7 +106,41 @@ impl KeyBinding {
             .collect::<std::result::Result<_, _>>()?;
 
         Ok(Self {
-            keystrokes,
+            input: BindingInputKind::Keystrokes(keystrokes),
+            action,
+            context_predicate,
+            meta: None,
+            action_input,
+        })
+    }
+
+    /// Load a mouse binding from the given raw data.
+    pub fn load_mouse(
+        input: &str,
+        action: Box<dyn Action>,
+        context_predicate: Option<Rc<KeyBindingContextPredicate>>,
+        action_input: Option<SharedString>,
+    ) -> std::result::Result<Self, crate::InvalidMouseStrokeError> {
+        let mouse_stroke = MouseStroke::parse(input)?;
+        Ok(Self {
+            input: BindingInputKind::Mouse(mouse_stroke),
+            action,
+            context_predicate,
+            meta: None,
+            action_input,
+        })
+    }
+
+    /// Load a scroll binding from the given raw data.
+    pub fn load_scroll(
+        input: &str,
+        action: Box<dyn Action>,
+        context_predicate: Option<Rc<KeyBindingContextPredicate>>,
+        action_input: Option<SharedString>,
+    ) -> std::result::Result<Self, crate::InvalidScrollStrokeError> {
+        let scroll_stroke = ScrollStroke::parse(input)?;
+        Ok(Self {
+            input: BindingInputKind::Scroll(scroll_stroke),
             action,
             context_predicate,
             meta: None,
@@ -85,24 +159,89 @@ impl KeyBinding {
         self.meta = Some(meta);
     }
 
+    /// Returns true if this is a keyboard binding
+    pub fn is_key_binding(&self) -> bool {
+        matches!(self.input, BindingInputKind::Keystrokes(_))
+    }
+
+    /// Returns true if this is a mouse binding
+    pub fn is_mouse_binding(&self) -> bool {
+        matches!(self.input, BindingInputKind::Mouse(_))
+    }
+
+    /// Returns true if this is a scroll binding
+    pub fn is_scroll_binding(&self) -> bool {
+        matches!(self.input, BindingInputKind::Scroll(_))
+    }
+
     /// Check if the given keystrokes match this binding.
+    /// Returns None if this is not a keystroke binding or no match.
+    /// Returns Some(true) if partial match (more keystrokes needed).
+    /// Returns Some(false) if complete match.
     pub fn match_keystrokes(&self, typed: &[impl AsKeystroke]) -> Option<bool> {
-        if self.keystrokes.len() < typed.len() {
+        let keystrokes = match &self.input {
+            BindingInputKind::Keystrokes(ks) => ks,
+            _ => return None,
+        };
+
+        if keystrokes.len() < typed.len() {
             return None;
         }
 
-        for (target, typed) in self.keystrokes.iter().zip(typed.iter()) {
+        for (target, typed) in keystrokes.iter().zip(typed.iter()) {
             if !typed.as_keystroke().should_match(target) {
                 return None;
             }
         }
 
-        Some(self.keystrokes.len() > typed.len())
+        Some(keystrokes.len() > typed.len())
     }
 
-    /// Get the keystrokes associated with this binding
+    /// Check if a mouse event matches this binding.
+    pub fn match_mouse(
+        &self,
+        button: MouseButton,
+        modifiers: Modifiers,
+        click_count: usize,
+    ) -> bool {
+        match &self.input {
+            BindingInputKind::Mouse(mouse_stroke) => {
+                mouse_stroke.matches(button, modifiers, click_count)
+            }
+            _ => false,
+        }
+    }
+
+    /// Check if a scroll event matches this binding.
+    pub fn match_scroll(&self, direction: ScrollDirection, modifiers: Modifiers) -> bool {
+        match &self.input {
+            BindingInputKind::Scroll(scroll_stroke) => scroll_stroke.matches(direction, modifiers),
+            _ => false,
+        }
+    }
+
+    /// Get the keystrokes associated with this binding (if it's a keystroke binding)
     pub fn keystrokes(&self) -> &[KeybindingKeystroke] {
-        self.keystrokes.as_slice()
+        match &self.input {
+            BindingInputKind::Keystrokes(ks) => ks.as_slice(),
+            _ => &[],
+        }
+    }
+
+    /// Get the mouse stroke if this is a mouse binding
+    pub fn mouse_stroke(&self) -> Option<&MouseStroke> {
+        match &self.input {
+            BindingInputKind::Mouse(ms) => Some(ms),
+            _ => None,
+        }
+    }
+
+    /// Get the scroll stroke if this is a scroll binding
+    pub fn scroll_stroke(&self) -> Option<&ScrollStroke> {
+        match &self.input {
+            BindingInputKind::Scroll(ss) => Some(ss),
+            _ => None,
+        }
     }
 
     /// Get the action associated with this binding
@@ -129,7 +268,7 @@ impl KeyBinding {
 impl std::fmt::Debug for KeyBinding {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("KeyBinding")
-            .field("keystrokes", &self.keystrokes)
+            .field("input", &self.input)
             .field("context_predicate", &self.context_predicate)
             .field("action", &self.action.name())
             .finish()
