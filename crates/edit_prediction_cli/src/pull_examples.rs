@@ -149,21 +149,29 @@ struct SnowflakeConfig {
     role: Option<String>,
 }
 
-async fn fetch_examples_with_query(
+#[derive(Clone)]
+struct QueryRetryState {
+    resume_after: String,
+    remaining_limit: Option<usize>,
+    offset: usize,
+}
+
+async fn fetch_examples_with_query<MakeBindings>(
     http_client: Arc<dyn HttpClient>,
     step_progress: &crate::progress::StepProgress,
     background_executor: BackgroundExecutor,
     statement: &str,
-    mut bindings: JsonValue,
-    timestamp_binding_key: &str,
-    limit_binding_key: &str,
-    offset_binding_key: &str,
+    initial_retry_state: QueryRetryState,
+    make_bindings: MakeBindings,
     required_columns: &[&str],
     parse_response: for<'a> fn(
         &'a SnowflakeStatementResponse,
         &'a HashMap<String, usize>,
     ) -> Result<Box<dyn Iterator<Item = Example> + 'a>>,
-) -> Result<Vec<Example>> {
+) -> Result<Vec<Example>>
+where
+    MakeBindings: Fn(&QueryRetryState) -> JsonValue,
+{
     let snowflake = SnowflakeConfig {
         token: std::env::var("EP_SNOWFLAKE_API_KEY")
             .context("missing required environment variable EP_SNOWFLAKE_API_KEY")?,
@@ -179,19 +187,11 @@ async fn fetch_examples_with_query(
     }
 
     let mut parsed_examples = Vec::new();
-    let mut resume_timestamp =
-        binding_value(&bindings, "resume timestamp", timestamp_binding_key)?.to_string();
-    let mut remaining_limit =
-        binding_optional_fixed_usize(&bindings, "remaining limit", limit_binding_key)?;
-    let initial_offset = binding_fixed_usize(&bindings, "initial offset", offset_binding_key)?;
-    let mut current_offset = initial_offset;
+    let mut retry_state = initial_retry_state;
     let mut retry_count = 0usize;
 
     loop {
-        set_text_binding(&mut bindings, timestamp_binding_key, &resume_timestamp)?;
-        set_fixed_optional_usize_binding(&mut bindings, remaining_limit, limit_binding_key)?;
-        set_fixed_usize_binding(&mut bindings, current_offset, offset_binding_key)?;
-
+        let bindings = make_bindings(&retry_state);
         let request = json!({
             "statement": statement,
             "database": "EVENTS",
@@ -215,8 +215,10 @@ async fn fetch_examples_with_query(
             Err(error) => {
                 if is_snowflake_timeout_error(&error) && !parsed_examples.is_empty() {
                     retry_count += 1;
-                    step_progress
-                        .set_substatus(format!("retrying from {resume_timestamp} ({retry_count})"));
+                    step_progress.set_substatus(format!(
+                        "retrying from {} ({retry_count})",
+                        retry_state.resume_after
+                    ));
                     continue;
                 }
 
@@ -297,7 +299,7 @@ async fn fetch_examples_with_query(
             return Ok(parsed_examples);
         }
 
-        if let Some(remaining_limit_value) = &mut remaining_limit {
+        if let Some(remaining_limit_value) = &mut retry_state.remaining_limit {
             *remaining_limit_value =
                 remaining_limit_value.saturating_sub(rows_fetched_this_attempt);
             if *remaining_limit_value == 0 {
@@ -316,10 +318,13 @@ async fn fetch_examples_with_query(
             return Ok(parsed_examples);
         };
 
-        resume_timestamp = last_continuation_time_this_attempt;
-        current_offset = 0;
+        retry_state.resume_after = last_continuation_time_this_attempt;
+        retry_state.offset = 0;
         retry_count += 1;
-        step_progress.set_substatus(format!("retrying from {resume_timestamp} ({retry_count})"));
+        step_progress.set_substatus(format!(
+            "retrying from {} ({retry_count})",
+            retry_state.resume_after
+        ));
     }
 }
 
@@ -534,27 +539,29 @@ pub async fn fetch_rejected_examples_after(
             OFFSET ?
         "#};
 
-        let bindings = json!({
-            "1": { "type": "TEXT", "value": PREDICTIVE_EDIT_REQUESTED_EVENT },
-            "2": { "type": "TEXT", "value": PREDICTIVE_EDIT_REJECTED_EVENT },
-            "3": { "type": "TEXT", "value": after_date },
-            "4": { "type": "FIXED", "value": min_minor_str_ref },
-            "5": { "type": "FIXED", "value": min_minor_str_ref },
-            "6": { "type": "FIXED", "value": min_minor_str_ref },
-            "7": { "type": "FIXED", "value": min_patch_str_ref },
-            "8": { "type": "FIXED", "value": format_limit(max_rows_per_timestamp) },
-            "9": { "type": "FIXED", "value": offset.to_string() }
-        });
-
         let examples = fetch_examples_with_query(
             http_client.clone(),
             &step_progress,
             background_executor.clone(),
             statement,
-            bindings,
-            "3",
-            "8",
-            "9",
+            QueryRetryState {
+                resume_after: after_date.clone(),
+                remaining_limit: max_rows_per_timestamp,
+                offset,
+            },
+            |retry_state| {
+                json!({
+                    "1": { "type": "TEXT", "value": PREDICTIVE_EDIT_REQUESTED_EVENT },
+                    "2": { "type": "TEXT", "value": PREDICTIVE_EDIT_REJECTED_EVENT },
+                    "3": { "type": "TEXT", "value": retry_state.resume_after },
+                    "4": { "type": "FIXED", "value": min_minor_str_ref },
+                    "5": { "type": "FIXED", "value": min_minor_str_ref },
+                    "6": { "type": "FIXED", "value": min_minor_str_ref },
+                    "7": { "type": "FIXED", "value": min_patch_str_ref },
+                    "8": { "type": "FIXED", "value": format_limit(retry_state.remaining_limit) },
+                    "9": { "type": "FIXED", "value": retry_state.offset.to_string() }
+                })
+            },
             &[
                 "request_id",
                 "device_id",
@@ -631,26 +638,28 @@ pub async fn fetch_requested_examples_after(
             OFFSET ?
         "#};
 
-        let bindings = json!({
-            "1": { "type": "TEXT", "value": PREDICTIVE_EDIT_REQUESTED_EVENT },
-            "2": { "type": "TEXT", "value": after_date },
-            "3": { "type": "FIXED", "value": min_minor_str_ref },
-            "4": { "type": "FIXED", "value": min_minor_str_ref },
-            "5": { "type": "FIXED", "value": min_minor_str_ref },
-            "6": { "type": "FIXED", "value": min_patch_str_ref },
-            "7": { "type": "FIXED", "value": format_limit(max_rows_per_timestamp) },
-            "8": { "type": "FIXED", "value": offset.to_string() }
-        });
-
         let examples = fetch_examples_with_query(
             http_client.clone(),
             &step_progress,
             background_executor.clone(),
             statement,
-            bindings,
-            "2",
-            "7",
-            "8",
+            QueryRetryState {
+                resume_after: after_date.clone(),
+                remaining_limit: max_rows_per_timestamp,
+                offset,
+            },
+            |retry_state| {
+                json!({
+                    "1": { "type": "TEXT", "value": PREDICTIVE_EDIT_REQUESTED_EVENT },
+                    "2": { "type": "TEXT", "value": retry_state.resume_after },
+                    "3": { "type": "FIXED", "value": min_minor_str_ref },
+                    "4": { "type": "FIXED", "value": min_minor_str_ref },
+                    "5": { "type": "FIXED", "value": min_minor_str_ref },
+                    "6": { "type": "FIXED", "value": min_patch_str_ref },
+                    "7": { "type": "FIXED", "value": format_limit(retry_state.remaining_limit) },
+                    "8": { "type": "FIXED", "value": retry_state.offset.to_string() }
+                })
+            },
             &["request_id", "device_id", "time", "input", "zed_version"],
             requested_examples_from_response,
         )
@@ -720,27 +729,29 @@ pub async fn fetch_captured_examples_after(
             OFFSET ?
         "#};
 
-        let bindings = json!({
-            "1": { "type": "TEXT", "value": EDIT_PREDICTION_SETTLED_EVENT },
-            "2": { "type": "TEXT", "value": PREDICTIVE_EDIT_REQUESTED_EVENT },
-            "3": { "type": "TEXT", "value": after_date },
-            "4": { "type": "FIXED", "value": min_minor_str_ref },
-            "5": { "type": "FIXED", "value": min_minor_str_ref },
-            "6": { "type": "FIXED", "value": min_minor_str_ref },
-            "7": { "type": "FIXED", "value": min_patch_str_ref },
-            "8": { "type": "FIXED", "value": format_limit(max_rows_per_timestamp) },
-            "9": { "type": "FIXED", "value": offset.to_string() }
-        });
-
         let examples = fetch_examples_with_query(
             http_client.clone(),
             &step_progress,
             background_executor.clone(),
             statement,
-            bindings,
-            "3",
-            "8",
-            "9",
+            QueryRetryState {
+                resume_after: after_date.clone(),
+                remaining_limit: max_rows_per_timestamp,
+                offset,
+            },
+            |retry_state| {
+                json!({
+                    "1": { "type": "TEXT", "value": EDIT_PREDICTION_SETTLED_EVENT },
+                    "2": { "type": "TEXT", "value": PREDICTIVE_EDIT_REQUESTED_EVENT },
+                    "3": { "type": "TEXT", "value": retry_state.resume_after },
+                    "4": { "type": "FIXED", "value": min_minor_str_ref },
+                    "5": { "type": "FIXED", "value": min_minor_str_ref },
+                    "6": { "type": "FIXED", "value": min_minor_str_ref },
+                    "7": { "type": "FIXED", "value": min_patch_str_ref },
+                    "8": { "type": "FIXED", "value": format_limit(retry_state.remaining_limit) },
+                    "9": { "type": "FIXED", "value": retry_state.offset.to_string() }
+                })
+            },
             &[
                 "request_id",
                 "device_id",
@@ -819,23 +830,25 @@ pub async fn fetch_settled_examples_after(
             OFFSET ?
         "#};
 
-        let bindings = json!({
-            "1": { "type": "TEXT", "value": PREDICTIVE_EDIT_REQUESTED_EVENT },
-            "2": { "type": "TEXT", "value": after_date },
-            "3": { "type": "TEXT", "value": EDIT_PREDICTION_SETTLED_EVENT },
-            "4": { "type": "FIXED", "value": format_limit(max_rows_per_timestamp) },
-            "5": { "type": "FIXED", "value": offset.to_string() }
-        });
-
         let examples = fetch_examples_with_query(
             http_client.clone(),
             &step_progress,
             background_executor.clone(),
             statement,
-            bindings,
-            "2",
-            "4",
-            "5",
+            QueryRetryState {
+                resume_after: after_date.clone(),
+                remaining_limit: max_rows_per_timestamp,
+                offset,
+            },
+            |retry_state| {
+                json!({
+                    "1": { "type": "TEXT", "value": PREDICTIVE_EDIT_REQUESTED_EVENT },
+                    "2": { "type": "TEXT", "value": retry_state.resume_after },
+                    "3": { "type": "TEXT", "value": EDIT_PREDICTION_SETTLED_EVENT },
+                    "4": { "type": "FIXED", "value": format_limit(retry_state.remaining_limit) },
+                    "5": { "type": "FIXED", "value": retry_state.offset.to_string() }
+                })
+            },
             &[
                 "request_id",
                 "device_id",
@@ -920,26 +933,28 @@ pub async fn fetch_rated_examples_after(
             OFFSET ?
         "#};
 
-        let bindings = json!({
-            "1": { "type": "TEXT", "value": PREDICTIVE_EDIT_REQUESTED_EVENT },
-            "2": { "type": "TEXT", "value": EDIT_PREDICTION_DEPLOYMENT_EVENT },
-            "3": { "type": "TEXT", "value": EDIT_PREDICTION_RATED_EVENT },
-            "4": { "type": "TEXT", "value": rating_value },
-            "5": { "type": "TEXT", "value": rating_value },
-            "6": { "type": "TEXT", "value": after_date },
-            "7": { "type": "FIXED", "value": format_limit(max_rows_per_timestamp) },
-            "8": { "type": "FIXED", "value": offset.to_string() }
-        });
-
         let examples = fetch_examples_with_query(
             http_client.clone(),
             &step_progress,
             background_executor.clone(),
             statement,
-            bindings,
-            "6",
-            "7",
-            "8",
+            QueryRetryState {
+                resume_after: after_date.clone(),
+                remaining_limit: max_rows_per_timestamp,
+                offset,
+            },
+            |retry_state| {
+                json!({
+                    "1": { "type": "TEXT", "value": PREDICTIVE_EDIT_REQUESTED_EVENT },
+                    "2": { "type": "TEXT", "value": EDIT_PREDICTION_DEPLOYMENT_EVENT },
+                    "3": { "type": "TEXT", "value": EDIT_PREDICTION_RATED_EVENT },
+                    "4": { "type": "TEXT", "value": rating_value },
+                    "5": { "type": "TEXT", "value": rating_value },
+                    "6": { "type": "TEXT", "value": retry_state.resume_after },
+                    "7": { "type": "FIXED", "value": format_limit(retry_state.remaining_limit) },
+                    "8": { "type": "FIXED", "value": retry_state.offset.to_string() }
+                })
+            },
             &[
                 "request_id",
                 "inputs",
@@ -1739,87 +1754,6 @@ fn build_output_patch(
     writeln!(&mut patch, "+++ b/{}", cursor_path.display()).ok();
     patch.push_str(&diff_body);
     patch
-}
-
-fn binding_entry_mut<'a>(
-    bindings: &'a mut JsonValue,
-    key: &str,
-) -> Result<&'a mut serde_json::Map<String, JsonValue>> {
-    bindings
-        .as_object_mut()
-        .context("snowflake bindings must be a JSON object")?
-        .get_mut(key)
-        .context(format!("missing Snowflake binding {key}"))?
-        .as_object_mut()
-        .context(format!("Snowflake binding {key} must be a JSON object"))
-}
-
-fn binding_value<'a>(bindings: &'a JsonValue, label: &str, key: &str) -> Result<&'a str> {
-    bindings
-        .as_object()
-        .context("snowflake bindings must be a JSON object")?
-        .get(key)
-        .context(format!("missing Snowflake binding for {label}"))?
-        .get("value")
-        .context(format!("missing Snowflake binding value for {label}"))?
-        .as_str()
-        .context(format!(
-            "Snowflake binding value for {label} must be a string"
-        ))
-}
-
-fn binding_fixed_usize(bindings: &JsonValue, label: &str, key: &str) -> Result<usize> {
-    binding_value(bindings, label, key)?
-        .parse()
-        .with_context(|| format!("invalid Snowflake binding value for {label}"))
-}
-
-fn binding_optional_fixed_usize(
-    bindings: &JsonValue,
-    label: &str,
-    key: &str,
-) -> Result<Option<usize>> {
-    let value = binding_value(bindings, label, key)?;
-    if value.eq_ignore_ascii_case("NULL") {
-        Ok(None)
-    } else {
-        value
-            .parse()
-            .map(Some)
-            .with_context(|| format!("invalid Snowflake binding value for {label}"))
-    }
-}
-
-fn set_text_binding(bindings: &mut JsonValue, key: &str, value: &str) -> Result<()> {
-    let binding = binding_entry_mut(bindings, key)?;
-    binding.insert("type".to_string(), JsonValue::String("TEXT".to_string()));
-    binding.insert("value".to_string(), JsonValue::String(value.to_string()));
-    Ok(())
-}
-
-fn set_fixed_usize_binding(bindings: &mut JsonValue, value: usize, key: &str) -> Result<()> {
-    let binding = binding_entry_mut(bindings, key)?;
-    binding.insert("type".to_string(), JsonValue::String("FIXED".to_string()));
-    binding.insert("value".to_string(), JsonValue::String(value.to_string()));
-    Ok(())
-}
-
-fn set_fixed_optional_usize_binding(
-    bindings: &mut JsonValue,
-    value: Option<usize>,
-    key: &str,
-) -> Result<()> {
-    let binding = binding_entry_mut(bindings, key)?;
-    binding.insert("type".to_string(), JsonValue::String("FIXED".to_string()));
-    binding.insert(
-        "value".to_string(),
-        JsonValue::String(
-            value
-                .map(|value| value.to_string())
-                .unwrap_or_else(|| "NULL".to_string()),
-        ),
-    );
-    Ok(())
 }
 
 fn is_timeout_response(response: &SnowflakeStatementResponse) -> bool {
