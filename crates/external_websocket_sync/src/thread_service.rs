@@ -913,6 +913,20 @@ async fn handle_follow_up_message(
                                 );
                             }
                         }
+                        AcpThreadEvent::Stopped => {
+                            flush_streaming_throttle(&thread_id_for_sub);
+                            let rid = crate::get_thread_request_id(&thread_id_for_sub)
+                                .unwrap_or_default();
+                            eprintln!(
+                                "📤 [THREAD_SERVICE] Stopped event (follow-up subscription): sending message_completed for thread {} (request_id={})",
+                                thread_id_for_sub, rid
+                            );
+                            let _ = crate::send_websocket_event(SyncEvent::MessageCompleted {
+                                acp_thread_id: thread_id_for_sub.clone(),
+                                message_id: "0".to_string(),
+                                request_id: rid,
+                            });
+                        }
                         _ => {}
                     }
                 }).detach();
