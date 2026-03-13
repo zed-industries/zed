@@ -138,11 +138,13 @@ pub struct Transaction {
     pub id: TransactionId,
     pub edit_ids: Vec<clock::Lamport>,
     pub start: clock::Global,
+    pub end: clock::Global,
 }
 
 impl Transaction {
     pub fn merge_in(&mut self, other: Transaction) {
         self.edit_ids.extend(other.edit_ids);
+        self.end = other.end;
     }
 }
 
@@ -248,7 +250,8 @@ impl History {
             self.undo_stack.push(HistoryEntry {
                 transaction: Transaction {
                     id,
-                    start,
+                    start: start.clone(),
+                    end: start,
                     edit_ids: Default::default(),
                 },
                 first_edit_at: now,
@@ -376,7 +379,8 @@ impl History {
         let id = clock.tick();
         let transaction = Transaction {
             id,
-            start,
+            start: start.clone(),
+            end: start,
             edit_ids: Vec::new(),
         };
         self.undo_stack.push(HistoryEntry {
@@ -394,6 +398,12 @@ impl History {
             let last_transaction = self.undo_stack.last_mut().unwrap();
             last_transaction.transaction.edit_ids.push(op_id);
         }
+    }
+
+    fn update_transaction_end(&mut self, version: clock::Global) {
+        assert_ne!(self.transaction_depth, 0);
+        let last_transaction = self.undo_stack.last_mut().unwrap();
+        last_transaction.transaction.end = version;
     }
 
     fn pop_undo(&mut self) -> Option<&HistoryEntry> {
@@ -482,7 +492,7 @@ impl History {
         if let Some(transaction) = self.forget(transaction)
             && let Some(destination) = self.transaction_mut(destination)
         {
-            destination.edit_ids.extend(transaction.edit_ids);
+            destination.merge_in(transaction);
         }
     }
 
@@ -766,9 +776,22 @@ struct DeserializedHistory {
 impl Buffer {
     pub fn serialize_history(&self, max_operations: usize) -> anyhow::Result<Vec<u8>> {
         let history = &self.history;
-        if history.operations.iter().count() > max_operations {
-            anyhow::bail!("Too many operations to serialize");
+        let total_ops = self.undo_history_ops_count(&history.undo_stack)
+            + self.undo_history_ops_count(&history.redo_stack);
+
+        if total_ops > max_operations {
+            let serialized = SerializedHistory {
+                base_text: self.text(),
+                line_ending: self.line_ending(),
+                operations: Vec::new(),
+                undo_stack: &Vec::new(),
+                redo_stack: &Vec::new(),
+            };
+            let bytes = bincode::serialize(&serialized)?;
+            let compressed = zstd::stream::encode_all(&*bytes, 0)?;
+            return Ok(compressed);
         }
+
         let serialized = SerializedHistory {
             base_text: history.base_text.to_string(),
             line_ending: self.line_ending(),
@@ -779,6 +802,10 @@ impl Buffer {
         let bytes = bincode::serialize(&serialized)?;
         let compressed = zstd::stream::encode_all(&*bytes, 0)?;
         Ok(compressed)
+    }
+
+    fn undo_history_ops_count(&self, stack: &[HistoryEntry]) -> usize {
+        stack.iter().map(|e| e.transaction.edit_ids.len()).sum()
     }
 
     pub fn deserialize_history(
@@ -795,7 +822,14 @@ impl Buffer {
             deserialized.line_ending,
             Rope::from(deserialized.base_text.as_str()),
         );
-        buffer.apply_ops(deserialized.operations);
+        
+        for op in deserialized.operations {
+            buffer.history.push(op.clone());
+            if buffer.can_apply_op(&op) {
+                buffer.apply_op(op);
+            }
+        }
+        
         buffer.history.undo_stack = deserialized.undo_stack;
         buffer.history.redo_stack = deserialized.redo_stack;
         Ok(buffer)
@@ -941,6 +975,7 @@ impl Buffer {
         self.history.push(operation.clone());
         self.history.push_undo(operation.timestamp());
         self.snapshot.version.observe(operation.timestamp());
+        self.history.update_transaction_end(self.version());
         self.end_transaction();
         operation
     }

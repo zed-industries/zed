@@ -1520,7 +1520,7 @@ or
 {
   "session": {
     "restore_unsaved_buffers": true,
-    "restore_unsaved_buffers_max_operations": 10000,
+    "restore_unsaved_buffers_max_operations": 1000,
     "trust_all_worktrees": false
   }
 }
@@ -1545,12 +1545,12 @@ If this is true, user won't be prompted whether to save/discard dirty files when
 ```json [settings]
 {
   "session": {
-    "restore_unsaved_buffers_max_operations": 10000
+    "restore_unsaved_buffers_max_operations": 1000
   }
 }
 ```
 
-When there are more operations than this cap, the history is discarded.
+When there are more operations than this cap, the history is truncated and the current state is preserved as the base text.
 
 3. Whether or not to skip worktree and workspace trust checks:
 

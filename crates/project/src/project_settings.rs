@@ -729,7 +729,7 @@ impl Settings for ProjectSettings {
             load_direnv: project.load_direnv.clone().unwrap(),
             session: SessionSettings {
                 restore_unsaved_buffers: content.session.unwrap().restore_unsaved_buffers.unwrap(),
-                restore_unsaved_buffers_max_operations: content.session.unwrap().restore_unsaved_buffers_max_operations.unwrap_or(10000),
+                restore_unsaved_buffers_max_operations: content.session.unwrap().restore_unsaved_buffers_max_operations.unwrap_or(1000),
                 trust_all_worktrees: content.session.unwrap().trust_all_worktrees.unwrap(),
             },
         }
