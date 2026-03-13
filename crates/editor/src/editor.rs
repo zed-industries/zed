@@ -18119,6 +18119,7 @@ impl Editor {
 
         let workspace = self.workspace();
 
+        let excerpt_context_lines = multi_buffer::excerpt_context_lines(cx);
         cx.spawn_in(window, async move |editor, cx| {
             let locations: Vec<Location> = future::join_all(definitions)
                 .await
@@ -18139,7 +18140,11 @@ impl Editor {
             for ranges in locations.values_mut() {
                 ranges.sort_by_key(|range| (range.start, Reverse(range.end)));
                 ranges.dedup();
-                num_locations += ranges.len();
+                let fits_in_one_excerpt = ranges
+                    .iter()
+                    .tuple_windows()
+                    .all(|(a, b)| b.start.row - a.end.row <= 2 * excerpt_context_lines);
+                num_locations += if fits_in_one_excerpt { 1 } else { ranges.len() };
             }
 
             if num_locations > 1 {
@@ -18244,16 +18249,43 @@ impl Editor {
                 }
             } else {
                 let (target_buffer, target_ranges) = locations.into_iter().next().unwrap();
-                let target_range = target_ranges.first().unwrap().clone();
 
                 editor.update_in(cx, |editor, window, cx| {
-                    let range = editor.range_for_match(&target_range);
-                    let range = collapse_multiline_range(range);
-
+                    let target_ranges = target_ranges
+                        .into_iter()
+                        .map(|r| editor.range_for_match(&r))
+                        .map(collapse_multiline_range)
+                        .collect::<Vec<_>>();
                     if !split
                         && Some(&target_buffer) == editor.buffer.read(cx).as_singleton().as_ref()
                     {
-                        editor.go_to_singleton_buffer_range(range, window, cx);
+                        let multibuffer = editor.buffer.read(cx);
+                        let target_ranges = target_ranges
+                            .into_iter()
+                            .filter_map(|r| {
+                                let start = multibuffer.buffer_point_to_anchor(
+                                    &target_buffer,
+                                    r.start,
+                                    cx,
+                                )?;
+                                let end = multibuffer.buffer_point_to_anchor(
+                                    &target_buffer,
+                                    r.end,
+                                    cx,
+                                )?;
+                                Some(start..end)
+                            })
+                            .collect::<Vec<_>>();
+                        if target_ranges.is_empty() {
+                            return Navigated::No;
+                        }
+
+                        editor.change_selections(
+                            SelectionEffects::default().nav_history(true),
+                            window,
+                            cx,
+                            |s| s.select_anchor_ranges(target_ranges),
+                        );
 
                         let target =
                             editor.navigation_entry(editor.selections.newest_anchor().head(), cx);
@@ -18302,7 +18334,37 @@ impl Editor {
                                 // When selecting a definition in a different buffer, disable the nav history
                                 // to avoid creating a history entry at the previous cursor location.
                                 pane.update(cx, |pane, _| pane.disable_history());
-                                target_editor.go_to_singleton_buffer_range(range, window, cx);
+
+                                let multibuffer = target_editor.buffer.read(cx);
+                                let Some(target_buffer) = multibuffer.as_singleton() else {
+                                    return Navigated::No;
+                                };
+                                let target_ranges = target_ranges
+                                    .into_iter()
+                                    .filter_map(|r| {
+                                        let start = multibuffer.buffer_point_to_anchor(
+                                            &target_buffer,
+                                            r.start,
+                                            cx,
+                                        )?;
+                                        let end = multibuffer.buffer_point_to_anchor(
+                                            &target_buffer,
+                                            r.end,
+                                            cx,
+                                        )?;
+                                        Some(start..end)
+                                    })
+                                    .collect::<Vec<_>>();
+                                if target_ranges.is_empty() {
+                                    return Navigated::No;
+                                }
+
+                                target_editor.change_selections(
+                                    SelectionEffects::default().nav_history(true),
+                                    window,
+                                    cx,
+                                    |s| s.select_anchor_ranges(target_ranges),
+                                );
 
                                 let nav_data = target_editor.navigation_data(
                                     target_editor.selections.newest_anchor().head(),
@@ -18314,6 +18376,7 @@ impl Editor {
                                     )));
                                 nav_history.push_tag(origin, target);
                                 pane.update(cx, |pane, _| pane.enable_history());
+                                Navigated::Yes
                             });
                         });
                     }
