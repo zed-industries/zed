@@ -307,7 +307,8 @@ CREATE TABLE public.project_repositories (
     head_commit_details character varying,
     merge_message character varying,
     remote_upstream_url character varying,
-    remote_origin_url character varying
+    remote_origin_url character varying,
+    linked_worktrees text
 );
 
 CREATE TABLE public.project_repository_statuses (

@@ -15,8 +15,8 @@ use menu::{Confirm, SelectFirst, SelectLast, SelectNext, SelectPrevious};
 use project::{AgentServerStore, ExternalAgentServerName};
 use theme::ActiveTheme;
 use ui::{
-    ButtonLike, ContextMenu, ContextMenuEntry, HighlightedLabel, ListItem, PopoverMenu,
-    PopoverMenuHandle, Tab, TintColor, Tooltip, WithScrollbar, prelude::*,
+    ButtonLike, CommonAnimationExt, ContextMenu, ContextMenuEntry, HighlightedLabel, ListItem,
+    PopoverMenu, PopoverMenuHandle, Tab, TintColor, Tooltip, WithScrollbar, prelude::*,
 };
 use util::ResultExt as _;
 use zed_actions::editor::{MoveDown, MoveUp};
@@ -110,6 +110,7 @@ pub struct ThreadsArchiveView {
     _subscriptions: Vec<gpui::Subscription>,
     selected_agent_menu: PopoverMenuHandle<ContextMenu>,
     _refresh_history_task: Task<()>,
+    is_loading: bool,
 }
 
 impl ThreadsArchiveView {
@@ -152,13 +153,20 @@ impl ThreadsArchiveView {
             _subscriptions: vec![filter_editor_subscription],
             selected_agent_menu: PopoverMenuHandle::default(),
             _refresh_history_task: Task::ready(()),
+            is_loading: true,
         };
-        this.set_selected_agent(Agent::NativeAgent, cx);
+        this.set_selected_agent(Agent::NativeAgent, window, cx);
         this
     }
 
-    fn set_selected_agent(&mut self, agent: Agent, cx: &mut Context<Self>) {
+    fn set_selected_agent(&mut self, agent: Agent, window: &mut Window, cx: &mut Context<Self>) {
         self.selected_agent = agent.clone();
+        self.is_loading = true;
+        self.history = None;
+        self.items.clear();
+        self.selection = None;
+        self.list_state.reset(0);
+        self.reset_filter_editor_text(window, cx);
 
         let server = agent.server(self.fs.clone(), self.thread_store.clone());
         let connection = self
@@ -184,6 +192,7 @@ impl ThreadsArchiveView {
             history.refresh_full_history(cx);
         });
         self.history = Some(history);
+        self.is_loading = false;
         self.update_items(cx);
         cx.notify();
     }
@@ -477,9 +486,9 @@ impl ThreadsArchiveView {
                             .icon_color(Color::Muted)
                             .handler({
                                 let this = this.clone();
-                                move |_, cx| {
+                                move |window, cx| {
                                     this.update(cx, |this, cx| {
-                                        this.set_selected_agent(Agent::NativeAgent, cx)
+                                        this.set_selected_agent(Agent::NativeAgent, window, cx)
                                     })
                                     .ok();
                                 }
@@ -537,9 +546,9 @@ impl ThreadsArchiveView {
                                 let agent = Agent::Custom {
                                     name: item.id.0.clone(),
                                 };
-                                move |_, cx| {
+                                move |window, cx| {
                                     this.update(cx, |this, cx| {
-                                        this.set_selected_agent(agent.clone(), cx)
+                                        this.set_selected_agent(agent.clone(), window, cx)
                                     })
                                     .ok();
                                 }
@@ -565,7 +574,6 @@ impl ThreadsArchiveView {
         h_flex()
             .h(Tab::container_height(cx))
             .px_1()
-            .gap_1p5()
             .justify_between()
             .border_b_1()
             .border_color(cx.theme().colors().border)
@@ -610,12 +618,54 @@ impl Render for ThreadsArchiveView {
         let is_empty = self.items.is_empty();
         let has_query = !self.filter_editor.read(cx).text(cx).is_empty();
 
-        let empty_state_container = |label: SharedString| {
+        let content = if self.is_loading {
             v_flex()
                 .flex_1()
                 .justify_center()
                 .items_center()
-                .child(Label::new(label).size(LabelSize::Small).color(Color::Muted))
+                .child(
+                    Icon::new(IconName::LoadCircle)
+                        .size(IconSize::Small)
+                        .color(Color::Muted)
+                        .with_rotate_animation(2),
+                )
+                .into_any_element()
+        } else if is_empty && has_query {
+            v_flex()
+                .flex_1()
+                .justify_center()
+                .items_center()
+                .child(
+                    Label::new("No threads match your search.")
+                        .size(LabelSize::Small)
+                        .color(Color::Muted),
+                )
+                .into_any_element()
+        } else if is_empty {
+            v_flex()
+                .flex_1()
+                .justify_center()
+                .items_center()
+                .child(
+                    Label::new("No archived threads yet.")
+                        .size(LabelSize::Small)
+                        .color(Color::Muted),
+                )
+                .into_any_element()
+        } else {
+            v_flex()
+                .flex_1()
+                .overflow_hidden()
+                .child(
+                    list(
+                        self.list_state.clone(),
+                        cx.processor(Self::render_list_entry),
+                    )
+                    .flex_1()
+                    .size_full(),
+                )
+                .vertical_scrollbar_for(&self.list_state, window, cx)
+                .into_any_element()
         };
 
         v_flex()
@@ -631,24 +681,6 @@ impl Render for ThreadsArchiveView {
             .size_full()
             .bg(cx.theme().colors().surface_background)
             .child(self.render_header(cx))
-            .child(if is_empty && has_query {
-                empty_state_container("No threads match your search.".into()).into_any_element()
-            } else if is_empty {
-                empty_state_container("No archived threads yet.".into()).into_any_element()
-            } else {
-                v_flex()
-                    .flex_1()
-                    .overflow_hidden()
-                    .child(
-                        list(
-                            self.list_state.clone(),
-                            cx.processor(Self::render_list_entry),
-                        )
-                        .flex_1()
-                        .size_full(),
-                    )
-                    .vertical_scrollbar_for(&self.list_state, window, cx)
-                    .into_any_element()
-            })
+            .child(content)
     }
 }

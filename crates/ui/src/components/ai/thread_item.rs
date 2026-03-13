@@ -235,9 +235,9 @@ impl RenderOnce for ThreadItem {
 
         let gradient_overlay =
             GradientFade::new(base_bg, color.element_hover, color.element_active)
-                .width(px(32.0))
+                .width(px(64.0))
                 .right(px(-10.0))
-                .gradient_stop(0.8)
+                .gradient_stop(0.75)
                 .group_name("thread-item");
 
         let has_diff_stats = self.added.is_some() || self.removed.is_some();
@@ -264,6 +264,7 @@ impl RenderOnce for ThreadItem {
                     .border_color(color.border_focused)
             })
             .hover(|s| s.bg(color.element_hover))
+            .active(|s| s.bg(color.element_active))
             .on_hover(self.on_hover)
             .child(
                 h_flex()
@@ -310,11 +311,10 @@ impl RenderOnce for ThreadItem {
                             this.child(dot_separator())
                         })
                         .when(has_diff_stats, |this| {
-                            this.child(DiffStat::new(
-                                diff_stat_id.clone(),
-                                added_count,
-                                removed_count,
-                            ))
+                            this.child(
+                                DiffStat::new(diff_stat_id.clone(), added_count, removed_count)
+                                    .tooltip("Unreviewed changes"),
+                            )
                         })
                         .when(has_diff_stats && has_timestamp, |this| {
                             this.child(dot_separator())
@@ -335,7 +335,10 @@ impl RenderOnce for ThreadItem {
                         .gap_1p5()
                         .child(icon_container()) // Icon Spacing
                         .when(has_diff_stats, |this| {
-                            this.child(DiffStat::new(diff_stat_id, added_count, removed_count))
+                            this.child(
+                                DiffStat::new(diff_stat_id, added_count, removed_count)
+                                    .tooltip("Unreviewed changes"),
+                            )
                         })
                         .when(has_diff_stats && has_timestamp, |this| {
                             this.child(dot_separator())

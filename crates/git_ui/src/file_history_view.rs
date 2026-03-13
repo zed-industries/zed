@@ -565,7 +565,10 @@ impl Item for FileHistoryView {
         false
     }
 
-    fn breadcrumbs(&self, _cx: &App) -> Option<Vec<workspace::item::BreadcrumbText>> {
+    fn breadcrumbs(
+        &self,
+        _cx: &App,
+    ) -> Option<(Vec<workspace::item::HighlightedText>, Option<gpui::Font>)> {
         None
     }
 

@@ -6268,6 +6268,77 @@ async fn test_manipulate_text(cx: &mut TestAppContext) {
         «HeLlO, wOrLD!ˇ»
     "});
 
+    // Test that case conversions backed by `to_case` preserve leading/trailing whitespace.
+    cx.set_state(indoc! {"
+        «    hello worldˇ»
+    "});
+    cx.update_editor(|e, window, cx| e.convert_to_title_case(&ConvertToTitleCase, window, cx));
+    cx.assert_editor_state(indoc! {"
+        «    Hello Worldˇ»
+    "});
+
+    cx.set_state(indoc! {"
+        «    hello worldˇ»
+    "});
+    cx.update_editor(|e, window, cx| {
+        e.convert_to_upper_camel_case(&ConvertToUpperCamelCase, window, cx)
+    });
+    cx.assert_editor_state(indoc! {"
+        «    HelloWorldˇ»
+    "});
+
+    cx.set_state(indoc! {"
+        «    hello worldˇ»
+    "});
+    cx.update_editor(|e, window, cx| {
+        e.convert_to_lower_camel_case(&ConvertToLowerCamelCase, window, cx)
+    });
+    cx.assert_editor_state(indoc! {"
+        «    helloWorldˇ»
+    "});
+
+    cx.set_state(indoc! {"
+        «    hello worldˇ»
+    "});
+    cx.update_editor(|e, window, cx| e.convert_to_snake_case(&ConvertToSnakeCase, window, cx));
+    cx.assert_editor_state(indoc! {"
+        «    hello_worldˇ»
+    "});
+
+    cx.set_state(indoc! {"
+        «    hello worldˇ»
+    "});
+    cx.update_editor(|e, window, cx| e.convert_to_kebab_case(&ConvertToKebabCase, window, cx));
+    cx.assert_editor_state(indoc! {"
+        «    hello-worldˇ»
+    "});
+
+    cx.set_state(indoc! {"
+        «    hello worldˇ»
+    "});
+    cx.update_editor(|e, window, cx| {
+        e.convert_to_sentence_case(&ConvertToSentenceCase, window, cx)
+    });
+    cx.assert_editor_state(indoc! {"
+        «    Hello worldˇ»
+    "});
+
+    cx.set_state(indoc! {"
+        «    hello world\t\tˇ»
+    "});
+    cx.update_editor(|e, window, cx| e.convert_to_title_case(&ConvertToTitleCase, window, cx));
+    cx.assert_editor_state(indoc! {"
+        «    Hello World\t\tˇ»
+    "});
+
+    cx.set_state(indoc! {"
+        «    hello world\t\tˇ»
+    "});
+    cx.update_editor(|e, window, cx| e.convert_to_snake_case(&ConvertToSnakeCase, window, cx));
+    cx.assert_editor_state(indoc! {"
+        «    hello_world\t\tˇ»
+    "});
+
     // Test selections with `line_mode() = true`.
     cx.update_editor(|editor, _window, _cx| editor.selections.set_line_mode(true));
     cx.set_state(indoc! {"

@@ -217,7 +217,7 @@ use workspace::{
     CollaboratorId, Item as WorkspaceItem, ItemId, ItemNavHistory, NavigationEntry, OpenInTerminal,
     OpenTerminal, Pane, RestoreOnStartupBehavior, SERIALIZATION_THROTTLE_TIME, SplitDirection,
     TabBarSettings, Toast, ViewId, Workspace, WorkspaceId, WorkspaceSettings,
-    item::{BreadcrumbText, ItemBufferKind, ItemHandle, PreviewTabsSettings, SaveOptions},
+    item::{ItemBufferKind, ItemHandle, PreviewTabsSettings, SaveOptions},
     notifications::{DetachAndPromptErr, NotificationId, NotifyTaskExt},
     searchable::SearchEvent,
 };
@@ -12438,9 +12438,7 @@ impl Editor {
         cx: &mut Context<Self>,
     ) {
         self.manipulate_text(window, cx, |text| {
-            text.split('\n')
-                .map(|line| line.to_case(Case::Title))
-                .join("\n")
+            Self::convert_text_case(text, Case::Title)
         })
     }
 
@@ -12450,7 +12448,9 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.manipulate_text(window, cx, |text| text.to_case(Case::Snake))
+        self.manipulate_text(window, cx, |text| {
+            Self::convert_text_case(text, Case::Snake)
+        })
     }
 
     pub fn convert_to_kebab_case(
@@ -12459,7 +12459,9 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.manipulate_text(window, cx, |text| text.to_case(Case::Kebab))
+        self.manipulate_text(window, cx, |text| {
+            Self::convert_text_case(text, Case::Kebab)
+        })
     }
 
     pub fn convert_to_upper_camel_case(
@@ -12469,9 +12471,7 @@ impl Editor {
         cx: &mut Context<Self>,
     ) {
         self.manipulate_text(window, cx, |text| {
-            text.split('\n')
-                .map(|line| line.to_case(Case::UpperCamel))
-                .join("\n")
+            Self::convert_text_case(text, Case::UpperCamel)
         })
     }
 
@@ -12481,7 +12481,9 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.manipulate_text(window, cx, |text| text.to_case(Case::Camel))
+        self.manipulate_text(window, cx, |text| {
+            Self::convert_text_case(text, Case::Camel)
+        })
     }
 
     pub fn convert_to_opposite_case(
@@ -12509,7 +12511,9 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.manipulate_text(window, cx, |text| text.to_case(Case::Sentence))
+        self.manipulate_text(window, cx, |text| {
+            Self::convert_text_case(text, Case::Sentence)
+        })
     }
 
     pub fn toggle_case(&mut self, _: &ToggleCase, window: &mut Window, cx: &mut Context<Self>) {
@@ -12538,6 +12542,18 @@ impl Editor {
                 })
                 .collect()
         })
+    }
+
+    fn convert_text_case(text: &str, case: Case) -> String {
+        text.lines()
+            .map(|line| {
+                let trimmed_start = line.trim_start();
+                let leading = &line[..line.len() - trimmed_start.len()];
+                let trimmed = trimmed_start.trim_end();
+                let trailing = &trimmed_start[trimmed.len()..];
+                format!("{}{}{}", leading, trimmed.to_case(case), trailing)
+            })
+            .join("\n")
     }
 
     pub fn convert_to_rot47(
@@ -25307,14 +25323,13 @@ impl Editor {
         }
     }
 
-    fn breadcrumbs_inner(&self, cx: &App) -> Option<Vec<BreadcrumbText>> {
+    fn breadcrumbs_inner(&self, cx: &App) -> Option<Vec<HighlightedText>> {
         let multibuffer = self.buffer().read(cx);
         let is_singleton = multibuffer.is_singleton();
         let (buffer_id, symbols) = self.outline_symbols_at_cursor.as_ref()?;
         let buffer = multibuffer.buffer(*buffer_id)?;
 
         let buffer = buffer.read(cx);
-        let settings = ThemeSettings::get_global(cx);
         // In a multi-buffer layout, we don't want to include the filename in the breadcrumbs
         let mut breadcrumbs = if is_singleton {
             let text = self.breadcrumb_header.clone().unwrap_or_else(|| {
@@ -25335,19 +25350,17 @@ impl Editor {
                         }
                     })
             });
-            vec![BreadcrumbText {
-                text,
-                highlights: None,
-                font: Some(settings.buffer_font.clone()),
+            vec![HighlightedText {
+                text: text.into(),
+                highlights: vec![],
             }]
         } else {
             vec![]
         };
 
-        breadcrumbs.extend(symbols.iter().map(|symbol| BreadcrumbText {
-            text: symbol.text.clone(),
-            highlights: Some(symbol.highlight_ranges.clone()),
-            font: Some(settings.buffer_font.clone()),
+        breadcrumbs.extend(symbols.iter().map(|symbol| HighlightedText {
+            text: symbol.text.clone().into(),
+            highlights: symbol.highlight_ranges.clone(),
         }));
         Some(breadcrumbs)
     }

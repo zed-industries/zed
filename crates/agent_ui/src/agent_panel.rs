@@ -87,7 +87,7 @@ use ui::{
 use util::{ResultExt as _, debug_panic};
 use workspace::{
     CollaboratorId, DraggedSelection, DraggedSidebar, DraggedTab, FocusWorkspaceSidebar,
-    MultiWorkspace, SIDEBAR_RESIZE_HANDLE_SIZE, ToggleWorkspaceSidebar, ToggleZoom,
+    MultiWorkspace, OpenResult, SIDEBAR_RESIZE_HANDLE_SIZE, ToggleWorkspaceSidebar, ToggleZoom,
     ToolbarItemView, Workspace, WorkspaceId,
     dock::{DockPosition, Panel, PanelEvent},
     multi_workspace_enabled,
@@ -2642,6 +2642,12 @@ impl AgentPanel {
         }
     }
 
+    // TODO: The mapping from workspace root paths to git repositories needs a
+    // unified approach across the codebase: this method, `sidebar::is_root_repo`,
+    // thread persistence (which PathList is saved to the database), and thread
+    // querying (which PathList is used to read threads back). All of these need
+    // to agree on how repos are resolved for a given workspace, especially in
+    // multi-root and nested-repo configurations.
     /// Partitions the project's visible worktrees into git-backed repositories
     /// and plain (non-git) paths. Git repos will have worktrees created for
     /// them; non-git paths are carried over to the new workspace as-is.
@@ -3019,20 +3025,15 @@ impl AgentPanel {
             workspace.set_dock_structure(dock_structure, window, cx);
         }));
 
-        let (new_window_handle, _) = cx
+        let OpenResult {
+            window: new_window_handle,
+            workspace: new_workspace,
+            ..
+        } = cx
             .update(|_window, cx| {
                 Workspace::new_local(all_paths, app_state, window_handle, None, init, false, cx)
             })?
             .await?;
-
-        let new_workspace = new_window_handle.update(cx, |multi_workspace, _window, _cx| {
-            let workspaces = multi_workspace.workspaces();
-            workspaces.last().cloned()
-        })?;
-
-        let Some(new_workspace) = new_workspace else {
-            anyhow::bail!("New workspace was not added to MultiWorkspace");
-        };
 
         let panels_task = new_window_handle.update(cx, |_, _, cx| {
             new_workspace.update(cx, |workspace, _cx| workspace.take_panels_task())

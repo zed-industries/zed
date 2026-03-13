@@ -790,7 +790,7 @@ impl GitRepository for FakeGitRepository {
     }
 
     fn diff(&self, _diff: git::repository::DiffType) -> BoxFuture<'_, Result<String>> {
-        unimplemented!()
+        future::ready(Ok(String::new())).boxed()
     }
 
     fn diff_stat(
