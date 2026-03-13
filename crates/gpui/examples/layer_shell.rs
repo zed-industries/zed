@@ -26,7 +26,8 @@ mod example {
 
     use gpui::{
         App, Bounds, Context, FontWeight, Size, Window, WindowBackgroundAppearance, WindowBounds,
-        WindowKind, WindowOptions, div, layer_shell::*, point, prelude::*, px, rems, rgba, white,
+        WindowKind, WindowOptions, div, layer_shell::*, point, prelude::*, px, rems, rgba,
+        white,
     };
     use gpui_platform::application;
 
@@ -75,27 +76,32 @@ mod example {
 
     pub fn main() {
         application().run(|cx: &mut App| {
-            cx.open_window(
-                WindowOptions {
-                    titlebar: None,
-                    window_bounds: Some(WindowBounds::Windowed(Bounds {
-                        origin: point(px(0.), px(0.)),
-                        size: Size::new(px(500.), px(200.)),
-                    })),
-                    app_id: Some("gpui-layer-shell-example".to_string()),
-                    window_background: WindowBackgroundAppearance::Transparent,
-                    kind: WindowKind::LayerShell(LayerShellOptions {
-                        namespace: "gpui".to_string(),
-                        anchor: Anchor::LEFT | Anchor::RIGHT | Anchor::BOTTOM,
-                        margin: Some((px(0.), px(0.), px(40.), px(0.))),
-                        keyboard_interactivity: KeyboardInteractivity::None,
+            for display in cx.displays() {
+                println!("Opening window on {:?}", display.name());
+
+                cx.open_window(
+                    WindowOptions {
+                        titlebar: None,
+                        window_bounds: Some(WindowBounds::Windowed(Bounds {
+                            origin: point(px(0.), px(0.)),
+                            size: Size::new(px(500.), px(200.)),
+                        })),
+                        display_id: Some(display.id()),
+                        app_id: Some("gpui-layer-shell-example".to_string()),
+                        window_background: WindowBackgroundAppearance::Transparent,
+                        kind: WindowKind::LayerShell(LayerShellOptions {
+                            namespace: "gpui".to_string(),
+                            anchor: Anchor::LEFT | Anchor::RIGHT | Anchor::BOTTOM,
+                            margin: Some((px(0.), px(0.), px(40.), px(0.))),
+                            keyboard_interactivity: KeyboardInteractivity::None,
+                            ..Default::default()
+                        }),
                         ..Default::default()
-                    }),
-                    ..Default::default()
-                },
-                |_, cx| cx.new(LayerShellExample::new),
-            )
-            .unwrap();
+                    },
+                    |_, cx| cx.new(LayerShellExample::new),
+                )
+                .unwrap();
+            }
         });
     }
 }

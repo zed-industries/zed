@@ -179,6 +179,7 @@ impl Globals {
 #[derive(Default, Debug, Clone, PartialEq, Eq, Hash)]
 pub struct InProgressOutput {
     name: Option<String>,
+    description: Option<String>,
     scale: Option<i32>,
     position: Option<Point<DevicePixels>>,
     size: Option<Size<DevicePixels>>,
@@ -190,6 +191,7 @@ impl InProgressOutput {
             let scale = self.scale.unwrap_or(1);
             Some(Output {
                 name: self.name.clone(),
+                description: self.description.clone(),
                 scale,
                 bounds: Bounds::new(position, size),
             })
@@ -202,6 +204,7 @@ impl InProgressOutput {
 #[derive(Debug, Clone, Eq, PartialEq, Hash)]
 pub struct Output {
     pub name: Option<String>,
+    pub description: Option<String>,
     pub scale: i32,
     pub bounds: Bounds<DevicePixels>,
 }
@@ -465,7 +468,8 @@ impl WaylandClient {
     pub(crate) fn new() -> Self {
         let conn = Connection::connect_to_env().unwrap();
 
-        let (globals, event_queue) = registry_queue_init::<WaylandClientStatePtr>(&conn).unwrap();
+        let (globals, mut event_queue) =
+            registry_queue_init::<WaylandClientStatePtr>(&conn).unwrap();
         let qh = event_queue.handle();
 
         let mut seat: Option<wl_seat::WlSeat> = None;
@@ -654,6 +658,14 @@ impl WaylandClient {
             event_loop: Some(event_loop),
         }));
 
+        // The initial registry roundtrip discovers and binds wl_output globals, but their
+        // property events (Name, Geometry, Mode, Scale, Done) are queued server-side. This
+        // extra roundtrip ensures all output events are delivered before we return, so
+        // displays() returns the full list immediately after init.
+        event_queue
+            .roundtrip(&mut WaylandClientStatePtr(Rc::downgrade(&state)))
+            .unwrap();
+
         WaylandSource::new(conn, event_queue)
             .insert(handle)
             .unwrap();
@@ -676,6 +688,7 @@ impl LinuxClient for WaylandClient {
                 Rc::new(WaylandDisplay {
                     id: id.clone(),
                     name: output.name.clone(),
+                    description: output.description.clone(),
                     bounds: output.bounds.to_pixels(output.scale as f32),
                 }) as Rc<dyn PlatformDisplay>
             })
@@ -692,6 +705,7 @@ impl LinuxClient for WaylandClient {
                     Rc::new(WaylandDisplay {
                         id: object_id.clone(),
                         name: output.name.clone(),
+                        description: output.description.clone(),
                         bounds: output.bounds.to_pixels(output.scale as f32),
                     }) as Rc<dyn PlatformDisplay>
                 })
@@ -733,7 +747,6 @@ impl LinuxClient for WaylandClient {
         let mut state = self.0.borrow_mut();
 
         let parent = state.keyboard_focused_window.clone();
-
         let target_output = params.display_id.and_then(|display_id| {
             let target_protocol_id: u32 = display_id.into();
             state
@@ -1146,6 +1159,9 @@ impl Dispatch<wl_output::WlOutput, ()> for WaylandClientStatePtr {
         match event {
             wl_output::Event::Name { name } => {
                 in_progress_output.name = Some(name);
+            }
+            wl_output::Event::Description { description } => {
+                in_progress_output.description = Some(description);
             }
             wl_output::Event::Scale { factor } => {
                 in_progress_output.scale = Some(factor);
