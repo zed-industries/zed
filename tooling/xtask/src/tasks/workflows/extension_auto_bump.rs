@@ -1,7 +1,7 @@
 use gh_workflow::{
     Event, Expression, Input, Job, Level, Permissions, Push, Strategy, UsesJob, Workflow,
 };
-use indoc::formatdoc;
+use indoc::indoc;
 use serde_json::json;
 
 use crate::tasks::workflows::{
@@ -21,7 +21,13 @@ pub(crate) fn extension_auto_bump() -> Workflow {
 
     named::workflow()
         .add_event(
-            Event::default().push(Push::default().add_branch("main").add_path("extensions/**")),
+            Event::default().push(
+                Push::default()
+                    .add_branch("main")
+                    .add_path("extensions/**")
+                    .add_ignored_path("extensions/workflows/**")
+                    .add_ignored_path("extensions/*.md"),
+            ),
         )
         .concurrency(one_workflow_per_non_main_branch())
         .add_job(detect.name, detect.job)
@@ -29,12 +35,28 @@ pub(crate) fn extension_auto_bump() -> Workflow {
 }
 
 fn detect_changed_extensions() -> NamedJob {
-    let script = formatdoc!(
-        r#"
-        COMPARE_REV=\"$(git rev-parse HEAD~1)\
-        CHANGED_FILES=\"$(git diff --name-only \"$COMPARE_REV\" \"$GITHUB_SHA\")\"
-        {DETECT_CHANGED_EXTENSIONS_SCRIPT}
-        "#
+    let preamble = indoc! {r#"
+        COMPARE_REV="$(git rev-parse HEAD~1)"
+        CHANGED_FILES="$(git diff --name-only "$COMPARE_REV" "$GITHUB_SHA")"
+    "#};
+
+    let filter_new_and_removed = indoc! {r#"
+        # Filter out newly added or entirely removed extensions
+        FILTERED="[]"
+        for ext in $(echo "$EXTENSIONS_JSON" | jq -r '.[]'); do
+            if git show HEAD~1:"$ext/extension.toml" >/dev/null 2>&1 && \
+               [ -f "$ext/extension.toml" ]; then
+                FILTERED=$(echo "$FILTERED" | jq --arg e "$ext" '. + [$e]')
+            fi
+        done
+        echo "changed_extensions=$FILTERED" >> "$GITHUB_OUTPUT"
+    "#};
+
+    let script = format!(
+        "{preamble}{detect}{filter}",
+        preamble = preamble,
+        detect = DETECT_CHANGED_EXTENSIONS_SCRIPT,
+        filter = filter_new_and_removed,
     );
 
     let step = named::bash(script).id("detect");

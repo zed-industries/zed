@@ -7,6 +7,9 @@ on:
     - main
     paths:
     - extensions/**
+    paths-ignore:
+    - extensions/workflows/**
+    - extensions/*.md
 jobs:
   detect_changed_extensions:
     if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions')
@@ -19,9 +22,9 @@ jobs:
         fetch-depth: 2
     - id: detect
       name: extension_auto_bump::detect_changed_extensions
-      run: |+
-        COMPARE_REV=\"$(git rev-parse HEAD~1)\
-        CHANGED_FILES=\"$(git diff --name-only \"$COMPARE_REV\" \"$GITHUB_SHA\")\"
+      run: |
+        COMPARE_REV="$(git rev-parse HEAD~1)"
+        CHANGED_FILES="$(git diff --name-only "$COMPARE_REV" "$GITHUB_SHA")"
         # Detect changed extension directories (excluding extensions/workflows)
         CHANGED_EXTENSIONS=$(echo "$CHANGED_FILES" | grep -oP '^extensions/[^/]+(?=/)' | sort -u | grep -v '^extensions/workflows$' || true)
         if [ -n "$CHANGED_EXTENSIONS" ]; then
@@ -29,8 +32,15 @@ jobs:
         else
             EXTENSIONS_JSON="[]"
         fi
-        echo "changed_extensions=$EXTENSIONS_JSON" >> "$GITHUB_OUTPUT"
-
+        # Filter out newly added or entirely removed extensions
+        FILTERED="[]"
+        for ext in $(echo "$EXTENSIONS_JSON" | jq -r '.[]'); do
+            if git show HEAD~1:"$ext/extension.toml" >/dev/null 2>&1 && \
+               [ -f "$ext/extension.toml" ]; then
+                FILTERED=$(echo "$FILTERED" | jq --arg e "$ext" '. + [$e]')
+            fi
+        done
+        echo "changed_extensions=$FILTERED" >> "$GITHUB_OUTPUT"
     outputs:
       changed_extensions: ${{ steps.detect.outputs.changed_extensions }}
     timeout-minutes: 5

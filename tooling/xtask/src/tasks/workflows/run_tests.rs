@@ -98,22 +98,28 @@ pub(crate) fn run_tests() -> Workflow {
         .add_job(tests_pass.name, tests_pass.job)
 }
 
+/// Controls which features `orchestrate_impl` includes in the generated script.
+#[derive(PartialEq, Eq)]
+enum OrchestrateTarget {
+    /// For the main Zed repo: includes the cargo package filter and extension
+    /// change detection, but no working-directory scoping.
+    ZedRepo,
+    /// For individual extension repos: scopes changed-file detection to the
+    /// working directory, with no package filter or extension detection.
+    Extension,
+}
+
 // Generates a bash script that checks changed files against regex patterns
 // and sets GitHub output variables accordingly
 pub fn orchestrate(rules: &[&PathCondition]) -> NamedJob {
-    orchestrate_impl(rules, true, false, true)
+    orchestrate_impl(rules, OrchestrateTarget::ZedRepo)
 }
 
 pub fn orchestrate_for_extension(rules: &[&PathCondition]) -> NamedJob {
-    orchestrate_impl(rules, false, true, false)
+    orchestrate_impl(rules, OrchestrateTarget::Extension)
 }
 
-fn orchestrate_impl(
-    rules: &[&PathCondition],
-    include_package_filter: bool,
-    filter_by_working_directory: bool,
-    include_extension_filter: bool,
-) -> NamedJob {
+fn orchestrate_impl(rules: &[&PathCondition], target: OrchestrateTarget) -> NamedJob {
     let name = "orchestrate".to_owned();
     let step_name = "filter".to_owned();
     let mut script = String::new();
@@ -132,7 +138,7 @@ fn orchestrate_impl(
 
     "#});
 
-    if filter_by_working_directory {
+    if target == OrchestrateTarget::Extension {
         script.push_str(indoc::indoc! {r#"
         # When running from a subdirectory, git diff returns repo-root-relative paths.
         # Filter to only files within the current working directory and strip the prefix.
@@ -160,7 +166,7 @@ fn orchestrate_impl(
 
     let mut outputs = IndexMap::new();
 
-    if include_package_filter {
+    if target == OrchestrateTarget::ZedRepo {
         script.push_str(indoc::indoc! {r#"
         # Check for changes that require full rebuild (no filter)
         # Direct pushes to main/stable/preview always run full suite
@@ -246,8 +252,9 @@ fn orchestrate_impl(
         ));
     }
 
-    if include_extension_filter {
+    if target == OrchestrateTarget::ZedRepo {
         script.push_str(DETECT_CHANGED_EXTENSIONS_SCRIPT);
+        script.push_str("echo \"changed_extensions=$EXTENSIONS_JSON\" >> \"$GITHUB_OUTPUT\"\n");
 
         outputs.insert(
             "changed_extensions".to_owned(),
@@ -324,8 +331,8 @@ pub fn tests_pass(jobs: &[NamedJob], extra_job_names: &[&str]) -> NamedJob {
 }
 
 /// Bash script snippet that detects changed extension directories from `$CHANGED_FILES`.
-/// Assumes `$CHANGED_FILES` is already set. Outputs `changed_extensions` as a JSON array
-/// to `$GITHUB_OUTPUT`.
+/// Assumes `$CHANGED_FILES` is already set. Sets `$EXTENSIONS_JSON` to a JSON array of
+/// changed extension paths. Callers are responsible for writing the result to `$GITHUB_OUTPUT`.
 pub(crate) const DETECT_CHANGED_EXTENSIONS_SCRIPT: &str = indoc::indoc! {r#"
     # Detect changed extension directories (excluding extensions/workflows)
     CHANGED_EXTENSIONS=$(echo "$CHANGED_FILES" | grep -oP '^extensions/[^/]+(?=/)' | sort -u | grep -v '^extensions/workflows$' || true)
@@ -334,7 +341,6 @@ pub(crate) const DETECT_CHANGED_EXTENSIONS_SCRIPT: &str = indoc::indoc! {r#"
     else
         EXTENSIONS_JSON="[]"
     fi
-    echo "changed_extensions=$EXTENSIONS_JSON" >> "$GITHUB_OUTPUT"
 "#};
 
 const TS_QUERY_LS_FILE: &str = "ts_query_ls-x86_64-unknown-linux-gnu.tar.gz";
