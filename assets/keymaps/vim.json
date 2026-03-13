@@ -427,6 +427,7 @@
       "escape": "vim::SwitchToHelixNormalMode",
       "i": "vim::HelixInsert",
       "a": "vim::HelixAppend",
+      "shift-a": "vim::HelixInsertEndOfLine",
       "ctrl-[": "editor::Cancel",
     },
   },

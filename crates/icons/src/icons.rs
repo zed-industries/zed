@@ -27,6 +27,7 @@ pub enum IconName {
     AiVZero,
     AiXAi,
     AiZed,
+    Archive,
     ArrowCircle,
     ArrowDown,
     ArrowDown10,

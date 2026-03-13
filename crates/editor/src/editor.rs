@@ -217,7 +217,7 @@ use workspace::{
     CollaboratorId, Item as WorkspaceItem, ItemId, ItemNavHistory, NavigationEntry, OpenInTerminal,
     OpenTerminal, Pane, RestoreOnStartupBehavior, SERIALIZATION_THROTTLE_TIME, SplitDirection,
     TabBarSettings, Toast, ViewId, Workspace, WorkspaceId, WorkspaceSettings,
-    item::{BreadcrumbText, ItemBufferKind, ItemHandle, PreviewTabsSettings, SaveOptions},
+    item::{ItemBufferKind, ItemHandle, PreviewTabsSettings, SaveOptions},
     notifications::{DetachAndPromptErr, NotificationId, NotifyTaskExt},
     searchable::SearchEvent,
 };
@@ -2621,16 +2621,7 @@ impl Editor {
                                 .await;
                             editor
                                 .update_in(cx, |editor, window, cx| {
-                                    editor.register_visible_buffers(cx);
-                                    editor.colorize_brackets(false, cx);
-                                    editor.refresh_inlay_hints(
-                                        InlayHintRefreshReason::NewLinesShown,
-                                        cx,
-                                    );
-                                    if !editor.buffer().read(cx).is_singleton() {
-                                        editor.update_lsp_data(None, window, cx);
-                                        editor.refresh_runnables(window, cx);
-                                    }
+                                    editor.update_data_on_scroll(window, cx)
                                 })
                                 .ok();
                         });
@@ -12447,9 +12438,7 @@ impl Editor {
         cx: &mut Context<Self>,
     ) {
         self.manipulate_text(window, cx, |text| {
-            text.split('\n')
-                .map(|line| line.to_case(Case::Title))
-                .join("\n")
+            Self::convert_text_case(text, Case::Title)
         })
     }
 
@@ -12459,7 +12448,9 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.manipulate_text(window, cx, |text| text.to_case(Case::Snake))
+        self.manipulate_text(window, cx, |text| {
+            Self::convert_text_case(text, Case::Snake)
+        })
     }
 
     pub fn convert_to_kebab_case(
@@ -12468,7 +12459,9 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.manipulate_text(window, cx, |text| text.to_case(Case::Kebab))
+        self.manipulate_text(window, cx, |text| {
+            Self::convert_text_case(text, Case::Kebab)
+        })
     }
 
     pub fn convert_to_upper_camel_case(
@@ -12478,9 +12471,7 @@ impl Editor {
         cx: &mut Context<Self>,
     ) {
         self.manipulate_text(window, cx, |text| {
-            text.split('\n')
-                .map(|line| line.to_case(Case::UpperCamel))
-                .join("\n")
+            Self::convert_text_case(text, Case::UpperCamel)
         })
     }
 
@@ -12490,7 +12481,9 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.manipulate_text(window, cx, |text| text.to_case(Case::Camel))
+        self.manipulate_text(window, cx, |text| {
+            Self::convert_text_case(text, Case::Camel)
+        })
     }
 
     pub fn convert_to_opposite_case(
@@ -12518,7 +12511,9 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.manipulate_text(window, cx, |text| text.to_case(Case::Sentence))
+        self.manipulate_text(window, cx, |text| {
+            Self::convert_text_case(text, Case::Sentence)
+        })
     }
 
     pub fn toggle_case(&mut self, _: &ToggleCase, window: &mut Window, cx: &mut Context<Self>) {
@@ -12547,6 +12542,18 @@ impl Editor {
                 })
                 .collect()
         })
+    }
+
+    fn convert_text_case(text: &str, case: Case) -> String {
+        text.lines()
+            .map(|line| {
+                let trimmed_start = line.trim_start();
+                let leading = &line[..line.len() - trimmed_start.len()];
+                let trimmed = trimmed_start.trim_end();
+                let trailing = &trimmed_start[trimmed.len()..];
+                format!("{}{}{}", leading, trimmed.to_case(case), trailing)
+            })
+            .join("\n")
     }
 
     pub fn convert_to_rot47(
@@ -14703,6 +14710,7 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let stop_at_indent = action.stop_at_indent && !self.mode.is_single_line();
         self.hide_mouse_cursor(HideMouseCursorOrigin::MovementAction, cx);
         self.change_selections(Default::default(), window, cx, |s| {
             s.move_cursors_with(&mut |map, head, _| {
@@ -14711,7 +14719,7 @@ impl Editor {
                         map,
                         head,
                         action.stop_at_soft_wraps,
-                        action.stop_at_indent,
+                        stop_at_indent,
                     ),
                     SelectionGoal::None,
                 )
@@ -14725,6 +14733,7 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let stop_at_indent = action.stop_at_indent && !self.mode.is_single_line();
         self.hide_mouse_cursor(HideMouseCursorOrigin::MovementAction, cx);
         self.change_selections(Default::default(), window, cx, |s| {
             s.move_heads_with(&mut |map, head, _| {
@@ -14733,7 +14742,7 @@ impl Editor {
                         map,
                         head,
                         action.stop_at_soft_wraps,
-                        action.stop_at_indent,
+                        stop_at_indent,
                     ),
                     SelectionGoal::None,
                 )
@@ -20053,7 +20062,7 @@ impl Editor {
         &mut self,
         creases: Vec<Crease<T>>,
         auto_scroll: bool,
-        _window: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         if creases.is_empty() {
@@ -20069,6 +20078,7 @@ impl Editor {
         cx.notify();
 
         self.scrollbar_marker_state.dirty = true;
+        self.update_data_on_scroll(window, cx);
         self.folds_did_change(cx);
     }
 
@@ -22846,18 +22856,28 @@ impl Editor {
         _: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let selection = self
-            .selections
-            .newest::<Point>(&self.display_snapshot(cx))
-            .start
-            .row
-            + 1;
+        let selection = self.selections.newest::<Point>(&self.display_snapshot(cx));
+
+        let start_line = selection.start.row + 1;
+        let end_line = selection.end.row + 1;
+
+        let end_line = if selection.end.column == 0 && end_line > start_line {
+            end_line - 1
+        } else {
+            end_line
+        };
+
         if let Some(file_location) = self.active_excerpt(cx).and_then(|(_, buffer, _)| {
             let project = self.project()?.read(cx);
             let file = buffer.read(cx).file()?;
             let path = file.path().display(project.path_style(cx));
 
-            Some(format!("{path}:{selection}"))
+            let location = if start_line == end_line {
+                format!("{path}:{start_line}")
+            } else {
+                format!("{path}:{start_line}-{end_line}")
+            };
+            Some(location)
         }) {
             cx.write_to_clipboard(ClipboardItem::new_string(file_location));
         }
@@ -25303,14 +25323,13 @@ impl Editor {
         }
     }
 
-    fn breadcrumbs_inner(&self, cx: &App) -> Option<Vec<BreadcrumbText>> {
+    fn breadcrumbs_inner(&self, cx: &App) -> Option<Vec<HighlightedText>> {
         let multibuffer = self.buffer().read(cx);
         let is_singleton = multibuffer.is_singleton();
         let (buffer_id, symbols) = self.outline_symbols_at_cursor.as_ref()?;
         let buffer = multibuffer.buffer(*buffer_id)?;
 
         let buffer = buffer.read(cx);
-        let settings = ThemeSettings::get_global(cx);
         // In a multi-buffer layout, we don't want to include the filename in the breadcrumbs
         let mut breadcrumbs = if is_singleton {
             let text = self.breadcrumb_header.clone().unwrap_or_else(|| {
@@ -25331,19 +25350,17 @@ impl Editor {
                         }
                     })
             });
-            vec![BreadcrumbText {
-                text,
-                highlights: None,
-                font: Some(settings.buffer_font.clone()),
+            vec![HighlightedText {
+                text: text.into(),
+                highlights: vec![],
             }]
         } else {
             vec![]
         };
 
-        breadcrumbs.extend(symbols.iter().map(|symbol| BreadcrumbText {
-            text: symbol.text.clone(),
-            highlights: Some(symbol.highlight_ranges.clone()),
-            font: Some(settings.buffer_font.clone()),
+        breadcrumbs.extend(symbols.iter().map(|symbol| HighlightedText {
+            text: symbol.text.clone().into(),
+            highlights: symbol.highlight_ranges.clone(),
         }));
         Some(breadcrumbs)
     }
@@ -25354,6 +25371,16 @@ impl Editor {
 
     fn disable_runnables(&mut self) {
         self.enable_runnables = false;
+    }
+
+    fn update_data_on_scroll(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
+        self.register_visible_buffers(cx);
+        self.colorize_brackets(false, cx);
+        self.refresh_inlay_hints(InlayHintRefreshReason::NewLinesShown, cx);
+        if !self.buffer().read(cx).is_singleton() {
+            self.update_lsp_data(None, window, cx);
+            self.refresh_runnables(window, cx);
+        }
     }
 }
 

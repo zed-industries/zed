@@ -293,6 +293,7 @@ pub struct RepositorySnapshot {
     pub remote_origin_url: Option<String>,
     pub remote_upstream_url: Option<String>,
     pub stash_entries: GitStash,
+    pub linked_worktrees: Arc<[GitWorktree]>,
 }
 
 type JobId = u64;
@@ -429,6 +430,7 @@ pub enum RepositoryEvent {
     StatusesChanged,
     BranchChanged,
     StashEntriesChanged,
+    GitWorktreeListChanged,
     PendingOpsChanged { pending_ops: SumTree<PendingOps> },
     GraphEvent((LogSource, LogOrder), GitGraphEvent),
 }
@@ -3575,6 +3577,7 @@ impl RepositorySnapshot {
             remote_origin_url: None,
             remote_upstream_url: None,
             stash_entries: Default::default(),
+            linked_worktrees: Arc::from([]),
             path_style,
         }
     }
@@ -3613,6 +3616,11 @@ impl RepositorySnapshot {
             original_repo_abs_path: Some(
                 self.original_repo_abs_path.to_string_lossy().into_owned(),
             ),
+            linked_worktrees: self
+                .linked_worktrees
+                .iter()
+                .map(worktree_to_proto)
+                .collect(),
         }
     }
 
@@ -3689,7 +3697,16 @@ impl RepositorySnapshot {
             original_repo_abs_path: Some(
                 self.original_repo_abs_path.to_string_lossy().into_owned(),
             ),
+            linked_worktrees: self
+                .linked_worktrees
+                .iter()
+                .map(worktree_to_proto)
+                .collect(),
         }
+    }
+
+    pub fn linked_worktrees(&self) -> &[GitWorktree] {
+        &self.linked_worktrees
     }
 
     pub fn status(&self) -> impl Iterator<Item = StatusEntry> + '_ {
@@ -6145,6 +6162,15 @@ impl Repository {
             cx.emit(RepositoryEvent::StashEntriesChanged)
         }
         self.snapshot.stash_entries = new_stash_entries;
+        let new_linked_worktrees: Arc<[GitWorktree]> = update
+            .linked_worktrees
+            .iter()
+            .map(proto_to_worktree)
+            .collect();
+        if *self.snapshot.linked_worktrees != *new_linked_worktrees {
+            cx.emit(RepositoryEvent::GitWorktreeListChanged);
+        }
+        self.snapshot.linked_worktrees = new_linked_worktrees;
         self.snapshot.remote_upstream_url = update.remote_upstream_url;
         self.snapshot.remote_origin_url = update.remote_origin_url;
 
@@ -6901,13 +6927,19 @@ async fn compute_snapshot(
         }))
         .boxed()
     };
-    let (statuses, diff_stats) = futures::future::try_join(
+    let (statuses, diff_stats, all_worktrees) = futures::future::try_join3(
         backend.status(&[RepoPath::from_rel_path(
             &RelPath::new(".".as_ref(), PathStyle::local()).unwrap(),
         )]),
         diff_stat_future,
+        backend.worktrees(),
     )
     .await?;
+
+    let linked_worktrees: Arc<[GitWorktree]> = all_worktrees
+        .into_iter()
+        .filter(|wt| wt.path != *work_directory_abs_path)
+        .collect();
 
     let diff_stat_map: HashMap<&RepoPath, DiffStat> =
         diff_stats.entries.iter().map(|(p, s)| (p, *s)).collect();
@@ -6938,6 +6970,10 @@ async fn compute_snapshot(
         events.push(RepositoryEvent::BranchChanged);
     }
 
+    if *linked_worktrees != *prev_snapshot.linked_worktrees {
+        events.push(RepositoryEvent::GitWorktreeListChanged);
+    }
+
     let remote_origin_url = backend.remote_url("origin").await;
     let remote_upstream_url = backend.remote_url("upstream").await;
 
@@ -6954,6 +6990,7 @@ async fn compute_snapshot(
         remote_origin_url,
         remote_upstream_url,
         stash_entries,
+        linked_worktrees,
     };
 
     Ok((snapshot, events))
