@@ -8,6 +8,8 @@ Today, each panel in a dock gets exactly one icon button in the status bar, and 
 
 ## Design
 
+The core of the idea add the methods to the `Panel` trait to let them return multiple buttons and have these be rendered in the status bar. We can then handle these pretty much uniformly for all panels, even though only the agent panel will have multiple dock buttons.
+
 ### New `DockButton` struct
 
 A small struct describing a single button to render in the status bar:
