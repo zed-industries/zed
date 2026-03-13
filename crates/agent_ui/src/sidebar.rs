@@ -575,10 +575,6 @@ impl Sidebar {
         .detach();
 
         let thread_store = ThreadStore::global(cx);
-        cx.observe_in(&thread_store, window, |this, _, _window, cx| {
-            this.sync_native_threads_to_sidebar_db(cx);
-        })
-        .detach();
 
         cx.observe_flag::<AgentV2FeatureFlag, _>(window, |_is_enabled, this, _window, cx| {
             this.update_entries(cx);
@@ -696,32 +692,6 @@ impl Sidebar {
             },
         )
         .detach();
-    }
-
-    fn sync_native_threads_to_sidebar_db(&self, cx: &mut Context<Self>) {
-        if let Some(thread_store) = ThreadStore::try_global(cx) {
-            let entries: Vec<_> = thread_store.read(cx).entries().collect();
-            cx.spawn(async move |this, cx| {
-                for meta in entries {
-                    THREAD_METADATA_DB
-                        .save(&ThreadMetadata {
-                            session_id: meta.id,
-                            agent_name: None,
-                            title: meta.title,
-                            updated_at: meta.updated_at,
-                            created_at: meta.created_at,
-                            folder_paths: meta.folder_paths,
-                        })
-                        .await
-                        .log_err();
-                }
-                this.update(cx, |this, cx| {
-                    this.update_entries(cx);
-                })
-                .log_err();
-            })
-            .detach();
-        }
     }
 
     fn all_thread_infos_for_workspace(
