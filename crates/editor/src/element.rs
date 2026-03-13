@@ -7257,6 +7257,112 @@ impl EditorElement {
         });
     }
 
+    fn refresh_slow_minimap_markers(
+        &self,
+        layout: &EditorLayout,
+        minimap_layout: &ScrollbarLayout,
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        self.editor.update(cx, |editor, cx| {
+            if editor.buffer_kind(cx) != ItemBufferKind::Singleton
+                || !editor
+                    .minimap_marker_state
+                    .should_refresh(minimap_layout.hitbox.size)
+            {
+                return;
+            }
+
+            let minimap_layout = minimap_layout.clone();
+            let snapshot = layout.position_map.snapshot.clone();
+            let theme = cx.theme().clone();
+            let minimap_settings = EditorSettings::get_global(cx).minimap;
+
+            editor.minimap_marker_state.dirty = false;
+            editor.minimap_marker_state.pending_refresh =
+                Some(cx.spawn_in(window, async move |editor, cx| {
+                    let minimap_size = minimap_layout.hitbox.size;
+                    let minimap_markers = cx
+                        .background_spawn(async move {
+                            let mut marker_quads = Vec::new();
+
+                            if minimap_settings.diagnostics != ScrollbarDiagnostics::None {
+                                let max_point =
+                                    snapshot.display_snapshot.buffer_snapshot().max_point();
+                                let diagnostics = snapshot
+                                    .buffer_snapshot()
+                                    .diagnostics_in_range::<Point>(Point::zero()..max_point)
+                                    .filter(|diagnostic| {
+                                        match (
+                                            minimap_settings.diagnostics,
+                                            diagnostic.diagnostic.severity,
+                                        ) {
+                                            (ScrollbarDiagnostics::All, _) => true,
+                                            (
+                                                ScrollbarDiagnostics::Error,
+                                                lsp::DiagnosticSeverity::ERROR,
+                                            ) => true,
+                                            (
+                                                ScrollbarDiagnostics::Warning,
+                                                lsp::DiagnosticSeverity::ERROR
+                                                | lsp::DiagnosticSeverity::WARNING,
+                                            ) => true,
+                                            (
+                                                ScrollbarDiagnostics::Information,
+                                                lsp::DiagnosticSeverity::ERROR
+                                                | lsp::DiagnosticSeverity::WARNING
+                                                | lsp::DiagnosticSeverity::INFORMATION,
+                                            ) => true,
+                                            (_, _) => false,
+                                        }
+                                    })
+                                    .sorted_by_key(|diagnostic| {
+                                        std::cmp::Reverse(diagnostic.diagnostic.severity)
+                                    });
+
+                                let marker_row_ranges = diagnostics.map(|diagnostic| {
+                                    let start_display = diagnostic
+                                        .range
+                                        .start
+                                        .to_display_point(&snapshot.display_snapshot);
+                                    let end_display = diagnostic
+                                        .range
+                                        .end
+                                        .to_display_point(&snapshot.display_snapshot);
+                                    let mut color = match diagnostic.diagnostic.severity {
+                                        lsp::DiagnosticSeverity::ERROR => theme.status().error,
+                                        lsp::DiagnosticSeverity::WARNING => theme.status().warning,
+                                        lsp::DiagnosticSeverity::INFORMATION => theme.status().info,
+                                        _ => theme.status().hint,
+                                    };
+                                    color.fade_out(0.5);
+                                    ColoredRange {
+                                        start: start_display.row(),
+                                        end: end_display.row(),
+                                        color,
+                                    }
+                                });
+                                marker_quads.extend(
+                                    minimap_layout.marker_quads_for_ranges(marker_row_ranges, None),
+                                );
+                            }
+
+                            Arc::from(marker_quads)
+                        })
+                        .await;
+
+                    editor.update(cx, |editor, cx| {
+                        editor.minimap_marker_state.markers = minimap_markers;
+                        editor.minimap_marker_state.scrollbar_size = minimap_size;
+                        editor.minimap_marker_state.pending_refresh = None;
+                        cx.notify();
+                    })?;
+
+                    Ok(())
+                }));
+        });
+    }
+
     fn paint_highlighted_range(
         &self,
         range: Range<DisplayPoint>,
@@ -7377,15 +7483,29 @@ impl EditorElement {
     }
 
     fn paint_minimap(&self, layout: &mut EditorLayout, window: &mut Window, cx: &mut App) {
-        if let Some(mut layout) = layout.minimap.take() {
-            let minimap_hitbox = layout.thumb_layout.hitbox.clone();
+        if let Some(mut minimap_layout) = layout.minimap.take() {
+            let minimap_hitbox = minimap_layout.thumb_layout.hitbox.clone();
             let dragging_minimap = self.editor.read(cx).scroll_manager.is_dragging_minimap();
 
-            window.paint_layer(layout.thumb_layout.hitbox.bounds, |window| {
+            window.paint_layer(minimap_layout.thumb_layout.hitbox.bounds, |window| {
                 window.with_element_namespace("minimap", |window| {
-                    layout.minimap.paint(window, cx);
-                    if let Some(thumb_bounds) = layout.thumb_layout.thumb_bounds {
-                        let minimap_thumb_color = match layout.thumb_layout.thumb_state {
+                    minimap_layout.minimap.paint(window, cx);
+
+                    self.refresh_slow_minimap_markers(
+                        layout,
+                        &minimap_layout.thumb_layout,
+                        window,
+                        cx,
+                    );
+                    let minimap_markers = self.editor.read(cx).minimap_marker_state.markers.clone();
+                    for marker in minimap_markers.iter() {
+                        let mut marker = marker.clone();
+                        marker.bounds.origin += minimap_hitbox.origin;
+                        window.paint_quad(marker);
+                    }
+
+                    if let Some(thumb_bounds) = minimap_layout.thumb_layout.thumb_bounds {
+                        let minimap_thumb_color = match minimap_layout.thumb_layout.thumb_state {
                             ScrollbarThumbState::Idle => {
                                 cx.theme().colors().minimap_thumb_background
                             }
@@ -7396,7 +7516,7 @@ impl EditorElement {
                                 cx.theme().colors().minimap_thumb_active_background
                             }
                         };
-                        let minimap_thumb_border = match layout.thumb_border_style {
+                        let minimap_thumb_border = match minimap_layout.thumb_border_style {
                             MinimapThumbBorder::Full => Edges::all(ScrollbarLayout::BORDER_WIDTH),
                             MinimapThumbBorder::LeftOnly => Edges {
                                 left: ScrollbarLayout::BORDER_WIDTH,
@@ -7439,9 +7559,9 @@ impl EditorElement {
 
             let minimap_axis = ScrollbarAxis::Vertical;
             let pixels_per_line = Pixels::from(
-                ScrollPixelOffset::from(minimap_hitbox.size.height) / layout.max_scroll_top,
+                ScrollPixelOffset::from(minimap_hitbox.size.height) / minimap_layout.max_scroll_top,
             )
-            .min(layout.minimap_line_height);
+            .min(minimap_layout.minimap_line_height);
 
             let mut mouse_position = window.mouse_position();
 
@@ -7479,7 +7599,7 @@ impl EditorElement {
                         } else if minimap_hitbox.is_hovered(window) {
                             editor.scroll_manager.set_is_hovering_minimap_thumb(
                                 !event.dragging()
-                                    && layout
+                                    && minimap_layout
                                         .thumb_layout
                                         .thumb_bounds
                                         .is_some_and(|bounds| bounds.contains(&event.position)),
@@ -7510,7 +7630,7 @@ impl EditorElement {
                         editor.update(cx, |editor, cx| {
                             if minimap_hitbox.is_hovered(window) {
                                 editor.scroll_manager.set_is_hovering_minimap_thumb(
-                                    layout
+                                    minimap_layout
                                         .thumb_layout
                                         .thumb_bounds
                                         .is_some_and(|bounds| bounds.contains(&event.position)),
@@ -7534,7 +7654,7 @@ impl EditorElement {
 
                         let event_position = event.position;
 
-                        let Some(thumb_bounds) = layout.thumb_layout.thumb_bounds else {
+                        let Some(thumb_bounds) = minimap_layout.thumb_layout.thumb_bounds else {
                             return;
                         };
 
@@ -7547,11 +7667,11 @@ impl EditorElement {
                                     - thumb_bounds.size.along(minimap_axis) / 2.0)
                                     .max(Pixels::ZERO);
 
-                                let scroll_offset = (layout.minimap_scroll_top
+                                let scroll_offset = (minimap_layout.minimap_scroll_top
                                     + ScrollPixelOffset::from(
-                                        top_position / layout.minimap_line_height,
+                                        top_position / minimap_layout.minimap_line_height,
                                     ))
-                                .min(layout.max_scroll_top);
+                                .min(minimap_layout.max_scroll_top);
 
                                 let scroll_position = editor
                                     .scroll_position(cx)
