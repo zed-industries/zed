@@ -574,8 +574,6 @@ impl Sidebar {
         })
         .detach();
 
-        let thread_store = ThreadStore::global(cx);
-
         cx.observe_flag::<AgentV2FeatureFlag, _>(window, |_is_enabled, this, _window, cx| {
             this.update_entries(cx);
         })
@@ -685,8 +683,7 @@ impl Sidebar {
             |this, _agent_panel, event: &AgentPanelEvent, _window, cx| match event {
                 AgentPanelEvent::ActiveViewChanged
                 | AgentPanelEvent::ThreadFocused
-                | AgentPanelEvent::BackgroundThreadChanged
-                | AgentPanelEvent::ThreadMetadataChanged => {
+                | AgentPanelEvent::BackgroundThreadChanged => {
                     this.update_entries(cx);
                 }
             },

@@ -74,7 +74,7 @@ use crate::agent_diff::AgentDiff;
 use crate::entry_view_state::{EntryViewEvent, ViewEvent};
 use crate::message_editor::{MessageEditor, MessageEditorEvent};
 use crate::profile_selector::{ProfileProvider, ProfileSelector};
-use crate::sidebar::{THREAD_METADATA_DB, ThreadMetadata};
+use crate::sidebar::THREAD_METADATA_DB;
 use crate::ui::{AgentNotification, AgentNotificationEvent};
 use crate::{
     Agent, AgentDiffPane, AgentInitialContent, AgentPanel, AllowAlways, AllowOnce,
@@ -794,7 +794,6 @@ impl ConnectionView {
                             }),
                             cx,
                         );
-                        this.save_active_thread_to_sidebar_db(cx);
                     }
                     Err(err) => {
                         this.handle_load_error(
@@ -1160,47 +1159,6 @@ impl ConnectionView {
         &self.workspace
     }
 
-    fn save_active_thread_to_sidebar_db(&self, cx: &App) {
-        let Some(thread) = self
-            .as_connected()
-            .and_then(|c| c.active_view())
-            .map(|v| &v.read(cx).thread)
-        else {
-            return;
-        };
-        let thread_ref = thread.read(cx);
-        let session_id = thread_ref.session_id().clone();
-        let title = thread_ref.title();
-        let updated_at = chrono::Utc::now();
-        let created_at = None; // ACP threads don't always have a created_at
-
-        let agent_name = match &self.connection_key {
-            Agent::NativeAgent => None,
-            Agent::Custom { name } => Some(name.to_string()),
-        };
-
-        let folder_paths = self
-            .workspace
-            .upgrade()
-            .map(|ws| util::path_list::PathList::new(&ws.read(cx).root_paths(cx)))
-            .unwrap_or_default();
-
-        cx.background_spawn(async move {
-            THREAD_METADATA_DB
-                .save(&ThreadMetadata {
-                    session_id,
-                    agent_name,
-                    title,
-                    updated_at,
-                    created_at,
-                    folder_paths,
-                })
-                .await
-                .log_err();
-        })
-        .detach();
-    }
-
     pub fn title(&self, _cx: &App) -> SharedString {
         match &self.server_state {
             ServerState::Connected(_) => "New Thread".into(),
@@ -1390,7 +1348,6 @@ impl ConnectionView {
                 if should_send_queued {
                     self.send_queued_message_at_index(0, false, window, cx);
                 }
-                self.save_active_thread_to_sidebar_db(cx);
             }
             AcpThreadEvent::Refusal => {
                 let error = ThreadError::Refusal;
@@ -1451,7 +1408,6 @@ impl ConnectionView {
                         }
                     });
                 }
-                self.save_active_thread_to_sidebar_db(cx);
                 cx.notify();
             }
             AcpThreadEvent::PromptCapabilitiesUpdated => {
