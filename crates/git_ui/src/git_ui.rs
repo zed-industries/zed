@@ -62,6 +62,7 @@ pub fn init(cx: &mut App) {
         git_panel::register(workspace);
         repository_selector::register(workspace);
         git_picker::register(workspace);
+        conflict_view::register_conflict_notification(workspace, cx);
 
         let project = workspace.project().read(cx);
         if project.is_read_only(cx) {
@@ -871,8 +872,7 @@ impl Render for GitCloneModal {
                     .child(
                         Button::new("learn-more", "Learn More")
                             .label_size(LabelSize::Small)
-                            .icon(IconName::ArrowUpRight)
-                            .icon_size(IconSize::XSmall)
+                            .end_icon(Icon::new(IconName::ArrowUpRight).size(IconSize::XSmall))
                             .on_click(|_, _, cx| {
                                 cx.open_url("https://github.com/git-guides/git-clone");
                             }),

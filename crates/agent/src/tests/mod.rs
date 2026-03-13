@@ -3167,7 +3167,7 @@ async fn test_agent_connection(cx: &mut TestAppContext) {
         let clock = Arc::new(clock::FakeSystemClock::new());
         let client = Client::new(clock, http_client, cx);
         let user_store = cx.new(|cx| UserStore::new(client.clone(), cx));
-        language_model::init(client.clone(), cx);
+        language_model::init(user_store.clone(), client.clone(), cx);
         language_models::init(user_store, client.clone(), cx);
         LanguageModelRegistry::test(cx);
     });
@@ -3181,16 +3181,8 @@ async fn test_agent_connection(cx: &mut TestAppContext) {
     let thread_store = cx.new(|cx| ThreadStore::new(cx));
 
     // Create agent and connection
-    let agent = NativeAgent::new(
-        project.clone(),
-        thread_store,
-        templates.clone(),
-        None,
-        fake_fs.clone(),
-        &mut cx.to_async(),
-    )
-    .await
-    .unwrap();
+    let agent = cx
+        .update(|cx| NativeAgent::new(thread_store, templates.clone(), None, fake_fs.clone(), cx));
     let connection = NativeAgentConnection(agent.clone());
 
     // Create a thread using new_thread
@@ -3616,7 +3608,7 @@ async fn test_streaming_tool_completes_when_llm_stream_ends_without_final_input(
     let fake_model = model.as_fake();
 
     thread.update(cx, |thread, _cx| {
-        thread.add_tool(StreamingEchoTool);
+        thread.add_tool(StreamingEchoTool::new());
     });
 
     let _events = thread
@@ -3768,7 +3760,8 @@ async fn setup(cx: &mut TestAppContext, model: TestModel) -> ThreadTest {
                             InfiniteTool::NAME: true,
                             CancellationAwareTool::NAME: true,
                             StreamingEchoTool::NAME: true,
-                            (TerminalTool::NAME): true,
+                            StreamingFailingEchoTool::NAME: true,
+                            TerminalTool::NAME: true,
                         }
                     }
                 }
@@ -3790,7 +3783,7 @@ async fn setup(cx: &mut TestAppContext, model: TestModel) -> ThreadTest {
                 cx.set_http_client(Arc::new(http_client));
                 let client = Client::production(cx);
                 let user_store = cx.new(|cx| UserStore::new(client.clone(), cx));
-                language_model::init(client.clone(), cx);
+                language_model::init(user_store.clone(), client.clone(), cx);
                 language_models::init(user_store, client.clone(), cx);
             }
         };
@@ -4387,16 +4380,9 @@ async fn test_subagent_tool_call_end_to_end(cx: &mut TestAppContext) {
     .await;
     let project = Project::test(fs.clone(), [path!("/a").as_ref()], cx).await;
     let thread_store = cx.new(|cx| ThreadStore::new(cx));
-    let agent = NativeAgent::new(
-        project.clone(),
-        thread_store.clone(),
-        Templates::new(),
-        None,
-        fs.clone(),
-        &mut cx.to_async(),
-    )
-    .await
-    .unwrap();
+    let agent = cx.update(|cx| {
+        NativeAgent::new(thread_store.clone(), Templates::new(), None, fs.clone(), cx)
+    });
     let connection = Rc::new(NativeAgentConnection(agent.clone()));
 
     let acp_thread = cx
@@ -4529,16 +4515,9 @@ async fn test_subagent_tool_output_does_not_include_thinking(cx: &mut TestAppCon
     .await;
     let project = Project::test(fs.clone(), [path!("/a").as_ref()], cx).await;
     let thread_store = cx.new(|cx| ThreadStore::new(cx));
-    let agent = NativeAgent::new(
-        project.clone(),
-        thread_store.clone(),
-        Templates::new(),
-        None,
-        fs.clone(),
-        &mut cx.to_async(),
-    )
-    .await
-    .unwrap();
+    let agent = cx.update(|cx| {
+        NativeAgent::new(thread_store.clone(), Templates::new(), None, fs.clone(), cx)
+    });
     let connection = Rc::new(NativeAgentConnection(agent.clone()));
 
     let acp_thread = cx
@@ -4684,16 +4663,9 @@ async fn test_subagent_tool_call_cancellation_during_task_prompt(cx: &mut TestAp
     .await;
     let project = Project::test(fs.clone(), [path!("/a").as_ref()], cx).await;
     let thread_store = cx.new(|cx| ThreadStore::new(cx));
-    let agent = NativeAgent::new(
-        project.clone(),
-        thread_store.clone(),
-        Templates::new(),
-        None,
-        fs.clone(),
-        &mut cx.to_async(),
-    )
-    .await
-    .unwrap();
+    let agent = cx.update(|cx| {
+        NativeAgent::new(thread_store.clone(), Templates::new(), None, fs.clone(), cx)
+    });
     let connection = Rc::new(NativeAgentConnection(agent.clone()));
 
     let acp_thread = cx
@@ -4821,16 +4793,9 @@ async fn test_subagent_tool_resume_session(cx: &mut TestAppContext) {
     .await;
     let project = Project::test(fs.clone(), [path!("/a").as_ref()], cx).await;
     let thread_store = cx.new(|cx| ThreadStore::new(cx));
-    let agent = NativeAgent::new(
-        project.clone(),
-        thread_store.clone(),
-        Templates::new(),
-        None,
-        fs.clone(),
-        &mut cx.to_async(),
-    )
-    .await
-    .unwrap();
+    let agent = cx.update(|cx| {
+        NativeAgent::new(thread_store.clone(), Templates::new(), None, fs.clone(), cx)
+    });
     let connection = Rc::new(NativeAgentConnection(agent.clone()));
 
     let acp_thread = cx
@@ -5200,16 +5165,9 @@ async fn test_subagent_context_window_warning(cx: &mut TestAppContext) {
     .await;
     let project = Project::test(fs.clone(), [path!("/a").as_ref()], cx).await;
     let thread_store = cx.new(|cx| ThreadStore::new(cx));
-    let agent = NativeAgent::new(
-        project.clone(),
-        thread_store.clone(),
-        Templates::new(),
-        None,
-        fs.clone(),
-        &mut cx.to_async(),
-    )
-    .await
-    .unwrap();
+    let agent = cx.update(|cx| {
+        NativeAgent::new(thread_store.clone(), Templates::new(), None, fs.clone(), cx)
+    });
     let connection = Rc::new(NativeAgentConnection(agent.clone()));
 
     let acp_thread = cx
@@ -5333,16 +5291,9 @@ async fn test_subagent_no_context_window_warning_when_already_at_warning(cx: &mu
     .await;
     let project = Project::test(fs.clone(), [path!("/a").as_ref()], cx).await;
     let thread_store = cx.new(|cx| ThreadStore::new(cx));
-    let agent = NativeAgent::new(
-        project.clone(),
-        thread_store.clone(),
-        Templates::new(),
-        None,
-        fs.clone(),
-        &mut cx.to_async(),
-    )
-    .await
-    .unwrap();
+    let agent = cx.update(|cx| {
+        NativeAgent::new(thread_store.clone(), Templates::new(), None, fs.clone(), cx)
+    });
     let connection = Rc::new(NativeAgentConnection(agent.clone()));
 
     let acp_thread = cx
@@ -5514,16 +5465,9 @@ async fn test_subagent_error_propagation(cx: &mut TestAppContext) {
     .await;
     let project = Project::test(fs.clone(), [path!("/a").as_ref()], cx).await;
     let thread_store = cx.new(|cx| ThreadStore::new(cx));
-    let agent = NativeAgent::new(
-        project.clone(),
-        thread_store.clone(),
-        Templates::new(),
-        None,
-        fs.clone(),
-        &mut cx.to_async(),
-    )
-    .await
-    .unwrap();
+    let agent = cx.update(|cx| {
+        NativeAgent::new(thread_store.clone(), Templates::new(), None, fs.clone(), cx)
+    });
     let connection = Rc::new(NativeAgentConnection(agent.clone()));
 
     let acp_thread = cx
@@ -6334,4 +6278,197 @@ async fn test_queued_message_ends_turn_at_boundary(cx: &mut TestAppContext) {
             "Thread should not be running after turn ends"
         );
     });
+}
+
+#[gpui::test]
+async fn test_streaming_tool_error_breaks_stream_loop_immediately(cx: &mut TestAppContext) {
+    init_test(cx);
+    always_allow_tools(cx);
+
+    let ThreadTest { model, thread, .. } = setup(cx, TestModel::Fake).await;
+    let fake_model = model.as_fake();
+
+    thread.update(cx, |thread, _cx| {
+        thread.add_tool(StreamingFailingEchoTool {
+            receive_chunks_until_failure: 1,
+        });
+    });
+
+    let _events = thread
+        .update(cx, |thread, cx| {
+            thread.send(
+                UserMessageId::new(),
+                ["Use the streaming_failing_echo tool"],
+                cx,
+            )
+        })
+        .unwrap();
+    cx.run_until_parked();
+
+    let tool_use = LanguageModelToolUse {
+        id: "call_1".into(),
+        name: StreamingFailingEchoTool::NAME.into(),
+        raw_input: "hello".into(),
+        input: json!({}),
+        is_input_complete: false,
+        thought_signature: None,
+    };
+
+    fake_model
+        .send_last_completion_stream_event(LanguageModelCompletionEvent::ToolUse(tool_use.clone()));
+
+    cx.run_until_parked();
+
+    let completions = fake_model.pending_completions();
+    let last_completion = completions.last().unwrap();
+
+    assert_eq!(
+        last_completion.messages[1..],
+        vec![
+            LanguageModelRequestMessage {
+                role: Role::User,
+                content: vec!["Use the streaming_failing_echo tool".into()],
+                cache: false,
+                reasoning_details: None,
+            },
+            LanguageModelRequestMessage {
+                role: Role::Assistant,
+                content: vec![language_model::MessageContent::ToolUse(tool_use.clone())],
+                cache: false,
+                reasoning_details: None,
+            },
+            LanguageModelRequestMessage {
+                role: Role::User,
+                content: vec![language_model::MessageContent::ToolResult(
+                    LanguageModelToolResult {
+                        tool_use_id: tool_use.id.clone(),
+                        tool_name: tool_use.name,
+                        is_error: true,
+                        content: "failed".into(),
+                        output: Some("failed".into()),
+                    }
+                )],
+                cache: true,
+                reasoning_details: None,
+            },
+        ]
+    );
+}
+
+#[gpui::test]
+async fn test_streaming_tool_error_waits_for_prior_tools_to_complete(cx: &mut TestAppContext) {
+    init_test(cx);
+    always_allow_tools(cx);
+
+    let ThreadTest { model, thread, .. } = setup(cx, TestModel::Fake).await;
+    let fake_model = model.as_fake();
+
+    let (complete_streaming_echo_tool_call_tx, complete_streaming_echo_tool_call_rx) =
+        oneshot::channel();
+
+    thread.update(cx, |thread, _cx| {
+        thread.add_tool(
+            StreamingEchoTool::new().with_wait_until_complete(complete_streaming_echo_tool_call_rx),
+        );
+        thread.add_tool(StreamingFailingEchoTool {
+            receive_chunks_until_failure: 1,
+        });
+    });
+
+    let _events = thread
+        .update(cx, |thread, cx| {
+            thread.send(
+                UserMessageId::new(),
+                ["Use the streaming_echo tool and the streaming_failing_echo tool"],
+                cx,
+            )
+        })
+        .unwrap();
+    cx.run_until_parked();
+
+    fake_model.send_last_completion_stream_event(LanguageModelCompletionEvent::ToolUse(
+        LanguageModelToolUse {
+            id: "call_1".into(),
+            name: StreamingEchoTool::NAME.into(),
+            raw_input: "hello".into(),
+            input: json!({ "text": "hello" }),
+            is_input_complete: false,
+            thought_signature: None,
+        },
+    ));
+    let first_tool_use = LanguageModelToolUse {
+        id: "call_1".into(),
+        name: StreamingEchoTool::NAME.into(),
+        raw_input: "hello world".into(),
+        input: json!({ "text": "hello world" }),
+        is_input_complete: true,
+        thought_signature: None,
+    };
+    fake_model.send_last_completion_stream_event(LanguageModelCompletionEvent::ToolUse(
+        first_tool_use.clone(),
+    ));
+    let second_tool_use = LanguageModelToolUse {
+        name: StreamingFailingEchoTool::NAME.into(),
+        raw_input: "hello".into(),
+        input: json!({ "text": "hello" }),
+        is_input_complete: false,
+        thought_signature: None,
+        id: "call_2".into(),
+    };
+    fake_model.send_last_completion_stream_event(LanguageModelCompletionEvent::ToolUse(
+        second_tool_use.clone(),
+    ));
+
+    cx.run_until_parked();
+
+    complete_streaming_echo_tool_call_tx.send(()).unwrap();
+
+    cx.run_until_parked();
+
+    let completions = fake_model.pending_completions();
+    let last_completion = completions.last().unwrap();
+
+    assert_eq!(
+        last_completion.messages[1..],
+        vec![
+            LanguageModelRequestMessage {
+                role: Role::User,
+                content: vec![
+                    "Use the streaming_echo tool and the streaming_failing_echo tool".into()
+                ],
+                cache: false,
+                reasoning_details: None,
+            },
+            LanguageModelRequestMessage {
+                role: Role::Assistant,
+                content: vec![
+                    language_model::MessageContent::ToolUse(first_tool_use.clone()),
+                    language_model::MessageContent::ToolUse(second_tool_use.clone())
+                ],
+                cache: false,
+                reasoning_details: None,
+            },
+            LanguageModelRequestMessage {
+                role: Role::User,
+                content: vec![
+                    language_model::MessageContent::ToolResult(LanguageModelToolResult {
+                        tool_use_id: second_tool_use.id.clone(),
+                        tool_name: second_tool_use.name,
+                        is_error: true,
+                        content: "failed".into(),
+                        output: Some("failed".into()),
+                    }),
+                    language_model::MessageContent::ToolResult(LanguageModelToolResult {
+                        tool_use_id: first_tool_use.id.clone(),
+                        tool_name: first_tool_use.name,
+                        is_error: false,
+                        content: "hello world".into(),
+                        output: Some("hello world".into()),
+                    }),
+                ],
+                cache: true,
+                reasoning_details: None,
+            },
+        ]
+    );
 }

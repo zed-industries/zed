@@ -109,9 +109,10 @@ impl State {
         cx: &mut Context<Self>,
     ) -> Self {
         let refresh_llm_token_listener = RefreshLlmTokenListener::global(cx);
+        let llm_api_token = LlmApiToken::global(cx);
         Self {
             client: client.clone(),
-            llm_api_token: LlmApiToken::default(),
+            llm_api_token,
             user_store: user_store.clone(),
             status,
             models: Vec::new(),
@@ -156,11 +157,8 @@ impl State {
                         .user_store
                         .read(cx)
                         .current_organization()
-                        .map(|o| o.id.clone());
+                        .map(|organization| organization.id.clone());
                     cx.spawn(async move |this, cx| {
-                        llm_api_token
-                            .refresh(&client, organization_id.clone())
-                            .await?;
                         let response =
                             Self::fetch_models(client, llm_api_token, organization_id).await?;
                         this.update(cx, |this, cx| {
@@ -707,7 +705,7 @@ impl LanguageModel for CloudLanguageModel {
                     .user_store
                     .read(cx)
                     .current_organization()
-                    .map(|o| o.id.clone());
+                    .map(|organization| organization.id.clone());
                 let model_id = self.model.id.to_string();
                 let generate_content_request =
                     into_google(request, model_id.clone(), GoogleModelMode::Default);
@@ -779,7 +777,7 @@ impl LanguageModel for CloudLanguageModel {
             user_store
                 .read(cx)
                 .current_organization()
-                .map(|o| o.id.clone())
+                .map(|organization| organization.id.clone())
         });
         let thinking_allowed = request.thinking_allowed;
         let enable_thinking = thinking_allowed && self.model.supports_thinking;
@@ -866,7 +864,10 @@ impl LanguageModel for CloudLanguageModel {
                 );
 
                 if enable_thinking && let Some(effort) = effort {
-                    request.reasoning = Some(open_ai::responses::ReasoningConfig { effort });
+                    request.reasoning = Some(open_ai::responses::ReasoningConfig {
+                        effort,
+                        summary: Some(open_ai::responses::ReasoningSummaryMode::Auto),
+                    });
                 }
 
                 let future = self.request_limiter.stream(async move {
@@ -1125,6 +1126,7 @@ impl RenderOnce for ZedAiConfiguration {
         let manage_subscription_buttons = if is_pro {
             Button::new("manage_settings", "Manage Subscription")
                 .full_width()
+                .label_size(LabelSize::Small)
                 .style(ButtonStyle::Tinted(TintColor::Accent))
                 .on_click(|_, _, cx| cx.open_url(&zed_urls::account_url(cx)))
                 .into_any_element()
@@ -1148,10 +1150,7 @@ impl RenderOnce for ZedAiConfiguration {
                 .child(Label::new("Sign in to have access to Zed's complete agentic experience with hosted models."))
                 .child(
                     Button::new("sign_in", "Sign In to use Zed AI")
-                        .icon_color(Color::Muted)
-                        .icon(IconName::Github)
-                        .icon_size(IconSize::Small)
-                        .icon_position(IconPosition::Start)
+                        .start_icon(Icon::new(IconName::Github).size(IconSize::Small).color(Color::Muted))
                         .full_width()
                         .on_click({
                             let callback = self.sign_in_callback.clone();

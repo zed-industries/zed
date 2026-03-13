@@ -81,7 +81,7 @@ pub(crate) async fn get_messages(git: &GitBinary, shas: &[Oid]) -> Result<HashMa
 async fn get_messages_impl(git: &GitBinary, shas: &[Oid]) -> Result<Vec<String>> {
     const MARKER: &str = "<MARKER>";
     let output = git
-        .build_command(["show"])
+        .build_command(&["show"])
         .arg("-s")
         .arg(format!("--format=%B{}", MARKER))
         .args(shas.iter().map(ToString::to_string))
@@ -91,7 +91,7 @@ async fn get_messages_impl(git: &GitBinary, shas: &[Oid]) -> Result<Vec<String>>
     anyhow::ensure!(
         output.status.success(),
         "'git show' failed with error {:?}",
-        output.status
+        String::from_utf8_lossy(&output.stderr)
     );
     Ok(String::from_utf8_lossy(&output.stdout)
         .trim()

@@ -27,9 +27,9 @@ mod workspace_settings;
 pub use crate::notifications::NotificationFrame;
 pub use dock::Panel;
 pub use multi_workspace::{
-    DraggedSidebar, FocusWorkspaceSidebar, MultiWorkspace, NewWorkspaceInWindow,
-    NextWorkspaceInWindow, PreviousWorkspaceInWindow, Sidebar, SidebarEvent, SidebarHandle,
-    ToggleWorkspaceSidebar,
+    DraggedSidebar, FocusWorkspaceSidebar, MultiWorkspace, MultiWorkspaceEvent,
+    NewWorkspaceInWindow, NextWorkspaceInWindow, PreviousWorkspaceInWindow,
+    SIDEBAR_RESIZE_HANDLE_SIZE, ToggleWorkspaceSidebar, multi_workspace_enabled,
 };
 pub use path_list::{PathList, SerializedPathList};
 pub use toast_layer::{ToastAction, ToastLayer, ToastView};
@@ -80,8 +80,8 @@ use persistence::{DB, SerializedWindowBounds, model::SerializedWorkspace};
 pub use persistence::{
     DB as WORKSPACE_DB, WorkspaceDb, delete_unloaded_items,
     model::{
-        DockStructure, ItemId, SerializedMultiWorkspace, SerializedWorkspaceLocation,
-        SessionWorkspace,
+        DockStructure, ItemId, MultiWorkspaceId, SerializedMultiWorkspace,
+        SerializedWorkspaceLocation, SessionWorkspace,
     },
     read_serialized_multi_workspaces,
 };
@@ -146,7 +146,7 @@ pub use workspace_settings::{
     AutosaveSetting, BottomDockLayout, RestoreOnStartupBehavior, StatusBarSettings, TabBarSettings,
     WorkspaceSettings,
 };
-use zed_actions::{Spawn, feedback::FileBugReport};
+use zed_actions::{Spawn, feedback::FileBugReport, theme::ToggleMode};
 
 use crate::{item::ItemBufferKind, notifications::NotificationId};
 use crate::{
@@ -659,7 +659,7 @@ fn prompt_and_open_paths(app_state: Arc<AppState>, options: PathPromptOptions, c
     } else {
         let task = Workspace::new_local(Vec::new(), app_state.clone(), None, None, None, true, cx);
         cx.spawn(async move |cx| {
-            let (window, _) = task.await?;
+            let OpenResult { window, .. } = task.await?;
             window.update(cx, |multi_workspace, window, cx| {
                 window.activate_window();
                 let workspace = multi_workspace.workspace().clone();
@@ -1230,6 +1230,7 @@ pub enum Event {
     ZoomChanged,
     ModalOpened,
     Activate,
+    PanelAdded(AnyView),
 }
 
 #[derive(Debug, Clone)]
@@ -1751,12 +1752,7 @@ impl Workspace {
         init: Option<Box<dyn FnOnce(&mut Workspace, &mut Window, &mut Context<Workspace>) + Send>>,
         activate: bool,
         cx: &mut App,
-    ) -> Task<
-        anyhow::Result<(
-            WindowHandle<MultiWorkspace>,
-            Vec<Option<anyhow::Result<Box<dyn ItemHandle>>>>,
-        )>,
-    > {
+    ) -> Task<anyhow::Result<OpenResult>> {
         let project_handle = Project::local(
             app_state.client.clone(),
             app_state.node_runtime.clone(),
@@ -1996,7 +1992,11 @@ impl Workspace {
                     });
                 })
                 .log_err();
-            Ok((window, opened_items))
+            Ok(OpenResult {
+                window,
+                workspace,
+                opened_items,
+            })
         })
     }
 
@@ -2129,10 +2129,13 @@ impl Workspace {
 
         let dock_position = panel.position(window, cx);
         let dock = self.dock_at_position(dock_position);
+        let any_panel = panel.to_any();
 
         dock.update(cx, |dock, cx| {
             dock.add_panel(panel, self.weak_self.clone(), window, cx)
         });
+
+        cx.emit(Event::PanelAdded(any_panel));
     }
 
     pub fn remove_panel<T: Panel>(
@@ -2148,12 +2151,6 @@ impl Workspace {
 
     pub fn status_bar(&self) -> &Entity<StatusBar> {
         &self.status_bar
-    }
-
-    pub fn set_workspace_sidebar_open(&self, open: bool, cx: &mut App) {
-        self.status_bar.update(cx, |status_bar, cx| {
-            status_bar.set_workspace_sidebar_open(open, cx);
-        });
     }
 
     pub fn status_bar_visible(&self, cx: &App) -> bool {
@@ -2687,7 +2684,10 @@ impl Workspace {
                 cx,
             );
             cx.spawn_in(window, async move |_vh, cx| {
-                let (multi_workspace_window, _) = task.await?;
+                let OpenResult {
+                    window: multi_workspace_window,
+                    ..
+                } = task.await?;
                 multi_workspace_window.update(cx, |multi_workspace, window, cx| {
                     let workspace = multi_workspace.workspace().clone();
                     workspace.update(cx, |workspace, cx| callback(workspace, window, cx))
@@ -2725,7 +2725,10 @@ impl Workspace {
                 cx,
             );
             cx.spawn_in(window, async move |_vh, cx| {
-                let (multi_workspace_window, _) = task.await?;
+                let OpenResult {
+                    window: multi_workspace_window,
+                    ..
+                } = task.await?;
                 multi_workspace_window.update(cx, |multi_workspace, window, cx| {
                     let workspace = multi_workspace.workspace().clone();
                     workspace.update(cx, |workspace, cx| callback(workspace, window, cx))
@@ -3104,7 +3107,7 @@ impl Workspace {
         paths: Vec<PathBuf>,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> Task<Result<()>> {
+    ) -> Task<Result<Entity<Workspace>>> {
         let window_handle = window.window_handle().downcast::<MultiWorkspace>();
         let is_remote = self.project.read(cx).is_via_collab();
         let has_worktree = self.project.read(cx).worktrees(cx).next().is_some();
@@ -3120,19 +3123,20 @@ impl Workspace {
         let app_state = self.app_state.clone();
 
         cx.spawn(async move |_, cx| {
-            cx.update(|cx| {
-                open_paths(
-                    &paths,
-                    app_state,
-                    OpenOptions {
-                        replace_window: window_to_replace,
-                        ..Default::default()
-                    },
-                    cx,
-                )
-            })
-            .await?;
-            Ok(())
+            let OpenResult { workspace, .. } = cx
+                .update(|cx| {
+                    open_paths(
+                        &paths,
+                        app_state,
+                        OpenOptions {
+                            replace_window: window_to_replace,
+                            ..Default::default()
+                        },
+                        cx,
+                    )
+                })
+                .await?;
+            Ok(workspace)
         })
     }
 
@@ -6501,6 +6505,7 @@ impl Workspace {
             .on_action(cx.listener(Self::move_item_to_pane_at_index))
             .on_action(cx.listener(Self::move_focused_panel_to_next_position))
             .on_action(cx.listener(Self::toggle_edit_predictions_all_files))
+            .on_action(cx.listener(Self::toggle_theme_mode))
             .on_action(cx.listener(|workspace, _: &Unfollow, window, cx| {
                 let pane = workspace.active_pane().clone();
                 workspace.unfollow_in_pane(&pane, window, cx);
@@ -7081,7 +7086,17 @@ impl Workspace {
     }
 
     fn resize_left_dock(&mut self, new_size: Pixels, window: &mut Window, cx: &mut App) {
-        let size = new_size.min(self.bounds.right() - RESIZE_HANDLE_SIZE);
+        let workspace_width = self.bounds.size.width;
+        let mut size = new_size.min(workspace_width - RESIZE_HANDLE_SIZE);
+
+        self.right_dock.read_with(cx, |right_dock, cx| {
+            let right_dock_size = right_dock
+                .active_panel_size(window, cx)
+                .unwrap_or(Pixels::ZERO);
+            if right_dock_size + size > workspace_width {
+                size = workspace_width - right_dock_size
+            }
+        });
 
         self.left_dock.update(cx, |left_dock, cx| {
             if WorkspaceSettings::get_global(cx)
@@ -7096,13 +7111,14 @@ impl Workspace {
     }
 
     fn resize_right_dock(&mut self, new_size: Pixels, window: &mut Window, cx: &mut App) {
-        let mut size = new_size.max(self.bounds.left() - RESIZE_HANDLE_SIZE);
+        let workspace_width = self.bounds.size.width;
+        let mut size = new_size.min(workspace_width - RESIZE_HANDLE_SIZE);
         self.left_dock.read_with(cx, |left_dock, cx| {
             let left_dock_size = left_dock
                 .active_panel_size(window, cx)
                 .unwrap_or(Pixels::ZERO);
-            if left_dock_size + size > self.bounds.right() {
-                size = self.bounds.right() - left_dock_size
+            if left_dock_size + size > workspace_width {
+                size = workspace_width - left_dock_size
             }
         });
         self.right_dock.update(cx, |right_dock, cx| {
@@ -7141,6 +7157,23 @@ impl Workspace {
         let show_edit_predictions = all_language_settings(None, cx).show_edit_predictions(None, cx);
         update_settings_file(fs, cx, move |file, _| {
             file.project.all_languages.defaults.show_edit_predictions = Some(!show_edit_predictions)
+        });
+    }
+
+    fn toggle_theme_mode(&mut self, _: &ToggleMode, _window: &mut Window, cx: &mut Context<Self>) {
+        let current_mode = ThemeSettings::get_global(cx).theme.mode();
+        let next_mode = match current_mode {
+            Some(theme::ThemeAppearanceMode::Light) => theme::ThemeAppearanceMode::Dark,
+            Some(theme::ThemeAppearanceMode::Dark) => theme::ThemeAppearanceMode::Light,
+            Some(theme::ThemeAppearanceMode::System) | None => match cx.theme().appearance() {
+                theme::Appearance::Light => theme::ThemeAppearanceMode::Dark,
+                theme::Appearance::Dark => theme::ThemeAppearanceMode::Light,
+            },
+        };
+
+        let fs = self.project().read(cx).fs().clone();
+        settings::update_settings_file(fs, cx, move |settings, _cx| {
+            theme::set_mode(settings, next_mode);
         });
     }
 
@@ -7663,6 +7696,7 @@ impl Render for Workspace {
                                             {
                                                 workspace.previous_dock_drag_coordinates =
                                                     Some(e.event.position);
+
                                                 match e.drag(cx).0 {
                                                     DockPosition::Left => {
                                                         workspace.resize_left_dock(
@@ -8168,7 +8202,11 @@ pub async fn restore_multiworkspace(
     app_state: Arc<AppState>,
     cx: &mut AsyncApp,
 ) -> anyhow::Result<MultiWorkspaceRestoreResult> {
-    let SerializedMultiWorkspace { workspaces, state } = multi_workspace;
+    let SerializedMultiWorkspace {
+        workspaces,
+        state,
+        id: window_id,
+    } = multi_workspace;
     let mut group_iter = workspaces.into_iter();
     let first = group_iter
         .next()
@@ -8178,7 +8216,7 @@ pub async fn restore_multiworkspace(
         cx.update(|cx| open_workspace_by_id(first.workspace_id, app_state.clone(), None, cx))
             .await?
     } else {
-        let (window, _items) = cx
+        let OpenResult { window, .. } = cx
             .update(|cx| {
                 Workspace::new_local(
                     first.paths.paths().to_vec(),
@@ -8232,6 +8270,7 @@ pub async fn restore_multiworkspace(
     if let Some(target_id) = state.active_workspace_id {
         window_handle
             .update(cx, |multi_workspace, window, cx| {
+                multi_workspace.set_database_id(window_id);
                 let target_index = multi_workspace
                     .workspaces()
                     .iter()
@@ -8249,14 +8288,6 @@ pub async fn restore_multiworkspace(
                 if !multi_workspace.workspaces().is_empty() {
                     multi_workspace.activate_index(0, window, cx);
                 }
-            })
-            .ok();
-    }
-
-    if state.sidebar_open {
-        window_handle
-            .update(cx, |multi_workspace, _, cx| {
-                multi_workspace.open_sidebar(cx);
             })
             .ok();
     }
@@ -8299,6 +8330,15 @@ actions!(
         CopyRoomId,
     ]
 );
+
+/// Opens the channel notes for a specific channel by its ID.
+#[derive(Clone, PartialEq, Deserialize, JsonSchema, Action)]
+#[action(namespace = collab)]
+#[serde(deny_unknown_fields)]
+pub struct OpenChannelNotesById {
+    pub channel_id: u64,
+}
+
 actions!(
     zed,
     [
@@ -8478,7 +8518,10 @@ pub fn join_channel(
         let mut active_window = requesting_window.or_else(|| activate_any_workspace_window(cx));
         if active_window.is_none() {
             // no open workspaces, make one to show the error in (blergh)
-            let (window_handle, _) = cx
+            let OpenResult {
+                window: window_handle,
+                ..
+            } = cx
                 .update(|cx| {
                     Workspace::new_local(
                         vec![],
@@ -8734,6 +8777,14 @@ pub struct OpenOptions {
     pub env: Option<HashMap<String, String>>,
 }
 
+/// The result of opening a workspace via [`open_paths`], [`Workspace::new_local`],
+/// or [`Workspace::open_workspace_for_paths`].
+pub struct OpenResult {
+    pub window: WindowHandle<MultiWorkspace>,
+    pub workspace: Entity<Workspace>,
+    pub opened_items: Vec<Option<anyhow::Result<Box<dyn ItemHandle>>>>,
+}
+
 /// Opens a workspace by its database ID, used for restoring empty workspaces with unsaved content.
 pub fn open_workspace_by_id(
     workspace_id: WorkspaceId,
@@ -8853,12 +8904,7 @@ pub fn open_paths(
     app_state: Arc<AppState>,
     open_options: OpenOptions,
     cx: &mut App,
-) -> Task<
-    anyhow::Result<(
-        WindowHandle<MultiWorkspace>,
-        Vec<Option<anyhow::Result<Box<dyn ItemHandle>>>>,
-    )>,
-> {
+) -> Task<anyhow::Result<OpenResult>> {
     let abs_paths = abs_paths.to_vec();
     #[cfg(target_os = "windows")]
     let wsl_path = abs_paths
@@ -8937,7 +8983,7 @@ pub fn open_paths(
                 });
             });
 
-            Ok((existing, open_task))
+            Ok(OpenResult { window: existing, workspace: target_workspace, opened_items: open_task })
         } else {
             let result = cx
                 .update(move |cx| {
@@ -8953,8 +8999,8 @@ pub fn open_paths(
                 })
                 .await;
 
-            if let Ok((ref window_handle, _)) = result {
-                window_handle
+            if let Ok(ref result) = result {
+                result.window
                     .update(cx, |_, window, _cx| {
                         window.activate_window();
                     })
@@ -8966,9 +9012,9 @@ pub fn open_paths(
 
         #[cfg(target_os = "windows")]
         if let Some(util::paths::WslPath{distro, path}) = wsl_path
-            && let Ok((multi_workspace_window, _)) = &result
+            && let Ok(ref result) = result
         {
-            multi_workspace_window
+            result.window
                 .update(cx, move |multi_workspace, _window, cx| {
                     struct OpenInWsl;
                     let workspace = multi_workspace.workspace().clone();
@@ -9015,7 +9061,7 @@ pub fn open_new(
         cx,
     );
     cx.spawn(async move |cx| {
-        let (window, _opened_paths) = task.await?;
+        let OpenResult { window, .. } = task.await?;
         window
             .update(cx, |_, window, _cx| {
                 window.activate_window();
@@ -9957,7 +10003,7 @@ pub fn with_active_or_new_workspace(
 
 #[cfg(test)]
 mod tests {
-    use std::{cell::RefCell, rc::Rc};
+    use std::{cell::RefCell, rc::Rc, sync::Arc, time::Duration};
 
     use super::*;
     use crate::{
@@ -9975,6 +10021,7 @@ mod tests {
     use project::{Project, ProjectEntryId};
     use serde_json::json;
     use settings::SettingsStore;
+    use util::path;
     use util::rel_path::rel_path;
 
     #[gpui::test]
@@ -13531,6 +13578,74 @@ mod tests {
             cx.set_global(settings_store);
             theme::init(theme::LoadThemes::JustBase, cx);
         });
+    }
+
+    #[gpui::test]
+    async fn test_toggle_theme_mode_persists_and_updates_active_theme(cx: &mut TestAppContext) {
+        use settings::{ThemeName, ThemeSelection};
+        use theme::SystemAppearance;
+        use zed_actions::theme::ToggleMode;
+
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        let settings_fs: Arc<dyn fs::Fs> = fs.clone();
+
+        fs.insert_tree(path!("/root"), json!({ "file.rs": "fn main() {}\n" }))
+            .await;
+
+        // Build a test project and workspace view so the test can invoke
+        // the workspace action handler the same way the UI would.
+        let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+
+        // Seed the settings file with a plain static light theme so the
+        // first toggle always starts from a known persisted state.
+        workspace.update_in(cx, |_workspace, _window, cx| {
+            *SystemAppearance::global_mut(cx) = SystemAppearance(theme::Appearance::Light);
+            settings::update_settings_file(settings_fs.clone(), cx, |settings, _cx| {
+                settings.theme.theme = Some(ThemeSelection::Static(ThemeName("One Light".into())));
+            });
+        });
+        cx.executor().advance_clock(Duration::from_millis(200));
+        cx.run_until_parked();
+
+        // Confirm the initial persisted settings contain the static theme
+        // we just wrote before any toggling happens.
+        let settings_text = SettingsStore::load_settings(&settings_fs).await.unwrap();
+        assert!(settings_text.contains(r#""theme": "One Light""#));
+
+        // Toggle once. This should migrate the persisted theme settings
+        // into light/dark slots and enable system mode.
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.toggle_theme_mode(&ToggleMode, window, cx);
+        });
+        cx.executor().advance_clock(Duration::from_millis(200));
+        cx.run_until_parked();
+
+        // 1. Static -> Dynamic
+        // this assertion checks theme changed from static to dynamic.
+        let settings_text = SettingsStore::load_settings(&settings_fs).await.unwrap();
+        let parsed: serde_json::Value = settings::parse_json_with_comments(&settings_text).unwrap();
+        assert_eq!(
+            parsed["theme"],
+            serde_json::json!({
+                "mode": "system",
+                "light": "One Light",
+                "dark": "One Dark"
+            })
+        );
+
+        // 2. Toggle again, suppose it will change the mode to light
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.toggle_theme_mode(&ToggleMode, window, cx);
+        });
+        cx.executor().advance_clock(Duration::from_millis(200));
+        cx.run_until_parked();
+
+        let settings_text = SettingsStore::load_settings(&settings_fs).await.unwrap();
+        assert!(settings_text.contains(r#""mode": "light""#));
     }
 
     fn dirty_project_item(id: u64, path: &str, cx: &mut App) -> Entity<TestProjectItem> {

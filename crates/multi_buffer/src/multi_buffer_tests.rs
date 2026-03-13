@@ -171,12 +171,15 @@ fn test_excerpt_boundaries_and_clipping(cx: &mut App) {
         &[
             Event::Edited {
                 edited_buffer: None,
+                is_local: true,
             },
             Event::Edited {
                 edited_buffer: None,
+                is_local: true,
             },
             Event::Edited {
                 edited_buffer: None,
+                is_local: true,
             }
         ]
     );
@@ -1285,7 +1288,7 @@ fn test_resolving_anchors_after_replacing_their_excerpts(cx: &mut App) {
         let mut ids = multibuffer
             .excerpts_for_buffer(buffer_2.read(cx).remote_id(), cx)
             .into_iter()
-            .map(|(id, _)| id);
+            .map(|(id, _, _)| id);
         (ids.next().unwrap(), ids.next().unwrap())
     });
     let snapshot_2 = multibuffer.read(cx).snapshot(cx);
