@@ -147,8 +147,8 @@ jobs:
         file: ts_query_ls-x86_64-unknown-linux-gnu.tar.gz
     - name: run_tests::run_ts_query_ls
       run: |-
-        tar -xf ts_query_ls-x86_64-unknown-linux-gnu.tar.gz
-        ./ts_query_ls format --check . || {
+        tar -xf "$GITHUB_WORKSPACE/ts_query_ls-x86_64-unknown-linux-gnu.tar.gz" -C "$GITHUB_WORKSPACE"
+        "$GITHUB_WORKSPACE/ts_query_ls" format --check . || {
             echo "Found unformatted queries, please format them with ts_query_ls."
             echo "For easy use, install the Tree-sitter query extension:"
             echo "zed://extension/tree-sitter-query"
