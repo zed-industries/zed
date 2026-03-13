@@ -39,11 +39,27 @@ use workspace::{
 };
 use zed_actions::editor::{MoveDown, MoveUp};
 
+pub fn init(cx: &mut App) {
+    ThreadMetadataStore::init_global(cx);
+}
+
+struct GlobalThreadMetadataStore(Entity<ThreadMetadataStore>);
+impl Global for GlobalThreadMetadataStore {}
+
 struct ThreadMetadataStore {
     session_subscriptions: HashMap<SessionId, Subscription>,
 }
 
 impl ThreadMetadataStore {
+    pub fn init_global(cx: &mut App) {
+        let thread_store = cx.new(|cx| Self::new(cx));
+        cx.set_global(GlobalThreadMetadataStore(thread_store));
+    }
+
+    pub fn global(cx: &App) -> Entity<Self> {
+        cx.global::<GlobalThreadMetadataStore>().0.clone()
+    }
+
     fn new(cx: &mut Context<Self>) -> Self {
         let weak_store = cx.weak_entity();
 
