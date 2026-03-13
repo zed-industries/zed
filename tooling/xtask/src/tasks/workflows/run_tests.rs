@@ -761,9 +761,16 @@ fn extension_tests_matrix() -> NamedJob<UsesJob> {
             "needs.orchestrate.outputs.changed_extensions != '[]'",
         ))
         .permissions(Permissions::default().contents(Level::Read))
-        .strategy(Strategy::default().fail_fast(false).matrix(json!({
-            "extension": "${{ fromJson(needs.orchestrate.outputs.changed_extensions) }}"
-        })))
+        .strategy(
+            Strategy::default()
+                .fail_fast(false)
+                // TODO: Remove the limit. We currently need this to workaround the concurrency group issue
+                // where different matrix jobs would be placed in the same concurrency group and thus cancelled.
+                .max_parallel(1u32)
+                .matrix(json!({
+                    "extension": "${{ fromJson(needs.orchestrate.outputs.changed_extensions) }}"
+                })),
+        )
         .uses_local(".github/workflows/extension_tests.yml")
         .with(Input::default().add("working-directory", "${{ matrix.extension }}"));
 

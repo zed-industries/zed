@@ -220,6 +220,9 @@ jobs:
       run:
         shell: bash -euxo pipefail {0}
         working-directory: ${{ inputs.working-directory }}
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref_name }}-${{ github.ref_name == 'main' && github.sha || 'anysha' }}extension-tests
+  cancel-in-progress: true
 defaults:
   run:
     shell: bash -euxo pipefail {0}

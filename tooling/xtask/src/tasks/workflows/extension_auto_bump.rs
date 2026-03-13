@@ -88,12 +88,19 @@ fn bump_extension_versions(detect_job: &NamedJob) -> NamedJob<UsesJob> {
                 .pull_requests(Level::Write)
                 .actions(Level::Write),
         )
-        .strategy(Strategy::default().fail_fast(false).matrix(json!({
-            "extension": format!(
-                "${{{{ fromJson(needs.{}.outputs.changed_extensions) }}}}",
-                detect_job.name
-            )
-        })))
+        .strategy(
+            Strategy::default()
+                .fail_fast(false)
+                // TODO: Remove the limit. We currently need this to workaround the concurrency group issue
+                // where different matrix jobs would be placed in the same concurrency group and thus cancelled.
+                .max_parallel(1u32)
+                .matrix(json!({
+                    "extension": format!(
+                        "${{{{ fromJson(needs.{}.outputs.changed_extensions) }}}}",
+                        detect_job.name
+                    )
+                })),
+        )
         .uses_local(".github/workflows/extension_bump.yml")
         .with(
             Input::default()
