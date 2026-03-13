@@ -3164,6 +3164,7 @@ pub enum AgentPanelEvent {
     ActiveViewChanged,
     ThreadFocused,
     BackgroundThreadChanged,
+    ThreadMetadataChanged,
 }
 
 impl EventEmitter<PanelEvent> for AgentPanel {}

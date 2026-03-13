@@ -5,13 +5,20 @@ use action_log::DiffStats;
 use agent::ThreadStore;
 use agent_client_protocol as acp;
 use agent_settings::AgentSettings;
-use chrono::Utc;
+use chrono::{DateTime, Utc};
 use db::kvp::KEY_VALUE_STORE;
+use db::{
+    sqlez::{
+        bindable::Column, domain::Domain, statement::Statement,
+        thread_safe_connection::ThreadSafeConnection,
+    },
+    sqlez_macros::sql,
+};
 use editor::Editor;
 use feature_flags::{AgentV2FeatureFlag, FeatureFlagViewExt as _};
 use gpui::{
-    Action as _, AnyElement, App, Context, Entity, FocusHandle, Focusable, ListState, Pixels,
-    Render, SharedString, WeakEntity, Window, actions, list, prelude::*, px,
+    Action as _, AnyElement, App, Context, Entity, FocusHandle, Focusable, Global, ListState,
+    Pixels, Render, SharedString, Subscription, WeakEntity, Window, actions, list, prelude::*, px,
 };
 use menu::{Cancel, Confirm, SelectFirst, SelectLast, SelectNext, SelectPrevious};
 use project::Event as ProjectEvent;
@@ -31,6 +38,189 @@ use workspace::{
     MultiWorkspace, MultiWorkspaceEvent, ToggleWorkspaceSidebar, Workspace, multi_workspace_enabled,
 };
 use zed_actions::editor::{MoveDown, MoveUp};
+
+struct ThreadMetadataStore {
+    subscriptions: Vec<Subscription>,
+}
+
+impl ThreadMetadataStore {
+    fn new(cx: &mut Context<Self>) -> Self {
+        let this = cx.weak_entity();
+        cx.observe_new::<acp_thread::AcpThread>(move |_thread, _window, cx| {
+            let thread_entity = cx.entity();
+            this.update(cx, |this, cx| {
+                let subscription = cx.subscribe(&thread_entity, Self::handle_thread_update);
+                this.subscriptions.push(subscription);
+            })
+            .ok();
+        })
+        .detach();
+        Self {
+            subscriptions: Vec::new(),
+        }
+    }
+
+    fn handle_thread_update(
+        &mut self,
+        _thread: Entity<acp_thread::AcpThread>,
+        event: &acp_thread::AcpThreadEvent,
+        cx: &mut Context<Self>,
+    ) {
+    }
+}
+
+impl Global for ThreadMetadataStore {}
+
+/// Lightweight metadata for any thread (native or ACP), enough to populate
+/// the sidebar list and route to the correct load path when clicked.
+#[derive(Debug, Clone)]
+pub struct ThreadMetadata {
+    pub session_id: acp::SessionId,
+    /// `None` for native Zed threads, `Some("claude-code")` etc. for ACP agents.
+    pub agent_name: Option<String>,
+    pub title: SharedString,
+    pub updated_at: DateTime<Utc>,
+    pub created_at: Option<DateTime<Utc>>,
+    pub folder_paths: PathList,
+}
+
+pub struct ThreadMetadataDb(ThreadSafeConnection);
+
+impl Domain for ThreadMetadataDb {
+    const NAME: &str = stringify!(ThreadMetadataDb);
+
+    const MIGRATIONS: &[&str] = &[sql!(
+        CREATE TABLE IF NOT EXISTS sidebar_threads(
+            session_id TEXT PRIMARY KEY,
+            agent_name TEXT,
+            title TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            created_at TEXT,
+            folder_paths TEXT,
+            folder_paths_order TEXT
+        ) STRICT;
+    )];
+}
+
+db::static_connection!(THREAD_METADATA_DB, ThreadMetadataDb, []);
+
+impl ThreadMetadataDb {
+    /// Upsert metadata for a thread (native or ACP).
+    pub async fn save(&self, row: &ThreadMetadata) -> anyhow::Result<()> {
+        let id = row.session_id.0.clone();
+        let agent_name = row.agent_name.clone();
+        let title = row.title.to_string();
+        let updated_at = row.updated_at.to_rfc3339();
+        let created_at = row.created_at.map(|dt| dt.to_rfc3339());
+        let serialized = row.folder_paths.serialize();
+        let (folder_paths, folder_paths_order) = if row.folder_paths.is_empty() {
+            (None, None)
+        } else {
+            (Some(serialized.paths), Some(serialized.order))
+        };
+
+        self.write(move |conn| {
+            let sql = "INSERT INTO sidebar_threads(session_id, agent_name, title, updated_at, created_at, folder_paths, folder_paths_order) \
+                       VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7) \
+                       ON CONFLICT(session_id) DO UPDATE SET \
+                           agent_name = excluded.agent_name, \
+                           title = excluded.title, \
+                           updated_at = excluded.updated_at, \
+                           folder_paths = excluded.folder_paths, \
+                           folder_paths_order = excluded.folder_paths_order";
+            let mut stmt = Statement::prepare(conn, sql)?;
+            let mut i = stmt.bind(&id, 1)?;
+            i = stmt.bind(&agent_name, i)?;
+            i = stmt.bind(&title, i)?;
+            i = stmt.bind(&updated_at, i)?;
+            i = stmt.bind(&created_at, i)?;
+            i = stmt.bind(&folder_paths, i)?;
+            stmt.bind(&folder_paths_order, i)?;
+            stmt.exec()
+        })
+        .await
+    }
+
+    /// List all sidebar thread metadata, ordered by updated_at descending.
+    pub fn list(&self) -> anyhow::Result<Vec<ThreadMetadata>> {
+        self.select::<ThreadMetadata>(
+            "SELECT session_id, agent_name, title, updated_at, created_at, folder_paths, folder_paths_order \
+             FROM sidebar_threads \
+             ORDER BY updated_at DESC"
+        )?()
+    }
+
+    /// Look up a single thread by session ID.
+    pub fn get(&self, session_id: &acp::SessionId) -> anyhow::Result<Option<ThreadMetadata>> {
+        self.select_row_bound::<&str, ThreadMetadata>(
+            "SELECT session_id, agent_name, title, updated_at, created_at, folder_paths, folder_paths_order \
+             FROM sidebar_threads \
+             WHERE session_id = ?"
+        )?(session_id.0.as_ref())
+    }
+
+    /// Delete metadata for a single thread.
+    pub async fn delete(&self, session_id: acp::SessionId) -> anyhow::Result<()> {
+        let id = session_id.0.clone();
+        self.write(move |conn| {
+            let mut stmt =
+                Statement::prepare(conn, "DELETE FROM sidebar_threads WHERE session_id = ?")?;
+            stmt.bind(&id, 1)?;
+            stmt.exec()
+        })
+        .await
+    }
+
+    /// Delete all thread metadata.
+    pub async fn delete_all(&self) -> anyhow::Result<()> {
+        self.write(move |conn| {
+            let mut stmt = Statement::prepare(conn, "DELETE FROM sidebar_threads")?;
+            stmt.exec()
+        })
+        .await
+    }
+}
+
+impl Column for ThreadMetadata {
+    fn column(statement: &mut Statement, start_index: i32) -> anyhow::Result<(Self, i32)> {
+        let (id, next): (Arc<str>, i32) = Column::column(statement, start_index)?;
+        let (agent_name, next): (Option<String>, i32) = Column::column(statement, next)?;
+        let (title, next): (String, i32) = Column::column(statement, next)?;
+        let (updated_at_str, next): (String, i32) = Column::column(statement, next)?;
+        let (created_at_str, next): (Option<String>, i32) = Column::column(statement, next)?;
+        let (folder_paths_str, next): (Option<String>, i32) = Column::column(statement, next)?;
+        let (folder_paths_order_str, next): (Option<String>, i32) =
+            Column::column(statement, next)?;
+
+        let updated_at = DateTime::parse_from_rfc3339(&updated_at_str)?.with_timezone(&Utc);
+        let created_at = created_at_str
+            .as_deref()
+            .map(DateTime::parse_from_rfc3339)
+            .transpose()?
+            .map(|dt| dt.with_timezone(&Utc));
+
+        let folder_paths = folder_paths_str
+            .map(|paths| {
+                PathList::deserialize(&util::path_list::SerializedPathList {
+                    paths,
+                    order: folder_paths_order_str.unwrap_or_default(),
+                })
+            })
+            .unwrap_or_default();
+
+        Ok((
+            ThreadMetadata {
+                session_id: acp::SessionId::new(id),
+                agent_name,
+                title: title.into(),
+                updated_at,
+                created_at,
+                folder_paths,
+            },
+            next,
+        ))
+    }
+}
 
 actions!(
     agents_sidebar,
@@ -311,7 +501,7 @@ impl Sidebar {
 
         let thread_store = ThreadStore::global(cx);
         cx.observe_in(&thread_store, window, |this, _, _window, cx| {
-            this.update_entries(cx);
+            this.sync_native_threads_to_sidebar_db(cx);
         })
         .detach();
 
@@ -424,12 +614,39 @@ impl Sidebar {
             |this, _agent_panel, event: &AgentPanelEvent, _window, cx| match event {
                 AgentPanelEvent::ActiveViewChanged
                 | AgentPanelEvent::ThreadFocused
-                | AgentPanelEvent::BackgroundThreadChanged => {
+                | AgentPanelEvent::BackgroundThreadChanged
+                | AgentPanelEvent::ThreadMetadataChanged => {
                     this.update_entries(cx);
                 }
             },
         )
         .detach();
+    }
+
+    fn sync_native_threads_to_sidebar_db(&self, cx: &mut Context<Self>) {
+        if let Some(thread_store) = ThreadStore::try_global(cx) {
+            let entries: Vec<_> = thread_store.read(cx).entries().collect();
+            cx.spawn(async move |this, cx| {
+                for meta in entries {
+                    THREAD_METADATA_DB
+                        .save(&ThreadMetadata {
+                            session_id: meta.id,
+                            agent_name: None,
+                            title: meta.title,
+                            updated_at: meta.updated_at,
+                            created_at: meta.created_at,
+                            folder_paths: meta.folder_paths,
+                        })
+                        .await
+                        .log_err();
+                }
+                this.update(cx, |this, cx| {
+                    this.update_entries(cx);
+                })
+                .log_err();
+            })
+            .detach();
+        }
     }
 
     fn all_thread_infos_for_workspace(
@@ -494,7 +711,21 @@ impl Sidebar {
             .and_then(|panel| panel.read(cx).active_connection_view().cloned())
             .and_then(|cv| cv.read(cx).parent_id(cx));
 
-        let thread_store = ThreadStore::try_global(cx);
+        // Read ALL sidebar thread metadata once and index by folder_paths.
+        let all_sidebar_threads = THREAD_METADATA_DB.list().unwrap_or_default();
+        let mut threads_by_paths: HashMap<PathList, Vec<ThreadMetadata>> = HashMap::new();
+        for row in all_sidebar_threads {
+            threads_by_paths
+                .entry(row.folder_paths.clone())
+                .or_default()
+                .push(row);
+        }
+
+        // Build a lookup for agent icons from the first workspace's AgentServerStore.
+        let agent_server_store = workspaces
+            .first()
+            .map(|ws| ws.read(cx).project().read(cx).agent_server_store().clone());
+
         let query = self.filter_editor.read(cx).text(cx);
 
         let previous = mem::take(&mut self.contents);
@@ -579,14 +810,40 @@ impl Sidebar {
             if should_load_threads {
                 let mut seen_session_ids: HashSet<acp::SessionId> = HashSet::new();
 
-                if let Some(ref thread_store) = thread_store {
-                    for meta in thread_store.read(cx).threads_for_paths(&path_list) {
-                        seen_session_ids.insert(meta.id.clone());
+                // Read threads from SidebarDb for this workspace's path list.
+                if let Some(rows) = threads_by_paths.get(&path_list) {
+                    for row in rows {
+                        seen_session_ids.insert(row.session_id.clone());
+                        let (agent, icon, icon_from_external_svg) = match &row.agent_name {
+                            None => (Agent::NativeAgent, IconName::ZedAgent, None),
+                            Some(name) => {
+                                use project::agent_server_store::ExternalAgentServerName;
+                                let custom_icon = agent_server_store.as_ref().and_then(|store| {
+                                    store
+                                        .read(cx)
+                                        .agent_icon(&ExternalAgentServerName(name.clone().into()))
+                                });
+                                (
+                                    Agent::Custom {
+                                        name: name.clone().into(),
+                                    },
+                                    IconName::Terminal,
+                                    custom_icon,
+                                )
+                            }
+                        };
                         threads.push(ThreadEntry {
-                            agent: Agent::NativeAgent,
-                            session_info: meta.into(),
-                            icon: IconName::ZedAgent,
-                            icon_from_external_svg: None,
+                            agent,
+                            session_info: acp_thread::AgentSessionInfo {
+                                session_id: row.session_id.clone(),
+                                cwd: None,
+                                title: Some(row.title.clone()),
+                                updated_at: Some(row.updated_at),
+                                created_at: row.created_at,
+                                meta: None,
+                            },
+                            icon,
+                            icon_from_external_svg,
                             status: AgentThreadStatus::default(),
                             workspace: ThreadEntryWorkspace::Open(workspace.clone()),
                             is_live: false,
@@ -600,7 +857,7 @@ impl Sidebar {
                 }
 
                 // Load threads from linked git worktrees of this workspace's repos.
-                if let Some(ref thread_store) = thread_store {
+                {
                     let mut linked_worktree_queries: Vec<(PathList, SharedString, Arc<Path>)> =
                         Vec::new();
                     for snapshot in root_repository_snapshots(workspace, cx) {
@@ -631,24 +888,52 @@ impl Sidebar {
                                 None => ThreadEntryWorkspace::Closed(worktree_path_list.clone()),
                             };
 
-                        for meta in thread_store.read(cx).threads_for_paths(worktree_path_list) {
-                            if !seen_session_ids.insert(meta.id.clone()) {
-                                continue;
+                        if let Some(rows) = threads_by_paths.get(worktree_path_list) {
+                            for row in rows {
+                                if !seen_session_ids.insert(row.session_id.clone()) {
+                                    continue;
+                                }
+                                let (agent, icon, icon_from_external_svg) = match &row.agent_name {
+                                    None => (Agent::NativeAgent, IconName::ZedAgent, None),
+                                    Some(name) => {
+                                        use project::agent_server_store::ExternalAgentServerName;
+                                        let custom_icon =
+                                            agent_server_store.as_ref().and_then(|store| {
+                                                store.read(cx).agent_icon(&ExternalAgentServerName(
+                                                    name.clone().into(),
+                                                ))
+                                            });
+                                        (
+                                            Agent::Custom {
+                                                name: name.clone().into(),
+                                            },
+                                            IconName::Terminal,
+                                            custom_icon,
+                                        )
+                                    }
+                                };
+                                threads.push(ThreadEntry {
+                                    agent,
+                                    session_info: acp_thread::AgentSessionInfo {
+                                        session_id: row.session_id.clone(),
+                                        cwd: None,
+                                        title: Some(row.title.clone()),
+                                        updated_at: Some(row.updated_at),
+                                        created_at: row.created_at,
+                                        meta: None,
+                                    },
+                                    icon,
+                                    icon_from_external_svg,
+                                    status: AgentThreadStatus::default(),
+                                    workspace: target_workspace.clone(),
+                                    is_live: false,
+                                    is_background: false,
+                                    highlight_positions: Vec::new(),
+                                    worktree_name: Some(worktree_name.clone()),
+                                    worktree_highlight_positions: Vec::new(),
+                                    diff_stats: DiffStats::default(),
+                                });
                             }
-                            threads.push(ThreadEntry {
-                                agent: Agent::NativeAgent,
-                                session_info: meta.into(),
-                                icon: IconName::ZedAgent,
-                                icon_from_external_svg: None,
-                                status: AgentThreadStatus::default(),
-                                workspace: target_workspace.clone(),
-                                is_live: false,
-                                is_background: false,
-                                highlight_positions: Vec::new(),
-                                worktree_name: Some(worktree_name.clone()),
-                                worktree_highlight_positions: Vec::new(),
-                                diff_stats: DiffStats::default(),
-                            });
                         }
                     }
                 }
@@ -1488,12 +1773,11 @@ impl Sidebar {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let saved_path_list = ThreadStore::try_global(cx).and_then(|thread_store| {
-            thread_store
-                .read(cx)
-                .thread_from_session_id(&session_info.session_id)
-                .map(|thread| thread.folder_paths.clone())
-        });
+        let saved_path_list = THREAD_METADATA_DB
+            .get(&session_info.session_id)
+            .ok()
+            .flatten()
+            .map(|row| row.folder_paths);
         let path_list = saved_path_list.or_else(|| {
             // we don't have saved metadata, so create path list based on the cwd
             session_info
@@ -2088,6 +2372,11 @@ mod tests {
             language_model::LanguageModelRegistry::test(cx);
             prompt_store::init(cx);
         });
+        // Clear the shared SidebarDb to prevent cross-test interference.
+        cx.executor().allow_parking();
+        cx.foreground_executor()
+            .block_on(THREAD_METADATA_DB.delete_all())
+            .ok();
     }
 
     fn make_test_thread(title: &str, updated_at: DateTime<Utc>) -> agent::DbThread {
