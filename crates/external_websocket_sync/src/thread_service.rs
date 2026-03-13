@@ -763,6 +763,26 @@ fn create_new_thread_sync(
                             );
                         }
                     }
+                    AcpThreadEvent::Stopped => {
+                        // Emit MessageCompleted for EVERY turn completion, regardless of
+                        // whether the turn was initiated by Helix (chat_message) or by
+                        // direct Zed UI input. Previously, MessageCompleted was only sent
+                        // from the post-send_task.await paths in create_new_thread_sync
+                        // and handle_follow_up_message, which missed turns initiated
+                        // directly in Zed's agent panel.
+                        flush_streaming_throttle(&thread_id_for_sub);
+                        let rid = crate::get_thread_request_id(&thread_id_for_sub)
+                            .unwrap_or_default();
+                        eprintln!(
+                            "📤 [THREAD_SERVICE] Stopped event: sending message_completed for thread {} (request_id={})",
+                            thread_id_for_sub, rid
+                        );
+                        let _ = crate::send_websocket_event(SyncEvent::MessageCompleted {
+                            acp_thread_id: thread_id_for_sub.clone(),
+                            message_id: "0".to_string(),
+                            request_id: rid,
+                        });
+                    }
                     _ => {}
                 }
             }).detach();
@@ -796,27 +816,11 @@ fn create_new_thread_sync(
         eprintln!("✅ [THREAD_SERVICE] Message send awaited - AI response complete");
         log::info!("✅ [THREAD_SERVICE] Message send awaited - AI response complete");
 
-        // Flush any pending throttled messages before sending message_completed.
-        // The throttle may have buffered the final streaming tokens.
-        flush_streaming_throttle(&acp_thread_id);
-
-        // Send message_completed after the response finishes
-        // NOTE: Do NOT send a final summary message_added here. The streaming EntryUpdated
-        // events already delivered all content with cumulative updates. Sending a final
-        // message_added with message_id="response" causes the API to append it (different
-        // message_id = new message), duplicating the entire response.
-        let request_id_for_ws = request_clone.request_id.clone();
-        let acp_thread_id_for_ws = acp_thread_id.clone();
-        cx.update(|_cx| {
-            let request_id = crate::get_thread_request_id(&acp_thread_id_for_ws)
-                .unwrap_or(request_id_for_ws);
-            eprintln!("📤 [THREAD_SERVICE] Sending message_completed: request_id={}", request_id);
-            let _ = crate::send_websocket_event(SyncEvent::MessageCompleted {
-                acp_thread_id: acp_thread_id_for_ws,
-                message_id: "0".to_string(),
-                request_id,
-            });
-        });
+        // NOTE: MessageCompleted is now sent by the persistent subscription's
+        // Stopped event handler (above). This ensures ALL turn completions emit
+        // MessageCompleted, whether initiated by Helix or by direct Zed UI input.
+        // Previously, this code sent MessageCompleted here, but that missed turns
+        // the user typed directly into Zed's agent panel.
 
         anyhow::Ok(())
     }).detach();
@@ -938,25 +942,8 @@ async fn handle_follow_up_message(
         }
     }
 
-    // Flush any pending throttled messages before sending message_completed.
-    flush_streaming_throttle(&thread_id);
-
-    // Send message_completed for the follow-up response
-    // NOTE: Do NOT send a final summary message_added here. The streaming EntryUpdated
-    // events already delivered all content. Sending a final message_added with a different
-    // message_id causes the API to append it, duplicating the response.
-    let thread_id_for_ws = thread_id.clone();
-    let request_id_for_ws = request_id.clone();
-    cx.update(|_cx| {
-        let rid = crate::get_thread_request_id(&thread_id_for_ws)
-            .unwrap_or(request_id_for_ws);
-        eprintln!("📤 [THREAD_SERVICE] Follow-up: sending message_completed (request_id={})", rid);
-        let _ = crate::send_websocket_event(SyncEvent::MessageCompleted {
-            acp_thread_id: thread_id_for_ws,
-            message_id: "0".to_string(),
-            request_id: rid,
-        });
-    });
+    // NOTE: MessageCompleted is now sent by the persistent subscription's
+    // Stopped event handler. See create_new_thread_sync for rationale.
 
     log::info!("✅ [THREAD_SERVICE] Follow-up message sent successfully");
     Ok(())
@@ -1099,10 +1086,20 @@ async fn load_thread_from_agent(
                     }
                 }
                 AcpThreadEvent::Stopped => {
-                    // NOTE: MessageCompleted is sent by thread_view.rs when the UI is displayed.
-                    // We don't send it here to avoid duplicate events.
-                    // notify_thread_display() always creates a UI view after loading a thread.
-                    eprintln!("🛑 [THREAD_SERVICE] Thread Stopped event (loaded thread) - UI handles MessageCompleted");
+                    // Emit MessageCompleted for every turn completion on loaded threads,
+                    // same as the persistent subscription in create_new_thread_sync.
+                    flush_streaming_throttle(&thread_id_for_events);
+                    let rid = crate::get_thread_request_id(&thread_id_for_events)
+                        .unwrap_or_default();
+                    eprintln!(
+                        "📤 [THREAD_SERVICE] Stopped event (loaded thread): sending message_completed for thread {} (request_id={})",
+                        thread_id_for_events, rid
+                    );
+                    let _ = crate::send_websocket_event(SyncEvent::MessageCompleted {
+                        acp_thread_id: thread_id_for_events.clone(),
+                        message_id: "0".to_string(),
+                        request_id: rid,
+                    });
                 }
                 _ => {}
             }
