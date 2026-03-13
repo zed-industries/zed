@@ -36,8 +36,8 @@ use ui::{
 };
 use util::{ResultExt, TryFutureExt, maybe};
 use workspace::{
-    CopyRoomId, Deafen, LeaveCall, MultiWorkspace, Mute, OpenChannelNotes, ScreenShare,
-    ShareProject, Workspace,
+    CopyRoomId, Deafen, LeaveCall, MultiWorkspace, Mute, OpenChannelNotes, OpenChannelNotesById,
+    ScreenShare, ShareProject, Workspace,
     dock::{DockPosition, Panel, PanelEvent},
     notifications::{DetachAndPromptErr, NotifyResultExt},
 };
@@ -113,6 +113,13 @@ pub fn init(cx: &mut App) {
                         .detach_and_log_err(cx)
                 });
             }
+        });
+        workspace.register_action(|_, action: &OpenChannelNotesById, window, cx| {
+            let channel_id = client::ChannelId(action.channel_id);
+            let workspace = cx.entity();
+            window.defer(cx, move |window, cx| {
+                ChannelView::open(channel_id, None, workspace, window, cx).detach_and_log_err(cx)
+            });
         });
         // TODO: make it possible to bind this one to a held key for push to talk?
         // how to make "toggle_on_modifiers_press" contextual?
