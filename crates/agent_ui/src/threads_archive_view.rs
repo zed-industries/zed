@@ -362,8 +362,17 @@ impl ThreadsArchiveView {
                 highlight_positions,
             } => {
                 let is_selected = self.selection == Some(ix);
-                let title: SharedString =
-                    session.title.clone().unwrap_or_else(|| "Untitled".into());
+                let title: SharedString = session
+                    .title
+                    .clone()
+                    .map(|t| {
+                        if t.contains('\n') || t.contains('\r') {
+                            SharedString::from(t.replace(['\n', '\r'], " "))
+                        } else {
+                            t
+                        }
+                    })
+                    .unwrap_or_else(|| "Untitled".into());
                 let session_info = session.clone();
                 let highlight_positions = highlight_positions.clone();
 

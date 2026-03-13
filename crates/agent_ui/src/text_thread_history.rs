@@ -17,11 +17,13 @@ use ui::{
 
 const DEFAULT_TITLE: &SharedString = &SharedString::new_static("New Thread");
 
-fn thread_title(entry: &SavedTextThreadMetadata) -> &SharedString {
+fn thread_title(entry: &SavedTextThreadMetadata) -> SharedString {
     if entry.title.is_empty() {
-        DEFAULT_TITLE
+        DEFAULT_TITLE.clone()
+    } else if entry.title.contains('\n') || entry.title.contains('\r') {
+        SharedString::from(entry.title.replace(['\n', '\r'], " "))
     } else {
-        &entry.title
+        entry.title.clone()
     }
 }
 
