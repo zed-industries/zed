@@ -7,9 +7,8 @@ on:
     - main
     paths:
     - extensions/**
-    paths-ignore:
-    - extensions/workflows/**
-    - extensions/*.md
+    - '!extensions/workflows/**'
+    - '!extensions/*.md'
 jobs:
   detect_changed_extensions:
     if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions')

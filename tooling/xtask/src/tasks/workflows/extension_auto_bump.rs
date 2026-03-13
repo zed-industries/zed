@@ -25,8 +25,8 @@ pub(crate) fn extension_auto_bump() -> Workflow {
                 Push::default()
                     .add_branch("main")
                     .add_path("extensions/**")
-                    .add_ignored_path("extensions/workflows/**")
-                    .add_ignored_path("extensions/*.md"),
+                    .add_path("!extensions/workflows/**")
+                    .add_path("!extensions/*.md"),
             ),
         )
         .concurrency(one_workflow_per_non_main_branch())
