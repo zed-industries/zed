@@ -243,8 +243,8 @@ impl ProfilingCollector {
     }
 }
 
-// Allow 20mb of task timing entries
-const MAX_TASK_TIMINGS: usize = (20 * 1024 * 1024) / core::mem::size_of::<TaskTiming>();
+// Allow 5mb of task timing entries
+const MAX_TASK_TIMINGS: usize = (5 * 1024 * 1024) / core::mem::size_of::<TaskTiming>();
 
 #[doc(hidden)]
 pub type TaskTimings = circular_buffer::CircularBuffer<MAX_TASK_TIMINGS, TaskTiming>;
