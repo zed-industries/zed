@@ -243,6 +243,7 @@ pub struct Sidebar {
     selection: Option<usize>,
     focused_thread: Option<acp::SessionId>,
     active_entry_index: Option<usize>,
+    hovered_thread_index: Option<usize>,
     collapsed_groups: HashSet<PathList>,
     expanded_groups: HashMap<PathList, usize>,
     view: SidebarView,
@@ -345,6 +346,7 @@ impl Sidebar {
             selection: None,
             focused_thread: None,
             active_entry_index: None,
+            hovered_thread_index: None,
             collapsed_groups: HashSet::new(),
             expanded_groups: HashMap::new(),
             view: SidebarView::default(),
@@ -1582,11 +1584,23 @@ impl Sidebar {
         }
     }
 
+    fn delete_thread(&mut self, session_id: &acp::SessionId, cx: &mut Context<Self>) {
+        let Some(thread_store) = ThreadStore::try_global(cx) else {
+            return;
+        };
+        self.hovered_thread_index = None;
+        thread_store.update(cx, |store, cx| {
+            store
+                .delete_thread(session_id.clone(), cx)
+                .detach_and_log_err(cx);
+        });
+    }
+
     fn render_thread(
         &self,
         ix: usize,
         thread: &ThreadEntry,
-        is_selected: bool,
+        is_focused: bool,
         docked_right: bool,
         cx: &mut Context<Self>,
     ) -> AnyElement {
@@ -1601,6 +1615,11 @@ impl Sidebar {
             .unwrap_or_else(|| "Untitled".into());
         let session_info = thread.session_info.clone();
         let thread_workspace = thread.workspace.clone();
+
+        let is_hovered = self.hovered_thread_index == Some(ix);
+        let is_selected = self.focused_thread.as_ref() == Some(&session_info.session_id);
+        let can_delete = thread.agent == Agent::NativeAgent;
+        let session_id_for_delete = thread.session_info.session_id.clone();
 
         let id = SharedString::from(format!("thread-entry-{}", ix));
 
@@ -1648,9 +1667,32 @@ impl Sidebar {
             .when(thread.diff_stats.lines_removed > 0, |this| {
                 this.removed(thread.diff_stats.lines_removed as usize)
             })
-            .selected(self.focused_thread.as_ref() == Some(&session_info.session_id))
-            .focused(is_selected)
+            .selected(is_selected)
+            .focused(is_focused)
             .docked_right(docked_right)
+            .hovered(is_hovered)
+            .on_hover(cx.listener(move |this, is_hovered: &bool, _window, cx| {
+                if *is_hovered {
+                    this.hovered_thread_index = Some(ix);
+                } else if this.hovered_thread_index == Some(ix) {
+                    this.hovered_thread_index = None;
+                }
+                cx.notify();
+            }))
+            .when((is_hovered || is_selected) && can_delete, |this| {
+                this.action_slot(
+                    IconButton::new("delete-thread", IconName::Trash)
+                        .icon_size(IconSize::Small)
+                        .icon_color(Color::Muted)
+                        .tooltip(Tooltip::text("Delete Thread"))
+                        .on_click({
+                            let session_id = session_id_for_delete.clone();
+                            cx.listener(move |this, _, _window, cx| {
+                                this.delete_thread(&session_id, cx);
+                            })
+                        }),
+                )
+            })
             .on_click({
                 let agent = thread.agent.clone();
                 cx.listener(move |this, _, window, cx| {
