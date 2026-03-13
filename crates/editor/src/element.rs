@@ -89,8 +89,8 @@ use text::{BufferId, SelectionGoal};
 use theme::{ActiveTheme, Appearance, BufferLineHeight, PlayerColor};
 use ui::utils::ensure_minimum_contrast;
 use ui::{
-    ButtonLike, ContextMenu, Indicator, KeyBinding, POPOVER_Y_PADDING, Tooltip, prelude::*,
-    right_click_menu, scrollbars::ShowScrollbar, text_for_keystroke,
+    ButtonLike, ContextMenu, Indicator, KeyBinding, POPOVER_Y_PADDING, Tooltip, checkbox,
+    prelude::*, right_click_menu, scrollbars::ShowScrollbar, text_for_keystroke,
 };
 use unicode_segmentation::UnicodeSegmentation;
 use util::post_inc;
@@ -3186,6 +3186,126 @@ impl EditorElement {
         })
     }
 
+    fn layout_staging_checkboxes(
+        &self,
+        line_height: Pixels,
+        range: Range<DisplayRow>,
+        scroll_position: gpui::Point<ScrollOffset>,
+        gutter_dimensions: &GutterDimensions,
+        gutter_hitbox: &Hitbox,
+        display_hunks: &[(DisplayDiffHunk, Option<Hitbox>)],
+        row_infos: &[RowInfo],
+        editor: Entity<Editor>,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Vec<AnyElement> {
+        if self.split_side.is_none() {
+            return Vec::new();
+        }
+
+        let is_read_only = editor.read(cx).read_only(cx);
+        let delegate = editor.read(cx).delegate_stage_and_restore;
+        if is_read_only && !delegate {
+            return Vec::new();
+        }
+
+        let mut checkboxes = Vec::new();
+
+        for (hunk, _) in display_hunks {
+            let DisplayDiffHunk::Unfolded {
+                display_row_range,
+                multi_buffer_range,
+                status,
+                ..
+            } = hunk
+            else {
+                continue;
+            };
+
+            if display_row_range.start < range.start || display_row_range.start >= range.end {
+                continue;
+            }
+
+            let row_ix = (display_row_range.start - range.start).0 as usize;
+            if row_infos
+                .get(row_ix)
+                .is_some_and(|row_info| row_info.expand_info.is_some())
+            {
+                continue;
+            }
+
+            let toggle_state = match status.secondary {
+                buffer_diff::DiffHunkSecondaryStatus::NoSecondaryHunk
+                | buffer_diff::DiffHunkSecondaryStatus::SecondaryHunkRemovalPending => {
+                    ToggleState::Selected
+                }
+                buffer_diff::DiffHunkSecondaryStatus::OverlapsWithSecondaryHunk => {
+                    ToggleState::Indeterminate
+                }
+                buffer_diff::DiffHunkSecondaryStatus::HasSecondaryHunk
+                | buffer_diff::DiffHunkSecondaryStatus::SecondaryHunkAdditionPending => {
+                    ToggleState::Unselected
+                }
+            };
+
+            let is_pending = status.is_pending();
+            let hunk_range = multi_buffer_range.clone();
+            let editor_handle = editor.clone();
+
+            let checkbox_element = checkbox(
+                ("staging-checkbox", display_row_range.start.0 as u64),
+                toggle_state,
+            )
+            .disabled(is_pending)
+            .tooltip({
+                let focus_handle = editor.focus_handle(cx);
+                let has_secondary = status.has_secondary_hunk();
+                move |_window, cx| {
+                    if has_secondary {
+                        Tooltip::for_action_in(
+                            "Stage Hunk",
+                            &::git::ToggleStaged,
+                            &focus_handle,
+                            cx,
+                        )
+                    } else {
+                        Tooltip::for_action_in(
+                            "Unstage Hunk",
+                            &::git::ToggleStaged,
+                            &focus_handle,
+                            cx,
+                        )
+                    }
+                }
+            })
+            .on_click(move |new_state, _window, cx| {
+                let stage = matches!(new_state, ToggleState::Selected);
+                editor_handle.update(cx, |editor, cx| {
+                    editor.stage_or_unstage_diff_hunks(
+                        stage,
+                        vec![hunk_range.start..hunk_range.start],
+                        cx,
+                    );
+                });
+            })
+            .into_any_element();
+
+            let button = prepaint_gutter_button(
+                checkbox_element,
+                display_row_range.start,
+                line_height,
+                gutter_dimensions,
+                scroll_position,
+                gutter_hitbox,
+                window,
+                cx,
+            );
+            checkboxes.push(button);
+        }
+
+        checkboxes
+    }
+
     fn should_render_diff_review_button(
         &self,
         range: Range<DisplayRow>,
@@ -5736,6 +5856,7 @@ impl EditorElement {
                         *is_created_file,
                         line_height,
                         &editor,
+                        self.split_side,
                         window,
                         cx,
                     );
@@ -6427,6 +6548,10 @@ impl EditorElement {
 
             if let Some(diff_review_button) = layout.diff_review_button.as_mut() {
                 diff_review_button.paint(window, cx);
+            }
+
+            for staging_checkbox in layout.staging_checkboxes.iter_mut() {
+                staging_checkbox.paint(window, cx);
             }
         });
     }
@@ -10784,6 +10909,19 @@ impl Element for EditorElement {
                         Vec::new()
                     };
 
+                    let staging_checkboxes = self.layout_staging_checkboxes(
+                        line_height,
+                        start_row..end_row,
+                        scroll_position,
+                        &gutter_dimensions,
+                        &gutter_hitbox,
+                        &display_hunks,
+                        &row_infos,
+                        self.editor.clone(),
+                        window,
+                        cx,
+                    );
+
                     let git_gutter_width = Self::gutter_strip_width(line_height)
                         + gutter_dimensions
                             .git_blame_entries_width
@@ -11070,6 +11208,7 @@ impl Element for EditorElement {
                         selections,
                         edit_prediction_popover,
                         diff_hunk_controls,
+                        staging_checkboxes,
                         mouse_context_menu,
                         test_indicators,
                         breakpoints,
@@ -11264,6 +11403,7 @@ pub struct EditorLayout {
     crease_toggles: Vec<Option<AnyElement>>,
     expand_toggles: Vec<Option<(AnyElement, gpui::Point<Pixels>)>>,
     diff_hunk_controls: Vec<AnyElement>,
+    staging_checkboxes: Vec<AnyElement>,
     crease_trailers: Vec<Option<CreaseTrailerLayout>>,
     edit_prediction_popover: Option<AnyElement>,
     mouse_context_menu: Option<AnyElement>,
