@@ -19,7 +19,7 @@ use std::{cell::RefCell, ops::Range, rc::Rc, sync::Arc};
 use ui::{ActiveTheme, Divider, Element as _, Styled, Window, prelude::*};
 use util::{ResultExt as _, debug_panic, maybe};
 use workspace::{
-    Workspace,
+    AgentActivityCallbacks, Workspace,
     notifications::{NotificationId, simple_message_notification::MessageNotification},
 };
 use zed_actions::agent::{
@@ -543,6 +543,10 @@ pub(crate) fn register_conflict_notification(
                 | GitStoreEvent::RepositoryUpdated(_, RepositoryEvent::StatusesChanged, _)
         );
         if !AgentSettings::get_global(cx).enabled || !conflicts_changed {
+            return;
+        }
+
+        if AgentActivityCallbacks::is_generating(workspace, cx) {
             return;
         }
 
