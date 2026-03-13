@@ -74,6 +74,10 @@
   "agent_ui_font_size": null,
   // The default font size for user messages in the agent panel.
   "agent_buffer_font_size": 12,
+  // Scales markdown preview typography relative to the buffer font size.
+  // 1.0 uses the buffer font size unchanged, 1.2 makes it 20% larger,
+  // and 0.8 makes it 20% smaller.
+  "markdown_preview_font_size_multiplier": 1.0,
   // How much to fade out unused code.
   "unnecessary_code_fade": 0.3,
   // Active pane styling settings.

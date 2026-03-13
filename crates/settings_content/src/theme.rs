@@ -149,6 +149,11 @@ pub struct ThemeSettingsContent {
     pub agent_ui_font_size: Option<FontSize>,
     /// The font size for user messages in the agent panel.
     pub agent_buffer_font_size: Option<FontSize>,
+    /// Scales markdown preview typography relative to the buffer font size.
+    ///
+    /// `1.0` uses the buffer font size unchanged, `1.2` makes the preview 20% larger,
+    /// and `0.8` makes it 20% smaller.
+    pub markdown_preview_font_size_multiplier: Option<f32>,
     /// The name of the Zed theme to use.
     pub theme: Option<ThemeSelection>,
     /// The name of the icon theme to use.

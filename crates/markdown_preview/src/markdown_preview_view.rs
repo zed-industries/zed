@@ -547,7 +547,8 @@ impl Item for MarkdownPreviewView {
 
 impl Render for MarkdownPreviewView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let buffer_size = ThemeSettings::get_global(cx).buffer_font_size(cx);
+        let markdown_preview_font_size =
+            ThemeSettings::get_global(cx).markdown_preview_font_size(cx);
         let buffer_line_height = ThemeSettings::get_global(cx).buffer_line_height;
 
         v_flex()
@@ -564,10 +565,10 @@ impl Render for MarkdownPreviewView {
             .size_full()
             .bg(cx.theme().colors().editor_background)
             .p_4()
-            .text_size(buffer_size)
+            .text_size(markdown_preview_font_size)
             .line_height(relative(buffer_line_height.value()))
-            .child(div().flex_grow().map(|this| {
-                this.child(
+            .child(
+                div().flex_grow().child(
                     list(
                         self.list_state.clone(),
                         cx.processor(|this, ix, window, cx| {
@@ -668,8 +669,8 @@ impl Render for MarkdownPreviewView {
                         }),
                     )
                     .size_full(),
-                )
-            }))
+                ),
+            )
             .vertical_scrollbar_for(&self.list_state, window, cx)
     }
 }
