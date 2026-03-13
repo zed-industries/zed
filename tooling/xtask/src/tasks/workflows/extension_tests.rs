@@ -45,7 +45,7 @@ pub(crate) fn extension_tests() -> Workflow {
                     .add_input(working_directory.name, working_directory.call_input()),
             ),
         )
-        .concurrency(one_workflow_per_non_main_branch())
+        // .concurrency(one_workflow_per_non_main_branch())
         .add_env(("CARGO_TERM_COLOR", "always"))
         .add_env(("RUST_BACKTRACE", 1))
         .add_env(("CARGO_INCREMENTAL", 0))
