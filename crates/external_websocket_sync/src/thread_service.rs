@@ -234,7 +234,35 @@ pub fn register_thread(acp_thread_id: String, thread: Entity<AcpThread>) {
     init_thread_registry();
     let registry = THREAD_REGISTRY.lock();
     if let Some(reg) = registry.as_ref() {
-        reg.write().insert(acp_thread_id, thread);
+        let mut map = reg.write();
+        if let Some(existing) = map.get(&acp_thread_id) {
+            if existing.entity_id() != thread.entity_id() {
+                log::warn!(
+                    "⚠️ [THREAD_SERVICE] register_thread: overwriting thread '{}' with different entity (old={:?}, new={:?})",
+                    acp_thread_id,
+                    existing.entity_id(),
+                    thread.entity_id(),
+                );
+                eprintln!(
+                    "⚠️ [THREAD_SERVICE] register_thread: overwriting thread '{}' with different entity (old={:?}, new={:?})",
+                    acp_thread_id,
+                    existing.entity_id(),
+                    thread.entity_id(),
+                );
+            }
+        }
+        map.insert(acp_thread_id, thread);
+    }
+}
+
+/// Remove a thread from the registry (e.g., when a headless view is dropped).
+pub fn unregister_thread(acp_thread_id: &str) {
+    let registry = THREAD_REGISTRY.lock();
+    if let Some(reg) = registry.as_ref() {
+        if reg.write().remove(acp_thread_id).is_some() {
+            eprintln!("🗑️ [THREAD_SERVICE] unregister_thread: removed '{}'", acp_thread_id);
+            log::info!("🗑️ [THREAD_SERVICE] unregister_thread: removed '{}'", acp_thread_id);
+        }
     }
 }
 

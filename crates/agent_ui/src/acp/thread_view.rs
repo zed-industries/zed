@@ -579,6 +579,14 @@ impl AcpServerView {
         ];
 
         cx.on_release(|this, cx| {
+            // Unregister thread from THREAD_REGISTRY so stale entries don't
+            // cause split-brain when the same session is loaded via the UI path.
+            if let ServerState::Connected(connected) = &this.server_state {
+                if let Some(id) = &connected.active_id {
+                    let session_id_str = id.to_string();
+                    external_websocket_sync::unregister_thread(&session_id_str);
+                }
+            }
             for window in this.notifications.drain(..) {
                 window
                     .update(cx, |_, window, _| {
