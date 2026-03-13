@@ -214,7 +214,7 @@ jobs:
         shell: bash -euxo pipefail {0}
         working-directory: ${{ inputs.working-directory }}
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref_name }}-${{ github.ref_name == 'main' && github.sha || 'anysha' }}
+  group: ${{ github.workflow }}-${{ github.ref_name }}-${{ github.ref_name == 'main' && github.sha || 'anysha' }}extension-bump
   cancel-in-progress: true
 defaults:
   run:

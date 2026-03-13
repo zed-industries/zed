@@ -9,7 +9,8 @@ use crate::tasks::workflows::{
         NamedJob, checkout_repo, dependant_job, named,
     },
     vars::{
-        JobOutput, StepOutput, WorkflowInput, WorkflowSecret, one_workflow_per_non_main_branch,
+        JobOutput, StepOutput, WorkflowInput, WorkflowSecret,
+        one_workflow_per_non_main_branch_and_token,
     },
 };
 
@@ -70,7 +71,7 @@ pub(crate) fn extension_bump() -> Workflow {
                     ]),
             ),
         )
-        .concurrency(one_workflow_per_non_main_branch())
+        .concurrency(one_workflow_per_non_main_branch_and_token("extension-bump"))
         .add_env(("CARGO_TERM_COLOR", "always"))
         .add_env(("RUST_BACKTRACE", 1))
         .add_env(("CARGO_INCREMENTAL", 0))
