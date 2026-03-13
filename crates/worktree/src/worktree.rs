@@ -2466,6 +2466,10 @@ impl Snapshot {
         &self.root_name
     }
 
+    pub fn root_name_arc(&self) -> Arc<RelPath> {
+        self.root_name.clone()
+    }
+
     pub fn root_name_str(&self) -> &str {
         self.root_name.as_unix_str()
     }
