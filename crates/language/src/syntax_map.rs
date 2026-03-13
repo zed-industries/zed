@@ -949,6 +949,97 @@ impl SyntaxSnapshot {
         )
     }
 
+    pub fn highlight_text_with_injections(
+        language: &Arc<Language>,
+        text: &Rope,
+        range: Range<usize>,
+        language_registry: &Arc<LanguageRegistry>,
+    ) -> Vec<(Range<usize>, crate::HighlightId)> {
+        use crate::buffer::BufferChunks;
+
+        const MAX_INJECTION_DEPTH: usize = 5;
+
+        let grammar = match &language.grammar {
+            Some(grammar) => grammar,
+            None => return Vec::new(),
+        };
+
+        let root_tree = grammar.parse_text(text, None);
+
+        let mut trees: Vec<(Arc<Language>, tree_sitter::Tree, usize)> = Vec::new();
+        trees.push((language.clone(), root_tree, 0));
+
+        let mut layer_start = 0;
+        while layer_start < trees.len() {
+            let current_end = trees.len();
+            for i in layer_start..current_end {
+                let (ref lang, ref tree, depth) = trees[i];
+                if depth >= MAX_INJECTION_DEPTH {
+                    continue;
+                }
+                let lang_grammar = match &lang.grammar {
+                    Some(g) => g,
+                    None => continue,
+                };
+                let injection_config = match &lang_grammar.injection_config {
+                    Some(config) => config,
+                    None => continue,
+                };
+                let new_layers = discover_injection_layers(
+                    injection_config,
+                    text,
+                    tree.root_node(),
+                    language_registry,
+                    depth + 1,
+                );
+                trees.extend(new_layers);
+            }
+            layer_start = current_end;
+        }
+
+        let syntax_layers: Vec<_> = trees
+            .iter()
+            .map(|(lang, tree, depth)| SyntaxLayer {
+                language: lang,
+                tree,
+                included_sub_ranges: None,
+                depth: *depth,
+                offset: (0, tree_sitter::Point::new(0, 0)),
+            })
+            .collect();
+
+        let captures = SyntaxMapCaptures::new(
+            range.clone(),
+            text,
+            syntax_layers.into_iter(),
+            |grammar| {
+                grammar
+                    .highlights_config
+                    .as_ref()
+                    .map(|config| &config.query)
+            },
+        );
+
+        let highlight_maps = captures
+            .grammars()
+            .iter()
+            .map(|grammar| grammar.highlight_map())
+            .collect();
+
+        let mut result = Vec::new();
+        let mut offset = 0;
+        for chunk in BufferChunks::new(text, range, Some((captures, highlight_maps)), false, None) {
+            let end_offset = offset + chunk.text.len();
+            if let Some(highlight_id) = chunk.syntax_highlight_id
+                && !highlight_id.is_default()
+            {
+                result.push((offset..end_offset, highlight_id));
+            }
+            offset = end_offset;
+        }
+        result
+    }
+
     pub fn captures<'a>(
         &'a self,
         range: Range<usize>,
@@ -1541,6 +1632,105 @@ fn parse_text(
                 true => anyhow::anyhow!(ParseTimeout),
                 false => anyhow::anyhow!("parsing failed"),
             })
+    })
+}
+
+fn discover_injection_layers(
+    config: &InjectionConfig,
+    text: &Rope,
+    node: Node,
+    language_registry: &Arc<LanguageRegistry>,
+    depth: usize,
+) -> Vec<(Arc<Language>, tree_sitter::Tree, usize)> {
+    let mut result = Vec::new();
+    let mut combined_ranges: HashMap<LanguageId, (Arc<Language>, Vec<tree_sitter::Range>)> =
+        HashMap::default();
+    let mut query_cursor = QueryCursorHandle::new();
+    query_cursor.set_byte_range(node.byte_range());
+
+    let mut matches = query_cursor.matches(&config.query, node, TextProvider(text));
+    while let Some(mat) = matches.next() {
+        let content_ranges: Vec<tree_sitter::Range> = mat
+            .nodes_for_capture_index(config.content_capture_ix)
+            .map(|node| node.range())
+            .collect();
+        if content_ranges.is_empty() {
+            continue;
+        }
+
+        let combined = config.patterns[mat.pattern_index].combined;
+
+        let language_name =
+            if let Some(name) = config.patterns[mat.pattern_index].language.as_ref() {
+                Some(Cow::Borrowed(name.as_ref()))
+            } else if let Some(language_node) = config
+                .language_capture_ix
+                .and_then(|ix| mat.nodes_for_capture_index(ix).next())
+            {
+                let language_name: String = text
+                    .chunks_in_range(language_node.byte_range())
+                    .collect();
+                if let Some(last_dot_pos) = language_name.rfind('.') {
+                    Some(Cow::Owned(language_name[last_dot_pos + 1..].to_string()))
+                } else {
+                    Some(Cow::Owned(language_name))
+                }
+            } else {
+                None
+            };
+
+        if let Some(language_name) = language_name {
+            let language = language_registry
+                .language_for_name_or_extension(&language_name)
+                .now_or_never()
+                .and_then(|language| language.ok());
+            if let Some(language) = language {
+                if combined {
+                    combined_ranges
+                        .entry(language.id)
+                        .or_insert_with(|| (language.clone(), vec![]))
+                        .1
+                        .extend(content_ranges);
+                } else if let Some(tree) = parse_injection_tree(&language, text, &content_ranges) {
+                    result.push((language, tree, depth));
+                }
+            }
+        }
+    }
+
+    for (_, (language, mut ranges)) in combined_ranges {
+        ranges.sort_unstable_by(|a, b| {
+            Ord::cmp(&a.start_byte, &b.start_byte)
+                .then_with(|| Ord::cmp(&a.end_byte, &b.end_byte))
+        });
+        if let Some(tree) = parse_injection_tree(&language, text, &ranges) {
+            result.push((language, tree, depth));
+        }
+    }
+
+    result
+}
+
+fn parse_injection_tree(
+    language: &Arc<Language>,
+    text: &Rope,
+    ranges: &[tree_sitter::Range],
+) -> Option<tree_sitter::Tree> {
+    let grammar = language.grammar.as_ref()?;
+    with_parser(|parser| {
+        parser
+            .set_language(&grammar.ts_language)
+            .expect("incompatible grammar");
+        parser.set_included_ranges(ranges).ok()?;
+        let mut chunks = text.chunks_in_range(0..text.len());
+        parser.parse_with_options(
+            &mut move |offset, _| {
+                chunks.seek(offset);
+                chunks.next().unwrap_or("").as_bytes()
+            },
+            None,
+            None,
+        )
     })
 }
 
