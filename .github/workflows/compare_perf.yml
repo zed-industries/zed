@@ -30,8 +30,6 @@ jobs:
         cp ./.cargo/ci-config.toml ./../.cargo/config.toml
     - name: steps::setup_linux
       run: ./script/linux
-    - name: steps::install_mold
-      run: ./script/install-mold
     - name: steps::download_wasi_sdk
       run: ./script/download-wasi-sdk
     - name: compare_perf::run_perf::install_hyperfine
