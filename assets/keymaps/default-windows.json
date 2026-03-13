@@ -1330,7 +1330,9 @@
       "ctrl-3": ["welcome::OpenRecentProject", 2],
       "ctrl-4": ["welcome::OpenRecentProject", 3],
       "ctrl-5": ["welcome::OpenRecentProject", 4],
-    },
+      "left": "welcome::PreviousTip",
+      "right": "welcome::NextTip"
+    }
   },
   {
     "context": "GitWorktreeSelector || (GitWorktreeSelector > Picker > Editor)",

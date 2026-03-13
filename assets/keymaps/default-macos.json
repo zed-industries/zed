@@ -1407,7 +1407,9 @@
       "cmd-3": ["welcome::OpenRecentProject", 2],
       "cmd-4": ["welcome::OpenRecentProject", 3],
       "cmd-5": ["welcome::OpenRecentProject", 4],
-    },
+      "left": "welcome::PreviousTip",
+      "right": "welcome::NextTip"
+    }
   },
   {
     "context": "InvalidBuffer",
