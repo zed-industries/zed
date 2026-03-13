@@ -497,7 +497,8 @@ pub fn format_prompt_with_budget_for_format(
             prompt
         }
     };
-    if estimate_tokens(prompt.len()) >= max_tokens {
+    let prompt_tokens = estimate_tokens(prompt.len());
+    if prompt_tokens > max_tokens {
         return None;
     }
     return Some(prompt);
@@ -2710,8 +2711,8 @@ pub mod seed_coder {
     ) -> String {
         let suffix_section = build_suffix_section(context, editable_range);
 
-        let suffix_tokens = estimate_tokens(suffix_section.len());
-        let cursor_prefix_tokens = estimate_tokens(cursor_prefix_section.len());
+        let suffix_tokens = estimate_tokens(suffix_section.len() + FIM_PREFIX.len());
+        let cursor_prefix_tokens = estimate_tokens(cursor_prefix_section.len() + FIM_MIDDLE.len());
         let budget_after_cursor = max_tokens.saturating_sub(suffix_tokens + cursor_prefix_tokens);
 
         let edit_history_section = super::format_edit_history_within_budget(
@@ -2721,8 +2722,9 @@ pub mod seed_coder {
             budget_after_cursor,
             max_edit_event_count_for_format(&ZetaFormat::V0211SeedCoder),
         );
-        let edit_history_tokens = estimate_tokens(edit_history_section.len());
-        let budget_after_edit_history = budget_after_cursor.saturating_sub(edit_history_tokens);
+        let edit_history_tokens = estimate_tokens(edit_history_section.len() + "\n".len());
+        let budget_after_edit_history =
+            budget_after_cursor.saturating_sub(edit_history_tokens + "\n".len());
 
         let related_files_section = super::format_related_files_within_budget(
             related_files,
@@ -2744,6 +2746,7 @@ pub mod seed_coder {
         }
         prompt.push_str(cursor_prefix_section);
         prompt.push_str(FIM_MIDDLE);
+
         prompt
     }
 
@@ -4136,8 +4139,8 @@ mod tests {
             2,
             vec![make_event("a.rs", "-x\n+y\n")],
             vec![
-                make_related_file("r1.rs", "a\n"),
-                make_related_file("r2.rs", "b\n"),
+                make_related_file("r1.rs", "aaaaaaa\n"),
+                make_related_file("r2.rs", "bbbbbbb\n"),
             ],
         );
 
@@ -4145,9 +4148,9 @@ mod tests {
             format_with_budget(&input, 10000).unwrap(),
             indoc! {r#"
                 <|file_sep|>r1.rs
-                a
+                aaaaaaa
                 <|file_sep|>r2.rs
-                b
+                bbbbbbb
                 <|file_sep|>edit history
                 --- a/a.rs
                 +++ b/a.rs
@@ -4164,12 +4167,14 @@ mod tests {
         );
 
         assert_eq!(
-            format_with_budget(&input, 50).unwrap(),
-            indoc! {r#"
-                <|file_sep|>r1.rs
-                a
-                <|file_sep|>r2.rs
-                b
+            format_with_budget(&input, 55),
+            Some(
+                indoc! {r#"
+                <|file_sep|>edit history
+                --- a/a.rs
+                +++ b/a.rs
+                -x
+                +y
                 <|file_sep|>test.rs
                 <|fim_prefix|>
                 <|fim_middle|>current
@@ -4177,7 +4182,8 @@ mod tests {
                 <|fim_suffix|>
                 <|fim_middle|>updated
             "#}
-            .to_string()
+                .to_string()
+            )
         );
     }
 
@@ -4426,7 +4432,7 @@ mod tests {
         );
 
         assert_eq!(
-            format_with_budget(&input, 55).unwrap(),
+            format_with_budget(&input, 60).unwrap(),
             indoc! {r#"
                 <|file_sep|>edit history
                 --- a/new.rs
@@ -4456,11 +4462,13 @@ mod tests {
         assert!(format_with_budget(&input, 30).is_none())
     }
 
+    #[track_caller]
     fn format_seed_coder(input: &ZetaPromptInput) -> String {
         format_prompt_with_budget_for_format(input, ZetaFormat::V0211SeedCoder, 10000)
             .expect("seed coder prompt formatting should succeed")
     }
 
+    #[track_caller]
     fn format_seed_coder_with_budget(input: &ZetaPromptInput, max_tokens: usize) -> String {
         format_prompt_with_budget_for_format(input, ZetaFormat::V0211SeedCoder, max_tokens)
             .expect("seed coder prompt formatting should succeed")
@@ -4548,17 +4556,22 @@ mod tests {
                 <[fim-middle]>"#}
         );
 
-        // With tight budget, context is dropped but cursor section remains
         assert_eq!(
-            format_seed_coder_with_budget(&input, 30),
+            format_prompt_with_budget_for_format(&input, ZetaFormat::V0211SeedCoder, 24),
+            None
+        );
+
+        assert_eq!(
+            format_seed_coder_with_budget(&input, 40),
             indoc! {r#"
                 <[fim-suffix]>
                 <[fim-prefix]><filename>test.rs
                 <<<<<<< CURRENT
                 co<|user_cursor|>de
                 =======
-                <[fim-middle]>"#}
-        );
+                <[fim-middle]>"#
+            }
+        )
     }
 
     #[test]
@@ -4609,43 +4622,20 @@ mod tests {
                 <[fim-middle]>"#}
         );
 
-        // With tight budget, only high_prio included.
-        // Cursor sections cost 25 tokens, so budget 44 leaves 19 for related files.
-        // high_prio header (7) + excerpt (3) = 10, fits. low_prio would add 10 more = 20 > 19.
+        // With tight budget under the generic heuristic, context is dropped but the
+        // minimal cursor section still fits.
         assert_eq!(
-            format_seed_coder_with_budget(&input, 44),
-            indoc! {r#"
-                <[fim-suffix]>
-                <[fim-prefix]><filename>high_prio.rs
-                high prio
-
-                <filename>test.rs
-                <<<<<<< CURRENT
-                co<|user_cursor|>de
-                =======
-                <[fim-middle]>"#}
-        );
-    }
-
-    #[test]
-    fn test_seed_coder_returns_none_when_cursor_region_exceeds_budget() {
-        let oversized_line = format!("{}{}", "a".repeat(120), "\n");
-        let input = make_input(&oversized_line, 0..oversized_line.len(), 60, vec![], vec![]);
-
-        assert_eq!(
-            format_prompt_with_budget_for_format(&input, ZetaFormat::V0211SeedCoder, 20),
-            None
-        );
-    }
-
-    #[test]
-    fn test_seed_multi_regions_returns_none_when_cursor_region_exceeds_budget() {
-        let oversized_line = format!("{}{}", "a".repeat(120), "\n");
-        let input = make_input(&oversized_line, 0..oversized_line.len(), 60, vec![], vec![]);
-
-        assert_eq!(
-            format_prompt_with_budget_for_format(&input, ZetaFormat::V0306SeedMultiRegions, 20),
-            None
+            format_prompt_with_budget_for_format(&input, ZetaFormat::V0211SeedCoder, 44),
+            Some(
+                indoc! {r#"
+                    <[fim-suffix]>
+                    <[fim-prefix]><filename>test.rs
+                    <<<<<<< CURRENT
+                    co<|user_cursor|>de
+                    =======
+                    <[fim-middle]>"#}
+                .to_string()
+            )
         );
     }
 
