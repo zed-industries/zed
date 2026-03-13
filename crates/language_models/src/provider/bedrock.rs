@@ -113,6 +113,8 @@ pub struct AmazonBedrockSettings {
     pub authentication_method: Option<BedrockAuthMethod>,
     pub allow_global: Option<bool>,
     pub allow_extended_context: Option<bool>,
+    pub guardrail_identifier: Option<String>,
+    pub guardrail_version: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, EnumIter, IntoStaticStr, JsonSchema)]
@@ -390,6 +392,14 @@ impl State {
             .as_ref()
             .and_then(|s| s.allow_extended_context)
             .unwrap_or(false)
+    }
+
+    fn get_guardrail_config(&self) -> (Option<String>, Option<String>) {
+        self.settings
+            .as_ref()
+            .map_or((None, None), |s| {
+                (s.guardrail_identifier.clone(), s.guardrail_version.clone())
+            })
     }
 }
 
@@ -693,12 +703,15 @@ impl LanguageModel for BedrockModel {
             LanguageModelCompletionError,
         >,
     > {
-        let (region, allow_global, allow_extended_context) =
+        let (region, allow_global, allow_extended_context, guardrail_identifier, guardrail_version) =
             cx.read_entity(&self.state, |state, _cx| {
+                let (gid, gv) = state.get_guardrail_config();
                 (
                     state.get_region(),
                     state.get_allow_global(),
                     state.get_allow_extended_context(),
+                    gid,
+                    gv,
                 )
             });
 
@@ -722,6 +735,8 @@ impl LanguageModel for BedrockModel {
             self.model.supports_caching(),
             self.model.supports_tool_use(),
             use_extended_context,
+            guardrail_identifier,
+            guardrail_version,
         ) {
             Ok(request) => request,
             Err(err) => return futures::future::ready(Err(err.into())).boxed(),
@@ -815,6 +830,8 @@ pub fn into_bedrock(
     supports_caching: bool,
     supports_tool_use: bool,
     allow_extended_context: bool,
+    guardrail_identifier: Option<String>,
+    guardrail_version: Option<String>,
 ) -> Result<bedrock::Request> {
     let mut new_messages: Vec<BedrockMessage> = Vec::new();
     let mut system_message = String::new();
@@ -1103,6 +1120,8 @@ pub fn into_bedrock(
         top_k: None,
         top_p: None,
         allow_extended_context,
+        guardrail_identifier,
+        guardrail_version,
     })
 }
 
