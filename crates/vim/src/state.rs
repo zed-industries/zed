@@ -1002,7 +1002,6 @@ pub struct SearchState {
     pub direction: Direction,
     pub count: usize,
     pub vim_mode_search: bool,
-    pub show_match_highlights: bool,
 
     pub prior_selections: Vec<Range<Anchor>>,
     pub prior_operator: Option<Operator>,
