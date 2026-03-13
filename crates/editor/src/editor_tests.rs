@@ -30111,6 +30111,24 @@ async fn test_end_of_editor_context(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_move_to_beginning_and_end_in_single_line_mode(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+    cx.set_state("abcˇdef");
+    cx.update_editor(|editor, window, cx| {
+        editor.set_mode(EditorMode::SingleLine);
+        editor.move_to_beginning(&MoveToBeginning, window, cx);
+    });
+    cx.assert_editor_state("ˇabcdef");
+
+    cx.update_editor(|editor, window, cx| {
+        editor.move_to_end(&MoveToEnd, window, cx);
+    });
+    cx.assert_editor_state("abcdefˇ");
+}
+
+#[gpui::test]
 async fn test_sticky_scroll(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
     let mut cx = EditorTestContext::new(cx).await;

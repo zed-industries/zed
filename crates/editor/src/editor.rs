@@ -15133,10 +15133,6 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if matches!(self.mode, EditorMode::SingleLine) {
-            cx.propagate();
-            return;
-        }
         self.hide_mouse_cursor(HideMouseCursorOrigin::MovementAction, cx);
         self.change_selections(Default::default(), window, cx, |s| {
             s.select_ranges(vec![Anchor::min()..Anchor::min()]);
@@ -15158,10 +15154,6 @@ impl Editor {
     }
 
     pub fn move_to_end(&mut self, _: &MoveToEnd, window: &mut Window, cx: &mut Context<Self>) {
-        if matches!(self.mode, EditorMode::SingleLine) {
-            cx.propagate();
-            return;
-        }
         self.hide_mouse_cursor(HideMouseCursorOrigin::MovementAction, cx);
         let cursor = self.buffer.read(cx).read(cx).len();
         self.change_selections(Default::default(), window, cx, |s| {
