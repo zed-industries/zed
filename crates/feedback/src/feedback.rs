@@ -123,7 +123,7 @@ fn format_installed_extensions_for_clipboard(store: &ExtensionStore) -> String {
     for (extension_id, entry) in store.extension_index.extensions.iter() {
         let dev_suffix = if entry.dev { " (dev)" } else { "" };
         lines.push(format!(
-            "{} ({}) v{}{}",
+            "- {} ({}) v{}{}",
             entry.manifest.name, extension_id, entry.manifest.version, dev_suffix
         ));
     }
