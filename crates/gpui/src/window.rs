@@ -929,6 +929,8 @@ pub struct Window {
     pub(crate) focus_lost_listeners: SubscriberSet<(), AnyObserver>,
     default_prevented: bool,
     mouse_position: Point<Pixels>,
+    pressed_mouse_button: Option<MouseButton>,
+    cursor_style_on_mouse_down: Option<CursorStyle>,
     mouse_hit_test: HitTest,
     modifiers: Modifiers,
     capslock: Capslock,
@@ -1417,6 +1419,8 @@ impl Window {
             focus_lost_listeners: SubscriberSet::new(),
             default_prevented: true,
             mouse_position,
+            pressed_mouse_button: None,
+            cursor_style_on_mouse_down: None,
             mouse_hit_test: HitTest::default(),
             modifiers,
             capslock,
@@ -2142,6 +2146,11 @@ impl Window {
     /// The position of the mouse relative to the window.
     pub fn mouse_position(&self) -> Point<Pixels> {
         self.mouse_position
+    }
+
+    /// Returns true if any mouse button is currently pressed.
+    pub fn any_mouse_button_pressed(&self) -> bool {
+        self.pressed_mouse_button.is_some()
     }
 
     /// The current state of the keyboard's modifiers
@@ -3844,8 +3853,8 @@ impl Window {
         // Set the cursor only if we're the active window.
         if self.is_window_hovered() {
             let style = self
-                .rendered_frame
-                .cursor_style(self)
+                .cursor_style_on_mouse_down
+                .or_else(|| self.rendered_frame.cursor_style(self))
                 .unwrap_or(CursorStyle::Arrow);
             cx.platform.set_cursor_style(style);
         }
@@ -3921,11 +3930,18 @@ impl Window {
             PlatformInput::MouseDown(mouse_down) => {
                 self.mouse_position = mouse_down.position;
                 self.modifiers = mouse_down.modifiers;
+                self.pressed_mouse_button = Some(mouse_down.button);
+                self.cursor_style_on_mouse_down = self
+                    .rendered_frame
+                    .cursor_style(self)
+                    .or(Some(CursorStyle::Arrow));
                 PlatformInput::MouseDown(mouse_down)
             }
             PlatformInput::MouseUp(mouse_up) => {
                 self.mouse_position = mouse_up.position;
                 self.modifiers = mouse_up.modifiers;
+                self.pressed_mouse_button = None;
+                self.cursor_style_on_mouse_down = None;
                 PlatformInput::MouseUp(mouse_up)
             }
             PlatformInput::MousePressure(mouse_pressure) => {
@@ -5017,7 +5033,7 @@ impl Window {
         let event = PlatformInput::MouseMove(MouseMoveEvent {
             position,
             modifiers: self.modifiers,
-            pressed_button: None,
+            pressed_button: self.pressed_mouse_button,
         });
         let _ = self.dispatch_event(event, cx);
     }

@@ -2226,8 +2226,9 @@ impl Interactivity {
             });
             let current_view = window.current_view();
 
-            window.on_mouse_event(move |_: &MouseMoveEvent, phase, window, cx| {
-                let hovered = hitbox.is_hovered(window);
+            window.on_mouse_event(move |event: &MouseMoveEvent, phase, window, cx| {
+                let hovered =
+                    event.pressed_button.is_none() && hitbox.is_hovered(window);
                 let was_hovered = hover_state
                     .as_ref()
                     .is_some_and(|state| state.borrow().element);
@@ -2248,8 +2249,9 @@ impl Interactivity {
                     .cloned();
                 let current_view = window.current_view();
 
-                window.on_mouse_event(move |_: &MouseMoveEvent, phase, window, cx| {
-                    let group_hovered = group_hitbox_id.is_hovered(window);
+                window.on_mouse_event(move |event: &MouseMoveEvent, phase, window, cx| {
+                    let group_hovered =
+                        event.pressed_button.is_none() && group_hitbox_id.is_hovered(window);
                     let was_group_hovered = hover_state
                         .as_ref()
                         .is_some_and(|state| state.borrow().group);
@@ -2460,11 +2462,12 @@ impl Interactivity {
                     .get_or_insert_with(Default::default)
                     .clone();
 
-                window.on_mouse_event(move |_: &MouseMoveEvent, phase, window, cx| {
+                window.on_mouse_event(move |event: &MouseMoveEvent, phase, window, cx| {
                     if phase != DispatchPhase::Bubble {
                         return;
                     }
                     let is_hovered = has_mouse_down.borrow().is_none()
+                        && event.pressed_button.is_none()
                         && !cx.has_active_drag()
                         && hitbox.is_hovered(window);
                     let mut was_hovered = was_hovered.borrow_mut();
@@ -2498,13 +2501,16 @@ impl Interactivity {
                     let source_bounds = hitbox.bounds;
                     move |window: &Window| {
                         pending_mouse_down.borrow().is_none()
+                            && !window.any_mouse_button_pressed()
                             && source_bounds.contains(&window.mouse_position())
                     }
                 });
                 let check_is_hovered = Rc::new({
                     let hitbox = hitbox.clone();
                     move |window: &Window| {
-                        pending_mouse_down.borrow().is_none() && hitbox.is_hovered(window)
+                        pending_mouse_down.borrow().is_none()
+                            && !window.any_mouse_button_pressed()
+                            && hitbox.is_hovered(window)
                     }
                 });
                 register_tooltip_mouse_handlers(
@@ -2703,7 +2709,7 @@ impl Interactivity {
             }
         }
 
-        if !cx.has_active_drag() {
+        if !cx.has_active_drag() && !window.any_mouse_button_pressed() {
             if let Some(group_hover) = self.group_hover_style.as_ref() {
                 let is_group_hovered =
                     if let Some(group_hitbox_id) = GroupHitboxes::get(&group_hover.group, cx) {
