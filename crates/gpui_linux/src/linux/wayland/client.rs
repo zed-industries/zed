@@ -746,13 +746,13 @@ impl WaylandClient {
                             };
                             let appmenus = state
                                 .appmenu_objects
-                                .iter()
-                                .map(|(surface_id, appmenu)| (surface_id.clone(), appmenu.clone()))
+                                .values()
+                                .map(|appmenu| appmenu.clone())
                                 .collect::<Vec<_>>();
                             (service_name, dbus_menu_server, appmenus)
                         };
 
-                        for (_, appmenu) in appmenus {
+                        for appmenu in appmenus {
                             appmenu.set_address(service_name.clone(), crate::linux::dbusmenu::DBUSMENU_OBJECT_PATH.to_string());
                         }
                     },

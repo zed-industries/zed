@@ -523,12 +523,15 @@ impl<P: LinuxClient + 'static> Platform for LinuxPlatform<P> {
         Ok(app_path)
     }
 
-    fn set_menus(&self, menus: Vec<Menu>, _keymap: &Keymap) {
+    fn set_menus(&self, menus: Vec<Menu>, keymap: &Keymap) {
+        #[cfg(not(all(any(feature = "wayland", feature = "x11"), feature = "global-menu")))]
+        let _ = keymap;
+
         self.inner.with_common(|common| {
             common.menus = menus.into_iter().map(|menu| menu.owned()).collect();
             #[cfg(all(any(feature = "wayland", feature = "x11"), feature = "global-menu"))]
             if let Some(server) = &common.dbus_menu_server {
-                server.set_menus(common.menus.clone(), _keymap);
+                server.set_menus(common.menus.clone(), keymap);
             }
         })
     }

@@ -322,7 +322,9 @@ impl Drop for X11Client {
                     state.dbus_menu_thread.take(),
                 ),
                 Err(_) => {
-                    return;
+                    log::warn!("Failed to borrow X11Client inner in Drop; DBusMenu resources may leak");
+                    let server = self.0.try_borrow().ok().and_then(|state| state.common.dbus_menu_server.clone());
+                    (server, None)
                 }
             };
 
