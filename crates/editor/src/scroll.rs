@@ -223,6 +223,10 @@ impl ScrollAnimationProgress {
         self.0
     }
 
+    pub fn remaining(self) -> f32 {
+        Self::COMPLETE.0 - self.0
+    }
+
     pub fn is_finished(&self) -> bool {
         *self >= Self::COMPLETE
     }
@@ -238,6 +242,7 @@ pub(crate) enum ScrollAnimation {
         start_position: gpui::Point<ScrollOffset>,
         target_position: gpui::Point<ScrollOffset>,
         start_time: Instant,
+        duration: Duration,
     },
 }
 
@@ -272,6 +277,7 @@ impl ScrollAnimation {
                 start_position,
                 target_position,
                 start_time,
+                duration,
                 ..
             } => {
                 if start_position == target_position {
@@ -279,7 +285,7 @@ impl ScrollAnimation {
                 }
 
                 let elapsed = start_time.elapsed().as_secs_f32();
-                let duration = SCROLL_ANIMATION_DURATION.as_secs_f32();
+                let duration = duration.as_secs_f32();
 
                 ScrollAnimationProgress(elapsed / duration).min(ScrollAnimationProgress::COMPLETE)
             }
@@ -316,14 +322,78 @@ impl ScrollAnimation {
         let current_position = self.position();
         if current_position == target {
             *self = Self::Completed { position: target };
-        } else {
-            *self = Self::Animating {
-                position: current_position,
-                start_position: current_position,
-                target_position: target,
-                start_time: Instant::now(),
-            };
+            return;
         }
+
+        let new_duration = match self {
+            Self::Animating { .. } => {
+                let progress = self.progress();
+                if progress.is_finished() {
+                    SCROLL_ANIMATION_DURATION
+                } else {
+                    self.update_duration(target)
+                }
+            }
+            Self::Completed { .. } => SCROLL_ANIMATION_DURATION,
+        };
+
+        *self = Self::Animating {
+            position: current_position,
+            start_position: current_position,
+            target_position: target,
+            start_time: Instant::now(),
+            duration: new_duration,
+        };
+    }
+
+    fn update_duration(&self, new_target: gpui::Point<ScrollOffset>) -> Duration {
+        let Self::Animating {
+            start_position,
+            target_position,
+            duration,
+            ..
+        } = *self
+        else {
+            return SCROLL_ANIMATION_DURATION;
+        };
+
+        let current_position = self.position();
+        let remaining = self.progress().remaining();
+        // The derivative of ease_out_cubic f(t) = 1 - (1-t)^3 is f'(t) = 3(1-t)^2
+        let derivative = 3.0 * remaining * remaining;
+        let old_duration_secs = duration.as_secs_f64();
+
+        let new_displacement_x = new_target.x - current_position.x;
+        let new_displacement_y = new_target.y - current_position.y;
+
+        let velocity_x =
+            (target_position.x - start_position.x) * derivative as f64 / old_duration_secs;
+        let velocity_y =
+            (target_position.y - start_position.y) * derivative as f64 / old_duration_secs;
+
+        let (dominant_displacement, dominant_velocity) =
+            if new_displacement_x.abs() >= new_displacement_y.abs() {
+                (new_displacement_x, velocity_x)
+            } else {
+                (new_displacement_y, velocity_y)
+            };
+
+        let direction_reversed = dominant_displacement * dominant_velocity < 0.0;
+        let velocity_near_zero = dominant_velocity.abs() < 1e-6;
+
+        if direction_reversed || velocity_near_zero {
+            return SCROLL_ANIMATION_DURATION;
+        }
+
+        // At t=0, ease_out_cubic has initial velocity v0 = displacement * f'(0) / duration
+        // Solving for duration: new_duration = displacement * 3 / v
+        let new_duration_secs = dominant_displacement * 3.0 / dominant_velocity;
+
+        let min_duration = SCROLL_ANIMATION_DURATION.as_secs_f64() / 8.0;
+        let max_duration = SCROLL_ANIMATION_DURATION.as_secs_f64();
+        let clamped = new_duration_secs.abs().clamp(min_duration, max_duration);
+
+        Duration::from_secs_f64(clamped)
     }
 
     fn interpolate(
@@ -831,8 +901,13 @@ impl ScrollManager {
                 start_position: current_position,
                 target_position,
                 start_time: Instant::now(),
+                duration: SCROLL_ANIMATION_DURATION,
             })
         }
+    }
+
+    pub(crate) fn scroll_animation(&self) -> Option<&ScrollAnimation> {
+        self.scroll_animation.as_ref()
     }
 
     pub(crate) fn update_animation(&mut self) -> Option<ScrollAnimation> {

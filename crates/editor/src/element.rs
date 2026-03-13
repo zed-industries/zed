@@ -7676,7 +7676,13 @@ impl EditorElement {
                             }
                         };
 
-                        let current_scroll_position = position_map.snapshot.scroll_position();
+                        let current_scroll_position = editor
+                            .scroll_manager
+                            .scroll_animation()
+                            .filter(|animation| animation.is_animating())
+                            .map(|animation| animation.target_position())
+                            .unwrap_or_else(|| position_map.snapshot.scroll_position());
+
                         let x = (current_scroll_position.x * ScrollPixelOffset::from(glyph_width)
                             - ScrollPixelOffset::from(delta.x * scroll_sensitivity))
                             / ScrollPixelOffset::from(glyph_width);
