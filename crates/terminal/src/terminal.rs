@@ -140,6 +140,7 @@ pub enum Event {
     Wakeup,
     BlinkChanged(bool),
     SelectionsChanged,
+    SshDisconnect,
     NewNavigationTarget(Option<MaybeNavigationTarget>),
     Open(MaybeNavigationTarget),
 }
@@ -2252,7 +2253,11 @@ impl Terminal {
         let task = match &mut self.task {
             Some(task) => task,
             None => {
-                if self.child_exited.is_none_or(|e| e.code() == Some(0)) {
+                if self.is_remote_terminal
+                    && self.child_exited.is_some_and(|e| e.code() == Some(255))
+                {
+                    cx.emit(Event::SshDisconnect);
+                } else if self.child_exited.is_none_or(|e| e.code() == Some(0)) {
                     cx.emit(Event::CloseTerminal);
                 }
                 return;

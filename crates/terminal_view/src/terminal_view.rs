@@ -145,6 +145,8 @@ pub struct TerminalView {
     scroll_handle: TerminalScrollHandle,
     ime_state: Option<ImeState>,
     self_handle: WeakEntity<Self>,
+    reconnect_task: Option<Task<()>>,
+    is_ssh_disconnected: bool,
     rename_editor: Option<Entity<Editor>>,
     rename_editor_subscription: Option<Subscription>,
     _subscriptions: Vec<Subscription>,
@@ -289,6 +291,8 @@ impl TerminalView {
             scroll_handle,
             needs_serialize: true,
             custom_title: None,
+            reconnect_task: None,
+            is_ssh_disconnected: false,
             ime_state: None,
             self_handle: cx.entity().downgrade(),
             rename_editor: None,
@@ -953,6 +957,46 @@ impl TerminalView {
         self.terminal = terminal;
     }
 
+    fn attempt_ssh_reconnect(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let terminal_id = self.terminal.read(cx).terminal_id().to_string();
+        let project = self.project.clone();
+
+        self.reconnect_task = Some(cx.spawn_in(window, async move |this, cx| {
+            cx.background_executor()
+                .timer(Duration::from_secs(2))
+                .await;
+
+            let task = project.update(cx, |project, cx| {
+                project.create_terminal_shell_with_id(None, terminal_id, cx)
+            });
+
+            let result = match task {
+                Ok(task) => task.await,
+                Err(error) => Err(error),
+            };
+
+            match result {
+                Ok(new_terminal) => {
+                    this.update_in(cx, |this, window, cx| {
+                        this.set_terminal(new_terminal, window, cx);
+                        this.is_ssh_disconnected = false;
+                        this.reconnect_task = None;
+                        cx.emit(ItemEvent::UpdateTab);
+                        cx.notify();
+                    })
+                    .ok();
+                }
+                Err(error) => {
+                    log::error!("SSH reconnect failed: {error:?}");
+                    this.update(cx, |this, _cx| {
+                        this.reconnect_task = None;
+                    })
+                    .ok();
+                }
+            }
+        }));
+    }
+
     fn rerun_button(task: &TaskState) -> Option<IconButton> {
         if !task.spawned_task.show_rerun {
             return None;
@@ -1093,6 +1137,12 @@ fn subscribe_for_terminal_events(
                 },
                 Event::BreadcrumbsChanged => cx.emit(ItemEvent::UpdateBreadcrumbs),
                 Event::CloseTerminal => cx.emit(ItemEvent::CloseItem),
+                Event::SshDisconnect => {
+                    terminal_view.is_ssh_disconnected = true;
+                    cx.emit(ItemEvent::UpdateTab);
+                    cx.notify();
+                    terminal_view.attempt_ssh_reconnect(window, cx);
+                }
                 Event::SelectionsChanged => {
                     window.invalidate_character_coordinates();
                     cx.emit(SearchEvent::ActiveMatchChanged)
@@ -1348,7 +1398,13 @@ impl Item for TerminalView {
                     }
                 }
             },
-            None => (IconName::Terminal, Color::Muted, None),
+            None => {
+                if self.is_ssh_disconnected {
+                    (IconName::Disconnected, Color::Warning, None)
+                } else {
+                    (IconName::Terminal, Color::Muted, None)
+                }
+            }
         };
 
         h_flex()
