@@ -91,7 +91,7 @@ async fn get_messages_impl(git: &GitBinary, shas: &[Oid]) -> Result<Vec<String>>
     anyhow::ensure!(
         output.status.success(),
         "'git show' failed with error {:?}",
-        output.status
+        String::from_utf8_lossy(&output.stderr)
     );
     Ok(String::from_utf8_lossy(&output.stdout)
         .trim()
