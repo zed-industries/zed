@@ -54,7 +54,7 @@ use ui::{
 use util::{RangeExt, ResultExt, TryFutureExt, debug_panic, rel_path::RelPath};
 use workspace::{
     OpenInTerminal, WeakItemHandle, Workspace,
-    dock::{DockPosition, Panel, PanelEvent},
+    dock::{DockPosition, Panel, PanelEvent, PanelIconButton},
     item::ItemHandle,
     searchable::{SearchEvent, SearchableItem},
 };
@@ -5017,18 +5017,16 @@ impl Panel for OutlinePanel {
         });
     }
 
-    fn icon(&self, _: &Window, cx: &App) -> Option<IconName> {
-        OutlinePanelSettings::get_global(cx)
-            .button
-            .then_some(IconName::ListTree)
+    fn icon_button(&self, _window: &Window, _cx: &App) -> PanelIconButton {
+        PanelIconButton {
+            icon: IconName::ListTree,
+            tooltip: "Outline Panel",
+            action: Box::new(ToggleFocus),
+        }
     }
 
-    fn icon_tooltip(&self, _window: &Window, _: &App) -> Option<&'static str> {
-        Some("Outline Panel")
-    }
-
-    fn toggle_action(&self) -> Box<dyn Action> {
-        Box::new(ToggleFocus)
+    fn enabled(&self, cx: &App) -> bool {
+        OutlinePanelSettings::get_global(cx).button
     }
 
     fn starts_open(&self, _window: &Window, _: &App) -> bool {

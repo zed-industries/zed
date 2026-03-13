@@ -14,7 +14,6 @@ use settings::SettingsStore;
 use std::sync::Arc;
 use ui::{ContextMenu, Divider, DividerColor, IconButton, Tooltip, h_flex};
 use ui::{prelude::*, right_click_menu};
-use util::ResultExt as _;
 
 pub(crate) const RESIZE_HANDLE_SIZE: Pixels = px(6.);
 
@@ -27,6 +26,12 @@ pub enum PanelEvent {
 
 pub use proto::PanelId;
 
+pub struct PanelIconButton {
+    pub icon: ui::IconName,
+    pub tooltip: &'static str,
+    pub action: Box<dyn Action>,
+}
+
 pub trait Panel: Focusable + EventEmitter<PanelEvent> + Render + Sized {
     fn persistent_name() -> &'static str;
     fn panel_key() -> &'static str;
@@ -35,10 +40,8 @@ pub trait Panel: Focusable + EventEmitter<PanelEvent> + Render + Sized {
     fn set_position(&mut self, position: DockPosition, window: &mut Window, cx: &mut Context<Self>);
     fn size(&self, window: &Window, cx: &App) -> Pixels;
     fn set_size(&mut self, size: Option<Pixels>, window: &mut Window, cx: &mut Context<Self>);
-    fn icon(&self, window: &Window, cx: &App) -> Option<ui::IconName>;
-    fn icon_tooltip(&self, window: &Window, cx: &App) -> Option<&'static str>;
-    fn toggle_action(&self) -> Box<dyn Action>;
-    fn icon_label(&self, _window: &Window, _: &App) -> Option<String> {
+    fn icon_button(&self, window: &Window, cx: &App) -> PanelIconButton;
+    fn secondary_button(&self, _window: &Window, _cx: &App) -> Option<PanelIconButton> {
         None
     }
     fn is_zoomed(&self, _window: &Window, _cx: &App) -> bool {
@@ -75,10 +78,8 @@ pub trait PanelHandle: Send + Sync {
     fn pane(&self, cx: &App) -> Option<Entity<Pane>>;
     fn size(&self, window: &Window, cx: &App) -> Pixels;
     fn set_size(&self, size: Option<Pixels>, window: &mut Window, cx: &mut App);
-    fn icon(&self, window: &Window, cx: &App) -> Option<ui::IconName>;
-    fn icon_tooltip(&self, window: &Window, cx: &App) -> Option<&'static str>;
-    fn toggle_action(&self, window: &Window, cx: &App) -> Box<dyn Action>;
-    fn icon_label(&self, window: &Window, cx: &App) -> Option<String>;
+    fn icon_button(&self, window: &Window, cx: &App) -> PanelIconButton;
+    fn secondary_button(&self, window: &Window, cx: &App) -> Option<PanelIconButton>;
     fn panel_focus_handle(&self, cx: &App) -> FocusHandle;
     fn to_any(&self) -> AnyView;
     fn activation_priority(&self, cx: &App) -> u32;
@@ -156,20 +157,12 @@ where
         self.update(cx, |this, cx| this.set_size(size, window, cx))
     }
 
-    fn icon(&self, window: &Window, cx: &App) -> Option<ui::IconName> {
-        self.read(cx).icon(window, cx)
+    fn icon_button(&self, window: &Window, cx: &App) -> PanelIconButton {
+        self.read(cx).icon_button(window, cx)
     }
 
-    fn icon_tooltip(&self, window: &Window, cx: &App) -> Option<&'static str> {
-        self.read(cx).icon_tooltip(window, cx)
-    }
-
-    fn toggle_action(&self, _: &Window, cx: &App) -> Box<dyn Action> {
-        self.read(cx).toggle_action()
-    }
-
-    fn icon_label(&self, window: &Window, cx: &App) -> Option<String> {
-        self.read(cx).icon_label(window, cx)
+    fn secondary_button(&self, window: &Window, cx: &App) -> Option<PanelIconButton> {
+        self.read(cx).secondary_button(window, cx)
     }
 
     fn to_any(&self) -> AnyView {
@@ -263,11 +256,6 @@ impl DockPosition {
 struct PanelEntry {
     panel: Arc<dyn PanelHandle>,
     _subscriptions: [Subscription; 3],
-}
-
-pub struct PanelButtons {
-    dock: Entity<Dock>,
-    _settings_subscription: Subscription,
 }
 
 impl Dock {
@@ -886,6 +874,11 @@ impl Render for Dock {
     }
 }
 
+pub struct PanelButtons {
+    dock: Entity<Dock>,
+    _settings_subscription: Subscription,
+}
+
 impl PanelButtons {
     pub fn new(dock: Entity<Dock>, cx: &mut Context<Self>) -> Self {
         cx.observe(&dock, |_, _, cx| cx.notify()).detach();
@@ -914,14 +907,15 @@ impl Render for PanelButtons {
             .iter()
             .enumerate()
             .filter_map(|(i, entry)| {
-                let icon = entry.panel.icon(window, cx)?;
-                let icon_tooltip = entry
-                    .panel
-                    .icon_tooltip(window, cx)
-                    .ok_or_else(|| {
-                        anyhow::anyhow!("can't render a panel button without an icon tooltip")
-                    })
-                    .log_err()?;
+                if !entry.panel.enabled(cx) {
+                    return None;
+                }
+                let PanelIconButton {
+                    icon,
+                    tooltip: icon_tooltip,
+                    action: toggle_action,
+                } = entry.panel.icon_button(window, cx);
+                let secondary_button = entry.panel.secondary_button(window, cx);
                 let name = entry.panel.persistent_name();
                 let panel = entry.panel.clone();
 
@@ -934,9 +928,7 @@ impl Render for PanelButtons {
 
                     (action, tooltip)
                 } else {
-                    let action = entry.panel.toggle_action(window, cx);
-
-                    (action, icon_tooltip.into())
+                    (toggle_action, icon_tooltip.into())
                 };
 
                 let focus_handle = dock.focus_handle(cx);
@@ -970,10 +962,10 @@ impl Render for PanelButtons {
                         })
                         .anchor(menu_anchor)
                         .attach(menu_attach)
-                        .trigger(move |is_active, _window, _cx| {
+                        .trigger(move |is_active, _window, cx| {
                             // Include active state in element ID to invalidate the cached
                             // tooltip when panel state changes (e.g., via keyboard shortcut)
-                            IconButton::new((name, is_active_button as u64), icon)
+                            let button = IconButton::new((name, is_active_button as u64), icon)
                                 .icon_size(IconSize::Small)
                                 .toggle_state(is_active_button)
                                 .on_click({
@@ -987,7 +979,48 @@ impl Render for PanelButtons {
                                     this.tooltip(move |_window, cx| {
                                         Tooltip::for_action(tooltip.clone(), &*action, cx)
                                     })
-                                })
+                                });
+
+                            match secondary_button {
+                                Some(secondary_button) => {
+                                    let action = secondary_button.action.boxed_clone();
+                                    let secondary_button =
+                                        IconButton::new("secondary-button", secondary_button.icon)
+                                            .icon_size(IconSize::Small)
+                                            .toggle_state(false) // todo! show active when drawer is open
+                                            .on_click({
+                                                let action = action.boxed_clone();
+                                                move |_, window, cx| {
+                                                    window.dispatch_action(action.boxed_clone(), cx)
+                                                }
+                                            })
+                                            .when(!is_active, |this| {
+                                                this.tooltip(move |_window, cx| {
+                                                    Tooltip::for_action(
+                                                        secondary_button.tooltip,
+                                                        &*action,
+                                                        cx,
+                                                    )
+                                                })
+                                            });
+
+                                    h_flex()
+                                        .min_w_0()
+                                        .rounded_sm()
+                                        .gap_px()
+                                        .border_1()
+                                        .border_color(cx.theme().colors().border)
+                                        .when(
+                                            matches!(dock_position, DockPosition::Right),
+                                            |this| this.flex_row_reverse(),
+                                        )
+                                        .child(button)
+                                        .child(div().h_4().w_px().bg(cx.theme().colors().border))
+                                        .child(secondary_button)
+                                        .into_any_element()
+                                }
+                                None => button.into_any_element(),
+                            }
                         }),
                 )
             })
@@ -1085,16 +1118,12 @@ pub mod test {
             self.size = size.unwrap_or(px(300.));
         }
 
-        fn icon(&self, _window: &Window, _: &App) -> Option<ui::IconName> {
-            None
-        }
-
-        fn icon_tooltip(&self, _window: &Window, _cx: &App) -> Option<&'static str> {
-            None
-        }
-
-        fn toggle_action(&self) -> Box<dyn Action> {
-            ToggleTestPanel.boxed_clone()
+        fn icon_button(&self, _window: &Window, _cx: &App) -> PanelIconButton {
+            PanelIconButton {
+                icon: ui::IconName::Cog,
+                tooltip: "Test Panel",
+                action: ToggleTestPanel.boxed_clone(),
+            }
         }
 
         fn is_zoomed(&self, _window: &Window, _: &App) -> bool {

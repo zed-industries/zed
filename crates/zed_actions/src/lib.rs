@@ -516,7 +516,11 @@ pub mod assistant {
             /// Toggles the agent panel.
             Toggle,
             #[action(deprecated_aliases = ["assistant::ToggleFocus"])]
-            ToggleFocus
+            ToggleFocus,
+            /// Toggles the agent drawer open or closed.
+            ToggleAgentDrawer,
+            /// Toggles the threads sidebar panel in the status bar.
+            ToggleThreadsSidebar
         ]
     );
 

@@ -72,7 +72,7 @@ use util::{
 use workspace::{
     DraggedSelection, OpenInTerminal, OpenOptions, OpenVisible, PreviewTabsSettings, SelectedEntry,
     SplitDirection, Workspace,
-    dock::{DockPosition, Panel, PanelEvent},
+    dock::{DockPosition, Panel, PanelEvent, PanelIconButton},
     notifications::{DetachAndPromptErr, NotifyResultExt, NotifyTaskExt},
 };
 use worktree::CreatedEntry;
@@ -7057,18 +7057,16 @@ impl Panel for ProjectPanel {
         });
     }
 
-    fn icon(&self, _: &Window, cx: &App) -> Option<IconName> {
-        ProjectPanelSettings::get_global(cx)
-            .button
-            .then_some(IconName::FileTree)
+    fn icon_button(&self, _window: &Window, _cx: &App) -> PanelIconButton {
+        PanelIconButton {
+            icon: IconName::FileTree,
+            tooltip: "Project Panel",
+            action: Box::new(ToggleFocus),
+        }
     }
 
-    fn icon_tooltip(&self, _window: &Window, _cx: &App) -> Option<&'static str> {
-        Some("Project Panel")
-    }
-
-    fn toggle_action(&self) -> Box<dyn Action> {
-        Box::new(ToggleFocus)
+    fn enabled(&self, cx: &App) -> bool {
+        ProjectPanelSettings::get_global(cx).button
     }
 
     fn persistent_name() -> &'static str {

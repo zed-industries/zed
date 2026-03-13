@@ -32,7 +32,7 @@ use workspace::{
     MoveItemToPaneInDirection, MovePaneDown, MovePaneLeft, MovePaneRight, MovePaneUp, Pane,
     PaneGroup, SplitDirection, SplitDown, SplitLeft, SplitMode, SplitRight, SplitUp, SwapPaneDown,
     SwapPaneLeft, SwapPaneRight, SwapPaneUp, ToggleZoom, Workspace,
-    dock::{DockPosition, Panel, PanelEvent, PanelHandle},
+    dock::{DockPosition, Panel, PanelEvent, PanelHandle, PanelIconButton},
     item::SerializableItem,
     move_active_item, pane,
 };
@@ -1605,20 +1605,6 @@ impl Panel for TerminalPanel {
         })
     }
 
-    fn icon_label(&self, _window: &Window, cx: &App) -> Option<String> {
-        let count = self
-            .center
-            .panes()
-            .into_iter()
-            .map(|pane| pane.read(cx).items_len())
-            .sum::<usize>();
-        if count == 0 {
-            None
-        } else {
-            Some(count.to_string())
-        }
-    }
-
     fn persistent_name() -> &'static str {
         "TerminalPanel"
     }
@@ -1627,22 +1613,12 @@ impl Panel for TerminalPanel {
         TERMINAL_PANEL_KEY
     }
 
-    fn icon(&self, _window: &Window, cx: &App) -> Option<IconName> {
-        if (self.is_enabled(cx) || !self.has_no_terminals(cx))
-            && TerminalSettings::get_global(cx).button
-        {
-            Some(IconName::TerminalAlt)
-        } else {
-            None
+    fn icon_button(&self, _window: &Window, _cx: &App) -> PanelIconButton {
+        PanelIconButton {
+            icon: IconName::TerminalAlt,
+            tooltip: "Terminal Panel",
+            action: Box::new(ToggleFocus),
         }
-    }
-
-    fn icon_tooltip(&self, _window: &Window, _cx: &App) -> Option<&'static str> {
-        Some("Terminal Panel")
-    }
-
-    fn toggle_action(&self) -> Box<dyn gpui::Action> {
-        Box::new(ToggleFocus)
     }
 
     fn pane(&self) -> Option<Entity<Pane>> {
@@ -1651,6 +1627,11 @@ impl Panel for TerminalPanel {
 
     fn activation_priority(&self) -> u32 {
         1
+    }
+
+    fn enabled(&self, cx: &App) -> bool {
+        (self.is_enabled(cx) || !self.has_no_terminals(cx))
+            && TerminalSettings::get_global(cx).button
     }
 }
 

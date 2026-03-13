@@ -749,7 +749,7 @@ impl RenderOnce for HistoryEntryElement {
                         .upgrade()
                         .and_then(|view| view.read(cx).workspace().upgrade())
                     {
-                        if let Some(panel) = workspace.read(cx).panel::<AgentPanel>(cx) {
+                        if let Some(panel) = workspace.read(cx).drawer::<AgentPanel>() {
                             panel.update(cx, |panel, cx| {
                                 if let Some(agent) = panel.selected_agent() {
                                     panel.load_agent_thread(

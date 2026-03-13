@@ -27,7 +27,7 @@ use workspace::notifications::{
 };
 use workspace::{
     Workspace,
-    dock::{DockPosition, Panel, PanelEvent},
+    dock::{DockPosition, Panel, PanelEvent, PanelIconButton},
 };
 
 const LOADING_THRESHOLD: usize = 30;
@@ -659,34 +659,20 @@ impl Panel for NotificationPanel {
         }
     }
 
-    fn icon(&self, _: &Window, cx: &App) -> Option<IconName> {
-        let show_button = NotificationPanelSettings::get_global(cx).button;
-        if !show_button {
-            return None;
-        }
-
-        if self.unseen_notifications.is_empty() {
-            return Some(IconName::Bell);
-        }
-
-        Some(IconName::BellDot)
-    }
-
-    fn icon_tooltip(&self, _window: &Window, _cx: &App) -> Option<&'static str> {
-        Some("Notification Panel")
-    }
-
-    fn icon_label(&self, _window: &Window, cx: &App) -> Option<String> {
-        let count = self.notification_store.read(cx).unread_notification_count();
-        if count == 0 {
-            None
-        } else {
-            Some(count.to_string())
+    fn icon_button(&self, _window: &Window, _cx: &App) -> PanelIconButton {
+        PanelIconButton {
+            icon: if self.unseen_notifications.is_empty() {
+                IconName::Bell
+            } else {
+                IconName::BellDot
+            },
+            tooltip: "Notification Panel",
+            action: Box::new(ToggleFocus),
         }
     }
 
-    fn toggle_action(&self) -> Box<dyn gpui::Action> {
-        Box::new(ToggleFocus)
+    fn enabled(&self, cx: &App) -> bool {
+        NotificationPanelSettings::get_global(cx).button
     }
 
     fn activation_priority(&self) -> u32 {

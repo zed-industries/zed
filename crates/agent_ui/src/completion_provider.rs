@@ -1096,7 +1096,7 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
         let project = workspace.project().read(cx);
         let include_root_name = workspace.visible_worktrees(cx).count() > 1;
 
-        if let Some(agent_panel) = workspace.panel::<AgentPanel>(cx)
+        if let Some(agent_panel) = workspace.drawer::<AgentPanel>()
             && let Some(thread) = agent_panel.read(cx).active_agent_thread(cx)
         {
             let thread = thread.read(cx);
