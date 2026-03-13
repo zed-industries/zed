@@ -3,7 +3,7 @@ use std::{path::Path, sync::Arc};
 use collections::BTreeMap;
 use gpui::{Entity, TestAppContext};
 use language::Buffer;
-use project::{Project, bookmark_store::SerializedBookmark};
+use project::{Project, bookmark_store::BookmarkRow};
 use serde_json::json;
 use util::path;
 
@@ -58,26 +58,22 @@ mod integration {
     fn get_all_bookmarks(
         project: &Entity<Project>,
         cx: &mut TestAppContext,
-    ) -> BTreeMap<Arc<Path>, Vec<SerializedBookmark>> {
+    ) -> BTreeMap<Arc<Path>, Vec<BookmarkRow>> {
         project.read_with(cx, |project, cx| {
-            project.bookmark_store().read(cx).all_serialized_bookmarks(cx)
+            project
+                .bookmark_store()
+                .read(cx)
+                .all_serialized_bookmarks(cx)
         })
     }
 
-    fn build_serialized(
-        entries: &[(&str, &[u32])],
-    ) -> BTreeMap<Arc<Path>, Vec<SerializedBookmark>> {
+    fn build_serialized(entries: &[(&str, &[u32])]) -> BTreeMap<Arc<Path>, Vec<BookmarkRow>> {
         let mut map = BTreeMap::new();
         for &(path_str, rows) in entries {
             let path = project_path(path_str);
             map.insert(
                 path.clone(),
-                rows.iter()
-                    .map(|&row| SerializedBookmark {
-                        row,
-                        path: path.clone(),
-                    })
-                    .collect(),
+                rows.iter().map(|&row| BookmarkRow(row)).collect(),
             );
         }
         map
@@ -85,7 +81,7 @@ mod integration {
 
     async fn restore_bookmarks(
         project: &Entity<Project>,
-        serialized: BTreeMap<Arc<Path>, Vec<SerializedBookmark>>,
+        serialized: BTreeMap<Arc<Path>, Vec<BookmarkRow>>,
         cx: &mut TestAppContext,
     ) {
         project
@@ -107,7 +103,7 @@ mod integration {
     }
 
     fn assert_bookmark_rows(
-        bookmarks: &BTreeMap<Arc<Path>, Vec<SerializedBookmark>>,
+        bookmarks: &BTreeMap<Arc<Path>, Vec<BookmarkRow>>,
         path: &str,
         expected_rows: &[u32],
     ) {
@@ -115,7 +111,7 @@ mod integration {
         let file_bookmarks = bookmarks
             .get(&path)
             .unwrap_or_else(|| panic!("Expected bookmarks for {}", path.display()));
-        let rows: Vec<u32> = file_bookmarks.iter().map(|b| b.row).collect();
+        let rows: Vec<u32> = file_bookmarks.iter().map(|b| b.0).collect();
         assert_eq!(rows, expected_rows, "Bookmark rows for {}", path.display());
     }
 
@@ -295,7 +291,7 @@ mod integration {
             .get(&project_path(path!("/project/file1.rs")))
             .unwrap()
             .iter()
-            .map(|b| b.row)
+            .map(|b| b.0)
             .collect();
         let mut deduped = rows.clone();
         deduped.dedup();

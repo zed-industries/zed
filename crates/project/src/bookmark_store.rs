@@ -16,11 +16,8 @@ impl BookmarkAnchor {
     }
 }
 
-#[derive(Clone, Debug, Hash, PartialEq, Eq)]
-pub struct SerializedBookmark {
-    pub row: u32,
-    pub path: Arc<Path>,
-}
+#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq, PartialOrd, Ord)]
+pub struct BookmarkRow(pub u32);
 
 #[derive(Debug)]
 pub struct BufferBookmarks {
@@ -74,7 +71,7 @@ impl BookmarkStore {
 
     pub fn with_serialized_bookmarks(
         &mut self,
-        bookmarks: BTreeMap<Arc<Path>, Vec<SerializedBookmark>>,
+        bookmark_rows: BTreeMap<Arc<Path>, Vec<BookmarkRow>>,
         cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
         let worktree_store = self.worktree_store.downgrade();
@@ -83,7 +80,7 @@ impl BookmarkStore {
         cx.spawn(async move |this, cx| {
             let mut new_bookmarks = BTreeMap::default();
 
-            for (path, bookmarks) in bookmarks {
+            for (path, bookmarks) in bookmark_rows {
                 if bookmarks.is_empty() {
                     continue;
                 }
@@ -118,13 +115,13 @@ impl BookmarkStore {
                 let bookmarks_vec: Vec<BookmarkAnchor> = bookmarks
                     .into_iter()
                     .filter_map(|bookmark| {
-                        let point = Point::new(bookmark.row, 0);
+                        let point = Point::new(bookmark.0, 0);
 
                         if point > max_point {
                             log::warn!(
                                 "Skipping out-of-range bookmark: {} row {} (file has {} rows)",
                                 path.display(),
-                                bookmark.row,
+                                bookmark.0,
                                 max_point.row
                             );
                             return None;
@@ -277,15 +274,12 @@ impl BookmarkStore {
         }
     }
 
-    pub fn all_serialized_bookmarks(
-        &self,
-        cx: &App,
-    ) -> BTreeMap<Arc<Path>, Vec<SerializedBookmark>> {
+    pub fn all_serialized_bookmarks(&self, cx: &App) -> BTreeMap<Arc<Path>, Vec<BookmarkRow>> {
         self.bookmarks
             .iter()
             .filter_map(|(path, buffer_bookmarks)| {
                 let snapshot = buffer_bookmarks.buffer.read(cx).snapshot();
-                let mut bookmarks: Vec<SerializedBookmark> = buffer_bookmarks
+                let mut bookmark_rows: Vec<BookmarkRow> = buffer_bookmarks
                     .bookmarks
                     .iter()
                     .filter_map(|bookmark| {
@@ -293,20 +287,17 @@ impl BookmarkStore {
                             return None;
                         }
                         let row = snapshot.summary_for_anchor::<Point>(&bookmark.anchor()).row;
-                        Some(SerializedBookmark {
-                            row,
-                            path: path.clone(),
-                        })
+                        Some(BookmarkRow(row))
                     })
                     .collect();
 
-                bookmarks.sort_by_key(|a| a.row);
-                bookmarks.dedup_by(|a, b| a.row == b.row);
+                bookmark_rows.sort();
+                bookmark_rows.dedup();
 
-                if bookmarks.is_empty() {
+                if bookmark_rows.is_empty() {
                     None
                 } else {
-                    Some((path.clone(), bookmarks))
+                    Some((path.clone(), bookmark_rows))
                 }
             })
             .collect()

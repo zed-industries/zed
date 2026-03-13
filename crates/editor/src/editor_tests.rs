@@ -41,7 +41,7 @@ use parking_lot::Mutex;
 use pretty_assertions::{assert_eq, assert_ne};
 use project::{
     FakeFs, Project,
-    bookmark_store::SerializedBookmark,
+    bookmark_store::BookmarkRow,
     debugger::breakpoint_store::{BreakpointState, SourceBreakpoint},
     project_settings::LspSettings,
     trusted_worktrees::{PathTrust, TrustedWorktrees},
@@ -26472,9 +26472,12 @@ impl BookmarkTestContext {
         })
     }
 
-    fn all_bookmarks(&self) -> BTreeMap<Arc<Path>, Vec<SerializedBookmark>> {
+    fn all_bookmarks(&self) -> BTreeMap<Arc<Path>, Vec<BookmarkRow>> {
         self.project.read_with(&self.cx, |project, cx| {
-            project.bookmark_store().read(cx).all_serialized_bookmarks(cx)
+            project
+                .bookmark_store()
+                .read(cx)
+                .all_serialized_bookmarks(cx)
         })
     }
 
@@ -26492,7 +26495,7 @@ impl BookmarkTestContext {
                 .get(&abs_path)
                 .unwrap()
                 .iter()
-                .map(|b| b.row)
+                .map(|b| b.0)
                 .collect();
             rows.sort();
             assert_eq!(expected_rows, rows);
