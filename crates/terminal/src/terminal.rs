@@ -83,6 +83,8 @@ actions!(
         Copy,
         /// Pastes from the clipboard.
         Paste,
+        /// Pastes the text from the clipboard.
+        PasteText,
         /// Shows the character palette for special characters.
         ShowCharacterPalette,
         /// Searches for text in the terminal.
