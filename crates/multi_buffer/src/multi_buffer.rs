@@ -2459,9 +2459,6 @@ impl MultiBuffer {
         let diff = diff.read(cx);
         let buffer_id = diff.buffer_id;
 
-        let Some(buffer_state) = self.buffers.get(&buffer_id) else {
-            return;
-        };
         let new_diff = DiffStateSnapshot {
             diff: diff.snapshot(cx),
             main_buffer: None,
@@ -2472,6 +2469,10 @@ impl MultiBuffer {
             .get(&buffer_id)
             .is_none_or(|old_diff| !new_diff.base_texts_definitely_eq(old_diff));
         snapshot.diffs.insert_or_replace(buffer_id, new_diff);
+
+        let Some(buffer_state) = self.buffers.get(&buffer_id) else {
+            return;
+        };
 
         let buffer = buffer_state.buffer.read(cx);
         let diff_change_range = range.to_offset(buffer);

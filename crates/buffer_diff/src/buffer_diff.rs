@@ -50,6 +50,53 @@ pub struct BufferDiffUpdate {
     base_text_changed: bool,
 }
 
+impl BufferDiffUpdate {
+    pub fn from_hunks(
+        base_text: Arc<str>,
+        base_snapshot: &Rope,
+        buffer_snapshot: text::BufferSnapshot,
+        edits: Patch<usize>,
+        diff_options: Option<DiffOptions>,
+    ) -> Self {
+        let hunks = edits.into_iter().map(|edit| {
+            let buffer_range = buffer_snapshot.anchor_after(edit.new.start)
+                ..buffer_snapshot.anchor_after(edit.new.end);
+
+            let (base_word_diffs, buffer_word_diffs) = if let Some(options) = &diff_options {
+                word_diffs(
+                    base_snapshot,
+                    edit.old.clone(),
+                    &buffer_snapshot,
+                    buffer_range,
+                    options,
+                )
+            } else {
+                (Vec::new(), Vec::new())
+            };
+            InternalDiffHunk {
+                buffer_range: buffer_snapshot.anchor_before(edit.new.start)
+                    ..buffer_snapshot.anchor_before(edit.new.end),
+                diff_base_byte_range: edit.old,
+                base_word_diffs,
+                buffer_word_diffs,
+            }
+        });
+
+        Self {
+            inner: BufferDiffInner {
+                hunks: SumTree::from_iter(hunks, &buffer_snapshot),
+                pending_hunks: SumTree::new(&buffer_snapshot),
+                base_text,
+                base_text_exists: true,
+                buffer_snapshot: buffer_snapshot.clone(),
+            },
+            buffer_snapshot,
+            base_text_edits: None,
+            base_text_changed: false,
+        }
+    }
+}
+
 #[derive(Clone)]
 struct BufferDiffInner<BaseText> {
     hunks: SumTree<InternalDiffHunk>,
@@ -1412,41 +1459,16 @@ fn process_patch_hunk(
     let end = Point::new(buffer_row_range.end, 0);
     let buffer_range = buffer.anchor_before(start)..buffer.anchor_before(end);
 
-    let base_line_count = line_item_count.saturating_sub(buffer_row_range.len());
-
-    let (base_word_diffs, buffer_word_diffs) = if let Some(diff_options) = diff_options
-        && !buffer_row_range.is_empty()
-        && base_line_count == buffer_row_range.len()
-        && diff_options.max_word_diff_line_count >= base_line_count
-    {
-        let base_text: String = diff_base
-            .chunks_in_range(diff_base_byte_range.clone())
-            .collect();
-
-        let buffer_text: String = buffer.text_for_range(buffer_range.clone()).collect();
-
-        let (base_word_diffs, buffer_word_diffs_relative) = word_diff_ranges(
-            &base_text,
-            &buffer_text,
-            DiffOptions {
-                language_scope: diff_options.language_scope.clone(),
-                ..*diff_options
-            },
-        );
-
-        let buffer_start_offset = buffer_range.start.to_offset(buffer);
-        let buffer_word_diffs = buffer_word_diffs_relative
-            .into_iter()
-            .map(|range| {
-                let start = buffer.anchor_after(buffer_start_offset + range.start);
-                let end = buffer.anchor_after(buffer_start_offset + range.end);
-                start..end
-            })
-            .collect();
-
-        (base_word_diffs, buffer_word_diffs)
+    let (base_word_diffs, buffer_word_diffs) = if let Some(options) = diff_options {
+        word_diffs(
+            diff_base,
+            diff_base_byte_range.clone(),
+            buffer,
+            buffer_range.clone(),
+            options,
+        )
     } else {
-        (Vec::default(), Vec::default())
+        (Vec::new(), Vec::new())
     };
 
     InternalDiffHunk {
@@ -1455,6 +1477,44 @@ fn process_patch_hunk(
         base_word_diffs,
         buffer_word_diffs,
     }
+}
+
+fn word_diffs(
+    diff_base: &Rope,
+    diff_base_byte_range: Range<usize>,
+    buffer: &text::BufferSnapshot,
+    buffer_range: Range<Anchor>,
+    options: &DiffOptions,
+) -> (Vec<Range<usize>>, Vec<Range<Anchor>>) {
+    let buffer_rows = buffer.text_summary_for_range::<Point, _>(buffer_range.clone());
+    let base_text_rows = diff_base
+        .cursor(diff_base_byte_range.start)
+        .summary::<Point>(diff_base_byte_range.end);
+    if buffer_rows == Point::zero()
+        || base_text_rows.row != buffer_rows.row
+        || base_text_rows.row > options.max_word_diff_line_count as u32
+    {
+        return (Vec::default(), Vec::default());
+    }
+
+    let base_text: String = diff_base.chunks_in_range(diff_base_byte_range).collect();
+
+    let buffer_text: String = buffer.text_for_range(buffer_range.clone()).collect();
+
+    let (base_word_diffs, buffer_word_diffs_relative) =
+        word_diff_ranges(&base_text, &buffer_text, options.clone());
+
+    let buffer_start_offset = buffer_range.start.to_offset(buffer);
+    let buffer_word_diffs = buffer_word_diffs_relative
+        .into_iter()
+        .map(|range| {
+            let start = buffer.anchor_after(buffer_start_offset + range.start);
+            let end = buffer.anchor_after(buffer_start_offset + range.end);
+            start..end
+        })
+        .collect();
+
+    (base_word_diffs, buffer_word_diffs)
 }
 
 impl std::fmt::Debug for BufferDiff {
