@@ -1335,6 +1335,8 @@ pub struct Workspace {
     scheduled_tasks: Vec<Task<()>>,
     last_open_dock_positions: Vec<DockPosition>,
     removing: bool,
+    open_in_dev_container: bool,
+    _dev_container_task: Option<Task<Result<()>>>,
     _panels_task: Option<Task<Result<()>>>,
 }
 
@@ -1741,6 +1743,8 @@ impl Workspace {
             scheduled_tasks: Vec::new(),
             last_open_dock_positions: Vec::new(),
             removing: false,
+            open_in_dev_container: false,
+            _dev_container_task: None,
         }
     }
 
@@ -2522,6 +2526,18 @@ impl Workspace {
         self.debugger_provider = Some(Arc::new(provider));
     }
 
+    pub fn set_open_in_dev_container(&mut self, value: bool) {
+        self.open_in_dev_container = value;
+    }
+
+    pub fn open_in_dev_container(&self) -> bool {
+        self.open_in_dev_container
+    }
+
+    pub fn set_dev_container_task(&mut self, task: Task<Result<()>>) {
+        self._dev_container_task = Some(task);
+    }
+
     pub fn debugger_provider(&self) -> Option<Arc<dyn DebuggerProvider>> {
         self.debugger_provider.clone()
     }
@@ -2748,7 +2764,6 @@ impl Workspace {
         self.project.read(cx).visible_worktrees(cx)
     }
 
-    #[cfg(any(test, feature = "test-support"))]
     pub fn worktree_scans_complete(&self, cx: &App) -> impl Future<Output = ()> + 'static + use<> {
         let futures = self
             .worktrees(cx)
@@ -8775,6 +8790,7 @@ pub struct OpenOptions {
     pub wait: bool,
     pub replace_window: Option<WindowHandle<MultiWorkspace>>,
     pub env: Option<HashMap<String, String>>,
+    pub open_in_dev_container: bool,
 }
 
 /// The result of opening a workspace via [`open_paths`], [`Workspace::new_local`],
@@ -8952,12 +8968,17 @@ pub fn open_paths(
             }
         }
 
+        let open_in_dev_container = open_options.open_in_dev_container;
+
         let result = if let Some((existing, target_workspace)) = existing {
             let open_task = existing
                 .update(cx, |multi_workspace, window, cx| {
                     window.activate_window();
                     multi_workspace.activate(target_workspace.clone(), cx);
                     target_workspace.update(cx, |workspace, cx| {
+                        if open_in_dev_container {
+                            workspace.set_open_in_dev_container(true);
+                        }
                         workspace.open_paths(
                             abs_paths,
                             OpenOptions {
@@ -8985,6 +9006,13 @@ pub fn open_paths(
 
             Ok(OpenResult { window: existing, workspace: target_workspace, opened_items: open_task })
         } else {
+            let init = if open_in_dev_container {
+                Some(Box::new(|workspace: &mut Workspace, _window: &mut Window, _cx: &mut Context<Workspace>| {
+                    workspace.set_open_in_dev_container(true);
+                }) as Box<dyn FnOnce(&mut Workspace, &mut Window, &mut Context<Workspace>) + Send>)
+            } else {
+                None
+            };
             let result = cx
                 .update(move |cx| {
                     Workspace::new_local(
@@ -8992,7 +9020,7 @@ pub fn open_paths(
                         app_state.clone(),
                         open_options.replace_window,
                         open_options.env,
-                        None,
+                        init,
                         true,
                         cx,
                     )
