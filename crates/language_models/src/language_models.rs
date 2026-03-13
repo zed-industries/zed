@@ -14,6 +14,7 @@ mod settings;
 pub use crate::extension::init_proxy as init_extension_proxy;
 
 use crate::provider::anthropic::AnthropicLanguageModelProvider;
+use crate::provider::anthropic_compatible::AnthropicCompatibleLanguageModelProvider;
 use crate::provider::bedrock::BedrockLanguageModelProvider;
 use crate::provider::cloud::CloudLanguageModelProvider;
 use crate::provider::copilot_chat::CopilotChatLanguageModelProvider;
@@ -90,12 +91,24 @@ pub fn init(user_store: Entity<UserStore>, client: Arc<Client>, cx: &mut App) {
         .keys()
         .cloned()
         .collect::<HashSet<_>>();
+    let mut anthropic_compatible_providers = AllLanguageModelSettings::get_global(cx)
+        .anthropic_compatible
+        .keys()
+        .cloned()
+        .collect::<HashSet<_>>();
 
     registry.update(cx, |registry, cx| {
         register_openai_compatible_providers(
             registry,
             &HashSet::default(),
             &openai_compatible_providers,
+            client.clone(),
+            cx,
+        );
+        register_anthropic_compatible_providers(
+            registry,
+            &HashSet::default(),
+            &anthropic_compatible_providers,
             client.clone(),
             cx,
         );
@@ -118,6 +131,24 @@ pub fn init(user_store: Entity<UserStore>, client: Arc<Client>, cx: &mut App) {
             });
             openai_compatible_providers = openai_compatible_providers_new;
         }
+
+        let anthropic_compatible_providers_new = AllLanguageModelSettings::get_global(cx)
+            .anthropic_compatible
+            .keys()
+            .cloned()
+            .collect::<HashSet<_>>();
+        if anthropic_compatible_providers_new != anthropic_compatible_providers {
+            registry.update(cx, |registry, cx| {
+                register_anthropic_compatible_providers(
+                    registry,
+                    &anthropic_compatible_providers,
+                    &anthropic_compatible_providers_new,
+                    client.clone(),
+                    cx,
+                );
+            });
+            anthropic_compatible_providers = anthropic_compatible_providers_new;
+        }
     })
     .detach();
 }
@@ -139,6 +170,33 @@ fn register_openai_compatible_providers(
         if !old.contains(provider_id) {
             registry.register_provider(
                 Arc::new(OpenAiCompatibleLanguageModelProvider::new(
+                    provider_id.clone(),
+                    client.http_client(),
+                    cx,
+                )),
+                cx,
+            );
+        }
+    }
+}
+
+fn register_anthropic_compatible_providers(
+    registry: &mut LanguageModelRegistry,
+    old: &HashSet<Arc<str>>,
+    new: &HashSet<Arc<str>>,
+    client: Arc<Client>,
+    cx: &mut Context<LanguageModelRegistry>,
+) {
+    for provider_id in old {
+        if !new.contains(provider_id) {
+            registry.unregister_provider(LanguageModelProviderId::from(provider_id.clone()), cx);
+        }
+    }
+
+    for provider_id in new {
+        if !old.contains(provider_id) {
+            registry.register_provider(
+                Arc::new(AnthropicCompatibleLanguageModelProvider::new(
                     provider_id.clone(),
                     client.http_client(),
                     cx,

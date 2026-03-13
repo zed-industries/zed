@@ -10,6 +10,7 @@ use std::sync::Arc;
 #[derive(Default, Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema, MergeFrom)]
 pub struct AllLanguageModelSettingsContent {
     pub anthropic: Option<AnthropicSettingsContent>,
+    pub anthropic_compatible: Option<HashMap<Arc<str>, AnthropicCompatibleSettingsContent>>,
     pub bedrock: Option<AmazonBedrockSettingsContent>,
     pub deepseek: Option<DeepseekSettingsContent>,
     pub google: Option<GoogleSettingsContent>,
@@ -31,6 +32,13 @@ pub struct AllLanguageModelSettingsContent {
 pub struct AnthropicSettingsContent {
     pub api_url: Option<String>,
     pub available_models: Option<Vec<AnthropicAvailableModel>>,
+}
+
+#[with_fallible_options]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema, MergeFrom)]
+pub struct AnthropicCompatibleSettingsContent {
+    pub api_url: String,
+    pub available_models: Vec<AnthropicAvailableModel>,
 }
 
 #[with_fallible_options]

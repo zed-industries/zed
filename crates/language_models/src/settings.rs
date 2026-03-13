@@ -4,16 +4,18 @@ use collections::HashMap;
 use settings::RegisterSetting;
 
 use crate::provider::{
-    anthropic::AnthropicSettings, bedrock::AmazonBedrockSettings, cloud::ZedDotDevSettings,
-    deepseek::DeepSeekSettings, google::GoogleSettings, lmstudio::LmStudioSettings,
-    mistral::MistralSettings, ollama::OllamaSettings, open_ai::OpenAiSettings,
-    open_ai_compatible::OpenAiCompatibleSettings, open_router::OpenRouterSettings,
-    vercel::VercelSettings, vercel_ai_gateway::VercelAiGatewaySettings, x_ai::XAiSettings,
+    anthropic::AnthropicSettings, anthropic_compatible::AnthropicCompatibleSettings,
+    bedrock::AmazonBedrockSettings, cloud::ZedDotDevSettings, deepseek::DeepSeekSettings,
+    google::GoogleSettings, lmstudio::LmStudioSettings, mistral::MistralSettings,
+    ollama::OllamaSettings, open_ai::OpenAiSettings, open_ai_compatible::OpenAiCompatibleSettings,
+    open_router::OpenRouterSettings, vercel::VercelSettings,
+    vercel_ai_gateway::VercelAiGatewaySettings, x_ai::XAiSettings,
 };
 
 #[derive(Debug, RegisterSetting)]
 pub struct AllLanguageModelSettings {
     pub anthropic: AnthropicSettings,
+    pub anthropic_compatible: HashMap<Arc<str>, AnthropicCompatibleSettings>,
     pub bedrock: AmazonBedrockSettings,
     pub deepseek: DeepSeekSettings,
     pub google: GoogleSettings,
@@ -35,6 +37,7 @@ impl settings::Settings for AllLanguageModelSettings {
     fn from_settings(content: &settings::SettingsContent) -> Self {
         let language_models = content.language_models.clone().unwrap();
         let anthropic = language_models.anthropic.unwrap();
+        let anthropic_compatible = language_models.anthropic_compatible.unwrap();
         let bedrock = language_models.bedrock.unwrap();
         let deepseek = language_models.deepseek.unwrap();
         let google = language_models.google.unwrap();
@@ -53,6 +56,18 @@ impl settings::Settings for AllLanguageModelSettings {
                 api_url: anthropic.api_url.unwrap(),
                 available_models: anthropic.available_models.unwrap_or_default(),
             },
+            anthropic_compatible: anthropic_compatible
+                .into_iter()
+                .map(|(key, value)| {
+                    (
+                        key,
+                        AnthropicCompatibleSettings {
+                            api_url: value.api_url,
+                            available_models: value.available_models,
+                        },
+                    )
+                })
+                .collect(),
             bedrock: AmazonBedrockSettings {
                 available_models: bedrock.available_models.unwrap_or_default(),
                 region: bedrock.region,
