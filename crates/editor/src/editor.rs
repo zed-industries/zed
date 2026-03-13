@@ -5582,7 +5582,7 @@ impl Editor {
             _ => self.open_or_update_completions_menu(
                 None,
                 Some(text.to_owned()).filter(|x| !x.is_empty()),
-                true,
+                trigger_in_words,
                 window,
                 cx,
             ),
@@ -6138,6 +6138,7 @@ impl Editor {
         };
 
         let snippets = if let Some(provider) = &provider
+            && load_provider_completions
             && provider.show_snippets()
             && let Some(project) = self.project()
         {
