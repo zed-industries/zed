@@ -283,8 +283,20 @@ impl RenderOnce for ThreadItem {
                             .when_some(self.tooltip, |this, tooltip| this.tooltip(tooltip)),
                     )
                     .child(gradient_overlay)
-                    .when(self.hovered, |this| {
-                        this.when_some(self.action_slot, |this, slot| this.child(slot))
+                    .when(self.hovered || self.selected, |this| {
+                        this.when_some(self.action_slot, |this, slot| {
+                            let overlay = GradientFade::new(
+                                base_bg,
+                                color.element_hover,
+                                color.element_active,
+                            )
+                            .width(px(64.0))
+                            .right(px(6.))
+                            .gradient_stop(0.75)
+                            .group_name("thread-item");
+
+                            this.child(h_flex().relative().child(overlay).child(slot))
+                        })
                     }),
             )
             .when_some(self.worktree, |this, worktree| {
@@ -337,7 +349,7 @@ impl RenderOnce for ThreadItem {
                         .when(has_diff_stats, |this| {
                             this.child(
                                 DiffStat::new(diff_stat_id, added_count, removed_count)
-                                    .tooltip("Unreviewed changes"),
+                                    .tooltip("Unreviewed Changes"),
                             )
                         })
                         .when(has_diff_stats && has_timestamp, |this| {
