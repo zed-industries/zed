@@ -3,7 +3,7 @@ use crate::{Agent, AgentPanel, AgentPanelEvent, NewThread};
 use acp_thread::ThreadStatus;
 use action_log::DiffStats;
 use agent::ThreadStore;
-use agent_client_protocol as acp;
+use agent_client_protocol::{self as acp, SessionId};
 use agent_settings::AgentSettings;
 use chrono::{DateTime, Utc};
 use db::kvp::KEY_VALUE_STORE;
@@ -40,32 +40,91 @@ use workspace::{
 use zed_actions::editor::{MoveDown, MoveUp};
 
 struct ThreadMetadataStore {
-    subscriptions: Vec<Subscription>,
+    session_subscriptions: HashMap<SessionId, Subscription>,
 }
 
 impl ThreadMetadataStore {
     fn new(cx: &mut Context<Self>) -> Self {
-        let this = cx.weak_entity();
-        cx.observe_new::<acp_thread::AcpThread>(move |_thread, _window, cx| {
+        let weak_store = cx.weak_entity();
+
+        cx.observe_new::<acp_thread::AcpThread>(move |thread, _window, cx| {
             let thread_entity = cx.entity();
-            this.update(cx, |this, cx| {
-                let subscription = cx.subscribe(&thread_entity, Self::handle_thread_update);
-                this.subscriptions.push(subscription);
+
+            let weak_store_2 = weak_store.clone();
+            cx.on_release(move |thread, cx| {
+                weak_store_2
+                    .update(cx, |store, _cx| {
+                        store.session_subscriptions.remove(thread.session_id());
+                    })
+                    .ok();
             })
-            .ok();
+            .detach();
+
+            weak_store
+                .update(cx, |this, cx| {
+                    let subscription = cx.subscribe(&thread_entity, Self::handle_thread_update);
+                    this.session_subscriptions
+                        .insert(thread.session_id().clone(), subscription);
+                })
+                .ok();
         })
         .detach();
+
         Self {
-            subscriptions: Vec::new(),
+            session_subscriptions: HashMap::new(),
         }
     }
 
     fn handle_thread_update(
         &mut self,
-        _thread: Entity<acp_thread::AcpThread>,
+        thread: Entity<acp_thread::AcpThread>,
         event: &acp_thread::AcpThreadEvent,
         cx: &mut Context<Self>,
     ) {
+        match event {
+            acp_thread::AcpThreadEvent::NewEntry | acp_thread::AcpThreadEvent::TitleUpdated => {}
+            _ => return,
+        }
+
+        let thread_ref = thread.read(cx);
+        let session_id = thread_ref.session_id().clone();
+        let title = thread_ref.title();
+        let updated_at = Utc::now();
+
+        let agent_name = if thread_ref
+            .connection()
+            .clone()
+            .downcast::<agent::NativeAgentConnection>()
+            .is_some()
+        {
+            None
+        } else {
+            Some(thread_ref.connection().telemetry_id().to_string())
+        };
+
+        let folder_paths = {
+            let project = thread_ref.project().read(cx);
+            let paths: Vec<Arc<Path>> = project
+                .visible_worktrees(cx)
+                .map(|worktree| worktree.read(cx).abs_path())
+                .collect();
+            PathList::new(&paths)
+        };
+
+        cx.background_spawn(async move {
+            THREAD_METADATA_DB
+                .save(&ThreadMetadata {
+                    session_id,
+                    agent_name,
+                    title,
+                    updated_at,
+                    created_at: None,
+                    folder_paths,
+                })
+                .await
+                .log_err();
+        })
+        .detach();
     }
 }
 
