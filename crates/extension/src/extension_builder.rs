@@ -241,18 +241,14 @@ impl ExtensionBuilder {
 
         let grammar_repo_dir = match grammar_metadata {
             GrammarManifestEntry::Remote {
-                repository,
-                rev,
-                path,
+                repository, rev, ..
             } => {
                 log::info!("checking out {grammar_name} parser");
                 self.checkout_repo(&grammar_output_dir, repository, rev)
                     .await?;
-                path.as_ref()
-                    .map(|path| grammar_output_dir.join(path))
-                    .unwrap_or(grammar_output_dir)
+                Self::grammar_source_dir(grammar_name, &grammar_output_dir, grammar_metadata)?
             }
-            GrammarManifestEntry::Local { path } => {
+            GrammarManifestEntry::Local { .. } => {
                 log::info!("using local grammar source for {grammar_name} parser");
                 if let Some(parent_directory) = grammar_wasm_path.parent() {
                     fs::create_dir_all(parent_directory).with_context(|| {
@@ -263,7 +259,7 @@ impl ExtensionBuilder {
                     })?;
                 }
 
-                Self::local_grammar_repository_path(grammar_name, path)?
+                Self::grammar_source_dir(grammar_name, &grammar_output_dir, grammar_metadata)?
             }
         };
 
@@ -302,6 +298,22 @@ impl ExtensionBuilder {
         }
 
         Ok(())
+    }
+
+    fn grammar_source_dir(
+        grammar_name: &str,
+        grammar_output_dir: &Path,
+        grammar_metadata: &GrammarManifestEntry,
+    ) -> Result<PathBuf> {
+        match grammar_metadata {
+            GrammarManifestEntry::Local { path } => {
+                Self::local_grammar_repository_path(grammar_name, path)
+            }
+            GrammarManifestEntry::Remote { path, .. } => Ok(path
+                .as_ref()
+                .map(|path| grammar_output_dir.join(path))
+                .unwrap_or_else(|| grammar_output_dir.to_path_buf())),
+        }
     }
 
     fn local_grammar_repository_path(grammar_name: &str, repository: &str) -> Result<PathBuf> {
@@ -843,6 +855,37 @@ mod tests {
                 .to_string()
                 .contains("must be an absolute `file://` URL")
         );
+    }
+
+    #[test]
+    fn grammar_source_dir_uses_remote_subdirectory_when_present() {
+        let grammar_output_dir = Path::new("/extension/grammars/rust");
+        let grammar_metadata = GrammarManifestEntry::Remote {
+            repository: "https://github.com/tree-sitter/tree-sitter-rust".to_string(),
+            rev: "abc123".to_string(),
+            path: Some("grammar".to_string()),
+        };
+
+        let path =
+            ExtensionBuilder::grammar_source_dir("rust", grammar_output_dir, &grammar_metadata)
+                .unwrap();
+
+        assert_eq!(path, grammar_output_dir.join("grammar"));
+    }
+
+    #[test]
+    fn grammar_source_dir_uses_local_grammar_root_directly() {
+        let tempdir = tempfile::tempdir().unwrap();
+        let grammar_output_dir = Path::new("/extension/grammars/rust");
+        let grammar_metadata = GrammarManifestEntry::Local {
+            path: format!("file://{}", tempdir.path().display()),
+        };
+
+        let path =
+            ExtensionBuilder::grammar_source_dir("rust", grammar_output_dir, &grammar_metadata)
+                .unwrap();
+
+        assert_eq!(path, tempdir.path());
     }
 
     #[gpui::test]
