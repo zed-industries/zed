@@ -1,5 +1,5 @@
-use crate::prelude::*;
 use crate::Tooltip;
+use crate::prelude::*;
 
 #[derive(IntoElement, RegisterComponent)]
 pub struct DiffStat {

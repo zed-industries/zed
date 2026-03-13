@@ -312,12 +312,8 @@ impl RenderOnce for ThreadItem {
                         })
                         .when(has_diff_stats, |this| {
                             this.child(
-                                DiffStat::new(
-                                    diff_stat_id.clone(),
-                                    added_count,
-                                    removed_count,
-                                )
-                                .tooltip("Unreviewed changes"),
+                                DiffStat::new(diff_stat_id.clone(), added_count, removed_count)
+                                    .tooltip("Unreviewed changes"),
                             )
                         })
                         .when(has_diff_stats && has_timestamp, |this| {
