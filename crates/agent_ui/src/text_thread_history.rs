@@ -17,11 +17,11 @@ use ui::{
 
 const DEFAULT_TITLE: &SharedString = &SharedString::new_static("New Thread");
 
-fn thread_title(entry: &SavedTextThreadMetadata) -> &SharedString {
+fn thread_title(entry: &SavedTextThreadMetadata) -> SharedString {
     if entry.title.is_empty() {
-        DEFAULT_TITLE
+        DEFAULT_TITLE.clone()
     } else {
-        &entry.title
+        entry.title.replace('\n', " ").replace('\r', " ").into()
     }
 }
 
@@ -200,7 +200,7 @@ impl TextThreadHistory {
                 let mut candidates = Vec::with_capacity(entries.len());
 
                 for (idx, entry) in entries.iter().enumerate() {
-                    candidates.push(StringMatchCandidate::new(idx, thread_title(entry)));
+                    candidates.push(StringMatchCandidate::new(idx, &thread_title(entry)));
                 }
 
                 const MAX_MATCHES: usize = 100;
@@ -416,7 +416,7 @@ impl TextThreadHistory {
             EntryTimeFormat::TimeOnly => format.format_timestamp(timestamp, self.local_timezone),
         };
 
-        let title = thread_title(entry).clone();
+        let title = thread_title(entry);
         let full_date =
             EntryTimeFormat::DateAndTime.format_timestamp(timestamp, self.local_timezone);
 

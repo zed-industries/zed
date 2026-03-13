@@ -1435,6 +1435,7 @@ impl ThreadView {
                 }
 
                 let new_title = title_editor.read(cx).text(cx);
+                let new_title = new_title.replace('\n', " ").replace('\r', " ");
                 thread.update(cx, |thread, cx| {
                     thread
                         .set_title(new_title.into(), cx)

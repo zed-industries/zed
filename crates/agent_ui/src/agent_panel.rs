@@ -799,6 +799,7 @@ impl ActiveView {
                                 return;
                             }
                             let new_summary = editor.read(cx).text(cx);
+                            let new_summary = new_summary.replace('\n', " ").replace('\r', " ");
 
                             text_thread_editor.update(cx, |text_thread_editor, cx| {
                                 text_thread_editor
