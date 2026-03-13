@@ -332,7 +332,13 @@ fn bump_version(
         else
             {{
                 echo "title=${{EXTENSION_ID}}: Bump to v${{NEW_VERSION}}";
-                echo "body=This PR bumps the version of the ${{EXTENSION_NAME}} extension to v${{NEW_VERSION}}";
+                echo "body<<EOF";
+                echo "This PR bumps the version of the ${{EXTENSION_NAME}} extension to v${{NEW_VERSION}}.";
+                echo "";
+                echo "Release Notes:";
+                echo "";
+                echo "- N/A";
+                echo "EOF";
                 echo "branch_name=zed-zippy-${{EXTENSION_ID}}-autobump";
             }} >> "$GITHUB_OUTPUT"
         fi
