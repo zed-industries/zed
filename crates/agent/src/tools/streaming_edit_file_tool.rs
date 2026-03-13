@@ -481,7 +481,7 @@ impl StreamingEditState {
             *last_content_len = new_len;
 
             let anchor_range = buffer.read_with(cx, |buffer, _cx| {
-                buffer.anchor_range_between(0..buffer.len())
+                buffer.anchor_range_outside(0..buffer.len())
             });
             diff.update(cx, |diff, cx| diff.reveal_range(anchor_range, cx));
         }
@@ -594,7 +594,7 @@ impl StreamingEditState {
             }
 
             let anchor_range =
-                buffer.read_with(cx, |buffer, _cx| buffer.anchor_range_between(range.clone()));
+                buffer.read_with(cx, |buffer, _cx| buffer.anchor_range_outside(range.clone()));
             edit_state.applied_ranges.push(anchor_range);
 
             let line = snapshot.offset_to_point(range.start).row;
@@ -629,7 +629,7 @@ impl StreamingEditState {
 
                     if let Some(match_range) = matcher.push(new_chunk, None) {
                         let anchor_range = buffer.read_with(cx, |buffer, _cx| {
-                            buffer.anchor_range_between(match_range.clone())
+                            buffer.anchor_range_outside(match_range.clone())
                         });
                         diff.update(cx, |card, cx| card.reveal_range(anchor_range, cx));
                     }
@@ -1054,7 +1054,7 @@ fn resolve_and_reveal_edit(
     let range = matches.into_iter().next().expect("checked len above");
 
     let anchor_range =
-        buffer.read_with(cx, |buffer, _cx| buffer.anchor_range_between(range.clone()));
+        buffer.read_with(cx, |buffer, _cx| buffer.anchor_range_outside(range.clone()));
     diff.update(cx, |card, cx| card.reveal_range(anchor_range, cx));
 
     Ok((range, edit.new_text.clone()))

@@ -2510,13 +2510,13 @@ impl BufferSnapshot {
 
     /// Returns an anchor range for the given input position range that is anchored to the text in the range.
     /// todo!() this name seems misleading
-    pub fn anchor_range_around<T: ToOffset>(&self, position: Range<T>) -> Range<Anchor> {
+    pub fn anchor_range_inside<T: ToOffset>(&self, position: Range<T>) -> Range<Anchor> {
         self.anchor_after(position.start)..self.anchor_before(position.end)
     }
 
     /// Returns an anchor range for the given input position range that is anchored to the text before and after.
     /// todo!() this name seems misleading
-    pub fn anchor_range_between<T: ToOffset>(&self, position: Range<T>) -> Range<Anchor> {
+    pub fn anchor_range_outside<T: ToOffset>(&self, position: Range<T>) -> Range<Anchor> {
         self.anchor_before(position.start)..self.anchor_after(position.end)
     }
 

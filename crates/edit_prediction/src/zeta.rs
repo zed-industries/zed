@@ -345,9 +345,9 @@ pub fn request_prediction_with_zeta(
             cx.spawn({
                 let weak_buffer = edited_buffer.downgrade();
                 let context_anchor_range =
-                    edited_buffer_snapshot.anchor_range_around(full_context_offset_range);
+                    edited_buffer_snapshot.anchor_range_inside(full_context_offset_range);
                 let editable_anchor_range =
-                    edited_buffer_snapshot.anchor_range_around(editable_range_in_buffer);
+                    edited_buffer_snapshot.anchor_range_inside(editable_range_in_buffer);
                 let request_id = id.0.clone();
                 async move |cx| {
                     cx.background_executor()

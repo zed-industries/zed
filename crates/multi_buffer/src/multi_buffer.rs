@@ -6589,11 +6589,39 @@ impl MultiBufferSnapshot {
     /// returns the corresponding buffer range.
     ///
     /// Otherwise, returns None.
-    pub fn range_to_buffer_range<T: MultiBufferDimension>(
+    pub fn range_to_buffer_range<MBD: MultiBufferDimension>(
         &self,
-        range: Range<T>,
-    ) -> Option<(BufferSnapshot, Range<T::TextDimension>)> {
-        todo!()
+        range: Range<MBD>,
+    ) -> Option<(&BufferSnapshot, Range<MBD::TextDimension>)>
+    where
+        MBD: MultiBufferDimension + Ord + Sub + ops::AddAssign<<MBD as Sub>::Output>,
+        MBD::TextDimension: AddAssign<<MBD as Sub>::Output>,
+    {
+        let mut cursor = self.cursor::<MBD, MBD::TextDimension>();
+        cursor.seek(&range.start);
+
+        let start_region = cursor.region()?.clone();
+
+        while let Some(region) = cursor.region()
+            && region.range.end < range.end
+        {
+            if !region.is_main_buffer {
+                return None;
+            }
+            cursor.next();
+        }
+
+        let end_region = cursor.region()?;
+        if end_region.buffer.remote_id() != start_region.buffer.remote_id() {
+            return None;
+        }
+
+        let mut buffer_start = start_region.buffer_range.start;
+        buffer_start += range.start - start_region.range.start;
+        let mut buffer_end = end_region.buffer_range.start;
+        buffer_end += range.end - end_region.range.start;
+
+        Some((start_region.buffer, buffer_start..buffer_end))
     }
 
     /// If the two endpoints of the range lie in (possibly different) excerpts for the same buffer, return the corresponding
@@ -6602,7 +6630,6 @@ impl MultiBufferSnapshot {
         &self,
         range: Range<Anchor>,
     ) -> Option<(&BufferSnapshot, Range<text::Anchor>)> {
-        // todo!() should this deal with deleted hunks somehow?
         let mut cursor = self.excerpts.cursor::<ExcerptSummary>(());
         cursor.seek(&range.start.seek_target(&self), Bias::Left);
 
@@ -6663,7 +6690,35 @@ impl MultiBufferSnapshot {
         &self,
         range: Range<text::Anchor>,
     ) -> impl Iterator<Item = Range<Anchor>> {
-        std::iter::once(todo!())
+        assert!(range.start.buffer_id == range.end.buffer_id);
+
+        let buffer_id = range.start.buffer_id;
+        self.path_key_index_for_buffer(buffer_id)
+            .map(|path_key_index| {
+                let start = Anchor::in_buffer(path_key_index, range.start).to_offset(self);
+                let mut cursor = self.cursor::<MultiBufferOffset, BufferOffset>();
+                cursor.seek(&start);
+                std::iter::from_fn(move || {
+                    while let Some(region) = cursor.region()
+                        && !region.is_main_buffer
+                    {
+                        cursor.next();
+                    }
+
+                    let region = cursor.region()?;
+                    if region.buffer.remote_id() != buffer_id {
+                        return None;
+                    }
+
+                    let buffer_range = region
+                        .buffer
+                        .anchor_range_inside(region.buffer_range.clone());
+                    let multibuffer_range = Anchor::range_in_buffer(path_key_index, buffer_range);
+                    Some(multibuffer_range)
+                })
+            })
+            .into_iter()
+            .flatten()
     }
 }
 

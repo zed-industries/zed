@@ -7070,7 +7070,7 @@ impl Editor {
                     .edited_ranges_for_transaction::<usize>(transaction)
                     .all(|range| {
                         multibuffer_snapshot
-                            .excerpt_for_range(buffer_snapshot.anchor_range_around(range))
+                            .excerpt_for_range(buffer_snapshot.anchor_range_inside(range))
                             .is_some()
                     })
             });
@@ -16869,7 +16869,7 @@ impl Editor {
                 let Some(node) = buffer.syntax_prev_sibling(buffer_range) else {
                     return selection.clone();
                 };
-                let new_buffer_range = buffer.anchor_range_around(
+                let new_buffer_range = buffer.anchor_range_inside(
                     BufferOffset(node.byte_range().start)..BufferOffset(node.byte_range().end),
                 );
                 let Some(new_range) = multibuffer_snapshot.anchor_range_in_buffer(new_buffer_range)

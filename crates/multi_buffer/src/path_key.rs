@@ -106,7 +106,7 @@ impl MultiBuffer {
         let anchors = ranges
             .into_iter()
             .map(|range| {
-                Anchor::range_in_buffer(path_key_index, buffer_snapshot.anchor_range_around(range))
+                Anchor::range_in_buffer(path_key_index, buffer_snapshot.anchor_range_inside(range))
             })
             .collect::<Vec<_>>();
         (anchors, inserted)
@@ -129,7 +129,7 @@ impl MultiBuffer {
             .map(|range| {
                 Anchor::range_in_buffer(
                     path_key_index,
-                    buffer_snapshot.anchor_range_around(range.primary),
+                    buffer_snapshot.anchor_range_inside(range.primary),
                 )
             })
             .collect::<Vec<_>>();

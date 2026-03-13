@@ -66,7 +66,7 @@ impl Editor {
                             } else {
                                 Some(Anchor::range_in_buffer(
                                     path_key_index,
-                                    buffer_snapshot.anchor_range_around(pair.open_range),
+                                    buffer_snapshot.anchor_range_inside(pair.open_range),
                                 ))
                             };
                             let buffer_close_range = if close_range.is_empty() {
@@ -74,7 +74,7 @@ impl Editor {
                             } else {
                                 Some(Anchor::range_in_buffer(
                                     path_key_index,
-                                    buffer_snapshot.anchor_range_around(pair.close_range),
+                                    buffer_snapshot.anchor_range_inside(pair.close_range),
                                 ))
                             };
 
