@@ -285,7 +285,6 @@ impl Vim {
             direction,
             count,
             vim_mode_search: true,
-            show_match_highlights: false,
             prior_selections,
             prior_operator: self.operator_stack.last().cloned(),
             prior_mode,
@@ -300,7 +299,6 @@ impl Vim {
         let current_mode = self.mode;
         self.search = Default::default();
         self.search.prior_mode = current_mode;
-        self.search.show_match_highlights = true;
         cx.propagate();
     }
 
