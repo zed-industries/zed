@@ -1263,12 +1263,13 @@ impl ConnectionView {
                 }
             }
             AcpThreadEvent::EntryUpdated(index) => {
-                if let Some(entry_view_state) = self
-                    .thread_view(&thread_id)
-                    .map(|active| active.read(cx).entry_view_state.clone())
-                {
+                if let Some(active) = self.thread_view(&thread_id) {
+                    let entry_view_state = active.read(cx).entry_view_state.clone();
                     entry_view_state.update(cx, |view_state, cx| {
                         view_state.sync_entry(*index, thread, window, cx)
+                    });
+                    active.update(cx, |active, cx| {
+                        active.auto_expand_streaming_thought(cx);
                     });
                 }
             }
@@ -1301,6 +1302,7 @@ impl ConnectionView {
                 if let Some(active) = self.thread_view(&thread_id) {
                     active.update(cx, |active, _cx| {
                         active.thread_retry_status.take();
+                        active.clear_auto_expand_tracking();
                     });
                 }
                 if is_subagent {

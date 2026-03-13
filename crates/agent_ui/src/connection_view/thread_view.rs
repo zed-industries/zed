@@ -194,6 +194,7 @@ pub struct ThreadView {
     pub expanded_tool_calls: HashSet<agent_client_protocol::ToolCallId>,
     pub expanded_tool_call_raw_inputs: HashSet<agent_client_protocol::ToolCallId>,
     pub expanded_thinking_blocks: HashSet<(usize, usize)>,
+    auto_expanded_thinking_block: Option<(usize, usize)>,
     pub subagent_scroll_handles: RefCell<HashMap<agent_client_protocol::SessionId, ScrollHandle>>,
     pub edits_expanded: bool,
     pub plan_expanded: bool,
@@ -425,6 +426,7 @@ impl ThreadView {
             expanded_tool_calls: HashSet::default(),
             expanded_tool_call_raw_inputs: HashSet::default(),
             expanded_thinking_blocks: HashSet::default(),
+            auto_expanded_thinking_block: None,
             subagent_scroll_handles: RefCell::new(HashMap::default()),
             edits_expanded: false,
             plan_expanded: false,
@@ -4573,6 +4575,53 @@ impl ThreadView {
             .into_any_element()
     }
 
+    /// If the last entry's last chunk is a streaming thought block, auto-expand it.
+    /// Also collapses the previously auto-expanded block when a new one starts.
+    pub(crate) fn auto_expand_streaming_thought(&mut self, cx: &mut Context<Self>) {
+        let key = {
+            let thread = self.thread.read(cx);
+            if thread.status() != ThreadStatus::Generating {
+                return;
+            }
+            let entries = thread.entries();
+            let last_ix = entries.len().saturating_sub(1);
+            match entries.get(last_ix) {
+                Some(AgentThreadEntry::AssistantMessage(msg)) => match msg.chunks.last() {
+                    Some(AssistantMessageChunk::Thought { .. }) => {
+                        Some((last_ix, msg.chunks.len() - 1))
+                    }
+                    _ => None,
+                },
+                _ => None,
+            }
+        };
+
+        if let Some(key) = key {
+            if self.auto_expanded_thinking_block != Some(key) {
+                if let Some(old_key) = self.auto_expanded_thinking_block.replace(key) {
+                    self.expanded_thinking_blocks.remove(&old_key);
+                }
+                self.expanded_thinking_blocks.insert(key);
+                cx.notify();
+            }
+        } else if self.auto_expanded_thinking_block.is_some() {
+            // The last chunk is no longer a thought (model transitioned to responding),
+            // so collapse the previously auto-expanded block.
+            self.collapse_auto_expanded_thinking_block();
+            cx.notify();
+        }
+    }
+
+    fn collapse_auto_expanded_thinking_block(&mut self) {
+        if let Some(key) = self.auto_expanded_thinking_block.take() {
+            self.expanded_thinking_blocks.remove(&key);
+        }
+    }
+
+    pub(crate) fn clear_auto_expand_tracking(&mut self) {
+        self.auto_expanded_thinking_block = None;
+    }
+
     fn render_thinking_block(
         &self,
         entry_ix: usize,
@@ -4593,20 +4642,6 @@ impl ThreadView {
             .read(cx)
             .entry(entry_ix)
             .and_then(|entry| entry.scroll_handle_for_assistant_message_chunk(chunk_ix));
-
-        let thinking_content = {
-            div()
-                .id(("thinking-content", chunk_ix))
-                .when_some(scroll_handle, |this, scroll_handle| {
-                    this.track_scroll(&scroll_handle)
-                })
-                .text_ui_sm(cx)
-                .overflow_hidden()
-                .child(self.render_markdown(
-                    chunk,
-                    MarkdownStyle::themed(MarkdownFont::Agent, window, cx),
-                ))
-        };
 
         v_flex()
             .gap_1()
@@ -4663,11 +4698,19 @@ impl ThreadView {
             .when(is_open, |this| {
                 this.child(
                     div()
+                        .id(("thinking-content", chunk_ix))
                         .ml_1p5()
                         .pl_3p5()
                         .border_l_1()
                         .border_color(self.tool_card_border_color(cx))
-                        .child(thinking_content),
+                        .when_some(scroll_handle, |this, scroll_handle| {
+                            this.track_scroll(&scroll_handle)
+                        })
+                        .overflow_hidden()
+                        .child(self.render_markdown(
+                            chunk,
+                            MarkdownStyle::themed(MarkdownFont::Agent, window, cx),
+                        )),
                 )
             })
             .into_any_element()
