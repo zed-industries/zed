@@ -329,7 +329,7 @@ impl ButtonCommon for Button {
     /// Add a tooltip to a button:
     ///
     /// ```
-    /// use ui::prelude::*;
+    /// use ui::{Tooltip, prelude::*};
     ///
     /// Button::new("tooltip_button", "Hover Me")
     ///     .tooltip(|window, cx| Tooltip::text("This is a tooltip"));
