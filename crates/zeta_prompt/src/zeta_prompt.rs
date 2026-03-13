@@ -2253,21 +2253,21 @@ pub mod hashline {
                 Case {
                     name: "insert_before_first_and_after_line",
                     original: indoc! {"
-                    a
-                    b
-                "},
+                        a
+                        b
+                    "},
                     model_output: indoc! {"
-                    <|insert|>
-                    HEAD
-                    <|insert|>0:61
-                    MID
-                "},
+                        <|insert|>
+                        HEAD
+                        <|insert|>0:61
+                        MID
+                    "},
                     expected: indoc! {"
-                    HEAD
-                    a
-                    MID
-                    b
-                "},
+                        HEAD
+                        a
+                        MID
+                        b
+                    "},
                 },
             ];
 
