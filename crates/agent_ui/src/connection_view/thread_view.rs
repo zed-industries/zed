@@ -3680,7 +3680,6 @@ impl ThreadView {
                         .icon_size(IconSize::XSmall)
                         .disabled(!supports_embedded_context)
                         .handler({
-                            let message_editor = message_editor.clone();
                             move |window, cx| {
                                 message_editor.focus_handle(cx).focus(window, cx);
                                 message_editor.update(cx, |editor, cx| {
