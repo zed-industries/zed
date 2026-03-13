@@ -6,7 +6,7 @@ use crate::tasks::workflows::{
     runners,
     steps::{
         self, BASH_SHELL, CommonJobConditions, DEFAULT_REPOSITORY_OWNER_GUARD, FluentBuilder,
-        NamedJob, checkout_repo, dependant_job, named,
+        NamedJob, cache_rust_dependencies_namespace, checkout_repo, dependant_job, named,
     },
     vars::{
         JobOutput, StepOutput, WorkflowInput, WorkflowSecret,
@@ -41,16 +41,17 @@ pub(crate) fn extension_bump() -> Workflow {
         &app_id,
         &app_secret,
     );
-    let create_label = create_version_label(
+    let (create_label, tag) = create_version_label(
         &dependencies,
         &version_changed,
         &current_version,
         &app_id,
         &app_secret,
     );
+    let tag = tag.as_job_output(&create_label);
     let trigger_release = trigger_release(
         &[&check_version_changed, &create_label],
-        current_version,
+        tag,
         &app_id,
         &app_secret,
     );
@@ -120,9 +121,10 @@ fn create_version_label(
     current_version: &JobOutput,
     app_id: &WorkflowSecret,
     app_secret: &WorkflowSecret,
-) -> NamedJob {
+) -> (NamedJob, StepOutput) {
     let (generate_token, generated_token) =
         generate_token(&app_id.to_string(), &app_secret.to_string(), None);
+    let (determine_tag_step, tag) = determine_tag(current_version);
     let job = steps::dependant_job(dependencies)
         .defaults(extension_job_defaults())
         .cond(Expression::new(format!(
@@ -130,16 +132,18 @@ fn create_version_label(
             github.ref == 'refs/heads/main' && {version_changed} == 'true'",
             version_changed = version_changed_output.expr(),
         )))
+        .outputs([(tag.name.to_owned(), tag.to_string())])
         .runs_on(runners::LINUX_SMALL)
         .timeout_minutes(1u32)
         .add_step(generate_token)
         .add_step(steps::checkout_repo())
-        .add_step(create_version_tag(current_version, generated_token));
+        .add_step(determine_tag_step)
+        .add_step(create_version_tag(&tag, generated_token));
 
-    named::job(job)
+    (named::job(job), tag)
 }
 
-fn create_version_tag(current_version: &JobOutput, generated_token: StepOutput) -> Step<Use> {
+fn create_version_tag(tag: &StepOutput, generated_token: StepOutput) -> Step<Use> {
     named::uses("actions", "github-script", "v7").with(
         Input::default()
             .add(
@@ -148,13 +152,33 @@ fn create_version_tag(current_version: &JobOutput, generated_token: StepOutput) 
                     github.rest.git.createRef({{
                         owner: context.repo.owner,
                         repo: context.repo.repo,
-                        ref: 'refs/tags/v{current_version}',
+                        ref: 'refs/tags/{tag}',
                         sha: context.sha
                     }})"#
                 },
             )
             .add("github-token", generated_token.to_string()),
     )
+}
+
+fn determine_tag(current_version: &JobOutput) -> (Step<Run>, StepOutput) {
+    let step = named::bash(formatdoc! {r#"
+        EXTENSION_ID="$(sed -n 's/^id = "\(.*\)"/\1/p' < extension.toml | head -1 | tr -d '[:space:]')"
+
+        if [[ "$WORKING_DIR" == "." || -z "$WORKING_DIR" ]]; then
+            TAG="v${{CURRENT_VERSION}}"
+        else
+            TAG="${{EXTENSION_ID}}-v${{CURRENT_VERSION}}"
+        fi
+
+        echo "tag=${{TAG}}" >> "$GITHUB_OUTPUT"
+    "#})
+    .id("determine-tag")
+    .add_env(("CURRENT_VERSION", current_version.to_string()))
+    .add_env(("WORKING_DIR", "${{ inputs.working-directory }}"));
+
+    let tag = StepOutput::new(&step, "tag");
+    (step, tag)
 }
 
 /// Compares the current and previous commit and checks whether versions changed inbetween.
@@ -209,9 +233,10 @@ fn bump_extension_version(
             version_changed = version_changed_output.expr(),
         )))
         .runs_on(runners::LINUX_SMALL)
-        .timeout_minutes(3u32)
+        .timeout_minutes(5u32)
         .add_step(generate_token)
         .add_step(steps::checkout_repo())
+        .add_step(cache_rust_dependencies_namespace())
         .add_step(install_bump_2_version())
         .add_step(bump_version)
         .add_step(create_pull_request(
@@ -353,7 +378,7 @@ fn create_pull_request(
 
 fn trigger_release(
     dependencies: &[&NamedJob],
-    version: JobOutput,
+    tag: JobOutput,
     app_id: &WorkflowSecret,
     app_secret: &WorkflowSecret,
 ) -> NamedJob {
@@ -372,7 +397,7 @@ fn trigger_release(
         .add_step(generate_token)
         .add_step(checkout_repo())
         .add_step(get_extension_id)
-        .add_step(release_action(extension_id, version, generated_token));
+        .add_step(release_action(extension_id, tag, generated_token));
 
     named::job(job)
 }
@@ -393,13 +418,13 @@ fn get_extension_id() -> (Step<Run>, StepOutput) {
 
 fn release_action(
     extension_id: StepOutput,
-    version: JobOutput,
+    tag: JobOutput,
     generated_token: StepOutput,
 ) -> Step<Use> {
     named::uses("huacnlee", "zed-extension-action", "v2")
         .add_with(("extension-name", extension_id.to_string()))
         .add_with(("push-to", "zed-industries/extensions"))
-        .add_with(("tag", format!("v{version}")))
+        .add_with(("tag", tag.to_string()))
         .add_env(("COMMITTER_TOKEN", generated_token.to_string()))
 }
 
