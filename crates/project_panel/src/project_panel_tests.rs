@@ -2901,6 +2901,60 @@ async fn test_rename_item_and_check_history(cx: &mut gpui::TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_duplicate_directory_name_with_dot(cx: &mut gpui::TestAppContext) {
+    init_test_with_editor(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        "/src",
+        json!({
+            "static": {
+                "nginx": {
+                    "1.20": {
+                        "default.conf": ""
+                    }
+                }
+            }
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), ["/src".as_ref()], cx).await;
+    let workspace = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+    let cx = &mut VisualTestContext::from_window(*workspace, cx);
+    let panel = workspace
+        .update(cx, |workspace, window, cx| {
+            let panel = ProjectPanel::new(workspace, window, cx);
+            workspace.add_panel(panel.clone(), window, cx);
+            panel
+        })
+        .unwrap();
+    cx.run_until_parked();
+
+    toggle_expand_dir(&panel, "src", cx);
+    toggle_expand_dir(&panel, "src/static", cx);
+    toggle_expand_dir(&panel, "src/static/nginx", cx);
+
+    select_path(&panel, "src/static/nginx/1.20", cx);
+    panel.update_in(cx, |panel, window, cx| {
+        panel.duplicate(&Duplicate, window, cx);
+    });
+    cx.executor().run_until_parked();
+
+    let entries = visible_entries_as_strings(&panel, 0..50, cx);
+    assert!(
+        entries
+            .iter()
+            .any(|line| line.contains("[EDITOR: '1.20 copy']")),
+        "Expected duplicated directory to be named '1.20 copy', got: {entries:?}"
+    );
+    assert!(
+        !entries.iter().any(|line| line.contains("1 copy.20")),
+        "Did not expect directory name to be treated like a file extension, got: {entries:?}"
+    );
+}
+
+#[gpui::test]
 async fn test_select_git_entry(cx: &mut gpui::TestAppContext) {
     init_test_with_editor(cx);
 
