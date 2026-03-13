@@ -396,6 +396,9 @@ impl ThreadsDatabase {
             Connection::open_file(&sqlite_path.to_string_lossy())
         };
 
+        connection.exec("PRAGMA journal_mode=WAL;")?()?;
+        connection.exec("PRAGMA busy_timeout=1000;")?()?;
+
         connection.exec(indoc! {"
             CREATE TABLE IF NOT EXISTS threads (
                 id TEXT PRIMARY KEY,
