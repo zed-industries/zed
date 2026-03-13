@@ -6466,7 +6466,8 @@ impl Workspace {
                         bookmark_store.with_serialized_bookmarks(serialized_workspace.bookmarks, cx)
                     })
                 })
-                .await?;
+                .await
+                .log_err();
 
             let _ = project
                 .update(cx, |project, cx| {
