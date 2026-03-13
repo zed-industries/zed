@@ -94,12 +94,7 @@ fn bump_extension_versions(detect_job: &NamedJob) -> NamedJob<UsesJob> {
                 detect_job.name
             )
         })))
-        .uses(
-            "zed-industries",
-            "zed",
-            ".github/workflows/extension_bump.yml",
-            "main",
-        )
+        .uses(".github", "workflows", "extension_bump.yml", "main")
         .with(
             Input::default()
                 .add("working-directory", "${{ matrix.extension }}")
