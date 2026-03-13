@@ -186,6 +186,18 @@ impl Anchor {
             value: self.timestamp_value,
         }
     }
+
+    pub fn opaque_id(&self) -> [u8; 20] {
+        let mut bytes = [0u8; 20];
+        let buffer_id: u64 = self.buffer_id.into();
+        bytes[0..8].copy_from_slice(&buffer_id.to_le_bytes());
+        bytes[8..12].copy_from_slice(&self.offset.to_le_bytes());
+        bytes[12..16].copy_from_slice(&self.timestamp_value.to_le_bytes());
+        let replica_id = self.timestamp_replica_id.as_u16();
+        bytes[16..18].copy_from_slice(&replica_id.to_le_bytes());
+        bytes[18] = self.bias as u8;
+        bytes
+    }
 }
 
 pub trait OffsetRangeExt {

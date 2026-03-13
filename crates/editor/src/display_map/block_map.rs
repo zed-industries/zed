@@ -26,7 +26,7 @@ use std::{
     },
 };
 use sum_tree::{Bias, ContextLessSummary, Dimensions, SumTree, TreeMap};
-use text::{BufferId, Edit};
+use text::{BufferId, Edit, ToPoint};
 use ui::{ElementId, IntoElement};
 
 const NEWLINES: &[u8; rope::Chunk::MASK_BITS] = &[b'\n'; _];
@@ -297,10 +297,10 @@ pub struct BlockContext<'a, 'b> {
     pub indent_guide_padding: Pixels,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Ord, PartialOrd, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum BlockId {
-    ExcerptBoundary(ExcerptId),
-    FoldedBuffer(ExcerptId),
+    ExcerptBoundary(Anchor),
+    FoldedBuffer(BufferId),
     Custom(CustomBlockId),
     Spacer(SpacerId),
 }
@@ -309,10 +309,13 @@ impl From<BlockId> for ElementId {
     fn from(value: BlockId) -> Self {
         match value {
             BlockId::Custom(CustomBlockId(id)) => ("Block", id).into(),
-            BlockId::ExcerptBoundary(excerpt_id) => {
-                ("ExcerptBoundary", EntityId::from(excerpt_id)).into()
-            }
-            BlockId::FoldedBuffer(id) => ("FoldedBuffer", EntityId::from(id)).into(),
+            BlockId::ExcerptBoundary(anchor) => anchor
+                .excerpt_anchor()
+                .unwrap()
+                .text_anchor()
+                .opaque_id()
+                .into(),
+            BlockId::FoldedBuffer(id) => ("FoldedBuffer", EntityId::from(id.to_proto())).into(),
             BlockId::Spacer(SpacerId(id)) => ("Spacer", id).into(),
         }
     }
@@ -322,7 +325,7 @@ impl std::fmt::Display for BlockId {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Custom(id) => write!(f, "Block({id:?})"),
-            Self::ExcerptBoundary(id) => write!(f, "ExcerptHeader({id:?})"),
+            Self::ExcerptBoundary(id) => write!(f, "ExcerptBoundary({id:?})"),
             Self::FoldedBuffer(id) => write!(f, "FoldedBuffer({id:?})"),
             Self::Spacer(id) => write!(f, "Spacer({id:?})"),
         }
@@ -364,12 +367,14 @@ impl Block {
             Block::ExcerptBoundary {
                 excerpt: next_excerpt,
                 ..
-            } => BlockId::ExcerptBoundary(next_excerpt.id),
-            Block::FoldedBuffer { first_excerpt, .. } => BlockId::FoldedBuffer(first_excerpt.id),
+            } => BlockId::ExcerptBoundary(next_excerpt.start_anchor()),
+            Block::FoldedBuffer { first_excerpt, .. } => {
+                BlockId::FoldedBuffer(first_excerpt.buffer_id())
+            }
             Block::BufferHeader {
                 excerpt: next_excerpt,
                 ..
-            } => BlockId::ExcerptBoundary(next_excerpt.id),
+            } => BlockId::ExcerptBoundary(next_excerpt.start_anchor()),
             Block::Spacer { id, .. } => BlockId::Spacer(*id),
         }
     }
@@ -1166,10 +1171,10 @@ impl BlockMap {
                 let wrap_row = wrap_row_for(Point::new(excerpt_boundary.row.0, 0), Bias::Left);
 
                 let new_buffer_id = match (&excerpt_boundary.prev, &excerpt_boundary.next) {
-                    (None, next) => Some(next.buffer_id),
+                    (None, next) => Some(next.buffer_id()),
                     (Some(prev), next) => {
-                        if prev.buffer_id != next.buffer_id {
-                            Some(next.buffer_id)
+                        if prev.buffer_id() != next.buffer_id() {
+                            Some(next.buffer_id())
                         } else {
                             None
                         }
@@ -1187,7 +1192,7 @@ impl BlockMap {
                         let mut last_excerpt_end_row = first_excerpt.end_row;
 
                         while let Some(next_boundary) = boundaries.peek() {
-                            if next_boundary.next.buffer_id == new_buffer_id {
+                            if next_boundary.next.buffer_id() == new_buffer_id {
                                 last_excerpt_end_row = next_boundary.next.end_row;
                             } else {
                                 break;
@@ -1530,7 +1535,8 @@ impl BlockMap {
                         | Block::BufferHeader {
                             excerpt: excerpt_b, ..
                         },
-                    ) => Some(excerpt_a.id).cmp(&Some(excerpt_b.id)),
+                    ) => Some(excerpt_a.start_text_anchor().opaque_id())
+                        .cmp(&Some(excerpt_b.start_text_anchor().opaque_id())),
                     (
                         Block::ExcerptBoundary { .. } | Block::BufferHeader { .. },
                         Block::Spacer { .. } | Block::Custom(_),
@@ -2260,10 +2266,9 @@ impl BlockSnapshot {
                 let custom_block = self.custom_blocks_by_id.get(&custom_block_id)?;
                 return Some(Block::Custom(custom_block.clone()));
             }
-            BlockId::ExcerptBoundary(next_excerpt_id) => {
-                let excerpt_range = buffer.range_for_excerpt(next_excerpt_id)?;
-                self.wrap_snapshot
-                    .make_wrap_point(excerpt_range.start, Bias::Left)
+            BlockId::ExcerptBoundary(start_anchor) => {
+                let start_point = start_anchor.to_point(&buffer);
+                self.wrap_snapshot.make_wrap_point(start_point, Bias::Left)
             }
             BlockId::FoldedBuffer(excerpt_id) => self
                 .wrap_snapshot

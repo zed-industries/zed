@@ -703,6 +703,18 @@ pub struct ExcerptBoundaryInfo {
     pub end_row: MultiBufferRow,
 }
 
+impl ExcerptBoundaryInfo {
+    pub fn start_anchor(&self) -> Anchor {
+        Anchor::in_buffer(self.path_key_index, self.start_text_anchor())
+    }
+    pub fn start_text_anchor(&self) -> text::Anchor {
+        self.range.context.start
+    }
+    pub fn buffer_id(&self) -> BufferId {
+        self.start_text_anchor().buffer_id
+    }
+}
+
 impl std::fmt::Debug for ExcerptBoundaryInfo {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct(type_name::<Self>())
