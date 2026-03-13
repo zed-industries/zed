@@ -21,7 +21,7 @@ use db::{
 };
 use gpui::{Axis, Bounds, Task, WindowBounds, WindowId, point, size};
 use project::{
-    bookmark_store::SerializedBookmark,
+    bookmark_store::BookmarkRow,
     debugger::breakpoint_store::{BreakpointState, SourceBreakpoint},
     trusted_worktrees::{DbTrustedPaths, RemoteHostLocation},
 };
@@ -1247,7 +1247,7 @@ impl WorkspaceDb {
         })
     }
 
-    fn bookmarks(&self, workspace_id: WorkspaceId) -> BTreeMap<Arc<Path>, Vec<SerializedBookmark>> {
+    fn bookmarks(&self, workspace_id: WorkspaceId) -> BTreeMap<Arc<Path>, Vec<BookmarkRow>> {
         let bookmarks: Result<Vec<(PathBuf, Bookmark)>> = self
             .select_bound(sql! {
                 SELECT path, row
@@ -1263,16 +1263,13 @@ impl WorkspaceDb {
                     log::debug!("Bookmarks are empty after querying database for them");
                 }
 
-                let mut map: BTreeMap<Arc<Path>, Vec<SerializedBookmark>> = BTreeMap::default();
+                let mut map: BTreeMap<Arc<Path>, Vec<BookmarkRow>> = BTreeMap::default();
 
                 for (path, bookmark) in bookmarks {
                     let path: Arc<Path> = path.into();
                     map.entry(path.clone())
                         .or_default()
-                        .push(SerializedBookmark {
-                            row: bookmark.row,
-                            path,
-                        })
+                        .push(BookmarkRow(bookmark.row))
                 }
 
                 map
@@ -1436,7 +1433,7 @@ impl WorkspaceDb {
                         conn.exec_bound(sql!(
                             INSERT INTO bookmarks (workspace_id, path, row)
                             VALUES (?1, ?2, ?3);
-                        ))?((workspace.id, path.as_ref(), bookmark.row)).context("Inserting bookmark")?;
+                        ))?((workspace.id, path.as_ref(), bookmark.0)).context("Inserting bookmark")?;
                     }
                 }
 
