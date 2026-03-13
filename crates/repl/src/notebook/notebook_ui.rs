@@ -1117,10 +1117,11 @@ impl NotebookEditor {
                     worktree_id,
                     Button::new("kernel-selector", kernel_name.clone())
                         .label_size(LabelSize::Small)
-                        .icon(status_icon)
-                        .icon_size(IconSize::Small)
-                        .icon_color(status_color)
-                        .icon_position(IconPosition::Start),
+                        .start_icon(
+                            Icon::new(status_icon)
+                                .size(IconSize::Small)
+                                .color(status_color),
+                        ),
                     Tooltip::text(format!(
                         "Kernel: {} ({}). Click to change.",
                         kernel_name,
@@ -1514,6 +1515,9 @@ impl project::ProjectItem for NotebookItem {
 
                             nbformat::upgrade_legacy_notebook(legacy_notebook)?
                         }
+                        nbformat::Notebook::V3(v3_notebook) => {
+                            nbformat::upgrade_v3_notebook(v3_notebook)?
+                        }
                     }
                 };
 
@@ -1790,6 +1794,9 @@ impl Item for NotebookEditor {
                 Ok(nbformat::Notebook::V4(notebook)) => notebook,
                 Ok(nbformat::Notebook::Legacy(legacy_notebook)) => {
                     nbformat::upgrade_legacy_notebook(legacy_notebook)?
+                }
+                Ok(nbformat::Notebook::V3(v3_notebook)) => {
+                    nbformat::upgrade_v3_notebook(v3_notebook)?
                 }
                 Err(e) => {
                     anyhow::bail!("Failed to parse notebook: {:?}", e);

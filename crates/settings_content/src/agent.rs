@@ -9,6 +9,19 @@ use crate::ExtendingVec;
 
 use crate::DockPosition;
 
+/// Where new threads should start by default.
+#[derive(
+    Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema, MergeFrom,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum NewThreadLocation {
+    /// Start threads in the current project.
+    #[default]
+    LocalProject,
+    /// Start threads in a new worktree.
+    NewWorktree,
+}
+
 #[with_fallible_options]
 #[derive(Clone, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom, Debug, Default)]
 pub struct AgentSettingsContent {
@@ -59,6 +72,10 @@ pub struct AgentSettingsContent {
     ///
     /// Default: "thread"
     pub default_view: Option<DefaultAgentView>,
+    /// Where new threads should start by default.
+    ///
+    /// Default: "local_project"
+    pub new_thread_location: Option<NewThreadLocation>,
     /// The available agent profiles.
     pub profiles: Option<IndexMap<Arc<str>, AgentProfileContent>>,
     /// Where to show a popup notification when the agent is waiting for user input.
@@ -144,6 +161,10 @@ impl AgentSettingsContent {
 
     pub fn set_profile(&mut self, profile_id: Arc<str>) {
         self.default_profile = Some(profile_id);
+    }
+
+    pub fn set_new_thread_location(&mut self, value: NewThreadLocation) {
+        self.new_thread_location = Some(value);
     }
 
     pub fn add_favorite_model(&mut self, model: LanguageModelSelection) {

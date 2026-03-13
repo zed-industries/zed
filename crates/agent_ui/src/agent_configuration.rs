@@ -228,6 +228,7 @@ impl AgentConfiguration {
             .unwrap_or(false);
 
         v_flex()
+            .min_w_0()
             .w_full()
             .when(is_expanded, |this| this.mb_2())
             .child(
@@ -312,6 +313,7 @@ impl AgentConfiguration {
             )
             .child(
                 v_flex()
+                    .min_w_0()
                     .w_full()
                     .px_2()
                     .gap_1()
@@ -330,10 +332,11 @@ impl AgentConfiguration {
                             .full_width()
                             .style(ButtonStyle::Outlined)
                             .layer(ElevationIndex::ModalSurface)
-                            .icon_position(IconPosition::Start)
-                            .icon(IconName::Thread)
-                            .icon_size(IconSize::Small)
-                            .icon_color(Color::Muted)
+                            .start_icon(
+                                Icon::new(IconName::Thread)
+                                    .size(IconSize::Small)
+                                    .color(Color::Muted),
+                            )
                             .label_size(LabelSize::Small)
                             .on_click(cx.listener({
                                 let provider = provider.clone();
@@ -355,10 +358,11 @@ impl AgentConfiguration {
                                 )
                                 .full_width()
                                 .style(ButtonStyle::Outlined)
-                                .icon_position(IconPosition::Start)
-                                .icon(IconName::Trash)
-                                .icon_size(IconSize::Small)
-                                .icon_color(Color::Muted)
+                                .start_icon(
+                                    Icon::new(IconName::Trash)
+                                        .size(IconSize::Small)
+                                        .color(Color::Muted),
+                                )
                                 .label_size(LabelSize::Small)
                                 .on_click(cx.listener({
                                     let provider = provider.clone();
@@ -424,10 +428,11 @@ impl AgentConfiguration {
             .trigger(
                 Button::new("add-provider", "Add Provider")
                     .style(ButtonStyle::Outlined)
-                    .icon_position(IconPosition::Start)
-                    .icon(IconName::Plus)
-                    .icon_size(IconSize::Small)
-                    .icon_color(Color::Muted)
+                    .start_icon(
+                        Icon::new(IconName::Plus)
+                            .size(IconSize::Small)
+                            .color(Color::Muted),
+                    )
                     .label_size(LabelSize::Small),
             )
             .menu({
@@ -459,6 +464,7 @@ impl AgentConfiguration {
             });
 
         v_flex()
+            .min_w_0()
             .w_full()
             .child(self.render_section_title(
                 "LLM Providers",
@@ -498,6 +504,7 @@ impl AgentConfiguration {
                 Plan::ZedFree => ("Free", Color::Default, free_chip_bg),
                 Plan::ZedProTrial => ("Pro Trial", Color::Accent, pro_chip_bg),
                 Plan::ZedPro => ("Pro", Color::Accent, pro_chip_bg),
+                Plan::ZedBusiness => ("Business", Color::Accent, pro_chip_bg),
                 Plan::ZedStudent => ("Student", Color::Accent, pro_chip_bg),
             };
 
@@ -521,10 +528,11 @@ impl AgentConfiguration {
             .trigger(
                 Button::new("add-server", "Add Server")
                     .style(ButtonStyle::Outlined)
-                    .icon_position(IconPosition::Start)
-                    .icon(IconName::Plus)
-                    .icon_size(IconSize::Small)
-                    .icon_color(Color::Muted)
+                    .start_icon(
+                        Icon::new(IconName::Plus)
+                            .size(IconSize::Small)
+                            .color(Color::Muted),
+                    )
                     .label_size(LabelSize::Small),
             )
             .menu({
@@ -559,6 +567,7 @@ impl AgentConfiguration {
             });
 
         v_flex()
+            .min_w_0()
             .border_b_1()
             .border_color(cx.theme().colors().border)
             .child(self.render_section_title(
@@ -802,9 +811,12 @@ impl AgentConfiguration {
             });
 
         v_flex()
+            .min_w_0()
             .id(item_id.clone())
             .child(
                 h_flex()
+                    .min_w_0()
+                    .w_full()
                     .justify_between()
                     .child(
                         h_flex()
@@ -820,13 +832,13 @@ impl AgentConfiguration {
                                     .tooltip(Tooltip::text(tooltip_text))
                                     .child(status_indicator),
                             )
-                            .child(Label::new(item_id).truncate())
+                            .child(Label::new(item_id).flex_shrink_0().truncate())
                             .child(
                                 div()
                                     .id("extension-source")
+                                    .min_w_0()
                                     .mt_0p5()
                                     .mx_1()
-                                    .flex_none()
                                     .tooltip(Tooltip::text(source_tooltip))
                                     .child(
                                         Icon::new(source_icon)
@@ -962,10 +974,11 @@ impl AgentConfiguration {
             .trigger(
                 Button::new("add-agent", "Add Agent")
                     .style(ButtonStyle::Outlined)
-                    .icon_position(IconPosition::Start)
-                    .icon(IconName::Plus)
-                    .icon_size(IconSize::Small)
-                    .icon_color(Color::Muted)
+                    .start_icon(
+                        Icon::new(IconName::Plus)
+                            .size(IconSize::Small)
+                            .color(Color::Muted),
+                    )
                     .label_size(LabelSize::Small),
             )
             .menu({
@@ -1019,6 +1032,7 @@ impl AgentConfiguration {
             });
 
         v_flex()
+            .min_w_0()
             .border_b_1()
             .border_color(cx.theme().colors().border)
             .child(
@@ -1217,6 +1231,7 @@ impl Render for AgentConfiguration {
                             .id("assistant-configuration-content")
                             .track_scroll(&self.scroll_handle)
                             .size_full()
+                            .min_w_0()
                             .overflow_y_scroll()
                             .child(self.render_agent_servers_section(cx))
                             .child(self.render_context_servers_section(window, cx))

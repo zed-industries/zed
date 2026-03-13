@@ -350,10 +350,7 @@ impl ConfigOptionSelector {
         )
         .label_size(LabelSize::Small)
         .color(Color::Muted)
-        .icon(icon)
-        .icon_size(IconSize::XSmall)
-        .icon_position(IconPosition::End)
-        .icon_color(Color::Muted)
+        .end_icon(Icon::new(icon).size(IconSize::XSmall).color(Color::Muted))
         .disabled(self.setting_value)
     }
 }
@@ -493,12 +490,7 @@ impl PickerDelegate for ConfigOptionPickerDelegate {
         cx.notify();
     }
 
-    fn can_select(
-        &mut self,
-        ix: usize,
-        _window: &mut Window,
-        _cx: &mut Context<Picker<Self>>,
-    ) -> bool {
+    fn can_select(&self, ix: usize, _window: &mut Window, _cx: &mut Context<Picker<Self>>) -> bool {
         match self.filtered_entries.get(ix) {
             Some(ConfigOptionPickerEntry::Option(_)) => true,
             Some(ConfigOptionPickerEntry::Separator(_)) | None => false,

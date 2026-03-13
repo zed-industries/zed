@@ -58,4 +58,4 @@ gpui = { workspace = true, features = ["test-support"] }
 git = { workspace = true, features = ["test-support"] }
 
 [features]
-test-support = ["gpui/test-support", "git/test-support"]
+test-support = ["gpui/test-support", "git/test-support", "util/test-support"]
