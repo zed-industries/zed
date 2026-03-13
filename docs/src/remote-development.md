@@ -234,7 +234,7 @@ Each connection tries to run the development server in proxy mode. This mode wil
 
 In the case that reconnecting fails, the daemon will not be re-used. That said, unsaved changes are by default persisted locally, so that you do not lose work. You can always reconnect to the project at a later date and Zed will restore unsaved changes.
 
-If you are struggling with connection issues, you should be able to see more information in the Zed log `cmd-shift-p Open Log`. If you are seeing things that are unexpected, please file a [GitHub issue](https://github.com/zed-industries/zed/issues/new) or reach out in the #remoting-feedback channel in the [Zed Discord](https://zed.dev/community-links).
+If you are struggling with connection issues, you should be able to see more information in the Zed log `cmd-shift-p Open Log`. If you are seeing things that are unexpected, please file a [GitHub issue](https://github.com/zed-industries/zed/issues/new) or reach out in the #support forums on [Discord](https://zed.dev/community-links).
 
 ## Supported SSH Options
 
@@ -257,10 +257,6 @@ Note that we deliberately disallow some options (for example `-t` or `-T`) that 
 ## Known Limitations
 
 - You can't open files from the remote Terminal by typing the `zed` command.
-
-## Feedback
-
-Please join the #remoting-feedback channel in the [Zed Discord](https://zed.dev/community-links).
 
 ## See also
 
