@@ -949,17 +949,16 @@ impl Vim {
             let current_line = point.row;
             let percentage = current_line as f32 / lines as f32;
             let modified = if buffer.is_dirty() { " [modified]" } else { "" };
-            vim.status_label = Some(
+            vim.set_status_label(
                 format!(
                     "{}{} {} lines --{:.0}%--",
                     filename,
                     modified,
                     lines,
                     percentage * 100.0,
-                )
-                .into(),
+                ),
+                cx,
             );
-            cx.notify();
         });
     }
 

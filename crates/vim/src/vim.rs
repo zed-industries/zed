@@ -2087,6 +2087,11 @@ impl Vim {
         editor.selections.set_line_mode(state.line_mode);
         editor.set_edit_predictions_hidden_for_vim_mode(state.hide_edit_predictions, window, cx);
     }
+
+    fn set_status_label(&mut self, label: impl Into<SharedString>, cx: &mut Context<Editor>) {
+        self.status_label = Some(label.into());
+        cx.notify();
+    }
 }
 
 struct VimEditorSettingsState {
