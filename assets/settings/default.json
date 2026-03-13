@@ -923,6 +923,74 @@
     // Default: true
     "diff_stats": true,
   },
+  "local_history_panel": {
+    // Whether to show the local history panel button in the status bar.
+    "button": true,
+    // Where to dock the local history panel. Can be 'left' or 'right'.
+    "dock": "right",
+    // Default width of the local history panel.
+    "default_width": 300,
+    // Whether to show the relative file path line in local history entries.
+    "show_relative_path": false,
+    // Controls when the timeline and storage metadata header is shown.
+    //
+    // Choices: auto, always, never
+    "header_metadata_visibility": "auto",
+    // Minimum vertical gap between timeline entries in pixels.
+    "timeline_gap_min_px": 0,
+    // Maximum vertical gap between timeline entries in pixels.
+    "timeline_gap_max_px": 12,
+  },
+  "local_history": {
+    // Whether local history is enabled.
+    "enabled": true,
+    // Whether to capture local history on save (including autosave).
+    "capture_on_save": false,
+    // Capture local history after edits are idle or file changes settle for the given number
+    // of milliseconds.
+    // Set to 0 to disable.
+    "capture_on_edit_idle_ms": 1000,
+    // Capture local history when switching focus between items.
+    "capture_on_focus_change": true,
+    // Capture local history when the window is deactivated.
+    "capture_on_window_change": true,
+    // Capture local history before running tasks.
+    "capture_on_task": true,
+    // Capture local history when a file changes on disk.
+    "capture_on_external_change": true,
+    // Storage endpoints (directories) to read from. When null or empty, Zed uses
+    // its default data directory for storage.
+    "storage_paths": null,
+    // The active storage endpoint for new snapshots. If unset, the first storage
+    // path is used.
+    "active_storage_path": null,
+    // Minimum age in days before entries are eligible for pruning.
+    "min_age_days": 100,
+    // Percentage of available free space to use as the per-worktree cap in the
+    // active endpoint.
+    "cap_free_space_percent": 0.12,
+    // Minimum cap size in bytes.
+    "cap_min_bytes": 314572800,
+    // Pruning policy: both, size_only, age_only, any.
+    "prune_policy": "both",
+    // Globs for files/directories excluded from local history.
+    "exclude_globs": [
+      "**/.git/**",
+      "**/.hg/**",
+      "**/.svn/**",
+      "**/.jj/**",
+      "**/node_modules/**",
+      "**/target/**",
+      "**/dist/**",
+      "**/build/**",
+      "**/out/**",
+      "**/.gradle/**",
+      "**/.idea/**",
+      "**/.zed/**",
+      "**/*.min.*",
+      "**/*.map",
+    ],
+  },
   "message_editor": {
     // Whether to automatically replace emoji shortcodes with emoji characters.
     // For example: typing `:wave:` gets replaced with `👋`.

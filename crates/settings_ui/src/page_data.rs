@@ -15,6 +15,7 @@ use crate::{
         open_audio_test_window, render_edit_prediction_setup_page,
         render_tool_permissions_setup_page,
     },
+    sub_page_stack,
 };
 
 const DEFAULT_STRING: String = String::new();
@@ -5212,6 +5213,162 @@ fn panels_page() -> SettingsPage {
         ]
     }
 
+    fn local_history_panel_section() -> [SettingsPageItem; 8] {
+        [
+            SettingsPageItem::SectionHeader("Local History Panel"),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Local History Panel Button",
+                description: "Show the local history panel button in the status bar.",
+                field: Box::new(SettingField {
+                    json_path: Some("local_history_panel.button"),
+                    pick: |settings_content| {
+                        settings_content
+                            .local_history_panel
+                            .as_ref()?
+                            .button
+                            .as_ref()
+                    },
+                    write: |settings_content, value| {
+                        settings_content
+                            .local_history_panel
+                            .get_or_insert_default()
+                            .button = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Local History Panel Dock",
+                description: "Where to dock the local history panel.",
+                field: Box::new(SettingField {
+                    json_path: Some("local_history_panel.dock"),
+                    pick: |settings_content| {
+                        settings_content.local_history_panel.as_ref()?.dock.as_ref()
+                    },
+                    write: |settings_content, value| {
+                        settings_content
+                            .local_history_panel
+                            .get_or_insert_default()
+                            .dock = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Local History Panel Default Width",
+                description: "Default width of the local history panel in pixels.",
+                field: Box::new(SettingField {
+                    json_path: Some("local_history_panel.default_width"),
+                    pick: |settings_content| {
+                        settings_content
+                            .local_history_panel
+                            .as_ref()?
+                            .default_width
+                            .as_ref()
+                    },
+                    write: |settings_content, value| {
+                        settings_content
+                            .local_history_panel
+                            .get_or_insert_default()
+                            .default_width = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Local History Entry Paths",
+                description: "Show the relative file path line in local history entries.",
+                field: Box::new(SettingField {
+                    json_path: Some("local_history_panel.show_relative_path"),
+                    pick: |settings_content| {
+                        settings_content
+                            .local_history_panel
+                            .as_ref()?
+                            .show_relative_path
+                            .as_ref()
+                    },
+                    write: |settings_content, value| {
+                        settings_content
+                            .local_history_panel
+                            .get_or_insert_default()
+                            .show_relative_path = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Local History Panel Header Visibility",
+                description: "Controls when the timeline and storage metadata header is shown.",
+                field: Box::new(SettingField {
+                    json_path: Some("local_history_panel.header_metadata_visibility"),
+                    pick: |settings_content| {
+                        settings_content
+                            .local_history_panel
+                            .as_ref()?
+                            .header_metadata_visibility
+                            .as_ref()
+                    },
+                    write: |settings_content, value| {
+                        settings_content
+                            .local_history_panel
+                            .get_or_insert_default()
+                            .header_metadata_visibility = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Local History Timeline Min Gap",
+                description: "Minimum vertical gap between local history entries in pixels.",
+                field: Box::new(SettingField {
+                    json_path: Some("local_history_panel.timeline_gap_min_px"),
+                    pick: |settings_content| {
+                        settings_content
+                            .local_history_panel
+                            .as_ref()?
+                            .timeline_gap_min_px
+                            .as_ref()
+                    },
+                    write: |settings_content, value| {
+                        settings_content
+                            .local_history_panel
+                            .get_or_insert_default()
+                            .timeline_gap_min_px = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Local History Timeline Max Gap",
+                description: "Maximum vertical gap between local history entries in pixels.",
+                field: Box::new(SettingField {
+                    json_path: Some("local_history_panel.timeline_gap_max_px"),
+                    pick: |settings_content| {
+                        settings_content
+                            .local_history_panel
+                            .as_ref()?
+                            .timeline_gap_max_px
+                            .as_ref()
+                    },
+                    write: |settings_content, value| {
+                        settings_content
+                            .local_history_panel
+                            .get_or_insert_default()
+                            .timeline_gap_max_px = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+        ]
+    }
+
     fn debugger_panel_section() -> [SettingsPageItem; 2] {
         [
             SettingsPageItem::SectionHeader("Debugger Panel"),
@@ -5440,6 +5597,7 @@ fn panels_page() -> SettingsPage {
             terminal_panel_section(),
             outline_panel_section(),
             git_panel_section(),
+            local_history_panel_section(),
             debugger_panel_section(),
             notification_panel_section(),
             collaboration_panel_section(),

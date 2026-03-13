@@ -49,12 +49,14 @@ dap.workspace = true
 extension.workspace = true
 fancy-regex.workspace = true
 fs.workspace = true
+fs2.workspace = true
 futures.workspace = true
 fuzzy.workspace = true
 git.workspace = true
 git_hosting_providers.workspace = true
 globset.workspace = true
 gpui.workspace = true
+hex.workspace = true
 http_client.workspace = true
 image.workspace = true
 itertools.workspace = true
@@ -89,6 +91,7 @@ task.workspace = true
 tempfile.workspace = true
 terminal.workspace = true
 text.workspace = true
+time.workspace = true
 toml.workspace = true
 url.workspace = true
 util.workspace = true
@@ -100,6 +103,7 @@ zeroize.workspace = true
 zlog.workspace = true
 ztracing.workspace = true
 tracing.workspace = true
+zstd.workspace = true
 
 [dev-dependencies]
 client = { workspace = true, features = ["test-support"] }

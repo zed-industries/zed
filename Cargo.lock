@@ -9974,6 +9974,31 @@ dependencies = [
 ]
 
 [[package]]
+name = "local_history_ui"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "buffer_diff",
+ "db",
+ "editor",
+ "fs",
+ "gpui",
+ "language",
+ "project",
+ "serde",
+ "serde_json",
+ "settings",
+ "tempfile",
+ "theme",
+ "time",
+ "time_format",
+ "ui",
+ "util",
+ "workspace",
+ "zstd",
+]
+
+[[package]]
 name = "lock_api"
 version = "0.4.14"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -13084,6 +13109,7 @@ dependencies = [
  "extension",
  "fancy-regex",
  "fs",
+ "fs2",
  "futures 0.3.31",
  "fuzzy",
  "git",
@@ -13091,6 +13117,7 @@ dependencies = [
  "git_hosting_providers",
  "globset",
  "gpui",
+ "hex",
  "http_client",
  "image",
  "indexmap",
@@ -13127,6 +13154,7 @@ dependencies = [
  "tempfile",
  "terminal",
  "text",
+ "time",
  "toml 0.8.23",
  "tracing",
  "unindent",
@@ -13138,6 +13166,7 @@ dependencies = [
  "worktree",
  "zeroize",
  "zlog",
+ "zstd",
  "ztracing",
 ]
 
@@ -21843,6 +21872,7 @@ dependencies = [
  "language_tools",
  "languages",
  "line_ending_selector",
+ "local_history_ui",
  "log",
  "markdown",
  "markdown_preview",

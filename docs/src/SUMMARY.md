@@ -35,6 +35,7 @@
   - [Snippets](./snippets.md)
   - [Diagnostics & Quick Fixes](./diagnostics.md)
   - [Multibuffers](./multibuffers.md)
+  - [Local History](./local-history.md)
 - [Finding & Navigating](./finding-navigating.md)
   - [Command Palette](./command-palette.md)
   - [Outline Panel](./outline-panel.md)

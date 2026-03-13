@@ -40,7 +40,7 @@ use multi_buffer::{IndentGuide, MultiBuffer, MultiBufferOffset, MultiBufferOffse
 use parking_lot::Mutex;
 use pretty_assertions::{assert_eq, assert_ne};
 use project::{
-    FakeFs, Project,
+    FakeFs, Project, ProjectPath,
     debugger::breakpoint_store::{BreakpointState, SourceBreakpoint},
     project_settings::LspSettings,
     trusted_worktrees::{PathTrust, TrustedWorktrees},
@@ -56,6 +56,7 @@ use std::{
     iter,
     sync::atomic::{self, AtomicUsize},
 };
+use tempfile::tempdir;
 use test::build_editor_with_project;
 use text::ToPoint as _;
 use unindent::Unindent;
@@ -79,6 +80,64 @@ fn display_ranges(editor: &Editor, cx: &mut Context<'_, Editor>) -> Vec<Range<Di
 
 #[cfg(any(test, feature = "test-support"))]
 pub mod property_test;
+
+#[gpui::test]
+async fn test_local_history_capture_on_editor_deactivate(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let history_root = tempdir().unwrap();
+    let history_path = history_root.path().to_string_lossy().to_string();
+
+    cx.update(|cx| {
+        cx.update_global::<SettingsStore, _>(|store, cx| {
+            store.update_user_settings(cx, |content| {
+                content.local_history = Some(settings::LocalHistorySettingsContent {
+                    enabled: Some(true),
+                    capture_on_save: Some(false),
+                    capture_on_edit_idle_ms: Some(0.into()),
+                    capture_on_focus_change: Some(true),
+                    capture_on_window_change: Some(false),
+                    capture_on_task: Some(false),
+                    capture_on_external_change: Some(false),
+                    storage_paths: Some(vec![history_path.clone()]),
+                    active_storage_path: Some(history_path.clone()),
+                    ..Default::default()
+                });
+            });
+        });
+    });
+
+    let mut test_ctx = EditorTestContext::new(cx).await;
+    let buffer = test_ctx.update_multibuffer(|multibuffer, _| multibuffer.as_singleton().unwrap());
+
+    buffer.update(&mut test_ctx.cx, |buffer, cx| {
+        buffer.set_text("edited\n", cx);
+    });
+
+    test_ctx.update_editor(|editor, window, cx| {
+        Item::deactivated(editor, window, cx);
+    });
+
+    test_ctx.cx.run_until_parked();
+
+    let project = test_ctx
+        .editor(|editor, _, _| editor.project().cloned())
+        .expect("editor project should be available");
+    let project_path = buffer.read_with(&test_ctx.cx, |buffer, cx| {
+        let file = buffer.file().unwrap();
+        ProjectPath::from_file(file.as_ref(), cx)
+    });
+    let store = project.read_with(&test_ctx.cx, |project, _| {
+        project.local_history_store().clone()
+    });
+    let entries = store
+        .read_with(&test_ctx.cx, |store, cx| {
+            store.load_entries_for_path(project_path, cx)
+        })
+        .await
+        .unwrap();
+    assert_eq!(entries.len(), 1);
+}
 
 #[gpui::test]
 fn test_edit_events(cx: &mut TestAppContext) {

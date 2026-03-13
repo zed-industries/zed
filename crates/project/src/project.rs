@@ -8,6 +8,7 @@ pub mod debounced_delay;
 pub mod debugger;
 pub mod git_store;
 pub mod image_store;
+pub mod local_history;
 pub mod lsp_command;
 pub mod lsp_store;
 pub mod manifest_tree;
@@ -80,6 +81,10 @@ use futures::{
 };
 pub use image_store::{ImageItem, ImageStore};
 use image_store::{ImageItemEvent, ImageStoreEvent};
+pub use local_history::{
+    LocalHistoryCaptureTrigger, LocalHistoryEntry, LocalHistoryEvent, LocalHistorySettings,
+    LocalHistoryStore, LocalHistoryTransferMode,
+};
 
 use ::git::{blame::Blame, status::FileStatus};
 use gpui::{
@@ -226,6 +231,7 @@ pub struct Project {
     buffer_store: Entity<BufferStore>,
     context_server_store: Entity<ContextServerStore>,
     image_store: Entity<ImageStore>,
+    local_history_store: Entity<LocalHistoryStore>,
     lsp_store: Entity<LspStore>,
     _subscriptions: Vec<gpui::Subscription>,
     buffers_needing_diff: HashSet<WeakEntity<Buffer>>,
@@ -1194,6 +1200,9 @@ impl Project {
             cx.subscribe(&buffer_store, Self::on_buffer_store_event)
                 .detach();
 
+            let local_history_store =
+                cx.new(|_| LocalHistoryStore::new_local(worktree_store.clone()));
+
             let breakpoint_store =
                 cx.new(|_| BreakpointStore::local(worktree_store.clone(), buffer_store.clone()));
 
@@ -1295,6 +1304,7 @@ impl Project {
                 worktree_store,
                 buffer_store,
                 image_store,
+                local_history_store,
                 lsp_store,
                 context_server_store,
                 join_project_response_message_id: 0,
@@ -1402,6 +1412,8 @@ impl Project {
             });
             cx.subscribe(&buffer_store, Self::on_buffer_store_event)
                 .detach();
+            let local_history_store =
+                cx.new(|_| LocalHistoryStore::new_local(worktree_store.clone()));
             let toolchain_store = cx.new(|cx| {
                 ToolchainStore::remote(
                     REMOTE_SERVER_PROJECT_ID,
@@ -1510,6 +1522,7 @@ impl Project {
                 worktree_store,
                 buffer_store,
                 image_store,
+                local_history_store,
                 lsp_store,
                 context_server_store,
                 breakpoint_store,
@@ -1686,6 +1699,7 @@ impl Project {
         let image_store = cx.new(|cx| {
             ImageStore::remote(worktree_store.clone(), client.clone().into(), remote_id, cx)
         });
+        let local_history_store = cx.new(|_| LocalHistoryStore::new_local(worktree_store.clone()));
 
         let environment =
             cx.new(|cx| ProjectEnvironment::new(None, worktree_store.downgrade(), None, true, cx));
@@ -1799,6 +1813,7 @@ impl Project {
                 buffer_ordered_messages_tx: tx,
                 buffer_store: buffer_store.clone(),
                 image_store,
+                local_history_store: local_history_store.clone(),
                 worktree_store: worktree_store.clone(),
                 lsp_store: lsp_store.clone(),
                 context_server_store,
@@ -3601,6 +3616,7 @@ impl Project {
                 self.client()
                     .telemetry()
                     .report_discovered_project_type_events(*worktree_id, changes);
+                self.handle_local_history_worktree_changes(*worktree_id, changes, cx);
                 cx.emit(Event::WorktreeUpdatedEntries(*worktree_id, changes.clone()))
             }
             WorktreeStoreEvent::WorktreeDeletedEntry(worktree_id, id) => {
@@ -3608,6 +3624,11 @@ impl Project {
             }
             // Listen to the GitStore instead.
             WorktreeStoreEvent::WorktreeUpdatedGitRepositories(_, _) => {}
+            WorktreeStoreEvent::WorktreeRootPathChanged(_, old_path, new_path) => {
+                self.local_history_store.update(cx, |store, cx| {
+                    store.migrate_worktree_root(old_path.clone(), new_path.clone(), cx);
+                });
+            }
         }
     }
 
@@ -3642,6 +3663,23 @@ impl Project {
 
         if matches!(event, BufferEvent::Edited { .. }) {
             cx.emit(Event::BufferEdited);
+            self.schedule_local_history_edit_idle(buffer.clone(), cx);
+        }
+
+        if matches!(event, BufferEvent::Saved) {
+            self.capture_local_history_for_buffer(
+                buffer.clone(),
+                LocalHistoryCaptureTrigger::Save,
+                cx,
+            );
+        }
+
+        if matches!(event, BufferEvent::Reloaded) {
+            self.capture_local_history_for_buffer(
+                buffer.clone(),
+                LocalHistoryCaptureTrigger::ExternalChange,
+                cx,
+            );
         }
 
         let buffer_id = buffer.read(cx).remote_id();
@@ -3732,6 +3770,129 @@ impl Project {
             .fire_new(duration, cx, move |this, cx| {
                 this.recalculate_buffer_diffs(cx)
             });
+    }
+
+    fn schedule_local_history_edit_idle(&mut self, buffer: Entity<Buffer>, cx: &mut Context<Self>) {
+        let settings = LocalHistorySettings::get_global(cx);
+        if !settings.enabled {
+            return;
+        }
+        let Some(delay) = settings.capture_on_edit_idle_delay() else {
+            return;
+        };
+        if buffer.read(cx).file().is_none() {
+            return;
+        }
+
+        self.local_history_store.update(cx, |store, cx| {
+            store.schedule_edit_snapshot(buffer, delay, cx);
+        });
+    }
+
+    fn handle_local_history_worktree_changes(
+        &mut self,
+        worktree_id: WorktreeId,
+        changes: &UpdatedEntriesSet,
+        cx: &mut Context<Self>,
+    ) {
+        let settings = LocalHistorySettings::get_global(cx).clone();
+        if !settings.enabled {
+            return;
+        }
+
+        let Some(worktree) = self
+            .worktree_store
+            .read(cx)
+            .worktree_for_id(worktree_id, cx)
+        else {
+            return;
+        };
+
+        if !worktree.read(cx).is_local() {
+            return;
+        }
+
+        let path_style = worktree.read(cx).path_style();
+
+        let mut removed_by_id: HashMap<ProjectEntryId, Arc<RelPath>> = HashMap::default();
+        let mut added_by_id: HashMap<ProjectEntryId, Arc<RelPath>> = HashMap::default();
+        for (path, entry_id, change) in changes.iter() {
+            match change {
+                PathChange::Removed => {
+                    removed_by_id.insert(*entry_id, path.clone());
+                }
+                PathChange::Loaded => {}
+                _ => {
+                    added_by_id.insert(*entry_id, path.clone());
+                }
+            }
+        }
+
+        let mut renames = Vec::new();
+        for (entry_id, old_path) in removed_by_id {
+            if let Some(new_path) = added_by_id.get(&entry_id) {
+                if old_path != *new_path {
+                    let is_file = worktree
+                        .read(cx)
+                        .entry_for_id(entry_id)
+                        .map(|entry| entry.is_file())
+                        .unwrap_or(false);
+                    if is_file {
+                        renames.push((
+                            old_path.as_ref().display(path_style).to_string(),
+                            new_path.as_ref().display(path_style).to_string(),
+                        ));
+                    }
+                }
+            }
+        }
+
+        if !renames.is_empty() {
+            let worktree_path = worktree.read(cx).abs_path().to_path_buf();
+            self.local_history_store.update(cx, |store, cx| {
+                store.rewrite_relative_paths_for_renames(worktree_path, renames, cx);
+            });
+        }
+
+        if !settings.should_capture(LocalHistoryCaptureTrigger::ExternalChange) {
+            return;
+        }
+
+        let Some(delay) = settings.capture_on_edit_idle_delay() else {
+            return;
+        };
+
+        for (path, entry_id, change) in changes.iter() {
+            match change {
+                PathChange::Updated | PathChange::Added | PathChange::AddedOrUpdated => {}
+                PathChange::Removed | PathChange::Loaded => continue,
+            }
+
+            let is_file = worktree
+                .read(cx)
+                .entry_for_id(*entry_id)
+                .map(|entry| entry.is_file())
+                .unwrap_or(false);
+            if !is_file {
+                continue;
+            }
+            let project_path = ProjectPath {
+                worktree_id,
+                path: path.clone(),
+            };
+            if self
+                .buffer_store
+                .read(cx)
+                .get_by_path(&project_path)
+                .is_some()
+            {
+                continue;
+            }
+            let path = path.clone();
+            self.local_history_store.update(cx, |store, cx| {
+                store.schedule_filesystem_snapshot(worktree_id, path, delay, cx);
+            });
+        }
     }
 
     fn recalculate_buffer_diffs(&mut self, cx: &mut Context<Self>) -> Task<()> {
@@ -5832,6 +5993,48 @@ impl Project {
 
     pub fn buffer_store(&self) -> &Entity<BufferStore> {
         &self.buffer_store
+    }
+
+    pub fn local_history_store(&self) -> &Entity<LocalHistoryStore> {
+        &self.local_history_store
+    }
+
+    pub fn capture_local_history_for_buffer(
+        &mut self,
+        buffer: Entity<Buffer>,
+        trigger: LocalHistoryCaptureTrigger,
+        cx: &mut Context<Self>,
+    ) {
+        let settings = LocalHistorySettings::get_global(cx);
+        if !settings.enabled || !settings.should_capture(trigger) {
+            return;
+        }
+
+        self.local_history_store.update(cx, |store, cx| {
+            store.record_snapshot(buffer, trigger, cx);
+        });
+    }
+
+    pub fn capture_local_history_for_dirty_buffers(
+        &mut self,
+        trigger: LocalHistoryCaptureTrigger,
+        cx: &mut Context<Self>,
+    ) {
+        let settings = LocalHistorySettings::get_global(cx);
+        if !settings.enabled || !settings.should_capture(trigger) {
+            return;
+        }
+
+        let requires_dirty = trigger.requires_dirty();
+        let buffers = self.buffer_store.read(cx).buffers().collect::<Vec<_>>();
+        for buffer in buffers {
+            if requires_dirty && !buffer.read(cx).is_dirty() {
+                continue;
+            }
+            self.local_history_store.update(cx, |store, cx| {
+                store.record_snapshot(buffer.clone(), trigger, cx);
+            });
+        }
     }
 
     pub fn git_store(&self) -> &Entity<GitStore> {

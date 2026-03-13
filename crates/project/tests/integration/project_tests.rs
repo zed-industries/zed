@@ -63,7 +63,7 @@ use project::{
     task_store::{TaskSettingsLocation, TaskStore},
     *,
 };
-use rand::{Rng as _, rngs::StdRng};
+use rand::{Rng as _, RngCore, SeedableRng, rngs::StdRng};
 use serde_json::json;
 use settings::SettingsStore;
 #[cfg(not(windows))]
@@ -82,6 +82,7 @@ use std::{
 };
 use sum_tree::SumTree;
 use task::{ResolvedTask, ShellKind, TaskContext};
+use tempfile::tempdir;
 use text::{Anchor, PointUtf16, ReplicaId, ToOffset, Unclipped};
 use unindent::Unindent as _;
 use util::{
@@ -4842,6 +4843,858 @@ async fn test_save_file(cx: &mut gpui::TestAppContext) {
         .unwrap()
         .replace("\r\n", "\n");
     assert_eq!(new_text, buffer.update(cx, |buffer, _| buffer.text()));
+}
+
+#[gpui::test]
+async fn test_local_history_snapshot_on_save(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let history_root = tempdir().unwrap();
+    let history_path = history_root.path().to_string_lossy().to_string();
+
+    cx.update(|cx| {
+        cx.update_global::<SettingsStore, _>(|store, cx| {
+            store.update_user_settings(cx, |content| {
+                content.local_history = Some(settings::LocalHistorySettingsContent {
+                    enabled: Some(true),
+                    capture_on_save: Some(true),
+                    capture_on_edit_idle_ms: Some(0.into()),
+                    capture_on_focus_change: Some(false),
+                    capture_on_window_change: Some(false),
+                    capture_on_task: Some(false),
+                    capture_on_external_change: Some(false),
+                    storage_paths: Some(vec![history_path.clone()]),
+                    active_storage_path: Some(history_path.clone()),
+                    ..Default::default()
+                });
+            });
+        });
+    });
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/dir"),
+        json!({
+            "file1": "the old contents",
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
+    let buffer = project
+        .update(cx, |p, cx| p.open_local_buffer(path!("/dir/file1"), cx))
+        .await
+        .unwrap();
+    buffer.update(cx, |buffer, cx| {
+        buffer.edit([(0..0, "new text\n")], None, cx);
+    });
+
+    project
+        .update(cx, |project, cx| project.save_buffer(buffer.clone(), cx))
+        .await
+        .unwrap();
+
+    cx.run_until_parked();
+
+    let worktrees_dir = history_root.path().join("worktrees");
+    let mut entries = std::fs::read_dir(&worktrees_dir).unwrap();
+    let worktree_dir = entries
+        .next()
+        .expect("worktree directory should exist")
+        .unwrap()
+        .path();
+    let index_path = worktree_dir.join("index.jsonl");
+    assert!(index_path.exists(), "index.jsonl should be created");
+
+    let mut lines = std::fs::read_to_string(&index_path)
+        .unwrap()
+        .lines()
+        .map(str::to_string)
+        .collect::<Vec<_>>();
+    lines.sort();
+    let record: serde_json::Value = serde_json::from_str(&lines[0]).unwrap();
+    assert_eq!(record["relative_path"], "file1");
+}
+
+#[gpui::test]
+async fn test_local_history_snapshot_on_edit_idle(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let history_root = tempdir().unwrap();
+    let history_path = history_root.path().to_string_lossy().to_string();
+
+    cx.update(|cx| {
+        cx.update_global::<SettingsStore, _>(|store, cx| {
+            store.update_user_settings(cx, |content| {
+                content.local_history = Some(settings::LocalHistorySettingsContent {
+                    enabled: Some(true),
+                    capture_on_save: Some(false),
+                    capture_on_edit_idle_ms: Some(10.into()),
+                    capture_on_focus_change: Some(false),
+                    capture_on_window_change: Some(false),
+                    capture_on_task: Some(false),
+                    capture_on_external_change: Some(false),
+                    storage_paths: Some(vec![history_path.clone()]),
+                    active_storage_path: Some(history_path.clone()),
+                    ..Default::default()
+                });
+            });
+        });
+    });
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/dir"),
+        json!({
+            "file1": "start\n",
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
+    let buffer = project
+        .update(cx, |p, cx| p.open_local_buffer(path!("/dir/file1"), cx))
+        .await
+        .unwrap();
+
+    buffer.update(cx, |buffer, cx| buffer.set_text("edited\n", cx));
+
+    cx.executor().advance_clock(Duration::from_millis(15));
+    cx.run_until_parked();
+
+    let project_path = buffer.read_with(cx, |buffer, cx| {
+        let file = buffer.file().unwrap();
+        ProjectPath::from_file(file.as_ref(), cx)
+    });
+    let store = project.read_with(cx, |project, _| project.local_history_store().clone());
+    let entries = store
+        .read_with(cx, |store, cx| {
+            store.load_entries_for_path(project_path, cx)
+        })
+        .await
+        .unwrap();
+    assert_eq!(entries.len(), 1);
+
+    let text = store
+        .read_with(cx, |store, cx| {
+            store.load_entry_text(entries[0].clone(), cx)
+        })
+        .await
+        .unwrap();
+    assert_eq!(text.as_ref(), "edited\n");
+}
+
+#[gpui::test]
+async fn test_local_history_first_entry_is_immediate_then_returns_to_idle_delay(
+    cx: &mut gpui::TestAppContext,
+) {
+    init_test(cx);
+
+    let history_root = tempdir().unwrap();
+    let history_path = history_root.path().to_string_lossy().to_string();
+
+    cx.update(|cx| {
+        cx.update_global::<SettingsStore, _>(|store, cx| {
+            store.update_user_settings(cx, |content| {
+                content.local_history = Some(settings::LocalHistorySettingsContent {
+                    enabled: Some(true),
+                    capture_on_save: Some(false),
+                    capture_on_edit_idle_ms: Some(10_000.into()),
+                    capture_on_focus_change: Some(false),
+                    capture_on_window_change: Some(false),
+                    capture_on_task: Some(false),
+                    capture_on_external_change: Some(false),
+                    storage_paths: Some(vec![history_path.clone()]),
+                    active_storage_path: Some(history_path.clone()),
+                    ..Default::default()
+                });
+            });
+        });
+    });
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/dir"),
+        json!({
+            "file1": "start\n",
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
+    let buffer = project
+        .update(cx, |p, cx| p.open_local_buffer(path!("/dir/file1"), cx))
+        .await
+        .unwrap();
+
+    let project_path = buffer.read_with(cx, |buffer, cx| {
+        let file = buffer.file().unwrap();
+        ProjectPath::from_file(file.as_ref(), cx)
+    });
+    let store = project.read_with(cx, |project, _| project.local_history_store().clone());
+
+    buffer.update(cx, |buffer, cx| buffer.set_text("first edit\n", cx));
+    cx.run_until_parked();
+
+    let entries = store
+        .read_with(cx, |store, cx| {
+            store.load_entries_for_path(project_path.clone(), cx)
+        })
+        .await
+        .unwrap();
+    assert_eq!(entries.len(), 1);
+
+    let text = store
+        .read_with(cx, |store, cx| {
+            store.load_entry_text(entries[0].clone(), cx)
+        })
+        .await
+        .unwrap();
+    assert_eq!(text.as_ref(), "first edit\n");
+
+    buffer.update(cx, |buffer, cx| buffer.set_text("second edit\n", cx));
+    cx.run_until_parked();
+
+    let entries = store
+        .read_with(cx, |store, cx| {
+            store.load_entries_for_path(project_path.clone(), cx)
+        })
+        .await
+        .unwrap();
+    assert_eq!(entries.len(), 1);
+
+    cx.executor().advance_clock(Duration::from_millis(10_005));
+    cx.run_until_parked();
+
+    let entries = store
+        .read_with(cx, |store, cx| {
+            store.load_entries_for_path(project_path, cx)
+        })
+        .await
+        .unwrap();
+    assert_eq!(entries.len(), 2);
+}
+
+#[gpui::test]
+async fn test_local_history_snapshot_on_file_change(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let history_root = tempdir().unwrap();
+    let history_path = history_root.path().to_string_lossy().to_string();
+
+    cx.update(|cx| {
+        cx.update_global::<SettingsStore, _>(|store, cx| {
+            store.update_user_settings(cx, |content| {
+                content.local_history = Some(settings::LocalHistorySettingsContent {
+                    enabled: Some(true),
+                    capture_on_save: Some(false),
+                    capture_on_edit_idle_ms: Some(10.into()),
+                    capture_on_focus_change: Some(false),
+                    capture_on_window_change: Some(false),
+                    capture_on_task: Some(false),
+                    capture_on_external_change: Some(true),
+                    storage_paths: Some(vec![history_path.clone()]),
+                    active_storage_path: Some(history_path.clone()),
+                    ..Default::default()
+                });
+            });
+        });
+    });
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/dir"),
+        json!({
+            "file1": "start\n",
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
+    let worktree = project.read_with(cx, |project, cx| project.worktrees(cx).next().unwrap());
+    let worktree_id = worktree.read_with(cx, |worktree, _| worktree.id());
+
+    fs.save(
+        path!("/dir/file1").as_ref(),
+        &"changed\n".into(),
+        Default::default(),
+    )
+    .await
+    .unwrap();
+    worktree.next_event(cx).await;
+
+    cx.executor().advance_clock(Duration::from_millis(15));
+    cx.run_until_parked();
+
+    let project_path = ProjectPath {
+        worktree_id,
+        path: rel_path("file1").into(),
+    };
+    let store = project.read_with(cx, |project, _| project.local_history_store().clone());
+    let entries = store
+        .read_with(cx, |store, cx| {
+            store.load_entries_for_path(project_path, cx)
+        })
+        .await
+        .unwrap();
+    assert_eq!(entries.len(), 1);
+
+    let text = store
+        .read_with(cx, |store, cx| {
+            store.load_entry_text(entries[0].clone(), cx)
+        })
+        .await
+        .unwrap();
+    assert_eq!(text.as_ref(), "changed\n");
+}
+
+#[gpui::test]
+async fn test_local_history_renamed_path_keeps_history(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let history_root = tempdir().unwrap();
+    let history_path = history_root.path().to_string_lossy().to_string();
+
+    cx.update(|cx| {
+        cx.update_global::<SettingsStore, _>(|store, cx| {
+            store.update_user_settings(cx, |content| {
+                content.local_history = Some(settings::LocalHistorySettingsContent {
+                    enabled: Some(true),
+                    capture_on_save: Some(false),
+                    capture_on_edit_idle_ms: Some(10.into()),
+                    capture_on_focus_change: Some(false),
+                    capture_on_window_change: Some(false),
+                    capture_on_task: Some(false),
+                    capture_on_external_change: Some(false),
+                    storage_paths: Some(vec![history_path.clone()]),
+                    active_storage_path: Some(history_path.clone()),
+                    ..Default::default()
+                });
+            });
+        });
+    });
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/dir"),
+        json!({
+            "old.txt": "start\n",
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
+    let worktree = project.read_with(cx, |project, cx| project.worktrees(cx).next().unwrap());
+    let worktree_id = worktree.read_with(cx, |worktree, _| worktree.id());
+
+    let buffer = project
+        .update(cx, |p, cx| p.open_local_buffer(path!("/dir/old.txt"), cx))
+        .await
+        .unwrap();
+    buffer.update(cx, |buffer, cx| buffer.set_text("edited\n", cx));
+    cx.executor().advance_clock(Duration::from_millis(15));
+    cx.run_until_parked();
+
+    let store = project.read_with(cx, |project, _| project.local_history_store().clone());
+    let old_path = ProjectPath {
+        worktree_id,
+        path: rel_path("old.txt").into(),
+    };
+    let entries = store
+        .read_with(cx, |store, cx| store.load_entries_for_path(old_path, cx))
+        .await
+        .unwrap();
+    assert_eq!(entries.len(), 1);
+
+    fs.rename(
+        Path::new(path!("/dir/old.txt")),
+        Path::new(path!("/dir/new.txt")),
+        Default::default(),
+    )
+    .await
+    .unwrap();
+    worktree.next_event(cx).await;
+    cx.run_until_parked();
+
+    let new_path = ProjectPath {
+        worktree_id,
+        path: rel_path("new.txt").into(),
+    };
+    let entries = store
+        .read_with(cx, |store, cx| store.load_entries_for_path(new_path, cx))
+        .await
+        .unwrap();
+    assert_eq!(entries.len(), 1);
+    let text = store
+        .read_with(cx, |store, cx| {
+            store.load_entry_text(entries[0].clone(), cx)
+        })
+        .await
+        .unwrap();
+    assert_eq!(text.as_ref(), "edited\n");
+}
+
+#[gpui::test]
+async fn test_local_history_multiple_saves_captured(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let history_root = tempdir().unwrap();
+    let history_path = history_root.path().to_string_lossy().to_string();
+
+    cx.update(|cx| {
+        cx.update_global::<SettingsStore, _>(|store, cx| {
+            store.update_user_settings(cx, |content| {
+                content.local_history = Some(settings::LocalHistorySettingsContent {
+                    enabled: Some(true),
+                    capture_on_save: Some(true),
+                    capture_on_edit_idle_ms: Some(0.into()),
+                    capture_on_focus_change: Some(false),
+                    capture_on_window_change: Some(false),
+                    capture_on_task: Some(false),
+                    capture_on_external_change: Some(false),
+                    storage_paths: Some(vec![history_path.clone()]),
+                    active_storage_path: Some(history_path.clone()),
+                    ..Default::default()
+                });
+            });
+        });
+    });
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/dir"),
+        json!({
+            "file1": "start\n",
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
+    let buffer = project
+        .update(cx, |p, cx| p.open_local_buffer(path!("/dir/file1"), cx))
+        .await
+        .unwrap();
+
+    let expected_texts = ["first\n", "second\n", "third\n"];
+    for text in expected_texts {
+        buffer.update(cx, |buffer, cx| buffer.set_text(text, cx));
+        project
+            .update(cx, |project, cx| project.save_buffer(buffer.clone(), cx))
+            .await
+            .unwrap();
+    }
+
+    cx.run_until_parked();
+
+    let project_path = buffer.read_with(cx, |buffer, cx| {
+        let file = buffer.file().unwrap();
+        ProjectPath::from_file(file.as_ref(), cx)
+    });
+    let store = project.read_with(cx, |project, _| project.local_history_store().clone());
+    let entries = store
+        .read_with(cx, |store, cx| {
+            store.load_entries_for_path(project_path, cx)
+        })
+        .await
+        .unwrap();
+    assert_eq!(entries.len(), expected_texts.len());
+
+    let mut snapshot_texts = Vec::new();
+    for entry in entries {
+        let text = store
+            .read_with(cx, |store, cx| store.load_entry_text(entry, cx))
+            .await
+            .unwrap();
+        snapshot_texts.push(text.to_string());
+    }
+    snapshot_texts.sort();
+
+    let mut expected = expected_texts
+        .iter()
+        .map(|s| s.to_string())
+        .collect::<Vec<_>>();
+    expected.sort();
+    assert_eq!(snapshot_texts, expected);
+}
+
+#[gpui::test]
+async fn test_local_history_save_after_edit_idle_dedupes_same_version(
+    cx: &mut gpui::TestAppContext,
+) {
+    init_test(cx);
+
+    let history_root = tempdir().unwrap();
+    let history_path = history_root.path().to_string_lossy().to_string();
+
+    cx.update(|cx| {
+        cx.update_global::<SettingsStore, _>(|store, cx| {
+            store.update_user_settings(cx, |content| {
+                content.local_history = Some(settings::LocalHistorySettingsContent {
+                    enabled: Some(true),
+                    capture_on_save: Some(true),
+                    capture_on_edit_idle_ms: Some(10.into()),
+                    capture_on_focus_change: Some(false),
+                    capture_on_window_change: Some(false),
+                    capture_on_task: Some(false),
+                    capture_on_external_change: Some(false),
+                    storage_paths: Some(vec![history_path.clone()]),
+                    active_storage_path: Some(history_path.clone()),
+                    ..Default::default()
+                });
+            });
+        });
+    });
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/dir"),
+        serde_json::json!({
+            "file1": "start\n",
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
+    let buffer = project
+        .update(cx, |p, cx| p.open_local_buffer(path!("/dir/file1"), cx))
+        .await
+        .unwrap();
+
+    buffer.update(cx, |buffer, cx| buffer.set_text("edited once\n", cx));
+    cx.executor().advance_clock(Duration::from_millis(15));
+    cx.run_until_parked();
+
+    project
+        .update(cx, |project, cx| project.save_buffer(buffer.clone(), cx))
+        .await
+        .unwrap();
+    cx.run_until_parked();
+
+    let project_path = buffer.read_with(cx, |buffer, cx| {
+        let file = buffer.file().unwrap();
+        ProjectPath::from_file(file.as_ref(), cx)
+    });
+    let store = project.read_with(cx, |project, _| project.local_history_store().clone());
+    let entries = store
+        .read_with(cx, |store, cx| {
+            store.load_entries_for_path(project_path, cx)
+        })
+        .await
+        .unwrap();
+    assert_eq!(entries.len(), 1);
+}
+
+#[gpui::test]
+async fn test_local_history_reads_from_multiple_endpoints(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let history_root_a = tempdir().unwrap();
+    let history_root_b = tempdir().unwrap();
+    let path_a = history_root_a.path().to_string_lossy().to_string();
+    let path_b = history_root_b.path().to_string_lossy().to_string();
+
+    cx.update(|cx| {
+        cx.update_global::<SettingsStore, _>(|store, cx| {
+            store.update_user_settings(cx, |content| {
+                content.local_history = Some(settings::LocalHistorySettingsContent {
+                    enabled: Some(true),
+                    capture_on_save: Some(true),
+                    capture_on_edit_idle_ms: Some(0.into()),
+                    capture_on_focus_change: Some(false),
+                    capture_on_window_change: Some(false),
+                    capture_on_task: Some(false),
+                    capture_on_external_change: Some(false),
+                    storage_paths: Some(vec![path_a.clone(), path_b.clone()]),
+                    active_storage_path: Some(path_a.clone()),
+                    ..Default::default()
+                });
+            });
+        });
+    });
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/dir"),
+        json!({
+            "file1": "start\n",
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
+    let buffer = project
+        .update(cx, |p, cx| p.open_local_buffer(path!("/dir/file1"), cx))
+        .await
+        .unwrap();
+
+    buffer.update(cx, |buffer, cx| buffer.set_text("from a\n", cx));
+    project
+        .update(cx, |project, cx| project.save_buffer(buffer.clone(), cx))
+        .await
+        .unwrap();
+
+    cx.update(|cx| {
+        cx.update_global::<SettingsStore, _>(|store, cx| {
+            store.update_user_settings(cx, |content| {
+                if let Some(local_history) = content.local_history.as_mut() {
+                    local_history.active_storage_path = Some(path_b.clone());
+                }
+            });
+        });
+    });
+
+    buffer.update(cx, |buffer, cx| buffer.set_text("from b\n", cx));
+    project
+        .update(cx, |project, cx| project.save_buffer(buffer.clone(), cx))
+        .await
+        .unwrap();
+
+    cx.run_until_parked();
+
+    let project_path = buffer.read_with(cx, |buffer, cx| {
+        let file = buffer.file().unwrap();
+        ProjectPath::from_file(file.as_ref(), cx)
+    });
+    let store = project.read_with(cx, |project, _| project.local_history_store().clone());
+    let entries = store
+        .read_with(cx, |store, cx| {
+            store.load_entries_for_path(project_path, cx)
+        })
+        .await
+        .unwrap();
+    assert_eq!(entries.len(), 2);
+
+    let mut snapshot_texts = Vec::new();
+    for entry in entries {
+        let text = store
+            .read_with(cx, |store, cx| store.load_entry_text(entry, cx))
+            .await
+            .unwrap();
+        snapshot_texts.push(text.to_string());
+    }
+    snapshot_texts.sort();
+    assert_eq!(
+        snapshot_texts,
+        vec!["from a\n".to_string(), "from b\n".to_string()]
+    );
+}
+
+#[gpui::test]
+async fn test_local_history_excluded_paths_not_recorded(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let history_root = tempdir().unwrap();
+    let history_path = history_root.path().to_string_lossy().to_string();
+
+    cx.update(|cx| {
+        cx.update_global::<SettingsStore, _>(|store, cx| {
+            store.update_user_settings(cx, |content| {
+                content.local_history = Some(settings::LocalHistorySettingsContent {
+                    enabled: Some(true),
+                    capture_on_save: Some(true),
+                    capture_on_edit_idle_ms: Some(0.into()),
+                    capture_on_focus_change: Some(false),
+                    capture_on_window_change: Some(false),
+                    capture_on_task: Some(false),
+                    capture_on_external_change: Some(false),
+                    storage_paths: Some(vec![history_path.clone()]),
+                    active_storage_path: Some(history_path.clone()),
+                    exclude_globs: Some(vec!["**/*.log".to_string()]),
+                    ..Default::default()
+                });
+            });
+        });
+    });
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/dir"),
+        json!({
+            "file.log": "start\n",
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
+    let buffer = project
+        .update(cx, |p, cx| p.open_local_buffer(path!("/dir/file.log"), cx))
+        .await
+        .unwrap();
+    buffer.update(cx, |buffer, cx| buffer.set_text("edited\n", cx));
+    project
+        .update(cx, |project, cx| project.save_buffer(buffer.clone(), cx))
+        .await
+        .unwrap();
+
+    cx.run_until_parked();
+
+    let project_path = buffer.read_with(cx, |buffer, cx| {
+        let file = buffer.file().unwrap();
+        ProjectPath::from_file(file.as_ref(), cx)
+    });
+    let store = project.read_with(cx, |project, _| project.local_history_store().clone());
+    let entries = store
+        .read_with(cx, |store, cx| {
+            store.load_entries_for_path(project_path, cx)
+        })
+        .await
+        .unwrap();
+    assert!(entries.is_empty());
+}
+
+#[gpui::test]
+async fn test_local_history_concurrent_saves_do_not_corrupt_index(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let history_root = tempdir().unwrap();
+    let history_path = history_root.path().to_string_lossy().to_string();
+
+    cx.update(|cx| {
+        cx.update_global::<SettingsStore, _>(|store, cx| {
+            store.update_user_settings(cx, |content| {
+                content.local_history = Some(settings::LocalHistorySettingsContent {
+                    enabled: Some(true),
+                    capture_on_save: Some(true),
+                    capture_on_edit_idle_ms: Some(0.into()),
+                    capture_on_focus_change: Some(false),
+                    capture_on_window_change: Some(false),
+                    capture_on_task: Some(false),
+                    capture_on_external_change: Some(false),
+                    storage_paths: Some(vec![history_path.clone()]),
+                    active_storage_path: Some(history_path.clone()),
+                    ..Default::default()
+                });
+            });
+        });
+    });
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/dir"),
+        json!({
+            "file1": "",
+            "file2": "",
+            "file3": "",
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
+    let buffers = [
+        project
+            .update(cx, |p, cx| p.open_local_buffer(path!("/dir/file1"), cx))
+            .await
+            .unwrap(),
+        project
+            .update(cx, |p, cx| p.open_local_buffer(path!("/dir/file2"), cx))
+            .await
+            .unwrap(),
+        project
+            .update(cx, |p, cx| p.open_local_buffer(path!("/dir/file3"), cx))
+            .await
+            .unwrap(),
+    ];
+
+    let texts = ["one\n", "two\n", "three\n"];
+    for (buffer, text) in buffers.iter().zip(texts.iter()) {
+        buffer.update(cx, |buffer, cx| buffer.set_text(*text, cx));
+    }
+
+    let save_tasks = buffers
+        .iter()
+        .map(|buffer| project.update(cx, |project, cx| project.save_buffer(buffer.clone(), cx)))
+        .collect::<Vec<_>>();
+    for result in future::join_all(save_tasks).await {
+        result.unwrap();
+    }
+
+    cx.run_until_parked();
+
+    let store = project.read_with(cx, |project, _| project.local_history_store().clone());
+    for (buffer, expected) in buffers.iter().zip(texts.iter()) {
+        let project_path = buffer.read_with(cx, |buffer, cx| {
+            let file = buffer.file().unwrap();
+            ProjectPath::from_file(file.as_ref(), cx)
+        });
+        let entries = store
+            .read_with(cx, |store, cx| {
+                store.load_entries_for_path(project_path, cx)
+            })
+            .await
+            .unwrap();
+        assert_eq!(entries.len(), 1);
+        let text = store
+            .read_with(cx, |store, cx| {
+                store.load_entry_text(entries[0].clone(), cx)
+            })
+            .await
+            .unwrap();
+        assert_eq!(text.as_ref(), *expected);
+    }
+}
+
+#[gpui::test]
+#[ignore]
+async fn test_local_history_stress_many_saves(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let history_root = tempdir().unwrap();
+    let history_path = history_root.path().to_string_lossy().to_string();
+
+    cx.update(|cx| {
+        cx.update_global::<SettingsStore, _>(|store, cx| {
+            store.update_user_settings(cx, |content| {
+                content.local_history = Some(settings::LocalHistorySettingsContent {
+                    enabled: Some(true),
+                    capture_on_save: Some(true),
+                    capture_on_edit_idle_ms: Some(0.into()),
+                    capture_on_focus_change: Some(false),
+                    capture_on_window_change: Some(false),
+                    capture_on_task: Some(false),
+                    capture_on_external_change: Some(false),
+                    storage_paths: Some(vec![history_path.clone()]),
+                    active_storage_path: Some(history_path.clone()),
+                    ..Default::default()
+                });
+            });
+        });
+    });
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(path!("/dir"), json!({ "file1": "" })).await;
+
+    let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
+    let buffer = project
+        .update(cx, |p, cx| p.open_local_buffer(path!("/dir/file1"), cx))
+        .await
+        .unwrap();
+
+    let mut rng = StdRng::seed_from_u64(42);
+    let mut expected = Vec::new();
+    for _ in 0..200 {
+        let text = format!("line {}\n", rng.next_u64());
+        buffer.update(cx, |buffer, cx| buffer.set_text(text.as_str(), cx));
+        project
+            .update(cx, |project, cx| project.save_buffer(buffer.clone(), cx))
+            .await
+            .unwrap();
+        expected.push(text);
+    }
+
+    cx.run_until_parked();
+
+    let project_path = buffer.read_with(cx, |buffer, cx| {
+        let file = buffer.file().unwrap();
+        ProjectPath::from_file(file.as_ref(), cx)
+    });
+    let store = project.read_with(cx, |project, _| project.local_history_store().clone());
+    let entries = store
+        .read_with(cx, |store, cx| {
+            store.load_entries_for_path(project_path, cx)
+        })
+        .await
+        .unwrap();
+    assert_eq!(entries.len(), expected.len());
 }
 
 #[gpui::test(iterations = 10)]

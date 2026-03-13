@@ -116,6 +116,7 @@ members = [
     "crates/language_tools",
     "crates/languages",
     "crates/line_ending_selector",
+    "crates/local_history_ui",
     "crates/livekit_api",
     "crates/livekit_client",
     "crates/lmstudio",
@@ -360,6 +361,7 @@ language_selector = { path = "crates/language_selector" }
 language_tools = { path = "crates/language_tools" }
 languages = { path = "crates/languages" }
 line_ending_selector = { path = "crates/line_ending_selector" }
+local_history_ui = { path = "crates/local_history_ui" }
 livekit_api = { path = "crates/livekit_api" }
 livekit_client = { path = "crates/livekit_client" }
 lmstudio = { path = "crates/lmstudio" }
@@ -554,6 +556,7 @@ env_logger = "0.11"
 encoding_rs = "0.8"
 exec = "0.3.1"
 fancy-regex = "0.16.0"
+fs2 = "0.4.3"
 fork = "0.4.0"
 futures = "0.3"
 futures-concurrency = "7.7.1"

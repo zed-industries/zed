@@ -194,6 +194,8 @@ impl VsCodeSettings {
             image_viewer: None,
             journal: None,
             language_models: None,
+            local_history: None,
+            local_history_panel: None,
             line_indicator_format: None,
             log: None,
             message_editor: None,

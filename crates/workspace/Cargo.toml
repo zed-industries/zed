@@ -80,6 +80,7 @@ remote = { workspace = true, features = ["test-support"] }
 session = { workspace = true, features = ["test-support"] }
 settings = { workspace = true, features = ["test-support"] }
 http_client = { workspace = true, features = ["test-support"] }
+util = { workspace = true, features = ["test-support"] }
 pretty_assertions.workspace = true
 tempfile.workspace = true
 zlog.workspace = true

@@ -87,8 +87,8 @@ pub use persistence::{
 };
 use postage::stream::Stream;
 use project::{
-    DirectoryLister, Project, ProjectEntryId, ProjectPath, ResolvedPath, Worktree, WorktreeId,
-    WorktreeSettings,
+    DirectoryLister, LocalHistoryCaptureTrigger, Project, ProjectEntryId, ProjectPath,
+    ResolvedPath, Worktree, WorktreeId, WorktreeSettings,
     debugger::{breakpoint_store::BreakpointStoreEvent, session::ThreadStatus},
     project_settings::ProjectSettings,
     toolchain_store::ToolchainStoreEvent,
@@ -5928,6 +5928,13 @@ impl Workspace {
                     .detach();
             }
         } else {
+            self.project.update(cx, |project, cx| {
+                project.capture_local_history_for_dirty_buffers(
+                    LocalHistoryCaptureTrigger::WindowChange,
+                    cx,
+                );
+            });
+
             for pane in &self.panes {
                 pane.update(cx, |pane, cx| {
                     if let Some(item) = pane.active_item() {
@@ -10018,11 +10025,12 @@ mod tests {
         DismissEvent, Empty, EventEmitter, FocusHandle, Focusable, Render, TestAppContext,
         UpdateGlobal, VisualTestContext, px,
     };
-    use project::{Project, ProjectEntryId};
+    use project::{Project, ProjectEntryId, TaskSourceKind};
     use serde_json::json;
     use settings::SettingsStore;
-    use util::path;
-    use util::rel_path::rel_path;
+    use task::{TaskContext, TaskTemplate};
+    use tempfile::tempdir;
+    use util::{path, rel_path::rel_path};
 
     #[gpui::test]
     async fn test_tab_disambiguation(cx: &mut TestAppContext) {
@@ -10816,6 +10824,146 @@ mod tests {
                 "Deactivating window should trigger autosave when focus was on a child"
             );
         });
+    }
+
+    #[gpui::test]
+    async fn test_local_history_capture_on_window_change(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let history_root = tempdir().unwrap();
+        let history_path = history_root.path().to_string_lossy().to_string();
+
+        cx.update(|cx| {
+            cx.update_global::<SettingsStore, _>(|store, cx| {
+                store.update_user_settings(cx, |content| {
+                    content.local_history = Some(settings::LocalHistorySettingsContent {
+                        enabled: Some(true),
+                        capture_on_save: Some(false),
+                        capture_on_edit_idle_ms: Some(0.into()),
+                        capture_on_focus_change: Some(false),
+                        capture_on_window_change: Some(true),
+                        capture_on_task: Some(false),
+                        capture_on_external_change: Some(false),
+                        storage_paths: Some(vec![history_path.clone()]),
+                        active_storage_path: Some(history_path.clone()),
+                        ..Default::default()
+                    });
+                });
+            });
+        });
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/dir"),
+            json!({
+                "file1": "start\n",
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
+        let (_workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+
+        let buffer = project
+            .update(cx, |project, cx| {
+                project.open_local_buffer(path!("/dir/file1"), cx)
+            })
+            .await
+            .unwrap();
+        buffer.update(cx, |buffer, cx| buffer.set_text("edited\n", cx));
+
+        cx.deactivate_window();
+        cx.run_until_parked();
+
+        let project_path = buffer.read_with(cx, |buffer, cx| {
+            let file = buffer.file().unwrap();
+            ProjectPath::from_file(file.as_ref(), cx)
+        });
+        let store = project.read_with(cx, |project, _| project.local_history_store().clone());
+        let entries = store
+            .read_with(cx, |store, cx| {
+                store.load_entries_for_path(project_path, cx)
+            })
+            .await
+            .unwrap();
+        assert_eq!(entries.len(), 1);
+    }
+
+    #[gpui::test]
+    async fn test_local_history_capture_on_task_schedule(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let history_root = tempdir().unwrap();
+        let history_path = history_root.path().to_string_lossy().to_string();
+
+        cx.update(|cx| {
+            cx.update_global::<SettingsStore, _>(|store, cx| {
+                store.update_user_settings(cx, |content| {
+                    content.local_history = Some(settings::LocalHistorySettingsContent {
+                        enabled: Some(true),
+                        capture_on_save: Some(false),
+                        capture_on_edit_idle_ms: Some(0.into()),
+                        capture_on_focus_change: Some(false),
+                        capture_on_window_change: Some(false),
+                        capture_on_task: Some(true),
+                        capture_on_external_change: Some(false),
+                        storage_paths: Some(vec![history_path.clone()]),
+                        active_storage_path: Some(history_path.clone()),
+                        ..Default::default()
+                    });
+                });
+            });
+        });
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/dir"),
+            json!({
+                "file1": "start\n",
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+
+        let buffer = project
+            .update(cx, |project, cx| {
+                project.open_local_buffer(path!("/dir/file1"), cx)
+            })
+            .await
+            .unwrap();
+        buffer.update(cx, |buffer, cx| buffer.set_text("edited\n", cx));
+
+        let template = TaskTemplate {
+            label: "Test".to_string(),
+            command: "true".to_string(),
+            ..Default::default()
+        };
+        let resolved = template
+            .resolve_task("test", &TaskContext::default())
+            .unwrap();
+
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.schedule_resolved_task(TaskSourceKind::UserInput, resolved, true, window, cx);
+        });
+
+        cx.run_until_parked();
+
+        let project_path = buffer.read_with(cx, |buffer, cx| {
+            let file = buffer.file().unwrap();
+            ProjectPath::from_file(file.as_ref(), cx)
+        });
+        let store = project.read_with(cx, |project, _| project.local_history_store().clone());
+        let entries = store
+            .read_with(cx, |store, cx| {
+                store.load_entries_for_path(project_path, cx)
+            })
+            .await
+            .unwrap();
+        assert_eq!(entries.len(), 1);
     }
 
     #[gpui::test]

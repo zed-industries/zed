@@ -3,7 +3,7 @@ use std::process::ExitStatus;
 use anyhow::Result;
 use gpui::{AppContext, Context, Entity, Task};
 use language::Buffer;
-use project::{TaskSourceKind, WorktreeId};
+use project::{LocalHistoryCaptureTrigger, TaskSourceKind, WorktreeId};
 use remote::ConnectionState;
 use task::{
     DebugScenario, ResolvedTask, SharedTaskContext, SpawnInTerminal, TaskContext, TaskTemplate,
@@ -56,6 +56,10 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Workspace>,
     ) {
+        self.project().update(cx, |project, cx| {
+            project.capture_local_history_for_dirty_buffers(LocalHistoryCaptureTrigger::Task, cx);
+        });
+
         let spawn_in_terminal = resolved_task.resolved.clone();
         if !omit_history {
             if let Some(debugger_provider) = self.debugger_provider.as_ref() {

@@ -24,8 +24,8 @@ use language::{
 use lsp::DiagnosticSeverity;
 use multi_buffer::MultiBufferOffset;
 use project::{
-    File, Project, ProjectItem as _, ProjectPath, lsp_store::FormatTrigger,
-    project_settings::ProjectSettings, search::SearchQuery,
+    File, LocalHistoryCaptureTrigger, Project, ProjectItem as _, ProjectPath,
+    lsp_store::FormatTrigger, project_settings::ProjectSettings, search::SearchQuery,
 };
 use rpc::proto::{self, update_view};
 use settings::Settings;
@@ -806,6 +806,18 @@ impl Item for Editor {
     fn deactivated(&mut self, _: &mut Window, cx: &mut Context<Self>) {
         let selection = self.selections.newest_anchor();
         self.push_to_nav_history(selection.head(), None, true, false, cx);
+
+        if let Some(project) = self.project.clone() {
+            if let Some(buffer) = self.buffer.read(cx).as_singleton() {
+                project.update(cx, |project, cx| {
+                    project.capture_local_history_for_buffer(
+                        buffer,
+                        LocalHistoryCaptureTrigger::FocusChange,
+                        cx,
+                    );
+                });
+            }
+        }
     }
 
     fn workspace_deactivated(&mut self, _: &mut Window, cx: &mut Context<Self>) {

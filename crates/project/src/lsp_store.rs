@@ -4359,7 +4359,8 @@ impl LspStore {
                         this.update_local_worktree_language_servers(&worktree, changes, cx);
                     }
                     worktree::Event::UpdatedGitRepositories(_)
-                    | worktree::Event::DeletedEntry(_) => {}
+                    | worktree::Event::DeletedEntry(_)
+                    | worktree::Event::RootPathChanged { .. } => {}
                 })
                 .detach()
             }
@@ -4371,7 +4372,8 @@ impl LspStore {
             | WorktreeStoreEvent::WorktreeOrderChanged
             | WorktreeStoreEvent::WorktreeUpdatedEntries(..)
             | WorktreeStoreEvent::WorktreeUpdatedGitRepositories(..)
-            | WorktreeStoreEvent::WorktreeDeletedEntry(..) => {}
+            | WorktreeStoreEvent::WorktreeDeletedEntry(..)
+            | WorktreeStoreEvent::WorktreeRootPathChanged(..) => {}
         }
     }
 
