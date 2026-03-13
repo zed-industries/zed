@@ -2315,12 +2315,14 @@ impl DisplaySnapshot {
             let max_point = self.buffer_snapshot().max_point();
             let mut end = None;
 
-            for row in (buffer_row.0 + 1)..=max_point.row {
+            let mut row = buffer_row.0 + 1;
+            while row <= max_point.row {
                 let line_indent = self.line_indent_for_buffer_row(MultiBufferRow(row));
                 if !line_indent.is_line_blank()
                     && line_indent.raw_len() <= start_line_indent.raw_len()
                 {
-                    if self.is_inside_multiline_literal(row) {
+                    if let Some(literal_end_row) = self.multiline_literal_end_row(row) {
+                        row = literal_end_row + 1;
                         continue;
                     }
                     let prev_row = row - 1;
@@ -2330,6 +2332,7 @@ impl DisplaySnapshot {
                     ));
                     break;
                 }
+                row += 1;
             }
 
             let mut row_before_line_breaks = end.unwrap_or(max_point);
@@ -2359,11 +2362,9 @@ impl DisplaySnapshot {
         }
     }
 
-    fn is_inside_multiline_literal(&self, row: u32) -> bool {
+    fn multiline_literal_end_row(&self, row: u32) -> Option<u32> {
         let point = Point::new(row, 0);
-        let Some((node, _)) = self.buffer_snapshot().syntax_ancestor(point..point) else {
-            return false;
-        };
+        let (node, _) = self.buffer_snapshot().syntax_ancestor(point..point)?;
 
         let mut current = node;
         loop {
@@ -2373,12 +2374,12 @@ impl DisplaySnapshot {
                     || kind.contains("comment")
                     || kind.contains("heredoc"))
             {
-                return true;
+                return Some(current.end_position().row as u32);
             }
             if let Some(parent) = current.parent() {
                 current = parent;
             } else {
-                return false;
+                return None;
             }
         }
     }
