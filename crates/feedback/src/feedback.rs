@@ -1,4 +1,4 @@
-use extension_host::{CopyInstalledExtensionsIntoClipboard, installed_extensions_for_clipboard};
+use extension_host::ExtensionStore;
 use gpui::{App, ClipboardItem, PromptLevel, actions};
 use system_specs::{CopySystemSpecsIntoClipboard, SystemSpecs};
 use util::ResultExt;
@@ -10,6 +10,8 @@ actions!(
     [
         /// Opens the Zed repository on GitHub.
         OpenZedRepo,
+        /// Copies installed extensions to the clipboard for bug reports.
+        CopyInstalledExtensionsIntoClipboard
     ]
 );
 
@@ -107,4 +109,32 @@ pub fn init(cx: &mut App) {
             });
     })
     .detach();
+}
+
+pub fn installed_extensions_for_clipboard(cx: &App) -> String {
+    ExtensionStore::try_global(cx)
+        .map(|store| format_installed_extensions_for_clipboard(store.read(cx)))
+        .unwrap_or_else(|| "Installed extensions: unavailable".to_string())
+}
+
+fn format_installed_extensions_for_clipboard(store: &ExtensionStore) -> String {
+    let mut lines = Vec::with_capacity(store.extension_index.extensions.len());
+
+    for (extension_id, entry) in store.extension_index.extensions.iter() {
+        let dev_suffix = if entry.dev { " (dev)" } else { "" };
+        lines.push(format!(
+            "{} ({}) v{}{}",
+            entry.manifest.name, extension_id, entry.manifest.version, dev_suffix
+        ));
+    }
+
+    if lines.is_empty() {
+        return "Installed extensions: none".to_string();
+    }
+
+    format!(
+        "Installed extensions ({}):\n{}",
+        lines.len(),
+        lines.join("\n")
+    )
 }
