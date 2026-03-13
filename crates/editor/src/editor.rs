@@ -1163,6 +1163,7 @@ pub struct Editor {
     show_breakpoints: Option<bool>,
     show_diff_review_button: bool,
     show_wrap_guides: Option<bool>,
+    show_wrap_guides_toggle: bool,
     show_indent_guides: Option<bool>,
     buffers_with_disabled_indent_guides: HashSet<BufferId>,
     highlight_order: usize,
@@ -2395,6 +2396,7 @@ impl Editor {
             show_breakpoints: None,
             show_diff_review_button: false,
             show_wrap_guides: None,
+            show_wrap_guides_toggle: false,
             show_indent_guides,
             buffers_with_disabled_indent_guides: HashSet::default(),
             highlight_order: 0,
@@ -20830,7 +20832,7 @@ impl Editor {
         }
 
         let settings = self.buffer.read(cx).language_settings(cx);
-        if settings.show_wrap_guides {
+        if settings.show_wrap_guides != self.show_wrap_guides_toggle {
             match self.soft_wrap_mode(cx) {
                 SoftWrap::Column(soft_wrap) => {
                     wrap_guides.push((soft_wrap as usize, true));
@@ -20939,6 +20941,11 @@ impl Editor {
             };
             self.soft_wrap_mode_override = Some(soft_wrap);
         }
+        cx.notify();
+    }
+
+    pub fn toggle_wrap_guides(&mut self, _: &ToggleWrapGuides, _: &mut Window, cx: &mut Context<Self>) {
+        self.show_wrap_guides_toggle = !self.show_wrap_guides_toggle;
         cx.notify();
     }
 

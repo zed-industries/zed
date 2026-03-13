@@ -856,6 +856,8 @@ actions!(
         ToggleSelectionMenu,
         /// Toggles soft wrap mode.
         ToggleSoftWrap,
+        /// Toggles the wrap guides display.
+        ToggleWrapGuides,
         /// Toggles the tab bar display.
         ToggleTabBar,
         /// Transposes characters around cursor.
