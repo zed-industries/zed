@@ -1126,6 +1126,7 @@ impl RenderOnce for ZedAiConfiguration {
         let manage_subscription_buttons = if is_pro {
             Button::new("manage_settings", "Manage Subscription")
                 .full_width()
+                .label_size(LabelSize::Small)
                 .style(ButtonStyle::Tinted(TintColor::Accent))
                 .on_click(|_, _, cx| cx.open_url(&zed_urls::account_url(cx)))
                 .into_any_element()
@@ -1149,10 +1150,7 @@ impl RenderOnce for ZedAiConfiguration {
                 .child(Label::new("Sign in to have access to Zed's complete agentic experience with hosted models."))
                 .child(
                     Button::new("sign_in", "Sign In to use Zed AI")
-                        .icon_color(Color::Muted)
-                        .icon(IconName::Github)
-                        .icon_size(IconSize::Small)
-                        .icon_position(IconPosition::Start)
+                        .start_icon(Icon::new(IconName::Github).size(IconSize::Small).color(Color::Muted))
                         .full_width()
                         .on_click({
                             let callback = self.sign_in_callback.clone();
