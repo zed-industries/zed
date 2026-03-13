@@ -528,10 +528,7 @@ impl ProjectPicker {
                                                 .point_for_row_and_column_from_external_source(
                                                     row, col,
                                                 );
-                                            let anchor = buffer_snapshot.anchor_after(point);
-                                            editor.go_to_singleton_buffer_text_anchor(
-                                                anchor, window, cx,
-                                            );
+                                            editor.go_to_singleton_buffer_point(point, window, cx);
                                         });
                                     })
                                     .ok();

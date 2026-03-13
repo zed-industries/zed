@@ -227,7 +227,18 @@ impl GoToLine {
 
         let row = query_row.saturating_sub(1);
         let character = query_char.unwrap_or(0).saturating_sub(1);
-        let point = snapshot.point_for_row_and_column_from_external_source(row, character);
+        let row = row.min(snapshot.max_point().row);
+        let start = Point::new(row, 0);
+        let end = snapshot.clip_point(
+            Point::new(row, character.saturating_mul(4).saturating_add(1)),
+            Bias::Right,
+        );
+        let range = start..end;
+        let point = text::BufferSnapshot::point_for_column_in_range_from_external_source(
+            range.clone(),
+            snapshot.text_for_range(range),
+            character,
+        );
         Some(snapshot.anchor_before(point))
     }
 

@@ -17206,27 +17206,6 @@ impl Editor {
         self.go_to_singleton_buffer_range(point..point, window, cx);
     }
 
-    pub fn go_to_singleton_buffer_text_anchor(
-        &mut self,
-        anchor: text::Anchor,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let multibuffer = self.buffer().read(cx);
-        let Some(buffer) = multibuffer.as_singleton() else {
-            return;
-        };
-        let Some(anchor) = multibuffer.buffer_anchor_to_anchor(&buffer, anchor, cx) else {
-            return;
-        };
-        self.change_selections(
-            SelectionEffects::default().nav_history(true),
-            window,
-            cx,
-            |selections| selections.select_anchor_ranges([anchor..anchor]),
-        );
-    }
-
     pub fn go_to_singleton_buffer_range(
         &mut self,
         range: Range<Point>,

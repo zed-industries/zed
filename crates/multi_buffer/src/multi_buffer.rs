@@ -2134,7 +2134,7 @@ impl MultiBuffer {
         for (excerpt_id, _, range) in self.excerpts_for_buffer(snapshot.remote_id(), cx) {
             let start = range.context.start.to_point(&snapshot);
             let end = range.context.end.to_point(&snapshot);
-            if start <= point && point < end {
+            if start <= point && point <= end {
                 found = Some((snapshot.clip_point(point, Bias::Left), excerpt_id));
                 break;
             }
@@ -5186,16 +5186,6 @@ impl MultiBufferSnapshot {
         } else {
             0
         }
-    }
-
-    pub fn point_for_row_and_column_from_external_source(&self, row: u32, column: u32) -> Point {
-        let row = row.min(self.max_point().row);
-        let range = Point::new(row, 0)..Point::new(row, self.line_len(MultiBufferRow(row)));
-        text::BufferSnapshot::point_for_column_in_range_from_external_source(
-            range.clone(),
-            self.text_for_range(range),
-            column,
-        )
     }
 
     pub fn buffer_line_for_row(

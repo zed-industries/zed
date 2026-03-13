@@ -73,37 +73,26 @@ fn test_singleton(cx: &mut App) {
 }
 
 #[gpui::test]
-fn test_point_for_row_and_column_from_external_source(cx: &mut App) {
-    let buffer = cx.new(|cx| Buffer::local("aaéøbb", cx));
-    let multibuffer = cx.new(|_| MultiBuffer::new(Capability::ReadWrite));
+fn test_buffer_point_to_anchor_at_end_of_singleton_buffer(cx: &mut App) {
+    let buffer = cx.new(|cx| Buffer::local("abc", cx));
+    let multibuffer = cx.new(|cx| MultiBuffer::singleton(buffer.clone(), cx));
 
-    multibuffer.update(cx, |multibuffer, cx| {
-        multibuffer.set_excerpt_ranges_for_path(
-            PathKey::sorted(0),
-            buffer.clone(),
-            &buffer.read(cx).snapshot(),
-            vec![ExcerptRange::new(Point::new(0, 2)..Point::new(0, 8))],
-            cx,
-        );
-    });
+    let excerpt_id = multibuffer
+        .read(cx)
+        .excerpt_ids()
+        .into_iter()
+        .next()
+        .unwrap();
+    let anchor = multibuffer
+        .read(cx)
+        .buffer_point_to_anchor(&buffer, Point::new(0, 3), cx);
 
-    let snapshot = multibuffer.read(cx).snapshot(cx);
-    assert_eq!(snapshot.text(), "éøbb");
     assert_eq!(
-        snapshot.point_for_row_and_column_from_external_source(0, 0),
-        Point::new(0, 0)
-    );
-    assert_eq!(
-        snapshot.point_for_row_and_column_from_external_source(0, 1),
-        Point::new(0, 2)
-    );
-    assert_eq!(
-        snapshot.point_for_row_and_column_from_external_source(0, 2),
-        Point::new(0, 4)
-    );
-    assert_eq!(
-        snapshot.point_for_row_and_column_from_external_source(0, 100),
-        Point::new(0, 6)
+        anchor,
+        Some(Anchor::in_buffer(
+            excerpt_id,
+            buffer.read(cx).snapshot().anchor_after(Point::new(0, 3)),
+        ))
     );
 }
 

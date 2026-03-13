@@ -2277,7 +2277,10 @@ impl BufferSnapshot {
 
     pub fn point_for_row_and_column_from_external_source(&self, row: u32, column: u32) -> Point {
         let row = row.min(self.max_point().row);
-        let range = Point::new(row, 0)..Point::new(row, self.line_len(row));
+        let max_column = self
+            .line_len(row)
+            .min(column.saturating_mul(4).saturating_add(1));
+        let range = Point::new(row, 0)..Point::new(row, max_column);
         Self::point_for_column_in_range_from_external_source(
             range.clone(),
             self.text_for_range(range),
