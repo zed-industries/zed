@@ -68,14 +68,17 @@ impl AddLlmProviderInput {
         let provider_name =
             single_line_input("Provider Name", provider.name(), None, 1, window, cx);
         let api_url = single_line_input("API URL", provider.api_url(), None, 2, window, cx);
-        let api_key = single_line_input(
-            "API Key",
-            "000000000000000000000000000000000000000000000000",
-            None,
-            3,
-            window,
-            cx,
-        );
+        let api_key = cx.new(|cx| {
+            InputField::new(
+                window,
+                cx,
+                "000000000000000000000000000000000000000000000000",
+            )
+            .label("API Key")
+            .tab_index(3)
+            .tab_stop(true)
+            .masked(true)
+        });
 
         Self {
             provider_name,
