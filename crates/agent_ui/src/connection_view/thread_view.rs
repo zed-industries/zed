@@ -183,6 +183,7 @@ pub struct ThreadView {
     pub thread_retry_status: Option<RetryStatus>,
     pub(super) thread_error: Option<ThreadError>,
     pub thread_error_markdown: Option<Entity<Markdown>>,
+    pub is_compacting_conversation: bool,
     pub token_limit_callout_dismissed: bool,
     pub last_token_limit_telemetry: Option<acp_thread::TokenUsageRatio>,
     thread_feedback: ThreadFeedbackState,
@@ -419,6 +420,7 @@ impl ThreadView {
             thread_retry_status: None,
             thread_error: None,
             thread_error_markdown: None,
+            is_compacting_conversation: false,
             token_limit_callout_dismissed: false,
             last_token_limit_telemetry: None,
             thread_feedback: Default::default(),
@@ -757,6 +759,23 @@ impl ThreadView {
         }
     }
 
+    pub fn maybe_prewarm_compaction_summary(&mut self, cx: &mut Context<Self>) {
+        let Some(token_usage) = self.thread.read(cx).token_usage() else {
+            return;
+        };
+        if token_usage.ratio() == acp_thread::TokenUsageRatio::Normal {
+            return;
+        }
+
+        let Some(native_thread) = self.as_native_thread(cx) else {
+            return;
+        };
+
+        native_thread.update(cx, |thread, cx| {
+            let _ = thread.summary(cx);
+        });
+    }
+
     // sending
 
     fn clear_external_source_prompt_warning(&mut self, cx: &mut Context<Self>) {
@@ -769,7 +788,7 @@ impl ThreadView {
     pub fn send(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let thread = &self.thread;
 
-        if self.is_loading_contents {
+        if self.is_loading_contents || self.is_compacting_conversation {
             return;
         }
 
@@ -825,6 +844,102 @@ impl ThreadView {
         }
 
         if is_editor_empty {
+            return;
+        }
+
+        let native_thread = self.as_native_thread(cx);
+        let should_compact_in_place = native_thread.is_some()
+            && self
+                .thread
+                .read(cx)
+                .token_usage()
+                .is_some_and(|usage| usage.ratio() == acp_thread::TokenUsageRatio::Exceeded);
+        if should_compact_in_place {
+            self.is_compacting_conversation = true;
+            cx.notify();
+
+            let Some(native_thread) = native_thread else {
+                self.is_compacting_conversation = false;
+                cx.notify();
+                return;
+            };
+            let content_task = self.resolve_message_contents(&message_editor, cx);
+            let summary_task = native_thread.update(cx, |thread, cx| thread.summary(cx));
+
+            cx.spawn_in(window, async move |this, cx| {
+                let compact_result: Result<()> = async {
+                    let (content, tracked_buffers) = content_task.await?;
+                    if content.is_empty() {
+                        return Ok(());
+                    }
+
+                    this.update_in(cx, |this, window, cx| {
+                        this.in_flight_prompt = Some(content.clone());
+                        this.message_editor
+                            .update(cx, |message_editor, cx| message_editor.clear(window, cx));
+                        this.clear_external_source_prompt_warning(cx);
+                        cx.notify();
+                    })?;
+
+                    let Some(summary_text) = summary_task.await else {
+                        return Err(anyhow!("Failed to compact the earlier conversation context"));
+                    };
+                    if summary_text.is_empty() {
+                        return Err(anyhow!("Failed to compact the earlier conversation context"));
+                    }
+
+                    native_thread.update(cx, |thread, cx| {
+                        thread.set_compacted_context(summary_text, cx);
+                    });
+
+                    this.update_in(cx, |this, window, cx| {
+                        this.thread_error.take();
+                        this.thread_feedback.clear();
+                        this.editing_message.take();
+
+                        if this.should_be_following {
+                            this.workspace
+                                .update(cx, |workspace, cx| {
+                                    workspace.follow(CollaboratorId::Agent, window, cx);
+                                })
+                                .ok();
+                        }
+
+                        if let Some(workspace) = this.workspace.upgrade() {
+                            workspace.update(cx, |workspace, cx| {
+                                struct ThreadCompactedToast;
+                                workspace.show_toast(
+                                    Toast::new(
+                                        NotificationId::unique::<ThreadCompactedToast>(),
+                                        "Conversation compacted; continuing in this thread",
+                                    )
+                                    .autohide(),
+                                    cx,
+                                );
+                            });
+                        }
+
+                        this.send_content(Task::ready(Ok(Some((content, tracked_buffers)))), window, cx);
+                    })?;
+                    Ok(())
+                }
+                .await;
+
+                if let Err(error) = compact_result {
+                    this.update(cx, |this, cx| {
+                        this.handle_thread_error(error, cx);
+                    })
+                    .ok();
+                }
+
+                this.update(cx, |this, cx| {
+                    this.is_compacting_conversation = false;
+                    cx.notify();
+                })
+                .ok();
+            })
+            .detach();
+
             return;
         }
 
@@ -7555,12 +7670,17 @@ impl ThreadView {
     }
 
     fn render_token_limit_callout(&self, cx: &mut Context<Self>) -> Option<Callout> {
-        if self.token_limit_callout_dismissed {
+        if self.token_limit_callout_dismissed
+            || self.is_compacting_conversation
+            || self.in_flight_prompt.is_some()
+            || self.thread.read(cx).status() != ThreadStatus::Idle
+        {
             return None;
         }
 
         let token_usage = self.thread.read(cx).token_usage()?;
         let ratio = token_usage.ratio();
+        let can_compact_in_place = self.as_native_thread(cx).is_some();
 
         let (severity, icon, title) = match ratio {
             acp_thread::TokenUsageRatio::Normal => return None,
@@ -7569,6 +7689,11 @@ impl ThreadView {
                 IconName::Warning,
                 "Thread reaching the token limit soon",
             ),
+            acp_thread::TokenUsageRatio::Exceeded if can_compact_in_place => (
+                Severity::Warning,
+                IconName::Warning,
+                "Earlier context will be compacted automatically",
+            ),
             acp_thread::TokenUsageRatio::Exceeded => (
                 Severity::Error,
                 IconName::XCircle,
@@ -7576,31 +7701,58 @@ impl ThreadView {
             ),
         };
 
-        let description = "To continue, start a new thread from a summary.";
+        let description = match (&ratio, can_compact_in_place) {
+            (acp_thread::TokenUsageRatio::Exceeded, true) => {
+                "Zed will compact earlier context before sending your next message in this thread."
+            }
+            (acp_thread::TokenUsageRatio::Warning, true) => {
+                "This thread is getting long. Zed will compact earlier context automatically if it needs more room."
+            }
+            _ => "Start a new thread or shorten the conversation before sending another message.",
+        };
+
+        let callout = Callout::new()
+            .severity(severity)
+            .icon(icon)
+            .title(title)
+            .description(description);
+
+        let callout = if ratio == acp_thread::TokenUsageRatio::Exceeded && !can_compact_in_place {
+            callout.actions_slot(
+                h_flex().gap_0p5().child(
+                    Button::new("start-new-thread", "Start New Thread")
+                        .label_size(LabelSize::Small)
+                        .on_click(cx.listener(|this, _, window, cx| {
+                            let session_id = this.thread.read(cx).session_id().clone();
+                            window.dispatch_action(
+                                crate::NewNativeAgentThreadFromSummary {
+                                    from_session_id: session_id,
+                                }
+                                .boxed_clone(),
+                                cx,
+                            );
+                        })),
+                ),
+            )
+        } else {
+            callout
+        };
+
+        Some(callout.dismiss_action(self.dismiss_error_button(cx)))
+    }
+
+    fn render_compaction_in_progress_callout(&self) -> Option<Callout> {
+        if !self.is_compacting_conversation {
+            return None;
+        }
 
         Some(
             Callout::new()
-                .severity(severity)
-                .icon(icon)
-                .title(title)
-                .description(description)
-                .actions_slot(
-                    h_flex().gap_0p5().child(
-                        Button::new("start-new-thread", "Start New Thread")
-                            .label_size(LabelSize::Small)
-                            .on_click(cx.listener(|this, _, window, cx| {
-                                let session_id = this.thread.read(cx).session_id().clone();
-                                window.dispatch_action(
-                                    crate::NewNativeAgentThreadFromSummary {
-                                        from_session_id: session_id,
-                                    }
-                                    .boxed_clone(),
-                                    cx,
-                                );
-                            })),
-                    ),
-                )
-                .dismiss_action(self.dismiss_error_button(cx)),
+                .severity(Severity::Info)
+                .title("Compacting conversation")
+                .description(
+                    "Compacting earlier context before sending your message. This may take a moment.",
+                ),
         )
     }
 
@@ -7908,6 +8060,7 @@ impl Render for ThreadView {
                 },
                 |this, version| this.child(self.render_new_version_callout(&version, cx)),
             )
+            .children(self.render_compaction_in_progress_callout())
             .children(self.render_token_limit_callout(cx))
             .child(self.render_message_editor(window, cx))
     }

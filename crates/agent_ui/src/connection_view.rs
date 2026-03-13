@@ -1424,6 +1424,11 @@ impl ConnectionView {
             AcpThreadEvent::TokenUsageUpdated => {
                 self.update_turn_tokens(cx);
                 self.emit_token_limit_telemetry_if_needed(thread, cx);
+                if let Some(active) = self.thread_view(&thread_id) {
+                    active.update(cx, |active, cx| {
+                        active.maybe_prewarm_compaction_summary(cx);
+                    });
+                }
             }
             AcpThreadEvent::AvailableCommandsUpdated(available_commands) => {
                 let mut available_commands = available_commands.clone();

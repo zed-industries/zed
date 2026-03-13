@@ -877,6 +877,12 @@ enum CompletionError {
     Other(#[from] anyhow::Error),
 }
 
+#[derive(Debug, Clone)]
+struct CompactedContext {
+    summary: SharedString,
+    message_count: usize,
+}
+
 pub struct Thread {
     id: acp::SessionId,
     prompt_id: PromptId,
@@ -885,6 +891,7 @@ pub struct Thread {
     pending_title_generation: Option<Task<()>>,
     pending_summary_generation: Option<Shared<Task<Option<SharedString>>>>,
     summary: Option<SharedString>,
+    compacted_context: Option<CompactedContext>,
     messages: Vec<Message>,
     user_store: Entity<UserStore>,
     /// Holds the task that handles agent interaction until the end of the turn.
@@ -1006,6 +1013,7 @@ impl Thread {
             pending_title_generation: None,
             pending_summary_generation: None,
             summary: None,
+            compacted_context: None,
             messages: Vec::new(),
             user_store: project.read(cx).user_store(),
             running_turn: None,
@@ -1226,6 +1234,7 @@ impl Thread {
             pending_title_generation: None,
             pending_summary_generation: None,
             summary: db_thread.detailed_summary,
+            compacted_context: None,
             messages: db_thread.messages,
             user_store: project.read(cx).user_store(),
             running_turn: None,
@@ -1597,6 +1606,7 @@ impl Thread {
             }
         }
         self.clear_summary();
+        self.clear_compacted_context();
         cx.notify();
         Ok(())
     }
@@ -2589,6 +2599,18 @@ impl Thread {
         self.pending_summary_generation = None;
     }
 
+    fn clear_compacted_context(&mut self) {
+        self.compacted_context = None;
+    }
+
+    pub fn set_compacted_context(&mut self, summary: SharedString, cx: &mut Context<Self>) {
+        self.compacted_context = Some(CompactedContext {
+            summary,
+            message_count: self.messages.len(),
+        });
+        cx.notify();
+    }
+
     fn last_user_message(&self) -> Option<&UserMessage> {
         self.messages
             .iter()
@@ -2867,7 +2889,29 @@ impl Thread {
             cache: false,
             reasoning_details: None,
         }];
-        for message in &self.messages {
+
+        if let Some(compacted_context) = self.compacted_context.as_ref() {
+            messages.push(LanguageModelRequestMessage {
+                role: Role::System,
+                content: vec![format!(
+                    "Earlier conversation context has been compacted into the summary below. \
+Use it as authoritative context for omitted turns, and continue naturally without mentioning \
+the compaction unless the user asks.\n\n<earlier_conversation_summary>\n{}\n</earlier_conversation_summary>",
+                    compacted_context.summary
+                )
+                .into()],
+                cache: false,
+                reasoning_details: None,
+            });
+        }
+
+        let message_start_index = self
+            .compacted_context
+            .as_ref()
+            .map(|compacted_context| compacted_context.message_count.min(self.messages.len()))
+            .unwrap_or(0);
+
+        for message in &self.messages[message_start_index..] {
             messages.extend(message.to_request());
         }
 
