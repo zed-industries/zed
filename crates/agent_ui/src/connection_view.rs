@@ -6539,6 +6539,7 @@ pub(crate) mod tests {
         let thread_store = cx.update(|_window, cx| cx.new(|cx| ThreadStore::new(cx)));
         let connection_store =
             cx.update(|_window, cx| cx.new(|cx| AgentConnectionStore::new(project.clone(), cx)));
+        let history = cx.update(|window, cx| cx.new(|cx| ThreadHistory::new(None, window, cx)));
 
         // StubAgentConnection defaults to supports_close_session() -> false
         let thread_view = cx.update(|window, cx| {
@@ -6546,7 +6547,7 @@ pub(crate) mod tests {
                 ConnectionView::new(
                     Rc::new(StubAgentServer::default_response()),
                     connection_store,
-                    Agent::Custom {
+                    ExternalAgent::Custom {
                         name: "Test".into(),
                     },
                     None,
@@ -6557,6 +6558,7 @@ pub(crate) mod tests {
                     project,
                     Some(thread_store),
                     None,
+                    history,
                     window,
                     cx,
                 )
