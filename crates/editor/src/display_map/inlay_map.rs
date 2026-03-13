@@ -1351,7 +1351,7 @@ mod tests {
                 Anchor::min(),
                 &InlayHint {
                     label: InlayHintLabel::String("a".to_string()),
-                    position: text::Anchor::min_for_buffer(BufferId::new(1)),
+                    position: text::Anchor::min_for_buffer(BufferId::new(1).unwrap()),
                     padding_left: false,
                     padding_right: false,
                     tooltip: None,
@@ -1371,7 +1371,7 @@ mod tests {
                 Anchor::min(),
                 &InlayHint {
                     label: InlayHintLabel::String("a".to_string()),
-                    position: text::Anchor::min_for_buffer(BufferId::new(1)),
+                    position: text::Anchor::min_for_buffer(BufferId::new(1).unwrap()),
                     padding_left: true,
                     padding_right: true,
                     tooltip: None,
@@ -1391,7 +1391,7 @@ mod tests {
                 Anchor::min(),
                 &InlayHint {
                     label: InlayHintLabel::String(" a ".to_string()),
-                    position: text::Anchor::min_for_buffer(BufferId::new(1)),
+                    position: text::Anchor::min_for_buffer(BufferId::new(1).unwrap()),
                     padding_left: false,
                     padding_right: false,
                     tooltip: None,
@@ -1411,7 +1411,7 @@ mod tests {
                 Anchor::min(),
                 &InlayHint {
                     label: InlayHintLabel::String(" a ".to_string()),
-                    position: text::Anchor::min_for_buffer(BufferId::new(1)),
+                    position: text::Anchor::min_for_buffer(BufferId::new(1).unwrap()),
                     padding_left: true,
                     padding_right: true,
                     tooltip: None,
@@ -1434,7 +1434,7 @@ mod tests {
                 Anchor::min(),
                 &InlayHint {
                     label: InlayHintLabel::String("🎨".to_string()),
-                    position: text::Anchor::min_for_buffer(BufferId::new(1)),
+                    position: text::Anchor::min_for_buffer(BufferId::new(1).unwrap()),
                     padding_left: true,
                     padding_right: true,
                     tooltip: None,
