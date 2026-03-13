@@ -18457,7 +18457,9 @@ impl Editor {
             let outline_items: Vec<OutlineItem<text::Anchor>> = task.await;
 
             let multi_snapshot = editor_snapshot.buffer();
-            let buffer_range = |range: &Range<_>| Anchor::range_in_buffer(excerpt_id, range.clone()).to_offset(multi_snapshot);
+            let buffer_range = |range: &Range<_>| {
+                Anchor::range_in_buffer(excerpt_id, range.clone()).to_offset(multi_snapshot)
+            };
 
             wcx.update_window(wcx.window_handle(), |_, window, acx| {
                 let current_idx = outline_items
@@ -18471,48 +18473,35 @@ impl Editor {
                             (source_range.end.0 as isize - cursor_offset.0 as isize).abs(),
                         );
 
-                        // Candidate outline item must also contain the cursor
-                        let range = buffer_range(&item.range);
-                        range
-                            .contains(&cursor_offset)
+                        let item_towards_offset =
+                            (source_range.start.0 as isize - cursor_offset.0 as isize).signum()
+                                == (offset as isize).signum();
+
+                        let source_range_contains_cursor = source_range.contains(&cursor_offset);
+
+                        // To pick the next outline to jump to, we should jump in the direction of the offset, and
+                        // we should not already be within the outline's source range. We then pick the closest outline
+                        // item.
+                        (item_towards_offset && !source_range_contains_cursor)
                             .then_some((distance_to_closest_endpoint, idx))
                     })
                     .min()
                     .map(|(_, idx)| idx);
 
                 let Some(idx) = current_idx else {
-                    log::warn!("no enclosing symbols found");
                     return;
                 };
 
-                let source_range = buffer_range(&outline_items[idx].source_range_for_text);
-
-                // If we're inside an outline item but the cursor position does not overlap with the outline text,
-                // and if the direction of movement is towards the outline text, we can stay within the same outline
-                // item. We then move the cursor towards the outline text.
-                let offset_idx = if !source_range.contains(&cursor_offset)
-                    && (source_range.start.0 as isize - cursor_offset.0 as isize).signum()
-                        == (offset as isize).signum()
-                {
-                    idx
-                } else {
-                    (idx as isize + offset as isize) as usize
-                };
-
-                if !(0..outline_items.len()).contains(&offset_idx) {
-                    return;
-                }
-
-                let range =
-                    Anchor::range_in_buffer(excerpt_id, outline_items[offset_idx].range.clone());
+                let range = buffer_range(&outline_items[idx].source_range_for_text);
+                let selection = [range.start..range.start];
 
                 let _ = editor
                     .update(acx, |editor, ecx| {
                         editor.change_selections(
-                            SelectionEffects::scroll(Autoscroll::center()),
+                            SelectionEffects::scroll(Autoscroll::newest()),
                             window,
                             ecx,
-                            |s| s.select_ranges([range.start..range.start]),
+                            |s| s.select_ranges(selection),
                         );
                     })
                     .ok();
