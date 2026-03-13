@@ -94,7 +94,7 @@ fn bump_extension_versions(detect_job: &NamedJob) -> NamedJob<UsesJob> {
                 detect_job.name
             )
         })))
-        .uses(".github", "workflows", "extension_bump.yml", "main")
+        .uses_local(".github/workflows/extension_bump.yml")
         .with(
             Input::default()
                 .add("working-directory", "${{ matrix.extension }}")

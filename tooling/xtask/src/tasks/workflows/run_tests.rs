@@ -764,7 +764,7 @@ fn extension_tests_matrix() -> NamedJob<UsesJob> {
         .strategy(Strategy::default().fail_fast(false).matrix(json!({
             "extension": "${{ fromJson(needs.orchestrate.outputs.changed_extensions) }}"
         })))
-        .uses(".github", "workflows", "extension_tests.yml", "main")
+        .uses_local(".github/workflows/extension_tests.yml")
         .with(Input::default().add("working-directory", "${{ matrix.extension }}"));
 
     named::job(job)

@@ -56,7 +56,7 @@ jobs:
       matrix:
         extension: ${{ fromJson(needs.detect_changed_extensions.outputs.changed_extensions) }}
       fail-fast: false
-    uses: .github/workflows/extension_bump.yml@main
+    uses: .github/workflows/extension_bump.yml
     secrets:
       app-id: ${{ secrets.ZED_ZIPPY_APP_ID }}
       app-secret: ${{ secrets.ZED_ZIPPY_APP_PRIVATE_KEY }}
