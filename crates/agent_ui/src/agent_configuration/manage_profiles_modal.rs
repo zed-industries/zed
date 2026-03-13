@@ -121,7 +121,7 @@ impl ManageProfilesModal {
         _cx: &mut Context<Workspace>,
     ) {
         workspace.register_action(|workspace, action: &ManageProfiles, window, cx| {
-            if let Some(panel) = workspace.panel::<AgentPanel>(cx) {
+            if let Some(panel) = workspace.drawer::<AgentPanel>() {
                 let fs = workspace.app_state().fs.clone();
                 let active_model = panel
                     .read(cx)

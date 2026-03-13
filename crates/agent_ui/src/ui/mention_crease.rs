@@ -273,7 +273,7 @@ fn open_thread(
 ) {
     use crate::AgentPanel;
 
-    let Some(panel) = workspace.panel::<AgentPanel>(cx) else {
+    let Some(panel) = workspace.drawer::<AgentPanel>() else {
         return;
     };
 

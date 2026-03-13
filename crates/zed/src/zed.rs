@@ -657,36 +657,50 @@ fn initialize_panels(
     })
 }
 
-fn setup_or_teardown_ai_panel<P: Panel>(
+fn setup_or_teardown_ai_panels(
     workspace: &mut Workspace,
+    prompt_builder: Arc<PromptBuilder>,
     window: &mut Window,
     cx: &mut Context<Workspace>,
-    load_panel: impl FnOnce(
-        WeakEntity<Workspace>,
-        AsyncWindowContext,
-    ) -> Task<anyhow::Result<Entity<P>>>
-    + 'static,
 ) -> Task<anyhow::Result<()>> {
     let disable_ai = SettingsStore::global(cx)
         .get::<DisableAiSettings>(None)
         .disable_ai
         || cfg!(test);
-    let existing_panel = workspace.panel::<P>(cx);
+    let existing_panel = workspace.panel::<agent_ui::sidebar::Sidebar>(cx);
     match (disable_ai, existing_panel) {
         (false, None) => cx.spawn_in(window, async move |workspace, cx| {
-            let panel = load_panel(workspace.clone(), cx.clone()).await?;
+            let agent_drawer =
+                agent_ui::AgentPanel::load(workspace.clone(), prompt_builder.clone(), cx.clone())
+                    .await?;
+            let sidebar_panel =
+                agent_ui::sidebar::Sidebar::load(workspace.clone(), cx.clone()).await?;
             workspace.update_in(cx, |workspace, window, cx| {
                 let disable_ai = SettingsStore::global(cx)
                     .get::<DisableAiSettings>(None)
                     .disable_ai;
-                let have_panel = workspace.panel::<P>(cx).is_some();
+                let have_panel = workspace.panel::<agent_ui::sidebar::Sidebar>(cx).is_some();
                 if !disable_ai && !have_panel {
-                    workspace.add_panel(panel, window, cx);
+                    let position =
+                        workspace::dock::PanelHandle::position(&sidebar_panel, window, cx);
+                    workspace.add_panel(sidebar_panel, window, cx);
+                    match position {
+                        workspace::dock::DockPosition::Left => {
+                            workspace.set_left_drawer(agent_drawer.into(), cx)
+                        }
+                        workspace::dock::DockPosition::Right => {
+                            workspace.set_right_drawer(agent_drawer.into(), cx)
+                        }
+                        workspace::dock::DockPosition::Bottom => {
+                            unreachable!("drawers cannot go on the bottom")
+                        }
+                    }
                 }
             })
         }),
         (true, Some(existing_panel)) => {
-            workspace.remove_panel::<P>(&existing_panel, window, cx);
+            workspace.remove_panel(&existing_panel, window, cx);
+            workspace.remove_drawer::<agent_ui::AgentPanel>(cx);
             Task::ready(Ok(()))
         }
         _ => Task::ready(Ok(())),
@@ -700,18 +714,7 @@ async fn initialize_agent_panel(
 ) -> anyhow::Result<()> {
     workspace_handle
         .update_in(&mut cx, |workspace, window, cx| {
-            let prompt_builder = prompt_builder.clone();
-            setup_or_teardown_ai_panel(workspace, window, cx, move |workspace, cx| {
-                agent_ui::AgentPanel::load(workspace, prompt_builder, cx)
-            })
-        })?
-        .await?;
-
-    workspace_handle
-        .update_in(&mut cx, |workspace, window, cx| {
-            setup_or_teardown_ai_panel(workspace, window, cx, |workspace, cx| {
-                agent_ui::sidebar::Sidebar::load(workspace, cx)
-            })
+            setup_or_teardown_ai_panels(workspace, prompt_builder.clone(), window, cx)
         })?
         .await?;
 
@@ -719,14 +722,8 @@ async fn initialize_agent_panel(
         let prompt_builder = prompt_builder.clone();
         cx.observe_global_in::<SettingsStore>(window, move |workspace, window, cx| {
             let prompt_builder = prompt_builder.clone();
-            setup_or_teardown_ai_panel(workspace, window, cx, move |workspace, cx| {
-                agent_ui::AgentPanel::load(workspace, prompt_builder, cx)
-            })
-            .detach_and_log_err(cx);
-            setup_or_teardown_ai_panel(workspace, window, cx, |workspace, cx| {
-                agent_ui::sidebar::Sidebar::load(workspace, cx)
-            })
-            .detach_and_log_err(cx);
+            setup_or_teardown_ai_panels(workspace, prompt_builder.clone(), window, cx)
+                .detach_and_log_err(cx);
         })
         .detach();
 

@@ -33,9 +33,9 @@ impl AcpOnboardingModal {
 
     fn open_panel(&mut self, _: &ClickEvent, window: &mut Window, cx: &mut Context<Self>) {
         self.workspace.update(cx, |workspace, cx| {
-            workspace.focus_panel::<AgentPanel>(window, cx);
+            workspace.focus_drawer::<AgentPanel>(window, cx);
 
-            if let Some(panel) = workspace.panel::<AgentPanel>(cx) {
+            if let Some(panel) = workspace.drawer::<AgentPanel>() {
                 panel.update(cx, |panel, cx| {
                     panel.new_agent_thread(
                         AgentType::Custom {

@@ -923,7 +923,7 @@ fn handle_open_request(request: OpenRequest, app_state: Arc<AppState>, cx: &mut 
 
                     multi_workspace.update(cx, |multi_workspace, window, cx| {
                         multi_workspace.workspace().update(cx, |workspace, cx| {
-                            if let Some(panel) = workspace.focus_panel::<AgentPanel>(window, cx) {
+                            if let Some(panel) = workspace.focus_drawer::<AgentPanel>(window, cx) {
                                 panel.update(cx, |panel, cx| {
                                     panel.new_agent_thread_with_external_source_prompt(
                                         external_source_prompt,
@@ -951,7 +951,7 @@ fn handle_open_request(request: OpenRequest, app_state: Arc<AppState>, cx: &mut 
                             workspace.update(cx, |workspace, cx| {
                                 let client = workspace.project().read(cx).client();
                                 let thread_store: Option<gpui::Entity<ThreadStore>> = workspace
-                                    .panel::<AgentPanel>(cx)
+                                    .drawer::<AgentPanel>()
                                     .map(|panel| panel.read(cx).thread_store().clone());
                                 anyhow::Ok((client, thread_store))
                             })
@@ -989,7 +989,7 @@ fn handle_open_request(request: OpenRequest, app_state: Arc<AppState>, cx: &mut 
 
                     multi_workspace.update(cx, |_, window, cx| {
                         workspace.update(cx, |workspace, cx| {
-                            if let Some(panel) = workspace.panel::<AgentPanel>(cx) {
+                            if let Some(panel) = workspace.drawer::<AgentPanel>() {
                                 panel.update(cx, |panel, cx| {
                                     panel.open_thread(
                                         session_id,

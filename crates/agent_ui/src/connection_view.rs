@@ -2465,7 +2465,7 @@ impl ConnectionView {
                                         if let Some(workspace) = workspace_handle.upgrade() {
                                             multi_workspace.activate(workspace.clone(), cx);
                                             workspace.update(cx, |workspace, cx| {
-                                                workspace.focus_panel::<AgentPanel>(window, cx);
+                                                workspace.focus_drawer::<AgentPanel>(window, cx);
                                             });
                                         }
                                     })
@@ -3493,7 +3493,7 @@ pub(crate) mod tests {
             workspace.add_panel(panel, window, cx);
 
             // Open the dock and activate the agent panel so it's visible
-            workspace.focus_panel::<crate::AgentPanel>(window, cx);
+            workspace.focus_drawer::<crate::AgentPanel>(window, cx);
         });
 
         cx.run_until_parked();

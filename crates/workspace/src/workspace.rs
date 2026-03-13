@@ -7017,6 +7017,110 @@ impl Workspace {
         cx.notify();
     }
 
+    pub fn drawer<T: 'static>(&self) -> Option<Entity<T>> {
+        if let Some(left) = self.left_drawer.as_ref() {
+            if let Some(drawer) = left.view.clone().downcast().ok() {
+                return Some(drawer);
+            }
+        }
+        if let Some(right) = self.right_drawer.as_ref() {
+            if let Some(drawer) = right.view.clone().downcast().ok() {
+                return Some(drawer);
+            }
+        }
+        None
+    }
+
+    pub fn focus_drawer<T: Focusable>(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<Entity<T>> {
+        if let Some(drawer) = self.left_drawer.as_mut() {
+            if let Some(view) = drawer.view.clone().downcast::<T>().ok() {
+                drawer.open = true;
+                view.focus_handle(cx).focus(window, cx);
+                return Some(view);
+            }
+        }
+        if let Some(drawer) = self.right_drawer.as_mut() {
+            if let Some(view) = drawer.view.clone().downcast::<T>().ok() {
+                drawer.open = true;
+                return Some(view);
+            }
+        }
+        None
+    }
+
+    pub fn toggle_drawer_focus<T: Focusable>(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        if let Some(drawer) = self.drawer::<T>() {
+            if drawer.focus_handle(cx).contains_focused(window, cx) {
+                // todo! focus the center?
+                false
+            } else {
+                drawer.focus_handle(cx).focus(window, cx);
+                true
+            }
+        } else {
+            false
+        }
+    }
+
+    pub fn open_drawer<T: Focusable>(&mut self, cx: &mut Context<Self>) {
+        if let Some(left) = self.left_drawer.as_mut() {
+            if left.view.clone().downcast::<T>().is_ok() {
+                left.open = true;
+                cx.notify();
+                return;
+            }
+        }
+        if let Some(right) = self.right_drawer.as_mut() {
+            if right.view.clone().downcast::<T>().is_ok() {
+                right.open = true;
+                cx.notify();
+                return;
+            }
+        }
+    }
+
+    pub fn close_drawer<T: Focusable>(&mut self, cx: &mut Context<Self>) {
+        if let Some(left) = self.left_drawer.as_mut() {
+            if left.view.clone().downcast::<T>().is_ok() {
+                left.open = false;
+                cx.notify();
+                return;
+            }
+        }
+        if let Some(right) = self.right_drawer.as_mut() {
+            if right.view.clone().downcast::<T>().is_ok() {
+                right.open = false;
+                cx.notify();
+                return;
+            }
+        }
+    }
+
+    pub fn remove_drawer<T: Focusable>(&mut self, cx: &mut Context<Self>) {
+        if let Some(left) = self.left_drawer.as_mut() {
+            if left.view.clone().downcast::<T>().is_ok() {
+                self.left_drawer = None;
+                cx.notify();
+                return;
+            }
+        }
+        if let Some(right) = self.right_drawer.as_mut() {
+            if right.view.clone().downcast::<T>().is_ok() {
+                self.right_drawer = None;
+                cx.notify();
+                return;
+            }
+        }
+    }
+
     pub fn left_drawer_view(&self) -> Option<&AnyView> {
         self.left_drawer.as_ref().map(|d| &d.view)
     }

@@ -783,7 +783,7 @@ impl ThreadView {
             && self
                 .workspace
                 .upgrade()
-                .and_then(|workspace| workspace.read(cx).panel::<AgentPanel>(cx))
+                .and_then(|workspace| workspace.read(cx).drawer::<AgentPanel>())
                 .is_some_and(|panel| {
                     panel.read(cx).start_thread_in() == &StartThreadIn::NewWorktree
                 });
@@ -8000,14 +8000,14 @@ pub(crate) fn open_link(
             }
             MentionUri::Selection { abs_path: None, .. } => {}
             MentionUri::Thread { id, name } => {
-                if let Some(panel) = workspace.panel::<AgentPanel>(cx) {
+                if let Some(panel) = workspace.drawer::<AgentPanel>() {
                     panel.update(cx, |panel, cx| {
                         panel.open_thread(id, None, Some(name.into()), window, cx)
                     });
                 }
             }
             MentionUri::TextThread { path, .. } => {
-                if let Some(panel) = workspace.panel::<AgentPanel>(cx) {
+                if let Some(panel) = workspace.drawer::<AgentPanel>() {
                     panel.update(cx, |panel, cx| {
                         panel
                             .open_saved_text_thread(path.as_path().into(), window, cx)

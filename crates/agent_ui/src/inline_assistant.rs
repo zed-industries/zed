@@ -259,7 +259,7 @@ impl InlineAssistant {
 
         let Some(inline_assist_target) = Self::resolve_inline_assist_target(
             workspace,
-            workspace.panel::<AgentPanel>(cx),
+            workspace.drawer::<AgentPanel>(),
             window,
             cx,
         ) else {
@@ -271,7 +271,7 @@ impl InlineAssistant {
             model_registry.configuration_error(model_registry.inline_assistant_model(), cx)
         };
 
-        let Some(agent_panel) = workspace.panel::<AgentPanel>(cx) else {
+        let Some(agent_panel) = workspace.drawer::<AgentPanel>() else {
             return;
         };
         let agent_panel = agent_panel.read(cx);
@@ -1974,7 +1974,7 @@ impl CodeActionProvider for AssistantCodeActionProvider {
             let (thread_store, history) = cx.update(|_window, cx| {
                 let panel = workspace
                     .read(cx)
-                    .panel::<AgentPanel>(cx)
+                    .drawer::<AgentPanel>()
                     .context("missing agent panel")?
                     .read(cx);
 

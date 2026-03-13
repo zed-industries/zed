@@ -428,7 +428,7 @@ impl Sidebar {
         )
         .detach();
 
-        if let Some(agent_panel) = workspace.read(cx).panel::<AgentPanel>(cx) {
+        if let Some(agent_panel) = workspace.read(cx).drawer::<AgentPanel>() {
             self.subscribe_to_agent_panel(&agent_panel, window, cx);
         }
     }
@@ -457,7 +457,7 @@ impl Sidebar {
         workspace: &Entity<Workspace>,
         cx: &App,
     ) -> Vec<ActiveThreadInfo> {
-        let Some(agent_panel) = workspace.read(cx).panel::<AgentPanel>(cx) else {
+        let Some(agent_panel) = workspace.read(cx).drawer::<AgentPanel>() else {
             return Vec::new();
         };
         let agent_panel_ref = agent_panel.read(cx);
@@ -511,7 +511,7 @@ impl Sidebar {
 
         self.focused_thread = active_workspace
             .as_ref()
-            .and_then(|ws| ws.read(cx).panel::<AgentPanel>(cx))
+            .and_then(|ws| ws.read(cx).drawer::<AgentPanel>())
             .and_then(|panel| panel.read(cx).active_connection_view().cloned())
             .and_then(|cv| cv.read(cx).parent_id(cx));
 
@@ -1441,10 +1441,10 @@ impl Sidebar {
         });
 
         workspace.update(cx, |workspace, cx| {
-            workspace.open_panel::<AgentPanel>(window, cx);
+            workspace.open_drawer::<AgentPanel>(cx);
         });
 
-        if let Some(agent_panel) = workspace.read(cx).panel::<AgentPanel>(cx) {
+        if let Some(agent_panel) = workspace.read(cx).drawer::<AgentPanel>() {
             agent_panel.update(cx, |panel, cx| {
                 panel.load_agent_thread(
                     agent,
@@ -1766,12 +1766,12 @@ impl Sidebar {
         });
 
         workspace.update(cx, |workspace, cx| {
-            if let Some(agent_panel) = workspace.panel::<AgentPanel>(cx) {
+            if let Some(agent_panel) = workspace.drawer::<AgentPanel>() {
                 agent_panel.update(cx, |panel, cx| {
                     panel.new_thread(&NewThread, window, cx);
                 });
             }
-            workspace.focus_panel::<AgentPanel>(window, cx);
+            workspace.focus_drawer::<AgentPanel>(window, cx);
         });
     }
 
@@ -1871,7 +1871,7 @@ impl Sidebar {
             return;
         };
 
-        let Some(agent_panel) = active_workspace.read(cx).panel::<AgentPanel>(cx) else {
+        let Some(agent_panel) = active_workspace.read(cx).drawer::<AgentPanel>() else {
             return;
         };
 
@@ -4091,7 +4091,7 @@ mod tests {
 
         workspace_a.read_with(cx, |workspace, cx| {
             assert!(
-                workspace.panel::<AgentPanel>(cx).is_some(),
+                workspace.drawer::<AgentPanel>().is_some(),
                 "Agent panel should exist"
             );
             let dock = workspace.right_dock().read(cx);
