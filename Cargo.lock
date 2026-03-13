@@ -6250,6 +6250,7 @@ dependencies = [
  "fuzzy",
  "gpui",
  "menu",
+ "multi_buffer",
  "open_path_prompt",
  "picker",
  "pretty_assertions",
