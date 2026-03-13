@@ -1,5 +1,7 @@
 use editor::{Editor, EditorElement, EditorStyle};
-use gpui::{Action, Entity, FocusHandle, Hsla, IntoElement, TextStyle};
+use gpui::{
+    Action, ClickEvent, Context, Entity, FocusHandle, Hsla, IntoElement, TextStyle, Window,
+};
 use settings::Settings;
 use theme::ThemeSettings;
 use ui::{IconButton, IconButtonShape};
@@ -10,6 +12,33 @@ pub(super) enum ActionButtonState {
     Toggled,
 }
 
+fn render_action_button_with_click<F>(
+    id_prefix: &'static str,
+    icon: ui::IconName,
+    button_state: Option<ActionButtonState>,
+    tooltip: &'static str,
+    action: &'static dyn Action,
+    focus_handle: FocusHandle,
+    on_click: F,
+) -> impl IntoElement
+where
+    F: FnOnce(IconButton, FocusHandle) -> IconButton,
+{
+    on_click(
+        IconButton::new(
+            SharedString::from(format!("{id_prefix}-{}", action.name())),
+            icon,
+        )
+        .shape(IconButtonShape::Square),
+        focus_handle.clone(),
+    )
+    .tooltip(move |_window, cx| Tooltip::for_action_in(tooltip, action, &focus_handle, cx))
+    .when_some(button_state, |this, state| match state {
+        ActionButtonState::Toggled => this.toggle_state(true),
+        ActionButtonState::Disabled => this.disabled(true),
+    })
+}
+
 pub(super) fn render_action_button(
     id_prefix: &'static str,
     icon: ui::IconName,
@@ -18,25 +47,50 @@ pub(super) fn render_action_button(
     action: &'static dyn Action,
     focus_handle: FocusHandle,
 ) -> impl IntoElement {
-    IconButton::new(
-        SharedString::from(format!("{id_prefix}-{}", action.name())),
+    render_action_button_with_click(
+        id_prefix,
         icon,
+        button_state,
+        tooltip,
+        action,
+        focus_handle,
+        move |button, focus_handle| {
+            button.on_click(move |_, window, cx| {
+                if !focus_handle.is_focused(window) {
+                    window.focus(&focus_handle, cx);
+                }
+                window.dispatch_action(action.boxed_clone(), cx);
+            })
+        },
     )
-    .shape(IconButtonShape::Square)
-    .on_click({
-        let focus_handle = focus_handle.clone();
-        move |_, window, cx| {
-            if !focus_handle.is_focused(window) {
-                window.focus(&focus_handle, cx);
-            }
-            window.dispatch_action(action.boxed_clone(), cx);
-        }
-    })
-    .tooltip(move |_window, cx| Tooltip::for_action_in(tooltip, action, &focus_handle, cx))
-    .when_some(button_state, |this, state| match state {
-        ActionButtonState::Toggled => this.toggle_state(true),
-        ActionButtonState::Disabled => this.disabled(true),
-    })
+}
+
+pub(super) fn render_local_action_button<T: 'static>(
+    cx: &Context<T>,
+    id_prefix: &'static str,
+    icon: ui::IconName,
+    button_state: Option<ActionButtonState>,
+    tooltip: &'static str,
+    action: &'static dyn Action,
+    focus_handle: FocusHandle,
+    on_click: impl Fn(&mut T, &mut Window, &mut Context<T>) + 'static,
+) -> impl IntoElement {
+    render_action_button_with_click(
+        id_prefix,
+        icon,
+        button_state,
+        tooltip,
+        action,
+        focus_handle,
+        move |button, focus_handle| {
+            button.on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
+                if !focus_handle.is_focused(window) {
+                    window.focus(&focus_handle, cx);
+                }
+                on_click(this, window, cx);
+            }))
+        },
+    )
 }
 
 pub(crate) fn input_base_styles(border_color: Hsla, map: impl FnOnce(Div) -> Div) -> Div {
