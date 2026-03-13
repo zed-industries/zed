@@ -14200,6 +14200,7 @@ dependencies = [
  "fs",
  "futures 0.3.31",
  "gpui",
+ "libc",
  "log",
  "parking_lot",
  "paths",

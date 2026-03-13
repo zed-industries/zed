@@ -716,6 +716,7 @@ pub mod simple_message_notification {
         secondary_icon_color: Option<Color>,
         secondary_on_click: Option<Arc<dyn Fn(&mut Window, &mut Context<Self>)>>,
         more_info_message: Option<SharedString>,
+        more_info_on_click: Option<Arc<dyn Fn(&mut Window, &mut Context<Self>)>>,
         more_info_url: Option<Arc<str>>,
         show_close_button: bool,
         show_suppress_button: bool,
@@ -760,6 +761,7 @@ pub mod simple_message_notification {
                 secondary_icon_color: None,
                 secondary_on_click: None,
                 more_info_message: None,
+                more_info_on_click: None,
                 more_info_url: None,
                 show_close_button: true,
                 show_suppress_button: true,
@@ -842,6 +844,22 @@ pub mod simple_message_notification {
             S: Into<SharedString>,
         {
             self.more_info_message = Some(message.into());
+            self
+        }
+
+        pub fn more_info_on_click<F>(mut self, on_click: F) -> Self
+        where
+            F: 'static + Fn(&mut Window, &mut Context<Self>),
+        {
+            self.more_info_on_click = Some(Arc::new(on_click));
+            self
+        }
+
+        pub fn more_info_on_click_arc<F>(mut self, on_click: Arc<F>) -> Self
+        where
+            F: 'static + Fn(&mut Window, &mut Context<Self>),
+        {
+            self.more_info_on_click = Some(on_click);
             self
         }
 
@@ -948,22 +966,38 @@ pub mod simple_message_notification {
                         }))
                         .child(
                             h_flex().w_full().justify_end().children(
-                                self.more_info_message
-                                    .iter()
-                                    .zip(self.more_info_url.iter())
-                                    .map(|(message, url)| {
-                                        let url = url.clone();
-                                        Button::new(message.clone(), message.clone())
-                                            .label_size(LabelSize::Small)
-                                            .end_icon(
-                                                Icon::new(IconName::ArrowUpRight)
-                                                    .size(IconSize::Indicator)
-                                                    .color(Color::Muted),
-                                            )
-                                            .on_click(cx.listener(move |_, _, _, cx| {
+                                self.more_info_message.iter().filter_map(|message| {
+                                    let more_info_on_click = self.more_info_on_click.clone();
+                                    let more_info_url = self.more_info_url.clone();
+
+                                    if more_info_on_click.is_none() && more_info_url.is_none() {
+                                        return None;
+                                    }
+
+                                    let mut button = Button::new(message.clone(), message.clone())
+                                        .label_size(LabelSize::Small)
+                                        .end_icon(
+                                            Icon::new(IconName::ArrowUpRight)
+                                                .size(IconSize::Indicator)
+                                                .color(Color::Muted),
+                                        );
+
+                                    button = match (more_info_on_click, more_info_url) {
+                                        (Some(on_click), _) => button.on_click(cx.listener(
+                                            move |_, _, window, cx| {
+                                                (on_click)(window, cx);
+                                            },
+                                        )),
+                                        (None, Some(url)) => button.on_click(cx.listener(
+                                            move |_, _, _, cx| {
                                                 cx.open_url(&url);
-                                            }))
-                                    }),
+                                            },
+                                        )),
+                                        (None, None) => button,
+                                    };
+
+                                    Some(button)
+                                }),
                             ),
                         ),
                 )

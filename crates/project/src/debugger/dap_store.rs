@@ -357,7 +357,7 @@ impl DapStore {
                         command: Some(command.program),
                         arguments: command.args,
                         envs: command.env,
-                        cwd: None,
+                        cwd: command.cwd,
                         connection,
                         request_args: binary.request_args,
                     })

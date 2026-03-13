@@ -27,7 +27,8 @@ use project::{
 
 use language::{LanguageName, Toolchain, ToolchainScope};
 use remote::{
-    DockerConnectionOptions, RemoteConnectionOptions, SshConnectionOptions, WslConnectionOptions,
+    DockerConnectionOptions, GuixContainerConnectionOptions, GuixShellOptions,
+    RemoteConnectionOptions, SshConnectionOptions, WslConnectionOptions,
 };
 use serde::{Deserialize, Serialize};
 use sqlez::{
@@ -1519,6 +1520,13 @@ impl WorkspaceDb {
                 use_podman = Some(options.use_podman);
                 user = Some(options.remote_user);
             }
+            RemoteConnectionOptions::GuixContainer(options) => {
+                kind = RemoteConnectionKind::GuixContainer;
+                host = Some(options.manifest_path);
+                name = Some(options.project_root);
+                distro = Some(serde_json::to_string(&options.shell_options)?);
+                user = None;
+            }
             #[cfg(any(test, feature = "test-support"))]
             RemoteConnectionOptions::Mock(options) => {
                 kind = RemoteConnectionKind::Ssh;
@@ -1560,7 +1568,8 @@ impl WorkspaceDb {
                 user IS ? AND
                 distro IS ? AND
                 name IS ? AND
-                container_id IS ?
+                container_id IS ? AND
+                ifnull(use_podman, 0) IS ifnull(?, 0)
             LIMIT 1
         ))?((
             kind.serialize(),
@@ -1570,6 +1579,7 @@ impl WorkspaceDb {
             distro.clone(),
             name.clone(),
             container_id.clone(),
+            use_podman,
         ))? {
             Ok(RemoteConnectionId(id))
         } else {
@@ -1773,6 +1783,18 @@ impl WorkspaceDb {
                     upload_binary_over_docker_exec: false,
                     use_podman: use_podman?,
                 }))
+            }
+            RemoteConnectionKind::GuixContainer => {
+                let shell_options = distro
+                    .and_then(|value| serde_json::from_str::<GuixShellOptions>(&value).ok())
+                    .unwrap_or_default();
+                Some(RemoteConnectionOptions::GuixContainer(
+                    GuixContainerConnectionOptions {
+                        manifest_path: host?,
+                        project_root: name?,
+                        shell_options,
+                    },
+                ))
             }
         }
     }

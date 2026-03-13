@@ -433,6 +433,7 @@ pub struct ContextServerCommand {
     pub path: PathBuf,
     pub args: Vec<String>,
     pub env: Option<HashMap<String, String>>,
+    pub working_directory: Option<PathBuf>,
     /// Timeout for tool calls in seconds. Defaults to 60 if not specified.
     pub timeout: Option<u64>,
 }
@@ -458,6 +459,7 @@ impl std::fmt::Debug for ContextServerCommand {
             .field("path", &self.path)
             .field("args", &self.args)
             .field("env", &filtered_env)
+            .field("working_directory", &self.working_directory)
             .finish()
     }
 }

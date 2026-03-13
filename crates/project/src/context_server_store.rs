@@ -361,6 +361,7 @@ impl ContextServerStore {
                 path: "test".into(),
                 args: vec![],
                 env: None,
+                working_directory: None,
                 timeout: None,
             },
             remote: false,
@@ -720,12 +721,13 @@ impl ContextServerStore {
                 })
                 .await?;
 
+            let working_directory = response.working_directory.or(root_dir);
             let remote_command = upstream_client.update(cx, |client, _| {
                 client.build_command(
                     Some(response.path),
                     &response.args,
                     &response.env.into_iter().collect(),
-                    root_dir,
+                    working_directory,
                     None,
                 )
             })?;
@@ -734,6 +736,7 @@ impl ContextServerStore {
                 path: remote_command.program.into(),
                 args: remote_command.args,
                 env: Some(remote_command.env.into_iter().collect()),
+                working_directory: remote_command.cwd,
                 timeout: None,
             };
 
@@ -777,8 +780,17 @@ impl ContextServerStore {
                             .min(MAX_TIMEOUT_SECS),
                     );
 
-                    // Don't pass remote paths as working directory for locally-spawned processes
-                    let working_directory = if is_remote_project { None } else { root_path };
+                    let working_directory = command
+                        .working_directory
+                        .clone()
+                        .map(Arc::from)
+                        .or_else(|| {
+                            if is_remote_project {
+                                None
+                            } else {
+                                root_path.clone()
+                            }
+                        });
                     anyhow::Ok(Arc::new(ContextServer::stdio(
                         id,
                         command,
@@ -843,6 +855,10 @@ impl ContextServerStore {
                 .clone()
                 .map(|env| env.into_iter().collect())
                 .unwrap_or_default(),
+            working_directory: command
+                .working_directory
+                .as_ref()
+                .map(|path| path.display().to_string()),
         })
     }
 

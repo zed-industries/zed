@@ -320,6 +320,9 @@ pub async fn open_remote_project(
                                 RemoteConnectionOptions::Docker(_) => {
                                     "Failed to connect to Dev Container"
                                 }
+                                RemoteConnectionOptions::GuixContainer(_) => {
+                                    "Failed to connect to Guix container"
+                                }
                                 #[cfg(any(test, feature = "test-support"))]
                                 RemoteConnectionOptions::Mock(_) => {
                                     "Failed to connect to mock server"
@@ -380,6 +383,9 @@ pub async fn open_remote_project(
                                 RemoteConnectionOptions::Wsl(_) => "Failed to connect to WSL",
                                 RemoteConnectionOptions::Docker(_) => {
                                     "Failed to connect to Dev Container"
+                                }
+                                RemoteConnectionOptions::GuixContainer(_) => {
+                                    "Failed to connect to Guix container"
                                 }
                                 #[cfg(any(test, feature = "test-support"))]
                                 RemoteConnectionOptions::Mock(_) => {
@@ -498,11 +504,13 @@ async fn path_exists(connection: &Arc<dyn RemoteConnection>, path: &Path) -> boo
     ) else {
         return false;
     };
-    let Ok(mut child) = util::command::new_command(command.program)
-        .args(command.args)
-        .envs(command.env)
-        .spawn()
-    else {
+    let mut child = util::command::new_command(command.program);
+    child.args(command.args);
+    child.envs(command.env);
+    if let Some(path) = command.cwd {
+        child.current_dir(path);
+    }
+    let Ok(mut child) = child.spawn() else {
         return false;
     };
     child.status().await.is_ok_and(|status| status.success())

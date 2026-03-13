@@ -1060,6 +1060,7 @@ pub struct RemoteSettingsContent {
     pub ssh_connections: Option<Vec<SshConnection>>,
     pub wsl_connections: Option<Vec<WslConnection>>,
     pub dev_container_connections: Option<Vec<DevContainerConnection>>,
+    pub guix_connections: Option<Vec<GuixConnection>>,
     pub read_ssh_config: Option<bool>,
     pub use_podman: Option<bool>,
 }
@@ -1073,6 +1074,43 @@ pub struct DevContainerConnection {
     pub remote_user: String,
     pub container_id: String,
     pub use_podman: bool,
+}
+
+#[with_fallible_options]
+#[derive(
+    Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq, JsonSchema, MergeFrom, Hash,
+)]
+pub struct GuixConnection {
+    pub manifest_path: String,
+    pub project_root: String,
+    #[serde(default)]
+    pub options: GuixShellOptions,
+}
+
+#[with_fallible_options]
+#[derive(
+    Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq, JsonSchema, MergeFrom, Hash,
+)]
+pub struct GuixShellOptions {
+    #[serde(default)]
+    pub allow_network: bool,
+    #[serde(default)]
+    pub nesting: bool,
+    #[serde(default)]
+    pub expose: Vec<GuixMount>,
+    #[serde(default)]
+    pub share: Vec<GuixMount>,
+    #[serde(default)]
+    pub extra_args: Vec<String>,
+}
+
+#[with_fallible_options]
+#[derive(
+    Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq, JsonSchema, MergeFrom, Hash,
+)]
+pub struct GuixMount {
+    pub source: String,
+    pub target: Option<String>,
 }
 
 #[with_fallible_options]

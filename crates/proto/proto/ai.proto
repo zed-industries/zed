@@ -182,6 +182,7 @@ message ContextServerCommand {
   string path = 1;
   repeated string args = 2;
   map<string, string> env = 3;
+  optional string working_directory = 4;
 }
 
 message AgentServerCommand {

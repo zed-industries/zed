@@ -486,6 +486,9 @@ impl TitleBar {
             RemoteConnectionOptions::Docker(_dev_container_connection) => {
                 (None, "Dev Container", IconName::Box)
             }
+            RemoteConnectionOptions::GuixContainer(_) => {
+                (None, "Guix Container", IconName::Box)
+            }
             #[cfg(any(test, feature = "test-support"))]
             RemoteConnectionOptions::Mock(_) => (None, "Mock Remote Project", IconName::Server),
         };

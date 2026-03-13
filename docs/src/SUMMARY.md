@@ -57,6 +57,7 @@
 - [Overview](./remote-development.md)
 - [Environment Variables](./environment.md)
 - [Dev Containers](./dev-containers.md)
+- [Guix Containers](./guix-containers.md)
 
 # Platform Support
 

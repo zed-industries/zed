@@ -170,7 +170,7 @@ impl Project {
                         }
                     };
 
-                    let (shell, env) = {
+                    let (shell, env, remote_working_directory) = {
                         env.extend(spawn_task.env);
                         match remote_client {
                             Some(remote_client) => match activation_script.clone() {
@@ -223,6 +223,7 @@ impl Project {
                                             title_override: None,
                                         },
                                         env,
+                                        None,
                                     )
                                 }
                                 _ => (
@@ -236,12 +237,17 @@ impl Project {
                                         Shell::System
                                     },
                                     env,
+                                    None,
                                 ),
                             },
                         }
                     };
                     anyhow::Ok(TerminalBuilder::new(
-                        local_path.map(|path| path.to_path_buf()),
+                        if is_via_remote {
+                            remote_working_directory
+                        } else {
+                            local_path.map(|path| path.to_path_buf())
+                        },
                         task_state,
                         shell,
                         env,
@@ -397,16 +403,20 @@ impl Project {
 
             let builder = project
                 .update(cx, move |_, cx| {
-                    let (shell, env) = {
+                    let (shell, env, remote_working_directory) = {
                         match remote_client {
                             Some(remote_client) => {
                                 create_remote_shell(None, env, path, remote_client, cx)?
                             }
-                            None => (settings.shell, env),
+                            None => (settings.shell, env, None),
                         }
                     };
                     anyhow::Ok(TerminalBuilder::new(
-                        local_path.map(|path| path.to_path_buf()),
+                        if is_via_remote {
+                            remote_working_directory
+                        } else {
+                            local_path.map(|path| path.to_path_buf())
+                        },
                         None,
                         shell,
                         env,
@@ -555,6 +565,9 @@ impl Project {
                         let mut command = new_std_command(command_template.program);
                         command.args(command_template.args);
                         command.envs(command_template.env);
+                        if let Some(path) = command_template.cwd {
+                            command.current_dir(path);
+                        }
                         Ok(command)
                     }
                     None => {
@@ -610,7 +623,7 @@ fn create_remote_shell(
     working_directory: Option<Arc<Path>>,
     remote_client: Entity<RemoteClient>,
     cx: &mut App,
-) -> Result<(Shell, HashMap<String, String>)> {
+) -> Result<(Shell, HashMap<String, String>, Option<PathBuf>)> {
     insert_zed_terminal_env(&mut env, &release_channel::AppVersion::global(cx));
 
     let (program, args) = match spawn_command {
@@ -636,5 +649,6 @@ fn create_remote_shell(
             title_override: Some(format!("{} — Terminal", host)),
         },
         command.env,
+        command.cwd,
     ))
 }

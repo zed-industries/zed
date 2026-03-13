@@ -3,6 +3,8 @@ use remote_server::Commands;
 use std::io::Write as _;
 use std::path::PathBuf;
 
+use paths;
+
 #[derive(Parser)]
 #[command(disable_version_flag = true)]
 struct Cli {
@@ -19,10 +21,17 @@ struct Cli {
     /// Used for loading the environment from the project.
     #[arg(long, hide = true)]
     printenv: bool,
+    /// Sets a custom directory for user data such as databases, extensions, and logs.
+    #[arg(long, value_name = "DIR")]
+    user_data_dir: Option<String>,
 }
 
 fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
+
+    if let Some(dir) = &cli.user_data_dir {
+        paths::set_custom_data_dir(dir);
+    }
 
     if let Some(socket_path) = &cli.askpass {
         askpass::main(socket_path);
