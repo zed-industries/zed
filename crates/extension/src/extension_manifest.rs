@@ -695,13 +695,11 @@ args = ["--serve"]
 
     #[test]
     fn parse_remote_grammar_manifest_entry() {
-        let entry: GrammarManifestEntry = toml::from_str(
-            r#"
-repository = "https://github.com/tree-sitter/tree-sitter-rust"
-rev = "abc123"
-path = "grammar"
-"#,
-        )
+        let entry: GrammarManifestEntry = toml::from_str(indoc::indoc! {r#"
+                repository = "https://github.com/tree-sitter/tree-sitter-rust"
+                rev = "abc123"
+                path = "grammar"
+            "#})
         .expect("grammar entry should parse");
 
         assert_eq!(
@@ -716,12 +714,10 @@ path = "grammar"
 
     #[test]
     fn parse_remote_grammar_manifest_entry_with_commit_alias() {
-        let entry: GrammarManifestEntry = toml::from_str(
-            r#"
-repository = "https://github.com/tree-sitter/tree-sitter-rust"
-commit = "def456"
-"#,
-        )
+        let entry: GrammarManifestEntry = toml::from_str(indoc::indoc! {r#"
+                repository = "https://github.com/tree-sitter/tree-sitter-rust"
+                commit = "def456"
+            "#})
         .expect("grammar entry should parse");
 
         assert_eq!(
@@ -736,11 +732,9 @@ commit = "def456"
 
     #[test]
     fn parse_local_grammar_manifest_entry_without_rev() {
-        let entry: GrammarManifestEntry = toml::from_str(
-            r#"
-repository = "file:///tmp/tree-sitter-rust"
-"#,
-        )
+        let entry: GrammarManifestEntry = toml::from_str(indoc::indoc! {r#"
+                repository = "file:///tmp/tree-sitter-rust"
+            "#})
         .expect("local grammar entry should parse");
 
         assert_eq!(
@@ -753,12 +747,10 @@ repository = "file:///tmp/tree-sitter-rust"
 
     #[test]
     fn reject_local_grammar_manifest_entry_with_path() {
-        let error = toml::from_str::<GrammarManifestEntry>(
-            r#"
-repository = "file:///tmp/tree-sitter-rust"
-path = "grammar"
-"#,
-        )
+        let error = toml::from_str::<GrammarManifestEntry>(indoc::indoc! {r#"
+                repository = "file:///tmp/tree-sitter-rust"
+                path = "grammar"
+            "#})
         .expect_err("local grammar entry with path should fail");
 
         assert!(error.to_string().contains("`path` is not supported"));
@@ -766,12 +758,10 @@ path = "grammar"
 
     #[test]
     fn reject_local_grammar_manifest_entry_with_rev() {
-        let error = toml::from_str::<GrammarManifestEntry>(
-            r#"
-repository = "file:///tmp/tree-sitter-rust"
-rev = "abc123"
-"#,
-        )
+        let error = toml::from_str::<GrammarManifestEntry>(indoc::indoc! {r#"
+                repository = "file:///tmp/tree-sitter-rust"
+                rev = "abc123"
+            "#})
         .expect_err("local grammar entry with rev should fail");
 
         assert!(error.to_string().contains("`rev` is not supported"));
@@ -779,11 +769,9 @@ rev = "abc123"
 
     #[test]
     fn reject_remote_grammar_manifest_entry_without_rev() {
-        let error = toml::from_str::<GrammarManifestEntry>(
-            r#"
-repository = "https://github.com/tree-sitter/tree-sitter-rust"
-"#,
-        )
+        let error = toml::from_str::<GrammarManifestEntry>(indoc::indoc! {r#"
+                repository = "https://github.com/tree-sitter/tree-sitter-rust"
+            "#})
         .expect_err("remote grammar entry without rev should fail");
 
         assert!(error.to_string().contains("missing `rev`"));
