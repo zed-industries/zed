@@ -967,6 +967,10 @@ impl EditPredictionStore {
         self.mercury.api_token.read(cx).has_key()
     }
 
+    pub fn mercury_has_payment_required_error(&self) -> bool {
+        self.mercury.has_payment_required_error()
+    }
+
     pub fn clear_history(&mut self) {
         for project_state in self.projects.values_mut() {
             project_state.events.clear();
