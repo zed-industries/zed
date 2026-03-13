@@ -80,9 +80,8 @@ use search::{BufferSearchBar, buffer_search};
 use settings::{Settings, update_settings_file};
 use theme::ThemeSettings;
 use ui::{
-    Button, ButtonLike, Callout, ContextMenu, ContextMenuEntry, DocumentationSide, Indicator,
-    KeyBinding, PopoverMenu, PopoverMenuHandle, SpinnerLabel, Tab, TintColor, Tooltip, prelude::*,
-    utils::WithRemSize,
+    Button, Callout, ContextMenu, ContextMenuEntry, DocumentationSide, Indicator, KeyBinding,
+    PopoverMenu, PopoverMenuHandle, SpinnerLabel, Tab, Tooltip, prelude::*, utils::WithRemSize,
 };
 use util::{ResultExt as _, debug_panic};
 use workspace::{
@@ -3632,11 +3631,7 @@ impl AgentPanel {
         };
 
         let trigger_button = Button::new("thread-target-trigger", trigger_label)
-            .icon(icon)
-            .icon_size(IconSize::XSmall)
-            .icon_position(IconPosition::End)
-            .icon_color(Color::Muted)
-            .selected_style(ButtonStyle::Tinted(TintColor::Accent))
+            .end_icon(Icon::new(icon).size(IconSize::XSmall).color(Color::Muted))
             .disabled(is_creating);
 
         let dock_position = AgentSettings::get_global(cx).dock;
@@ -4290,32 +4285,22 @@ impl AgentPanel {
                     (IconName::ChevronDown, Color::Muted, Color::Default)
                 };
 
-            let agent_icon_element: AnyElement =
-                if let Some(icon_path) = selected_agent_custom_icon_for_button {
-                    Icon::from_external_svg(icon_path)
-                        .size(IconSize::Small)
-                        .color(icon_color)
-                        .into_any_element()
-                } else {
-                    let icon_name = selected_agent_builtin_icon.unwrap_or(IconName::ZedAgent);
-                    Icon::new(icon_name)
-                        .size(IconSize::Small)
-                        .color(icon_color)
-                        .into_any_element()
-                };
+            let agent_icon = if let Some(icon_path) = selected_agent_custom_icon_for_button {
+                Icon::from_external_svg(icon_path)
+                    .size(IconSize::Small)
+                    .color(icon_color)
+            } else {
+                let icon_name = selected_agent_builtin_icon.unwrap_or(IconName::ZedAgent);
+                Icon::new(icon_name).size(IconSize::Small).color(icon_color)
+            };
 
-            let agent_selector_button = ButtonLike::new("agent-selector-trigger")
-                .selected_style(ButtonStyle::Tinted(TintColor::Accent))
-                .child(
-                    h_flex()
-                        .gap_1()
-                        .child(agent_icon_element)
-                        .child(Label::new(selected_agent_label).color(label_color).ml_0p5())
-                        .child(
-                            Icon::new(chevron_icon)
-                                .color(icon_color)
-                                .size(IconSize::XSmall),
-                        ),
+            let agent_selector_button = Button::new("agent-selector-trigger", selected_agent_label)
+                .start_icon(agent_icon)
+                .color(label_color)
+                .end_icon(
+                    Icon::new(chevron_icon)
+                        .color(icon_color)
+                        .size(IconSize::XSmall),
                 );
 
             let agent_selector_menu = PopoverMenu::new("new_thread_menu")

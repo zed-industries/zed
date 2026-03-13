@@ -33,7 +33,7 @@ use rope::Point;
 use settings::Settings;
 use std::{cell::RefCell, fmt::Write, ops::Range, rc::Rc, sync::Arc};
 use theme::ThemeSettings;
-use ui::{ButtonLike, ButtonStyle, ContextMenu, Disclosure, ElevationIndex, prelude::*};
+use ui::{ContextMenu, Disclosure, ElevationIndex, prelude::*};
 use util::paths::PathStyle;
 use util::{ResultExt, debug_panic};
 use workspace::{CollaboratorId, Workspace};
@@ -1161,11 +1161,9 @@ impl MessageEditor {
                 render: Arc::new({
                     let title = title.clone();
                     move |_fold_id, _fold_range, _cx| {
-                        ButtonLike::new("crease")
-                            .style(ButtonStyle::Filled)
+                        Button::new("crease", title.clone())
                             .layer(ElevationIndex::ElevatedSurface)
-                            .child(Icon::new(icon))
-                            .child(Label::new(title.clone()).single_line())
+                            .start_icon(Icon::new(icon))
                             .into_any_element()
                     }
                 }),
