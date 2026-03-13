@@ -119,10 +119,6 @@ mod integration {
         assert_eq!(rows, expected_rows, "Bookmark rows for {}", path.display());
     }
 
-    // -----------------------------------------------------------------------
-    // Tests for all_source_bookmarks
-    // -----------------------------------------------------------------------
-
     #[gpui::test]
     async fn test_all_source_bookmarks_empty(cx: &mut TestAppContext) {
         init_test(cx);
@@ -306,10 +302,6 @@ mod integration {
         assert_eq!(rows, deduped);
     }
 
-    // -----------------------------------------------------------------------
-    // Tests for with_serialized_bookmarks (deserialization)
-    // -----------------------------------------------------------------------
-
     #[gpui::test]
     async fn test_with_serialized_bookmarks_restores_bookmarks(cx: &mut TestAppContext) {
         init_test(cx);
@@ -436,10 +428,6 @@ mod integration {
         assert_eq!(after.len(), 1);
         assert_bookmark_rows(&after, path!("/project/file1.rs"), &[2, 3]);
     }
-
-    // -----------------------------------------------------------------------
-    // Tests for full serialize → deserialize round-trip
-    // -----------------------------------------------------------------------
 
     #[gpui::test]
     async fn test_serialize_deserialize_round_trip(cx: &mut TestAppContext) {
