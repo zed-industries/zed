@@ -730,7 +730,7 @@ jobs:
       matrix:
         extension: ${{ fromJson(needs.orchestrate.outputs.changed_extensions) }}
       fail-fast: false
-    uses: .github/workflows/extension_tests.yml
+    uses: ./.github/workflows/extension_tests.yml
     with:
       working-directory: ${{ matrix.extension }}
   tests_pass:
