@@ -30,6 +30,12 @@ impl Autoscroll {
         Self::Strategy(AutoscrollStrategy::Center, None)
     }
 
+    /// Scrolls so that the newest cursor is roughly an n-th line from the center.
+    /// Negative n places cursor above center, positive n places it below center.
+    pub fn center_relative(n: isize) -> Self {
+        Self::Strategy(AutoscrollStrategy::CenterRelative(n), None)
+    }
+
     /// scrolls so the newest cursor is near the top
     /// (offset by vertical_scroll_margin)
     pub fn focused() -> Self {
@@ -83,6 +89,7 @@ pub enum AutoscrollStrategy {
     Newest,
     #[default]
     Center,
+    CenterRelative(isize),
     Focused,
     Top,
     Bottom,
@@ -238,6 +245,10 @@ impl Editor {
             }
             AutoscrollStrategy::Center => {
                 scroll_position.y = (target_top - margin).max(0.0);
+                self.set_scroll_position_internal(scroll_position, local, true, window, cx)
+            }
+            AutoscrollStrategy::CenterRelative(lines) => {
+                scroll_position.y = (target_top - margin - lines as ScrollOffset).max(0.0);
                 self.set_scroll_position_internal(scroll_position, local, true, window, cx)
             }
             AutoscrollStrategy::Focused => {
