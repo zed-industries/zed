@@ -33,7 +33,7 @@ use workspace::{
     dock::{DockPosition, Panel, PanelEvent, PanelIconButton},
     multi_workspace_enabled,
 };
-use zed_actions::assistant::ToggleThreadsSidebar;
+use zed_actions::assistant::{ToggleAgentDrawer, ToggleThreadsSidebar};
 use zed_actions::editor::{MoveDown, MoveUp};
 
 actions!(
@@ -2032,6 +2032,14 @@ impl Panel for Sidebar {
             tooltip: "Threads Sidebar",
             action: Box::new(ToggleThreadsSidebar),
         }
+    }
+
+    fn secondary_button(&self, _window: &Window, _cx: &App) -> Option<PanelIconButton> {
+        Some(PanelIconButton {
+            icon: IconName::Ai,
+            tooltip: "Agent Drawer",
+            action: Box::new(ToggleAgentDrawer),
+        })
     }
 
     fn activation_priority(&self) -> u32 {

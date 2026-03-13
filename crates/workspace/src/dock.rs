@@ -41,6 +41,9 @@ pub trait Panel: Focusable + EventEmitter<PanelEvent> + Render + Sized {
     fn size(&self, window: &Window, cx: &App) -> Pixels;
     fn set_size(&mut self, size: Option<Pixels>, window: &mut Window, cx: &mut Context<Self>);
     fn icon_button(&self, window: &Window, cx: &App) -> PanelIconButton;
+    fn secondary_button(&self, _window: &Window, _cx: &App) -> Option<PanelIconButton> {
+        None
+    }
     fn is_zoomed(&self, _window: &Window, _cx: &App) -> bool {
         false
     }
@@ -76,6 +79,7 @@ pub trait PanelHandle: Send + Sync {
     fn size(&self, window: &Window, cx: &App) -> Pixels;
     fn set_size(&self, size: Option<Pixels>, window: &mut Window, cx: &mut App);
     fn icon_button(&self, window: &Window, cx: &App) -> PanelIconButton;
+    fn secondary_button(&self, window: &Window, cx: &App) -> Option<PanelIconButton>;
     fn panel_focus_handle(&self, cx: &App) -> FocusHandle;
     fn to_any(&self) -> AnyView;
     fn activation_priority(&self, cx: &App) -> u32;
@@ -155,6 +159,10 @@ where
 
     fn icon_button(&self, window: &Window, cx: &App) -> PanelIconButton {
         self.read(cx).icon_button(window, cx)
+    }
+
+    fn secondary_button(&self, window: &Window, cx: &App) -> Option<PanelIconButton> {
+        self.read(cx).secondary_button(window, cx)
     }
 
     fn to_any(&self) -> AnyView {
@@ -907,6 +915,7 @@ impl Render for PanelButtons {
                     tooltip: icon_tooltip,
                     action: toggle_action,
                 } = entry.panel.icon_button(window, cx);
+                let secondary_button = entry.panel.secondary_button(window, cx);
                 let name = entry.panel.persistent_name();
                 let panel = entry.panel.clone();
 
@@ -953,10 +962,10 @@ impl Render for PanelButtons {
                         })
                         .anchor(menu_anchor)
                         .attach(menu_attach)
-                        .trigger(move |is_active, _window, _cx| {
+                        .trigger(move |is_active, _window, cx| {
                             // Include active state in element ID to invalidate the cached
                             // tooltip when panel state changes (e.g., via keyboard shortcut)
-                            IconButton::new((name, is_active_button as u64), icon)
+                            let button = IconButton::new((name, is_active_button as u64), icon)
                                 .icon_size(IconSize::Small)
                                 .toggle_state(is_active_button)
                                 .on_click({
@@ -970,7 +979,48 @@ impl Render for PanelButtons {
                                     this.tooltip(move |_window, cx| {
                                         Tooltip::for_action(tooltip.clone(), &*action, cx)
                                     })
-                                })
+                                });
+
+                            match secondary_button {
+                                Some(secondary_button) => {
+                                    let action = secondary_button.action.boxed_clone();
+                                    let secondary_button =
+                                        IconButton::new("secondary-button", secondary_button.icon)
+                                            .icon_size(IconSize::Small)
+                                            .toggle_state(false) // todo! show active when drawer is open
+                                            .on_click({
+                                                let action = action.boxed_clone();
+                                                move |_, window, cx| {
+                                                    window.dispatch_action(action.boxed_clone(), cx)
+                                                }
+                                            })
+                                            .when(!is_active, |this| {
+                                                this.tooltip(move |_window, cx| {
+                                                    Tooltip::for_action(
+                                                        secondary_button.tooltip,
+                                                        &*action,
+                                                        cx,
+                                                    )
+                                                })
+                                            });
+
+                                    h_flex()
+                                        .min_w_0()
+                                        .rounded_sm()
+                                        .gap_px()
+                                        .border_1()
+                                        .border_color(cx.theme().colors().border)
+                                        .when(
+                                            matches!(dock_position, DockPosition::Right),
+                                            |this| this.flex_row_reverse(),
+                                        )
+                                        .child(button)
+                                        .child(div().h_4().w_px().bg(cx.theme().colors().border))
+                                        .child(secondary_button)
+                                        .into_any_element()
+                                }
+                                None => button.into_any_element(),
+                            }
                         }),
                 )
             })
