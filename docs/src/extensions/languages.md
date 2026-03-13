@@ -32,6 +32,7 @@ line_comments = ["# "]
 - `tab_size` defines the indentation/tab size used for this language (default is `4`).
 - `hard_tabs` whether to indent with tabs (`true`) or spaces (`false`, the default).
 - `first_line_pattern` is a regular expression that can be used alongside `path_suffixes` (above) or `file_types` in settings to match files that should use this language. For example, Zed uses this to identify Shell Scripts by matching [shebang lines](https://github.com/zed-industries/zed/blob/main/crates/languages/src/bash/config.toml) in the first line of a script.
+- `modeline_aliases` is an array of additional Emacs modes or Vim filetypes to map modeline settings to Zed language.
 - `debuggers` is an array of strings that are used to identify debuggers in the language. When launching a debugger's `New Process Modal`, Zed will order available debuggers by the order of entries in this array.
 
 <!--

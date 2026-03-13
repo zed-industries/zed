@@ -93,6 +93,8 @@ extend-ignore-re = [
     "ags",
     # AMD GPU Services
     "AGS",
+    # "noet" is a vim variable (ideally to ignore locally)
+    "noet",
     # Yarn Plug'n'Play
     "PnP"
 ]
