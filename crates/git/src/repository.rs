@@ -1000,11 +1000,18 @@ impl RealGitRepository {
         bundled_git_binary_path: Option<PathBuf>,
         system_git_binary_path: Option<PathBuf>,
         executor: BackgroundExecutor,
-    ) -> Option<Self> {
-        let any_git_binary_path = system_git_binary_path.clone().or(bundled_git_binary_path)?;
-        let workdir_root = dotgit_path.parent()?;
-        let repository = git2::Repository::open(workdir_root).log_err()?;
-        Some(Self {
+    ) -> Result<Self> {
+        let any_git_binary_path = system_git_binary_path
+            .clone()
+            .or(bundled_git_binary_path)
+            .context("no git binary available")?;
+        log::info!(
+            "opening git repository at {dotgit_path:?} using git binary {any_git_binary_path:?}"
+        );
+        let workdir_root = dotgit_path.parent().context(".git has no parent")?;
+        let repository =
+            git2::Repository::open(workdir_root).context("creating libgit2 repository")?;
+        Ok(Self {
             repository: Arc::new(Mutex::new(repository)),
             system_git_binary_path,
             any_git_binary_path,
