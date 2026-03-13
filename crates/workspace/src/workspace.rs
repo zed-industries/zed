@@ -717,6 +717,15 @@ pub fn prompt_for_open_path_and_open(
     .detach();
 }
 
+const MESSAGE: &str = r#"
+command palette is good. use it
+
+hey look markdown:
+```json
+{"fun": "times"}
+```
+"#;
+
 pub fn init(app_state: Arc<AppState>, cx: &mut App) {
     component::init();
     theme_preview::init(cx);
@@ -726,14 +735,7 @@ pub fn init(app_state: Arc<AppState>, cx: &mut App) {
     welcome::register_tip(
         welcome::Tip {
             title: "Master the Command Palette".into(),
-            message: "The command palette is your gateway to everything in Zed. Instead of \
-                hunting through menus, you can quickly find and execute any command by typing a \
-                few letters of its name. It supports fuzzy matching, so you don't need to \
-                remember exact command names. Whether you want to change your theme, toggle a \
-                panel, run a task, or trigger a Git operation, the command palette has you \
-                covered. Try building muscle memory by using it for actions you'd normally reach \
-                for with a mouse."
-                .into(),
+            message: MESSAGE.into(),
             icon: Some(ui::IconName::Sparkle),
             mentioned_actions: vec![Box::new(zed_actions::command_palette::Toggle)],
         },

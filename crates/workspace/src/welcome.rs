@@ -8,14 +8,17 @@ use gpui::WeakEntity;
 use gpui::{
     Action, App, Context, Entity, EventEmitter, FocusHandle, Focusable, FontWeight, Global,
     InteractiveElement, ParentElement, Render, Styled, Task, Window, actions,
+    humanize_action_name,
 };
+use markdown::{Markdown, MarkdownElement, MarkdownFont, MarkdownStyle};
 use menu::{SelectNext, SelectPrevious};
 use project::DisableAiSettings;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::Settings;
 use ui::{
-    ButtonLike, Divider, DividerColor, IconButtonShape, KeyBinding, Vector, VectorName, prelude::*,
+    ButtonLike, Divider, DividerColor, IconButtonShape, KeyBinding, TextSize, Vector, VectorName,
+    prelude::*,
 };
 use util::ResultExt;
 use zed_actions::{Extensions, OpenOnboarding, OpenSettings, agent, command_palette};
@@ -61,30 +64,6 @@ impl Global for TipRegistry {}
 
 pub fn register_tip(tip: Tip, cx: &mut App) {
     cx.default_global::<TipRegistry>().tips.push(tip);
-}
-
-fn humanize_action_name(name: &str) -> String {
-    let capacity = name.len() + name.chars().filter(|c| c.is_uppercase()).count();
-    let mut result = String::with_capacity(capacity);
-    for char in name.chars() {
-        if char == ':' {
-            if result.ends_with(':') {
-                result.push(' ');
-            } else {
-                result.push(':');
-            }
-        } else if char == '_' {
-            result.push(' ');
-        } else if char.is_uppercase() {
-            if !result.ends_with(' ') {
-                result.push(' ');
-            }
-            result.extend(char.to_lowercase());
-        } else {
-            result.push(char);
-        }
-    }
-    result
 }
 
 fn tip_index_for_today(cx: &App) -> usize {
@@ -313,6 +292,7 @@ pub struct WelcomePage {
     focus_handle: FocusHandle,
     fallback_to_recent_projects: bool,
     tip_index: usize,
+    tip_message_markdown: Option<Entity<Markdown>>,
     recent_workspaces: Option<
         Vec<(
             WorkspaceId,
@@ -355,13 +335,38 @@ impl WelcomePage {
             .detach();
         }
 
+        let tip_index = tip_index_for_today(cx);
+        let tip_message_markdown = Self::build_tip_markdown(tip_index, &workspace, cx);
+
         WelcomePage {
             workspace,
             focus_handle,
             fallback_to_recent_projects,
-            tip_index: tip_index_for_today(cx),
+            tip_index,
+            tip_message_markdown,
             recent_workspaces: None,
         }
+    }
+
+    fn build_tip_markdown(
+        tip_index: usize,
+        workspace: &WeakEntity<Workspace>,
+        cx: &mut Context<Self>,
+    ) -> Option<Entity<Markdown>> {
+        let registry = cx.try_global::<TipRegistry>()?;
+        let tip = registry.tips.get(tip_index)?;
+        let message = tip.message.trim().to_string();
+        let language_registry = workspace
+            .upgrade()
+            .map(|ws| ws.read(cx).app_state().languages.clone());
+        Some(cx.new(|cx| Markdown::new(message.into(), language_registry, None, cx)))
+    }
+
+    fn set_tip_index(&mut self, index: usize, cx: &mut Context<Self>) {
+        self.tip_index = index;
+        self.tip_message_markdown =
+            Self::build_tip_markdown(self.tip_index, &self.workspace, cx);
+        cx.notify();
     }
 
     fn select_next(&mut self, _: &SelectNext, window: &mut Window, cx: &mut Context<Self>) {
@@ -379,8 +384,7 @@ impl WelcomePage {
             .try_global::<TipRegistry>()
             .map_or(0, |r| r.tips.len());
         if count > 0 {
-            self.tip_index = (self.tip_index + 1) % count;
-            cx.notify();
+            self.set_tip_index((self.tip_index + 1) % count, cx);
         }
     }
 
@@ -389,8 +393,7 @@ impl WelcomePage {
             .try_global::<TipRegistry>()
             .map_or(0, |r| r.tips.len());
         if count > 0 {
-            self.tip_index = (self.tip_index + count - 1) % count;
-            cx.notify();
+            self.set_tip_index((self.tip_index + count - 1) % count, cx);
         }
     }
 
@@ -466,23 +469,25 @@ impl WelcomePage {
         )
     }
 
-    fn render_tip_section(&self, cx: &App) -> Option<impl IntoElement> {
+    fn render_tip_section(
+        &self,
+        window: &mut Window,
+        cx: &App,
+    ) -> Option<impl IntoElement> {
         let registry = cx.try_global::<TipRegistry>()?;
         let tip = registry.tips.get(self.tip_index)?;
         let focus = &self.focus_handle;
+        let tip_markdown = self.tip_message_markdown.clone()?;
 
         Some(
             v_flex()
                 .w_full()
-                .p_4()
-                .border_1()
-                .border_color(cx.theme().colors().border_variant)
-                .rounded_md()
-                .bg(cx.theme().colors().surface_background)
                 .gap_3()
                 .child(
                     h_flex()
-                        .justify_between()
+                        .px_1()
+                        .mb_2()
+                        .gap_2()
                         .items_center()
                         .child(
                             Label::new("TIP OF THE DAY")
@@ -491,8 +496,12 @@ impl WelcomePage {
                                 .size(LabelSize::XSmall),
                         )
                         .child(
+                            Divider::horizontal().color(DividerColor::BorderVariant),
+                        )
+                        .child(
                             h_flex()
                                 .gap_1()
+                                .flex_shrink_0()
                                 .items_center()
                                 .child(
                                     IconButton::new("prev-tip", IconName::ChevronLeft)
@@ -530,9 +539,13 @@ impl WelcomePage {
                         ),
                 )
                 .child(
-                    Label::new(tip.message.trim().to_string())
-                        .color(Color::Muted)
-                        .size(LabelSize::Small),
+                    MarkdownElement::new(tip_markdown, tip_markdown_style(window, cx))
+                        .text_size(TextSize::Default.rems(cx))
+                        .code_block_renderer(markdown::CodeBlockRenderer::Default {
+                            copy_button: false,
+                            copy_button_on_hover: false,
+                            border: true,
+                        }),
                 )
                 .when(!tip.mentioned_actions.is_empty(), |this| {
                     this.child(
@@ -576,8 +589,14 @@ impl WelcomePage {
     }
 }
 
+fn tip_markdown_style(window: &Window, cx: &App) -> MarkdownStyle {
+    let mut style = MarkdownStyle::themed(MarkdownFont::Editor, window, cx);
+    style.base_text_style.color = cx.theme().colors().text_muted;
+    style
+}
+
 impl Render for WelcomePage {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let (first_section, second_section) = CONTENT;
         let first_section_entries = first_section.entries.len();
         let last_index = first_section_entries + second_section.entries.len();
@@ -656,7 +675,7 @@ impl Render for WelcomePage {
                             )
                             .child(first_section.render(Default::default(), &self.focus_handle, cx))
                             .child(second_section)
-                            .children(self.render_tip_section(cx))
+                            .children(self.render_tip_section(window, cx))
                             .when(!self.fallback_to_recent_projects, |this| {
                                 this.child(
                                     v_flex().gap_1().child(Divider::horizontal()).child(

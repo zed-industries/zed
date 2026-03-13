@@ -680,29 +680,8 @@ impl PickerDelegate for CommandPaletteDelegate {
     }
 }
 
-pub fn humanize_action_name(name: &str) -> String {
-    let capacity = name.len() + name.chars().filter(|c| c.is_uppercase()).count();
-    let mut result = String::with_capacity(capacity);
-    for char in name.chars() {
-        if char == ':' {
-            if result.ends_with(':') {
-                result.push(' ');
-            } else {
-                result.push(':');
-            }
-        } else if char == '_' {
-            result.push(' ');
-        } else if char.is_uppercase() {
-            if !result.ends_with(' ') {
-                result.push(' ');
-            }
-            result.extend(char.to_lowercase());
-        } else {
-            result.push(char);
-        }
-    }
-    result
-}
+/// Re-export for external callers that were using this from command_palette.
+pub use gpui::humanize_action_name;
 
 impl std::fmt::Debug for Command {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {

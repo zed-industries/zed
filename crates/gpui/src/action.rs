@@ -187,6 +187,33 @@ impl dyn Action {
     }
 }
 
+/// Converts a raw action name like `"editor::GoToDefinition"` into a
+/// human-readable form like `"editor: go to definition"`, matching the
+/// display style used in the command palette.
+pub fn humanize_action_name(name: &str) -> String {
+    let capacity = name.len() + name.chars().filter(|c| c.is_uppercase()).count();
+    let mut result = String::with_capacity(capacity);
+    for char in name.chars() {
+        if char == ':' {
+            if result.ends_with(':') {
+                result.push(' ');
+            } else {
+                result.push(':');
+            }
+        } else if char == '_' {
+            result.push(' ');
+        } else if char.is_uppercase() {
+            if !result.ends_with(' ') {
+                result.push(' ');
+            }
+            result.extend(char.to_lowercase());
+        } else {
+            result.push(char);
+        }
+    }
+    result
+}
+
 /// Error type for `Keystroke::parse`. This is used instead of `anyhow::Error` so that Zed can use
 /// markdown to display it.
 #[derive(Debug)]
