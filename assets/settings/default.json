@@ -2246,10 +2246,11 @@
     // Default: true
     "restore_unsaved_buffers": true,
     // The maximum number of undo operations to save in the history of unsaved buffers.
-    // When there are more operations than this cap, the history is discarded.
+    // When there are more operations than this cap, the history is truncated and the
+    // current state is preserved as the base text.
     //
-    // Default: 10000
-    "restore_unsaved_buffers_max_operations": 10000,
+    // Default: 1000
+    "restore_unsaved_buffers_max_operations": 1000,
     // Whether or not to skip worktree trust checks.
     // When trusted, project settings are synchronized automatically,
     // language and MCP servers are downloaded and started automatically.

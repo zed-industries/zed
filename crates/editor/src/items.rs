@@ -2600,15 +2600,17 @@ mod tests {
 
         buffer.update(cx, |buffer, cx| {
             buffer.set_group_interval(Duration::ZERO);
-            buffer.edit([(0..0, "1")], None, cx);
+            buffer.edit([(0..0, "1\n")], None, cx);
             buffer.finalize_last_transaction();
-            buffer.edit([(1..1, "2")], None, cx);
+            buffer.edit([(2..2, "2\n")], None, cx);
             buffer.finalize_last_transaction();
-            buffer.edit([(2..2, "3")], None, cx); // Total 3 operations, limit is 2
+            buffer.edit([(4..4, "3\n")], None, cx);
+            buffer.finalize_last_transaction();
+            buffer.edit([(6..6, "4\n")], None, cx); // Total 4 operations, limit is 2
         });
 
         let (editor, cx) = cx.add_window_view(|window, cx| {
-            Editor::for_buffer(buffer, Some(project), window, cx)
+            Editor::for_buffer(buffer, Some(project.clone()), window, cx)
         });
 
         let task = workspace.update_in(cx, |workspace, window, cx| {
@@ -2618,9 +2620,23 @@ mod tests {
         });
         task.await.unwrap();
 
-        // Verify the DB contains NO undo history because it exceeded the limit
+        // Verify the DB contains truncated undo history (only last 2 operations)
         let saved = DB.get_serialized_editor(item_id, workspace_id).unwrap().unwrap();
-        assert!(saved.undo_history.as_ref().map_or(true, |h| h.is_empty()));
+        assert!(saved.undo_history.is_some());
+        
+        let deserialized =
+            deserialize_editor(item_id, workspace_id, workspace.clone(), project, cx).await;
+
+        workspace.update_in(cx, |_, window, cx| {
+            deserialized.update(cx, |editor, cx| {
+                assert_eq!(editor.text(cx), "1\n2\n3\n4\n");
+
+                // Perform an undo. It should NOT change the text because the entire history was discarded
+                // due to exceeding the limit, and we only preserved the current state as base_text.
+                editor.undo(&Default::default(), window, cx);
+                assert_eq!(editor.text(cx), "1\n2\n3\n4\n");
+            });
+        });
     }
 }
 
