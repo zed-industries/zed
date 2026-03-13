@@ -118,36 +118,36 @@ pub fn installed_extensions_for_clipboard(cx: &App) -> String {
 }
 
 fn format_installed_extensions_for_clipboard(store: &ExtensionStore) -> String {
-    let mut lines = Vec::with_capacity(store.extension_index.extensions.len());
-    let mut dev_lines = Vec::with_capacity(store.extension_index.extensions.len());
+    let mut top_lines = Vec::with_capacity(store.extension_index.extensions.len());
+    let mut bottom_lines = Vec::with_capacity(store.extension_index.extensions.len());
 
     for (extension_id, entry) in store.extension_index.extensions.iter() {
-        let dev_suffix = if entry.dev { " (dev)" } else { "" };
-        if dev_suffix == " (dev)" {
-            dev_lines.push(format!(
-                "- {} ({}) v{}{}",
-                entry.manifest.name, extension_id, entry.manifest.version, dev_suffix
-            ));
+        let line = format!(
+            "- {} ({}) v{}{}",
+            entry.manifest.name,
+            extension_id,
+            entry.manifest.version,
+            if entry.dev { " (dev)" } else { "" }
+        );
+        if entry.dev {
+            top_lines.push(line);
         } else {
-            lines.push(format!(
-                "- {} ({}) v{}{}",
-                entry.manifest.name, extension_id, entry.manifest.version, dev_suffix
-            ));
+            bottom_lines.push(line);
         }
     }
 
-    lines.sort();
-    dev_lines.sort();
+    top_lines.sort();
+    bottom_lines.sort();
 
-    lines = [dev_lines.as_slice(), lines.as_slice()].concat();
+    top_lines.extend(bottom_lines);
 
-    if lines.is_empty() {
+    if top_lines.is_empty() {
         return "Installed extensions: none".to_string();
     }
 
     format!(
         "Installed extensions ({}):\n{}",
-        lines.len(),
-        lines.join("\n")
+        top_lines.len(),
+        top_lines.join("\n")
     )
 }
