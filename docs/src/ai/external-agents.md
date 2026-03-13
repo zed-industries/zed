@@ -27,7 +27,10 @@ If you'd like to bind this to a keyboard shortcut, you can do so by editing your
 [
   {
     "bindings": {
-      "cmd-alt-g": ["agent::NewExternalAgentThread", { "agent": "gemini" }]
+      "cmd-alt-g": [
+        "agent::NewExternalAgentThread",
+        { "agent": { "custom": { "name": "gemini" } } }
+      ]
     }
   }
 ]
@@ -38,32 +41,14 @@ If you'd like to bind this to a keyboard shortcut, you can do so by editing your
 The first time you create a Gemini CLI thread, Zed will install [@google/gemini-cli](https://github.com/google-gemini/gemini-cli).
 This installation is only available to Zed and is kept up to date as you use the agent.
 
-By default, Zed will use this managed version of Gemini CLI even if you have it installed globally.
-However, you can configure it to use a version in your `PATH` by adding this to your settings:
-
-```json [settings]
-{
-  "agent_servers": {
-    "gemini": {
-      "ignore_system_version": false
-    }
-  }
-}
-```
-
 #### Authentication
 
-After you have Gemini CLI running, you'll be prompted to choose your authentication method.
+After you have Gemini CLI running, you'll be prompted to authenticate.
 
-Most users should click the "Log in with Google".
-This will cause a browser window to pop-up and auth directly with Gemini CLI.
+Click the "Login" button to open the Gemini CLI interactively, where you can log in with your Google account or [Vertex AI](https://cloud.google.com/vertex-ai) credentials.
 Zed does not see your OAuth or access tokens in this case.
 
-You can also use the "Gemini API Key".
-If you select this, and have the `GEMINI_API_KEY` set, then we will use that.
-Otherwise Zed will prompt you for an API key which will be stored securely in your keychain, and used to start Gemini CLI from within Zed.
-
-The "Vertex AI" option is for those who are using [Vertex AI](https://cloud.google.com/vertex-ai), and have already configured their environment correctly.
+If the `GEMINI_API_KEY` environment variable (or `GOOGLE_AI_API_KEY`) is already set, or you have configured a Google AI API key in Zed's [language model provider settings](./llm-providers.md#google-ai), it will be passed to Gemini CLI automatically.
 
 For more information, see the [Gemini CLI docs](https://github.com/google-gemini/gemini-cli/blob/main/docs/index.md).
 
@@ -88,7 +73,10 @@ If you'd like to bind this to a keyboard shortcut, you can do so by editing your
 [
   {
     "bindings": {
-      "cmd-alt-c": ["agent::NewExternalAgentThread", { "agent": "claude_code" }]
+      "cmd-alt-c": [
+        "agent::NewExternalAgentThread",
+        { "agent": { "custom": { "name": "claude-acp" } } }
+      ]
     }
   }
 ]
@@ -114,7 +102,8 @@ If you want to override the executable used by the adapter, you can set the `CLA
 ```json
 {
   "agent_servers": {
-    "claude": {
+    "claude-acp": {
+      "type": "registry",
       "env": {
         "CLAUDE_CODE_EXECUTABLE": "/path/to/alternate-claude-code-executable"
       }
@@ -159,7 +148,10 @@ If you'd like to bind this to a keyboard shortcut, you can do so by editing your
 [
   {
     "bindings": {
-      "cmd-alt-c": ["agent::NewExternalAgentThread", { "agent": "codex" }]
+      "cmd-alt-c": [
+        "agent::NewExternalAgentThread",
+        { "agent": { "custom": { "name": "codex-acp" } } }
+      ]
     }
   }
 ]
@@ -248,7 +240,7 @@ You can also add agents through your settings file ([how to edit](../configuring
 
 This can be useful if you're in the middle of developing a new agent that speaks the protocol and you want to debug it.
 
-It's also possible to specify a custom path, arguments, or environment for the builtin integrations by using the `claude` and `gemini` names.
+It's also possible to customize environment variables for registry-installed agents like Claude Agent, Codex, and Gemini CLI by using their registry names (`claude-acp`, `codex-acp`, `gemini`) with `"type": "registry"` in your settings.
 
 ## Debugging Agents
 

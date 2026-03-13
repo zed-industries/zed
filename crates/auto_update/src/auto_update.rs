@@ -212,18 +212,10 @@ pub fn init(client: Arc<Client>, cx: &mut App) {
 }
 
 pub fn check(_: &Check, window: &mut Window, cx: &mut App) {
-    if let Some(message) = option_env!("ZED_UPDATE_EXPLANATION") {
-        drop(window.prompt(
-            gpui::PromptLevel::Info,
-            "Zed was installed via a package manager.",
-            Some(message),
-            &["Ok"],
-            cx,
-        ));
-        return;
-    }
-
-    if let Ok(message) = env::var("ZED_UPDATE_EXPLANATION") {
+    if let Some(message) = option_env!("ZED_UPDATE_EXPLANATION")
+        .map(ToOwned::to_owned)
+        .or_else(|| env::var("ZED_UPDATE_EXPLANATION").ok())
+    {
         drop(window.prompt(
             gpui::PromptLevel::Info,
             "Zed was installed via a package manager.",
@@ -388,6 +380,10 @@ impl AutoUpdater {
 
     pub fn poll(&mut self, check_type: UpdateCheckType, cx: &mut Context<Self>) {
         if self.pending_poll.is_some() {
+            if self.update_check_type == UpdateCheckType::Automatic {
+                self.update_check_type = check_type;
+                cx.notify();
+            }
             return;
         }
         self.update_check_type = check_type;
@@ -557,7 +553,7 @@ impl AutoUpdater {
                 asset,
                 metrics_id: metrics_id.as_deref(),
                 system_id: system_id.as_deref(),
-                is_staff: is_staff,
+                is_staff,
             },
         )?;
 
@@ -990,7 +986,7 @@ async fn install_release_macos(
     };
 
     let output = new_command("rsync")
-        .args(["-av", "--delete"])
+        .args(["-av", "--delete", "--exclude", "Icon?"])
         .arg(&mounted_app_path)
         .arg(&running_app_path)
         .output()

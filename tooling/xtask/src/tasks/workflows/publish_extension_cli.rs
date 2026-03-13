@@ -28,7 +28,7 @@ fn publish_job() -> NamedJob {
     }
 
     fn upload_binary() -> Step<Run> {
-        named::bash("script/upload-extension-cli ${{ github.sha }}")
+        named::bash(r#"script/upload-extension-cli "$GITHUB_SHA""#)
             .add_env((
                 "DIGITALOCEAN_SPACES_ACCESS_KEY",
                 vars::DIGITALOCEAN_SPACES_ACCESS_KEY,
@@ -60,7 +60,7 @@ fn update_sha_in_zed(publish_job: &NamedJob) -> NamedJob {
 
     fn replace_sha() -> Step<Run> {
         named::bash(indoc! {r#"
-            sed -i "s/ZED_EXTENSION_CLI_SHA: &str = \"[a-f0-9]*\"/ZED_EXTENSION_CLI_SHA: \&str = \"${{ github.sha }}\"/" \
+            sed -i "s/ZED_EXTENSION_CLI_SHA: &str = \"[a-f0-9]*\"/ZED_EXTENSION_CLI_SHA: \&str = \"$GITHUB_SHA\"/" \
                 tooling/xtask/src/tasks/workflows/extension_tests.rs
         "#})
     }
@@ -139,7 +139,7 @@ fn update_sha_in_extensions(publish_job: &NamedJob) -> NamedJob {
 
     fn replace_sha() -> Step<Run> {
         named::bash(indoc! {r#"
-            sed -i "s/ZED_EXTENSION_CLI_SHA: [a-f0-9]*/ZED_EXTENSION_CLI_SHA: ${{ github.sha }}/" \
+            sed -i "s/ZED_EXTENSION_CLI_SHA: [a-f0-9]*/ZED_EXTENSION_CLI_SHA: $GITHUB_SHA/" \
                 .github/workflows/ci.yml
         "#})
     }
@@ -191,7 +191,7 @@ fn create_pull_request_extensions(
 
 fn get_short_sha() -> (Step<Run>, StepOutput) {
     let step = named::bash(indoc::indoc! {r#"
-        echo "sha_short=$(echo "${{ github.sha }}" | cut -c1-7)" >> "$GITHUB_OUTPUT"
+        echo "sha_short=$(echo "$GITHUB_SHA" | cut -c1-7)" >> "$GITHUB_OUTPUT"
     "#})
     .id("short-sha");
 

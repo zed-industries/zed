@@ -106,6 +106,8 @@ pub enum Event {
     },
     ExcerptsRemoved {
         ids: Vec<ExcerptId>,
+        /// Contains only buffer IDs for which all excerpts have been removed.
+        /// Buffers that still have remaining excerpts are never included.
         removed_buffer_ids: Vec<BufferId>,
     },
     ExcerptsExpanded {
@@ -118,6 +120,7 @@ pub enum Event {
     DiffHunksToggled,
     Edited {
         edited_buffer: Option<Entity<Buffer>>,
+        is_local: bool,
     },
     TransactionUndone {
         transaction_id: TransactionId,
@@ -596,14 +599,12 @@ impl DiffState {
                             base_text_changed_range,
                             extended_range: _,
                         }) => {
-                            if let Some(base_text_changed_range) = base_text_changed_range.clone() {
-                                this.inverted_buffer_diff_changed(
-                                    diff,
-                                    main_buffer,
-                                    base_text_changed_range,
-                                    cx,
-                                )
-                            }
+                            this.inverted_buffer_diff_changed(
+                                diff,
+                                main_buffer,
+                                base_text_changed_range.clone(),
+                                cx,
+                            );
                             cx.emit(Event::BufferDiffChanged);
                         }
                         BufferDiffEvent::LanguageChanged => {
@@ -627,7 +628,7 @@ pub struct MultiBufferSnapshot {
     diffs: TreeMap<BufferId, DiffStateSnapshot>,
     diff_transforms: SumTree<DiffTransform>,
     excerpt_ids: SumTree<ExcerptIdMapping>,
-    replaced_excerpts: TreeMap<ExcerptId, ExcerptId>,
+    replaced_excerpts: Arc<HashMap<ExcerptId, ExcerptId>>,
     non_text_state_update_count: usize,
     edit_count: usize,
     is_dirty: bool,
@@ -1163,12 +1164,11 @@ impl MultiBuffer {
             },
         );
         this.singleton = true;
-        let buffer_id = buffer.read(cx).remote_id();
-        this.push_excerpts(
-            buffer,
-            [ExcerptRange::new(text::Anchor::min_max_range_for_buffer(
-                buffer_id,
-            ))],
+        this.set_excerpts_for_path(
+            PathKey::sorted(0),
+            buffer.clone(),
+            [Point::zero()..buffer.read(cx).max_point()],
+            0,
             cx,
         );
         this
@@ -1737,18 +1737,6 @@ impl MultiBuffer {
         }
     }
 
-    pub fn push_excerpts<O>(
-        &mut self,
-        buffer: Entity<Buffer>,
-        ranges: impl IntoIterator<Item = ExcerptRange<O>>,
-        cx: &mut Context<Self>,
-    ) -> Vec<ExcerptId>
-    where
-        O: text::ToOffset,
-    {
-        self.insert_excerpts_after(ExcerptId::max(), buffer, ranges, cx)
-    }
-
     #[instrument(skip_all)]
     fn merge_excerpt_ranges<'a>(
         expanded_ranges: impl IntoIterator<Item = &'a ExcerptRange<Point>> + 'a,
@@ -1926,6 +1914,7 @@ impl MultiBuffer {
 
         cx.emit(Event::Edited {
             edited_buffer: None,
+            is_local: true,
         });
         cx.emit(Event::ExcerptsAdded {
             buffer,
@@ -1970,7 +1959,10 @@ impl MultiBuffer {
         *has_deleted_file = false;
         *has_conflict = false;
         *has_inverted_diff = false;
-        replaced_excerpts.clear();
+        match Arc::get_mut(replaced_excerpts) {
+            Some(replaced_excerpts) => replaced_excerpts.clear(),
+            None => *replaced_excerpts = Default::default(),
+        }
 
         let edits = Self::sync_diff_transforms(
             self.snapshot.get_mut(),
@@ -1985,6 +1977,7 @@ impl MultiBuffer {
         }
         cx.emit(Event::Edited {
             edited_buffer: None,
+            is_local: true,
         });
         cx.emit(Event::ExcerptsRemoved {
             ids,
@@ -1998,7 +1991,7 @@ impl MultiBuffer {
         &self,
         buffer_id: BufferId,
         cx: &App,
-    ) -> Vec<(ExcerptId, ExcerptRange<text::Anchor>)> {
+    ) -> Vec<(ExcerptId, Arc<BufferSnapshot>, ExcerptRange<text::Anchor>)> {
         let mut excerpts = Vec::new();
         let snapshot = self.read(cx);
         let mut cursor = snapshot.excerpts.cursor::<Option<&Locator>>(());
@@ -2008,7 +2001,7 @@ impl MultiBuffer {
                 if let Some(excerpt) = cursor.item()
                     && excerpt.locator == *locator
                 {
-                    excerpts.push((excerpt.id, excerpt.range.clone()));
+                    excerpts.push((excerpt.id, excerpt.buffer.clone(), excerpt.range.clone()));
                 }
             }
         }
@@ -2139,7 +2132,7 @@ impl MultiBuffer {
     ) -> Option<Anchor> {
         let mut found = None;
         let snapshot = buffer.read(cx).snapshot();
-        for (excerpt_id, range) in self.excerpts_for_buffer(snapshot.remote_id(), cx) {
+        for (excerpt_id, _, range) in self.excerpts_for_buffer(snapshot.remote_id(), cx) {
             let start = range.context.start.to_point(&snapshot);
             let end = range.context.end.to_point(&snapshot);
             if start <= point && point < end {
@@ -2168,7 +2161,7 @@ impl MultiBuffer {
         cx: &App,
     ) -> Option<Anchor> {
         let snapshot = buffer.read(cx).snapshot();
-        for (excerpt_id, range) in self.excerpts_for_buffer(snapshot.remote_id(), cx) {
+        for (excerpt_id, _, range) in self.excerpts_for_buffer(snapshot.remote_id(), cx) {
             if range.context.start.cmp(&anchor, &snapshot).is_le()
                 && range.context.end.cmp(&anchor, &snapshot).is_ge()
             {
@@ -2203,7 +2196,19 @@ impl MultiBuffer {
         drop(snapshot);
 
         self.resize_excerpt(excerpt_ids[0], union_range, cx);
-        self.remove_excerpts(excerpt_ids[1..].iter().copied(), cx);
+        let removed = &excerpt_ids[1..];
+        for &excerpt_id in removed {
+            if let Some(path) = self.paths_by_excerpt.get(&excerpt_id) {
+                if let Some(excerpt_list) = self.excerpts_by_path.get_mut(path) {
+                    excerpt_list.retain(|id| *id != excerpt_id);
+                    if excerpt_list.is_empty() {
+                        let path = path.clone();
+                        self.excerpts_by_path.remove(&path);
+                    }
+                }
+            }
+        }
+        self.remove_excerpts(removed.iter().copied(), cx);
 
         excerpt_ids[0]
     }
@@ -2329,6 +2334,7 @@ impl MultiBuffer {
         }
         cx.emit(Event::Edited {
             edited_buffer: None,
+            is_local: true,
         });
         cx.emit(Event::ExcerptsRemoved {
             ids,
@@ -2393,8 +2399,9 @@ impl MultiBuffer {
         use language::BufferEvent;
         let buffer_id = buffer.read(cx).remote_id();
         cx.emit(match event {
-            BufferEvent::Edited => Event::Edited {
+            &BufferEvent::Edited { is_local } => Event::Edited {
                 edited_buffer: Some(buffer),
+                is_local,
             },
             BufferEvent::DirtyChanged => Event::DirtyChanged,
             BufferEvent::Saved => Event::Saved,
@@ -2483,6 +2490,7 @@ impl MultiBuffer {
         }
         cx.emit(Event::Edited {
             edited_buffer: None,
+            is_local: true,
         });
     }
 
@@ -2490,7 +2498,7 @@ impl MultiBuffer {
         &mut self,
         diff: Entity<BufferDiff>,
         main_buffer: Entity<language::Buffer>,
-        diff_change_range: Range<usize>,
+        diff_change_range: Option<Range<usize>>,
         cx: &mut Context<Self>,
     ) {
         self.sync_mut(cx);
@@ -2511,6 +2519,10 @@ impl MultiBuffer {
             .diffs
             .insert_or_replace(base_text_buffer_id, new_diff);
 
+        let Some(diff_change_range) = diff_change_range else {
+            return;
+        };
+
         let excerpt_edits = snapshot.excerpt_edits_for_diff_change(buffer_state, diff_change_range);
         let edits = Self::sync_diff_transforms(
             &mut snapshot,
@@ -2525,6 +2537,7 @@ impl MultiBuffer {
         }
         cx.emit(Event::Edited {
             edited_buffer: None,
+            is_local: true,
         });
     }
 
@@ -2700,7 +2713,12 @@ impl MultiBuffer {
         let base_text_buffer_id = snapshot.remote_id();
         let diff_change_range = 0..snapshot.len();
         self.snapshot.get_mut().has_inverted_diff = true;
-        self.inverted_buffer_diff_changed(diff.clone(), main_buffer.clone(), diff_change_range, cx);
+        self.inverted_buffer_diff_changed(
+            diff.clone(),
+            main_buffer.clone(),
+            Some(diff_change_range),
+            cx,
+        );
         self.diffs.insert(
             base_text_buffer_id,
             DiffState::new_inverted(diff, main_buffer, cx),
@@ -2753,6 +2771,7 @@ impl MultiBuffer {
         cx.emit(Event::DiffHunksToggled);
         cx.emit(Event::Edited {
             edited_buffer: None,
+            is_local: true,
         });
     }
 
@@ -2869,6 +2888,7 @@ impl MultiBuffer {
         cx.emit(Event::DiffHunksToggled);
         cx.emit(Event::Edited {
             edited_buffer: None,
+            is_local: true,
         });
     }
 
@@ -2936,6 +2956,7 @@ impl MultiBuffer {
         }
         cx.emit(Event::Edited {
             edited_buffer: None,
+            is_local: true,
         });
         cx.emit(Event::ExcerptsExpanded { ids: vec![id] });
         cx.notify();
@@ -3043,6 +3064,7 @@ impl MultiBuffer {
         }
         cx.emit(Event::Edited {
             edited_buffer: None,
+            is_local: true,
         });
         cx.emit(Event::ExcerptsExpanded { ids });
         cx.notify();
@@ -3686,6 +3708,7 @@ impl MultiBuffer {
         cx.emit(Event::DiffHunksToggled);
         cx.emit(Event::Edited {
             edited_buffer: None,
+            is_local: true,
         });
     }
 }
@@ -3722,11 +3745,21 @@ impl MultiBuffer {
         cx: &mut gpui::App,
     ) -> Entity<Self> {
         let multi = cx.new(|_| Self::new(Capability::ReadWrite));
-        for (text, ranges) in excerpts {
+        for (ix, (text, ranges)) in excerpts.into_iter().enumerate() {
             let buffer = cx.new(|cx| Buffer::local(text, cx));
-            let excerpt_ranges = ranges.into_iter().map(ExcerptRange::new);
+            let snapshot = buffer.read(cx).snapshot();
+            let excerpt_ranges = ranges
+                .into_iter()
+                .map(ExcerptRange::new)
+                .collect::<Vec<_>>();
             multi.update(cx, |multi, cx| {
-                multi.push_excerpts(buffer, excerpt_ranges, cx)
+                multi.set_excerpt_ranges_for_path(
+                    PathKey::sorted(ix as u64),
+                    buffer,
+                    &snapshot,
+                    excerpt_ranges,
+                    cx,
+                )
             });
         }
 
@@ -3860,7 +3893,8 @@ impl MultiBuffer {
                         .collect::<Vec<_>>()
                 );
 
-                let excerpt_id = self.push_excerpts(buffer_handle.clone(), ranges, cx);
+                let excerpt_id =
+                    self.insert_excerpts_after(ExcerptId::max(), buffer_handle, ranges, cx);
                 log::info!("Inserted with ids: {:?}", excerpt_id);
             } else {
                 let remove_count = rng.random_range(1..=excerpt_ids.len());
@@ -6905,18 +6939,23 @@ impl MultiBufferSnapshot {
     }
 
     fn excerpt_locator_for_id(&self, id: ExcerptId) -> &Locator {
+        self.try_excerpt_locator_for_id(id)
+            .unwrap_or_else(|| panic!("invalid excerpt id {id:?}"))
+    }
+
+    fn try_excerpt_locator_for_id(&self, id: ExcerptId) -> Option<&Locator> {
         if id == ExcerptId::min() {
-            Locator::min_ref()
+            Some(Locator::min_ref())
         } else if id == ExcerptId::max() {
-            Locator::max_ref()
+            Some(Locator::max_ref())
         } else {
             let (_, _, item) = self.excerpt_ids.find::<ExcerptId, _>((), &id, Bias::Left);
             if let Some(entry) = item
                 && entry.id == id
             {
-                return &entry.locator;
+                return Some(&entry.locator);
             }
-            panic!("invalid excerpt id {id:?}")
+            None
         }
     }
 
@@ -7001,16 +7040,16 @@ impl MultiBufferSnapshot {
     /// afterwards.
     fn excerpt(&self, excerpt_id: ExcerptId) -> Option<&Excerpt> {
         let excerpt_id = self.latest_excerpt_id(excerpt_id);
-        let mut cursor = self.excerpts.cursor::<Option<&Locator>>(());
-        let locator = self.excerpt_locator_for_id(excerpt_id);
-        cursor.seek(&Some(locator), Bias::Left);
-        if let Some(excerpt) = cursor.item()
+        let locator = self.try_excerpt_locator_for_id(excerpt_id)?;
+        let (_, _, item) =
+            self.excerpts
+                .find::<Option<&Locator>, _>((), &Some(locator), Bias::Left);
+        if let Some(excerpt) = item
             && excerpt.id == excerpt_id
         {
             return Some(excerpt);
-        } else if cursor.item().is_none() && excerpt_id == ExcerptId::max() {
-            cursor.prev();
-            return cursor.item();
+        } else if item.is_none() && excerpt_id == ExcerptId::max() {
+            return self.excerpts.last();
         }
         None
     }

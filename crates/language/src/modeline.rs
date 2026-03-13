@@ -1,4 +1,5 @@
 use regex::Regex;
+use settings::AutoIndentMode;
 use std::{num::NonZeroU32, sync::LazyLock};
 
 /// The settings extracted from an emacs/vim modelines.
@@ -20,7 +21,7 @@ pub struct ModelineSettings {
     /// The number of bytes that comprise the indentation.
     pub indent_size: Option<NonZeroU32>,
     /// Whether to auto-indent lines.
-    pub auto_indent: Option<bool>,
+    pub auto_indent: Option<AutoIndentMode>,
     /// The column at which to soft-wrap lines.
     pub preferred_line_length: Option<NonZeroU32>,
     /// Whether to ensure a final newline at the end of the file.
@@ -181,7 +182,11 @@ fn parse_emacs_key_value(part: &str, settings: &mut ModelineSettings, bare: bool
                 settings.hard_tabs = Some(value != "nil");
             }
             "electric-indent-mode" => {
-                settings.auto_indent = Some(value != "nil");
+                settings.auto_indent = Some(if value != "nil" {
+                    AutoIndentMode::SyntaxAware
+                } else {
+                    AutoIndentMode::None
+                });
             }
             "require-final-newline" => {
                 settings.ensure_final_newline = Some(value != "nil");
@@ -292,10 +297,10 @@ fn parse_vim_settings(content: &str, settings: &mut ModelineSettings) {
             } else {
                 match part {
                     "ai" | "autoindent" => {
-                        settings.auto_indent = Some(true);
+                        settings.auto_indent = Some(AutoIndentMode::SyntaxAware);
                     }
                     "noai" | "noautoindent" => {
-                        settings.auto_indent = Some(false);
+                        settings.auto_indent = Some(AutoIndentMode::None);
                     }
                     "et" | "expandtab" => {
                         settings.hard_tabs = Some(false);
@@ -431,7 +436,7 @@ mod tests {
             settings,
             ModelineSettings {
                 tab_size: Some(NonZeroU32::new(6).unwrap()),
-                auto_indent: Some(false),
+                auto_indent: Some(AutoIndentMode::None),
                 indent_size: Some(NonZeroU32::new(3).unwrap()),
                 ..Default::default()
             }
@@ -447,7 +452,7 @@ mod tests {
             settings,
             ModelineSettings {
                 tab_size: Some(NonZeroU32::new(6).unwrap()),
-                auto_indent: Some(false),
+                auto_indent: Some(AutoIndentMode::None),
                 indent_size: Some(NonZeroU32::new(3).unwrap()),
                 ..Default::default()
             }
@@ -475,7 +480,7 @@ mod tests {
         assert_eq!(
             settings,
             ModelineSettings {
-                auto_indent: Some(true),
+                auto_indent: Some(AutoIndentMode::SyntaxAware),
                 preferred_line_length: Some(NonZeroU32::new(75).unwrap()),
                 ..Default::default()
             }
@@ -487,7 +492,7 @@ mod tests {
         assert_eq!(
             settings,
             ModelineSettings {
-                auto_indent: Some(true),
+                auto_indent: Some(AutoIndentMode::SyntaxAware),
                 preferred_line_length: Some(NonZeroU32::new(75).unwrap()),
                 ..Default::default()
             }
