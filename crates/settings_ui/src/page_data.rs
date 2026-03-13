@@ -2174,7 +2174,7 @@ fn editor_page() -> SettingsPage {
         ]
     }
 
-    fn minimap_section() -> [SettingsPageItem; 7] {
+    fn minimap_section() -> [SettingsPageItem; 8] {
         [
             SettingsPageItem::SectionHeader("Minimap"),
             SettingsPageItem::SettingItem(SettingItem {
@@ -2302,6 +2302,30 @@ fn editor_page() -> SettingsPage {
                             .minimap
                             .get_or_insert_default()
                             .max_width_columns = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Diagnostics",
+                description: "Which diagnostic indicators to show in the minimap.",
+                field: Box::new(SettingField {
+                    json_path: Some("minimap.diagnostics"),
+                    pick: |settings_content| {
+                        settings_content
+                            .editor
+                            .minimap
+                            .as_ref()?
+                            .diagnostics
+                            .as_ref()
+                    },
+                    write: |settings_content, value| {
+                        settings_content
+                            .editor
+                            .minimap
+                            .get_or_insert_default()
+                            .diagnostics = value;
                     },
                 }),
                 metadata: None,
