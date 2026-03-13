@@ -41,6 +41,8 @@ You can configure this globally or per-language:
 }
 ```
 
+> **Warning:** `"full"` mode relies entirely on semantic tokens from your language server. Many LSPs provide only a limited subset of token types—or none at all—so `"full"` may result in little or no syntax highlighting. We recommend `"combined"` for most users.
+
 > **Note:** Changing the `semantic_tokens` mode may require a language server restart to take effect. Use the `lsp: restart language servers` command from the command palette if highlighting doesn't update immediately.
 
 ## Customizing Token Colors
