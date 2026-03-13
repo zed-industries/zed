@@ -2,11 +2,7 @@ use gpui::{ClickEvent, DismissEvent, EventEmitter, FocusHandle, Focusable, Rende
 use project::project_settings::ProjectSettings;
 use remote::RemoteConnectionOptions;
 use settings::Settings;
-use ui::{
-    Button, ButtonCommon, ButtonStyle, Clickable, Context, ElevationIndex, FluentBuilder, Headline,
-    HeadlineSize, Icon, IconName, InteractiveElement, IntoElement, Label, Modal, ModalFooter,
-    ModalHeader, ParentElement, Section, Styled, StyledExt, Window, div, h_flex, rems,
-};
+use ui::{ElevationIndex, Modal, ModalFooter, ModalHeader, Section, prelude::*};
 use workspace::{
     ModalView, MultiWorkspace, OpenOptions, Workspace, notifications::DetachAndPromptErr,
 };

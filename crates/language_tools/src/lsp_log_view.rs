@@ -18,7 +18,7 @@ use project::{
 };
 use proto::toggle_lsp_logs::LogType;
 use std::{any::TypeId, borrow::Cow, sync::Arc};
-use ui::{Button, Checkbox, ContextMenu, Icon, Label, PopoverMenu, ToggleState, prelude::*};
+use ui::{Checkbox, ContextMenu, PopoverMenu, ToggleState, prelude::*};
 use util::ResultExt as _;
 use workspace::{
     SplitDirection, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView, Workspace, WorkspaceId,

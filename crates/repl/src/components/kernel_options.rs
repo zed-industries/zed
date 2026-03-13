@@ -6,9 +6,7 @@ use gpui::{AnyView, DismissEvent, FontWeight, SharedString, Task};
 use picker::{Picker, PickerDelegate};
 use project::WorktreeId;
 use std::sync::Arc;
-use ui::{
-    Icon, ListItem, ListItemSpacing, PopoverMenu, PopoverMenuHandle, PopoverTrigger, prelude::*,
-};
+use ui::{ListItem, ListItemSpacing, PopoverMenu, PopoverMenuHandle, PopoverTrigger, prelude::*};
 
 type OnSelect = Box<dyn Fn(KernelSpecification, &mut Window, &mut App)>;
 
