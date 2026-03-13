@@ -2070,6 +2070,7 @@ impl Vim {
             input_enabled: self.editor_input_enabled(),
             expects_character_input: self.expects_character_input(),
             autoindent: self.should_autoindent(),
+            cursor_offset_at_max_point: matches!(self.mode, Mode::HelixNormal | Mode::HelixSelect),
             cursor_offset_on_selection: self.mode.is_visual() || self.mode.is_helix(),
             line_mode: matches!(self.mode, Mode::VisualLine),
             hide_edit_predictions: !matches!(self.mode, Mode::Insert | Mode::Replace),
@@ -2089,6 +2090,7 @@ impl Vim {
         editor.set_expects_character_input(state.expects_character_input);
         editor.set_autoindent(state.autoindent);
         editor.set_cursor_offset_on_selection(state.cursor_offset_on_selection);
+        editor.set_cursor_offset_at_max_point(state.cursor_offset_at_max_point);
         editor.selections.set_line_mode(state.line_mode);
         editor.set_edit_predictions_hidden_for_vim_mode(state.hide_edit_predictions, window, cx);
     }
@@ -2102,6 +2104,7 @@ struct VimEditorSettingsState {
     expects_character_input: bool,
     autoindent: bool,
     cursor_offset_on_selection: bool,
+    cursor_offset_at_max_point: bool,
     line_mode: bool,
     hide_edit_predictions: bool,
 }
