@@ -462,10 +462,13 @@ impl ConnectedServerState {
     }
 
     pub fn close_all_sessions(&self, cx: &mut App) -> Task<()> {
-        let tasks = self
-            .threads
-            .keys()
-            .map(|id| self.connection.clone().close_session(id, cx));
+        let tasks = self.threads.keys().filter_map(|id| {
+            if self.connection.supports_close_session() {
+                Some(self.connection.clone().close_session(id, cx))
+            } else {
+                None
+            }
+        });
         let task = futures::future::join_all(tasks);
         cx.background_spawn(async move {
             task.await;
