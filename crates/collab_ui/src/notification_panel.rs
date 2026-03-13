@@ -676,15 +676,6 @@ impl Panel for NotificationPanel {
         "Notification Panel"
     }
 
-    fn icon_label(&self, _window: &Window, cx: &App) -> Option<String> {
-        let count = self.notification_store.read(cx).unread_notification_count();
-        if count == 0 {
-            None
-        } else {
-            Some(count.to_string())
-        }
-    }
-
     fn toggle_action(&self) -> Box<dyn gpui::Action> {
         Box::new(ToggleFocus)
     }

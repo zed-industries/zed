@@ -37,10 +37,6 @@ pub trait Panel: Focusable + EventEmitter<PanelEvent> + Render + Sized {
     fn icon(&self, window: &Window, cx: &App) -> Option<ui::IconName>;
     fn icon_tooltip(&self, window: &Window, cx: &App) -> &'static str;
     fn toggle_action(&self) -> Box<dyn Action>;
-    fn icon_label(&self, _window: &Window, _: &App) -> Option<String> {
-        None
-    }
-
     fn is_zoomed(&self, _window: &Window, _cx: &App) -> bool {
         false
     }
