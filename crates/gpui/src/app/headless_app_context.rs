@@ -186,6 +186,14 @@ impl HeadlessAppContext {
     }
 }
 
+impl Drop for HeadlessAppContext {
+    fn drop(&mut self) {
+        // Shut down the app so windows are closed and entity handles are
+        // released before the LeakDetector runs.
+        self.app.borrow_mut().shutdown();
+    }
+}
+
 impl AppContext for HeadlessAppContext {
     fn new<T: 'static>(&mut self, build_entity: impl FnOnce(&mut Context<T>) -> T) -> Entity<T> {
         let mut app = self.app.borrow_mut();

@@ -1000,11 +1000,18 @@ impl RealGitRepository {
         bundled_git_binary_path: Option<PathBuf>,
         system_git_binary_path: Option<PathBuf>,
         executor: BackgroundExecutor,
-    ) -> Option<Self> {
-        let any_git_binary_path = system_git_binary_path.clone().or(bundled_git_binary_path)?;
-        let workdir_root = dotgit_path.parent()?;
-        let repository = git2::Repository::open(workdir_root).log_err()?;
-        Some(Self {
+    ) -> Result<Self> {
+        let any_git_binary_path = system_git_binary_path
+            .clone()
+            .or(bundled_git_binary_path)
+            .context("no git binary available")?;
+        log::info!(
+            "opening git repository at {dotgit_path:?} using git binary {any_git_binary_path:?}"
+        );
+        let workdir_root = dotgit_path.parent().context(".git has no parent")?;
+        let repository =
+            git2::Repository::open(workdir_root).context("creating libgit2 repository")?;
+        Ok(Self {
             repository: Arc::new(Mutex::new(repository)),
             system_git_binary_path,
             any_git_binary_path,
@@ -1039,7 +1046,7 @@ impl RealGitRepository {
         let git_binary = self.git_binary();
         let output: SharedString = self
             .executor
-            .spawn(async move { git_binary?.run(["help", "-a"]).await })
+            .spawn(async move { git_binary?.run(&["help", "-a"]).await })
             .await
             .unwrap_or_default()
             .into();
@@ -1086,9 +1093,12 @@ pub async fn get_git_committer(cx: &AsyncApp) -> GitCommitter {
     );
 
     cx.background_spawn(async move {
-        let name = git.run(["config", "--global", "user.name"]).await.log_err();
+        let name = git
+            .run(&["config", "--global", "user.name"])
+            .await
+            .log_err();
         let email = git
-            .run(["config", "--global", "user.email"])
+            .run(&["config", "--global", "user.email"])
             .await
             .log_err();
         GitCommitter { name, email }
@@ -1119,7 +1129,7 @@ impl GitRepository for RealGitRepository {
             .spawn(async move {
                 let git = git_binary?;
                 let output = git
-                    .build_command([
+                    .build_command(&[
                         "--no-optional-locks",
                         "show",
                         "--no-patch",
@@ -1157,7 +1167,7 @@ impl GitRepository for RealGitRepository {
         cx.background_spawn(async move {
             let git = git_binary?;
             let show_output = git
-                .build_command([
+                .build_command(&[
                     "--no-optional-locks",
                     "show",
                     "--format=",
@@ -1179,7 +1189,7 @@ impl GitRepository for RealGitRepository {
             let parent_sha = format!("{}^", commit);
 
             let mut cat_file_process = git
-                .build_command(["--no-optional-locks", "cat-file", "--batch=%(objectsize)"])
+                .build_command(&["--no-optional-locks", "cat-file", "--batch=%(objectsize)"])
                 .stdin(Stdio::piped())
                 .stdout(Stdio::piped())
                 .stderr(Stdio::piped())
@@ -1295,7 +1305,7 @@ impl GitRepository for RealGitRepository {
 
             let git = git_binary?;
             let output = git
-                .build_command(["reset", mode_flag, &commit])
+                .build_command(&["reset", mode_flag, &commit])
                 .envs(env.iter())
                 .output()
                 .await?;
@@ -1323,7 +1333,7 @@ impl GitRepository for RealGitRepository {
 
             let git = git_binary?;
             let output = git
-                .build_command(["checkout", &commit, "--"])
+                .build_command(&["checkout", &commit, "--"])
                 .envs(env.iter())
                 .args(paths.iter().map(|path| path.as_unix_str()))
                 .output()
@@ -1427,7 +1437,7 @@ impl GitRepository for RealGitRepository {
 
                 if let Some(content) = content {
                     let mut child = git
-                        .build_command(["hash-object", "-w", "--stdin"])
+                        .build_command(&["hash-object", "-w", "--stdin"])
                         .envs(env.iter())
                         .stdin(Stdio::piped())
                         .stdout(Stdio::piped())
@@ -1442,7 +1452,7 @@ impl GitRepository for RealGitRepository {
                     log::debug!("indexing SHA: {sha}, path {path:?}");
 
                     let output = git
-                        .build_command(["update-index", "--add", "--cacheinfo", mode, sha])
+                        .build_command(&["update-index", "--add", "--cacheinfo", mode, sha])
                         .envs(env.iter())
                         .arg(path.as_unix_str())
                         .output()
@@ -1456,7 +1466,7 @@ impl GitRepository for RealGitRepository {
                 } else {
                     log::debug!("removing path {path:?} from the index");
                     let output = git
-                        .build_command(["update-index", "--force-remove"])
+                        .build_command(&["update-index", "--force-remove"])
                         .envs(env.iter())
                         .arg(path.as_unix_str())
                         .output()
@@ -1491,7 +1501,7 @@ impl GitRepository for RealGitRepository {
             .spawn(async move {
                 let git = git_binary?;
                 let mut process = git
-                    .build_command([
+                    .build_command(&[
                         "--no-optional-locks",
                         "cat-file",
                         "--batch-check=%(objectname)",
@@ -1551,7 +1561,7 @@ impl GitRepository for RealGitRepository {
         let args = git_status_args(path_prefixes);
         log::debug!("Checking for git status in {path_prefixes:?}");
         self.executor.spawn(async move {
-            let output = git.build_command(args).output().await?;
+            let output = git.build_command(&args).output().await?;
             if output.status.success() {
                 let stdout = String::from_utf8_lossy(&output.stdout);
                 stdout.parse()
@@ -1589,7 +1599,7 @@ impl GitRepository for RealGitRepository {
 
         self.executor
             .spawn(async move {
-                let output = git.build_command(args).output().await?;
+                let output = git.build_command(&args).output().await?;
                 if output.status.success() {
                     let stdout = String::from_utf8_lossy(&output.stdout);
                     stdout.parse()
@@ -1645,7 +1655,7 @@ impl GitRepository for RealGitRepository {
                     &fields,
                 ];
                 let git = git_binary?;
-                let output = git.build_command(args).output().await?;
+                let output = git.build_command(&args).output().await?;
 
                 anyhow::ensure!(
                     output.status.success(),
@@ -1659,7 +1669,7 @@ impl GitRepository for RealGitRepository {
                 if branches.is_empty() {
                     let args = vec!["symbolic-ref", "--quiet", "HEAD"];
 
-                    let output = git.build_command(args).output().await?;
+                    let output = git.build_command(&args).output().await?;
 
                     // git symbolic-ref returns a non-0 exit code if HEAD points
                     // to something other than a branch
@@ -1727,7 +1737,7 @@ impl GitRepository for RealGitRepository {
             .spawn(async move {
                 std::fs::create_dir_all(final_path.parent().unwrap_or(&final_path))?;
                 let git = git_binary?;
-                let output = git.build_command(args).output().await?;
+                let output = git.build_command(&args).output().await?;
                 if output.status.success() {
                     Ok(())
                 } else {
@@ -1753,7 +1763,7 @@ impl GitRepository for RealGitRepository {
                 }
                 args.push("--".into());
                 args.push(path.as_os_str().into());
-                git_binary?.run(args).await?;
+                git_binary?.run(&args).await?;
                 anyhow::Ok(())
             })
             .boxed()
@@ -1772,7 +1782,7 @@ impl GitRepository for RealGitRepository {
                     old_path.as_os_str().into(),
                     new_path.as_os_str().into(),
                 ];
-                git_binary?.run(args).await?;
+                git_binary?.run(&args).await?;
                 anyhow::Ok(())
             })
             .boxed()
@@ -1975,11 +1985,11 @@ impl GitRepository for RealGitRepository {
                 let git = git_binary?;
                 let output = match diff {
                     DiffType::HeadToIndex => {
-                        git.build_command(["diff", "--staged"]).output().await?
+                        git.build_command(&["diff", "--staged"]).output().await?
                     }
-                    DiffType::HeadToWorktree => git.build_command(["diff"]).output().await?,
+                    DiffType::HeadToWorktree => git.build_command(&["diff"]).output().await?,
                     DiffType::MergeBase { base_ref } => {
-                        git.build_command(["diff", "--merge-base", base_ref.as_ref()])
+                        git.build_command(&["diff", "--merge-base", base_ref.as_ref()])
                             .output()
                             .await?
                     }
@@ -2036,7 +2046,7 @@ impl GitRepository for RealGitRepository {
                 if !paths.is_empty() {
                     let git = git_binary?;
                     let output = git
-                        .build_command(["update-index", "--add", "--remove", "--"])
+                        .build_command(&["update-index", "--add", "--remove", "--"])
                         .envs(env.iter())
                         .args(paths.iter().map(|p| p.as_unix_str()))
                         .output()
@@ -2064,7 +2074,7 @@ impl GitRepository for RealGitRepository {
                 if !paths.is_empty() {
                     let git = git_binary?;
                     let output = git
-                        .build_command(["reset", "--quiet", "--"])
+                        .build_command(&["reset", "--quiet", "--"])
                         .envs(env.iter())
                         .args(paths.iter().map(|p| p.as_std_path()))
                         .output()
@@ -2091,7 +2101,7 @@ impl GitRepository for RealGitRepository {
             .spawn(async move {
                 let git = git_binary?;
                 let output = git
-                    .build_command(["stash", "push", "--quiet", "--include-untracked"])
+                    .build_command(&["stash", "push", "--quiet", "--include-untracked"])
                     .envs(env.iter())
                     .args(paths.iter().map(|p| p.as_unix_str()))
                     .output()
@@ -2196,7 +2206,7 @@ impl GitRepository for RealGitRepository {
         // which we want to block on.
         async move {
             let git = git_binary?;
-            let mut cmd = git.build_command(["commit", "--quiet", "-m"]);
+            let mut cmd = git.build_command(&["commit", "--quiet", "-m"]);
             cmd.envs(env.iter())
                 .arg(&message.to_string())
                 .arg("--cleanup=strip")
@@ -2248,7 +2258,7 @@ impl GitRepository for RealGitRepository {
                 executor.clone(),
                 is_trusted,
             );
-            let mut command = git.build_command(["push"]);
+            let mut command = git.build_command(&["push"]);
             command
                 .envs(env.iter())
                 .args(options.map(|option| match option {
@@ -2290,7 +2300,7 @@ impl GitRepository for RealGitRepository {
                 executor.clone(),
                 is_trusted,
             );
-            let mut command = git.build_command(["pull"]);
+            let mut command = git.build_command(&["pull"]);
             command.envs(env.iter());
 
             if rebase {
@@ -2331,7 +2341,7 @@ impl GitRepository for RealGitRepository {
                 executor.clone(),
                 is_trusted,
             );
-            let mut command = git.build_command(["fetch", &remote_name]);
+            let mut command = git.build_command(&["fetch", &remote_name]);
             command
                 .envs(env.iter())
                 .stdout(Stdio::piped())
@@ -2348,7 +2358,7 @@ impl GitRepository for RealGitRepository {
             .spawn(async move {
                 let git = git_binary?;
                 let output = git
-                    .build_command(["rev-parse", "--abbrev-ref"])
+                    .build_command(&["rev-parse", "--abbrev-ref"])
                     .arg(format!("{branch}@{{push}}"))
                     .output()
                     .await?;
@@ -2373,7 +2383,7 @@ impl GitRepository for RealGitRepository {
             .spawn(async move {
                 let git = git_binary?;
                 let output = git
-                    .build_command(["config", "--get"])
+                    .build_command(&["config", "--get"])
                     .arg(format!("branch.{branch}.remote"))
                     .output()
                     .await?;
@@ -2394,7 +2404,7 @@ impl GitRepository for RealGitRepository {
         self.executor
             .spawn(async move {
                 let git = git_binary?;
-                let output = git.build_command(["remote", "-v"]).output().await?;
+                let output = git.build_command(&["remote", "-v"]).output().await?;
 
                 anyhow::ensure!(
                     output.status.success(),
@@ -2725,7 +2735,7 @@ impl GitRepository for RealGitRepository {
         async move {
             let git = git_binary?;
 
-            let mut command = git.build_command([
+            let mut command = git.build_command(&[
                 "log",
                 GRAPH_COMMIT_FORMAT,
                 log_order.as_arg(),
@@ -2808,7 +2818,7 @@ async fn run_commit_data_reader(
     request_rx: smol::channel::Receiver<CommitDataRequest>,
 ) -> Result<()> {
     let mut process = git
-        .build_command(["--no-optional-locks", "cat-file", "--batch"])
+        .build_command(&["--no-optional-locks", "cat-file", "--batch"])
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -3075,7 +3085,7 @@ impl GitBinary {
             .join(format!("index-{}.tmp", id))
     }
 
-    pub async fn run<S>(&self, args: impl IntoIterator<Item = S>) -> Result<String>
+    pub async fn run<S>(&self, args: &[S]) -> Result<String>
     where
         S: AsRef<OsStr>,
     {
@@ -3087,7 +3097,7 @@ impl GitBinary {
     }
 
     /// Returns the result of the command without trimming the trailing newline.
-    pub async fn run_raw<S>(&self, args: impl IntoIterator<Item = S>) -> Result<String>
+    pub async fn run_raw<S>(&self, args: &[S]) -> Result<String>
     where
         S: AsRef<OsStr>,
     {
@@ -3105,10 +3115,7 @@ impl GitBinary {
     }
 
     #[allow(clippy::disallowed_methods)]
-    pub(crate) fn build_command<S>(
-        &self,
-        args: impl IntoIterator<Item = S>,
-    ) -> util::command::Command
+    pub(crate) fn build_command<S>(&self, args: &[S]) -> util::command::Command
     where
         S: AsRef<OsStr>,
     {
@@ -3125,6 +3132,14 @@ impl GitBinary {
             command.args(["-c", "diff.external="]);
         }
         command.args(args);
+
+        // If the `diff` command is being used, we'll want to add the
+        // `--no-ext-diff` flag when working on an untrusted repository,
+        // preventing any external diff programs from being invoked.
+        if !self.is_trusted && args.iter().any(|arg| arg.as_ref() == "diff") {
+            command.arg("--no-ext-diff");
+        }
+
         if let Some(index_file_path) = self.index_file_path.as_ref() {
             command.env("GIT_INDEX_FILE", index_file_path);
         }
@@ -3394,7 +3409,7 @@ mod tests {
             false,
         );
         let output = git
-            .build_command(["version"])
+            .build_command(&["version"])
             .output()
             .await
             .expect("git version should succeed");
@@ -3407,7 +3422,7 @@ mod tests {
             false,
         );
         let output = git
-            .build_command(["config", "--get", "core.fsmonitor"])
+            .build_command(&["config", "--get", "core.fsmonitor"])
             .output()
             .await
             .expect("git config should run");
@@ -3426,7 +3441,7 @@ mod tests {
             false,
         );
         let output = git
-            .build_command(["config", "--get", "core.hooksPath"])
+            .build_command(&["config", "--get", "core.hooksPath"])
             .output()
             .await
             .expect("git config should run");
@@ -3451,7 +3466,7 @@ mod tests {
             true,
         );
         let output = git
-            .build_command(["config", "--get", "core.fsmonitor"])
+            .build_command(&["config", "--get", "core.fsmonitor"])
             .output()
             .await
             .expect("git config should run");
@@ -3469,7 +3484,7 @@ mod tests {
             true,
         );
         let output = git
-            .build_command(["config", "--get", "core.hooksPath"])
+            .build_command(&["config", "--get", "core.hooksPath"])
             .output()
             .await
             .expect("git config should run");

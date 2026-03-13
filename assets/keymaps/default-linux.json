@@ -226,8 +226,8 @@
     "context": "ContextEditor > Editor",
     "bindings": {
       "ctrl-enter": "assistant::Assist",
-      "ctrl-s": "workspace::Save",
       "save": "workspace::Save",
+      "ctrl-s": "workspace::Save",
       "ctrl-<": "assistant::InsertIntoEditor",
       "shift-enter": "assistant::Split",
       "ctrl-r": "assistant::CycleMessageRole",

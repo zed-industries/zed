@@ -2117,8 +2117,10 @@ impl RemoteServerProjects {
                                     .child(
                                         Button::new("learn-more", "Learn More")
                                             .label_size(LabelSize::Small)
-                                            .icon(IconName::ArrowUpRight)
-                                            .icon_size(IconSize::XSmall)
+                                            .end_icon(
+                                                Icon::new(IconName::ArrowUpRight)
+                                                    .size(IconSize::XSmall),
+                                            )
                                             .on_click(|_, _, cx| {
                                                 cx.open_url(
                                                     "https://zed.dev/docs/remote-development",
