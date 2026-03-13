@@ -26,7 +26,7 @@ use language::{
     BracketPairConfig,
     Capability::ReadWrite,
     DiagnosticSourceKind, FakeLspAdapter, IndentGuideSettings, LanguageConfig,
-    LanguageConfigOverride, LanguageMatcher, LanguageName, Override, Point,
+    LanguageConfigOverride, LanguageMatcher, LanguageName, LanguageQueries, Override, Point,
     language_settings::{
         CompletionSettingsContent, FormatterList, LanguageSettingsContent, LspInsertMode,
     },
@@ -51,6 +51,7 @@ use settings::{
     IndentGuideBackgroundColoring, IndentGuideColoring, InlayHintSettingsContent,
     ProjectSettingsContent, SearchSettingsContent, SettingsContent, SettingsStore,
 };
+use std::borrow::Cow;
 use std::{cell::RefCell, future::Future, rc::Rc, sync::atomic::AtomicBool, time::Instant};
 use std::{
     iter,
@@ -1320,6 +1321,105 @@ fn test_fold_action_multiple_line_breaks(cx: &mut TestAppContext) {
         assert_eq!(
             editor.display_text(cx),
             editor.buffer.read(cx).read(cx).text()
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_fold_with_unindented_multiline_raw_string(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+
+    let language = Arc::new(
+        Language::new(
+            LanguageConfig::default(),
+            Some(tree_sitter_rust::LANGUAGE.into()),
+        )
+        .with_queries(LanguageQueries {
+            overrides: Some(Cow::from(indoc! {"
+                [
+                  (string_literal)
+                  (raw_string_literal)
+                ] @string
+                [
+                  (line_comment)
+                  (block_comment)
+                ] @comment.inclusive
+            "})),
+            ..Default::default()
+        })
+        .expect("Could not parse queries"),
+    );
+
+    cx.update_buffer(|buffer, cx| buffer.set_language(Some(language), cx));
+    cx.set_state(indoc! {"
+        fn main() {
+            let s = r#\"
+        a
+        b
+        c
+        \"#;
+        }ˇ
+    "});
+
+    cx.update_editor(|editor, window, cx| {
+        editor.fold_at_level(&FoldAtLevel(1), window, cx);
+        assert_eq!(
+            editor.display_text(cx),
+            indoc! {"
+                fn main() {⋯
+                }
+            "},
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_fold_with_unindented_multiline_block_comment(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+
+    let language = Arc::new(
+        Language::new(
+            LanguageConfig::default(),
+            Some(tree_sitter_rust::LANGUAGE.into()),
+        )
+        .with_queries(LanguageQueries {
+            overrides: Some(Cow::from(indoc! {"
+                [
+                  (string_literal)
+                  (raw_string_literal)
+                ] @string
+                [
+                  (line_comment)
+                  (block_comment)
+                ] @comment.inclusive
+            "})),
+            ..Default::default()
+        })
+        .expect("Could not parse queries"),
+    );
+
+    cx.update_buffer(|buffer, cx| buffer.set_language(Some(language), cx));
+    cx.set_state(indoc! {"
+        fn main() {
+            let x = 1;
+            /*
+        unindented comment line
+            */
+        }ˇ
+    "});
+
+    cx.update_editor(|editor, window, cx| {
+        editor.fold_at_level(&FoldAtLevel(1), window, cx);
+        assert_eq!(
+            editor.display_text(cx),
+            indoc! {"
+                fn main() {⋯
+                }
+            "},
         );
     });
 }

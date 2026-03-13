@@ -2320,6 +2320,19 @@ impl DisplaySnapshot {
                 if !line_indent.is_line_blank()
                     && line_indent.raw_len() <= start_line_indent.raw_len()
                 {
+                    if self
+                        .buffer_snapshot()
+                        .language_scope_at(Point::new(row, 0))
+                        .is_some_and(|scope| {
+                            matches!(
+                                scope.override_name(),
+                                Some("string") | Some("comment") | Some("comment.inclusive")
+                            )
+                        })
+                    {
+                        continue;
+                    }
+
                     let prev_row = row - 1;
                     end = Some(Point::new(
                         prev_row,
