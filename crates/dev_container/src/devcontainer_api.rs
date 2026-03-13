@@ -293,6 +293,7 @@ pub fn find_configs_in_snapshot(snapshot: &Snapshot) -> Vec<DevContainerConfig> 
 pub async fn start_dev_container_with_config(
     context: DevContainerContext,
     config: Option<DevContainerConfig>,
+    environment: HashMap<String, String>,
 ) -> Result<(DevContainerConnection, String), DevContainerError> {
     check_for_docker(context.use_podman).await?;
 
@@ -300,10 +301,10 @@ pub async fn start_dev_container_with_config(
         return Err(DevContainerError::NotInValidProject);
     };
 
-    // let config_path = config.map(|c| directory.join(&c.config_path));
-
     match spawn_dev_container(
         context.http_client,
+        context.fs,
+        environment,
         actual_config.clone(),
         Arc::new(context.project_directory.clone().as_ref()),
     )

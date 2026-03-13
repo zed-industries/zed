@@ -42,6 +42,7 @@ use std::{
         atomic::{self, AtomicUsize},
     },
 };
+use task::Shell;
 use ui::{
     CommonAnimationExt, IconButtonShape, KeyBinding, List, ListItem, ListSeparator, Modal,
     ModalFooter, ModalHeader, Navigable, NavigableEntry, Section, Tooltip, WithScrollbar,
@@ -1851,9 +1852,19 @@ impl RemoteServerProjects {
         let replace_window = window.window_handle().downcast::<MultiWorkspace>();
 
         let app_state = Arc::downgrade(&app_state);
+
+        let environment_task = context.environment.update(cx, |this, cx| {
+            this.local_directory_environment(&Shell::System, context.project_directory.clone(), cx)
+        });
+
         cx.spawn_in(window, async move |entity, cx| {
+            let environment = environment_task
+                .await
+                .map(|env| env.into_iter().collect::<std::collections::HashMap<_, _>>())
+                .unwrap_or_default();
+
             let (connection, starting_dir) =
-                match start_dev_container_with_config(context, config).await {
+                match start_dev_container_with_config(context, config, environment).await {
                     Ok((c, s)) => (Connection::DevContainer(c), s),
                     Err(e) => {
                         log::error!("Failed to start dev container: {:?}", e);

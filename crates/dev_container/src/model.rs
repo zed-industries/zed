@@ -6,6 +6,7 @@ use std::{
     sync::Arc,
 };
 
+use fs::Fs;
 use http_client::HttpClient;
 use serde::{Deserialize, Deserializer, Serialize};
 use serde_json_lenient::Value;
@@ -99,9 +100,10 @@ pub(crate) struct DevContainer {
     host_requirements: Option<HostRequirements>,
 }
 
-#[derive(Debug, Eq, PartialEq, Default)]
 struct DevContainerManifest {
+    fs: Arc<dyn Fs>,
     config: DevContainer,
+    local_environment: HashMap<String, String>,
     local_project_directory: PathBuf,
     config_directory: PathBuf,
     file_name: String,
@@ -110,7 +112,9 @@ struct DevContainerManifest {
     features: Vec<FeatureManifest>,
 }
 impl DevContainerManifest {
-    fn new(
+    async fn new(
+        fs: Arc<dyn Fs>,
+        environment: HashMap<String, String>,
         local_config: DevContainerConfig,
         local_project_path: Arc<&Path>,
     ) -> Result<Self, DevContainerErrorV2> {
@@ -119,7 +123,7 @@ impl DevContainerManifest {
         // SO basically everywhere we read_to_string, we want to do it with appropriate variable substitution
         // Let's confirm on the spec about that though
         // Actually ok - so the spec says _only_ the devcontainer.json file can have this substitution. That makes things a bit easier
-        let devcontainer_contents = std::fs::read_to_string(&config_path).map_err(|e| {
+        let devcontainer_contents = fs.load(&config_path).await.map_err(|e| {
             log::error!("Unable to read devcontainer contents: {e}");
             DevContainerErrorV2::UnmappedError
         })?;
@@ -139,14 +143,29 @@ impl DevContainerManifest {
             })?;
 
         Ok(Self {
+            fs,
             config: devcontainer,
             local_project_directory: local_project_path.to_path_buf(),
+            local_environment: environment,
             config_directory: devcontainer_directory.to_path_buf(),
             file_name: file_name.to_string(),
             root_image: None,
             features_build_info: None,
             features: Vec::new(),
         })
+    }
+
+    fn devcontainer_id(&self) -> String {
+        let mut labels = self.identifying_labels();
+        labels.sort_by_key(|(key, _)| *key);
+
+        let mut hasher = DefaultHasher::new();
+        for (key, value) in &labels {
+            key.hash(&mut hasher);
+            value.hash(&mut hasher);
+        }
+
+        format!("{:016x}", hasher.finish())
     }
 
     fn identifying_labels(&self) -> Vec<(&str, String)> {
@@ -163,15 +182,35 @@ impl DevContainerManifest {
         labels
     }
 
-    // Replaces the following values in devcontainer.json (TODO, probably needs a replacement status)
-    // --> ${localEnv:VARIABLE_NAME} -- pull from local env and replace
-    // --> ${localWorkspaceFolder} -- the project directory full path
-    // --> ${containerWorkspaceFolder} -- the container directory full path (TODO when do I know this?)
-    // --> ${containerWorkspaceFolder} -- the project directory name
-    // --> ${containerWorkspaceFolderBasename} -- the container directory name
-    // --> ${devcontainerId} -- the hash of what we've been calling "labels" up until now, probably shortened
+    // --> (done) ${localEnv:VARIABLE_NAME} -- pull from local env and replace // How are we going to do this?
+    // --> (done) ${localWorkspaceFolder} -- the lcoal project directory full path
+    // --> (done) ${containerWorkspaceFolder} -- the container directory full path (TODO when do I know this?)
+    // --> (done) ${localWorkspaceFolderBasename} -- the local project directory name
+    // --> (done) ${containerWorkspaceFolderBasename} -- the container directory name
+    // --> (done) ${devcontainerId} -- the hash of what we've been calling "labels" up until now, probably shortened
     //             - looks like cli pads by 52 chars
-    fn _replace_nonremote_vars(&mut self) {}
+    fn replace_nonremote_vars(&self, contents: &str) -> Result<String, DevContainerErrorV2> {
+        let mut replaced_content = contents
+            .replace("${devcontainerId}", &self.devcontainer_id())
+            .replace(
+                "${containerWorkspaceFolderBasename}",
+                &self.remote_workspace_base_name()?,
+            )
+            .replace(
+                "${localWorkspaceFolderBasename}",
+                &self.local_workspace_base_name()?,
+            )
+            .replace(
+                "${containerWorkspaceFolder}",
+                &self.remote_workspace_folder()?,
+            )
+            .replace("${localWorkspaceFolder}", &self.local_workspace_folder());
+        for (k, v) in &self.local_environment {
+            let find = format!("${{localEnv:{k}}}");
+            replaced_content = replaced_content.replace(&find, &v);
+        }
+        Ok(replaced_content)
+    }
 
     // Replaces the remote_env vars in devcontainer.json
     fn _replace_remote_env_vars(&mut self) {}
@@ -247,12 +286,15 @@ impl DevContainerManifest {
 
         let empty_context_dir = temp_base.join("empty-folder");
 
-        std::fs::create_dir_all(&features_content_dir).map_err(|e| {
-            log::error!("Failed to create features content dir: {e}");
-            DevContainerErrorV2::UnmappedError
-        })?;
+        self.fs
+            .create_dir(&features_content_dir)
+            .await
+            .map_err(|e| {
+                log::error!("Failed to create features content dir: {e}");
+                DevContainerErrorV2::UnmappedError
+            })?;
 
-        std::fs::create_dir_all(&empty_context_dir).map_err(|e| {
+        self.fs.create_dir(&empty_context_dir).await.map_err(|e| {
             log::error!("Failed to create empty context dir: {e}");
             DevContainerErrorV2::UnmappedError
         })?;
@@ -287,10 +329,13 @@ impl DevContainerManifest {
             .features_content_dir
             .join("devcontainer-features.builtin.env");
 
-        std::fs::write(&builtin_env_path, &builtin_env_content).map_err(|e| {
-            log::error!("Failed to write builtin env file: {e}");
-            DevContainerErrorV2::UnmappedError
-        })?;
+        self.fs
+            .write(&builtin_env_path, &builtin_env_content.as_bytes())
+            .await
+            .map_err(|e| {
+                log::error!("Failed to write builtin env file: {e}");
+                DevContainerErrorV2::UnmappedError
+            })?;
 
         let ordered_features =
             resolve_feature_order(features, &self.config.override_feature_install_order);
@@ -310,7 +355,7 @@ impl DevContainerManifest {
             let consecutive_id = format!("{}_{}", feature_id, index);
             let feature_dir = build_info.features_content_dir.join(&consecutive_id);
 
-            std::fs::create_dir_all(&feature_dir).map_err(|e| {
+            self.fs.create_dir(&feature_dir).await.map_err(|e| {
                 log::error!(
                     "Failed to create feature directory for {}: {e}",
                     feature_ref
@@ -373,24 +418,27 @@ impl DevContainerManifest {
 
             let wrapper_content = generate_install_wrapper(feature_ref, feature_id, &env_content);
 
-            std::fs::write(
-                feature_dir.join("devcontainer-features-install.sh"),
-                &wrapper_content,
-            )
-            .map_err(|e| {
-                log::error!("Failed to write install wrapper for {}: {e}", feature_ref);
-                DevContainerErrorV2::UnmappedError
-            })?;
+            self.fs
+                .write(
+                    &feature_dir.join("devcontainer-features-install.sh"),
+                    &wrapper_content.as_bytes(),
+                )
+                .await
+                .map_err(|e| {
+                    log::error!("Failed to write install wrapper for {}: {e}", feature_ref);
+                    DevContainerErrorV2::UnmappedError
+                })?;
 
             feature_layers.push_str(&generate_feature_layer(&consecutive_id));
 
             self.features.push(feature_manifest);
         }
 
-        let dockerfile_base_content = self
-            .dockerfile_location()
-            .await
-            .and_then(|path_buf| std::fs::read_to_string(path_buf).log_err());
+        let dockerfile_base_content = if let Some(location) = &self.dockerfile_location().await {
+            self.fs.load(location).await.log_err()
+        } else {
+            None
+        };
 
         let dockerfile_content = generate_dockerfile_extended(
             &feature_layers,
@@ -399,10 +447,13 @@ impl DevContainerManifest {
             dockerfile_base_content,
         );
 
-        std::fs::write(&build_info.dockerfile_path, &dockerfile_content).map_err(|e| {
-            log::error!("Failed to write Dockerfile.extended: {e}");
-            DevContainerErrorV2::UnmappedError
-        })?;
+        self.fs
+            .write(&build_info.dockerfile_path, &dockerfile_content.as_bytes())
+            .await
+            .map_err(|e| {
+                log::error!("Failed to write Dockerfile.extended: {e}");
+                DevContainerErrorV2::UnmappedError
+            })?;
 
         log::info!(
             "Features build resources written to {:?}",
@@ -587,10 +638,13 @@ impl DevContainerManifest {
                     DevContainerErrorV2::UnmappedError
                 })?;
 
-                std::fs::write(&config_location, config_json).map_err(|e| {
-                    log::error!("Error writing the runtime override file: {e}");
-                    DevContainerErrorV2::UnmappedError
-                })?;
+                self.fs
+                    .write(&config_location, config_json.as_bytes())
+                    .await
+                    .map_err(|e| {
+                        log::error!("Error writing the runtime override file: {e}");
+                        DevContainerErrorV2::UnmappedError
+                    })?;
 
                 docker_compose_resources.files.push(config_location);
 
@@ -652,10 +706,13 @@ impl DevContainerManifest {
                 DevContainerErrorV2::UnmappedError
             })?;
 
-            std::fs::write(&config_location, config_json).map_err(|e| {
-                log::error!("Error writing the runtime override file: {e}");
-                DevContainerErrorV2::UnmappedError
-            })?;
+            self.fs
+                .write(&config_location, config_json.as_bytes())
+                .await
+                .map_err(|e| {
+                    log::error!("Error writing the runtime override file: {e}");
+                    DevContainerErrorV2::UnmappedError
+                })?;
 
             docker_compose_resources.files.push(config_location);
 
@@ -669,8 +726,9 @@ impl DevContainerManifest {
 
         let resources = self.build_merged_resources(built_service_image);
 
-        let runtime_override_file =
-            self.build_runtime_override_file(&main_service_name, resources)?;
+        let runtime_override_file = self
+            .write_runtime_override_file(&main_service_name, resources)
+            .await?;
 
         dbg!(&runtime_override_file);
 
@@ -679,7 +737,7 @@ impl DevContainerManifest {
         Ok(docker_compose_resources)
     }
 
-    fn build_runtime_override_file(
+    async fn write_runtime_override_file(
         &self,
         main_service_name: &str,
         resources: DockerBuildResources,
@@ -693,10 +751,13 @@ impl DevContainerManifest {
             DevContainerErrorV2::UnmappedError
         })?;
 
-        std::fs::write(&config_location, config_json).map_err(|e| {
-            log::error!("Error writing the runtime override file: {e}");
-            DevContainerErrorV2::UnmappedError
-        })?;
+        self.fs
+            .write(&config_location, config_json.as_bytes())
+            .await
+            .map_err(|e| {
+                log::error!("Error writing the runtime override file: {e}");
+                DevContainerErrorV2::UnmappedError
+            })?;
 
         Ok(config_location)
     }
@@ -992,6 +1053,42 @@ impl DevContainerManifest {
         };
         inspect_image(&docker_ps.id).await
     }
+
+    fn local_workspace_folder(&self) -> String {
+        if let Some(folder) = &self.config.workspace_folder {
+            folder.clone()
+        } else {
+            self.local_project_directory.display().to_string()
+        }
+    }
+    fn local_workspace_base_name(&self) -> Result<String, DevContainerErrorV2> {
+        if let Some(folder) = &self.config.workspace_folder {
+            let path = PathBuf::from(&folder);
+            path.file_name()
+                .map(|f| format!("{}", f.display()))
+                .ok_or(DevContainerErrorV2::UnmappedError)
+        } else {
+            self.local_project_directory
+                .file_name()
+                .map(|f| format!("{}", f.display()))
+                .ok_or(DevContainerErrorV2::UnmappedError)
+        }
+    }
+
+    fn remote_workspace_folder(&self) -> Result<String, DevContainerErrorV2> {
+        self.remote_workspace_mount()
+            .map(|path_buf| path_buf.display().to_string())
+    }
+    fn remote_workspace_base_name(&self) -> Result<String, DevContainerErrorV2> {
+        self.remote_workspace_mount().and_then(|path_buf| {
+            path_buf
+                .file_name()
+                .map(|f| format!("{}", f.display()))
+                .ok_or(DevContainerErrorV2::UnmappedError)
+        })
+    }
+
+    // Config isn't in place by the time I get here in the var subst process. How to get around this?
     fn remote_workspace_mount(&self) -> Result<PathBuf, DevContainerErrorV2> {
         if let Some(mount) = &self.config.workspace_mount {
             return Ok(PathBuf::from(&mount.target));
@@ -1611,10 +1708,13 @@ pub(crate) fn read_devcontainer_configuration(
 ///     1. TODO - this is the next thing
 pub(crate) async fn spawn_dev_container(
     http_client: Arc<dyn HttpClient>,
+    fs: Arc<dyn Fs>,
+    environment: HashMap<String, String>,
     config: DevContainerConfig,
     local_project_path: Arc<&Path>,
 ) -> Result<DevContainerUp, DevContainerErrorV2> {
-    let mut devcontainer_manifest = DevContainerManifest::new(config, local_project_path.clone())?; // TODO kill this clone
+    let mut devcontainer_manifest =
+        DevContainerManifest::new(fs, environment, config, local_project_path.clone()).await?; // TODO kill this clone
     // 2. ensure that object is valid
     devcontainer_manifest.validate_config()?;
 
@@ -2247,33 +2347,24 @@ fn get_container_user_from_config(
 
 #[cfg(test)]
 mod test {
-    use std::{
-        collections::HashMap,
-        ffi::OsStr,
-        path::PathBuf,
-        process::{ExitStatus, Output},
-        sync::Arc,
-    };
+    use std::{collections::HashMap, ffi::OsStr, path::PathBuf, sync::Arc};
 
+    use fs::FakeFs;
+    use gpui::TestAppContext;
     use http_client::{FakeHttpClient, HttpClient};
 
     use crate::{
-        DevContainerErrorV2,
-        command_json::deserialize_json_output,
-        docker::{DockerConfigLabels, DockerInspectConfig, docker_cli},
-        features::{DevContainerFeatureJson, FeatureManifest},
+        DevContainerConfig, DevContainerErrorV2,
+        docker::{DockerConfigLabels, DockerInspectConfig},
         model::{
             ContainerBuild, DevContainer, DevContainerBuildType, DevContainerManifest,
-            DockerBuildResources, DockerComposeConfig, DockerComposeResources,
-            DockerComposeService, DockerInspect, DockerPs, FeatureOptions, ForwardPort,
-            HostRequirements, LifecycleCommand, LifecyleScript, MountDefinition, OnAutoForward,
-            PortAttributeProtocol, PortAttributes, ShutdownAction, UserEnvProbe,
-            create_docker_compose_config_command, deserialize_devcontainer_json,
-            extract_feature_id, find_primary_service, generate_dockerfile_extended,
-            get_remote_dir_from_config, get_remote_user_from_config,
+            DockerInspect, FeatureOptions, ForwardPort, HostRequirements, LifecycleCommand,
+            LifecyleScript, MountDefinition, OnAutoForward, PortAttributeProtocol, PortAttributes,
+            ShutdownAction, UserEnvProbe, deserialize_devcontainer_json,
+            get_remote_user_from_config,
         },
-        safe_id_upper,
     };
+    const TEST_PROJECT_PATH: &str = "/path/to/local/project";
 
     fn _fake_http_client() -> Arc<dyn HttpClient> {
         FakeHttpClient::create(|_| async move {
@@ -2339,6 +2430,42 @@ mod test {
                 }
             }
         })
+    }
+
+    fn test_project_filename() -> String {
+        PathBuf::from(TEST_PROJECT_PATH)
+            .file_name()
+            .expect("is valid")
+            .display()
+            .to_string()
+    }
+
+    async fn init_devcontainer_config(
+        fs: &Arc<FakeFs>,
+        devcontainer_contents: &str,
+    ) -> DevContainerConfig {
+        fs.insert_tree(
+            format!("{TEST_PROJECT_PATH}/.devcontainer"),
+            serde_json::json!({"devcontainer.json": devcontainer_contents}),
+        )
+        .await;
+
+        DevContainerConfig::default_config()
+    }
+
+    async fn init_devcontainer_manifest(
+        fs: Arc<FakeFs>,
+        environment: HashMap<String, String>,
+        devcontainer_contents: &str,
+    ) -> Result<DevContainerManifest, DevContainerErrorV2> {
+        let local_config = init_devcontainer_config(&fs, devcontainer_contents).await;
+        DevContainerManifest::new(
+            fs,
+            environment,
+            local_config,
+            Arc::new(&PathBuf::from(TEST_PROJECT_PATH)),
+        )
+        .await
     }
 
     // Tests needed as I come across them
@@ -3038,17 +3165,24 @@ mod test {
         assert_eq!(devcontainer.build_type(), DevContainerBuildType::Dockerfile);
     }
 
-    #[test]
-    fn should_get_remote_user_from_devcontainer_if_available() {
-        let given_dev_container = DevContainerManifest {
-            config: DevContainer {
-                image: Some("image".to_string()),
-                name: None,
-                remote_user: Some("root".to_string()),
-                ..Default::default()
-            },
-            ..Default::default()
-        };
+    #[gpui::test]
+    async fn should_get_remote_user_from_devcontainer_if_available(cx: &mut TestAppContext) {
+        let fs = FakeFs::new(cx.executor());
+
+        let devcontainer_manifest = init_devcontainer_manifest(
+            fs,
+            HashMap::default(),
+            r#"
+// These are some external comments. serde_lenient should handle them
+{
+    // These are some internal comments
+    "image": "image",
+    "remoteUser": "root",
+}
+            "#,
+        )
+        .await
+        .unwrap();
 
         let mut metadata = HashMap::new();
         metadata.insert(
@@ -3067,13 +3201,17 @@ mod test {
         };
 
         let remote_user =
-            get_remote_user_from_config(&given_docker_config, &given_dev_container).unwrap();
+            get_remote_user_from_config(&given_docker_config, &devcontainer_manifest).unwrap();
 
         assert_eq!(remote_user, "root".to_string())
     }
 
-    #[test]
-    fn should_get_remote_user_from_docker_config() {
+    #[gpui::test]
+    async fn should_get_remote_user_from_docker_config(cx: &mut TestAppContext) {
+        let fs = FakeFs::new(cx.executor());
+        let devcontainer_manifest = init_devcontainer_manifest(fs, HashMap::default(), "{}")
+            .await
+            .unwrap();
         let mut metadata = HashMap::new();
         metadata.insert(
             "remoteUser".to_string(),
@@ -3090,40 +3228,34 @@ mod test {
             mounts: None,
         };
 
-        let remote_user = get_remote_user_from_config(
-            &given_docker_config,
-            &DevContainerManifest {
-                config: DevContainer {
-                    image: None,
-                    name: None,
-                    remote_user: None,
-                    ..Default::default()
-                },
-                ..Default::default()
-            },
-        );
+        let remote_user = get_remote_user_from_config(&given_docker_config, &devcontainer_manifest);
 
         assert!(remote_user.is_ok());
         let remote_user = remote_user.expect("ok");
         assert_eq!(&remote_user, "vsCode")
     }
 
-    #[test]
-    fn should_create_correct_docker_build_command() {
+    #[gpui::test]
+    async fn should_create_correct_docker_build_command(cx: &mut TestAppContext) {
+        let fs = FakeFs::new(cx.executor());
+        let devcontainer_manifest = init_devcontainer_manifest(
+            fs,
+            HashMap::default(),
+            r#"
+    {
+        image: mcr.microsoft.com/devcontainers/rust:2-1-bookworm
+    }
+            "#,
+        )
+        .await
+        .unwrap();
+
         let features_content_dir =
             PathBuf::from("/tmp/devcontainercli/container-features/0.82.0-1234567890");
         let dockerfile_path = features_content_dir.join("Dockerfile.extended");
         let empty_context_dir = PathBuf::from("/tmp/devcontainercli/empty-folder");
 
-        let docker_build_command = DevContainerManifest {
-            config: DevContainer {
-                image: Some("mcr.microsoft.com/devcontainers/rust:2-1-bookworm".to_string()),
-                ..Default::default()
-            },
-            ..Default::default()
-        }
-        .create_docker_build()
-        .unwrap();
+        let docker_build_command = devcontainer_manifest.create_docker_build().unwrap();
 
         assert_eq!(docker_build_command.get_program(), "docker");
         assert_eq!(
@@ -3158,1160 +3290,1349 @@ mod test {
         );
     }
 
-    #[test]
-    fn should_extract_feature_id_from_references() {
-        assert_eq!(
-            extract_feature_id("ghcr.io/devcontainers/features/aws-cli:1"),
-            "aws-cli"
-        );
-        assert_eq!(
-            extract_feature_id("ghcr.io/devcontainers/features/go"),
-            "go"
-        );
-        assert_eq!(extract_feature_id("ghcr.io/user/repo/node:18.0.0"), "node");
-        assert_eq!(extract_feature_id("./myFeature"), "myFeature");
-        assert_eq!(
-            extract_feature_id("ghcr.io/devcontainers/features/rust@sha256:abc123"),
-            "rust"
-        );
-    }
+    //     #[test]
+    //     fn should_extract_feature_id_from_references() {
+    //         assert_eq!(
+    //             extract_feature_id("ghcr.io/devcontainers/features/aws-cli:1"),
+    //             "aws-cli"
+    //         );
+    //         assert_eq!(
+    //             extract_feature_id("ghcr.io/devcontainers/features/go"),
+    //             "go"
+    //         );
+    //         assert_eq!(extract_feature_id("ghcr.io/user/repo/node:18.0.0"), "node");
+    //         assert_eq!(extract_feature_id("./myFeature"), "myFeature");
+    //         assert_eq!(
+    //             extract_feature_id("ghcr.io/devcontainers/features/rust@sha256:abc123"),
+    //             "rust"
+    //         );
+    //     }
 
-    #[test]
-    fn should_get_safe_id() {
-        assert_eq!(safe_id_upper("version"), "VERSION");
-        assert_eq!(safe_id_upper("aws-cli"), "AWS_CLI");
-        assert_eq!(safe_id_upper("optionA"), "OPTIONA");
-        assert_eq!(safe_id_upper("123abc"), "_ABC");
-        assert_eq!(safe_id_upper("___test"), "_TEST");
-        assert_eq!(
-            safe_id_upper("DevContainer Name for (Greatness"),
-            "DEVCONTAINER_NAME_FOR__GREATNESS"
-        );
-    }
+    //     #[test]
+    //     fn should_get_safe_id() {
+    //         assert_eq!(safe_id_upper("version"), "VERSION");
+    //         assert_eq!(safe_id_upper("aws-cli"), "AWS_CLI");
+    //         assert_eq!(safe_id_upper("optionA"), "OPTIONA");
+    //         assert_eq!(safe_id_upper("123abc"), "_ABC");
+    //         assert_eq!(safe_id_upper("___test"), "_TEST");
+    //         assert_eq!(
+    //             safe_id_upper("DevContainer Name for (Greatness"),
+    //             "DEVCONTAINER_NAME_FOR__GREATNESS"
+    //         );
+    //     }
 
-    // Keeping these around since an example of this can probably translate to DevContainerManifest
-    //
-    // #[test]
-    // fn should_construct_features_build_resources() {
-    //     let client = fake_oci_http_client();
-    //     smol::block_on(async {
-    //         let temp_dir = std::env::temp_dir().join("devcontainer-test-features-build");
-    //         let features_dir = temp_dir.join("features-content");
-    //         let empty_dir = temp_dir.join("empty");
-    //         let dockerfile_path = features_dir.join("Dockerfile.extended");
+    //     // Keeping these around since an example of this can probably translate to DevContainerManifest
+    //     //
+    //     // #[test]
+    //     // fn should_construct_features_build_resources() {
+    //     //     let client = fake_oci_http_client();
+    //     //     smol::block_on(async {
+    //     //         let temp_dir = std::env::temp_dir().join("devcontainer-test-features-build");
+    //     //         let features_dir = temp_dir.join("features-content");
+    //     //         let empty_dir = temp_dir.join("empty");
+    //     //         let dockerfile_path = features_dir.join("Dockerfile.extended");
 
-    //         let _ = std::fs::remove_dir_all(&temp_dir);
-    //         std::fs::create_dir_all(&features_dir).unwrap();
-    //         std::fs::create_dir_all(&empty_dir).unwrap();
+    //     //         let _ = std::fs::remove_dir_all(&temp_dir);
+    //     //         std::fs::create_dir_all(&features_dir).unwrap();
+    //     //         std::fs::create_dir_all(&empty_dir).unwrap();
 
-    //         let build_info = FeaturesBuildInfo {
-    //             dockerfile_path: dockerfile_path.clone(),
-    //             features_content_dir: features_dir.clone(),
-    //             empty_context_dir: empty_dir,
-    //             base_image: Some("mcr.microsoft.com/devcontainers/rust:2-1-bookworm".to_string()),
-    //             image_tag: "vsc-test-features".to_string(),
-    //         };
+    //     //         let build_info = FeaturesBuildInfo {
+    //     //             dockerfile_path: dockerfile_path.clone(),
+    //     //             features_content_dir: features_dir.clone(),
+    //     //             empty_context_dir: empty_dir,
+    //     //             base_image: Some("mcr.microsoft.com/devcontainers/rust:2-1-bookworm".to_string()),
+    //     //             image_tag: "vsc-test-features".to_string(),
+    //     //         };
 
-    //         let dev_container = DevContainerManifest {
-    //             config: DevContainer {
-    //                 image: Some("mcr.microsoft.com/devcontainers/rust:2-1-bookworm".to_string()),
-    //                 features: Some(HashMap::from([
-    //                     (
-    //                         "ghcr.io/devcontainers/features/aws-cli:1".to_string(),
-    //                         FeatureOptions::Options(HashMap::new()),
-    //                     ),
-    //                     (
-    //                         "ghcr.io/devcontainers/features/node:1".to_string(),
-    //                         FeatureOptions::String("18".to_string()),
-    //                     ),
-    //                 ])),
-    //                 remote_user: Some("vscode".to_string()),
-    //                 ..Default::default()
-    //             },
+    //     //         let dev_container = DevContainerManifest {
+    //     //             config: DevContainer {
+    //     //                 image: Some("mcr.microsoft.com/devcontainers/rust:2-1-bookworm".to_string()),
+    //     //                 features: Some(HashMap::from([
+    //     //                     (
+    //     //                         "ghcr.io/devcontainers/features/aws-cli:1".to_string(),
+    //     //                         FeatureOptions::Options(HashMap::new()),
+    //     //                     ),
+    //     //                     (
+    //     //                         "ghcr.io/devcontainers/features/node:1".to_string(),
+    //     //                         FeatureOptions::String("18".to_string()),
+    //     //                     ),
+    //     //                 ])),
+    //     //                 remote_user: Some("vscode".to_string()),
+    //     //                 ..Default::default()
+    //     //             },
+    //     //             ..Default::default()
+    //     //         };
+
+    //     //         let result =
+    //     //             construct_features_build_resources(&dev_container, &build_info, &client, None)
+    //     //                 .await;
+    //     //         assert!(
+    //     //             result.is_ok(),
+    //     //             "construct_features_build_resources failed: {:?}",
+    //     //             result
+    //     //         );
+
+    //     //         // Verify builtin env file
+    //     //         let builtin_env =
+    //     //             std::fs::read_to_string(features_dir.join("devcontainer-features.builtin.env"))
+    //     //                 .unwrap();
+    //     //         assert!(builtin_env.contains("_CONTAINER_USER=root"));
+    //     //         assert!(builtin_env.contains("_REMOTE_USER=vscode"));
+
+    //     //         // Verify Dockerfile.extended exists and contains expected structures
+    //     //         let dockerfile = std::fs::read_to_string(&dockerfile_path).unwrap();
+    //     //         assert!(
+    //     //             dockerfile
+    //     //                 .contains("FROM $_DEV_CONTAINERS_BASE_IMAGE AS dev_containers_target_stage")
+    //     //         );
+    //     //         assert!(dockerfile.contains("dev_containers_feature_content_source"));
+    //     //         assert!(dockerfile.contains("devcontainer-features-install.sh"));
+    //     //         assert!(dockerfile.contains("_DEV_CONTAINERS_IMAGE_USER"));
+
+    //     //         // Verify feature directories (sorted: aws-cli at index 0, node at index 1)
+    //     //         assert!(features_dir.join("aws-cli_0").exists());
+    //     //         assert!(features_dir.join("node_1").exists());
+
+    //     //         // Verify aws-cli feature files — env should contain defaults from the
+    //     //         // fake tarball's devcontainer-feature.json (which has none since our
+    //     //         // test tarball doesn't include one), so it will be empty.
+    //     //         let aws_env =
+    //     //             std::fs::read_to_string(features_dir.join("aws-cli_0/devcontainer-features.env"))
+    //     //                 .unwrap();
+    //     //         assert!(
+    //     //             aws_env.is_empty(),
+    //     //             "aws-cli with empty options and no feature json defaults should produce an empty env file, got: {}",
+    //     //             aws_env,
+    //     //         );
+
+    //     //         let aws_wrapper = std::fs::read_to_string(
+    //     //             features_dir.join("aws-cli_0/devcontainer-features-install.sh"),
+    //     //         )
+    //     //         .unwrap();
+    //     //         assert!(aws_wrapper.contains("#!/bin/sh"));
+    //     //         assert!(aws_wrapper.contains("./install.sh"));
+    //     //         assert!(aws_wrapper.contains("../devcontainer-features.builtin.env"));
+
+    //     //         let aws_install =
+    //     //             std::fs::read_to_string(features_dir.join("aws-cli_0/install.sh")).unwrap();
+    //     //         assert!(
+    //     //             aws_install.contains("Test feature installed"),
+    //     //             "install.sh should contain content from the OCI tarball, got: {}",
+    //     //             aws_install
+    //     //         );
+
+    //     //         // Verify node feature files (String("18") → VERSION="18")
+    //     //         let node_env =
+    //     //             std::fs::read_to_string(features_dir.join("node_1/devcontainer-features.env"))
+    //     //                 .unwrap();
+    //     //         assert!(
+    //     //             node_env.contains("VERSION=\"18\""),
+    //     //             "Expected VERSION=\"18\" in node env, got: {}",
+    //     //             node_env
+    //     //         );
+
+    //     //         // Verify Dockerfile layers reference both features
+    //     //         assert!(dockerfile.contains("aws-cli_0"));
+    //     //         assert!(dockerfile.contains("node_1"));
+
+    //     //         let _ = std::fs::remove_dir_all(&temp_dir);
+    //     //     });
+    //     // }
+    //     // #[test]
+    //     // fn should_construct_features_with_override_order() {
+    //     //     let client = fake_oci_http_client();
+    //     //     smol::block_on(async {
+    //     //         let temp_dir = std::env::temp_dir().join("devcontainer-test-features-order");
+    //     //         let features_dir = temp_dir.join("features-content");
+    //     //         let empty_dir = temp_dir.join("empty");
+    //     //         let dockerfile_path = features_dir.join("Dockerfile.extended");
+
+    //     //         let _ = std::fs::remove_dir_all(&temp_dir);
+    //     //         std::fs::create_dir_all(&features_dir).unwrap();
+    //     //         std::fs::create_dir_all(&empty_dir).unwrap();
+
+    //     //         let build_info = FeaturesBuildInfo {
+    //     //             dockerfile_path: dockerfile_path.clone(),
+    //     //             features_content_dir: features_dir.clone(),
+    //     //             empty_context_dir: empty_dir,
+    //     //             build_image: Some("mcr.microsoft.com/devcontainers/base:ubuntu".to_string()),
+    //     //             image_tag: "vsc-test-order".to_string(),
+    //     //         };
+
+    //     //         let dev_container = DevContainerManifest {
+    //     //             config: DevContainer {
+    //     //                 image: Some("mcr.microsoft.com/devcontainers/base:ubuntu".to_string()),
+    //     //                 features: Some(HashMap::from([
+    //     //                     (
+    //     //                         "ghcr.io/devcontainers/features/aws-cli:1".to_string(),
+    //     //                         FeatureOptions::Options(HashMap::new()),
+    //     //                     ),
+    //     //                     (
+    //     //                         "ghcr.io/devcontainers/features/node:1".to_string(),
+    //     //                         FeatureOptions::Options(HashMap::from([(
+    //     //                             "version".to_string(),
+    //     //                             FeatureOptionValue::String("20".to_string()),
+    //     //                         )])),
+    //     //                     ),
+    //     //                 ])),
+    //     //                 override_feature_install_order: Some(vec![
+    //     //                     "ghcr.io/devcontainers/features/node:1".to_string(),
+    //     //                     "ghcr.io/devcontainers/features/aws-cli:1".to_string(),
+    //     //                 ]),
+    //     //                 ..Default::default()
+    //     //             },
+    //     //             ..Default::default()
+    //     //         };
+
+    //     //         let result =
+    //     //             construct_features_build_resources(&dev_container, &build_info, &client, None)
+    //     //                 .await;
+    //     //         assert!(result.is_ok());
+
+    //     //         // With override order: node first (index 0), aws-cli second (index 1)
+    //     //         assert!(features_dir.join("node_0").exists());
+    //     //         assert!(features_dir.join("aws-cli_1").exists());
+
+    //     //         let node_env =
+    //     //             std::fs::read_to_string(features_dir.join("node_0/devcontainer-features.env"))
+    //     //                 .unwrap();
+    //     //         assert!(
+    //     //             node_env.contains("version=\"20\""),
+    //     //             "Expected version=\"20\" in node env, got: {}",
+    //     //             node_env
+    //     //         );
+
+    //     //         // Verify the Dockerfile layers appear in the right order
+    //     //         let dockerfile = std::fs::read_to_string(&dockerfile_path).unwrap();
+    //     //         let node_pos = dockerfile.find("node_0").expect("node_0 layer missing");
+    //     //         let aws_pos = dockerfile
+    //     //             .find("aws-cli_1")
+    //     //             .expect("aws-cli_1 layer missing");
+    //     //         assert!(
+    //     //             node_pos < aws_pos,
+    //     //             "node should appear before aws-cli in the Dockerfile"
+    //     //         );
+
+    //     //         let _ = std::fs::remove_dir_all(&temp_dir);
+    //     //     });
+    //     // }
+
+    //     // #[test]
+    //     // fn should_skip_disabled_features() {
+    //     //     let client = fake_oci_http_client();
+    //     //     smol::block_on(async {
+    //     //         let temp_dir = std::env::temp_dir().join("devcontainer-test-features-disabled");
+    //     //         let features_dir = temp_dir.join("features-content");
+    //     //         let empty_dir = temp_dir.join("empty");
+    //     //         let dockerfile_path = features_dir.join("Dockerfile.extended");
+
+    //     //         let _ = std::fs::remove_dir_all(&temp_dir);
+    //     //         std::fs::create_dir_all(&features_dir).unwrap();
+    //     //         std::fs::create_dir_all(&empty_dir).unwrap();
+
+    //     //         let build_info = FeaturesBuildInfo {
+    //     //             dockerfile_path: dockerfile_path.clone(),
+    //     //             features_content_dir: features_dir.clone(),
+    //     //             empty_context_dir: empty_dir,
+    //     //             build_image: Some("mcr.microsoft.com/devcontainers/base:ubuntu".to_string()),
+    //     //             image_tag: "vsc-test-disabled".to_string(),
+    //     //         };
+
+    //     //         let dev_container = DevContainerManifest {
+    //     //             config: DevContainer {
+    //     //                 image: Some("mcr.microsoft.com/devcontainers/base:ubuntu".to_string()),
+    //     //                 features: Some(HashMap::from([
+    //     //                     (
+    //     //                         "ghcr.io/devcontainers/features/aws-cli:1".to_string(),
+    //     //                         FeatureOptions::Bool(false),
+    //     //                     ),
+    //     //                     (
+    //     //                         "ghcr.io/devcontainers/features/node:1".to_string(),
+    //     //                         FeatureOptions::Bool(true),
+    //     //                     ),
+    //     //                 ])),
+    //     //                 ..Default::default()
+    //     //             },
+    //     //             ..Default::default()
+    //     //         };
+
+    //     //         let result =
+    //     //             construct_features_build_resources(&dev_container, &build_info, &client, None)
+    //     //                 .await;
+    //     //         assert!(result.is_ok());
+
+    //     //         // aws-cli is disabled (false) — its directory should not exist
+    //     //         assert!(!features_dir.join("aws-cli_0").exists());
+    //     //         // node is enabled (true) — its directory should exist
+    //     //         assert!(features_dir.join("node_1").exists());
+
+    //     //         let dockerfile = std::fs::read_to_string(&dockerfile_path).unwrap();
+    //     //         assert!(!dockerfile.contains("aws-cli_0"));
+    //     //         assert!(dockerfile.contains("node_1"));
+
+    //     //         let _ = std::fs::remove_dir_all(&temp_dir);
+    //     //     });
+    //     // }
+
+    //     // #[test]
+    //     // fn should_fail_when_oci_download_fails() {
+    //     //     let client = fake_http_client();
+    //     //     smol::block_on(async {
+    //     //         let temp_dir = std::env::temp_dir().join("devcontainer-test-features-fail");
+    //     //         let features_dir = temp_dir.join("features-content");
+    //     //         let empty_dir = temp_dir.join("empty");
+    //     //         let dockerfile_path = features_dir.join("Dockerfile.extended");
+
+    //     //         let _ = std::fs::remove_dir_all(&temp_dir);
+    //     //         std::fs::create_dir_all(&features_dir).unwrap();
+    //     //         std::fs::create_dir_all(&empty_dir).unwrap();
+
+    //     //         let build_info = FeaturesBuildInfo {
+    //     //             dockerfile_path: dockerfile_path.clone(),
+    //     //             features_content_dir: features_dir.clone(),
+    //     //             empty_context_dir: empty_dir,
+    //     //             build_image: Some("mcr.microsoft.com/devcontainers/base:ubuntu".to_string()),
+    //     //             image_tag: "vsc-test-fail".to_string(),
+    //     //         };
+
+    //     //         let dev_container = DevContainerManifest {
+    //     //             config: DevContainer {
+    //     //                 image: Some("mcr.microsoft.com/devcontainers/base:ubuntu".to_string()),
+    //     //                 features: Some(HashMap::from([(
+    //     //                     "ghcr.io/devcontainers/features/go:1".to_string(),
+    //     //                     FeatureOptions::Options(HashMap::new()),
+    //     //                 )])),
+    //     //                 ..Default::default()
+    //     //             },
+    //     //             ..Default::default()
+    //     //         };
+
+    //     //         let result =
+    //     //             construct_features_build_resources(&dev_container, &build_info, &client, None)
+    //     //                 .await;
+    //     //         assert!(
+    //     //             result.is_err(),
+    //     //             "Expected error when OCI download fails, but got Ok"
+    //     //         );
+
+    //     //         let _ = std::fs::remove_dir_all(&temp_dir);
+    //     //     });
+    //     // }
+
+    //     #[test]
+    //     fn should_create_correct_docker_run_command() {
+    //         let mut metadata = HashMap::new();
+    //         metadata.insert(
+    //             "remoteUser".to_string(),
+    //             serde_json_lenient::Value::String("vsCode".to_string()),
+    //         );
+
+    //         let devcontainer_manifest = DevContainerManifest {
+    //             local_project_directory: PathBuf::from("/path/to/local/project"),
+    //             config_directory: PathBuf::from("/path/to/local/project/.devcontainer"),
+    //             file_name: "devcontainer.json".to_string(),
     //             ..Default::default()
     //         };
 
-    //         let result =
-    //             construct_features_build_resources(&dev_container, &build_info, &client, None)
-    //                 .await;
-    //         assert!(
-    //             result.is_ok(),
-    //             "construct_features_build_resources failed: {:?}",
-    //             result
-    //         );
+    //         let build_resources = DockerBuildResources {
+    //             image: DockerInspect {
+    //                 id: "mcr.microsoft.com/devcontainers/base:ubuntu".to_string(),
+    //                 config: DockerInspectConfig {
+    //                     labels: DockerConfigLabels { metadata: None },
+    //                     image_user: None,
+    //                 },
+    //                 mounts: None,
+    //             },
+    //             additional_mounts: vec![],
+    //             privileged: false,
+    //             entrypoints: vec![],
+    //         };
+    //         let docker_run_command = devcontainer_manifest.create_docker_run_command(build_resources);
 
-    //         // Verify builtin env file
-    //         let builtin_env =
-    //             std::fs::read_to_string(features_dir.join("devcontainer-features.builtin.env"))
-    //                 .unwrap();
-    //         assert!(builtin_env.contains("_CONTAINER_USER=root"));
-    //         assert!(builtin_env.contains("_REMOTE_USER=vscode"));
+    //         assert!(docker_run_command.is_ok());
+    //         let docker_run_command = docker_run_command.expect("ok");
 
-    //         // Verify Dockerfile.extended exists and contains expected structures
-    //         let dockerfile = std::fs::read_to_string(&dockerfile_path).unwrap();
-    //         assert!(
-    //             dockerfile
-    //                 .contains("FROM $_DEV_CONTAINERS_BASE_IMAGE AS dev_containers_target_stage")
-    //         );
-    //         assert!(dockerfile.contains("dev_containers_feature_content_source"));
-    //         assert!(dockerfile.contains("devcontainer-features-install.sh"));
-    //         assert!(dockerfile.contains("_DEV_CONTAINERS_IMAGE_USER"));
-
-    //         // Verify feature directories (sorted: aws-cli at index 0, node at index 1)
-    //         assert!(features_dir.join("aws-cli_0").exists());
-    //         assert!(features_dir.join("node_1").exists());
-
-    //         // Verify aws-cli feature files — env should contain defaults from the
-    //         // fake tarball's devcontainer-feature.json (which has none since our
-    //         // test tarball doesn't include one), so it will be empty.
-    //         let aws_env =
-    //             std::fs::read_to_string(features_dir.join("aws-cli_0/devcontainer-features.env"))
-    //                 .unwrap();
-    //         assert!(
-    //             aws_env.is_empty(),
-    //             "aws-cli with empty options and no feature json defaults should produce an empty env file, got: {}",
-    //             aws_env,
-    //         );
-
-    //         let aws_wrapper = std::fs::read_to_string(
-    //             features_dir.join("aws-cli_0/devcontainer-features-install.sh"),
+    //         assert_eq!(docker_run_command.get_program(), "docker");
+    //         assert_eq!(
+    //             docker_run_command.get_args().collect::<Vec<&OsStr>>(),
+    //             vec![
+    //                 OsStr::new("run"),
+    //                 OsStr::new("--sig-proxy=false"),
+    //                 OsStr::new("-d"),
+    //                 OsStr::new("--mount"),
+    //                 OsStr::new(
+    //                     "type=bind,source=/local/project_app,target=/workspaces/project_app,consistency=cached"
+    //                 ),
+    //                 OsStr::new("-l"),
+    //                 OsStr::new("label1=value1"),
+    //                 OsStr::new("-l"),
+    //                 OsStr::new("label2=value2"),
+    //                 OsStr::new("-l"),
+    //                 OsStr::new(
+    //                     r#"devcontainer.metadata=[{"id":"ghcr.io/devcontainers/features/common-utils:2"},{"id":"ghcr.io/devcontainers/features/git:1","customizations":{"vscode":{"settings":{"github.copilot.chat.codeGeneration.instructions":[{"text":"This dev container includes an up-to-date version of Git, built from source as needed, pre-installed and available on the `PATH`."}]}}}},{"remoteUser":"vscode"}]"#
+    //                 ),
+    //                 OsStr::new("--entrypoint"),
+    //                 OsStr::new("/bin/sh"),
+    //                 OsStr::new("mcr.microsoft.com/devcontainers/base:ubuntu"),
+    //                 OsStr::new("-c"),
+    //                 OsStr::new(
+    //                     "
+    // echo Container started
+    // trap \"exit 0\" 15
+    // exec \"$@\"
+    // while sleep 1 & wait $!; do :; done
+    //                     "
+    //                     .trim()
+    //                 ),
+    //                 OsStr::new("-"),
+    //             ]
     //         )
-    //         .unwrap();
-    //         assert!(aws_wrapper.contains("#!/bin/sh"));
-    //         assert!(aws_wrapper.contains("./install.sh"));
-    //         assert!(aws_wrapper.contains("../devcontainer-features.builtin.env"));
+    //     }
 
-    //         let aws_install =
-    //             std::fs::read_to_string(features_dir.join("aws-cli_0/install.sh")).unwrap();
-    //         assert!(
-    //             aws_install.contains("Test feature installed"),
-    //             "install.sh should contain content from the OCI tarball, got: {}",
-    //             aws_install
-    //         );
-
-    //         // Verify node feature files (String("18") → VERSION="18")
-    //         let node_env =
-    //             std::fs::read_to_string(features_dir.join("node_1/devcontainer-features.env"))
-    //                 .unwrap();
-    //         assert!(
-    //             node_env.contains("VERSION=\"18\""),
-    //             "Expected VERSION=\"18\" in node env, got: {}",
-    //             node_env
-    //         );
-
-    //         // Verify Dockerfile layers reference both features
-    //         assert!(dockerfile.contains("aws-cli_0"));
-    //         assert!(dockerfile.contains("node_1"));
-
-    //         let _ = std::fs::remove_dir_all(&temp_dir);
-    //     });
-    // }
-    // #[test]
-    // fn should_construct_features_with_override_order() {
-    //     let client = fake_oci_http_client();
-    //     smol::block_on(async {
-    //         let temp_dir = std::env::temp_dir().join("devcontainer-test-features-order");
-    //         let features_dir = temp_dir.join("features-content");
-    //         let empty_dir = temp_dir.join("empty");
-    //         let dockerfile_path = features_dir.join("Dockerfile.extended");
-
-    //         let _ = std::fs::remove_dir_all(&temp_dir);
-    //         std::fs::create_dir_all(&features_dir).unwrap();
-    //         std::fs::create_dir_all(&empty_dir).unwrap();
-
-    //         let build_info = FeaturesBuildInfo {
-    //             dockerfile_path: dockerfile_path.clone(),
-    //             features_content_dir: features_dir.clone(),
-    //             empty_context_dir: empty_dir,
-    //             build_image: Some("mcr.microsoft.com/devcontainers/base:ubuntu".to_string()),
-    //             image_tag: "vsc-test-order".to_string(),
+    //     #[test]
+    //     fn should_deserialize_docker_ps_with_filters() {
+    //         // First, deserializes empty
+    //         let empty_output = Output {
+    //             status: ExitStatus::default(),
+    //             stderr: vec![],
+    //             stdout: String::from("").into_bytes(),
     //         };
 
-    //         let dev_container = DevContainerManifest {
-    //             config: DevContainer {
-    //                 image: Some("mcr.microsoft.com/devcontainers/base:ubuntu".to_string()),
-    //                 features: Some(HashMap::from([
-    //                     (
-    //                         "ghcr.io/devcontainers/features/aws-cli:1".to_string(),
-    //                         FeatureOptions::Options(HashMap::new()),
-    //                     ),
-    //                     (
-    //                         "ghcr.io/devcontainers/features/node:1".to_string(),
-    //                         FeatureOptions::Options(HashMap::from([(
-    //                             "version".to_string(),
-    //                             FeatureOptionValue::String("20".to_string()),
-    //                         )])),
-    //                     ),
-    //                 ])),
-    //                 override_feature_install_order: Some(vec![
-    //                     "ghcr.io/devcontainers/features/node:1".to_string(),
-    //                     "ghcr.io/devcontainers/features/aws-cli:1".to_string(),
-    //                 ]),
+    //         let result: Option<DockerPs> = deserialize_json_output(empty_output).unwrap();
+
+    //         assert!(result.is_none());
+
+    //         let full_output = Output {
+    //             status: ExitStatus::default(),
+    //             stderr: vec![],
+    //             stdout: String::from(r#"
+    // {
+    //     "Command": "\"/bin/sh -c 'echo Co…\"",
+    //     "CreatedAt": "2026-02-04 15:44:21 -0800 PST",
+    //     "ID": "abdb6ab59573",
+    //     "Image": "mcr.microsoft.com/devcontainers/base:ubuntu",
+    //     "Labels": "desktop.docker.io/mounts/0/Source=/somepath/cli,desktop.docker.io/mounts/0/SourceKind=hostFile,desktop.docker.io/mounts/0/Target=/workspaces/cli,desktop.docker.io/ports.scheme=v2,dev.containers.features=common,dev.containers.id=base-ubuntu,dev.containers.release=v0.4.24,dev.containers.source=https://github.com/devcontainers/images,dev.containers.timestamp=Fri, 30 Jan 2026 16:52:34 GMT,dev.containers.variant=noble,devcontainer.config_file=/somepath/cli/.devcontainer/dev_container_2/devcontainer.json,devcontainer.local_folder=/somepath/cli,devcontainer.metadata=[{\"id\":\"ghcr.io/devcontainers/features/common-utils:2\"},{\"id\":\"ghcr.io/devcontainers/features/git:1\",\"customizations\":{\"vscode\":{\"settings\":{\"github.copilot.chat.codeGeneration.instructions\":[{\"text\":\"This dev container includes an up-to-date version of Git, built from source as needed, pre-installed and available on the `PATH`.\"}]}}}},{\"remoteUser\":\"vscode\"}],org.opencontainers.image.ref.name=ubuntu,org.opencontainers.image.version=24.04,version=2.1.6",
+    //     "LocalVolumes": "0",
+    //     "Mounts": "/host_mnt/User…",
+    //     "Names": "objective_haslett",
+    //     "Networks": "bridge",
+    //     "Platform": {
+    //     "architecture": "arm64",
+    //     "os": "linux"
+    //     },
+    //     "Ports": "",
+    //     "RunningFor": "47 hours ago",
+    //     "Size": "0B",
+    //     "State": "running",
+    //     "Status": "Up 47 hours"
+    // }
+    //                 "#).into_bytes(),
+    //         };
+
+    //         let result: Option<DockerPs> = deserialize_json_output(full_output).unwrap();
+
+    //         assert!(result.is_some());
+    //         let result = result.unwrap();
+    //         assert_eq!(result.id, "abdb6ab59573".to_string());
+    //     }
+
+    //     #[test]
+    //     fn should_deserialize_docker_labels() {
+    //         let given_config = r#"
+    // {"Id":"fca38334e88f9045a8cc41ebe0dc94e955a74dda2e526ed7546cf7a0f27b5b75","Created":"2026-02-09T23:22:15.585555798Z","Path":"/bin/sh","Args":["-c","echo Container started\ntrap \"exit 0\" 15\nexec \"$@\"\nwhile sleep 1 & wait $!; do :; done","-"],"State":{"Status":"running","Running":true,"Paused":false,"Restarting":false,"OOMKilled":false,"Dead":false,"Pid":94196,"ExitCode":0,"Error":"","StartedAt":"2026-02-09T23:22:15.628810548Z","FinishedAt":"0001-01-01T00:00:00Z"},"Image":"sha256:3dcb059253b2ebb44de3936620e1cff3dadcd2c1c982d579081ca8128c1eb319","ResolvConfPath":"/var/lib/docker/containers/fca38334e88f9045a8cc41ebe0dc94e955a74dda2e526ed7546cf7a0f27b5b75/resolv.conf","HostnamePath":"/var/lib/docker/containers/fca38334e88f9045a8cc41ebe0dc94e955a74dda2e526ed7546cf7a0f27b5b75/hostname","HostsPath":"/var/lib/docker/containers/fca38334e88f9045a8cc41ebe0dc94e955a74dda2e526ed7546cf7a0f27b5b75/hosts","LogPath":"/var/lib/docker/containers/fca38334e88f9045a8cc41ebe0dc94e955a74dda2e526ed7546cf7a0f27b5b75/fca38334e88f9045a8cc41ebe0dc94e955a74dda2e526ed7546cf7a0f27b5b75-json.log","Name":"/magical_easley","RestartCount":0,"Driver":"overlayfs","Platform":"linux","MountLabel":"","ProcessLabel":"","AppArmorProfile":"","ExecIDs":null,"HostConfig":{"Binds":null,"ContainerIDFile":"","LogConfig":{"Type":"json-file","Config":{}},"NetworkMode":"bridge","PortBindings":{},"RestartPolicy":{"Name":"no","MaximumRetryCount":0},"AutoRemove":false,"VolumeDriver":"","VolumesFrom":null,"ConsoleSize":[0,0],"CapAdd":null,"CapDrop":null,"CgroupnsMode":"private","Dns":[],"DnsOptions":[],"DnsSearch":[],"ExtraHosts":null,"GroupAdd":null,"IpcMode":"private","Cgroup":"","Links":null,"OomScoreAdj":0,"PidMode":"","Privileged":false,"PublishAllPorts":false,"ReadonlyRootfs":false,"SecurityOpt":null,"UTSMode":"","UsernsMode":"","ShmSize":67108864,"Runtime":"runc","Isolation":"","CpuShares":0,"Memory":0,"NanoCpus":0,"CgroupParent":"","BlkioWeight":0,"BlkioWeightDevice":[],"BlkioDeviceReadBps":[],"BlkioDeviceWriteBps":[],"BlkioDeviceReadIOps":[],"BlkioDeviceWriteIOps":[],"CpuPeriod":0,"CpuQuota":0,"CpuRealtimePeriod":0,"CpuRealtimeRuntime":0,"CpusetCpus":"","CpusetMems":"","Devices":[],"DeviceCgroupRules":null,"DeviceRequests":null,"MemoryReservation":0,"MemorySwap":0,"MemorySwappiness":null,"OomKillDisable":null,"PidsLimit":null,"Ulimits":[],"CpuCount":0,"CpuPercent":0,"IOMaximumIOps":0,"IOMaximumBandwidth":0,"Mounts":[{"Type":"bind","Source":"/somepath/rustwebstarter","Target":"/workspaces/rustwebstarter","Consistency":"cached"}],"MaskedPaths":["/proc/asound","/proc/acpi","/proc/interrupts","/proc/kcore","/proc/keys","/proc/latency_stats","/proc/timer_list","/proc/timer_stats","/proc/sched_debug","/proc/scsi","/sys/firmware","/sys/devices/virtual/powercap"],"ReadonlyPaths":["/proc/bus","/proc/fs","/proc/irq","/proc/sys","/proc/sysrq-trigger"]},"GraphDriver":{"Data":null,"Name":"overlayfs"},"Mounts":[{"Type":"bind","Source":"/somepath/rustwebstarter","Destination":"/workspaces/rustwebstarter","Mode":"","RW":true,"Propagation":"rprivate"}],"Config":{"Hostname":"fca38334e88f","Domainname":"","User":"root","AttachStdin":false,"AttachStdout":false,"AttachStderr":false,"Tty":false,"OpenStdin":false,"StdinOnce":false,"Env":["PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"],"Cmd":["-c","echo Container started\ntrap \"exit 0\" 15\nexec \"$@\"\nwhile sleep 1 & wait $!; do :; done","-"],"Image":"mcr.microsoft.com/devcontainers/base:ubuntu","Volumes":null,"WorkingDir":"","Entrypoint":["/bin/sh"],"OnBuild":null,"Labels":{"dev.containers.features":"common","dev.containers.id":"base-ubuntu","dev.containers.release":"v0.4.24","dev.containers.source":"https://github.com/devcontainers/images","dev.containers.timestamp":"Fri, 30 Jan 2026 16:52:34 GMT","dev.containers.variant":"noble","devcontainer.config_file":".devcontainer/devcontainer.json","devcontainer.local_folder":"/somepath/rustwebstarter","devcontainer.metadata":"[ {\"id\":\"ghcr.io/devcontainers/features/common-utils:2\"}, {\"id\":\"ghcr.io/devcontainers/features/git:1\",\"customizations\":{\"vscode\":{\"settings\":{\"github.copilot.chat.codeGeneration.instructions\":[{\"text\":\"This dev container includes an up-to-date version of Git, built from source as needed, pre-installed and available on the `PATH`.\"}]}}}}, {\"remoteUser\":\"vscode\"} ]","org.opencontainers.image.ref.name":"ubuntu","org.opencontainers.image.version":"24.04","version":"2.1.6"},"StopTimeout":1},"NetworkSettings":{"Bridge":"","SandboxID":"ef2f9f610d87de6bf6061627a0cadb2b89e918bafba92e0e4e9e877d092315c7","SandboxKey":"/var/run/docker/netns/ef2f9f610d87","Ports":{},"HairpinMode":false,"LinkLocalIPv6Address":"","LinkLocalIPv6PrefixLen":0,"SecondaryIPAddresses":null,"SecondaryIPv6Addresses":null,"EndpointID":"50b3501ee308c36e212a025b4f4ddd4ffbd6aeeafa986350ea7d9fe5e16e2c8c","Gateway":"172.17.0.1","GlobalIPv6Address":"","GlobalIPv6PrefixLen":0,"IPAddress":"172.17.0.4","IPPrefixLen":16,"IPv6Gateway":"","MacAddress":"ca:02:9f:22:fd:8e","Networks":{"bridge":{"IPAMConfig":null,"Links":null,"Aliases":null,"MacAddress":"ca:02:9f:22:fd:8e","DriverOpts":null,"GwPriority":0,"NetworkID":"51bb8ccc4d1281db44f16d915963fc728619d4a68e2f90e5ea8f1cb94885063e","EndpointID":"50b3501ee308c36e212a025b4f4ddd4ffbd6aeeafa986350ea7d9fe5e16e2c8c","Gateway":"172.17.0.1","IPAddress":"172.17.0.4","IPPrefixLen":16,"IPv6Gateway":"","GlobalIPv6Address":"","GlobalIPv6PrefixLen":0,"DNSNames":null}}},"ImageManifestDescriptor":{"mediaType":"application/vnd.oci.image.manifest.v1+json","digest":"sha256:39c3436527190561948236894c55b59fa58aa08d68d8867e703c8d5ab72a3593","size":2195,"platform":{"architecture":"arm64","os":"linux"}}}
+    //             "#;
+
+    //         let deserialized = serde_json_lenient::from_str::<DockerInspect>(given_config);
+    //         assert!(deserialized.is_ok());
+    //         let config = deserialized.unwrap();
+    //         let remote_user = get_remote_user_from_config(
+    //             &config,
+    //             &DevContainerManifest {
+    //                 config: DevContainer {
+    //                     image: None,
+    //                     name: None,
+    //                     remote_user: None,
+    //                     ..Default::default()
+    //                 },
+    //                 ..Default::default()
+    //             },
+    //         );
+
+    //         assert!(remote_user.is_ok());
+    //         assert_eq!(remote_user.unwrap(), "vscode".to_string())
+    //     }
+
+    //     #[test]
+    //     fn should_get_target_dir_from_docker_inspect() {
+    //         let given_config = r#"
+    // {
+    //   "Id": "abdb6ab59573659b11dac9f4973796741be35b642c9b48960709304ce46dbf85",
+    //   "Created": "2026-02-04T23:44:21.802688084Z",
+    //   "Path": "/bin/sh",
+    //   "Args": [
+    //     "-c",
+    //     "echo Container started\ntrap \"exit 0\" 15\n\nexec \"$@\"\nwhile sleep 1 & wait $!; do :; done",
+    //     "-"
+    //   ],
+    //   "State": {
+    //     "Status": "running",
+    //     "Running": true,
+    //     "Paused": false,
+    //     "Restarting": false,
+    //     "OOMKilled": false,
+    //     "Dead": false,
+    //     "Pid": 23087,
+    //     "ExitCode": 0,
+    //     "Error": "",
+    //     "StartedAt": "2026-02-04T23:44:21.954875084Z",
+    //     "FinishedAt": "0001-01-01T00:00:00Z"
+    //   },
+    //   "Image": "sha256:3dcb059253b2ebb44de3936620e1cff3dadcd2c1c982d579081ca8128c1eb319",
+    //   "ResolvConfPath": "/var/lib/docker/containers/abdb6ab59573659b11dac9f4973796741be35b642c9b48960709304ce46dbf85/resolv.conf",
+    //   "HostnamePath": "/var/lib/docker/containers/abdb6ab59573659b11dac9f4973796741be35b642c9b48960709304ce46dbf85/hostname",
+    //   "HostsPath": "/var/lib/docker/containers/abdb6ab59573659b11dac9f4973796741be35b642c9b48960709304ce46dbf85/hosts",
+    //   "LogPath": "/var/lib/docker/containers/abdb6ab59573659b11dac9f4973796741be35b642c9b48960709304ce46dbf85/abdb6ab59573659b11dac9f4973796741be35b642c9b48960709304ce46dbf85-json.log",
+    //   "Name": "/objective_haslett",
+    //   "RestartCount": 0,
+    //   "Driver": "overlayfs",
+    //   "Platform": "linux",
+    //   "MountLabel": "",
+    //   "ProcessLabel": "",
+    //   "AppArmorProfile": "",
+    //   "ExecIDs": [
+    //     "008019d93df4107fcbba78bcc6e1ed7e121844f36c26aca1a56284655a6adb53"
+    //   ],
+    //   "HostConfig": {
+    //     "Binds": null,
+    //     "ContainerIDFile": "",
+    //     "LogConfig": {
+    //       "Type": "json-file",
+    //       "Config": {}
+    //     },
+    //     "NetworkMode": "bridge",
+    //     "PortBindings": {},
+    //     "RestartPolicy": {
+    //       "Name": "no",
+    //       "MaximumRetryCount": 0
+    //     },
+    //     "AutoRemove": false,
+    //     "VolumeDriver": "",
+    //     "VolumesFrom": null,
+    //     "ConsoleSize": [
+    //       0,
+    //       0
+    //     ],
+    //     "CapAdd": null,
+    //     "CapDrop": null,
+    //     "CgroupnsMode": "private",
+    //     "Dns": [],
+    //     "DnsOptions": [],
+    //     "DnsSearch": [],
+    //     "ExtraHosts": null,
+    //     "GroupAdd": null,
+    //     "IpcMode": "private",
+    //     "Cgroup": "",
+    //     "Links": null,
+    //     "OomScoreAdj": 0,
+    //     "PidMode": "",
+    //     "Privileged": false,
+    //     "PublishAllPorts": false,
+    //     "ReadonlyRootfs": false,
+    //     "SecurityOpt": null,
+    //     "UTSMode": "",
+    //     "UsernsMode": "",
+    //     "ShmSize": 67108864,
+    //     "Runtime": "runc",
+    //     "Isolation": "",
+    //     "CpuShares": 0,
+    //     "Memory": 0,
+    //     "NanoCpus": 0,
+    //     "CgroupParent": "",
+    //     "BlkioWeight": 0,
+    //     "BlkioWeightDevice": [],
+    //     "BlkioDeviceReadBps": [],
+    //     "BlkioDeviceWriteBps": [],
+    //     "BlkioDeviceReadIOps": [],
+    //     "BlkioDeviceWriteIOps": [],
+    //     "CpuPeriod": 0,
+    //     "CpuQuota": 0,
+    //     "CpuRealtimePeriod": 0,
+    //     "CpuRealtimeRuntime": 0,
+    //     "CpusetCpus": "",
+    //     "CpusetMems": "",
+    //     "Devices": [],
+    //     "DeviceCgroupRules": null,
+    //     "DeviceRequests": null,
+    //     "MemoryReservation": 0,
+    //     "MemorySwap": 0,
+    //     "MemorySwappiness": null,
+    //     "OomKillDisable": null,
+    //     "PidsLimit": null,
+    //     "Ulimits": [],
+    //     "CpuCount": 0,
+    //     "CpuPercent": 0,
+    //     "IOMaximumIOps": 0,
+    //     "IOMaximumBandwidth": 0,
+    //     "Mounts": [
+    //       {
+    //         "Type": "bind",
+    //         "Source": "/somepath/cli",
+    //         "Target": "/workspaces/cli",
+    //         "Consistency": "cached"
+    //       }
+    //     ],
+    //     "MaskedPaths": [
+    //       "/proc/asound",
+    //       "/proc/acpi",
+    //       "/proc/interrupts",
+    //       "/proc/kcore",
+    //       "/proc/keys",
+    //       "/proc/latency_stats",
+    //       "/proc/timer_list",
+    //       "/proc/timer_stats",
+    //       "/proc/sched_debug",
+    //       "/proc/scsi",
+    //       "/sys/firmware",
+    //       "/sys/devices/virtual/powercap"
+    //     ],
+    //     "ReadonlyPaths": [
+    //       "/proc/bus",
+    //       "/proc/fs",
+    //       "/proc/irq",
+    //       "/proc/sys",
+    //       "/proc/sysrq-trigger"
+    //     ]
+    //   },
+    //   "GraphDriver": {
+    //     "Data": null,
+    //     "Name": "overlayfs"
+    //   },
+    //   "Mounts": [
+    //     {
+    //       "Type": "bind",
+    //       "Source": "/somepath/cli",
+    //       "Destination": "/workspaces/cli",
+    //       "Mode": "",
+    //       "RW": true,
+    //       "Propagation": "rprivate"
+    //     }
+    //   ],
+    //   "Config": {
+    //     "Hostname": "abdb6ab59573",
+    //     "Domainname": "",
+    //     "User": "root",
+    //     "AttachStdin": false,
+    //     "AttachStdout": true,
+    //     "AttachStderr": true,
+    //     "Tty": false,
+    //     "OpenStdin": false,
+    //     "StdinOnce": false,
+    //     "Env": [
+    //       "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+    //     ],
+    //     "Cmd": [
+    //       "-c",
+    //       "echo Container started\ntrap \"exit 0\" 15\n\nexec \"$@\"\nwhile sleep 1 & wait $!; do :; done",
+    //       "-"
+    //     ],
+    //     "Image": "mcr.microsoft.com/devcontainers/base:ubuntu",
+    //     "Volumes": null,
+    //     "WorkingDir": "",
+    //     "Entrypoint": [
+    //       "/bin/sh"
+    //     ],
+    //     "OnBuild": null,
+    //     "Labels": {
+    //       "dev.containers.features": "common",
+    //       "dev.containers.id": "base-ubuntu",
+    //       "dev.containers.release": "v0.4.24",
+    //       "dev.containers.source": "https://github.com/devcontainers/images",
+    //       "dev.containers.timestamp": "Fri, 30 Jan 2026 16:52:34 GMT",
+    //       "dev.containers.variant": "noble",
+    //       "devcontainer.config_file": "/somepath/cli/.devcontainer/dev_container_2/devcontainer.json",
+    //       "devcontainer.local_folder": "/somepath/cli",
+    //       "devcontainer.metadata": "[{\"id\":\"ghcr.io/devcontainers/features/common-utils:2\"},{\"id\":\"ghcr.io/devcontainers/features/git:1\",\"customizations\":{\"vscode\":{\"settings\":{\"github.copilot.chat.codeGeneration.instructions\":[{\"text\":\"This dev container includes an up-to-date version of Git, built from source as needed, pre-installed and available on the `PATH`.\"}]}}}},{\"remoteUser\":\"vscode\"}]",
+    //       "org.opencontainers.image.ref.name": "ubuntu",
+    //       "org.opencontainers.image.version": "24.04",
+    //       "version": "2.1.6"
+    //     },
+    //     "StopTimeout": 1
+    //   },
+    //   "NetworkSettings": {
+    //     "Bridge": "",
+    //     "SandboxID": "2a94990d542fe532deb75f1cc67f761df2d669e3b41161f914079e88516cc54b",
+    //     "SandboxKey": "/var/run/docker/netns/2a94990d542f",
+    //     "Ports": {},
+    //     "HairpinMode": false,
+    //     "LinkLocalIPv6Address": "",
+    //     "LinkLocalIPv6PrefixLen": 0,
+    //     "SecondaryIPAddresses": null,
+    //     "SecondaryIPv6Addresses": null,
+    //     "EndpointID": "ef5b35a8fbb145565853e1a1d960e737fcc18c20920e96494e4c0cfc55683570",
+    //     "Gateway": "172.17.0.1",
+    //     "GlobalIPv6Address": "",
+    //     "GlobalIPv6PrefixLen": 0,
+    //     "IPAddress": "172.17.0.3",
+    //     "IPPrefixLen": 16,
+    //     "IPv6Gateway": "",
+    //     "MacAddress": "",
+    //     "Networks": {
+    //       "bridge": {
+    //         "IPAMConfig": null,
+    //         "Links": null,
+    //         "Aliases": null,
+    //         "MacAddress": "9a:ec:af:8a:ac:81",
+    //         "DriverOpts": null,
+    //         "GwPriority": 0,
+    //         "NetworkID": "51bb8ccc4d1281db44f16d915963fc728619d4a68e2f90e5ea8f1cb94885063e",
+    //         "EndpointID": "ef5b35a8fbb145565853e1a1d960e737fcc18c20920e96494e4c0cfc55683570",
+    //         "Gateway": "172.17.0.1",
+    //         "IPAddress": "172.17.0.3",
+    //         "IPPrefixLen": 16,
+    //         "IPv6Gateway": "",
+    //         "GlobalIPv6Address": "",
+    //         "GlobalIPv6PrefixLen": 0,
+    //         "DNSNames": null
+    //       }
+    //     }
+    //   },
+    //   "ImageManifestDescriptor": {
+    //     "mediaType": "application/vnd.oci.image.manifest.v1+json",
+    //     "digest": "sha256:39c3436527190561948236894c55b59fa58aa08d68d8867e703c8d5ab72a3593",
+    //     "size": 2195,
+    //     "platform": {
+    //       "architecture": "arm64",
+    //       "os": "linux"
+    //     }
+    //   }
+    // }
+    //             "#;
+    //         let config = serde_json_lenient::from_str::<DockerInspect>(given_config).unwrap();
+
+    //         let target_dir = get_remote_dir_from_config(&config, "/somepath/cli".to_string());
+
+    //         assert!(target_dir.is_ok());
+    //         assert_eq!(target_dir.unwrap(), "/workspaces/cli/".to_string());
+    //     }
+
+    //     #[test]
+    //     fn should_inject_correct_parameters_into_dockerfile_extended() {
+    //         let (feature_layers, container_user, remote_user) = (
+    //             r#"RUN --mount=type=bind,from=dev_containers_feature_content_source,source=./copilot-cli_0,target=/tmp/build-features-src/copilot-cli_0 \
+    //     cp -ar /tmp/build-features-src/copilot-cli_0 /tmp/dev-container-features \
+    // && chmod -R 0755 /tmp/dev-container-features/copilot-cli_0 \
+    // && cd /tmp/dev-container-features/copilot-cli_0 \
+    // && chmod +x ./devcontainer-features-install.sh \
+    // && ./devcontainer-features-install.sh \
+    // && rm -rf /tmp/dev-container-features/copilot-cli_0
+    //             "#.trim(),
+    //             "container_user",
+    //             "remote_user",
+    //         );
+
+    //         let dockerfile_extended =
+    //             generate_dockerfile_extended(feature_layers, container_user, remote_user, None);
+
+    //         assert_eq!(dockerfile_extended.trim(),
+    //             r#"ARG _DEV_CONTAINERS_BASE_IMAGE=placeholder
+
+    // FROM $_DEV_CONTAINERS_BASE_IMAGE AS dev_containers_feature_content_normalize
+    // USER root
+    // COPY --from=dev_containers_feature_content_source ./devcontainer-features.builtin.env /tmp/build-features/
+    // RUN chmod -R 0755 /tmp/build-features/
+
+    // FROM $_DEV_CONTAINERS_BASE_IMAGE AS dev_containers_target_stage
+
+    // USER root
+
+    // RUN mkdir -p /tmp/dev-container-features
+    // COPY --from=dev_containers_feature_content_normalize /tmp/build-features/ /tmp/dev-container-features
+
+    // RUN \
+    // echo "_CONTAINER_USER_HOME=$( (command -v getent >/dev/null 2>&1 && getent passwd 'container_user' || grep -E '^container_user|^[^:]*:[^:]*:container_user:' /etc/passwd || true) | cut -d: -f6)" >> /tmp/dev-container-features/devcontainer-features.builtin.env && \
+    // echo "_REMOTE_USER_HOME=$( (command -v getent >/dev/null 2>&1 && getent passwd 'remote_user' || grep -E '^remote_user|^[^:]*:[^:]*:remote_user:' /etc/passwd || true) | cut -d: -f6)" >> /tmp/dev-container-features/devcontainer-features.builtin.env
+
+    // RUN --mount=type=bind,from=dev_containers_feature_content_source,source=./copilot-cli_0,target=/tmp/build-features-src/copilot-cli_0 \
+    //     cp -ar /tmp/build-features-src/copilot-cli_0 /tmp/dev-container-features \
+    // && chmod -R 0755 /tmp/dev-container-features/copilot-cli_0 \
+    // && cd /tmp/dev-container-features/copilot-cli_0 \
+    // && chmod +x ./devcontainer-features-install.sh \
+    // && ./devcontainer-features-install.sh \
+    // && rm -rf /tmp/dev-container-features/copilot-cli_0
+
+    // ARG _DEV_CONTAINERS_IMAGE_USER=root
+    // USER $_DEV_CONTAINERS_IMAGE_USER
+    //             "#.trim()
+    //         );
+
+    //         let dockerfile = r#"
+    // ARG VARIANT="16-bullseye"
+    // FROM mcr.microsoft.com/devcontainers/typescript-node:1-${VARIANT}
+
+    // RUN mkdir -p /workspaces && chown node:node /workspaces
+
+    // ARG USERNAME=node
+    // USER $USERNAME
+
+    // # Save command line history
+    // RUN echo "hello, world""#
+    //             .trim()
+    //             .to_string();
+
+    //         let dockerfile_extended = generate_dockerfile_extended(
+    //             feature_layers,
+    //             container_user,
+    //             remote_user,
+    //             Some(dockerfile),
+    //         );
+
+    //         assert_eq!(dockerfile_extended.trim(),
+    //             r#"ARG _DEV_CONTAINERS_BASE_IMAGE=placeholder
+
+    // ARG VARIANT="16-bullseye"
+    // FROM mcr.microsoft.com/devcontainers/typescript-node:1-${VARIANT} AS dev_container_auto_added_stage_label
+
+    // RUN mkdir -p /workspaces && chown node:node /workspaces
+
+    // ARG USERNAME=node
+    // USER $USERNAME
+
+    // # Save command line history
+    // RUN echo "hello, world"
+
+    // FROM $_DEV_CONTAINERS_BASE_IMAGE AS dev_containers_feature_content_normalize
+    // USER root
+    // COPY --from=dev_containers_feature_content_source ./devcontainer-features.builtin.env /tmp/build-features/
+    // RUN chmod -R 0755 /tmp/build-features/
+
+    // FROM $_DEV_CONTAINERS_BASE_IMAGE AS dev_containers_target_stage
+
+    // USER root
+
+    // RUN mkdir -p /tmp/dev-container-features
+    // COPY --from=dev_containers_feature_content_normalize /tmp/build-features/ /tmp/dev-container-features
+
+    // RUN \
+    // echo "_CONTAINER_USER_HOME=$( (command -v getent >/dev/null 2>&1 && getent passwd 'container_user' || grep -E '^container_user|^[^:]*:[^:]*:container_user:' /etc/passwd || true) | cut -d: -f6)" >> /tmp/dev-container-features/devcontainer-features.builtin.env && \
+    // echo "_REMOTE_USER_HOME=$( (command -v getent >/dev/null 2>&1 && getent passwd 'remote_user' || grep -E '^remote_user|^[^:]*:[^:]*:remote_user:' /etc/passwd || true) | cut -d: -f6)" >> /tmp/dev-container-features/devcontainer-features.builtin.env
+
+    // RUN --mount=type=bind,from=dev_containers_feature_content_source,source=./copilot-cli_0,target=/tmp/build-features-src/copilot-cli_0 \
+    //     cp -ar /tmp/build-features-src/copilot-cli_0 /tmp/dev-container-features \
+    // && chmod -R 0755 /tmp/dev-container-features/copilot-cli_0 \
+    // && cd /tmp/dev-container-features/copilot-cli_0 \
+    // && chmod +x ./devcontainer-features-install.sh \
+    // && ./devcontainer-features-install.sh \
+    // && rm -rf /tmp/dev-container-features/copilot-cli_0
+
+    // ARG _DEV_CONTAINERS_IMAGE_USER=root
+    // USER $_DEV_CONTAINERS_IMAGE_USER
+    //             "#.trim()
+    //         );
+    //     }
+
+    //     #[test]
+    //     fn should_create_docker_compose_command() {
+    //         let docker_compose_files = vec![
+    //             PathBuf::from("/var/test/docker-compose.yml"),
+    //             PathBuf::from("/var/other/docker-compose2.yml"),
+    //         ];
+
+    //         let command = create_docker_compose_config_command(&docker_compose_files).unwrap();
+
+    //         assert_eq!(command.get_program(), OsStr::new(docker_cli()));
+
+    //         assert_eq!(
+    //             command.get_args().collect::<Vec<&OsStr>>(),
+    //             vec![
+    //                 OsStr::new("compose"),
+    //                 OsStr::new("-f"),
+    //                 OsStr::new("/var/test/docker-compose.yml"),
+    //                 OsStr::new("-f"),
+    //                 OsStr::new("/var/other/docker-compose2.yml"),
+    //                 OsStr::new("config"),
+    //                 OsStr::new("--format"),
+    //                 OsStr::new("json"),
+    //             ]
+    //         )
+    //     }
+
+    //     #[test]
+    //     fn should_deserialize_docker_compose_config() {
+    //         let given_config = r#"
+    // {
+    //     "name": "devcontainer",
+    //     "networks": {
+    //     "default": {
+    //         "name": "devcontainer_default",
+    //         "ipam": {}
+    //     }
+    //     },
+    //     "services": {
+    //         "app": {
+    //             "command": [
+    //             "sleep",
+    //             "infinity"
+    //             ],
+    //             "depends_on": {
+    //             "db": {
+    //                 "condition": "service_started",
+    //                 "restart": true,
+    //                 "required": true
+    //             }
+    //             },
+    //             "entrypoint": null,
+    //             "environment": {
+    //             "POSTGRES_DB": "postgres",
+    //             "POSTGRES_HOSTNAME": "localhost",
+    //             "POSTGRES_PASSWORD": "postgres",
+    //             "POSTGRES_PORT": "5432",
+    //             "POSTGRES_USER": "postgres"
+    //             },
+    //             "image": "mcr.microsoft.com/devcontainers/rust:2-1-bookworm",
+    //             "network_mode": "service:db",
+    //             "volumes": [
+    //             {
+    //                 "type": "bind",
+    //                 "source": "/Users/kylebarton/Source",
+    //                 "target": "/workspaces",
+    //                 "bind": {
+    //                 "create_host_path": true
+    //                 }
+    //             }
+    //             ]
+    //         },
+    //         "db": {
+    //             "command": null,
+    //             "entrypoint": null,
+    //             "environment": {
+    //             "POSTGRES_DB": "postgres",
+    //             "POSTGRES_HOSTNAME": "localhost",
+    //             "POSTGRES_PASSWORD": "postgres",
+    //             "POSTGRES_PORT": "5432",
+    //             "POSTGRES_USER": "postgres"
+    //             },
+    //             "image": "postgres:14.1",
+    //             "networks": {
+    //             "default": null
+    //             },
+    //             "restart": "unless-stopped",
+    //             "volumes": [
+    //             {
+    //                 "type": "volume",
+    //                 "source": "postgres-data",
+    //                 "target": "/var/lib/postgresql/data",
+    //                 "volume": {}
+    //             }
+    //             ]
+    //         }
+    //     },
+    //     "volumes": {
+    //     "postgres-data": {
+    //         "name": "devcontainer_postgres-data"
+    //     }
+    //     }
+    // }
+    //             "#;
+
+    //         let docker_compose_config: DockerComposeConfig =
+    //             serde_json_lenient::from_str(given_config).unwrap();
+
+    //         let expected_config = DockerComposeConfig {
+    //             name: Some("devcontainer".to_string()),
+    //             services: HashMap::from([
+    //                 (
+    //                     "app".to_string(),
+    //                     DockerComposeService {
+    //                         image: Some(
+    //                             "mcr.microsoft.com/devcontainers/rust:2-1-bookworm".to_string(),
+    //                         ),
+    //                         ..Default::default()
+    //                     },
+    //                 ),
+    //                 (
+    //                     "db".to_string(),
+    //                     DockerComposeService {
+    //                         image: Some("postgres:14.1".to_string()),
+    //                         ..Default::default()
+    //                     },
+    //                 ),
+    //             ]),
+    //             ..Default::default()
+    //         };
+
+    //         assert_eq!(docker_compose_config, expected_config);
+    //     }
+
+    //     #[test]
+    //     fn should_find_primary_service_in_docker_compose() {
+    //         // State where service not defined in dev container
+    //         let given_dev_container = DevContainerManifest::default();
+    //         let given_docker_compose_config = DockerComposeResources {
+    //             config: DockerComposeConfig {
+    //                 name: Some("devcontainers".to_string()),
+    //                 services: HashMap::new(),
     //                 ..Default::default()
     //             },
     //             ..Default::default()
     //         };
 
-    //         let result =
-    //             construct_features_build_resources(&dev_container, &build_info, &client, None)
-    //                 .await;
-    //         assert!(result.is_ok());
+    //         let bad_result = find_primary_service(&given_docker_compose_config, &given_dev_container);
 
-    //         // With override order: node first (index 0), aws-cli second (index 1)
-    //         assert!(features_dir.join("node_0").exists());
-    //         assert!(features_dir.join("aws-cli_1").exists());
+    //         assert!(bad_result.is_err());
 
-    //         let node_env =
-    //             std::fs::read_to_string(features_dir.join("node_0/devcontainer-features.env"))
-    //                 .unwrap();
-    //         assert!(
-    //             node_env.contains("version=\"20\""),
-    //             "Expected version=\"20\" in node env, got: {}",
-    //             node_env
-    //         );
-
-    //         // Verify the Dockerfile layers appear in the right order
-    //         let dockerfile = std::fs::read_to_string(&dockerfile_path).unwrap();
-    //         let node_pos = dockerfile.find("node_0").expect("node_0 layer missing");
-    //         let aws_pos = dockerfile
-    //             .find("aws-cli_1")
-    //             .expect("aws-cli_1 layer missing");
-    //         assert!(
-    //             node_pos < aws_pos,
-    //             "node should appear before aws-cli in the Dockerfile"
-    //         );
-
-    //         let _ = std::fs::remove_dir_all(&temp_dir);
-    //     });
-    // }
-
-    // #[test]
-    // fn should_skip_disabled_features() {
-    //     let client = fake_oci_http_client();
-    //     smol::block_on(async {
-    //         let temp_dir = std::env::temp_dir().join("devcontainer-test-features-disabled");
-    //         let features_dir = temp_dir.join("features-content");
-    //         let empty_dir = temp_dir.join("empty");
-    //         let dockerfile_path = features_dir.join("Dockerfile.extended");
-
-    //         let _ = std::fs::remove_dir_all(&temp_dir);
-    //         std::fs::create_dir_all(&features_dir).unwrap();
-    //         std::fs::create_dir_all(&empty_dir).unwrap();
-
-    //         let build_info = FeaturesBuildInfo {
-    //             dockerfile_path: dockerfile_path.clone(),
-    //             features_content_dir: features_dir.clone(),
-    //             empty_context_dir: empty_dir,
-    //             build_image: Some("mcr.microsoft.com/devcontainers/base:ubuntu".to_string()),
-    //             image_tag: "vsc-test-disabled".to_string(),
-    //         };
-
-    //         let dev_container = DevContainerManifest {
+    //         // State where service defined in devcontainer, not found in DockerCompose config
+    //         let given_dev_container = DevContainerManifest {
     //             config: DevContainer {
-    //                 image: Some("mcr.microsoft.com/devcontainers/base:ubuntu".to_string()),
-    //                 features: Some(HashMap::from([
-    //                     (
-    //                         "ghcr.io/devcontainers/features/aws-cli:1".to_string(),
-    //                         FeatureOptions::Bool(false),
-    //                     ),
-    //                     (
-    //                         "ghcr.io/devcontainers/features/node:1".to_string(),
-    //                         FeatureOptions::Bool(true),
-    //                     ),
-    //                 ])),
+    //                 service: Some("not_found_service".to_string()),
+    //                 ..Default::default()
+    //             },
+    //             ..Default::default()
+    //         };
+    //         let given_docker_compose_config = DockerComposeResources {
+    //             config: DockerComposeConfig {
+    //                 name: Some("devcontainers".to_string()),
+    //                 services: HashMap::new(),
     //                 ..Default::default()
     //             },
     //             ..Default::default()
     //         };
 
-    //         let result =
-    //             construct_features_build_resources(&dev_container, &build_info, &client, None)
-    //                 .await;
-    //         assert!(result.is_ok());
+    //         let bad_result = find_primary_service(&given_docker_compose_config, &given_dev_container);
 
-    //         // aws-cli is disabled (false) — its directory should not exist
-    //         assert!(!features_dir.join("aws-cli_0").exists());
-    //         // node is enabled (true) — its directory should exist
-    //         assert!(features_dir.join("node_1").exists());
-
-    //         let dockerfile = std::fs::read_to_string(&dockerfile_path).unwrap();
-    //         assert!(!dockerfile.contains("aws-cli_0"));
-    //         assert!(dockerfile.contains("node_1"));
-
-    //         let _ = std::fs::remove_dir_all(&temp_dir);
-    //     });
-    // }
-
-    // #[test]
-    // fn should_fail_when_oci_download_fails() {
-    //     let client = fake_http_client();
-    //     smol::block_on(async {
-    //         let temp_dir = std::env::temp_dir().join("devcontainer-test-features-fail");
-    //         let features_dir = temp_dir.join("features-content");
-    //         let empty_dir = temp_dir.join("empty");
-    //         let dockerfile_path = features_dir.join("Dockerfile.extended");
-
-    //         let _ = std::fs::remove_dir_all(&temp_dir);
-    //         std::fs::create_dir_all(&features_dir).unwrap();
-    //         std::fs::create_dir_all(&empty_dir).unwrap();
-
-    //         let build_info = FeaturesBuildInfo {
-    //             dockerfile_path: dockerfile_path.clone(),
-    //             features_content_dir: features_dir.clone(),
-    //             empty_context_dir: empty_dir,
-    //             build_image: Some("mcr.microsoft.com/devcontainers/base:ubuntu".to_string()),
-    //             image_tag: "vsc-test-fail".to_string(),
-    //         };
-
-    //         let dev_container = DevContainerManifest {
+    //         assert!(bad_result.is_err());
+    //         // State where service defined in devcontainer and in DockerCompose config
+    //         let given_dev_container = DevContainerManifest {
     //             config: DevContainer {
-    //                 image: Some("mcr.microsoft.com/devcontainers/base:ubuntu".to_string()),
-    //                 features: Some(HashMap::from([(
-    //                     "ghcr.io/devcontainers/features/go:1".to_string(),
-    //                     FeatureOptions::Options(HashMap::new()),
-    //                 )])),
+    //                 service: Some("found_service".to_string()),
+    //                 ..Default::default()
+    //             },
+    //             ..Default::default()
+    //         };
+    //         let given_docker_compose_config = DockerComposeResources {
+    //             config: DockerComposeConfig {
+    //                 name: Some("devcontainers".to_string()),
+    //                 services: HashMap::from([(
+    //                     "found_service".to_string(),
+    //                     DockerComposeService {
+    //                         ..Default::default()
+    //                     },
+    //                 )]),
     //                 ..Default::default()
     //             },
     //             ..Default::default()
     //         };
 
-    //         let result =
-    //             construct_features_build_resources(&dev_container, &build_info, &client, None)
-    //                 .await;
-    //         assert!(
-    //             result.is_err(),
-    //             "Expected error when OCI download fails, but got Ok"
+    //         let (service_name, _) =
+    //             find_primary_service(&given_docker_compose_config, &given_dev_container).unwrap();
+
+    //         assert_eq!(service_name, "found_service".to_string());
+    //     }
+
+    //     #[test]
+    //     fn should_build_runtime_override() {
+    //         let devcontainer_manifest = DevContainerManifest {
+    //             local_project_directory: PathBuf::from("/path/to/project"),
+    //             config_directory: PathBuf::from("/path/to/project/.devcontainer"),
+    //             file_name: "devcontainer.json".to_string(),
+    //             ..Default::default()
+    //         };
+
+    //         let docker_image = DockerInspect {
+    //             id: "id".to_string(),
+    //             // Todo add some labels and make this test pass
+    //             config: DockerInspectConfig {
+    //                 labels: DockerConfigLabels { metadata: None },
+    //                 image_user: None,
+    //             },
+    //             mounts: None,
+    //         };
+
+    //         let resources = DockerBuildResources {
+    //             image: docker_image,
+    //             additional_mounts: vec![],
+    //             privileged: false,
+    //             entrypoints: vec![],
+    //         };
+
+    //         let runtime_override = devcontainer_manifest
+    //             .build_runtime_override("app", resources)
+    //             .unwrap();
+
+    //         // ugh how are we going to do labels
+    //         let expected_runtime_override = DockerComposeConfig {
+    //             name: None,
+    //             services: HashMap::from([(
+    //                 "app".to_string(),
+    //                 DockerComposeService {
+    //                     entrypoint: Some(vec![
+    //                         "/bin/sh".to_string(),
+    //                         "-c".to_string(),
+    //                         "
+    // echo Container started
+    // trap \"exit 0\" 15
+    // exec \"$@\"
+    // while sleep 1 & wait $!; do :; done"
+    //                             .to_string(),
+    //                         "-".to_string(),
+    //                     ]),
+    //                     cap_add: Some(vec!["SYS_PTRACE".to_string()]),
+    //                     security_opt: Some(vec!["seccomp=unconfined".to_string()]),
+    //                     labels: Some(vec!["label1=label1val".to_string()]),
+    //                     ..Default::default()
+    //                 },
+    //             )]),
+    //             ..Default::default()
+    //         };
+
+    //         assert_eq!(runtime_override, expected_runtime_override)
+    //     }
+
+    //     // TODO turn this into a merged config test more broadly
+    //     #[test]
+    //     fn test_privileged() {
+    //         let dev_container = DevContainer::default();
+
+    //         let feature_manifests = vec![FeatureManifest::new(
+    //             PathBuf::from("/"),
+    //             DevContainerFeatureJson {
+    //                 _id: None,
+    //                 options: HashMap::new(),
+    //                 mounts: None,
+    //                 privileged: Some(true),
+    //                 entrypoint: None,
+    //             },
+    //         )];
+
+    //         let privileged = dev_container.privileged.unwrap_or(false)
+    //             || feature_manifests.iter().any(|f| f.privileged());
+
+    //         assert!(privileged);
+    //     }
+
+    //     // Ok, let's get the docker run stuff into DevContainerManifest and then go from here
+    //     #[test]
+    //     fn test_remote_workspace_folder() {
+    //         let devcontainer_manifest = DevContainerManifest {
+    //             config: DevContainer::default(),
+    //             config_directory: PathBuf::from("/path/to/local/project/.devcontainer"),
+    //             local_project_directory: PathBuf::from("/path/to/local/project"),
+    //             ..Default::default()
+    //         };
+
+    //         assert_eq!(
+    //             devcontainer_manifest.remote_workspace_mount(),
+    //             Ok(PathBuf::from("/workspaces/project")),
     //         );
 
-    //         let _ = std::fs::remove_dir_all(&temp_dir);
-    //     });
-    // }
+    //         let devcontainer_manifest = DevContainerManifest {
+    //             config: DevContainer {
+    //                 workspace_mount: Some(MountDefinition {
+    //                     source: "/path/to/local/project/subfolder".to_string(),
+    //                     target: "/specialworkspace".to_string(),
+    //                     mount_type: Some("bind".to_string()),
+    //                 }),
+    //                 workspace_folder: Some("/specialworkspace/subfolder".to_string()),
+    //                 ..Default::default()
+    //             },
+    //             config_directory: PathBuf::from("/path/to/local/project/.devcontainer"),
+    //             local_project_directory: PathBuf::from("/path/to/local/project"),
+    //             ..Default::default()
+    //         };
 
-    #[test]
-    fn should_create_correct_docker_run_command() {
-        let mut metadata = HashMap::new();
-        metadata.insert(
-            "remoteUser".to_string(),
-            serde_json_lenient::Value::String("vsCode".to_string()),
-        );
+    //         assert_eq!(
+    //             devcontainer_manifest.remote_workspace_mount(),
+    //             Ok(PathBuf::from("/specialworkspace"))
+    //         )
+    //     }
 
-        let devcontainer_manifest = DevContainerManifest {
-            local_project_directory: PathBuf::from("/path/to/local/project"),
-            config_directory: PathBuf::from("/path/to/local/project/.devcontainer"),
-            file_name: "devcontainer.json".to_string(),
-            ..Default::default()
-        };
-
-        let build_resources = DockerBuildResources {
-            image: DockerInspect {
-                id: "mcr.microsoft.com/devcontainers/base:ubuntu".to_string(),
-                config: DockerInspectConfig {
-                    labels: DockerConfigLabels { metadata: None },
-                    image_user: None,
-                },
-                mounts: None,
-            },
-            additional_mounts: vec![],
-            privileged: false,
-            entrypoints: vec![],
-        };
-        let docker_run_command = devcontainer_manifest.create_docker_run_command(build_resources);
-
-        assert!(docker_run_command.is_ok());
-        let docker_run_command = docker_run_command.expect("ok");
-
-        assert_eq!(docker_run_command.get_program(), "docker");
-        assert_eq!(
-            docker_run_command.get_args().collect::<Vec<&OsStr>>(),
-            vec![
-                OsStr::new("run"),
-                OsStr::new("--sig-proxy=false"),
-                OsStr::new("-d"),
-                OsStr::new("--mount"),
-                OsStr::new(
-                    "type=bind,source=/local/project_app,target=/workspaces/project_app,consistency=cached"
-                ),
-                OsStr::new("-l"),
-                OsStr::new("label1=value1"),
-                OsStr::new("-l"),
-                OsStr::new("label2=value2"),
-                OsStr::new("-l"),
-                OsStr::new(
-                    r#"devcontainer.metadata=[{"id":"ghcr.io/devcontainers/features/common-utils:2"},{"id":"ghcr.io/devcontainers/features/git:1","customizations":{"vscode":{"settings":{"github.copilot.chat.codeGeneration.instructions":[{"text":"This dev container includes an up-to-date version of Git, built from source as needed, pre-installed and available on the `PATH`."}]}}}},{"remoteUser":"vscode"}]"#
-                ),
-                OsStr::new("--entrypoint"),
-                OsStr::new("/bin/sh"),
-                OsStr::new("mcr.microsoft.com/devcontainers/base:ubuntu"),
-                OsStr::new("-c"),
-                OsStr::new(
-                    "
-echo Container started
-trap \"exit 0\" 15
-exec \"$@\"
-while sleep 1 & wait $!; do :; done
-                    "
-                    .trim()
-                ),
-                OsStr::new("-"),
-            ]
-        )
-    }
-
-    #[test]
-    fn should_deserialize_docker_ps_with_filters() {
-        // First, deserializes empty
-        let empty_output = Output {
-            status: ExitStatus::default(),
-            stderr: vec![],
-            stdout: String::from("").into_bytes(),
-        };
-
-        let result: Option<DockerPs> = deserialize_json_output(empty_output).unwrap();
-
-        assert!(result.is_none());
-
-        let full_output = Output {
-            status: ExitStatus::default(),
-            stderr: vec![],
-            stdout: String::from(r#"
+    #[gpui::test]
+    async fn test_nonremote_variable_replacement_with_default_mount(cx: &mut TestAppContext) {
+        let fs = FakeFs::new(cx.executor());
+        let given_devcontainer_contents = r#"
+// These are some external comments. serde_lenient should handle them
 {
-    "Command": "\"/bin/sh -c 'echo Co…\"",
-    "CreatedAt": "2026-02-04 15:44:21 -0800 PST",
-    "ID": "abdb6ab59573",
-    "Image": "mcr.microsoft.com/devcontainers/base:ubuntu",
-    "Labels": "desktop.docker.io/mounts/0/Source=/somepath/cli,desktop.docker.io/mounts/0/SourceKind=hostFile,desktop.docker.io/mounts/0/Target=/workspaces/cli,desktop.docker.io/ports.scheme=v2,dev.containers.features=common,dev.containers.id=base-ubuntu,dev.containers.release=v0.4.24,dev.containers.source=https://github.com/devcontainers/images,dev.containers.timestamp=Fri, 30 Jan 2026 16:52:34 GMT,dev.containers.variant=noble,devcontainer.config_file=/somepath/cli/.devcontainer/dev_container_2/devcontainer.json,devcontainer.local_folder=/somepath/cli,devcontainer.metadata=[{\"id\":\"ghcr.io/devcontainers/features/common-utils:2\"},{\"id\":\"ghcr.io/devcontainers/features/git:1\",\"customizations\":{\"vscode\":{\"settings\":{\"github.copilot.chat.codeGeneration.instructions\":[{\"text\":\"This dev container includes an up-to-date version of Git, built from source as needed, pre-installed and available on the `PATH`.\"}]}}}},{\"remoteUser\":\"vscode\"}],org.opencontainers.image.ref.name=ubuntu,org.opencontainers.image.version=24.04,version=2.1.6",
-    "LocalVolumes": "0",
-    "Mounts": "/host_mnt/User…",
-    "Names": "objective_haslett",
-    "Networks": "bridge",
-    "Platform": {
-    "architecture": "arm64",
-    "os": "linux"
-    },
-    "Ports": "",
-    "RunningFor": "47 hours ago",
-    "Size": "0B",
-    "State": "running",
-    "Status": "Up 47 hours"
-}
-                "#).into_bytes(),
-        };
+    // These are some internal comments
+    "image": "mcr.microsoft.com/devcontainers/base:ubuntu",
+    "name": "myDevContainer-${devcontainerId}",
+    "remoteUser": "root",
+    "remoteEnv": {
+        "DEVCONTAINER_ID": "${devcontainerId}",
+        "MYVAR2": "myvarothervalue",
+        "REMOTE_WORKSPACE_FOLDER_BASENAME": "${containerWorkspaceFolderBasename}",
+        "LOCAL_WORKSPACE_FOLDER_BASENAME": "${localWorkspaceFolderBasename}",
+        "REMOTE_WORKSPACE_FOLDER": "${containerWorkspaceFolder}",
+        "LOCAL_WORKSPACE_FOLDER": "${localWorkspaceFolder}",
+        "LOCAL_ENV_VAR_1": "${localEnv:local_env_1}",
+        "LOCAL_ENV_VAR_2": "${localEnv:my_other_env}"
 
-        let result: Option<DockerPs> = deserialize_json_output(full_output).unwrap();
-
-        assert!(result.is_some());
-        let result = result.unwrap();
-        assert_eq!(result.id, "abdb6ab59573".to_string());
-    }
-
-    #[test]
-    fn should_deserialize_docker_labels() {
-        let given_config = r#"
-{"Id":"fca38334e88f9045a8cc41ebe0dc94e955a74dda2e526ed7546cf7a0f27b5b75","Created":"2026-02-09T23:22:15.585555798Z","Path":"/bin/sh","Args":["-c","echo Container started\ntrap \"exit 0\" 15\nexec \"$@\"\nwhile sleep 1 & wait $!; do :; done","-"],"State":{"Status":"running","Running":true,"Paused":false,"Restarting":false,"OOMKilled":false,"Dead":false,"Pid":94196,"ExitCode":0,"Error":"","StartedAt":"2026-02-09T23:22:15.628810548Z","FinishedAt":"0001-01-01T00:00:00Z"},"Image":"sha256:3dcb059253b2ebb44de3936620e1cff3dadcd2c1c982d579081ca8128c1eb319","ResolvConfPath":"/var/lib/docker/containers/fca38334e88f9045a8cc41ebe0dc94e955a74dda2e526ed7546cf7a0f27b5b75/resolv.conf","HostnamePath":"/var/lib/docker/containers/fca38334e88f9045a8cc41ebe0dc94e955a74dda2e526ed7546cf7a0f27b5b75/hostname","HostsPath":"/var/lib/docker/containers/fca38334e88f9045a8cc41ebe0dc94e955a74dda2e526ed7546cf7a0f27b5b75/hosts","LogPath":"/var/lib/docker/containers/fca38334e88f9045a8cc41ebe0dc94e955a74dda2e526ed7546cf7a0f27b5b75/fca38334e88f9045a8cc41ebe0dc94e955a74dda2e526ed7546cf7a0f27b5b75-json.log","Name":"/magical_easley","RestartCount":0,"Driver":"overlayfs","Platform":"linux","MountLabel":"","ProcessLabel":"","AppArmorProfile":"","ExecIDs":null,"HostConfig":{"Binds":null,"ContainerIDFile":"","LogConfig":{"Type":"json-file","Config":{}},"NetworkMode":"bridge","PortBindings":{},"RestartPolicy":{"Name":"no","MaximumRetryCount":0},"AutoRemove":false,"VolumeDriver":"","VolumesFrom":null,"ConsoleSize":[0,0],"CapAdd":null,"CapDrop":null,"CgroupnsMode":"private","Dns":[],"DnsOptions":[],"DnsSearch":[],"ExtraHosts":null,"GroupAdd":null,"IpcMode":"private","Cgroup":"","Links":null,"OomScoreAdj":0,"PidMode":"","Privileged":false,"PublishAllPorts":false,"ReadonlyRootfs":false,"SecurityOpt":null,"UTSMode":"","UsernsMode":"","ShmSize":67108864,"Runtime":"runc","Isolation":"","CpuShares":0,"Memory":0,"NanoCpus":0,"CgroupParent":"","BlkioWeight":0,"BlkioWeightDevice":[],"BlkioDeviceReadBps":[],"BlkioDeviceWriteBps":[],"BlkioDeviceReadIOps":[],"BlkioDeviceWriteIOps":[],"CpuPeriod":0,"CpuQuota":0,"CpuRealtimePeriod":0,"CpuRealtimeRuntime":0,"CpusetCpus":"","CpusetMems":"","Devices":[],"DeviceCgroupRules":null,"DeviceRequests":null,"MemoryReservation":0,"MemorySwap":0,"MemorySwappiness":null,"OomKillDisable":null,"PidsLimit":null,"Ulimits":[],"CpuCount":0,"CpuPercent":0,"IOMaximumIOps":0,"IOMaximumBandwidth":0,"Mounts":[{"Type":"bind","Source":"/somepath/rustwebstarter","Target":"/workspaces/rustwebstarter","Consistency":"cached"}],"MaskedPaths":["/proc/asound","/proc/acpi","/proc/interrupts","/proc/kcore","/proc/keys","/proc/latency_stats","/proc/timer_list","/proc/timer_stats","/proc/sched_debug","/proc/scsi","/sys/firmware","/sys/devices/virtual/powercap"],"ReadonlyPaths":["/proc/bus","/proc/fs","/proc/irq","/proc/sys","/proc/sysrq-trigger"]},"GraphDriver":{"Data":null,"Name":"overlayfs"},"Mounts":[{"Type":"bind","Source":"/somepath/rustwebstarter","Destination":"/workspaces/rustwebstarter","Mode":"","RW":true,"Propagation":"rprivate"}],"Config":{"Hostname":"fca38334e88f","Domainname":"","User":"root","AttachStdin":false,"AttachStdout":false,"AttachStderr":false,"Tty":false,"OpenStdin":false,"StdinOnce":false,"Env":["PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"],"Cmd":["-c","echo Container started\ntrap \"exit 0\" 15\nexec \"$@\"\nwhile sleep 1 & wait $!; do :; done","-"],"Image":"mcr.microsoft.com/devcontainers/base:ubuntu","Volumes":null,"WorkingDir":"","Entrypoint":["/bin/sh"],"OnBuild":null,"Labels":{"dev.containers.features":"common","dev.containers.id":"base-ubuntu","dev.containers.release":"v0.4.24","dev.containers.source":"https://github.com/devcontainers/images","dev.containers.timestamp":"Fri, 30 Jan 2026 16:52:34 GMT","dev.containers.variant":"noble","devcontainer.config_file":".devcontainer/devcontainer.json","devcontainer.local_folder":"/somepath/rustwebstarter","devcontainer.metadata":"[ {\"id\":\"ghcr.io/devcontainers/features/common-utils:2\"}, {\"id\":\"ghcr.io/devcontainers/features/git:1\",\"customizations\":{\"vscode\":{\"settings\":{\"github.copilot.chat.codeGeneration.instructions\":[{\"text\":\"This dev container includes an up-to-date version of Git, built from source as needed, pre-installed and available on the `PATH`.\"}]}}}}, {\"remoteUser\":\"vscode\"} ]","org.opencontainers.image.ref.name":"ubuntu","org.opencontainers.image.version":"24.04","version":"2.1.6"},"StopTimeout":1},"NetworkSettings":{"Bridge":"","SandboxID":"ef2f9f610d87de6bf6061627a0cadb2b89e918bafba92e0e4e9e877d092315c7","SandboxKey":"/var/run/docker/netns/ef2f9f610d87","Ports":{},"HairpinMode":false,"LinkLocalIPv6Address":"","LinkLocalIPv6PrefixLen":0,"SecondaryIPAddresses":null,"SecondaryIPv6Addresses":null,"EndpointID":"50b3501ee308c36e212a025b4f4ddd4ffbd6aeeafa986350ea7d9fe5e16e2c8c","Gateway":"172.17.0.1","GlobalIPv6Address":"","GlobalIPv6PrefixLen":0,"IPAddress":"172.17.0.4","IPPrefixLen":16,"IPv6Gateway":"","MacAddress":"ca:02:9f:22:fd:8e","Networks":{"bridge":{"IPAMConfig":null,"Links":null,"Aliases":null,"MacAddress":"ca:02:9f:22:fd:8e","DriverOpts":null,"GwPriority":0,"NetworkID":"51bb8ccc4d1281db44f16d915963fc728619d4a68e2f90e5ea8f1cb94885063e","EndpointID":"50b3501ee308c36e212a025b4f4ddd4ffbd6aeeafa986350ea7d9fe5e16e2c8c","Gateway":"172.17.0.1","IPAddress":"172.17.0.4","IPPrefixLen":16,"IPv6Gateway":"","GlobalIPv6Address":"","GlobalIPv6PrefixLen":0,"DNSNames":null}}},"ImageManifestDescriptor":{"mediaType":"application/vnd.oci.image.manifest.v1+json","digest":"sha256:39c3436527190561948236894c55b59fa58aa08d68d8867e703c8d5ab72a3593","size":2195,"platform":{"architecture":"arm64","os":"linux"}}}
-            "#;
-
-        let deserialized = serde_json_lenient::from_str::<DockerInspect>(given_config);
-        assert!(deserialized.is_ok());
-        let config = deserialized.unwrap();
-        let remote_user = get_remote_user_from_config(
-            &config,
-            &DevContainerManifest {
-                config: DevContainer {
-                    image: None,
-                    name: None,
-                    remote_user: None,
-                    ..Default::default()
-                },
-                ..Default::default()
-            },
-        );
-
-        assert!(remote_user.is_ok());
-        assert_eq!(remote_user.unwrap(), "vscode".to_string())
-    }
-
-    #[test]
-    fn should_get_target_dir_from_docker_inspect() {
-        let given_config = r#"
-{
-  "Id": "abdb6ab59573659b11dac9f4973796741be35b642c9b48960709304ce46dbf85",
-  "Created": "2026-02-04T23:44:21.802688084Z",
-  "Path": "/bin/sh",
-  "Args": [
-    "-c",
-    "echo Container started\ntrap \"exit 0\" 15\n\nexec \"$@\"\nwhile sleep 1 & wait $!; do :; done",
-    "-"
-  ],
-  "State": {
-    "Status": "running",
-    "Running": true,
-    "Paused": false,
-    "Restarting": false,
-    "OOMKilled": false,
-    "Dead": false,
-    "Pid": 23087,
-    "ExitCode": 0,
-    "Error": "",
-    "StartedAt": "2026-02-04T23:44:21.954875084Z",
-    "FinishedAt": "0001-01-01T00:00:00Z"
-  },
-  "Image": "sha256:3dcb059253b2ebb44de3936620e1cff3dadcd2c1c982d579081ca8128c1eb319",
-  "ResolvConfPath": "/var/lib/docker/containers/abdb6ab59573659b11dac9f4973796741be35b642c9b48960709304ce46dbf85/resolv.conf",
-  "HostnamePath": "/var/lib/docker/containers/abdb6ab59573659b11dac9f4973796741be35b642c9b48960709304ce46dbf85/hostname",
-  "HostsPath": "/var/lib/docker/containers/abdb6ab59573659b11dac9f4973796741be35b642c9b48960709304ce46dbf85/hosts",
-  "LogPath": "/var/lib/docker/containers/abdb6ab59573659b11dac9f4973796741be35b642c9b48960709304ce46dbf85/abdb6ab59573659b11dac9f4973796741be35b642c9b48960709304ce46dbf85-json.log",
-  "Name": "/objective_haslett",
-  "RestartCount": 0,
-  "Driver": "overlayfs",
-  "Platform": "linux",
-  "MountLabel": "",
-  "ProcessLabel": "",
-  "AppArmorProfile": "",
-  "ExecIDs": [
-    "008019d93df4107fcbba78bcc6e1ed7e121844f36c26aca1a56284655a6adb53"
-  ],
-  "HostConfig": {
-    "Binds": null,
-    "ContainerIDFile": "",
-    "LogConfig": {
-      "Type": "json-file",
-      "Config": {}
-    },
-    "NetworkMode": "bridge",
-    "PortBindings": {},
-    "RestartPolicy": {
-      "Name": "no",
-      "MaximumRetryCount": 0
-    },
-    "AutoRemove": false,
-    "VolumeDriver": "",
-    "VolumesFrom": null,
-    "ConsoleSize": [
-      0,
-      0
-    ],
-    "CapAdd": null,
-    "CapDrop": null,
-    "CgroupnsMode": "private",
-    "Dns": [],
-    "DnsOptions": [],
-    "DnsSearch": [],
-    "ExtraHosts": null,
-    "GroupAdd": null,
-    "IpcMode": "private",
-    "Cgroup": "",
-    "Links": null,
-    "OomScoreAdj": 0,
-    "PidMode": "",
-    "Privileged": false,
-    "PublishAllPorts": false,
-    "ReadonlyRootfs": false,
-    "SecurityOpt": null,
-    "UTSMode": "",
-    "UsernsMode": "",
-    "ShmSize": 67108864,
-    "Runtime": "runc",
-    "Isolation": "",
-    "CpuShares": 0,
-    "Memory": 0,
-    "NanoCpus": 0,
-    "CgroupParent": "",
-    "BlkioWeight": 0,
-    "BlkioWeightDevice": [],
-    "BlkioDeviceReadBps": [],
-    "BlkioDeviceWriteBps": [],
-    "BlkioDeviceReadIOps": [],
-    "BlkioDeviceWriteIOps": [],
-    "CpuPeriod": 0,
-    "CpuQuota": 0,
-    "CpuRealtimePeriod": 0,
-    "CpuRealtimeRuntime": 0,
-    "CpusetCpus": "",
-    "CpusetMems": "",
-    "Devices": [],
-    "DeviceCgroupRules": null,
-    "DeviceRequests": null,
-    "MemoryReservation": 0,
-    "MemorySwap": 0,
-    "MemorySwappiness": null,
-    "OomKillDisable": null,
-    "PidsLimit": null,
-    "Ulimits": [],
-    "CpuCount": 0,
-    "CpuPercent": 0,
-    "IOMaximumIOps": 0,
-    "IOMaximumBandwidth": 0,
-    "Mounts": [
-      {
-        "Type": "bind",
-        "Source": "/somepath/cli",
-        "Target": "/workspaces/cli",
-        "Consistency": "cached"
-      }
-    ],
-    "MaskedPaths": [
-      "/proc/asound",
-      "/proc/acpi",
-      "/proc/interrupts",
-      "/proc/kcore",
-      "/proc/keys",
-      "/proc/latency_stats",
-      "/proc/timer_list",
-      "/proc/timer_stats",
-      "/proc/sched_debug",
-      "/proc/scsi",
-      "/sys/firmware",
-      "/sys/devices/virtual/powercap"
-    ],
-    "ReadonlyPaths": [
-      "/proc/bus",
-      "/proc/fs",
-      "/proc/irq",
-      "/proc/sys",
-      "/proc/sysrq-trigger"
-    ]
-  },
-  "GraphDriver": {
-    "Data": null,
-    "Name": "overlayfs"
-  },
-  "Mounts": [
-    {
-      "Type": "bind",
-      "Source": "/somepath/cli",
-      "Destination": "/workspaces/cli",
-      "Mode": "",
-      "RW": true,
-      "Propagation": "rprivate"
-    }
-  ],
-  "Config": {
-    "Hostname": "abdb6ab59573",
-    "Domainname": "",
-    "User": "root",
-    "AttachStdin": false,
-    "AttachStdout": true,
-    "AttachStderr": true,
-    "Tty": false,
-    "OpenStdin": false,
-    "StdinOnce": false,
-    "Env": [
-      "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
-    ],
-    "Cmd": [
-      "-c",
-      "echo Container started\ntrap \"exit 0\" 15\n\nexec \"$@\"\nwhile sleep 1 & wait $!; do :; done",
-      "-"
-    ],
-    "Image": "mcr.microsoft.com/devcontainers/base:ubuntu",
-    "Volumes": null,
-    "WorkingDir": "",
-    "Entrypoint": [
-      "/bin/sh"
-    ],
-    "OnBuild": null,
-    "Labels": {
-      "dev.containers.features": "common",
-      "dev.containers.id": "base-ubuntu",
-      "dev.containers.release": "v0.4.24",
-      "dev.containers.source": "https://github.com/devcontainers/images",
-      "dev.containers.timestamp": "Fri, 30 Jan 2026 16:52:34 GMT",
-      "dev.containers.variant": "noble",
-      "devcontainer.config_file": "/somepath/cli/.devcontainer/dev_container_2/devcontainer.json",
-      "devcontainer.local_folder": "/somepath/cli",
-      "devcontainer.metadata": "[{\"id\":\"ghcr.io/devcontainers/features/common-utils:2\"},{\"id\":\"ghcr.io/devcontainers/features/git:1\",\"customizations\":{\"vscode\":{\"settings\":{\"github.copilot.chat.codeGeneration.instructions\":[{\"text\":\"This dev container includes an up-to-date version of Git, built from source as needed, pre-installed and available on the `PATH`.\"}]}}}},{\"remoteUser\":\"vscode\"}]",
-      "org.opencontainers.image.ref.name": "ubuntu",
-      "org.opencontainers.image.version": "24.04",
-      "version": "2.1.6"
-    },
-    "StopTimeout": 1
-  },
-  "NetworkSettings": {
-    "Bridge": "",
-    "SandboxID": "2a94990d542fe532deb75f1cc67f761df2d669e3b41161f914079e88516cc54b",
-    "SandboxKey": "/var/run/docker/netns/2a94990d542f",
-    "Ports": {},
-    "HairpinMode": false,
-    "LinkLocalIPv6Address": "",
-    "LinkLocalIPv6PrefixLen": 0,
-    "SecondaryIPAddresses": null,
-    "SecondaryIPv6Addresses": null,
-    "EndpointID": "ef5b35a8fbb145565853e1a1d960e737fcc18c20920e96494e4c0cfc55683570",
-    "Gateway": "172.17.0.1",
-    "GlobalIPv6Address": "",
-    "GlobalIPv6PrefixLen": 0,
-    "IPAddress": "172.17.0.3",
-    "IPPrefixLen": 16,
-    "IPv6Gateway": "",
-    "MacAddress": "",
-    "Networks": {
-      "bridge": {
-        "IPAMConfig": null,
-        "Links": null,
-        "Aliases": null,
-        "MacAddress": "9a:ec:af:8a:ac:81",
-        "DriverOpts": null,
-        "GwPriority": 0,
-        "NetworkID": "51bb8ccc4d1281db44f16d915963fc728619d4a68e2f90e5ea8f1cb94885063e",
-        "EndpointID": "ef5b35a8fbb145565853e1a1d960e737fcc18c20920e96494e4c0cfc55683570",
-        "Gateway": "172.17.0.1",
-        "IPAddress": "172.17.0.3",
-        "IPPrefixLen": 16,
-        "IPv6Gateway": "",
-        "GlobalIPv6Address": "",
-        "GlobalIPv6PrefixLen": 0,
-        "DNSNames": null
-      }
-    }
-  },
-  "ImageManifestDescriptor": {
-    "mediaType": "application/vnd.oci.image.manifest.v1+json",
-    "digest": "sha256:39c3436527190561948236894c55b59fa58aa08d68d8867e703c8d5ab72a3593",
-    "size": 2195,
-    "platform": {
-      "architecture": "arm64",
-      "os": "linux"
-    }
-  }
-}
-            "#;
-        let config = serde_json_lenient::from_str::<DockerInspect>(given_config).unwrap();
-
-        let target_dir = get_remote_dir_from_config(&config, "/somepath/cli".to_string());
-
-        assert!(target_dir.is_ok());
-        assert_eq!(target_dir.unwrap(), "/workspaces/cli/".to_string());
-    }
-
-    #[test]
-    fn should_inject_correct_parameters_into_dockerfile_extended() {
-        let (feature_layers, container_user, remote_user) = (
-            r#"RUN --mount=type=bind,from=dev_containers_feature_content_source,source=./copilot-cli_0,target=/tmp/build-features-src/copilot-cli_0 \
-    cp -ar /tmp/build-features-src/copilot-cli_0 /tmp/dev-container-features \
-&& chmod -R 0755 /tmp/dev-container-features/copilot-cli_0 \
-&& cd /tmp/dev-container-features/copilot-cli_0 \
-&& chmod +x ./devcontainer-features-install.sh \
-&& ./devcontainer-features-install.sh \
-&& rm -rf /tmp/dev-container-features/copilot-cli_0
-            "#.trim(),
-            "container_user",
-            "remote_user",
-        );
-
-        let dockerfile_extended =
-            generate_dockerfile_extended(feature_layers, container_user, remote_user, None);
-
-        assert_eq!(dockerfile_extended.trim(),
-            r#"ARG _DEV_CONTAINERS_BASE_IMAGE=placeholder
-
-
-
-FROM $_DEV_CONTAINERS_BASE_IMAGE AS dev_containers_feature_content_normalize
-USER root
-COPY --from=dev_containers_feature_content_source ./devcontainer-features.builtin.env /tmp/build-features/
-RUN chmod -R 0755 /tmp/build-features/
-
-FROM $_DEV_CONTAINERS_BASE_IMAGE AS dev_containers_target_stage
-
-USER root
-
-RUN mkdir -p /tmp/dev-container-features
-COPY --from=dev_containers_feature_content_normalize /tmp/build-features/ /tmp/dev-container-features
-
-RUN \
-echo "_CONTAINER_USER_HOME=$( (command -v getent >/dev/null 2>&1 && getent passwd 'container_user' || grep -E '^container_user|^[^:]*:[^:]*:container_user:' /etc/passwd || true) | cut -d: -f6)" >> /tmp/dev-container-features/devcontainer-features.builtin.env && \
-echo "_REMOTE_USER_HOME=$( (command -v getent >/dev/null 2>&1 && getent passwd 'remote_user' || grep -E '^remote_user|^[^:]*:[^:]*:remote_user:' /etc/passwd || true) | cut -d: -f6)" >> /tmp/dev-container-features/devcontainer-features.builtin.env
-
-RUN --mount=type=bind,from=dev_containers_feature_content_source,source=./copilot-cli_0,target=/tmp/build-features-src/copilot-cli_0 \
-    cp -ar /tmp/build-features-src/copilot-cli_0 /tmp/dev-container-features \
-&& chmod -R 0755 /tmp/dev-container-features/copilot-cli_0 \
-&& cd /tmp/dev-container-features/copilot-cli_0 \
-&& chmod +x ./devcontainer-features-install.sh \
-&& ./devcontainer-features-install.sh \
-&& rm -rf /tmp/dev-container-features/copilot-cli_0
-
-ARG _DEV_CONTAINERS_IMAGE_USER=root
-USER $_DEV_CONTAINERS_IMAGE_USER
-            "#.trim()
-        );
-
-        let dockerfile = r#"
-ARG VARIANT="16-bullseye"
-FROM mcr.microsoft.com/devcontainers/typescript-node:1-${VARIANT}
-
-RUN mkdir -p /workspaces && chown node:node /workspaces
-
-ARG USERNAME=node
-USER $USERNAME
-
-# Save command line history
-RUN echo "hello, world""#
-            .trim()
-            .to_string();
-
-        let dockerfile_extended = generate_dockerfile_extended(
-            feature_layers,
-            container_user,
-            remote_user,
-            Some(dockerfile),
-        );
-
-        assert_eq!(dockerfile_extended.trim(),
-            r#"ARG _DEV_CONTAINERS_BASE_IMAGE=placeholder
-
-ARG VARIANT="16-bullseye"
-FROM mcr.microsoft.com/devcontainers/typescript-node:1-${VARIANT} AS dev_container_auto_added_stage_label
-
-RUN mkdir -p /workspaces && chown node:node /workspaces
-
-ARG USERNAME=node
-USER $USERNAME
-
-# Save command line history
-RUN echo "hello, world"
-
-FROM $_DEV_CONTAINERS_BASE_IMAGE AS dev_containers_feature_content_normalize
-USER root
-COPY --from=dev_containers_feature_content_source ./devcontainer-features.builtin.env /tmp/build-features/
-RUN chmod -R 0755 /tmp/build-features/
-
-FROM $_DEV_CONTAINERS_BASE_IMAGE AS dev_containers_target_stage
-
-USER root
-
-RUN mkdir -p /tmp/dev-container-features
-COPY --from=dev_containers_feature_content_normalize /tmp/build-features/ /tmp/dev-container-features
-
-RUN \
-echo "_CONTAINER_USER_HOME=$( (command -v getent >/dev/null 2>&1 && getent passwd 'container_user' || grep -E '^container_user|^[^:]*:[^:]*:container_user:' /etc/passwd || true) | cut -d: -f6)" >> /tmp/dev-container-features/devcontainer-features.builtin.env && \
-echo "_REMOTE_USER_HOME=$( (command -v getent >/dev/null 2>&1 && getent passwd 'remote_user' || grep -E '^remote_user|^[^:]*:[^:]*:remote_user:' /etc/passwd || true) | cut -d: -f6)" >> /tmp/dev-container-features/devcontainer-features.builtin.env
-
-RUN --mount=type=bind,from=dev_containers_feature_content_source,source=./copilot-cli_0,target=/tmp/build-features-src/copilot-cli_0 \
-    cp -ar /tmp/build-features-src/copilot-cli_0 /tmp/dev-container-features \
-&& chmod -R 0755 /tmp/dev-container-features/copilot-cli_0 \
-&& cd /tmp/dev-container-features/copilot-cli_0 \
-&& chmod +x ./devcontainer-features-install.sh \
-&& ./devcontainer-features-install.sh \
-&& rm -rf /tmp/dev-container-features/copilot-cli_0
-
-ARG _DEV_CONTAINERS_IMAGE_USER=root
-USER $_DEV_CONTAINERS_IMAGE_USER
-            "#.trim()
-        );
-    }
-
-    #[test]
-    fn should_create_docker_compose_command() {
-        let docker_compose_files = vec![
-            PathBuf::from("/var/test/docker-compose.yml"),
-            PathBuf::from("/var/other/docker-compose2.yml"),
-        ];
-
-        let command = create_docker_compose_config_command(&docker_compose_files).unwrap();
-
-        assert_eq!(command.get_program(), OsStr::new(docker_cli()));
-
-        assert_eq!(
-            command.get_args().collect::<Vec<&OsStr>>(),
-            vec![
-                OsStr::new("compose"),
-                OsStr::new("-f"),
-                OsStr::new("/var/test/docker-compose.yml"),
-                OsStr::new("-f"),
-                OsStr::new("/var/other/docker-compose2.yml"),
-                OsStr::new("config"),
-                OsStr::new("--format"),
-                OsStr::new("json"),
-            ]
-        )
-    }
-
-    #[test]
-    fn should_deserialize_docker_compose_config() {
-        let given_config = r#"
-{
-    "name": "devcontainer",
-    "networks": {
-    "default": {
-        "name": "devcontainer_default",
-        "ipam": {}
-    }
-    },
-    "services": {
-        "app": {
-            "command": [
-            "sleep",
-            "infinity"
-            ],
-            "depends_on": {
-            "db": {
-                "condition": "service_started",
-                "restart": true,
-                "required": true
-            }
-            },
-            "entrypoint": null,
-            "environment": {
-            "POSTGRES_DB": "postgres",
-            "POSTGRES_HOSTNAME": "localhost",
-            "POSTGRES_PASSWORD": "postgres",
-            "POSTGRES_PORT": "5432",
-            "POSTGRES_USER": "postgres"
-            },
-            "image": "mcr.microsoft.com/devcontainers/rust:2-1-bookworm",
-            "network_mode": "service:db",
-            "volumes": [
-            {
-                "type": "bind",
-                "source": "/Users/kylebarton/Source",
-                "target": "/workspaces",
-                "bind": {
-                "create_host_path": true
-                }
-            }
-            ]
-        },
-        "db": {
-            "command": null,
-            "entrypoint": null,
-            "environment": {
-            "POSTGRES_DB": "postgres",
-            "POSTGRES_HOSTNAME": "localhost",
-            "POSTGRES_PASSWORD": "postgres",
-            "POSTGRES_PORT": "5432",
-            "POSTGRES_USER": "postgres"
-            },
-            "image": "postgres:14.1",
-            "networks": {
-            "default": null
-            },
-            "restart": "unless-stopped",
-            "volumes": [
-            {
-                "type": "volume",
-                "source": "postgres-data",
-                "target": "/var/lib/postgresql/data",
-                "volume": {}
-            }
-            ]
-        }
-    },
-    "volumes": {
-    "postgres-data": {
-        "name": "devcontainer_postgres-data"
-    }
     }
 }
-            "#;
-
-        let docker_compose_config: DockerComposeConfig =
-            serde_json_lenient::from_str(given_config).unwrap();
-
-        let expected_config = DockerComposeConfig {
-            name: Some("devcontainer".to_string()),
-            services: HashMap::from([
-                (
-                    "app".to_string(),
-                    DockerComposeService {
-                        image: Some(
-                            "mcr.microsoft.com/devcontainers/rust:2-1-bookworm".to_string(),
-                        ),
-                        ..Default::default()
-                    },
-                ),
-                (
-                    "db".to_string(),
-                    DockerComposeService {
-                        image: Some("postgres:14.1".to_string()),
-                        ..Default::default()
-                    },
-                ),
+                    "#;
+        let devcontainer_manifest = init_devcontainer_manifest(
+            fs,
+            HashMap::from([
+                ("local_env_1".to_string(), "local_env_value1".to_string()),
+                ("my_other_env".to_string(), "THISVALUEHERE".to_string()),
             ]),
-            ..Default::default()
-        };
+            given_devcontainer_contents,
+        )
+        .await
+        .unwrap();
 
-        assert_eq!(docker_compose_config, expected_config);
-    }
-
-    #[test]
-    fn should_find_primary_service_in_docker_compose() {
-        // State where service not defined in dev container
-        let given_dev_container = DevContainerManifest::default();
-        let given_docker_compose_config = DockerComposeResources {
-            config: DockerComposeConfig {
-                name: Some("devcontainers".to_string()),
-                services: HashMap::new(),
-                ..Default::default()
-            },
-            ..Default::default()
-        };
-
-        let bad_result = find_primary_service(&given_docker_compose_config, &given_dev_container);
-
-        assert!(bad_result.is_err());
-
-        // State where service defined in devcontainer, not found in DockerCompose config
-        let given_dev_container = DevContainerManifest {
-            config: DevContainer {
-                service: Some("not_found_service".to_string()),
-                ..Default::default()
-            },
-            ..Default::default()
-        };
-        let given_docker_compose_config = DockerComposeResources {
-            config: DockerComposeConfig {
-                name: Some("devcontainers".to_string()),
-                services: HashMap::new(),
-                ..Default::default()
-            },
-            ..Default::default()
-        };
-
-        let bad_result = find_primary_service(&given_docker_compose_config, &given_dev_container);
-
-        assert!(bad_result.is_err());
-        // State where service defined in devcontainer and in DockerCompose config
-        let given_dev_container = DevContainerManifest {
-            config: DevContainer {
-                service: Some("found_service".to_string()),
-                ..Default::default()
-            },
-            ..Default::default()
-        };
-        let given_docker_compose_config = DockerComposeResources {
-            config: DockerComposeConfig {
-                name: Some("devcontainers".to_string()),
-                services: HashMap::from([(
-                    "found_service".to_string(),
-                    DockerComposeService {
-                        ..Default::default()
-                    },
-                )]),
-                ..Default::default()
-            },
-            ..Default::default()
-        };
-
-        let (service_name, _) =
-            find_primary_service(&given_docker_compose_config, &given_dev_container).unwrap();
-
-        assert_eq!(service_name, "found_service".to_string());
-    }
-
-    #[test]
-    fn should_build_runtime_override() {
-        let devcontainer_manifest = DevContainerManifest {
-            local_project_directory: PathBuf::from("/path/to/project"),
-            config_directory: PathBuf::from("/path/to/project/.devcontainer"),
-            file_name: "devcontainer.json".to_string(),
-            ..Default::default()
-        };
-
-        let docker_image = DockerInspect {
-            id: "id".to_string(),
-            // Todo add some labels and make this test pass
-            config: DockerInspectConfig {
-                labels: DockerConfigLabels { metadata: None },
-                image_user: None,
-            },
-            mounts: None,
-        };
-
-        let resources = DockerBuildResources {
-            image: docker_image,
-            additional_mounts: vec![],
-            privileged: false,
-            entrypoints: vec![],
-        };
-
-        let runtime_override = devcontainer_manifest
-            .build_runtime_override("app", resources)
+        let variable_replaced_devcontainer = devcontainer_manifest
+            .replace_nonremote_vars(given_devcontainer_contents)
+            .and_then(|raw| deserialize_devcontainer_json(&raw))
             .unwrap();
 
-        // ugh how are we going to do labels
-        let expected_runtime_override = DockerComposeConfig {
-            name: None,
-            services: HashMap::from([(
-                "app".to_string(),
-                DockerComposeService {
-                    entrypoint: Some(vec![
-                        "/bin/sh".to_string(),
-                        "-c".to_string(),
-                        "
-echo Container started
-trap \"exit 0\" 15
-exec \"$@\"
-while sleep 1 & wait $!; do :; done"
-                            .to_string(),
-                        "-".to_string(),
-                    ]),
-                    cap_add: Some(vec!["SYS_PTRACE".to_string()]),
-                    security_opt: Some(vec!["seccomp=unconfined".to_string()]),
-                    labels: Some(vec!["label1=label1val".to_string()]),
-                    ..Default::default()
-                },
-            )]),
-            ..Default::default()
-        };
-
-        assert_eq!(runtime_override, expected_runtime_override)
-    }
-
-    // TODO turn this into a merged config test more broadly
-    #[test]
-    fn test_privileged() {
-        let dev_container = DevContainer::default();
-
-        let feature_manifests = vec![FeatureManifest::new(
-            PathBuf::from("/"),
-            DevContainerFeatureJson {
-                _id: None,
-                options: HashMap::new(),
-                mounts: None,
-                privileged: Some(true),
-                entrypoint: None,
-            },
-        )];
-
-        let privileged = dev_container.privileged.unwrap_or(false)
-            || feature_manifests.iter().any(|f| f.privileged());
-
-        assert!(privileged);
-    }
-
-    // Ok, let's get the docker run stuff into DevContainerManifest and then go from here
-    #[test]
-    fn test_remote_workspace_folder() {
-        let devcontainer_manifest = DevContainerManifest {
-            config: DevContainer::default(),
-            config_directory: PathBuf::from("/path/to/local/project/.devcontainer"),
-            local_project_directory: PathBuf::from("/path/to/local/project"),
-            ..Default::default()
-        };
-
+        // ${devcontainerId}
+        let devcontainer_id = devcontainer_manifest.devcontainer_id();
         assert_eq!(
-            devcontainer_manifest.remote_workspace_mount(),
-            Ok(PathBuf::from("/workspaces/project")),
+            variable_replaced_devcontainer.name,
+            Some(format!("myDevContainer-{devcontainer_id}"))
+        );
+        assert_eq!(
+            variable_replaced_devcontainer
+                .remote_env
+                .as_ref()
+                .and_then(|env| env.get("DEVCONTAINER_ID")),
+            Some(&devcontainer_id)
         );
 
-        let devcontainer_manifest = DevContainerManifest {
-            config: DevContainer {
-                workspace_mount: Some(MountDefinition {
-                    source: "/path/to/local/project/subfolder".to_string(),
-                    target: "/specialworkspace".to_string(),
-                    mount_type: Some("bind".to_string()),
-                }),
-                workspace_folder: Some("/specialworkspace/subfolder".to_string()),
-                ..Default::default()
-            },
-            config_directory: PathBuf::from("/path/to/local/project/.devcontainer"),
-            local_project_directory: PathBuf::from("/path/to/local/project"),
-            ..Default::default()
-        };
-
+        // ${containerWorkspaceFolderBasename}
         assert_eq!(
-            devcontainer_manifest.remote_workspace_mount(),
-            Ok(PathBuf::from("/specialworkspace"))
-        )
+            variable_replaced_devcontainer
+                .remote_env
+                .as_ref()
+                .and_then(|env| env.get("REMOTE_WORKSPACE_FOLDER_BASENAME")),
+            Some(&test_project_filename())
+        );
+
+        // ${localWorkspaceFolderBasename}
+        assert_eq!(
+            variable_replaced_devcontainer
+                .remote_env
+                .as_ref()
+                .and_then(|env| env.get("LOCAL_WORKSPACE_FOLDER_BASENAME")),
+            Some(&test_project_filename())
+        );
+
+        // ${containerWorkspaceFolder}
+        assert_eq!(
+            variable_replaced_devcontainer
+                .remote_env
+                .as_ref()
+                .and_then(|env| env.get("REMOTE_WORKSPACE_FOLDER")),
+            Some(&format!("/workspaces/{}", test_project_filename()))
+        );
+
+        // ${localWorkspaceFolder}
+        assert_eq!(
+            variable_replaced_devcontainer
+                .remote_env
+                .as_ref()
+                .and_then(|env| env.get("LOCAL_WORKSPACE_FOLDER")),
+            Some(&TEST_PROJECT_PATH.to_string())
+        );
+
+        // ${localEnv:VARIABLE_NAME}
+        assert_eq!(
+            variable_replaced_devcontainer
+                .remote_env
+                .as_ref()
+                .and_then(|env| env.get("LOCAL_ENV_VAR_1")),
+            Some(&"local_env_value1".to_string())
+        );
+        assert_eq!(
+            variable_replaced_devcontainer
+                .remote_env
+                .as_ref()
+                .and_then(|env| env.get("LOCAL_ENV_VAR_2")),
+            Some(&"THISVALUEHERE".to_string())
+        );
+    }
+
+    #[gpui::test]
+    async fn test_nonremote_variable_replacement_with_explicit_mount(cx: &mut TestAppContext) {
+        let fs = FakeFs::new(cx.executor());
+        let given_devcontainer_contents = r#"
+                // These are some external comments. serde_lenient should handle them
+                {
+                    // These are some internal comments
+                    "image": "mcr.microsoft.com/devcontainers/base:ubuntu",
+                    "name": "myDevContainer-${devcontainerId}",
+                    "remoteUser": "root",
+                    "remoteEnv": {
+                        "DEVCONTAINER_ID": "${devcontainerId}",
+                        "MYVAR2": "myvarothervalue",
+                        "REMOTE_WORKSPACE_FOLDER_BASENAME": "${containerWorkspaceFolderBasename}",
+                        "LOCAL_WORKSPACE_FOLDER_BASENAME": "${localWorkspaceFolderBasename}",
+                        "REMOTE_WORKSPACE_FOLDER": "${containerWorkspaceFolder}",
+                        "LOCAL_WORKSPACE_FOLDER": "${localWorkspaceFolder}"
+
+                    },
+                    "workspaceMount": "source=/local/folder,target=/workspace/subfolder,type=bind,consistency=cached",
+                    "workspaceFolder": "/local/folder"
+                }
+            "#;
+
+        let devcontainer_manifest =
+            init_devcontainer_manifest(fs, HashMap::default(), given_devcontainer_contents)
+                .await
+                .unwrap();
+
+        let variable_replaced_devcontainer = devcontainer_manifest
+            .replace_nonremote_vars(given_devcontainer_contents)
+            .and_then(|raw| deserialize_devcontainer_json(&raw))
+            .unwrap();
+
+        // ${devcontainerId}
+        let devcontainer_id = devcontainer_manifest.devcontainer_id();
+        assert_eq!(
+            variable_replaced_devcontainer.name,
+            Some(format!("myDevContainer-{devcontainer_id}"))
+        );
+        assert_eq!(
+            variable_replaced_devcontainer
+                .remote_env
+                .as_ref()
+                .and_then(|env| env.get("DEVCONTAINER_ID")),
+            Some(&devcontainer_id)
+        );
+
+        // ${containerWorkspaceFolderBasename}
+        assert_eq!(
+            variable_replaced_devcontainer
+                .remote_env
+                .as_ref()
+                .and_then(|env| env.get("REMOTE_WORKSPACE_FOLDER_BASENAME")),
+            Some(&"subfolder".to_string())
+        );
+
+        // ${localWorkspaceFolderBasename}
+        assert_eq!(
+            variable_replaced_devcontainer
+                .remote_env
+                .as_ref()
+                .and_then(|env| env.get("LOCAL_WORKSPACE_FOLDER_BASENAME")),
+            Some(&"folder".to_string())
+        );
+
+        // ${containerWorkspaceFolder}
+        assert_eq!(
+            variable_replaced_devcontainer
+                .remote_env
+                .as_ref()
+                .and_then(|env| env.get("REMOTE_WORKSPACE_FOLDER")),
+            Some(&"/workspace/subfolder".to_string())
+        );
+
+        // ${localWorkspaceFolder}
+        assert_eq!(
+            variable_replaced_devcontainer
+                .remote_env
+                .as_ref()
+                .and_then(|env| env.get("LOCAL_WORKSPACE_FOLDER")),
+            Some(&"/local/folder".to_string())
+        );
     }
 }

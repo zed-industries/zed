@@ -1,11 +1,13 @@
 use std::path::Path;
 
+use fs::Fs;
 use gpui::AppContext;
 use gpui::Entity;
 use gpui::Task;
 use http_client::anyhow;
 use picker::Picker;
 use picker::PickerDelegate;
+use project::ProjectEnvironment;
 use settings::RegisterSetting;
 use settings::Settings;
 use std::collections::HashMap;
@@ -111,7 +113,9 @@ pub struct DevContainerContext {
     pub project_directory: Arc<Path>,
     pub use_podman: bool,
     pub node_runtime: node_runtime::NodeRuntime,
+    pub fs: Arc<dyn Fs>,
     pub http_client: Arc<dyn HttpClient>,
+    pub environment: Entity<ProjectEnvironment>,
 }
 
 impl DevContainerContext {
@@ -120,11 +124,15 @@ impl DevContainerContext {
         let use_podman = DevContainerSettings::get_global(cx).use_podman;
         let node_runtime = workspace.app_state().node_runtime.clone();
         let http_client = cx.http_client().clone();
+        let fs = workspace.app_state().fs.clone();
+        let environment = workspace.project().read(cx).environment();
         Some(Self {
             project_directory,
             use_podman,
             node_runtime,
+            fs,
             http_client,
+            environment: environment.clone(),
         })
     }
 }

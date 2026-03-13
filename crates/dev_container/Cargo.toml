@@ -11,12 +11,14 @@ serde_json_lenient.workspace = true
 http_client.workspace = true
 http.workspace = true
 gpui.workspace = true
+fs.workspace = true
 futures.workspace = true
 log.workspace = true
 node_runtime.workspace = true
 menu.workspace = true
 paths.workspace = true
 picker.workspace = true
+project.workspace = true
 settings.workspace = true
 smol.workspace = true
 ui.workspace = true
@@ -33,6 +35,7 @@ settings = { workspace = true, features = ["test-support"] }
 
 workspace = { workspace = true, features = ["test-support"] }
 worktree = { workspace = true, features = ["test-support"] }
+util = { workspace = true, features = ["test-support"] }
 
 [lints]
 workspace = true
