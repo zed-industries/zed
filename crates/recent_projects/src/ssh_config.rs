@@ -1,5 +1,25 @@
 use std::collections::BTreeSet;
 
+const FILTERED_GIT_PROVIDER_HOSTS: &[&str] = &[
+    "dev.azure.com",
+    "bitbucket",
+    "bitbucket.org",
+    "chromium.googlesource.com",
+    "codeberg",
+    "codeberg.org",
+    "gitea",
+    "gitea.com",
+    "gitee",
+    "gitee.com",
+    "github",
+    "github.com",
+    "gitlab",
+    "gitlab.com",
+    "sourcehut",
+    "sourcehut.org",
+    "git.sr.ht",
+];
+
 pub fn parse_ssh_config_hosts(config: &str) -> BTreeSet<String> {
     let mut hosts = BTreeSet::new();
     let mut needs_another_line = false;
@@ -43,9 +63,16 @@ fn parse_hosts_from(line: &str, hosts: &mut BTreeSet<String>) {
         line.split_whitespace()
             .filter(|field| !field.starts_with("!"))
             .filter(|field| !field.contains("*"))
+            .filter(|field| !is_filtered_git_provider_host(field))
             .filter(|field| !field.is_empty())
             .map(|field| field.to_owned()),
     );
+}
+
+fn is_filtered_git_provider_host(host: &str) -> bool {
+    let normalized_host = host.trim_end_matches('.').to_ascii_lowercase();
+    log::info!("normalized_host: {}", normalized_host);
+    FILTERED_GIT_PROVIDER_HOSTS.contains(&normalized_host.as_str())
 }
 
 #[cfg(test)]
@@ -89,6 +116,31 @@ mod tests {
             "rpi".to_owned(),
             "somehost".to_owned(),
             "anotherhost".to_owned(),
+        ]);
+
+        assert_eq!(expected_hosts, parse_ssh_config_hosts(hosts));
+    }
+
+    #[test]
+    fn test_filters_git_hosting_providers() {
+        let hosts = "
+            Host dev.azure.com
+            Host bitbucket.org
+            Host codeberg.org
+            Host gitea.com
+            Host gitee.com
+            Host github.com
+            Host gitlab.com
+            Host sourcehut.org
+            Host git.sr.ht
+            Host engineering-box
+            Host custom-provider.internal
+            Host GITHUB
+        ";
+
+        let expected_hosts = BTreeSet::from_iter([
+            "custom-provider.internal".to_owned(),
+            "engineering-box".to_owned(),
         ]);
 
         assert_eq!(expected_hosts, parse_ssh_config_hosts(hosts));
