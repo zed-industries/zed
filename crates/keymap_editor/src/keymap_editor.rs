@@ -2928,9 +2928,11 @@ impl Render for KeybindingEditorModal {
                                                 .child(
                                                     Button::new("show_matching", "View")
                                                         .label_size(LabelSize::Small)
-                                                        .icon(IconName::ArrowUpRight)
-                                                        .icon_color(Color::Muted)
-                                                        .icon_size(IconSize::Small)
+                                                        .end_icon(
+                                                            Icon::new(IconName::ArrowUpRight)
+                                                                .size(IconSize::Small)
+                                                                .color(Color::Muted),
+                                                        )
                                                         .on_click(cx.listener(
                                                             |this, _, window, cx| {
                                                                 this.show_matching_bindings(

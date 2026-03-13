@@ -55,12 +55,12 @@ pub(crate) trait LinuxClient {
     fn display(&self, id: DisplayId) -> Option<Rc<dyn PlatformDisplay>>;
     fn primary_display(&self) -> Option<Rc<dyn PlatformDisplay>>;
 
-    #[allow(dead_code)]
+    #[cfg(feature = "screen-capture")]
     fn is_screen_capture_supported(&self) -> bool {
         false
     }
 
-    #[allow(dead_code)]
+    #[cfg(feature = "screen-capture")]
     fn screen_capture_sources(
         &self,
     ) -> oneshot::Receiver<Result<Vec<Rc<dyn gpui::ScreenCaptureSource>>>> {
@@ -229,17 +229,14 @@ impl<P: LinuxClient + 'static> Platform for LinuxPlatform<P> {
         log::info!("Restarting process, using app path: {:?}", app_path);
 
         // Script to wait for the current process to exit and then restart the app.
-        let script = format!(
-            r#"
-            while kill -0 {pid} 2>/dev/null; do
+        // Pass dynamic values as positional parameters to avoid shell interpolation issues.
+        let script = r#"
+            while kill -0 "$0" 2>/dev/null; do
                 sleep 0.1
             done
 
-            {app_path}
-            "#,
-            pid = app_pid,
-            app_path = app_path.display()
-        );
+            "$1"
+            "#;
 
         #[allow(
             clippy::disallowed_methods,
@@ -249,6 +246,8 @@ impl<P: LinuxClient + 'static> Platform for LinuxPlatform<P> {
             .arg("bash")
             .arg("-c")
             .arg(script)
+            .arg(&app_pid)
+            .arg(&app_path)
             .process_group(0)
             .spawn();
 
@@ -1036,6 +1035,46 @@ pub(super) fn modifiers_from_xkb(keymap_state: &State) -> gpui::Modifiers {
 pub(super) fn capslock_from_xkb(keymap_state: &State) -> gpui::Capslock {
     let on = keymap_state.mod_name_is_active(xkb::MOD_NAME_CAPS, xkb::STATE_MODS_EFFECTIVE);
     gpui::Capslock { on }
+}
+
+/// Resolve a Linux `dev_t` to PCI vendor/device IDs via sysfs, returning a
+/// [`CompositorGpuHint`] that the GPU adapter selection code can use to
+/// prioritize the compositor's rendering device.
+#[cfg(any(feature = "wayland", feature = "x11"))]
+pub(super) fn compositor_gpu_hint_from_dev_t(dev: u64) -> Option<gpui_wgpu::CompositorGpuHint> {
+    fn dev_major(dev: u64) -> u32 {
+        ((dev >> 8) & 0xfff) as u32 | (((dev >> 32) & !0xfff) as u32)
+    }
+
+    fn dev_minor(dev: u64) -> u32 {
+        (dev & 0xff) as u32 | (((dev >> 12) & !0xff) as u32)
+    }
+
+    fn read_sysfs_hex_id(path: &str) -> Option<u32> {
+        let content = std::fs::read_to_string(path).ok()?;
+        let trimmed = content.trim().strip_prefix("0x").unwrap_or(content.trim());
+        u32::from_str_radix(trimmed, 16).ok()
+    }
+
+    let major = dev_major(dev);
+    let minor = dev_minor(dev);
+
+    let vendor_path = format!("/sys/dev/char/{major}:{minor}/device/vendor");
+    let device_path = format!("/sys/dev/char/{major}:{minor}/device/device");
+
+    let vendor_id = read_sysfs_hex_id(&vendor_path)?;
+    let device_id = read_sysfs_hex_id(&device_path)?;
+
+    log::info!(
+        "Compositor GPU hint: vendor={:#06x}, device={:#06x} (from dev {major}:{minor})",
+        vendor_id,
+        device_id,
+    );
+
+    Some(gpui_wgpu::CompositorGpuHint {
+        vendor_id,
+        device_id,
+    })
 }
 
 #[cfg(test)]

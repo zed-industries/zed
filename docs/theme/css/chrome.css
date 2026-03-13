@@ -70,7 +70,9 @@ a > .hljs {
 }
 
 .logo-nav {
-  display: block;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   filter: var(--logo-brightness);
 }
 
@@ -138,6 +140,40 @@ a > .hljs {
 .footer-button i {
   text-decoration: underline !important;
   text-decoration-color: transparent !important;
+}
+
+.footer {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  padding: 24px 0;
+  border-top: 1px dashed var(--border-footer);
+}
+
+.footer-link {
+  font-size: 1.25rem;
+  color: var(--links);
+  text-decoration: underline;
+  text-decoration-color: var(--link-line-decoration);
+  text-wrap-mode: nowrap;
+
+  :hover {
+    text-decoration-color: var(--link-line-decoration-hover);
+  }
+}
+
+.footer-separator {
+  color: var(--border-light);
+  font-size: 0.8em;
+}
+
+.footer-logo {
+  height: 16px;
+  border-radius: 0 !important;
+  border: none !important;
+  background: transparent !important;
 }
 
 .mobile-nav-chapters {
@@ -332,7 +368,10 @@ mark.fade-out {
 .searchbar-outer {
   margin-inline-start: auto;
   margin-inline-end: auto;
+  width: 100%;
   max-width: var(--content-max-width);
+  box-sizing: border-box;
+  padding: 16px;
 }
 
 #searchbar {
@@ -358,21 +397,21 @@ mark.fade-out {
 .searchresults-header {
   font-weight: bold;
   font-size: 1em;
-  padding-block-start: 18px;
+  padding-block-start: 0;
   padding-block-end: 0;
-  padding-inline-start: 5px;
-  padding-inline-end: 0;
   color: var(--searchresults-header-fg);
 }
 
 ul#searchresults {
   list-style: none;
   padding-inline-start: 0;
+  margin-block-end: 0;
 }
 ul#searchresults li {
   margin: 10px 0px;
   padding: 2px;
   border-radius: 2px;
+  scroll-margin-block-end: 10px;
 }
 ul#searchresults li.focus {
   background-color: var(--searchresults-li-bg);
@@ -758,8 +797,7 @@ ul#searchresults span.teaser em {
   max-height: 600px;
   display: flex;
   flex-direction: column;
-  padding: 16px;
-  overflow-y: auto;
+  overflow-y: hidden;
 
   border-radius: 8px;
   background: var(--popover-bg);
@@ -767,8 +805,11 @@ ul#searchresults span.teaser em {
   box-shadow: var(--popover-shadow);
 }
 
-.searchbar-outer {
-  width: 100%;
+.searchresults-outer {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 0px 22px 22px 22px;
 }
 
 #searchbar {

@@ -132,7 +132,13 @@ pub fn start_debug_session_with<T: Fn(&Arc<DebugAdapterClient>) + 'static>(
             .workspace()
             .read(cx)
             .panel::<DebugPanel>(cx)
-            .and_then(|panel| panel.read(cx).active_session())
+            .and_then(|panel| {
+                panel
+                    .read(cx)
+                    .sessions_with_children
+                    .keys()
+                    .max_by_key(|session| session.read(cx).session_id(cx))
+            })
             .map(|session| session.read(cx).running_state().read(cx).session())
             .cloned()
             .context("Failed to get active session")

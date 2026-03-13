@@ -27,9 +27,12 @@ use collections::{FxHashMap, FxHashSet, HashMap, VecDeque};
 pub use context::*;
 pub use entity_map::*;
 use gpui_util::{ResultExt, debug_panic};
-#[cfg(not(target_family = "wasm"))]
+#[cfg(any(test, feature = "test-support"))]
+pub use headless_app_context::*;
 use http_client::{HttpClient, Url};
 use smallvec::SmallVec;
+#[cfg(any(test, feature = "test-support"))]
+pub use test_app::*;
 #[cfg(any(test, feature = "test-support"))]
 pub use test_context::*;
 #[cfg(all(target_os = "macos", any(test, feature = "test-support")))]
@@ -54,6 +57,10 @@ use crate::{
 mod async_context;
 mod context;
 mod entity_map;
+#[cfg(any(test, feature = "test-support"))]
+mod headless_app_context;
+#[cfg(any(test, feature = "test-support"))]
+mod test_app;
 #[cfg(any(test, feature = "test-support"))]
 mod test_context;
 #[cfg(all(target_os = "macos", any(test, feature = "test-support")))]
@@ -139,7 +146,6 @@ impl Application {
         Self(App::new_app(
             platform,
             Arc::new(()),
-            #[cfg(not(target_family = "wasm"))]
             Arc::new(NullHttpClient),
         ))
     }
@@ -155,7 +161,6 @@ impl Application {
     }
 
     /// Sets the HTTP client for the application.
-    #[cfg(not(target_family = "wasm"))]
     pub fn with_http_client(self, http_client: Arc<dyn HttpClient>) -> Self {
         let mut context_lock = self.0.borrow_mut();
         context_lock.http_client = http_client;
@@ -585,7 +590,6 @@ pub struct App {
     pub(crate) loading_assets: FxHashMap<(TypeId, u64), Box<dyn Any>>,
     asset_source: Arc<dyn AssetSource>,
     pub(crate) svg_renderer: SvgRenderer,
-    #[cfg(not(target_family = "wasm"))]
     http_client: Arc<dyn HttpClient>,
     pub(crate) globals_by_type: FxHashMap<TypeId, Box<dyn Any>>,
     pub(crate) entities: EntityMap,
@@ -642,7 +646,7 @@ impl App {
     pub(crate) fn new_app(
         platform: Rc<dyn Platform>,
         asset_source: Arc<dyn AssetSource>,
-        #[cfg(not(target_family = "wasm"))] http_client: Arc<dyn HttpClient>,
+        http_client: Arc<dyn HttpClient>,
     ) -> Rc<AppCell> {
         let background_executor = platform.background_executor();
         let foreground_executor = platform.foreground_executor();
@@ -672,7 +676,6 @@ impl App {
                 svg_renderer: SvgRenderer::new(asset_source.clone()),
                 loading_assets: Default::default(),
                 asset_source,
-                #[cfg(not(target_family = "wasm"))]
                 http_client,
                 globals_by_type: FxHashMap::default(),
                 entities,
@@ -749,13 +752,46 @@ impl App {
         }));
 
         platform.on_quit(Box::new({
-            let cx = app.clone();
+            let cx = Rc::downgrade(&app);
             move || {
-                cx.borrow_mut().shutdown();
+                if let Some(cx) = cx.upgrade() {
+                    cx.borrow_mut().shutdown();
+                }
             }
         }));
 
         app
+    }
+
+    #[doc(hidden)]
+    pub fn ref_counts_drop_handle(&self) -> impl Sized + use<> {
+        self.entities.ref_counts_drop_handle()
+    }
+
+    /// Captures a snapshot of all entities that currently have alive handles.
+    ///
+    /// The returned [`LeakDetectorSnapshot`] can later be passed to
+    /// [`assert_no_new_leaks`](Self::assert_no_new_leaks) to verify that no
+    /// entities created after the snapshot are still alive.
+    #[cfg(any(test, feature = "leak-detection"))]
+    pub fn leak_detector_snapshot(&self) -> LeakDetectorSnapshot {
+        self.entities.leak_detector_snapshot()
+    }
+
+    /// Asserts that no entities created after `snapshot` still have alive handles.
+    ///
+    /// Entities that were already tracked at the time of the snapshot are ignored,
+    /// even if they still have handles. Only *new* entities (those whose
+    /// `EntityId` was not present in the snapshot) are considered leaks.
+    ///
+    /// # Panics
+    ///
+    /// Panics if any new entity handles exist. The panic message lists every
+    /// leaked entity with its type name, and includes allocation-site backtraces
+    /// when `LEAK_BACKTRACE` is set.
+    #[cfg(any(test, feature = "leak-detection"))]
+    pub fn assert_no_new_leaks(&self, snapshot: &LeakDetectorSnapshot) {
+        self.entities.assert_no_new_leaks(snapshot)
     }
 
     /// Quit the application gracefully. Handlers registered with [`Context::on_app_quit`]
@@ -1281,13 +1317,11 @@ impl App {
     }
 
     /// Returns the HTTP client for the application.
-    #[cfg(not(target_family = "wasm"))]
     pub fn http_client(&self) -> Arc<dyn HttpClient> {
         self.http_client.clone()
     }
 
     /// Sets the HTTP client for the application.
-    #[cfg(not(target_family = "wasm"))]
     pub fn set_http_client(&mut self, new_client: Arc<dyn HttpClient>) {
         self.http_client = new_client;
     }
@@ -2512,10 +2546,8 @@ pub struct KeystrokeEvent {
     pub context_stack: Vec<KeyContext>,
 }
 
-#[cfg(not(target_family = "wasm"))]
 struct NullHttpClient;
 
-#[cfg(not(target_family = "wasm"))]
 impl HttpClient for NullHttpClient {
     fn send(
         &self,
@@ -2588,13 +2620,6 @@ impl<'a, T> Drop for GpuiBorrow<'a, T> {
         self.app.notify(lease.id);
         self.app.entities.end_lease(lease);
         self.app.finish_update();
-    }
-}
-
-impl Drop for App {
-    fn drop(&mut self) {
-        self.foreground_executor.close();
-        self.background_executor.close();
     }
 }
 

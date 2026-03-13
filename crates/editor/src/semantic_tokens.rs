@@ -119,7 +119,7 @@ impl Editor {
         for_server: Option<RefreshForServer>,
         cx: &mut Context<Self>,
     ) {
-        if !self.mode().is_full() || !self.semantic_token_state.enabled() {
+        if !self.lsp_data_enabled() || !self.semantic_token_state.enabled() {
             self.invalidate_semantic_tokens(None);
             self.display_map.update(cx, |display_map, _| {
                 match Arc::get_mut(&mut display_map.semantic_token_highlights) {
@@ -217,8 +217,9 @@ impl Editor {
                             }) {
                                 None
                             } else {
-                                let task = sema.semantic_tokens(buffer, for_server, cx);
-                                Some(async move { (buffer_id, query_version, task.await) })
+                                sema.semantic_tokens(buffer, for_server, cx).map(
+                                    |task| async move { (buffer_id, query_version, task.await) },
+                                )
                             }
                         })
                         .collect::<Vec<_>>()

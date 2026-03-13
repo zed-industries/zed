@@ -622,7 +622,7 @@ pub struct GitPanelSettingsContent {
 
     /// Whether to show the addition/deletion change count next to each file in the Git panel.
     ///
-    /// Default: false
+    /// Default: true
     pub diff_stats: Option<bool>,
 }
 
@@ -721,6 +721,10 @@ pub struct FileFinderSettingsContent {
     ///
     /// Default: Smart
     pub include_ignored: Option<IncludeIgnoredContent>,
+    /// Whether to include text channels in file finder results.
+    ///
+    /// Default: false
+    pub include_channels: Option<bool>,
 }
 
 #[derive(
@@ -1148,11 +1152,6 @@ pub struct ReplSettingsContent {
     ///
     /// Default: 0
     pub output_max_height_lines: Option<usize>,
-    /// Maximum number of columns of output to display before scaling images.
-    /// Set to 0 to disable output width limits.
-    ///
-    /// Default: 0
-    pub output_max_width_columns: Option<usize>,
 }
 
 /// Settings for configuring the which-key popup behaviour.

@@ -67,25 +67,22 @@ pub fn init(cx: &mut App) {
     .detach();
 
     if let Some(extension_events) = extension::ExtensionEvents::try_global(cx) {
-        cx.subscribe(&extension_events, move |_, evt, cx| {
-            match evt {
-                extension::Event::ExtensionInstalled(_)
-                | extension::Event::ExtensionUninstalled(_)
-                | extension::Event::ConfigureExtensionRequested(_) => return,
-                extension::Event::ExtensionsInstalledChanged => {}
+        cx.subscribe(&extension_events, move |_, evt, cx| match evt {
+            extension::Event::ExtensionsInstalledChanged => {
+                cx.update_global::<SchemaStore, _>(|schema_store, cx| {
+                    schema_store.notify_schema_changed(ChangedSchemas::Settings, cx);
+                });
             }
-            cx.update_global::<SchemaStore, _>(|schema_store, cx| {
-                schema_store.notify_schema_changed(&format!("{SCHEMA_URI_PREFIX}settings"), cx);
-                schema_store
-                    .notify_schema_changed(&format!("{SCHEMA_URI_PREFIX}project_settings"), cx);
-            });
+            extension::Event::ExtensionUninstalled(_)
+            | extension::Event::ExtensionInstalled(_)
+            | extension::Event::ConfigureExtensionRequested(_) => {}
         })
         .detach();
     }
 
     cx.observe_global::<dap::DapRegistry>(move |cx| {
         cx.update_global::<SchemaStore, _>(|schema_store, cx| {
-            schema_store.notify_schema_changed(&format!("{SCHEMA_URI_PREFIX}debug_tasks"), cx);
+            schema_store.notify_schema_changed(ChangedSchemas::DebugTasks, cx);
         });
     })
     .detach();
@@ -98,18 +95,42 @@ pub struct SchemaStore {
 
 impl gpui::Global for SchemaStore {}
 
-impl SchemaStore {
-    fn notify_schema_changed(&mut self, uri: &str, cx: &mut App) {
-        DYNAMIC_SCHEMA_CACHE.write().remove(uri);
+enum ChangedSchemas {
+    Settings,
+    DebugTasks,
+}
 
-        let uri = uri.to_string();
+impl SchemaStore {
+    fn notify_schema_changed(&mut self, changed_schemas: ChangedSchemas, cx: &mut App) {
+        let uris_to_invalidate = match changed_schemas {
+            ChangedSchemas::Settings => {
+                let settings_uri_prefix = &format!("{SCHEMA_URI_PREFIX}settings");
+                let project_settings_uri = &format!("{SCHEMA_URI_PREFIX}project_settings");
+                DYNAMIC_SCHEMA_CACHE
+                    .write()
+                    .extract_if(|uri, _| {
+                        uri == project_settings_uri || uri.starts_with(settings_uri_prefix)
+                    })
+                    .map(|(url, _)| url)
+                    .collect()
+            }
+            ChangedSchemas::DebugTasks => DYNAMIC_SCHEMA_CACHE
+                .write()
+                .remove_entry(&format!("{SCHEMA_URI_PREFIX}debug_tasks"))
+                .map_or_else(Vec::new, |(uri, _)| vec![uri]),
+        };
+
+        if uris_to_invalidate.is_empty() {
+            return;
+        }
+
         self.lsp_stores.retain(|lsp_store| {
             let Some(lsp_store) = lsp_store.upgrade() else {
                 return false;
             };
-            project::lsp_store::json_language_server_ext::notify_schema_changed(
+            project::lsp_store::json_language_server_ext::notify_schemas_changed(
                 lsp_store,
-                uri.clone(),
+                &uris_to_invalidate,
                 cx,
             );
             true
@@ -238,7 +259,8 @@ async fn resolve_dynamic_schema(
                 (adapter_name, LspSchemaKind::Settings)
             } else {
                 anyhow::bail!(
-                    "Invalid LSP schema path: expected '{{adapter}}/initialization_options' or '{{adapter}}/settings', got '{}'",
+                    "Invalid LSP schema path: \
+                    Expected '{{adapter}}/initialization_options' or '{{adapter}}/settings', got '{}'",
                     lsp_path
                 );
             };
@@ -484,7 +506,7 @@ pub fn all_schema_file_associations(
             let file_name = normalized_action_name_to_file_name(normalized_name.clone());
             serde_json::json!({
                 "fileMatch": [file_name],
-                "url": format!("{}action/{normalized_name}", SCHEMA_URI_PREFIX)
+                "url": format!("{SCHEMA_URI_PREFIX}action/{normalized_name}")
             })
         }));
 

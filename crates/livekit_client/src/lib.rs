@@ -1,8 +1,8 @@
 use anyhow::Context as _;
 use collections::HashMap;
+use cpal::DeviceId;
 
 mod remote_video_track_view;
-use cpal::traits::HostTrait as _;
 pub use remote_video_track_view::{RemoteVideoTrackView, RemoteVideoTrackViewEvent};
 use rodio::DeviceTrait as _;
 
@@ -192,24 +192,18 @@ pub enum RoomEvent {
 
 pub(crate) fn default_device(
     input: bool,
+    device_id: Option<&DeviceId>,
 ) -> anyhow::Result<(cpal::Device, cpal::SupportedStreamConfig)> {
-    let device;
-    let config;
-    if input {
-        device = cpal::default_host()
-            .default_input_device()
-            .context("no audio input device available")?;
-        config = device
+    let device = audio::resolve_device(device_id, input)?;
+    let config = if input {
+        device
             .default_input_config()
-            .context("failed to get default input config")?;
+            .context("failed to get default input config")?
     } else {
-        device = cpal::default_host()
-            .default_output_device()
-            .context("no audio output device available")?;
-        config = device
+        device
             .default_output_config()
-            .context("failed to get default output config")?;
-    }
+            .context("failed to get default output config")?
+    };
     Ok((device, config))
 }
 

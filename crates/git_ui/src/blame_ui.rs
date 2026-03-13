@@ -322,10 +322,11 @@ impl BlameRenderer for GitBlameRenderer {
                                                         format!("#{}", pr.number),
                                                     )
                                                     .color(Color::Muted)
-                                                    .icon(IconName::PullRequest)
-                                                    .icon_color(Color::Muted)
-                                                    .icon_position(IconPosition::Start)
-                                                    .icon_size(IconSize::Small)
+                                                    .start_icon(
+                                                        Icon::new(IconName::PullRequest)
+                                                            .size(IconSize::Small)
+                                                            .color(Color::Muted),
+                                                    )
                                                     .on_click(move |_, _, cx| {
                                                         cx.stop_propagation();
                                                         cx.open_url(pr.url.as_str())
@@ -339,10 +340,11 @@ impl BlameRenderer for GitBlameRenderer {
                                                     short_commit_id.clone(),
                                                 )
                                                 .color(Color::Muted)
-                                                .icon(IconName::FileGit)
-                                                .icon_color(Color::Muted)
-                                                .icon_position(IconPosition::Start)
-                                                .icon_size(IconSize::Small)
+                                                .start_icon(
+                                                    Icon::new(IconName::FileGit)
+                                                        .size(IconSize::Small)
+                                                        .color(Color::Muted),
+                                                )
                                                 .on_click(move |_, window, cx| {
                                                     CommitView::open(
                                                         commit_summary.sha.clone().into(),

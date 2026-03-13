@@ -83,6 +83,32 @@ impl EntityMap {
         }
     }
 
+    #[doc(hidden)]
+    pub fn ref_counts_drop_handle(&self) -> impl Sized + use<> {
+        self.ref_counts.clone()
+    }
+
+    /// Captures a snapshot of all entities that currently have alive handles.
+    ///
+    /// The returned [`LeakDetectorSnapshot`] can later be passed to
+    /// [`assert_no_new_leaks`](Self::assert_no_new_leaks) to verify that no
+    /// entities created after the snapshot are still alive.
+    #[cfg(any(test, feature = "leak-detection"))]
+    pub fn leak_detector_snapshot(&self) -> LeakDetectorSnapshot {
+        self.ref_counts.read().leak_detector.snapshot()
+    }
+
+    /// Asserts that no entities created after `snapshot` still have alive handles.
+    ///
+    /// See [`LeakDetector::assert_no_new_leaks`] for details.
+    #[cfg(any(test, feature = "leak-detection"))]
+    pub fn assert_no_new_leaks(&self, snapshot: &LeakDetectorSnapshot) {
+        self.ref_counts
+            .read()
+            .leak_detector
+            .assert_no_new_leaks(snapshot)
+    }
+
     /// Reserve a slot for an entity, which you can subsequently use with `insert`.
     pub fn reserve<T: 'static>(&self) -> Slot<T> {
         let id = self.ref_counts.write().counts.insert(1.into());
@@ -225,7 +251,12 @@ pub struct AnyEntity {
 }
 
 impl AnyEntity {
-    fn new(id: EntityId, entity_type: TypeId, entity_map: Weak<RwLock<EntityRefCounts>>) -> Self {
+    fn new(
+        id: EntityId,
+        entity_type: TypeId,
+        entity_map: Weak<RwLock<EntityRefCounts>>,
+        #[cfg(any(test, feature = "leak-detection"))] type_name: &'static str,
+    ) -> Self {
         Self {
             entity_id: id,
             entity_type,
@@ -236,7 +267,7 @@ impl AnyEntity {
                 .unwrap()
                 .write()
                 .leak_detector
-                .handle_created(id),
+                .handle_created(id, Some(type_name)),
             entity_map,
         }
     }
@@ -299,7 +330,7 @@ impl Clone for AnyEntity {
                 .unwrap()
                 .write()
                 .leak_detector
-                .handle_created(self.entity_id),
+                .handle_created(self.entity_id, None),
         }
     }
 }
@@ -395,7 +426,13 @@ impl<T: 'static> Entity<T> {
         T: 'static,
     {
         Self {
-            any_entity: AnyEntity::new(id, TypeId::of::<T>(), entity_map),
+            any_entity: AnyEntity::new(
+                id,
+                TypeId::of::<T>(),
+                entity_map,
+                #[cfg(any(test, feature = "leak-detection"))]
+                std::any::type_name::<T>(),
+            ),
             entity_type: PhantomData,
         }
     }
@@ -574,7 +611,7 @@ impl AnyWeakEntity {
                 .unwrap()
                 .write()
                 .leak_detector
-                .handle_created(self.entity_id),
+                .handle_created(self.entity_id, None),
         })
     }
 
@@ -892,7 +929,23 @@ pub(crate) struct HandleId {
 #[cfg(any(test, feature = "leak-detection"))]
 pub(crate) struct LeakDetector {
     next_handle_id: u64,
-    entity_handles: HashMap<EntityId, HashMap<HandleId, Option<backtrace::Backtrace>>>,
+    entity_handles: HashMap<EntityId, EntityLeakData>,
+}
+
+/// A snapshot of the set of alive entities at a point in time.
+///
+/// Created by [`LeakDetector::snapshot`]. Can later be passed to
+/// [`LeakDetector::assert_no_new_leaks`] to verify that no new entity
+/// handles remain between the snapshot and the current state.
+#[cfg(any(test, feature = "leak-detection"))]
+pub struct LeakDetectorSnapshot {
+    entity_ids: collections::HashSet<EntityId>,
+}
+
+#[cfg(any(test, feature = "leak-detection"))]
+struct EntityLeakData {
+    handles: HashMap<HandleId, Option<backtrace::Backtrace>>,
+    type_name: &'static str,
 }
 
 #[cfg(any(test, feature = "leak-detection"))]
@@ -903,11 +956,21 @@ impl LeakDetector {
     /// the handle is dropped. If `LEAK_BACKTRACE` is set, captures a backtrace
     /// at the allocation site.
     #[track_caller]
-    pub fn handle_created(&mut self, entity_id: EntityId) -> HandleId {
+    pub fn handle_created(
+        &mut self,
+        entity_id: EntityId,
+        type_name: Option<&'static str>,
+    ) -> HandleId {
         let id = gpui_util::post_inc(&mut self.next_handle_id);
         let handle_id = HandleId { id };
-        let handles = self.entity_handles.entry(entity_id).or_default();
-        handles.insert(
+        let handles = self
+            .entity_handles
+            .entry(entity_id)
+            .or_insert_with(|| EntityLeakData {
+                handles: HashMap::default(),
+                type_name: type_name.unwrap_or("<unknown>"),
+            });
+        handles.handles.insert(
             handle_id,
             LEAK_BACKTRACE.then(backtrace::Backtrace::new_unresolved),
         );
@@ -919,8 +982,14 @@ impl LeakDetector {
     /// This removes the handle from tracking. The `handle_id` should be the same
     /// one returned by `handle_created` when the handle was allocated.
     pub fn handle_released(&mut self, entity_id: EntityId, handle_id: HandleId) {
-        let handles = self.entity_handles.entry(entity_id).or_default();
-        handles.remove(&handle_id);
+        if let std::collections::hash_map::Entry::Occupied(mut data) =
+            self.entity_handles.entry(entity_id)
+        {
+            data.get_mut().handles.remove(&handle_id);
+            if data.get().handles.is_empty() {
+                data.remove();
+            }
+        }
     }
 
     /// Asserts that all handles to the given entity have been released.
@@ -932,11 +1001,10 @@ impl LeakDetector {
     /// otherwise it suggests setting the environment variable to get more info.
     pub fn assert_released(&mut self, entity_id: EntityId) {
         use std::fmt::Write as _;
-        let handles = self.entity_handles.entry(entity_id).or_default();
-        if !handles.is_empty() {
+        if let Some(data) = self.entity_handles.remove(&entity_id) {
             let mut out = String::new();
-            for backtrace in handles.values_mut() {
-                if let Some(mut backtrace) = backtrace.take() {
+            for (_, backtrace) in data.handles {
+                if let Some(mut backtrace) = backtrace {
                     backtrace.resolve();
                     writeln!(out, "Leaked handle:\n{:?}", backtrace).unwrap();
                 } else {
@@ -949,6 +1017,96 @@ impl LeakDetector {
             }
             panic!("{out}");
         }
+    }
+
+    /// Captures a snapshot of all entity IDs that currently have alive handles.
+    ///
+    /// The returned [`LeakDetectorSnapshot`] can later be passed to
+    /// [`assert_no_new_leaks`](Self::assert_no_new_leaks) to verify that no
+    /// entities created after the snapshot are still alive.
+    pub fn snapshot(&self) -> LeakDetectorSnapshot {
+        LeakDetectorSnapshot {
+            entity_ids: self.entity_handles.keys().copied().collect(),
+        }
+    }
+
+    /// Asserts that no entities created after `snapshot` still have alive handles.
+    ///
+    /// Entities that were already tracked at the time of the snapshot are ignored,
+    /// even if they still have handles. Only *new* entities (those whose
+    /// `EntityId` was not present in the snapshot) are considered leaks.
+    ///
+    /// # Panics
+    ///
+    /// Panics if any new entity handles exist. The panic message lists every
+    /// leaked entity with its type name, and includes allocation-site backtraces
+    /// when `LEAK_BACKTRACE` is set.
+    pub fn assert_no_new_leaks(&self, snapshot: &LeakDetectorSnapshot) {
+        use std::fmt::Write as _;
+
+        let mut out = String::new();
+        for (entity_id, data) in &self.entity_handles {
+            if snapshot.entity_ids.contains(entity_id) {
+                continue;
+            }
+            for (_, backtrace) in &data.handles {
+                if let Some(backtrace) = backtrace {
+                    let mut backtrace = backtrace.clone();
+                    backtrace.resolve();
+                    writeln!(
+                        out,
+                        "Leaked handle for entity {} ({entity_id:?}):\n{:?}",
+                        data.type_name, backtrace
+                    )
+                    .unwrap();
+                } else {
+                    writeln!(
+                        out,
+                        "Leaked handle for entity {} ({entity_id:?}): (export LEAK_BACKTRACE to find allocation site)",
+                        data.type_name
+                    )
+                    .unwrap();
+                }
+            }
+        }
+
+        if !out.is_empty() {
+            panic!("New entity leaks detected since snapshot:\n{out}");
+        }
+    }
+}
+
+#[cfg(any(test, feature = "leak-detection"))]
+impl Drop for LeakDetector {
+    fn drop(&mut self) {
+        use std::fmt::Write;
+
+        if self.entity_handles.is_empty() || std::thread::panicking() {
+            return;
+        }
+
+        let mut out = String::new();
+        for (entity_id, data) in self.entity_handles.drain() {
+            for (_handle, backtrace) in data.handles {
+                if let Some(mut backtrace) = backtrace {
+                    backtrace.resolve();
+                    writeln!(
+                        out,
+                        "Leaked handle for entity {} ({entity_id:?}):\n{:?}",
+                        data.type_name, backtrace
+                    )
+                    .unwrap();
+                } else {
+                    writeln!(
+                        out,
+                        "Leaked handle for entity {} ({entity_id:?}): (export LEAK_BACKTRACE to find allocation site)",
+                        data.type_name
+                    )
+                    .unwrap();
+                }
+            }
+        }
+        panic!("Exited with leaked handles:\n{out}");
     }
 }
 
@@ -1006,5 +1164,43 @@ mod test {
                 .collect::<Vec<i32>>(),
             vec![1],
         );
+    }
+
+    #[test]
+    fn test_leak_detector_snapshot_no_leaks() {
+        let mut entity_map = EntityMap::new();
+
+        let slot = entity_map.reserve::<TestEntity>();
+        let pre_existing = entity_map.insert(slot, TestEntity { i: 1 });
+
+        let snapshot = entity_map.leak_detector_snapshot();
+
+        let slot = entity_map.reserve::<TestEntity>();
+        let temporary = entity_map.insert(slot, TestEntity { i: 2 });
+        drop(temporary);
+
+        entity_map.assert_no_new_leaks(&snapshot);
+
+        drop(pre_existing);
+    }
+
+    #[test]
+    #[should_panic(expected = "New entity leaks detected since snapshot")]
+    fn test_leak_detector_snapshot_detects_new_leak() {
+        let mut entity_map = EntityMap::new();
+
+        let slot = entity_map.reserve::<TestEntity>();
+        let pre_existing = entity_map.insert(slot, TestEntity { i: 1 });
+
+        let snapshot = entity_map.leak_detector_snapshot();
+
+        let slot = entity_map.reserve::<TestEntity>();
+        let leaked = entity_map.insert(slot, TestEntity { i: 2 });
+
+        // `leaked` is still alive, so this should panic.
+        entity_map.assert_no_new_leaks(&snapshot);
+
+        drop(pre_existing);
+        drop(leaked);
     }
 }
