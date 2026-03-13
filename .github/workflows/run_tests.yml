@@ -720,7 +720,7 @@ jobs:
     - name: run_tests::check_postgres_and_protobuf_migrations::check_protobuf_formatting
       run: buf format --diff --exit-code crates/proto/proto
     timeout-minutes: 60
-  extension_tests_matrix:
+  extension_tests:
     needs:
     - orchestrate
     if: needs.orchestrate.outputs.changed_extensions != '[]'
@@ -751,7 +751,7 @@ jobs:
     - check_docs
     - check_licenses
     - check_scripts
-    - extension_tests_matrix
+    - extension_tests
     if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions') && always()
     runs-on: namespace-profile-2x4-ubuntu-2404
     steps:
@@ -780,7 +780,7 @@ jobs:
         check_result "check_docs" "$RESULT_CHECK_DOCS"
         check_result "check_licenses" "$RESULT_CHECK_LICENSES"
         check_result "check_scripts" "$RESULT_CHECK_SCRIPTS"
-        check_result "extension_tests_matrix" "$RESULT_EXTENSION_TESTS_MATRIX"
+        check_result "extension_tests" "$RESULT_EXTENSION_TESTS"
 
         exit $EXIT_CODE
       env:
@@ -799,7 +799,7 @@ jobs:
         RESULT_CHECK_DOCS: ${{ needs.check_docs.result }}
         RESULT_CHECK_LICENSES: ${{ needs.check_licenses.result }}
         RESULT_CHECK_SCRIPTS: ${{ needs.check_scripts.result }}
-        RESULT_EXTENSION_TESTS_MATRIX: ${{ needs.extension_tests_matrix.result }}
+        RESULT_EXTENSION_TESTS: ${{ needs.extension_tests.result }}
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref_name }}-${{ github.ref_name == 'main' && github.sha || 'anysha' }}
   cancel-in-progress: true

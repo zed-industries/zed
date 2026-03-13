@@ -62,7 +62,7 @@ pub(crate) fn run_tests() -> Workflow {
         should_check_licences.guard(check_licenses()),
         should_check_scripts.guard(check_scripts()),
     ];
-    let ext_tests = extension_tests_matrix();
+    let ext_tests = extension_tests();
     let tests_pass = tests_pass(&jobs, &[&ext_tests.name]);
 
     jobs.push(should_run_tests.guard(check_postgres_and_protobuf_migrations())); // could be more specific here?
@@ -754,7 +754,7 @@ pub(crate) fn check_scripts() -> NamedJob {
     )
 }
 
-fn extension_tests_matrix() -> NamedJob<UsesJob> {
+fn extension_tests() -> NamedJob<UsesJob> {
     let job = Job::default()
         .needs(vec!["orchestrate".to_owned()])
         .cond(Expression::new(
