@@ -611,7 +611,9 @@ pub struct SemanticTokensData {
 }
 
 impl SemanticTokensData {
-    pub(super) fn invalidate_update(&mut self) {
+    pub(super) fn remove_server_data(&mut self, server_id: LanguageServerId) {
+        self.raw_tokens.servers.remove(&server_id);
+        self.latest_invalidation_requests.remove(&server_id);
         self.update = None;
     }
 }
