@@ -473,6 +473,7 @@ pub fn deserialize_diagnostics(
                         proto::diagnostic::SourceKind::Other => DiagnosticSourceKind::Other,
                     },
                     data,
+                    rendered: None,
                 },
             })
         })

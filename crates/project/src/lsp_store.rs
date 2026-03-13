@@ -11196,6 +11196,10 @@ impl LspStore {
                         is_unnecessary,
                         underline,
                         data: diagnostic.data.clone(),
+                        rendered: diagnostic.data.as_ref()
+                            .and_then(|d| d.get("rendered"))
+                            .and_then(|v| v.as_str())
+                            .map(|s| s.to_string()),
                         registration_id: registration_id.clone(),
                     },
                 });
@@ -11224,6 +11228,7 @@ impl LspStore {
                                     is_unnecessary: false,
                                     underline,
                                     data: diagnostic.data.clone(),
+                                    rendered: None,
                                     registration_id: registration_id.clone(),
                                 },
                             });
