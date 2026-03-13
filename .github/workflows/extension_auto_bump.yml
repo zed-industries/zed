@@ -36,7 +36,7 @@ jobs:
         for ext in $(echo "$EXTENSIONS_JSON" | jq -r '.[]'); do
             if git show HEAD~1:"$ext/extension.toml" >/dev/null 2>&1 && \
                [ -f "$ext/extension.toml" ]; then
-                FILTERED=$(echo "$FILTERED" | jq --arg e "$ext" '. + [$e]')
+                FILTERED=$(echo "$FILTERED" | jq -c --arg e "$ext" '. + [$e]')
             fi
         done
         echo "changed_extensions=$FILTERED" >> "$GITHUB_OUTPUT"
