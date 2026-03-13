@@ -4,6 +4,8 @@
 
 Allow the agent thread view and the threads sidebar to be independently toggled from the status bar, while sharing a single dock slot and rendering side by side when both are active.
 
+Currently the threads sidebar and the thread view are combined as a single agent panel, so this the design in this doc leverages this existing state to move us to a world where we can control each sub-panel's visibility with independent dock buttons.
+
 Today, each panel in a dock gets exactly one icon button in the status bar, and only one panel can be visible per dock at a time. We want to support panels that expose **multiple buttons**, each controlling an independent sub-view within the panel.
 
 ## Design
