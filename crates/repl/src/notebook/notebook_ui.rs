@@ -594,7 +594,13 @@ impl NotebookEditor {
                 }
             }
         }
-        self.advance_in_command_mode(window, cx);
+
+        let is_last_cell = self.selected_cell_index == self.cell_count().saturating_sub(1);
+        if is_last_cell {
+            self.add_code_block(window, cx);
+        } else {
+            self.advance_in_command_mode(window, cx);
+        }
     }
 
     fn enter_edit_mode(&mut self, _: &EnterEditMode, window: &mut Window, cx: &mut Context<Self>) {
