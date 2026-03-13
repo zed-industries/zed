@@ -36,7 +36,7 @@ pub trait Panel: Focusable + EventEmitter<PanelEvent> + Render + Sized {
     fn size(&self, window: &Window, cx: &App) -> Pixels;
     fn set_size(&mut self, size: Option<Pixels>, window: &mut Window, cx: &mut Context<Self>);
     fn icon(&self, window: &Window, cx: &App) -> Option<ui::IconName>;
-    fn icon_tooltip(&self, window: &Window, cx: &App) -> Option<&'static str>;
+    fn icon_tooltip(&self, window: &Window, cx: &App) -> &'static str;
     fn toggle_action(&self) -> Box<dyn Action>;
     fn icon_label(&self, _window: &Window, _: &App) -> Option<String> {
         None
@@ -76,7 +76,7 @@ pub trait PanelHandle: Send + Sync {
     fn size(&self, window: &Window, cx: &App) -> Pixels;
     fn set_size(&self, size: Option<Pixels>, window: &mut Window, cx: &mut App);
     fn icon(&self, window: &Window, cx: &App) -> Option<ui::IconName>;
-    fn icon_tooltip(&self, window: &Window, cx: &App) -> Option<&'static str>;
+    fn icon_tooltip(&self, window: &Window, cx: &App) -> &'static str;
     fn toggle_action(&self, window: &Window, cx: &App) -> Box<dyn Action>;
     fn icon_label(&self, window: &Window, cx: &App) -> Option<String>;
     fn panel_focus_handle(&self, cx: &App) -> FocusHandle;
@@ -160,7 +160,7 @@ where
         self.read(cx).icon(window, cx)
     }
 
-    fn icon_tooltip(&self, window: &Window, cx: &App) -> Option<&'static str> {
+    fn icon_tooltip(&self, window: &Window, cx: &App) -> &'static str {
         self.read(cx).icon_tooltip(window, cx)
     }
 
@@ -263,11 +263,6 @@ impl DockPosition {
 struct PanelEntry {
     panel: Arc<dyn PanelHandle>,
     _subscriptions: [Subscription; 3],
-}
-
-pub struct PanelButtons {
-    dock: Entity<Dock>,
-    _settings_subscription: Subscription,
 }
 
 impl Dock {
@@ -886,6 +881,11 @@ impl Render for Dock {
     }
 }
 
+pub struct PanelButtons {
+    dock: Entity<Dock>,
+    _settings_subscription: Subscription,
+}
+
 impl PanelButtons {
     pub fn new(dock: Entity<Dock>, cx: &mut Context<Self>) -> Self {
         cx.observe(&dock, |_, _, cx| cx.notify()).detach();
@@ -915,13 +915,7 @@ impl Render for PanelButtons {
             .enumerate()
             .filter_map(|(i, entry)| {
                 let icon = entry.panel.icon(window, cx)?;
-                let icon_tooltip = entry
-                    .panel
-                    .icon_tooltip(window, cx)
-                    .ok_or_else(|| {
-                        anyhow::anyhow!("can't render a panel button without an icon tooltip")
-                    })
-                    .log_err()?;
+                let icon_tooltip = entry.panel.icon_tooltip(window, cx);
                 let name = entry.panel.persistent_name();
                 let panel = entry.panel.clone();
 
@@ -1089,8 +1083,8 @@ pub mod test {
             None
         }
 
-        fn icon_tooltip(&self, _window: &Window, _cx: &App) -> Option<&'static str> {
-            None
+        fn icon_tooltip(&self, _window: &Window, _cx: &App) -> &'static str {
+            "Test Panel"
         }
 
         fn toggle_action(&self) -> Box<dyn Action> {

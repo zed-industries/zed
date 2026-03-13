@@ -2031,8 +2031,8 @@ impl Panel for Sidebar {
         (settings.enabled(cx) && settings.button).then_some(IconName::ThreadsSidebarLeftClosed)
     }
 
-    fn icon_tooltip(&self, _window: &Window, _cx: &App) -> Option<&'static str> {
-        Some("Threads Sidebar")
+    fn icon_tooltip(&self, _window: &Window, _cx: &App) -> &'static str {
+        "Threads Sidebar"
     }
 
     fn toggle_action(&self) -> Box<dyn Action> {

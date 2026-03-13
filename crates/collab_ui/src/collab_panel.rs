@@ -3197,8 +3197,8 @@ impl Panel for CollabPanel {
             .then_some(ui::IconName::UserGroup)
     }
 
-    fn icon_tooltip(&self, _window: &Window, _cx: &App) -> Option<&'static str> {
-        Some("Collab Panel")
+    fn icon_tooltip(&self, _window: &Window, _cx: &App) -> &'static str {
+        "Collab Panel"
     }
 
     fn toggle_action(&self) -> Box<dyn gpui::Action> {

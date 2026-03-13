@@ -1585,12 +1585,8 @@ impl Panel for DebugPanel {
             .then_some(IconName::Debug)
     }
 
-    fn icon_tooltip(&self, _window: &Window, cx: &App) -> Option<&'static str> {
-        if DebuggerSettings::get_global(cx).button {
-            Some("Debug Panel")
-        } else {
-            None
-        }
+    fn icon_tooltip(&self, _window: &Window, _cx: &App) -> &'static str {
+        "Debug Panel"
     }
 
     fn toggle_action(&self) -> Box<dyn Action> {

@@ -5734,8 +5734,8 @@ impl Panel for GitPanel {
         Some(ui::IconName::GitBranchAlt).filter(|_| GitPanelSettings::get_global(cx).button)
     }
 
-    fn icon_tooltip(&self, _window: &Window, _cx: &App) -> Option<&'static str> {
-        Some("Git Panel")
+    fn icon_tooltip(&self, _window: &Window, _cx: &App) -> &'static str {
+        "Git Panel"
     }
 
     fn toggle_action(&self) -> Box<dyn Action> {

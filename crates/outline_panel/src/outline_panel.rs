@@ -5023,8 +5023,8 @@ impl Panel for OutlinePanel {
             .then_some(IconName::ListTree)
     }
 
-    fn icon_tooltip(&self, _window: &Window, _: &App) -> Option<&'static str> {
-        Some("Outline Panel")
+    fn icon_tooltip(&self, _window: &Window, _: &App) -> &'static str {
+        "Outline Panel"
     }
 
     fn toggle_action(&self) -> Box<dyn Action> {

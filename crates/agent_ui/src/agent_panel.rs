@@ -3166,8 +3166,8 @@ impl Panel for AgentPanel {
         (self.enabled(cx) && AgentSettings::get_global(cx).button).then_some(IconName::ZedAssistant)
     }
 
-    fn icon_tooltip(&self, _window: &Window, _cx: &App) -> Option<&'static str> {
-        Some("Agent Panel")
+    fn icon_tooltip(&self, _window: &Window, _cx: &App) -> &'static str {
+        "Agent Panel"
     }
 
     fn toggle_action(&self) -> Box<dyn Action> {
