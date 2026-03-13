@@ -619,6 +619,48 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_diffing_clipboard_against_partial_multiline_selection(cx: &mut TestAppContext) {
+        base_test(
+            path!("/test"),
+            path!("/test/text.txt"),
+            "line 2\nline 3",
+            "line 1\nli«ne 2\nliˇ»ne 3",
+            &unindent(
+                "
+                - line 2
+                - line 3
+                + ˇne 2
+                + li",
+            ),
+            "Clipboard ↔ text.txt @ L2:3-L3:3",
+            &format!("Clipboard ↔ {} @ L2:3-L3:3", path!("test/text.txt")),
+            cx,
+        )
+        .await;
+    }
+
+    #[gpui::test]
+    async fn test_diffing_clipboard_partial_clipboard_against_full_line(cx: &mut TestAppContext) {
+        base_test(
+            path!("/test"),
+            path!("/test/text.txt"),
+            "ne 2\nli",
+            "line 1\n«line 2\nline 3ˇ»",
+            &unindent(
+                "
+                - ne 2
+                - li
+                + ˇline 2
+                + line 3",
+            ),
+            "Clipboard ↔ text.txt @ L2:1-L3:7",
+            &format!("Clipboard ↔ {} @ L2:1-L3:7", path!("test/text.txt")),
+            cx,
+        )
+        .await;
+    }
+
+    #[gpui::test]
     async fn test_diffing_clipboard_with_selection_at_file_end_without_trailing_newline(
         cx: &mut TestAppContext,
     ) {
