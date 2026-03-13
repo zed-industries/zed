@@ -16,6 +16,7 @@ use project::DisableAiSettings;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::Settings;
+use std::sync::Arc;
 use ui::{
     ButtonLike, Divider, DividerColor, IconButtonShape, KeyBinding, TextSize, Tooltip, Vector,
     VectorName, prelude::*,
@@ -338,7 +339,7 @@ impl WelcomePage {
         }
 
         let tip_index = tip_index_for_today(cx);
-        let tip_message_markdown = Self::build_tip_markdown(tip_index, &workspace, cx);
+        let tip_message_markdown = Self::build_tip_markdown(tip_index, None, cx);
 
         WelcomePage {
             workspace,
@@ -352,22 +353,23 @@ impl WelcomePage {
 
     fn build_tip_markdown(
         tip_index: usize,
-        workspace: &WeakEntity<Workspace>,
+        language_registry: Option<Arc<language::LanguageRegistry>>,
         cx: &mut Context<Self>,
     ) -> Option<Entity<Markdown>> {
         let registry = cx.try_global::<TipRegistry>()?;
         let tip = registry.tips.get(tip_index)?;
         let message = tip.message.trim().to_string();
-        let language_registry = workspace
-            .upgrade()
-            .map(|ws| ws.read(cx).app_state().languages.clone());
         Some(cx.new(|cx| Markdown::new(message.into(), language_registry, None, cx)))
     }
 
     fn set_tip_index(&mut self, index: usize, cx: &mut Context<Self>) {
         self.tip_index = index;
+        let language_registry = self
+            .workspace
+            .upgrade()
+            .map(|ws| ws.read(cx).app_state().languages.clone());
         self.tip_message_markdown =
-            Self::build_tip_markdown(self.tip_index, &self.workspace, cx);
+            Self::build_tip_markdown(self.tip_index, language_registry, cx);
         cx.notify();
     }
 
