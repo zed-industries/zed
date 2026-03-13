@@ -12,7 +12,7 @@ use crate::{
 use collections::BTreeSet;
 use language::{Chunk, Edit, Point, TextSummary};
 use multi_buffer::{
-    Anchor, MBTextSummary, MultiBufferOffset, MultiBufferRow, MultiBufferRows, MultiBufferSnapshot,
+    MBTextSummary, MultiBufferOffset, MultiBufferRow, MultiBufferRows, MultiBufferSnapshot,
     RowInfo, ToOffset,
 };
 use project::InlayId;
@@ -1339,7 +1339,7 @@ mod tests {
     use settings::SettingsStore;
     use std::{cmp::Reverse, env, sync::Arc};
     use sum_tree::TreeMap;
-    use text::{Patch, Rope};
+    use text::{BufferId, Patch, Rope};
     use util::RandomCharIter;
     use util::post_inc;
 
@@ -1351,7 +1351,7 @@ mod tests {
                 Anchor::min(),
                 &InlayHint {
                     label: InlayHintLabel::String("a".to_string()),
-                    position: text::Anchor::MIN,
+                    position: text::Anchor::min_for_buffer(BufferId::new(1)),
                     padding_left: false,
                     padding_right: false,
                     tooltip: None,
@@ -1371,7 +1371,7 @@ mod tests {
                 Anchor::min(),
                 &InlayHint {
                     label: InlayHintLabel::String("a".to_string()),
-                    position: text::Anchor::MIN,
+                    position: text::Anchor::min_for_buffer(BufferId::new(1)),
                     padding_left: true,
                     padding_right: true,
                     tooltip: None,
@@ -1391,7 +1391,7 @@ mod tests {
                 Anchor::min(),
                 &InlayHint {
                     label: InlayHintLabel::String(" a ".to_string()),
-                    position: text::Anchor::MIN,
+                    position: text::Anchor::min_for_buffer(BufferId::new(1)),
                     padding_left: false,
                     padding_right: false,
                     tooltip: None,
@@ -1411,7 +1411,7 @@ mod tests {
                 Anchor::min(),
                 &InlayHint {
                     label: InlayHintLabel::String(" a ".to_string()),
-                    position: text::Anchor::MIN,
+                    position: text::Anchor::min_for_buffer(BufferId::new(1)),
                     padding_left: true,
                     padding_right: true,
                     tooltip: None,
@@ -1434,7 +1434,7 @@ mod tests {
                 Anchor::min(),
                 &InlayHint {
                     label: InlayHintLabel::String("🎨".to_string()),
-                    position: text::Anchor::MIN,
+                    position: text::Anchor::min_for_buffer(BufferId::new(1)),
                     padding_left: true,
                     padding_right: true,
                     tooltip: None,

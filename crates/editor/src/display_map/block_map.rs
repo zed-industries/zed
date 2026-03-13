@@ -26,7 +26,7 @@ use std::{
     },
 };
 use sum_tree::{Bias, ContextLessSummary, Dimensions, SumTree, TreeMap};
-use text::{BufferId, Edit, ToPoint};
+use text::{BufferId, Edit};
 use ui::{ElementId, IntoElement};
 
 const NEWLINES: &[u8; rope::Chunk::MASK_BITS] = &[b'\n'; _];
@@ -3093,11 +3093,12 @@ mod tests {
             );
             multi_buffer
         });
-        let excerpt_start_anchors = multi_buffer
-            .read_with(cx, |mb, _| {
-                mb.snapshot(cx).excerpts().map(|e| e.start_anchor())
-            })
-            .collect::<Vec<_>>();
+        let excerpt_start_anchors = multi_buffer.read_with(cx, |mb, _| {
+            mb.snapshot(cx)
+                .excerpts()
+                .map(|e| e.start_anchor())
+                .collect::<Vec<_>>()
+        });
 
         let font = test_font();
         let font_size = px(14.);
@@ -4009,19 +4010,16 @@ mod tests {
                         wrap_map.sync(tab_snapshot, tab_edits, cx)
                     });
                     let mut block_map = block_map.write(wraps_snapshot, wrap_edits, None);
-                    let (unfolded_buffers, folded_buffers) = buffer.read_with(cx, |buffer, _| {
-                        let folded_buffers: Vec<_> =
-                            block_map.block_map.folded_buffers.iter().cloned().collect();
-                        let mut unfolded_buffers = buffer_snapshot
-                            .buffer_ids_for_range(Anchor::Min..Anchor::Max)
-                            .collect::<Vec<_>>();
-                        unfolded_buffers.dedup();
-                        log::debug!("All buffers {unfolded_buffers:?}");
-                        log::debug!("Folded buffers {folded_buffers:?}");
-                        unfolded_buffers.retain(|buffer_id| {
-                            !block_map.block_map.folded_buffers.contains(buffer_id)
-                        });
-                        (unfolded_buffers, folded_buffers)
+                    let folded_buffers: Vec<_> =
+                        block_map.block_map.folded_buffers.iter().cloned().collect();
+                    let mut unfolded_buffers = buffer_snapshot
+                        .buffer_ids_for_range(Anchor::Min..Anchor::Max)
+                        .collect::<Vec<_>>();
+                    unfolded_buffers.dedup();
+                    log::debug!("All buffers {unfolded_buffers:?}");
+                    log::debug!("Folded buffers {folded_buffers:?}");
+                    unfolded_buffers.retain(|buffer_id| {
+                        !block_map.block_map.folded_buffers.contains(buffer_id)
                     });
                     let mut folded_count = folded_buffers.len();
                     let mut unfolded_count = unfolded_buffers.len();
