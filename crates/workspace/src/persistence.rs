@@ -2134,6 +2134,13 @@ impl WorkspaceDb {
     }
 
     query! {
+        pub(crate) async fn ensure_workspace_row(workspace_id: WorkspaceId) -> Result<()> {
+            INSERT OR IGNORE INTO workspaces(workspace_id)
+            VALUES (?1)
+        }
+    }
+
+    query! {
         pub(crate) async fn set_window_open_status(workspace_id: WorkspaceId, bounds: SerializedWindowBounds, display: Uuid) -> Result<()> {
             UPDATE workspaces
             SET window_state = ?2,
