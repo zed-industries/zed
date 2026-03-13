@@ -89,7 +89,10 @@ fn fuzzy_match_positions(query: &str, text: &str) -> Option<Vec<usize>> {
 
 pub enum ThreadsArchiveViewEvent {
     Close,
-    OpenThread(AgentSessionInfo),
+    OpenThread {
+        agent: Agent,
+        session_info: AgentSessionInfo,
+    },
 }
 
 impl EventEmitter<ThreadsArchiveViewEvent> for ThreadsArchiveView {}
@@ -263,7 +266,10 @@ impl ThreadsArchiveView {
     ) {
         self.selection = None;
         self.reset_filter_editor_text(window, cx);
-        cx.emit(ThreadsArchiveViewEvent::OpenThread(session_info));
+        cx.emit(ThreadsArchiveViewEvent::OpenThread {
+            agent: self.selected_agent.clone(),
+            session_info,
+        });
     }
 
     fn is_selectable_item(&self, ix: usize) -> bool {
@@ -413,7 +419,6 @@ impl ThreadsArchiveView {
 
                 ListItem::new(id)
                     .toggle_state(is_selected)
-                    .disabled(true)
                     .child(
                         h_flex()
                             .min_w_0()
