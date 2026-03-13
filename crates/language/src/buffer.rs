@@ -2620,7 +2620,6 @@ impl Buffer {
     }
 
     /// Replaces the buffer's entire text.
-
     pub fn restore_history(
         &mut self,
         undo_history: &[u8],

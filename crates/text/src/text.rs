@@ -745,7 +745,6 @@ impl FromIterator<char> for LineIndent {
     }
 }
 
-
 #[derive(serde::Serialize)]
 struct SerializedHistory<'a> {
     base_text: String,
@@ -773,7 +772,7 @@ impl Buffer {
         let serialized = SerializedHistory {
             base_text: history.base_text.to_string(),
             line_ending: self.line_ending(),
-            operations: history.operations.values().map(|v| v).collect(),
+            operations: history.operations.values().collect(),
             undo_stack: &history.undo_stack,
             redo_stack: &history.redo_stack,
         };
@@ -782,10 +781,14 @@ impl Buffer {
         Ok(compressed)
     }
 
-    pub fn deserialize_history(bytes: &[u8], replica_id: ReplicaId, remote_id: BufferId) -> anyhow::Result<Self> {
+    pub fn deserialize_history(
+        bytes: &[u8],
+        replica_id: ReplicaId,
+        remote_id: BufferId,
+    ) -> anyhow::Result<Self> {
         let uncompressed = zstd::stream::decode_all(bytes)?;
         let deserialized: DeserializedHistory = bincode::deserialize(&uncompressed)?;
-        
+
         let mut buffer = Self::new_normalized(
             replica_id,
             remote_id,
@@ -3141,7 +3144,19 @@ impl sum_tree::ContextLessSummary for InsertionFragmentKey {
     }
 }
 
-#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Copy,
+    Clone,
+    Debug,
+    Default,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Hash,
+    serde::Serialize,
+    serde::Deserialize,
+)]
 pub struct FullOffset(pub usize);
 
 impl ops::AddAssign<usize> for FullOffset {
