@@ -69,15 +69,15 @@ impl AddLlmProviderInput {
             single_line_input("Provider Name", provider.name(), None, 1, window, cx);
         let api_url = single_line_input("API URL", provider.api_url(), None, 2, window, cx);
         let api_key = cx.new(|cx| {
-            let input = InputField::new(
+            InputField::new(
                 window,
                 cx,
                 "000000000000000000000000000000000000000000000000",
             )
+            .label("API Key")
             .tab_index(3)
-            .tab_stop(true);
-            input.editor().set_masked(true, window, cx);
-            input
+            .tab_stop(true)
+            .masked(true)
         });
 
         Self {
@@ -287,7 +287,6 @@ fn save_provider_to_settings(
 pub struct AddLlmProviderModal {
     provider: LlmCompatibleProvider,
     input: AddLlmProviderInput,
-    api_key_visible: bool,
     scroll_handle: ScrollHandle,
     focus_handle: FocusHandle,
     last_error: Option<SharedString>,
@@ -307,7 +306,6 @@ impl AddLlmProviderModal {
         Self {
             input: AddLlmProviderInput::new(provider, window, cx),
             provider,
-            api_key_visible: false,
             last_error: None,
             focus_handle: cx.focus_handle(),
             scroll_handle: ScrollHandle::new(),
@@ -553,56 +551,7 @@ impl Render for AddLlmProviderModal {
                                     .track_scroll(&self.scroll_handle)
                                     .child(self.input.provider_name.clone())
                                     .child(self.input.api_url.clone())
-                                    .child(
-                                        v_flex()
-                                            .gap_1()
-                                            .child(Label::new("API Key").size(LabelSize::Small))
-                                            .child(
-                                                h_flex()
-                                                    .items_center()
-                                                    .gap_1()
-                                                    .child(self.input.api_key.clone())
-                                                    .child(
-                                                        IconButton::new(
-                                                            "toggle-api-key-visibility",
-                                                            if self.api_key_visible {
-                                                                IconName::EyeOff
-                                                            } else {
-                                                                IconName::Eye
-                                                            },
-                                                        )
-                                                        .icon_size(IconSize::Small)
-                                                        .icon_color(Color::Muted)
-                                                        .tooltip({
-                                                            let tooltip_text =
-                                                                if self.api_key_visible {
-                                                                    "Hide API key"
-                                                                } else {
-                                                                    "Show API key"
-                                                                };
-                                                            Tooltip::text(tooltip_text)
-                                                        })
-                                                        .on_click(cx.listener(
-                                                            |this, _, window, cx| {
-                                                                this.api_key_visible =
-                                                                    !this.api_key_visible;
-                                                                let editor = this
-                                                                    .input
-                                                                    .api_key
-                                                                    .read(cx)
-                                                                    .editor()
-                                                                    .clone();
-                                                                editor.set_masked(
-                                                                    !this.api_key_visible,
-                                                                    window,
-                                                                    cx,
-                                                                );
-                                                                cx.notify();
-                                                            },
-                                                        )),
-                                                    ),
-                                            ),
-                                    )
+                                    .child(self.input.api_key.clone())
                                     .child(self.render_model_section(cx)),
                             ),
                     )
