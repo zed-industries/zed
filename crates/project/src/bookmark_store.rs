@@ -277,7 +277,10 @@ impl BookmarkStore {
         }
     }
 
-    pub fn all_source_bookmarks(&self, cx: &App) -> BTreeMap<Arc<Path>, Vec<SerializedBookmark>> {
+    pub fn all_serialized_bookmarks(
+        &self,
+        cx: &App,
+    ) -> BTreeMap<Arc<Path>, Vec<SerializedBookmark>> {
         self.bookmarks
             .iter()
             .filter_map(|(path, buffer_bookmarks)| {
