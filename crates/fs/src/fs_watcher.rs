@@ -86,10 +86,12 @@ impl Watcher for FsWatcher {
         #[cfg(target_os = "linux")]
         let mode = notify::RecursiveMode::NonRecursive;
 
+        let registration_path = path.clone();
         let registration_id = global({
-            let path = path.clone();
+            let watch_path = path.clone();
+            let callback_path = path;
             |g| {
-                g.add(path, mode, move |event: &notify::Event| {
+                g.add(watch_path, mode, move |event: &notify::Event| {
                     log::trace!("watcher received event: {event:?}");
                     let kind = match event.kind {
                         EventKind::Create(_) => Some(PathEventKind::Created),
@@ -109,11 +111,28 @@ impl Watcher for FsWatcher {
                         })
                         .collect::<Vec<_>>();
 
+                    let is_rescan_event = event.need_rescan();
+                    if is_rescan_event {
+                        log::warn!(
+                            "filesystem watcher lost sync for {callback_path:?}; scheduling rescan"
+                        );
+                        // we only keep the first event per path below, this ensures it will be the rescan event
+                        // we'll remove any existing pending events for the same reason once we have the lock below
+                        path_events.retain(|p| &p.path != callback_path.as_ref());
+                        path_events.push(PathEvent {
+                            path: callback_path.to_path_buf(),
+                            kind: Some(PathEventKind::Rescan),
+                        });
+                    }
+
                     if !path_events.is_empty() {
                         path_events.sort();
                         let mut pending_paths = pending_paths.lock();
                         if pending_paths.is_empty() {
                             tx.try_send(()).ok();
+                        }
+                        if is_rescan_event {
+                            pending_paths.retain(|p| &p.path != callback_path.as_ref());
                         }
                         util::extend_sorted(
                             &mut *pending_paths,
@@ -126,7 +145,9 @@ impl Watcher for FsWatcher {
             }
         })??;
 
-        self.registrations.lock().insert(path, registration_id);
+        self.registrations
+            .lock()
+            .insert(registration_path, registration_id);
 
         Ok(())
     }
