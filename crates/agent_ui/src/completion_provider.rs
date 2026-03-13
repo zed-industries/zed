@@ -648,7 +648,7 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
                                     });
 
                                     mention_set
-                                        .update(cx, |mention_set, _| {
+                                        .update(cx, |mention_set, cx| {
                                             mention_set.insert_mention(
                                                 crease_id,
                                                 mention_uri.clone(),
@@ -659,6 +659,7 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
                                                     },
                                                 ))
                                                 .shared(),
+                                                cx,
                                             );
                                         })
                                         .ok();

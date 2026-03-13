@@ -5,6 +5,7 @@ use prompt_store::{PromptId, UserPromptId};
 use serde::{Deserialize, Serialize};
 use std::{
     borrow::Cow,
+    ffi::{OsStr, OsString},
     fmt,
     ops::RangeInclusive,
     path::{Path, PathBuf},
@@ -264,6 +265,32 @@ impl MentionUri {
                 ..
             } => selection_name(path.as_deref(), line_range),
             MentionUri::Fetch { url } => url.to_string(),
+        }
+    }
+
+    pub fn mention_filename(&self) -> Option<OsString> {
+        match self {
+            MentionUri::File { abs_path } | MentionUri::Directory { abs_path } => {
+                abs_path.file_name().map(OsString::from)
+            }
+            _ => None,
+        }
+    }
+
+    pub fn disambiguated_name(&self) -> String {
+        match self {
+            MentionUri::File { abs_path, .. } | MentionUri::Directory { abs_path, .. } => {
+                let file_name = abs_path
+                    .file_name()
+                    .unwrap_or(OsStr::new("Untitled"))
+                    .to_string_lossy();
+                if let Some(parent) = abs_path.parent().and_then(|p| p.file_name()) {
+                    format!("{}/{}", parent.to_string_lossy(), file_name)
+                } else {
+                    file_name.into_owned()
+                }
+            }
+            _ => self.name(),
         }
     }
 
