@@ -107,6 +107,7 @@ enum ThreadEntryWorkspace {
 
 #[derive(Clone)]
 struct ThreadEntry {
+    agent: Agent,
     session_info: acp_thread::AgentSessionInfo,
     icon: IconName,
     icon_from_external_svg: Option<SharedString>,
@@ -592,6 +593,7 @@ impl Sidebar {
                     for meta in thread_store.read(cx).threads_for_paths(&path_list) {
                         seen_session_ids.insert(meta.id.clone());
                         threads.push(ThreadEntry {
+                            agent: Agent::NativeAgent,
                             session_info: meta.into(),
                             icon: IconName::ZedAgent,
                             icon_from_external_svg: None,
@@ -644,6 +646,7 @@ impl Sidebar {
                                 continue;
                             }
                             threads.push(ThreadEntry {
+                                agent: Agent::NativeAgent,
                                 session_info: meta.into(),
                                 icon: IconName::ZedAgent,
                                 icon_from_external_svg: None,
@@ -1370,10 +1373,17 @@ impl Sidebar {
                 match &thread.workspace {
                     ThreadEntryWorkspace::Open(workspace) => {
                         let workspace = workspace.clone();
-                        self.activate_thread(session_info, &workspace, window, cx);
+                        self.activate_thread(
+                            thread.agent.clone(),
+                            session_info,
+                            &workspace,
+                            window,
+                            cx,
+                        );
                     }
                     ThreadEntryWorkspace::Closed(path_list) => {
                         self.open_workspace_and_activate_thread(
+                            thread.agent.clone(),
                             session_info,
                             path_list.clone(),
                             window,
@@ -1405,6 +1415,7 @@ impl Sidebar {
 
     fn activate_thread(
         &mut self,
+        agent: Agent,
         session_info: acp_thread::AgentSessionInfo,
         workspace: &Entity<Workspace>,
         window: &mut Window,
@@ -1425,9 +1436,11 @@ impl Sidebar {
         if let Some(agent_panel) = workspace.read(cx).panel::<AgentPanel>(cx) {
             agent_panel.update(cx, |panel, cx| {
                 panel.load_agent_thread(
+                    agent,
                     session_info.session_id,
                     session_info.cwd,
                     session_info.title,
+                    true,
                     window,
                     cx,
                 );
@@ -1437,6 +1450,7 @@ impl Sidebar {
 
     fn open_workspace_and_activate_thread(
         &mut self,
+        agent: Agent,
         session_info: acp_thread::AgentSessionInfo,
         path_list: PathList,
         window: &mut Window,
@@ -1454,7 +1468,7 @@ impl Sidebar {
         cx.spawn_in(window, async move |this, cx| {
             let workspace = open_task.await?;
             this.update_in(cx, |this, window, cx| {
-                this.activate_thread(session_info, &workspace, window, cx);
+                this.activate_thread(agent, session_info, &workspace, window, cx);
             })?;
             anyhow::Ok(())
         })
@@ -1589,22 +1603,32 @@ impl Sidebar {
             .selected(self.focused_thread.as_ref() == Some(&session_info.session_id))
             .focused(is_selected)
             .docked_right(docked_right)
-            .on_click(cx.listener(move |this, _, window, cx| {
-                this.selection = None;
-                match &thread_workspace {
-                    ThreadEntryWorkspace::Open(workspace) => {
-                        this.activate_thread(session_info.clone(), workspace, window, cx);
+            .on_click({
+                let agent = thread.agent.clone();
+                cx.listener(move |this, _, window, cx| {
+                    this.selection = None;
+                    match &thread_workspace {
+                        ThreadEntryWorkspace::Open(workspace) => {
+                            this.activate_thread(
+                                agent.clone(),
+                                session_info.clone(),
+                                workspace,
+                                window,
+                                cx,
+                            );
+                        }
+                        ThreadEntryWorkspace::Closed(path_list) => {
+                            this.open_workspace_and_activate_thread(
+                                agent.clone(),
+                                session_info.clone(),
+                                path_list.clone(),
+                                window,
+                                cx,
+                            );
+                        }
                     }
-                    ThreadEntryWorkspace::Closed(path_list) => {
-                        this.open_workspace_and_activate_thread(
-                            session_info.clone(),
-                            path_list.clone(),
-                            window,
-                            cx,
-                        );
-                    }
-                }
-            }))
+                })
+            })
             .into_any_element()
     }
 
@@ -1852,8 +1876,12 @@ impl Sidebar {
                 ThreadsArchiveViewEvent::Close => {
                     this.show_thread_list(window, cx);
                 }
-                ThreadsArchiveViewEvent::OpenThread(_session_info) => {
-                    //TODO: Actually open thread once we support it
+                ThreadsArchiveViewEvent::OpenThread {
+                    agent,
+                    session_info,
+                } => {
+                    // this.show_thread_list(window, cx);
+                    // this.activate_archived_thread(agent.clone(), session_info.clone(), window, cx);
                 }
             },
         );
@@ -2506,6 +2534,7 @@ mod tests {
                 },
                 // Thread with default (Completed) status, not active
                 ListEntry::Thread(ThreadEntry {
+                    agent: Agent::NativeAgent,
                     session_info: acp_thread::AgentSessionInfo {
                         session_id: acp::SessionId::new(Arc::from("t-1")),
                         cwd: None,
@@ -2527,6 +2556,7 @@ mod tests {
                 }),
                 // Active thread with Running status
                 ListEntry::Thread(ThreadEntry {
+                    agent: Agent::NativeAgent,
                     session_info: acp_thread::AgentSessionInfo {
                         session_id: acp::SessionId::new(Arc::from("t-2")),
                         cwd: None,
@@ -2548,6 +2578,7 @@ mod tests {
                 }),
                 // Active thread with Error status
                 ListEntry::Thread(ThreadEntry {
+                    agent: Agent::NativeAgent,
                     session_info: acp_thread::AgentSessionInfo {
                         session_id: acp::SessionId::new(Arc::from("t-3")),
                         cwd: None,
@@ -2569,6 +2600,7 @@ mod tests {
                 }),
                 // Thread with WaitingForConfirmation status, not active
                 ListEntry::Thread(ThreadEntry {
+                    agent: Agent::NativeAgent,
                     session_info: acp_thread::AgentSessionInfo {
                         session_id: acp::SessionId::new(Arc::from("t-4")),
                         cwd: None,
@@ -2590,6 +2622,7 @@ mod tests {
                 }),
                 // Background thread that completed (should show notification)
                 ListEntry::Thread(ThreadEntry {
+                    agent: Agent::NativeAgent,
                     session_info: acp_thread::AgentSessionInfo {
                         session_id: acp::SessionId::new(Arc::from("t-5")),
                         cwd: None,
@@ -3940,6 +3973,7 @@ mod tests {
         // ── 2. Click thread in workspace A via sidebar ───────────────────────
         sidebar.update_in(cx, |sidebar, window, cx| {
             sidebar.activate_thread(
+                Agent::NativeAgent,
                 acp_thread::AgentSessionInfo {
                     session_id: session_id_a.clone(),
                     cwd: None,
@@ -4007,6 +4041,7 @@ mod tests {
         // which also triggers a workspace switch.
         sidebar.update_in(cx, |sidebar, window, cx| {
             sidebar.activate_thread(
+                Agent::NativeAgent,
                 acp_thread::AgentSessionInfo {
                     session_id: session_id_b.clone(),
                     cwd: None,
