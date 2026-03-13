@@ -2273,7 +2273,13 @@ impl AgentPanel {
                         .title
                         .as_ref()
                         .filter(|title| !title.is_empty())
-                        .cloned()
+                        .map(|t| {
+                            if t.contains('\n') || t.contains('\r') {
+                                SharedString::from(t.replace(['\n', '\r'], " "))
+                            } else {
+                                t.clone()
+                            }
+                        })
                         .unwrap_or_else(|| SharedString::new_static(DEFAULT_THREAD_TITLE));
 
                     menu = menu.entry(title, None, {
@@ -2319,6 +2325,8 @@ impl AgentPanel {
                 for entry in entries {
                     let title = if entry.title.is_empty() {
                         SharedString::new_static(DEFAULT_THREAD_TITLE)
+                    } else if entry.title.contains('\n') || entry.title.contains('\r') {
+                        SharedString::from(entry.title.replace(['\n', '\r'], " "))
                     } else {
                         entry.title.clone()
                     };

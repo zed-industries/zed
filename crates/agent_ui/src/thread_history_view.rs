@@ -18,12 +18,19 @@ use ui::{
 
 const DEFAULT_TITLE: &SharedString = &SharedString::new_static("New Thread");
 
-pub(crate) fn thread_title(entry: &AgentSessionInfo) -> &SharedString {
-    entry
+pub(crate) fn thread_title(entry: &AgentSessionInfo) -> SharedString {
+    let title = entry
         .title
         .as_ref()
-        .filter(|title| !title.is_empty())
-        .unwrap_or(DEFAULT_TITLE)
+        .filter(|title| !title.is_empty());
+
+    match title {
+        Some(t) if t.contains('\n') || t.contains('\r') => {
+            SharedString::from(t.replace(['\n', '\r'], " "))
+        }
+        Some(t) => t.clone(),
+        None => DEFAULT_TITLE.clone(),
+    }
 }
 
 pub struct ThreadHistoryView {

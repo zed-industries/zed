@@ -1435,9 +1435,26 @@ impl ThreadView {
                 }
 
                 let new_title = title_editor.read(cx).text(cx);
+
+                // Strip newlines that may have been pasted into the title,
+                // as multi-line titles break the layout in history lists and menus.
+                let sanitized_title: String = new_title
+                    .chars()
+                    .map(|c| if c == '\n' || c == '\r' { ' ' } else { c })
+                    .collect();
+
+                // If the title was changed by sanitization, update the editor
+                // to reflect the cleaned title.
+                if sanitized_title != new_title {
+                    title_editor.update(cx, |editor, cx| {
+                        editor.set_text(&sanitized_title, window, cx);
+                    });
+                    return;
+                }
+
                 thread.update(cx, |thread, cx| {
                     thread
-                        .set_title(new_title.into(), cx)
+                        .set_title(sanitized_title.into(), cx)
                         .detach_and_log_err(cx);
                 })
             }
