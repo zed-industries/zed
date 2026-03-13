@@ -1,4 +1,4 @@
-use std::{cmp, ops::ControlFlow, path::PathBuf, process::ExitStatus, sync::Arc, time::Duration};
+use std::{cmp, path::PathBuf, process::ExitStatus, sync::Arc, time::Duration};
 
 use crate::{
     TerminalView, default_working_directory,
@@ -12,11 +12,11 @@ use db::kvp::KEY_VALUE_STORE;
 use futures::{channel::oneshot, future::join_all};
 use gpui::{
     Action, AnyView, App, AsyncApp, AsyncWindowContext, Context, Corner, Entity, EventEmitter,
-    ExternalPaths, FocusHandle, Focusable, IntoElement, ParentElement, Pixels, Render, Styled,
-    Task, WeakEntity, Window, actions,
+    FocusHandle, Focusable, IntoElement, ParentElement, Pixels, Render, Styled, Task, WeakEntity,
+    Window, actions,
 };
 use itertools::Itertools;
-use project::{Fs, Project, ProjectEntryId};
+use project::{Fs, Project};
 
 use settings::{Settings, TerminalDockPosition};
 use task::{RevealStrategy, RevealTarget, Shell, ShellBuilder, SpawnInTerminal, TaskId};
@@ -28,13 +28,13 @@ use ui::{
 use util::{ResultExt, TryFutureExt};
 use workspace::{
     ActivateNextPane, ActivatePane, ActivatePaneDown, ActivatePaneLeft, ActivatePaneRight,
-    ActivatePaneUp, ActivatePreviousPane, DraggedSelection, DraggedTab, ItemId, MoveItemToPane,
+    ActivatePaneUp, ActivatePreviousPane, DraggedTab, ItemId, MoveItemToPane,
     MoveItemToPaneInDirection, MovePaneDown, MovePaneLeft, MovePaneRight, MovePaneUp, Pane,
     PaneGroup, SplitDirection, SplitDown, SplitLeft, SplitMode, SplitRight, SplitUp, SwapPaneDown,
     SwapPaneLeft, SwapPaneRight, SwapPaneUp, ToggleZoom, Workspace,
     dock::{DockPosition, Panel, PanelEvent, PanelHandle},
     item::SerializableItem,
-    move_active_item, move_item, pane,
+    move_active_item, pane,
 };
 
 use anyhow::{Result, anyhow};
@@ -133,7 +133,11 @@ impl TerminalPanel {
         }
     }
 
-    fn apply_tab_bar_buttons(&self, terminal_pane: &Entity<Pane>, cx: &mut Context<Self>) {
+    pub(crate) fn apply_tab_bar_buttons(
+        &self,
+        terminal_pane: &Entity<Pane>,
+        cx: &mut Context<Self>,
+    ) {
         let assistant_tab_bar_button = self.assistant_tab_bar_button.clone();
         terminal_pane.update(cx, |pane, cx| {
             pane.set_render_tab_bar_buttons(cx, move |pane, window, cx| {
@@ -1187,7 +1191,6 @@ pub fn new_terminal_pane(
     window: &mut Window,
     cx: &mut Context<TerminalPanel>,
 ) -> Entity<Pane> {
-    let is_local = project.read(cx).is_local();
     let terminal_panel = cx.entity();
     let pane = cx.new(|cx| {
         let mut pane = Pane::new(
@@ -1245,113 +1248,6 @@ pub fn new_terminal_pane(
             toolbar.add_item(breadcrumbs, window, cx);
         });
 
-        let drop_closure_project = project.downgrade();
-        let drop_closure_terminal_panel = terminal_panel.downgrade();
-        pane.set_custom_drop_handle(cx, move |pane, dropped_item, window, cx| {
-            let Some(project) = drop_closure_project.upgrade() else {
-                return ControlFlow::Break(());
-            };
-            if let Some(tab) = dropped_item.downcast_ref::<DraggedTab>() {
-                let this_pane = cx.entity();
-                let item = if tab.pane == this_pane {
-                    pane.item_for_index(tab.ix)
-                } else {
-                    tab.pane.read(cx).item_for_index(tab.ix)
-                };
-                if let Some(item) = item {
-                    if item.downcast::<TerminalView>().is_some() {
-                        let source = tab.pane.clone();
-                        let item_id_to_move = item.item_id();
-
-                        // If no split direction, let the regular pane drop handler take care of it
-                        let Some(split_direction) = pane.drag_split_direction() else {
-                            return ControlFlow::Continue(());
-                        };
-
-                        // Gather data synchronously before deferring
-                        let is_zoomed = drop_closure_terminal_panel
-                            .upgrade()
-                            .map(|terminal_panel| {
-                                let terminal_panel = terminal_panel.read(cx);
-                                if terminal_panel.active_pane == this_pane {
-                                    pane.is_zoomed()
-                                } else {
-                                    terminal_panel.active_pane.read(cx).is_zoomed()
-                                }
-                            })
-                            .unwrap_or(false);
-
-                        let workspace = workspace.clone();
-                        let terminal_panel = drop_closure_terminal_panel.clone();
-
-                        // Defer the split operation to avoid re-entrancy panic.
-                        // The pane may be the one currently being updated, so we cannot
-                        // call mark_positions (via split) synchronously.
-                        cx.spawn_in(window, async move |_, cx| {
-                            cx.update(|window, cx| {
-                                let Ok(new_pane) =
-                                    terminal_panel.update(cx, |terminal_panel, cx| {
-                                        let new_pane = new_terminal_pane(
-                                            workspace, project, is_zoomed, window, cx,
-                                        );
-                                        terminal_panel.apply_tab_bar_buttons(&new_pane, cx);
-                                        terminal_panel.center.split(
-                                            &this_pane,
-                                            &new_pane,
-                                            split_direction,
-                                            cx,
-                                        );
-                                        new_pane
-                                    })
-                                else {
-                                    return;
-                                };
-
-                                move_item(
-                                    &source,
-                                    &new_pane,
-                                    item_id_to_move,
-                                    new_pane.read(cx).active_item_index(),
-                                    true,
-                                    window,
-                                    cx,
-                                );
-                            })
-                            .ok();
-                        })
-                        .detach();
-                    } else if let Some(project_path) = item.project_path(cx)
-                        && let Some(entry_path) = project.read(cx).absolute_path(&project_path, cx)
-                    {
-                        add_paths_to_terminal(pane, &[entry_path], window, cx);
-                    }
-                }
-            } else if let Some(selection) = dropped_item.downcast_ref::<DraggedSelection>() {
-                let project = project.read(cx);
-                let paths_to_add = selection
-                    .items()
-                    .map(|selected_entry| selected_entry.entry_id)
-                    .filter_map(|entry_id| project.path_for_entry(entry_id, cx))
-                    .filter_map(|project_path| project.absolute_path(&project_path, cx))
-                    .collect::<Vec<_>>();
-                if !paths_to_add.is_empty() {
-                    add_paths_to_terminal(pane, &paths_to_add, window, cx);
-                }
-            } else if let Some(&entry_id) = dropped_item.downcast_ref::<ProjectEntryId>() {
-                if let Some(entry_path) = project
-                    .read(cx)
-                    .path_for_entry(entry_id, cx)
-                    .and_then(|project_path| project.read(cx).absolute_path(&project_path, cx))
-                {
-                    add_paths_to_terminal(pane, &[entry_path], window, cx);
-                }
-            } else if is_local && let Some(paths) = dropped_item.downcast_ref::<ExternalPaths>() {
-                add_paths_to_terminal(pane, paths.paths(), window, cx);
-            }
-
-            ControlFlow::Break(())
-        });
-
         pane
     });
 
@@ -1374,27 +1270,6 @@ async fn wait_for_terminals_tasks(
         })
     });
     join_all(pending_tasks).await;
-}
-
-fn add_paths_to_terminal(
-    pane: &mut Pane,
-    paths: &[PathBuf],
-    window: &mut Window,
-    cx: &mut Context<Pane>,
-) {
-    if let Some(terminal_view) = pane
-        .active_item()
-        .and_then(|item| item.downcast::<TerminalView>())
-    {
-        window.focus(&terminal_view.focus_handle(cx), cx);
-        let mut new_text = paths.iter().map(|path| format!(" {path:?}")).join("");
-        new_text.push(' ');
-        terminal_view.update(cx, |terminal_view, cx| {
-            terminal_view.terminal().update(cx, |terminal, _| {
-                terminal.paste(&new_text);
-            });
-        });
-    }
 }
 
 struct FailedToSpawnTerminal {

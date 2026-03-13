@@ -1,0 +1,57 @@
+#!/usr/bin/env bash
+#
+# Build eval-cli for x86_64 Linux from any host (macOS, Linux, etc.)
+# using Docker. The resulting binary is placed at the path printed on
+# completion (default: target/eval-cli).
+#
+# Usage:
+#   crates/eval_cli/script/build-linux [--output PATH]
+#
+# Examples:
+#   crates/eval_cli/script/build-linux
+#   crates/eval_cli/script/build-linux --output ~/bin/eval-cli
+#
+# Prerequisites: Docker must be installed and running.
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
+OUTPUT="${REPO_ROOT}/target/eval-cli"
+
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        --output)
+            OUTPUT="$2"
+            shift 2
+            ;;
+        *)
+            echo "Unknown option: $1" >&2
+            exit 1
+            ;;
+    esac
+done
+
+cd "$REPO_ROOT"
+
+IMAGE_TAG="eval-cli-builder"
+
+echo "Building eval-cli for x86_64-unknown-linux-gnu..."
+echo "  Repo root: $REPO_ROOT"
+echo "  Output:    $OUTPUT"
+echo ""
+
+docker build \
+    --platform linux/amd64 \
+    -f crates/eval_cli/Dockerfile \
+    -t "$IMAGE_TAG" \
+    .
+
+CONTAINER_ID=$(docker create "$IMAGE_TAG" /eval-cli)
+mkdir -p "$(dirname "$OUTPUT")"
+docker cp "$CONTAINER_ID":/eval-cli "$OUTPUT"
+docker rm "$CONTAINER_ID" > /dev/null
+
+echo ""
+echo "Built successfully: $OUTPUT"
+echo "  $(file "$OUTPUT")"

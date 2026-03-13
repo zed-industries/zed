@@ -107,7 +107,7 @@ use project::{InlayId, lsp_store::LspFoldingRange, lsp_store::TokenType};
 use serde::Deserialize;
 use smallvec::SmallVec;
 use sum_tree::{Bias, TreeMap};
-use text::{BufferId, LineIndent, Patch, ToOffset as _};
+use text::{BufferId, LineIndent, Patch};
 use ui::{SharedString, px};
 use unicode_segmentation::UnicodeSegmentation;
 use ztracing::instrument;
@@ -789,6 +789,9 @@ impl DisplayMap {
                 .collect(),
             cx,
         );
+        for buffer_id in &other.block_snapshot.buffers_with_disabled_headers {
+            self.disable_header_for_buffer(*buffer_id, cx);
+        }
     }
 
     /// Creates folds for the given creases.
@@ -1498,7 +1501,7 @@ impl<'a> HighlightedChunk<'a> {
         self,
         editor_style: &'a EditorStyle,
     ) -> impl Iterator<Item = Self> + 'a {
-        let mut chars = self.text.chars().peekable();
+        let mut chunks = self.text.graphemes(true).peekable();
         let mut text = self.text;
         let style = self.style;
         let is_tab = self.is_tab;
@@ -1506,10 +1509,12 @@ impl<'a> HighlightedChunk<'a> {
         let is_inlay = self.is_inlay;
         iter::from_fn(move || {
             let mut prefix_len = 0;
-            while let Some(&ch) = chars.peek() {
-                if !is_invisible(ch) {
-                    prefix_len += ch.len_utf8();
-                    chars.next();
+            while let Some(&chunk) = chunks.peek() {
+                let mut chars = chunk.chars();
+                let Some(ch) = chars.next() else { break };
+                if chunk.len() != ch.len_utf8() || !is_invisible(ch) {
+                    prefix_len += chunk.len();
+                    chunks.next();
                     continue;
                 }
                 if prefix_len > 0 {
@@ -1523,8 +1528,8 @@ impl<'a> HighlightedChunk<'a> {
                         replacement: renderer.clone(),
                     });
                 }
-                chars.next();
-                let (prefix, suffix) = text.split_at(ch.len_utf8());
+                chunks.next();
+                let (prefix, suffix) = text.split_at(chunk.len());
                 text = suffix;
                 if let Some(replacement) = replacement(ch) {
                     let invisible_highlight = HighlightStyle {
@@ -1914,6 +1919,9 @@ impl DisplaySnapshot {
                             color
                         }
                     }),
+                    underline: chunk_highlight
+                        .underline
+                        .filter(|_| editor_style.show_underlines),
                     ..chunk_highlight
                 }
             });
@@ -1969,56 +1977,10 @@ impl DisplaySnapshot {
     /// Returned ranges are 0-based relative to `buffer_range.start`.
     pub(super) fn combined_highlights(
         &self,
-        buffer_id: BufferId,
-        buffer_range: Range<usize>,
+        multibuffer_range: Range<MultiBufferOffset>,
         syntax_theme: &theme::SyntaxTheme,
     ) -> Vec<(Range<usize>, HighlightStyle)> {
         let multibuffer = self.buffer_snapshot();
-
-        let multibuffer_range = multibuffer
-            .excerpts()
-            .find_map(|(excerpt_id, buffer, range)| {
-                if buffer.remote_id() != buffer_id {
-                    return None;
-                }
-                let context_start = range.context.start.to_offset(buffer);
-                let context_end = range.context.end.to_offset(buffer);
-                if buffer_range.start < context_start || buffer_range.end > context_end {
-                    return None;
-                }
-                let start_anchor = buffer.anchor_before(buffer_range.start);
-                let end_anchor = buffer.anchor_after(buffer_range.end);
-                let mb_range =
-                    multibuffer.anchor_range_in_excerpt(excerpt_id, start_anchor..end_anchor)?;
-                Some(mb_range.start.to_offset(multibuffer)..mb_range.end.to_offset(multibuffer))
-            });
-
-        let Some(multibuffer_range) = multibuffer_range else {
-            // Range is outside all excerpts (e.g. symbol name not in a
-            // multi-buffer excerpt). Fall back to buffer-level syntax highlights.
-            let buffer_snapshot = multibuffer.excerpts().find_map(|(_, buffer, _)| {
-                (buffer.remote_id() == buffer_id).then(|| buffer.clone())
-            });
-            let Some(buffer_snapshot) = buffer_snapshot else {
-                return Vec::new();
-            };
-            let mut highlights = Vec::new();
-            let mut offset = 0usize;
-            for chunk in buffer_snapshot.chunks(buffer_range, true) {
-                let chunk_len = chunk.text.len();
-                if chunk_len == 0 {
-                    continue;
-                }
-                if let Some(style) = chunk
-                    .syntax_highlight_id
-                    .and_then(|id| id.style(syntax_theme))
-                {
-                    highlights.push((offset..offset + chunk_len, style));
-                }
-                offset += chunk_len;
-            }
-            return highlights;
-        };
 
         let chunks = custom_highlights::CustomHighlightsChunks::new(
             multibuffer_range,
@@ -4123,5 +4085,36 @@ pub mod tests {
         assert_eq!(ranges.len(), 1);
         assert_eq!(ranges[0].start, DisplayPoint::new(DisplayRow(0), 10));
         assert_eq!(ranges[0].end, DisplayPoint::new(DisplayRow(0), 14));
+    }
+
+    #[test]
+    fn test_highlight_invisibles_preserves_compound_emojis() {
+        let editor_style = EditorStyle::default();
+
+        let pilot_emoji = "🧑\u{200d}✈\u{fe0f}";
+        let chunk = HighlightedChunk {
+            text: pilot_emoji,
+            style: None,
+            is_tab: false,
+            is_inlay: false,
+            replacement: None,
+        };
+
+        let chunks: Vec<_> = chunk
+            .highlight_invisibles(&editor_style)
+            .map(|chunk| chunk.text.to_string())
+            .collect();
+
+        assert_eq!(
+            chunks.concat(),
+            pilot_emoji,
+            "all text bytes must be preserved"
+        );
+        assert_eq!(
+            chunks.len(),
+            1,
+            "compound emoji should not be split into multiple chunks, got: {:?}",
+            chunks,
+        );
     }
 }

@@ -1,0 +1,72 @@
+# Generated from xtask::workflows::extension_auto_bump
+# Rebuild with `cargo xtask workflows`.
+name: extension_auto_bump
+on:
+  push:
+    branches:
+    - main
+    paths:
+    - extensions/**
+    - '!extensions/workflows/**'
+    - '!extensions/*.md'
+jobs:
+  detect_changed_extensions:
+    if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions')
+    runs-on: namespace-profile-2x4-ubuntu-2404
+    steps:
+    - name: steps::checkout_repo
+      uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      with:
+        clean: false
+        fetch-depth: 2
+    - id: detect
+      name: extension_auto_bump::detect_changed_extensions
+      run: |
+        COMPARE_REV="$(git rev-parse HEAD~1)"
+        CHANGED_FILES="$(git diff --name-only "$COMPARE_REV" "$GITHUB_SHA")"
+        # Detect changed extension directories (excluding extensions/workflows)
+        CHANGED_EXTENSIONS=$(echo "$CHANGED_FILES" | grep -oP '^extensions/[^/]+(?=/)' | sort -u | grep -v '^extensions/workflows$' || true)
+        if [ -n "$CHANGED_EXTENSIONS" ]; then
+            EXTENSIONS_JSON=$(echo "$CHANGED_EXTENSIONS" | jq -R -s -c 'split("\n") | map(select(length > 0))')
+        else
+            EXTENSIONS_JSON="[]"
+        fi
+        # Filter out newly added or entirely removed extensions
+        FILTERED="[]"
+        for ext in $(echo "$EXTENSIONS_JSON" | jq -r '.[]'); do
+            if git show HEAD~1:"$ext/extension.toml" >/dev/null 2>&1 && \
+               [ -f "$ext/extension.toml" ]; then
+                FILTERED=$(echo "$FILTERED" | jq -c --arg e "$ext" '. + [$e]')
+            fi
+        done
+        echo "changed_extensions=$FILTERED" >> "$GITHUB_OUTPUT"
+    outputs:
+      changed_extensions: ${{ steps.detect.outputs.changed_extensions }}
+    timeout-minutes: 5
+  bump_extension_versions:
+    needs:
+    - detect_changed_extensions
+    if: needs.detect_changed_extensions.outputs.changed_extensions != '[]'
+    permissions:
+      actions: write
+      contents: write
+      issues: write
+      pull-requests: write
+    strategy:
+      matrix:
+        extension: ${{ fromJson(needs.detect_changed_extensions.outputs.changed_extensions) }}
+      fail-fast: false
+      max-parallel: 1
+    uses: ./.github/workflows/extension_bump.yml
+    secrets:
+      app-id: ${{ secrets.ZED_ZIPPY_APP_ID }}
+      app-secret: ${{ secrets.ZED_ZIPPY_APP_PRIVATE_KEY }}
+    with:
+      working-directory: ${{ matrix.extension }}
+      force-bump: false
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref_name }}-${{ github.ref_name == 'main' && github.sha || 'anysha' }}
+  cancel-in-progress: true
+defaults:
+  run:
+    shell: bash -euxo pipefail {0}

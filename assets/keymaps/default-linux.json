@@ -204,6 +204,7 @@
   {
     "context": "Editor && editor_agent_diff",
     "bindings": {
+      "alt-y": "agent::Keep",
       "ctrl-alt-y": "agent::Keep",
       "ctrl-alt-z": "agent::Reject",
       "shift-alt-y": "agent::KeepAll",
@@ -214,6 +215,7 @@
   {
     "context": "AgentDiff",
     "bindings": {
+      "alt-y": "agent::Keep",
       "ctrl-alt-y": "agent::Keep",
       "ctrl-alt-z": "agent::Reject",
       "shift-alt-y": "agent::KeepAll",
@@ -224,8 +226,8 @@
     "context": "ContextEditor > Editor",
     "bindings": {
       "ctrl-enter": "assistant::Assist",
-      "ctrl-s": "workspace::Save",
       "save": "workspace::Save",
+      "ctrl-s": "workspace::Save",
       "ctrl-<": "assistant::InsertIntoEditor",
       "shift-enter": "assistant::Split",
       "ctrl-r": "assistant::CycleMessageRole",
@@ -256,6 +258,7 @@
       "ctrl-shift-j": "agent::ToggleNavigationMenu",
       "ctrl-alt-i": "agent::ToggleOptionsMenu",
       "ctrl-alt-shift-n": "agent::ToggleNewThreadMenu",
+      "ctrl-shift-t": "agent::CycleStartThreadIn",
       "shift-alt-escape": "agent::ExpandMessageEditor",
       "ctrl->": "agent::AddSelectionToThread",
       "ctrl-shift-e": "project_panel::ToggleFocus",
@@ -621,6 +624,7 @@
       "ctrl-shift-t": "pane::ReopenClosedItem",
       "ctrl-k ctrl-s": "zed::OpenKeymap",
       "ctrl-k ctrl-t": "theme_selector::Toggle",
+      "ctrl-k ctrl-shift-t": "theme::ToggleMode",
       "ctrl-alt-super-p": "settings_profile_selector::Toggle",
       "ctrl-t": "project_symbols::Toggle",
       "ctrl-p": "file_finder::Toggle",
@@ -671,6 +675,9 @@
     "use_key_equivalents": true,
     "bindings": {
       "ctrl-n": "multi_workspace::NewWorkspaceInWindow",
+      "left": "agents_sidebar::CollapseSelectedEntry",
+      "right": "agents_sidebar::ExpandSelectedEntry",
+      "enter": "menu::Confirm",
     },
   },
   {
@@ -813,7 +820,7 @@
     },
   },
   {
-    "context": "!ContextEditor > Editor && mode == full",
+    "context": "!ContextEditor && !AcpThread > Editor && mode == full",
     "bindings": {
       "alt-enter": "editor::OpenExcerpts",
       "shift-enter": "editor::ExpandExcerpts",
@@ -977,6 +984,7 @@
       "ctrl-shift-enter": "git::Amend",
       "ctrl-space": "git::StageAll",
       "ctrl-shift-space": "git::UnstageAll",
+      "ctrl-k ctrl-r": "git::RestoreAndNext",
     },
   },
   {
@@ -1310,6 +1318,7 @@
     "bindings": {
       "ctrl-shift-space": "git::WorktreeFromDefaultOnWindow",
       "ctrl-space": "git::WorktreeFromDefault",
+      "ctrl-shift-backspace": "git::DeleteWorktree",
     },
   },
   {

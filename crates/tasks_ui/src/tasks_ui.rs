@@ -316,7 +316,9 @@ pub fn task_contexts(
 
     let lsp_task_sources = active_editor
         .as_ref()
-        .map(|active_editor| active_editor.update(cx, |editor, cx| editor.lsp_task_sources(cx)))
+        .map(|active_editor| {
+            active_editor.update(cx, |editor, cx| editor.lsp_task_sources(false, false, cx))
+        })
         .unwrap_or_default();
 
     let latest_selection = active_editor.as_ref().map(|active_editor| {

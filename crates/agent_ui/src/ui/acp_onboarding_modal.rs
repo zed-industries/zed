@@ -193,15 +193,16 @@ impl Render for AcpOnboardingModal {
         let copy = "Bring the agent of your choice to Zed via our new Agent Client Protocol (ACP), starting with Google's Gemini CLI integration.";
 
         let open_panel_button = Button::new("open-panel", "Start with Gemini CLI")
-            .icon_size(IconSize::Indicator)
             .style(ButtonStyle::Tinted(TintColor::Accent))
             .full_width()
             .on_click(cx.listener(Self::open_panel));
 
         let docs_button = Button::new("add-other-agents", "Add Other Agents")
-            .icon(IconName::ArrowUpRight)
-            .icon_size(IconSize::Indicator)
-            .icon_color(Color::Muted)
+            .end_icon(
+                Icon::new(IconName::ArrowUpRight)
+                    .size(IconSize::Indicator)
+                    .color(Color::Muted),
+            )
             .full_width()
             .on_click(cx.listener(Self::open_agent_registry));
 
