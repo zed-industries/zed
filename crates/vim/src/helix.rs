@@ -879,22 +879,15 @@ use crate::{SwitchToHelixNormalMode, VimAddon, state::Mode, test::VimTestContext
             cx.bind_keys([KeyBinding::new("j j", SwitchToHelixNormalMode, None)]);
         });
 
-        cx.set_state(
-            indoc! {
-            "hello world!ˇ"},
-            Mode::Insert,
-        );
-        cx.simulate_keystrokes("j j");
+        cx.set_state("hello world!ˇ", Mode::Normal);
         cx.simulate_keystrokes("o");
         let state = cx.editor_state();
 
-        cx.set_state(
-            indoc! {
-            "hello world!ˇ"},
-            Mode::HelixNormal,
-        );
+        cx.set_state("hello world!ˇ", Mode::Insert);
+        cx.simulate_keystrokes("j j");
         cx.simulate_keystrokes("o");
-        assert_eq!(state, cx.editor_state());
+
+        assert_eq!(cx.editor_state(), state);
     }
 
     #[gpui::test]
