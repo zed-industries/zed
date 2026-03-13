@@ -25960,436 +25960,284 @@ async fn test_breakpoint_phantom_indicator_collision_on_toggle(cx: &mut TestAppC
     });
 }
 
-fn assert_bookmarks(
-    bookmarks: &BTreeMap<Arc<Path>, Vec<SerializedBookmark>>,
-    path: &Arc<Path>,
-    expected_rows: Vec<u32>,
-) {
-    if expected_rows.is_empty() {
-        assert!(
-            !bookmarks.contains_key(path),
-            "Expected no bookmarks for {}",
-            path.display()
-        );
-    } else {
-        let mut rows: Vec<u32> = bookmarks.get(path).unwrap().iter().map(|b| b.row).collect();
-        rows.sort();
-        assert_eq!(expected_rows, rows);
+struct BookmarkTestContext {
+    project: Entity<Project>,
+    editor: Entity<Editor>,
+    cx: VisualTestContext,
+}
+
+impl BookmarkTestContext {
+    async fn new(sample_text: &str, cx: &mut TestAppContext) -> BookmarkTestContext {
+        init_test(cx, |_| {});
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/a"),
+            json!({
+                "main.rs": sample_text,
+            }),
+        )
+        .await;
+        let project = Project::test(fs, [path!("/a").as_ref()], cx).await;
+        let window =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = window
+            .read_with(cx, |mw, _| mw.workspace().clone())
+            .unwrap();
+        let mut visual_cx = VisualTestContext::from_window(*window, cx);
+        let worktree_id = workspace.update_in(&mut visual_cx, |workspace, _window, cx| {
+            workspace.project().update(cx, |project, cx| {
+                project.worktrees(cx).next().unwrap().read(cx).id()
+            })
+        });
+
+        let buffer = project
+            .update(&mut visual_cx, |project, cx| {
+                project.open_buffer((worktree_id, rel_path("main.rs")), cx)
+            })
+            .await
+            .unwrap();
+
+        let (editor, editor_cx) = cx.add_window_view(|window, cx| {
+            Editor::new(
+                EditorMode::full(),
+                MultiBuffer::build_from_buffer(buffer, cx),
+                Some(project.clone()),
+                window,
+                cx,
+            )
+        });
+        let cx = editor_cx.clone();
+
+        BookmarkTestContext {
+            project,
+            editor,
+            cx,
+        }
+    }
+
+    fn abs_path(&self) -> Arc<Path> {
+        let project_path = self
+            .editor
+            .read_with(&self.cx, |editor, cx| editor.project_path(cx).unwrap());
+        self.project.read_with(&self.cx, |project, cx| {
+            project
+                .absolute_path(&project_path, cx)
+                .map(Arc::from)
+                .unwrap()
+        })
+    }
+
+    fn all_bookmarks(&self) -> BTreeMap<Arc<Path>, Vec<SerializedBookmark>> {
+        self.project.read_with(&self.cx, |project, cx| {
+            project.bookmark_store().read(cx).all_source_bookmarks(cx)
+        })
+    }
+
+    fn assert_bookmark_rows(&self, expected_rows: Vec<u32>) {
+        let abs_path = self.abs_path();
+        let bookmarks = self.all_bookmarks();
+        if expected_rows.is_empty() {
+            assert!(
+                !bookmarks.contains_key(&abs_path),
+                "Expected no bookmarks for {}",
+                abs_path.display()
+            );
+        } else {
+            let mut rows: Vec<u32> = bookmarks
+                .get(&abs_path)
+                .unwrap()
+                .iter()
+                .map(|b| b.row)
+                .collect();
+            rows.sort();
+            assert_eq!(expected_rows, rows);
+        }
+    }
+
+    fn cursor_row(&mut self) -> u32 {
+        self.editor.update(&mut self.cx, |editor, cx| {
+            let snapshot = editor.display_snapshot(cx);
+            editor.selections.newest::<Point>(&snapshot).head().row
+        })
+    }
+
+    fn cursor_point(&mut self) -> Point {
+        self.editor.update(&mut self.cx, |editor, cx| {
+            let snapshot = editor.display_snapshot(cx);
+            editor.selections.newest::<Point>(&snapshot).head()
+        })
+    }
+
+    fn move_to_row(&mut self, row: u32) {
+        self.editor
+            .update_in(&mut self.cx, |editor: &mut Editor, window, cx| {
+                editor.move_to_beginning(&MoveToBeginning, window, cx);
+                for _ in 0..row {
+                    editor.move_down(&MoveDown, window, cx);
+                }
+            });
+    }
+
+    fn toggle_bookmark(&mut self) {
+        self.editor
+            .update_in(&mut self.cx, |editor: &mut Editor, window, cx| {
+                editor.toggle_bookmark(&actions::ToggleBookmark, window, cx);
+            });
+    }
+
+    fn toggle_bookmarks_at_rows(&mut self, rows: &[u32]) {
+        for &row in rows {
+            self.move_to_row(row);
+            self.toggle_bookmark();
+        }
+    }
+
+    fn go_to_next_bookmark(&mut self) {
+        self.editor
+            .update_in(&mut self.cx, |editor: &mut Editor, window, cx| {
+                editor.go_to_next_bookmark(&actions::GoToNextBookmark, window, cx);
+            });
+    }
+
+    fn go_to_previous_bookmark(&mut self) {
+        self.editor
+            .update_in(&mut self.cx, |editor: &mut Editor, window, cx| {
+                editor.go_to_previous_bookmark(&actions::GoToPreviousBookmark, window, cx);
+            });
     }
 }
 
 #[gpui::test]
 async fn test_bookmark_toggling(cx: &mut TestAppContext) {
-    init_test(cx, |_| {});
+    let mut ctx =
+        BookmarkTestContext::new("First line\nSecond line\nThird line\nFourth line", cx).await;
 
-    let sample_text = "First line\nSecond line\nThird line\nFourth line".to_string();
-    let fs = FakeFs::new(cx.executor());
-    fs.insert_tree(
-        path!("/a"),
-        json!({
-            "main.rs": sample_text,
-        }),
-    )
-    .await;
-    let project = Project::test(fs, [path!("/a").as_ref()], cx).await;
-    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
-    let workspace = window
-        .read_with(cx, |mw, _| mw.workspace().clone())
-        .unwrap();
-    let cx = &mut VisualTestContext::from_window(*window, cx);
-    let worktree_id = workspace.update_in(cx, |workspace, _window, cx| {
-        workspace.project().update(cx, |project, cx| {
-            project.worktrees(cx).next().unwrap().read(cx).id()
-        })
-    });
+    ctx.editor
+        .update_in(&mut ctx.cx, |editor: &mut Editor, window, cx| {
+            editor.toggle_bookmark(&actions::ToggleBookmark, window, cx);
+            editor.move_to_end(&MoveToEnd, window, cx);
+            editor.toggle_bookmark(&actions::ToggleBookmark, window, cx);
+        });
 
-    let buffer = project
-        .update(cx, |project, cx| {
-            project.open_buffer((worktree_id, rel_path("main.rs")), cx)
-        })
-        .await
-        .unwrap();
+    assert_eq!(1, ctx.all_bookmarks().len());
+    ctx.assert_bookmark_rows(vec![0, 3]);
 
-    let (editor, cx) = cx.add_window_view(|window, cx| {
-        Editor::new(
-            EditorMode::full(),
-            MultiBuffer::build_from_buffer(buffer, cx),
-            Some(project.clone()),
-            window,
-            cx,
-        )
-    });
+    ctx.editor
+        .update_in(&mut ctx.cx, |editor: &mut Editor, window, cx| {
+            editor.move_to_beginning(&MoveToBeginning, window, cx);
+            editor.toggle_bookmark(&actions::ToggleBookmark, window, cx);
+        });
 
-    let project_path = editor.update(cx, |editor, cx| editor.project_path(cx).unwrap());
-    let abs_path = project.read_with(cx, |project, cx| {
-        project
-            .absolute_path(&project_path, cx)
-            .map(Arc::from)
-            .unwrap()
-    });
+    assert_eq!(1, ctx.all_bookmarks().len());
+    ctx.assert_bookmark_rows(vec![3]);
 
-    // Add bookmark on first line (row 0) and last line (row 3)
-    editor.update_in(cx, |editor, window, cx| {
-        editor.toggle_bookmark(&actions::ToggleBookmark, window, cx);
-        editor.move_to_end(&MoveToEnd, window, cx);
-        editor.toggle_bookmark(&actions::ToggleBookmark, window, cx);
-    });
+    ctx.editor
+        .update_in(&mut ctx.cx, |editor: &mut Editor, window, cx| {
+            editor.move_to_end(&MoveToEnd, window, cx);
+            editor.toggle_bookmark(&actions::ToggleBookmark, window, cx);
+        });
 
-    let bookmarks = project.read_with(cx, |project, cx| {
-        project.bookmark_store().read(cx).all_source_bookmarks(cx)
-    });
-
-    assert_eq!(1, bookmarks.len());
-    assert_bookmarks(&bookmarks, &abs_path, vec![0, 3]);
-
-    // Toggle off the first bookmark (row 0)
-    editor.update_in(cx, |editor, window, cx| {
-        editor.move_to_beginning(&MoveToBeginning, window, cx);
-        editor.toggle_bookmark(&actions::ToggleBookmark, window, cx);
-    });
-
-    let bookmarks = project.read_with(cx, |project, cx| {
-        project.bookmark_store().read(cx).all_source_bookmarks(cx)
-    });
-
-    assert_eq!(1, bookmarks.len());
-    assert_bookmarks(&bookmarks, &abs_path, vec![3]);
-
-    // Toggle off the last bookmark (row 3)
-    editor.update_in(cx, |editor, window, cx| {
-        editor.move_to_end(&MoveToEnd, window, cx);
-        editor.toggle_bookmark(&actions::ToggleBookmark, window, cx);
-    });
-
-    let bookmarks = project.read_with(cx, |project, cx| {
-        project.bookmark_store().read(cx).all_source_bookmarks(cx)
-    });
-
-    assert_eq!(0, bookmarks.len());
-    assert_bookmarks(&bookmarks, &abs_path, vec![]);
+    assert_eq!(0, ctx.all_bookmarks().len());
+    ctx.assert_bookmark_rows(vec![]);
 }
 
 #[gpui::test]
 async fn test_bookmark_toggling_with_multiple_selections(cx: &mut TestAppContext) {
-    init_test(cx, |_| {});
+    let mut ctx =
+        BookmarkTestContext::new("First line\nSecond line\nThird line\nFourth line", cx).await;
 
-    let sample_text = "First line\nSecond line\nThird line\nFourth line".to_string();
-    let fs = FakeFs::new(cx.executor());
-    fs.insert_tree(
-        path!("/a"),
-        json!({
-            "main.rs": sample_text,
-        }),
-    )
-    .await;
-    let project = Project::test(fs, [path!("/a").as_ref()], cx).await;
-    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
-    let workspace = window
-        .read_with(cx, |mw, _| mw.workspace().clone())
-        .unwrap();
-    let cx = &mut VisualTestContext::from_window(*window, cx);
-    let worktree_id = workspace.update_in(cx, |workspace, _window, cx| {
-        workspace.project().update(cx, |project, cx| {
-            project.worktrees(cx).next().unwrap().read(cx).id()
-        })
-    });
+    ctx.editor
+        .update_in(&mut ctx.cx, |editor: &mut Editor, window, cx| {
+            editor.move_to_beginning(&MoveToBeginning, window, cx);
+            editor.add_selection_below(&Default::default(), window, cx);
+            editor.add_selection_below(&Default::default(), window, cx);
+            editor.add_selection_below(&Default::default(), window, cx);
+        });
 
-    let buffer = project
-        .update(cx, |project, cx| {
-            project.open_buffer((worktree_id, rel_path("main.rs")), cx)
-        })
-        .await
-        .unwrap();
+    ctx.toggle_bookmark();
 
-    let (editor, cx) = cx.add_window_view(|window, cx| {
-        Editor::new(
-            EditorMode::full(),
-            MultiBuffer::build_from_buffer(buffer, cx),
-            Some(project.clone()),
-            window,
-            cx,
-        )
-    });
+    assert_eq!(1, ctx.all_bookmarks().len());
+    ctx.assert_bookmark_rows(vec![0, 1, 2, 3]);
 
-    let project_path = editor.update(cx, |editor, cx| editor.project_path(cx).unwrap());
-    let abs_path = project.read_with(cx, |project, cx| {
-        project
-            .absolute_path(&project_path, cx)
-            .map(Arc::from)
-            .unwrap()
-    });
+    ctx.editor
+        .update_in(&mut ctx.cx, |editor: &mut Editor, window, cx| {
+            editor.move_to_beginning(&MoveToBeginning, window, cx);
+            editor.add_selection_below(&Default::default(), window, cx);
+            editor.add_selection_below(&Default::default(), window, cx);
+            editor.add_selection_below(&Default::default(), window, cx);
+            editor.toggle_bookmark(&actions::ToggleBookmark, window, cx);
+        });
 
-    // Add cursors on rows 0, 1, 2, and 3 using add_selection_below
-    editor.update_in(cx, |editor, window, cx| {
-        editor.move_to_beginning(&MoveToBeginning, window, cx);
-        editor.add_selection_below(&Default::default(), window, cx);
-        editor.add_selection_below(&Default::default(), window, cx);
-        editor.add_selection_below(&Default::default(), window, cx);
-    });
-
-    // Toggle bookmarks — should add bookmarks on all cursor rows
-    editor.update_in(cx, |editor, window, cx| {
-        editor.toggle_bookmark(&actions::ToggleBookmark, window, cx);
-    });
-
-    let bookmarks = project.read_with(cx, |project, cx| {
-        project.bookmark_store().read(cx).all_source_bookmarks(cx)
-    });
-
-    assert_eq!(1, bookmarks.len());
-    assert_bookmarks(&bookmarks, &abs_path, vec![0, 1, 2, 3]);
-
-    // Re-select all rows and toggle again — should remove all bookmarks
-    editor.update_in(cx, |editor, window, cx| {
-        editor.move_to_beginning(&MoveToBeginning, window, cx);
-        editor.add_selection_below(&Default::default(), window, cx);
-        editor.add_selection_below(&Default::default(), window, cx);
-        editor.add_selection_below(&Default::default(), window, cx);
-        editor.toggle_bookmark(&actions::ToggleBookmark, window, cx);
-    });
-
-    let bookmarks = project.read_with(cx, |project, cx| {
-        project.bookmark_store().read(cx).all_source_bookmarks(cx)
-    });
-
-    assert_eq!(0, bookmarks.len());
-    assert_bookmarks(&bookmarks, &abs_path, vec![]);
+    assert_eq!(0, ctx.all_bookmarks().len());
+    ctx.assert_bookmark_rows(vec![]);
 }
 
 #[gpui::test]
 async fn test_bookmark_toggle_deduplicates_by_row(cx: &mut TestAppContext) {
-    init_test(cx, |_| {});
+    let mut ctx =
+        BookmarkTestContext::new("First line\nSecond line\nThird line\nFourth line", cx).await;
 
-    let sample_text = "First line\nSecond line\nThird line\nFourth line".to_string();
-    let fs = FakeFs::new(cx.executor());
-    fs.insert_tree(
-        path!("/a"),
-        json!({
-            "main.rs": sample_text,
-        }),
-    )
-    .await;
-    let project = Project::test(fs, [path!("/a").as_ref()], cx).await;
-    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
-    let workspace = window
-        .read_with(cx, |mw, _| mw.workspace().clone())
-        .unwrap();
-    let cx = &mut VisualTestContext::from_window(*window, cx);
-    let worktree_id = workspace.update_in(cx, |workspace, _window, cx| {
-        workspace.project().update(cx, |project, cx| {
-            project.worktrees(cx).next().unwrap().read(cx).id()
-        })
-    });
+    ctx.editor
+        .update_in(&mut ctx.cx, |editor: &mut Editor, window, cx| {
+            editor.move_to_beginning(&MoveToBeginning, window, cx);
+            editor.toggle_bookmark(&actions::ToggleBookmark, window, cx);
+        });
 
-    let buffer = project
-        .update(cx, |project, cx| {
-            project.open_buffer((worktree_id, rel_path("main.rs")), cx)
-        })
-        .await
-        .unwrap();
+    ctx.assert_bookmark_rows(vec![0]);
 
-    let (editor, cx) = cx.add_window_view(|window, cx| {
-        Editor::new(
-            EditorMode::full(),
-            MultiBuffer::build_from_buffer(buffer, cx),
-            Some(project.clone()),
-            window,
-            cx,
-        )
-    });
+    ctx.editor
+        .update_in(&mut ctx.cx, |editor: &mut Editor, window, cx| {
+            editor.move_to_end_of_line(
+                &MoveToEndOfLine {
+                    stop_at_soft_wraps: true,
+                },
+                window,
+                cx,
+            );
+            editor.toggle_bookmark(&actions::ToggleBookmark, window, cx);
+        });
 
-    let project_path = editor.update(cx, |editor, cx| editor.project_path(cx).unwrap());
-    let abs_path = project.read_with(cx, |project, cx| {
-        project
-            .absolute_path(&project_path, cx)
-            .map(Arc::from)
-            .unwrap()
-    });
-
-    // Add a bookmark at row 0, column 0
-    editor.update_in(cx, |editor, window, cx| {
-        editor.move_to_beginning(&MoveToBeginning, window, cx);
-        editor.toggle_bookmark(&actions::ToggleBookmark, window, cx);
-    });
-
-    let bookmarks = project.read_with(cx, |project, cx| {
-        project.bookmark_store().read(cx).all_source_bookmarks(cx)
-    });
-    assert_bookmarks(&bookmarks, &abs_path, vec![0]);
-
-    // Move to end of same row (column changes, row stays 0) and toggle again
-    // This should remove the bookmark since it's on the same row
-    editor.update_in(cx, |editor, window, cx| {
-        editor.move_to_end_of_line(
-            &MoveToEndOfLine {
-                stop_at_soft_wraps: true,
-            },
-            window,
-            cx,
-        );
-        editor.toggle_bookmark(&actions::ToggleBookmark, window, cx);
-    });
-
-    let bookmarks = project.read_with(cx, |project, cx| {
-        project.bookmark_store().read(cx).all_source_bookmarks(cx)
-    });
-    assert_bookmarks(&bookmarks, &abs_path, vec![]);
+    ctx.assert_bookmark_rows(vec![]);
 }
 
 #[gpui::test]
 async fn test_bookmark_survives_edits(cx: &mut TestAppContext) {
-    init_test(cx, |_| {});
+    let mut ctx =
+        BookmarkTestContext::new("First line\nSecond line\nThird line\nFourth line", cx).await;
 
-    let sample_text = "First line\nSecond line\nThird line\nFourth line".to_string();
-    let fs = FakeFs::new(cx.executor());
-    fs.insert_tree(
-        path!("/a"),
-        json!({
-            "main.rs": sample_text,
-        }),
-    )
-    .await;
-    let project = Project::test(fs, [path!("/a").as_ref()], cx).await;
-    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
-    let workspace = window
-        .read_with(cx, |mw, _| mw.workspace().clone())
-        .unwrap();
-    let cx = &mut VisualTestContext::from_window(*window, cx);
-    let worktree_id = workspace.update_in(cx, |workspace, _window, cx| {
-        workspace.project().update(cx, |project, cx| {
-            project.worktrees(cx).next().unwrap().read(cx).id()
-        })
-    });
+    ctx.move_to_row(2);
+    ctx.toggle_bookmark();
+    ctx.assert_bookmark_rows(vec![2]);
 
-    let buffer = project
-        .update(cx, |project, cx| {
-            project.open_buffer((worktree_id, rel_path("main.rs")), cx)
-        })
-        .await
-        .unwrap();
+    ctx.editor
+        .update_in(&mut ctx.cx, |editor: &mut Editor, window, cx| {
+            editor.move_to_beginning(&MoveToBeginning, window, cx);
+            editor.newline(&Newline, window, cx);
+        });
 
-    let (editor, cx) = cx.add_window_view(|window, cx| {
-        Editor::new(
-            EditorMode::full(),
-            MultiBuffer::build_from_buffer(buffer, cx),
-            Some(project.clone()),
-            window,
-            cx,
-        )
-    });
+    ctx.assert_bookmark_rows(vec![3]);
 
-    let project_path = editor.update(cx, |editor, cx| editor.project_path(cx).unwrap());
-    let abs_path = project.read_with(cx, |project, cx| {
-        project
-            .absolute_path(&project_path, cx)
-            .map(Arc::from)
-            .unwrap()
-    });
-
-    // Add bookmark on row 2 ("Third line")
-    editor.update_in(cx, |editor, window, cx| {
-        editor.move_down(&MoveDown, window, cx);
-        editor.move_down(&MoveDown, window, cx);
-        editor.toggle_bookmark(&actions::ToggleBookmark, window, cx);
-    });
-
-    let bookmarks = project.read_with(cx, |project, cx| {
-        project.bookmark_store().read(cx).all_source_bookmarks(cx)
-    });
-    assert_bookmarks(&bookmarks, &abs_path, vec![2]);
-
-    // Insert a new line above the bookmark (at beginning of file)
-    // This should push the bookmark from row 2 to row 3
-    editor.update_in(cx, |editor, window, cx| {
-        editor.move_to_beginning(&MoveToBeginning, window, cx);
-        editor.newline(&Newline, window, cx);
-    });
-
-    let bookmarks = project.read_with(cx, |project, cx| {
-        project.bookmark_store().read(cx).all_source_bookmarks(cx)
-    });
-    assert_bookmarks(&bookmarks, &abs_path, vec![3]);
-
-    // The bookmark should still be togglable at its new position (row 3)
-    editor.update_in(cx, |editor, window, cx| {
-        editor.move_to_beginning(&MoveToBeginning, window, cx);
-        editor.move_down(&MoveDown, window, cx);
-        editor.move_down(&MoveDown, window, cx);
-        editor.move_down(&MoveDown, window, cx);
-        editor.toggle_bookmark(&actions::ToggleBookmark, window, cx);
-    });
-
-    let bookmarks = project.read_with(cx, |project, cx| {
-        project.bookmark_store().read(cx).all_source_bookmarks(cx)
-    });
-    assert_bookmarks(&bookmarks, &abs_path, vec![]);
+    ctx.move_to_row(3);
+    ctx.toggle_bookmark();
+    ctx.assert_bookmark_rows(vec![]);
 }
 
 #[gpui::test]
 async fn test_active_bookmarks(cx: &mut TestAppContext) {
-    init_test(cx, |_| {});
-
-    let sample_text =
-        "Line 0\nLine 1\nLine 2\nLine 3\nLine 4\nLine 5\nLine 6\nLine 7\nLine 8\nLine 9"
-            .to_string();
-    let fs = FakeFs::new(cx.executor());
-    fs.insert_tree(
-        path!("/a"),
-        json!({
-            "main.rs": sample_text,
-        }),
+    let mut ctx = BookmarkTestContext::new(
+        "Line 0\nLine 1\nLine 2\nLine 3\nLine 4\nLine 5\nLine 6\nLine 7\nLine 8\nLine 9",
+        cx,
     )
     .await;
-    let project = Project::test(fs, [path!("/a").as_ref()], cx).await;
-    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
-    let workspace = window
-        .read_with(cx, |mw, _| mw.workspace().clone())
-        .unwrap();
-    let cx = &mut VisualTestContext::from_window(*window, cx);
-    let worktree_id = workspace.update_in(cx, |workspace, _window, cx| {
-        workspace.project().update(cx, |project, cx| {
-            project.worktrees(cx).next().unwrap().read(cx).id()
-        })
-    });
 
-    let buffer = project
-        .update(cx, |project, cx| {
-            project.open_buffer((worktree_id, rel_path("main.rs")), cx)
-        })
-        .await
-        .unwrap();
+    ctx.toggle_bookmarks_at_rows(&[1, 3, 5, 8]);
 
-    let (editor, cx) = cx.add_window_view(|window, cx| {
-        Editor::new(
-            EditorMode::full(),
-            MultiBuffer::build_from_buffer(buffer, cx),
-            Some(project.clone()),
-            window,
-            cx,
-        )
-    });
-
-    // Add bookmarks on rows 1, 3, 5, and 8
-    editor.update_in(cx, |editor, window, cx| {
-        editor.move_to_beginning(&MoveToBeginning, window, cx);
-        editor.move_down(&MoveDown, window, cx);
-        editor.toggle_bookmark(&actions::ToggleBookmark, window, cx);
-        editor.move_down(&MoveDown, window, cx);
-        editor.move_down(&MoveDown, window, cx);
-        editor.toggle_bookmark(&actions::ToggleBookmark, window, cx);
-        editor.move_down(&MoveDown, window, cx);
-        editor.move_down(&MoveDown, window, cx);
-        editor.toggle_bookmark(&actions::ToggleBookmark, window, cx);
-        editor.move_down(&MoveDown, window, cx);
-        editor.move_down(&MoveDown, window, cx);
-        editor.move_down(&MoveDown, window, cx);
-        editor.toggle_bookmark(&actions::ToggleBookmark, window, cx);
-    });
-
-    // Query active_bookmarks for a sub-range and verify
-    let active = editor.update_in(cx, |editor, window, cx| {
-        editor.active_bookmarks(DisplayRow(0)..DisplayRow(10), window, cx)
-    });
+    let active = ctx
+        .editor
+        .update_in(&mut ctx.cx, |editor: &mut Editor, window, cx| {
+            editor.active_bookmarks(DisplayRow(0)..DisplayRow(10), window, cx)
+        });
     assert!(active.contains(&DisplayRow(1)));
     assert!(active.contains(&DisplayRow(3)));
     assert!(active.contains(&DisplayRow(5)));
@@ -26398,10 +26246,11 @@ async fn test_active_bookmarks(cx: &mut TestAppContext) {
     assert!(!active.contains(&DisplayRow(2)));
     assert!(!active.contains(&DisplayRow(9)));
 
-    // Query a narrower range
-    let active = editor.update_in(cx, |editor, window, cx| {
-        editor.active_bookmarks(DisplayRow(2)..DisplayRow(6), window, cx)
-    });
+    let active = ctx
+        .editor
+        .update_in(&mut ctx.cx, |editor: &mut Editor, window, cx| {
+            editor.active_bookmarks(DisplayRow(2)..DisplayRow(6), window, cx)
+        });
     assert!(active.contains(&DisplayRow(3)));
     assert!(active.contains(&DisplayRow(5)));
     assert!(!active.contains(&DisplayRow(1)));
@@ -26414,7 +26263,6 @@ async fn test_bookmark_not_available_in_single_line_editor(cx: &mut TestAppConte
 
     let (editor, _cx) = cx.add_window_view(|window, cx| Editor::single_line(window, cx));
 
-    // Single-line editors should not have a bookmark store
     editor.update(cx, |editor, _cx| {
         assert!(
             editor.bookmark_store.is_none(),
@@ -26425,87 +26273,38 @@ async fn test_bookmark_not_available_in_single_line_editor(cx: &mut TestAppConte
 
 #[gpui::test]
 async fn test_bookmark_navigation_lands_at_column_zero(cx: &mut TestAppContext) {
-    init_test(cx, |_| {});
+    let mut ctx =
+        BookmarkTestContext::new("First line\nSecond line\nThird line\nFourth line", cx).await;
 
-    let sample_text = "First line\nSecond line\nThird line\nFourth line".to_string();
-    let fs = FakeFs::new(cx.executor());
-    fs.insert_tree(
-        path!("/a"),
-        json!({
-            "main.rs": sample_text,
-        }),
-    )
-    .await;
-    let project = Project::test(fs, [path!("/a").as_ref()], cx).await;
-    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
-    let workspace = window
-        .read_with(cx, |mw, _| mw.workspace().clone())
-        .unwrap();
-    let cx = &mut VisualTestContext::from_window(*window, cx);
-    let worktree_id = workspace.update_in(cx, |workspace, _window, cx| {
-        workspace.project().update(cx, |project, cx| {
-            project.worktrees(cx).next().unwrap().read(cx).id()
-        })
-    });
+    ctx.editor
+        .update_in(&mut ctx.cx, |editor: &mut Editor, window, cx| {
+            editor.move_to_beginning(&MoveToBeginning, window, cx);
+            editor.move_down(&MoveDown, window, cx);
+            editor.move_to_end_of_line(
+                &MoveToEndOfLine {
+                    stop_at_soft_wraps: true,
+                },
+                window,
+                cx,
+            );
+        });
 
-    let buffer = project
-        .update(cx, |project, cx| {
-            project.open_buffer((worktree_id, rel_path("main.rs")), cx)
-        })
-        .await
-        .unwrap();
-
-    let (editor, cx) = cx.add_window_view(|window, cx| {
-        Editor::new(
-            EditorMode::full(),
-            MultiBuffer::build_from_buffer(buffer, cx),
-            Some(project.clone()),
-            window,
-            cx,
-        )
-    });
-
-    // Move to row 1 end-of-line (non-zero column) and set a bookmark there
-    editor.update_in(cx, |editor, window, cx| {
-        editor.move_to_beginning(&MoveToBeginning, window, cx);
-        editor.move_down(&MoveDown, window, cx);
-        editor.move_to_end_of_line(
-            &MoveToEndOfLine {
-                stop_at_soft_wraps: true,
-            },
-            window,
-            cx,
-        );
-    });
-
-    let column_before_toggle = editor.update(cx, |editor, cx| {
-        let snapshot = editor.display_snapshot(cx);
-        editor.selections.newest::<Point>(&snapshot).head().column
-    });
+    let column_before_toggle = ctx.cursor_point().column;
     assert!(
         column_before_toggle > 0,
         "Cursor should be at non-zero column before toggling bookmark, got column {column_before_toggle}"
     );
 
-    editor.update_in(cx, |editor, window, cx| {
-        editor.toggle_bookmark(&actions::ToggleBookmark, window, cx);
-    });
+    ctx.toggle_bookmark();
 
-    // Move cursor away to row 0
-    editor.update_in(cx, |editor, window, cx| {
-        editor.move_to_beginning(&MoveToBeginning, window, cx);
-    });
+    ctx.editor
+        .update_in(&mut ctx.cx, |editor: &mut Editor, window, cx| {
+            editor.move_to_beginning(&MoveToBeginning, window, cx);
+        });
 
-    // Navigate to the bookmark
-    editor.update_in(cx, |editor, window, cx| {
-        editor.go_to_next_bookmark(&actions::GoToNextBookmark, window, cx);
-    });
+    ctx.go_to_next_bookmark();
 
-    // Cursor should land at row 1, column 0 regardless of where the bookmark was set
-    let cursor = editor.update(cx, |editor, cx| {
-        let snapshot = editor.display_snapshot(cx);
-        editor.selections.newest::<Point>(&snapshot).head()
-    });
+    let cursor = ctx.cursor_point();
     assert_eq!(cursor.row, 1, "Should navigate to the bookmarked row");
     assert_eq!(
         cursor.column, 0,
@@ -26517,555 +26316,195 @@ async fn test_bookmark_navigation_lands_at_column_zero(cx: &mut TestAppContext) 
 async fn test_bookmark_set_from_nonzero_column_toggles_off_from_column_zero(
     cx: &mut TestAppContext,
 ) {
-    init_test(cx, |_| {});
+    let mut ctx =
+        BookmarkTestContext::new("First line\nSecond line\nThird line\nFourth line", cx).await;
 
-    let sample_text = "First line\nSecond line\nThird line\nFourth line".to_string();
-    let fs = FakeFs::new(cx.executor());
-    fs.insert_tree(
-        path!("/a"),
-        json!({
-            "main.rs": sample_text,
-        }),
-    )
-    .await;
-    let project = Project::test(fs, [path!("/a").as_ref()], cx).await;
-    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
-    let workspace = window
-        .read_with(cx, |mw, _| mw.workspace().clone())
-        .unwrap();
-    let cx = &mut VisualTestContext::from_window(*window, cx);
-    let worktree_id = workspace.update_in(cx, |workspace, _window, cx| {
-        workspace.project().update(cx, |project, cx| {
-            project.worktrees(cx).next().unwrap().read(cx).id()
-        })
-    });
+    ctx.editor
+        .update_in(&mut ctx.cx, |editor: &mut Editor, window, cx| {
+            editor.move_to_beginning(&MoveToBeginning, window, cx);
+            editor.move_down(&MoveDown, window, cx);
+            editor.move_to_end_of_line(
+                &MoveToEndOfLine {
+                    stop_at_soft_wraps: true,
+                },
+                window,
+                cx,
+            );
+            editor.toggle_bookmark(&actions::ToggleBookmark, window, cx);
+        });
 
-    let buffer = project
-        .update(cx, |project, cx| {
-            project.open_buffer((worktree_id, rel_path("main.rs")), cx)
-        })
-        .await
-        .unwrap();
+    ctx.assert_bookmark_rows(vec![1]);
 
-    let (editor, cx) = cx.add_window_view(|window, cx| {
-        Editor::new(
-            EditorMode::full(),
-            MultiBuffer::build_from_buffer(buffer, cx),
-            Some(project.clone()),
-            window,
-            cx,
-        )
-    });
+    ctx.editor
+        .update_in(&mut ctx.cx, |editor: &mut Editor, window, cx| {
+            editor.move_to_beginning_of_line(
+                &MoveToBeginningOfLine {
+                    stop_at_soft_wraps: true,
+                    stop_at_indent: false,
+                },
+                window,
+                cx,
+            );
+            editor.toggle_bookmark(&actions::ToggleBookmark, window, cx);
+        });
 
-    let project_path = editor.update(cx, |editor, cx| editor.project_path(cx).unwrap());
-    let abs_path = project.read_with(cx, |project, cx| {
-        project
-            .absolute_path(&project_path, cx)
-            .map(Arc::from)
-            .unwrap()
-    });
-
-    // Set bookmark from end-of-line (non-zero column) on row 1
-    editor.update_in(cx, |editor, window, cx| {
-        editor.move_to_beginning(&MoveToBeginning, window, cx);
-        editor.move_down(&MoveDown, window, cx);
-        editor.move_to_end_of_line(
-            &MoveToEndOfLine {
-                stop_at_soft_wraps: true,
-            },
-            window,
-            cx,
-        );
-        editor.toggle_bookmark(&actions::ToggleBookmark, window, cx);
-    });
-
-    let bookmarks = project.read_with(cx, |project, cx| {
-        project.bookmark_store().read(cx).all_source_bookmarks(cx)
-    });
-    assert_bookmarks(&bookmarks, &abs_path, vec![1]);
-
-    // Toggle off from column 0 on the same row — should remove the bookmark
-    editor.update_in(cx, |editor, window, cx| {
-        editor.move_to_beginning_of_line(
-            &MoveToBeginningOfLine {
-                stop_at_soft_wraps: true,
-                stop_at_indent: false,
-            },
-            window,
-            cx,
-        );
-        editor.toggle_bookmark(&actions::ToggleBookmark, window, cx);
-    });
-
-    let bookmarks = project.read_with(cx, |project, cx| {
-        project.bookmark_store().read(cx).all_source_bookmarks(cx)
-    });
-    assert_bookmarks(&bookmarks, &abs_path, vec![]);
+    ctx.assert_bookmark_rows(vec![]);
 }
 
 #[gpui::test]
 async fn test_go_to_next_bookmark(cx: &mut TestAppContext) {
-    init_test(cx, |_| {});
-
-    let sample_text =
-        "Line 0\nLine 1\nLine 2\nLine 3\nLine 4\nLine 5\nLine 6\nLine 7\nLine 8\nLine 9"
-            .to_string();
-    let fs = FakeFs::new(cx.executor());
-    fs.insert_tree(
-        path!("/a"),
-        json!({
-            "main.rs": sample_text,
-        }),
+    let mut ctx = BookmarkTestContext::new(
+        "Line 0\nLine 1\nLine 2\nLine 3\nLine 4\nLine 5\nLine 6\nLine 7\nLine 8\nLine 9",
+        cx,
     )
     .await;
-    let project = Project::test(fs, [path!("/a").as_ref()], cx).await;
-    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
-    let workspace = window
-        .read_with(cx, |mw, _| mw.workspace().clone())
-        .unwrap();
-    let cx = &mut VisualTestContext::from_window(*window, cx);
-    let worktree_id = workspace.update_in(cx, |workspace, _window, cx| {
-        workspace.project().update(cx, |project, cx| {
-            project.worktrees(cx).next().unwrap().read(cx).id()
-        })
-    });
 
-    let buffer = project
-        .update(cx, |project, cx| {
-            project.open_buffer((worktree_id, rel_path("main.rs")), cx)
-        })
-        .await
-        .unwrap();
+    ctx.toggle_bookmarks_at_rows(&[2, 5, 8]);
 
-    let (editor, cx) = cx.add_window_view(|window, cx| {
-        Editor::new(
-            EditorMode::full(),
-            MultiBuffer::build_from_buffer(buffer, cx),
-            Some(project.clone()),
-            window,
-            cx,
-        )
-    });
+    ctx.move_to_row(0);
 
-    // Add bookmarks on rows 2, 5, and 8
-    editor.update_in(cx, |editor, window, cx| {
-        editor.move_to_beginning(&MoveToBeginning, window, cx);
-        editor.move_down(&MoveDown, window, cx);
-        editor.move_down(&MoveDown, window, cx);
-        editor.toggle_bookmark(&actions::ToggleBookmark, window, cx);
-        editor.move_down(&MoveDown, window, cx);
-        editor.move_down(&MoveDown, window, cx);
-        editor.move_down(&MoveDown, window, cx);
-        editor.toggle_bookmark(&actions::ToggleBookmark, window, cx);
-        editor.move_down(&MoveDown, window, cx);
-        editor.move_down(&MoveDown, window, cx);
-        editor.move_down(&MoveDown, window, cx);
-        editor.toggle_bookmark(&actions::ToggleBookmark, window, cx);
-    });
+    ctx.go_to_next_bookmark();
+    assert_eq!(
+        ctx.cursor_row(),
+        2,
+        "First next-bookmark should go to row 2"
+    );
 
-    // Start cursor at row 0 (before all bookmarks)
-    editor.update_in(cx, |editor, window, cx| {
-        editor.move_to_beginning(&MoveToBeginning, window, cx);
-    });
+    ctx.go_to_next_bookmark();
+    assert_eq!(
+        ctx.cursor_row(),
+        5,
+        "Second next-bookmark should go to row 5"
+    );
 
-    // Go to next bookmark: should land on row 2
-    editor.update_in(cx, |editor, window, cx| {
-        editor.go_to_next_bookmark(&actions::GoToNextBookmark, window, cx);
-    });
-    let cursor_row = editor.update(cx, |editor, cx| {
-        let snapshot = editor.display_snapshot(cx);
-        editor.selections.newest::<Point>(&snapshot).head().row
-    });
-    assert_eq!(cursor_row, 2, "First next-bookmark should go to row 2");
+    ctx.go_to_next_bookmark();
+    assert_eq!(
+        ctx.cursor_row(),
+        8,
+        "Third next-bookmark should go to row 8"
+    );
 
-    // Go to next bookmark: should land on row 5
-    editor.update_in(cx, |editor, window, cx| {
-        editor.go_to_next_bookmark(&actions::GoToNextBookmark, window, cx);
-    });
-    let cursor_row = editor.update(cx, |editor, cx| {
-        let snapshot = editor.display_snapshot(cx);
-        editor.selections.newest::<Point>(&snapshot).head().row
-    });
-    assert_eq!(cursor_row, 5, "Second next-bookmark should go to row 5");
-
-    // Go to next bookmark: should land on row 8
-    editor.update_in(cx, |editor, window, cx| {
-        editor.go_to_next_bookmark(&actions::GoToNextBookmark, window, cx);
-    });
-    let cursor_row = editor.update(cx, |editor, cx| {
-        let snapshot = editor.display_snapshot(cx);
-        editor.selections.newest::<Point>(&snapshot).head().row
-    });
-    assert_eq!(cursor_row, 8, "Third next-bookmark should go to row 8");
-
-    // Go to next bookmark: should wrap around to row 2
-    editor.update_in(cx, |editor, window, cx| {
-        editor.go_to_next_bookmark(&actions::GoToNextBookmark, window, cx);
-    });
-    let cursor_row = editor.update(cx, |editor, cx| {
-        let snapshot = editor.display_snapshot(cx);
-        editor.selections.newest::<Point>(&snapshot).head().row
-    });
-    assert_eq!(cursor_row, 2, "Next-bookmark should wrap around to row 2");
+    ctx.go_to_next_bookmark();
+    assert_eq!(
+        ctx.cursor_row(),
+        2,
+        "Next-bookmark should wrap around to row 2"
+    );
 }
 
 #[gpui::test]
 async fn test_go_to_previous_bookmark(cx: &mut TestAppContext) {
-    init_test(cx, |_| {});
-
-    let sample_text =
-        "Line 0\nLine 1\nLine 2\nLine 3\nLine 4\nLine 5\nLine 6\nLine 7\nLine 8\nLine 9"
-            .to_string();
-    let fs = FakeFs::new(cx.executor());
-    fs.insert_tree(
-        path!("/a"),
-        json!({
-            "main.rs": sample_text,
-        }),
+    let mut ctx = BookmarkTestContext::new(
+        "Line 0\nLine 1\nLine 2\nLine 3\nLine 4\nLine 5\nLine 6\nLine 7\nLine 8\nLine 9",
+        cx,
     )
     .await;
-    let project = Project::test(fs, [path!("/a").as_ref()], cx).await;
-    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
-    let workspace = window
-        .read_with(cx, |mw, _| mw.workspace().clone())
-        .unwrap();
-    let cx = &mut VisualTestContext::from_window(*window, cx);
-    let worktree_id = workspace.update_in(cx, |workspace, _window, cx| {
-        workspace.project().update(cx, |project, cx| {
-            project.worktrees(cx).next().unwrap().read(cx).id()
-        })
-    });
 
-    let buffer = project
-        .update(cx, |project, cx| {
-            project.open_buffer((worktree_id, rel_path("main.rs")), cx)
-        })
-        .await
-        .unwrap();
+    ctx.toggle_bookmarks_at_rows(&[2, 5, 8]);
 
-    let (editor, cx) = cx.add_window_view(|window, cx| {
-        Editor::new(
-            EditorMode::full(),
-            MultiBuffer::build_from_buffer(buffer, cx),
-            Some(project.clone()),
-            window,
-            cx,
-        )
-    });
+    ctx.editor
+        .update_in(&mut ctx.cx, |editor: &mut Editor, window, cx| {
+            editor.move_to_end(&MoveToEnd, window, cx);
+        });
 
-    // Add bookmarks on rows 2, 5, and 8
-    editor.update_in(cx, |editor, window, cx| {
-        editor.move_to_beginning(&MoveToBeginning, window, cx);
-        editor.move_down(&MoveDown, window, cx);
-        editor.move_down(&MoveDown, window, cx);
-        editor.toggle_bookmark(&actions::ToggleBookmark, window, cx);
-        editor.move_down(&MoveDown, window, cx);
-        editor.move_down(&MoveDown, window, cx);
-        editor.move_down(&MoveDown, window, cx);
-        editor.toggle_bookmark(&actions::ToggleBookmark, window, cx);
-        editor.move_down(&MoveDown, window, cx);
-        editor.move_down(&MoveDown, window, cx);
-        editor.move_down(&MoveDown, window, cx);
-        editor.toggle_bookmark(&actions::ToggleBookmark, window, cx);
-    });
+    ctx.go_to_previous_bookmark();
+    assert_eq!(
+        ctx.cursor_row(),
+        8,
+        "First prev-bookmark should go to row 8"
+    );
 
-    // Start cursor at end of file (row 9, after all bookmarks)
-    editor.update_in(cx, |editor, window, cx| {
-        editor.move_to_end(&MoveToEnd, window, cx);
-    });
+    ctx.go_to_previous_bookmark();
+    assert_eq!(
+        ctx.cursor_row(),
+        5,
+        "Second prev-bookmark should go to row 5"
+    );
 
-    // Go to previous bookmark: should land on row 8
-    editor.update_in(cx, |editor, window, cx| {
-        editor.go_to_previous_bookmark(&actions::GoToPreviousBookmark, window, cx);
-    });
-    let cursor_row = editor.update(cx, |editor, cx| {
-        let snapshot = editor.display_snapshot(cx);
-        editor.selections.newest::<Point>(&snapshot).head().row
-    });
-    assert_eq!(cursor_row, 8, "First prev-bookmark should go to row 8");
+    ctx.go_to_previous_bookmark();
+    assert_eq!(
+        ctx.cursor_row(),
+        2,
+        "Third prev-bookmark should go to row 2"
+    );
 
-    // Go to previous bookmark: should land on row 5
-    editor.update_in(cx, |editor, window, cx| {
-        editor.go_to_previous_bookmark(&actions::GoToPreviousBookmark, window, cx);
-    });
-    let cursor_row = editor.update(cx, |editor, cx| {
-        let snapshot = editor.display_snapshot(cx);
-        editor.selections.newest::<Point>(&snapshot).head().row
-    });
-    assert_eq!(cursor_row, 5, "Second prev-bookmark should go to row 5");
-
-    // Go to previous bookmark: should land on row 2
-    editor.update_in(cx, |editor, window, cx| {
-        editor.go_to_previous_bookmark(&actions::GoToPreviousBookmark, window, cx);
-    });
-    let cursor_row = editor.update(cx, |editor, cx| {
-        let snapshot = editor.display_snapshot(cx);
-        editor.selections.newest::<Point>(&snapshot).head().row
-    });
-    assert_eq!(cursor_row, 2, "Third prev-bookmark should go to row 2");
-
-    // Go to previous bookmark: should wrap around to row 8
-    editor.update_in(cx, |editor, window, cx| {
-        editor.go_to_previous_bookmark(&actions::GoToPreviousBookmark, window, cx);
-    });
-    let cursor_row = editor.update(cx, |editor, cx| {
-        let snapshot = editor.display_snapshot(cx);
-        editor.selections.newest::<Point>(&snapshot).head().row
-    });
-    assert_eq!(cursor_row, 8, "Prev-bookmark should wrap around to row 8");
+    ctx.go_to_previous_bookmark();
+    assert_eq!(
+        ctx.cursor_row(),
+        8,
+        "Prev-bookmark should wrap around to row 8"
+    );
 }
 
 #[gpui::test]
 async fn test_go_to_bookmark_when_cursor_on_bookmarked_line(cx: &mut TestAppContext) {
-    init_test(cx, |_| {});
-
-    let sample_text =
-        "Line 0\nLine 1\nLine 2\nLine 3\nLine 4\nLine 5\nLine 6\nLine 7\nLine 8\nLine 9"
-            .to_string();
-    let fs = FakeFs::new(cx.executor());
-    fs.insert_tree(
-        path!("/a"),
-        json!({
-            "main.rs": sample_text,
-        }),
+    let mut ctx = BookmarkTestContext::new(
+        "Line 0\nLine 1\nLine 2\nLine 3\nLine 4\nLine 5\nLine 6\nLine 7\nLine 8\nLine 9",
+        cx,
     )
     .await;
-    let project = Project::test(fs, [path!("/a").as_ref()], cx).await;
-    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
-    let workspace = window
-        .read_with(cx, |mw, _| mw.workspace().clone())
-        .unwrap();
-    let cx = &mut VisualTestContext::from_window(*window, cx);
-    let worktree_id = workspace.update_in(cx, |workspace, _window, cx| {
-        workspace.project().update(cx, |project, cx| {
-            project.worktrees(cx).next().unwrap().read(cx).id()
-        })
-    });
 
-    let buffer = project
-        .update(cx, |project, cx| {
-            project.open_buffer((worktree_id, rel_path("main.rs")), cx)
-        })
-        .await
-        .unwrap();
+    ctx.toggle_bookmarks_at_rows(&[3, 7]);
 
-    let (editor, cx) = cx.add_window_view(|window, cx| {
-        Editor::new(
-            EditorMode::full(),
-            MultiBuffer::build_from_buffer(buffer, cx),
-            Some(project.clone()),
-            window,
-            cx,
-        )
-    });
+    ctx.move_to_row(3);
 
-    // Add bookmarks on rows 3 and 7
-    editor.update_in(cx, |editor, window, cx| {
-        editor.move_to_beginning(&MoveToBeginning, window, cx);
-        editor.move_down(&MoveDown, window, cx);
-        editor.move_down(&MoveDown, window, cx);
-        editor.move_down(&MoveDown, window, cx);
-        editor.toggle_bookmark(&actions::ToggleBookmark, window, cx);
-        editor.move_down(&MoveDown, window, cx);
-        editor.move_down(&MoveDown, window, cx);
-        editor.move_down(&MoveDown, window, cx);
-        editor.move_down(&MoveDown, window, cx);
-        editor.toggle_bookmark(&actions::ToggleBookmark, window, cx);
-    });
-
-    // Place cursor on row 3 (a bookmarked line) at column 0
-    editor.update_in(cx, |editor, window, cx| {
-        editor.move_to_beginning(&MoveToBeginning, window, cx);
-        editor.move_down(&MoveDown, window, cx);
-        editor.move_down(&MoveDown, window, cx);
-        editor.move_down(&MoveDown, window, cx);
-    });
-
-    // Next bookmark from a bookmarked line should skip to the other bookmark (row 7)
-    editor.update_in(cx, |editor, window, cx| {
-        editor.go_to_next_bookmark(&actions::GoToNextBookmark, window, cx);
-    });
-    let cursor_row = editor.update(cx, |editor, cx| {
-        let snapshot = editor.display_snapshot(cx);
-        editor.selections.newest::<Point>(&snapshot).head().row
-    });
+    ctx.go_to_next_bookmark();
     assert_eq!(
-        cursor_row, 7,
+        ctx.cursor_row(),
+        7,
         "Next from bookmarked row 3 should go to row 7"
     );
 
-    // Previous bookmark from row 7 (also bookmarked) should go back to row 3
-    editor.update_in(cx, |editor, window, cx| {
-        editor.go_to_previous_bookmark(&actions::GoToPreviousBookmark, window, cx);
-    });
-    let cursor_row = editor.update(cx, |editor, cx| {
-        let snapshot = editor.display_snapshot(cx);
-        editor.selections.newest::<Point>(&snapshot).head().row
-    });
+    ctx.go_to_previous_bookmark();
     assert_eq!(
-        cursor_row, 3,
+        ctx.cursor_row(),
+        3,
         "Previous from bookmarked row 7 should go to row 3"
     );
 
-    // With only two bookmarks, next from row 3 -> row 7 -> wrap to row 3
-    editor.update_in(cx, |editor, window, cx| {
-        editor.go_to_next_bookmark(&actions::GoToNextBookmark, window, cx);
-    });
-    let cursor_row = editor.update(cx, |editor, cx| {
-        let snapshot = editor.display_snapshot(cx);
-        editor.selections.newest::<Point>(&snapshot).head().row
-    });
-    assert_eq!(cursor_row, 7, "Next from row 3 should go to row 7");
+    ctx.go_to_next_bookmark();
+    assert_eq!(ctx.cursor_row(), 7, "Next from row 3 should go to row 7");
 
-    editor.update_in(cx, |editor, window, cx| {
-        editor.go_to_next_bookmark(&actions::GoToNextBookmark, window, cx);
-    });
-    let cursor_row = editor.update(cx, |editor, cx| {
-        let snapshot = editor.display_snapshot(cx);
-        editor.selections.newest::<Point>(&snapshot).head().row
-    });
-    assert_eq!(cursor_row, 3, "Next from row 7 should wrap to row 3");
+    ctx.go_to_next_bookmark();
+    assert_eq!(ctx.cursor_row(), 3, "Next from row 7 should wrap to row 3");
 }
 
 #[gpui::test]
 async fn test_go_to_bookmark_with_out_of_order_bookmarks(cx: &mut TestAppContext) {
-    init_test(cx, |_| {});
-
-    let sample_text =
-        "Line 0\nLine 1\nLine 2\nLine 3\nLine 4\nLine 5\nLine 6\nLine 7\nLine 8\nLine 9"
-            .to_string();
-    let fs = FakeFs::new(cx.executor());
-    fs.insert_tree(
-        path!("/a"),
-        json!({
-            "main.rs": sample_text,
-        }),
+    let mut ctx = BookmarkTestContext::new(
+        "Line 0\nLine 1\nLine 2\nLine 3\nLine 4\nLine 5\nLine 6\nLine 7\nLine 8\nLine 9",
+        cx,
     )
     .await;
-    let project = Project::test(fs, [path!("/a").as_ref()], cx).await;
-    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
-    let workspace = window
-        .read_with(cx, |mw, _| mw.workspace().clone())
-        .unwrap();
-    let cx = &mut VisualTestContext::from_window(*window, cx);
-    let worktree_id = workspace.update_in(cx, |workspace, _window, cx| {
-        workspace.project().update(cx, |project, cx| {
-            project.worktrees(cx).next().unwrap().read(cx).id()
-        })
-    });
 
-    let buffer = project
-        .update(cx, |project, cx| {
-            project.open_buffer((worktree_id, rel_path("main.rs")), cx)
-        })
-        .await
-        .unwrap();
+    ctx.toggle_bookmarks_at_rows(&[8, 1, 5]);
 
-    let (editor, cx) = cx.add_window_view(|window, cx| {
-        Editor::new(
-            EditorMode::full(),
-            MultiBuffer::build_from_buffer(buffer, cx),
-            Some(project.clone()),
-            window,
-            cx,
-        )
-    });
+    ctx.move_to_row(0);
 
-    // Add bookmarks in reverse document order: row 8 first, then row 1, then row 5
-    editor.update_in(cx, |editor, window, cx| {
-        editor.move_to_beginning(&MoveToBeginning, window, cx);
-        editor.move_down(&MoveDown, window, cx);
-        editor.move_down(&MoveDown, window, cx);
-        editor.move_down(&MoveDown, window, cx);
-        editor.move_down(&MoveDown, window, cx);
-        editor.move_down(&MoveDown, window, cx);
-        editor.move_down(&MoveDown, window, cx);
-        editor.move_down(&MoveDown, window, cx);
-        editor.move_down(&MoveDown, window, cx);
-        editor.toggle_bookmark(&actions::ToggleBookmark, window, cx); // row 8
-    });
-    editor.update_in(cx, |editor, window, cx| {
-        editor.move_to_beginning(&MoveToBeginning, window, cx);
-        editor.move_down(&MoveDown, window, cx);
-        editor.toggle_bookmark(&actions::ToggleBookmark, window, cx); // row 1
-    });
-    editor.update_in(cx, |editor, window, cx| {
-        editor.move_down(&MoveDown, window, cx);
-        editor.move_down(&MoveDown, window, cx);
-        editor.move_down(&MoveDown, window, cx);
-        editor.move_down(&MoveDown, window, cx);
-        editor.toggle_bookmark(&actions::ToggleBookmark, window, cx); // row 5
-    });
+    ctx.go_to_next_bookmark();
+    assert_eq!(ctx.cursor_row(), 1, "First next should go to row 1");
 
-    // Start at row 0
-    editor.update_in(cx, |editor, window, cx| {
-        editor.move_to_beginning(&MoveToBeginning, window, cx);
-    });
+    ctx.go_to_next_bookmark();
+    assert_eq!(ctx.cursor_row(), 5, "Second next should go to row 5");
 
-    // Forward traversal should visit in document order: 1, 5, 8, wrap to 1
-    editor.update_in(cx, |editor, window, cx| {
-        editor.go_to_next_bookmark(&actions::GoToNextBookmark, window, cx);
-    });
-    let cursor_row = editor.update(cx, |editor, cx| {
-        let snapshot = editor.display_snapshot(cx);
-        editor.selections.newest::<Point>(&snapshot).head().row
-    });
-    assert_eq!(cursor_row, 1, "First next should go to row 1");
+    ctx.go_to_next_bookmark();
+    assert_eq!(ctx.cursor_row(), 8, "Third next should go to row 8");
 
-    editor.update_in(cx, |editor, window, cx| {
-        editor.go_to_next_bookmark(&actions::GoToNextBookmark, window, cx);
-    });
-    let cursor_row = editor.update(cx, |editor, cx| {
-        let snapshot = editor.display_snapshot(cx);
-        editor.selections.newest::<Point>(&snapshot).head().row
-    });
-    assert_eq!(cursor_row, 5, "Second next should go to row 5");
+    ctx.go_to_next_bookmark();
+    assert_eq!(ctx.cursor_row(), 1, "Fourth next should wrap to row 1");
 
-    editor.update_in(cx, |editor, window, cx| {
-        editor.go_to_next_bookmark(&actions::GoToNextBookmark, window, cx);
-    });
-    let cursor_row = editor.update(cx, |editor, cx| {
-        let snapshot = editor.display_snapshot(cx);
-        editor.selections.newest::<Point>(&snapshot).head().row
-    });
-    assert_eq!(cursor_row, 8, "Third next should go to row 8");
+    ctx.go_to_previous_bookmark();
+    assert_eq!(
+        ctx.cursor_row(),
+        8,
+        "Prev from row 1 should wrap around to row 8"
+    );
 
-    editor.update_in(cx, |editor, window, cx| {
-        editor.go_to_next_bookmark(&actions::GoToNextBookmark, window, cx);
-    });
-    let cursor_row = editor.update(cx, |editor, cx| {
-        let snapshot = editor.display_snapshot(cx);
-        editor.selections.newest::<Point>(&snapshot).head().row
-    });
-    assert_eq!(cursor_row, 1, "Fourth next should wrap to row 1");
+    ctx.go_to_previous_bookmark();
+    assert_eq!(ctx.cursor_row(), 5, "Prev from row 8 should go to row 5");
 
-    // Backward traversal from row 1 should visit: 8 (wrap), 5, 1
-    editor.update_in(cx, |editor, window, cx| {
-        editor.go_to_previous_bookmark(&actions::GoToPreviousBookmark, window, cx);
-    });
-    let cursor_row = editor.update(cx, |editor, cx| {
-        let snapshot = editor.display_snapshot(cx);
-        editor.selections.newest::<Point>(&snapshot).head().row
-    });
-    assert_eq!(cursor_row, 8, "Prev from row 1 should wrap around to row 8");
-
-    editor.update_in(cx, |editor, window, cx| {
-        editor.go_to_previous_bookmark(&actions::GoToPreviousBookmark, window, cx);
-    });
-    let cursor_row = editor.update(cx, |editor, cx| {
-        let snapshot = editor.display_snapshot(cx);
-        editor.selections.newest::<Point>(&snapshot).head().row
-    });
-    assert_eq!(cursor_row, 5, "Prev from row 8 should go to row 5");
-
-    editor.update_in(cx, |editor, window, cx| {
-        editor.go_to_previous_bookmark(&actions::GoToPreviousBookmark, window, cx);
-    });
-    let cursor_row = editor.update(cx, |editor, cx| {
-        let snapshot = editor.display_snapshot(cx);
-        editor.selections.newest::<Point>(&snapshot).head().row
-    });
-    assert_eq!(cursor_row, 1, "Prev from row 5 should go to row 1");
+    ctx.go_to_previous_bookmark();
+    assert_eq!(ctx.cursor_row(), 1, "Prev from row 5 should go to row 1");
 }
 
 #[gpui::test]
