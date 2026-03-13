@@ -722,7 +722,7 @@ mod tests {
     impl ContextProvider for TestRustContextProvider {
         fn associated_tasks(
             &self,
-            _: Option<Arc<dyn language::File>>,
+            _: Option<Entity<language::Buffer>>,
             _: &gpui::App,
         ) -> Task<Option<TaskTemplates>> {
             Task::ready(Some(TaskTemplates(vec![
