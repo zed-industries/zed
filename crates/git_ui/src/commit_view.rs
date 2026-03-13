@@ -67,6 +67,7 @@ pub struct CommitView {
     multibuffer: Entity<MultiBuffer>,
     repository: Entity<Repository>,
     remote: Option<GitRemote>,
+    is_commit_pushed: Option<bool>,
 }
 
 struct GitBlob {
@@ -387,6 +388,27 @@ impl CommitView {
             })
         });
 
+        let is_commit_pushed = if remote.is_some() && stash.is_none() {
+            let sha: Option<git::Oid> = commit.sha.parse().ok();
+            if let Some(sha) = sha {
+                let task = repository.update(cx, |repo, cx| repo.is_commit_pushed(sha, cx));
+                cx.spawn(async move |this, cx| {
+                    let pushed = task.await.unwrap_or(false);
+                    this.update(cx, |this, cx| {
+                        this.is_commit_pushed = Some(pushed);
+                        cx.notify();
+                    })
+                    .log_err();
+                })
+                .detach();
+                None
+            } else {
+                Some(false)
+            }
+        } else {
+            Some(false)
+        };
+
         Self {
             commit,
             editor,
@@ -394,6 +416,7 @@ impl CommitView {
             stash,
             repository,
             remote,
+            is_commit_pushed,
         }
     }
 
@@ -979,6 +1002,7 @@ impl Item for CommitView {
                 stash: self.stash,
                 repository: self.repository.clone(),
                 remote: self.remote.clone(),
+                is_commit_pushed: self.is_commit_pushed,
             }
         })))
     }
@@ -1024,19 +1048,23 @@ impl Render for CommitViewToolbar {
 
         let commit_sha = commit_view_ref.commit.sha.clone();
 
-        let remote_info = commit_view_ref.remote.as_ref().map(|remote| {
-            let provider = remote.host.name();
-            let parsed_remote = ParsedGitRemote {
-                owner: remote.owner.as_ref().into(),
-                repo: remote.repo.as_ref().into(),
-            };
-            let params = BuildCommitPermalinkParams { sha: &commit_sha };
-            let url = remote
-                .host
-                .build_commit_permalink(&parsed_remote, params)
-                .to_string();
-            (provider, url)
-        });
+        let remote_info = commit_view_ref
+            .remote
+            .as_ref()
+            .filter(|_| commit_view_ref.stash.is_none())
+            .map(|remote| {
+                let provider = remote.host.name();
+                let parsed_remote = ParsedGitRemote {
+                    owner: remote.owner.as_ref().into(),
+                    repo: remote.repo.as_ref().into(),
+                };
+                let params = BuildCommitPermalinkParams { sha: &commit_sha };
+                let url = remote
+                    .host
+                    .build_commit_permalink(&parsed_remote, params)
+                    .to_string();
+                (provider, url)
+            });
 
         let sha_for_graph = commit_sha.to_string();
 
@@ -1087,17 +1115,19 @@ impl Render for CommitViewToolbar {
                             }),
                     )
                 })
-                .children(remote_info.map(|(provider_name, url)| {
-                    let icon = match provider_name.as_str() {
-                        "GitHub" => IconName::Github,
-                        _ => IconName::Link,
-                    };
+                .when(commit_view_ref.is_commit_pushed == Some(true), |this| {
+                    this.children(remote_info.map(|(provider_name, url)| {
+                        let icon = match provider_name.as_str() {
+                            "GitHub" => IconName::Github,
+                            _ => IconName::Link,
+                        };
 
-                    IconButton::new("view_on_provider", icon)
-                        .icon_size(IconSize::Small)
-                        .tooltip(Tooltip::text(format!("View on {}", provider_name)))
-                        .on_click(move |_, _, cx| cx.open_url(&url))
-                }))
+                        IconButton::new("view_on_provider", icon)
+                            .icon_size(IconSize::Small)
+                            .tooltip(Tooltip::text(format!("View on {}", provider_name)))
+                            .on_click(move |_, _, cx| cx.open_url(&url))
+                    }))
+                })
             })
     }
 }

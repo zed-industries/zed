@@ -789,6 +789,10 @@ impl GitRepository for FakeGitRepository {
         future::ready(Ok(Vec::new())).boxed()
     }
 
+    fn is_commit_pushed(&self, _sha: git::Oid) -> BoxFuture<'_, Result<bool>> {
+        future::ready(Ok(false)).boxed()
+    }
+
     fn diff(&self, _diff: git::repository::DiffType) -> BoxFuture<'_, Result<String>> {
         future::ready(Ok(String::new())).boxed()
     }

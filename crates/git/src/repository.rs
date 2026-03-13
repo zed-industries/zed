@@ -919,6 +919,9 @@ pub trait GitRepository: Send + Sync {
     /// returns a list of remote branches that contain HEAD
     fn check_for_pushed_commit(&self) -> BoxFuture<'_, Result<Vec<SharedString>>>;
 
+    /// Returns whether the given commit SHA exists on any remote branch.
+    fn is_commit_pushed(&self, sha: Oid) -> BoxFuture<'_, Result<bool>>;
+
     /// Run git diff
     fn diff(&self, diff: DiffType) -> BoxFuture<'_, Result<String>>;
 
@@ -2492,6 +2495,29 @@ impl GitRepository for RealGitRepository {
                 }
 
                 Ok(remote_branches)
+            })
+            .boxed()
+    }
+
+    fn is_commit_pushed(&self, sha: Oid) -> BoxFuture<'_, Result<bool>> {
+        let working_directory = self.working_directory();
+        let git_binary_path = self.any_git_binary_path.clone();
+        let sha_string = sha.to_string();
+        self.executor
+            .spawn(async move {
+                let working_directory = working_directory?;
+                let output = new_command(&git_binary_path)
+                    .current_dir(&working_directory)
+                    .args(["branch", "-r", "--contains", &sha_string])
+                    .output()
+                    .await?;
+
+                if !output.status.success() {
+                    return Ok(false);
+                }
+
+                let stdout = String::from_utf8_lossy(&output.stdout);
+                Ok(stdout.lines().any(|line| !line.trim().is_empty()))
             })
             .boxed()
     }
