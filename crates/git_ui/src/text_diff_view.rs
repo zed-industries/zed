@@ -696,6 +696,88 @@ mod tests {
         .await;
     }
 
+    #[gpui::test]
+    async fn test_diffing_clipboard_against_selection(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+
+        let project_root = path!("/test");
+        let file_path = path!("/test/text.txt");
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            project_root,
+            json!({
+                "text.txt": "bb"
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs, [project_root.as_ref()], cx).await;
+
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
+
+        let buffer = project
+            .update(cx, |project, cx| project.open_local_buffer(file_path, cx))
+            .await
+            .unwrap();
+
+        let editor = cx.new_window_entity(|window, cx| {
+            let multibuffer = cx.new(|cx| {
+                let mut multibuffer = MultiBuffer::new(language::Capability::ReadWrite);
+                let max_point = buffer.read(cx).max_point();
+                let range = Point::new(0, 0)..max_point;
+                multibuffer.set_excerpts_for_buffer(buffer.clone(), [range.clone(), range], 0, cx);
+                multibuffer
+            });
+
+            let mut editor = Editor::for_multibuffer(multibuffer, None, window, cx);
+            let (_, selection_ranges) = marked_text_ranges("«bbˇ»", false);
+            editor.change_selections(Default::default(), window, cx, |s| {
+                s.select_ranges(
+                    selection_ranges
+                        .into_iter()
+                        .map(|range| MultiBufferOffset(range.start)..MultiBufferOffset(range.end)),
+                )
+            });
+
+            editor
+        });
+
+        let diff_view = workspace
+            .update_in(cx, |workspace, window, cx| {
+                TextDiffView::open(
+                    &DiffClipboardWithSelectionData {
+                        clipboard_text: "a".to_string(),
+                        editor,
+                    },
+                    workspace,
+                    window,
+                    cx,
+                )
+            })
+            .unwrap()
+            .await
+            .unwrap();
+
+        cx.executor().run_until_parked();
+
+        assert_state_with_diff(
+            &diff_view.read_with(cx, |diff_view, cx| {
+                diff_view.diff_editor.read(cx).rhs_editor().clone()
+            }),
+            cx,
+            &unindent(
+                "
+                - a
+                + ˇbb",
+            ),
+        );
+    }
+
     async fn base_test(
         project_root: &str,
         file_path: &str,
