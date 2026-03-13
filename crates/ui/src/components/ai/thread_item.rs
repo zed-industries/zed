@@ -311,11 +311,10 @@ impl RenderOnce for ThreadItem {
                             this.child(dot_separator())
                         })
                         .when(has_diff_stats, |this| {
-                            this.child(DiffStat::new(
-                                diff_stat_id.clone(),
-                                added_count,
-                                removed_count,
-                            ))
+                            this.child(
+                                DiffStat::new(diff_stat_id.clone(), added_count, removed_count)
+                                    .tooltip("Unreviewed changes"),
+                            )
                         })
                         .when(has_diff_stats && has_timestamp, |this| {
                             this.child(dot_separator())
@@ -336,7 +335,10 @@ impl RenderOnce for ThreadItem {
                         .gap_1p5()
                         .child(icon_container()) // Icon Spacing
                         .when(has_diff_stats, |this| {
-                            this.child(DiffStat::new(diff_stat_id, added_count, removed_count))
+                            this.child(
+                                DiffStat::new(diff_stat_id, added_count, removed_count)
+                                    .tooltip("Unreviewed changes"),
+                            )
                         })
                         .when(has_diff_stats && has_timestamp, |this| {
                             this.child(dot_separator())
