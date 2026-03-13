@@ -1151,6 +1151,10 @@ impl Element for List {
                 accumulated_scroll_delta = accumulated_scroll_delta.coalesce(event.delta);
                 let mut pixel_delta = accumulated_scroll_delta.pixel_delta(px(20.));
                 if pixel_delta.x.abs() > pixel_delta.y.abs() {
+                     accumulated_scroll_delta = match accumulated_scroll_delta {
+                         ScrollDelta::Pixels(p) => ScrollDelta::Pixels(point(p.x, px(0.))),
+                         ScrollDelta::Lines(p) => ScrollDelta::Lines(point(p.x, 0.)),
+                     };
                     pixel_delta.y = px(0.);
                 }
                 list_state.0.borrow_mut().scroll(
