@@ -859,8 +859,7 @@ impl Vim {
 
 #[cfg(test)]
 mod test {
-    use gpui::{UpdateGlobal, VisualTestContext};
-    use gpui::KeyBinding;
+use gpui::{KeyBinding, UpdateGlobal, VisualTestContext};
     use indoc::indoc;
     use project::FakeFs;
     use search::{ProjectSearchView, project_search};
@@ -869,8 +868,7 @@ mod test {
     use util::path;
     use workspace::{DeploySearch, MultiWorkspace};
 
-    use crate::{VimAddon, state::Mode, test::VimTestContext};
-    use crate::SwitchToHelixNormalMode;
+use crate::{SwitchToHelixNormalMode, VimAddon, state::Mode, test::VimTestContext};
 
     #[gpui::test]
     async fn test_insert_line(cx: &mut gpui::TestAppContext) {
