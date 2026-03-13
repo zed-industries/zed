@@ -99,13 +99,15 @@ The keys can be any single Unicode codepoint that your keyboard generates (for e
 
 A few examples:
 
-```json [settings]
- "bindings": {
-   "cmd-k cmd-s": "zed::OpenKeymap", // matches ⌘-k then ⌘-s
-   "space e": "editor::Complete", // type space then e
-   "ç": "editor::Complete", // matches ⌥-c
-   "shift shift": "file_finder::Toggle", // matches pressing and releasing shift twice
- }
+```json [keymap]
+{
+  "bindings": {
+    "cmd-k cmd-s": "zed::OpenKeymap", // matches ⌘-k then ⌘-s
+    "space e": "editor::ShowCompletions", // type space then e
+    "ç": "editor::ShowCompletions", // matches ⌥-c
+    "shift shift": "file_finder::Toggle" // matches pressing and releasing shift twice
+  }
+}
 ```
 
 The `shift-` modifier can only be used in combination with a letter to indicate the uppercase version. For example, `shift-g` matches typing `G`. Although on many keyboards shift is used to type punctuation characters like `(`, the keypress is not considered to be modified, and so `shift-(` does not match.
@@ -289,7 +291,7 @@ If you're on Linux or Windows, you might find yourself wanting to forward key co
 
 For example, `ctrl-n` creates a new tab in Zed on Linux. If you want to send `ctrl-n` to the built-in terminal when it's focused, add the following to your keymap:
 
-```json [settings]
+```json [keymap]
 {
   "context": "Terminal",
   "bindings": {

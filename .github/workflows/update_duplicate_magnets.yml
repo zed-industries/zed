@@ -21,7 +21,9 @@ jobs:
         run: pip install requests
 
       - name: Update duplicate magnets issue
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           python script/github-find-top-duplicated-bugs.py \
-            --github-token ${{ secrets.GITHUB_TOKEN }} \
+            --github-token "$GITHUB_TOKEN" \
             --issue-number 46355

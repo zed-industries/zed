@@ -63,17 +63,18 @@ pub struct SessionWorkspace {
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 pub struct MultiWorkspaceState {
     pub active_workspace_id: Option<WorkspaceId>,
-    pub sidebar_open: bool,
 }
 
-/// The serialized state of a single MultiWorkspace window from a previous session:
-/// all workspaces that shared the window, which one was active, and whether the
-/// sidebar was open.
+/// The serialized state of a single MultiWorkspace window from a previous session.
 #[derive(Debug, Clone)]
 pub struct SerializedMultiWorkspace {
+    pub id: Option<MultiWorkspaceId>,
     pub workspaces: Vec<SessionWorkspace>,
     pub state: MultiWorkspaceState,
 }
+
+#[derive(Debug, Clone, Copy)]
+pub struct MultiWorkspaceId(pub u64);
 
 #[derive(Debug, PartialEq, Clone)]
 pub(crate) struct SerializedWorkspace {
@@ -93,9 +94,9 @@ pub(crate) struct SerializedWorkspace {
 
 #[derive(Debug, PartialEq, Clone, Default, Serialize, Deserialize)]
 pub struct DockStructure {
-    pub(crate) left: DockData,
-    pub(crate) right: DockData,
-    pub(crate) bottom: DockData,
+    pub left: DockData,
+    pub right: DockData,
+    pub bottom: DockData,
 }
 
 impl RemoteConnectionKind {
@@ -143,9 +144,9 @@ impl Bind for DockStructure {
 
 #[derive(Debug, PartialEq, Clone, Default, Serialize, Deserialize)]
 pub struct DockData {
-    pub(crate) visible: bool,
-    pub(crate) active_panel: Option<String>,
-    pub(crate) zoom: bool,
+    pub visible: bool,
+    pub active_panel: Option<String>,
+    pub zoom: bool,
 }
 
 impl Column for DockData {

@@ -341,6 +341,7 @@ pub fn read_serialized_multi_workspaces(
                 .map(read_multi_workspace_state)
                 .unwrap_or_default();
             model::SerializedMultiWorkspace {
+                id: window_id.map(|id| model::MultiWorkspaceId(id.as_u64())),
                 workspaces: group,
                 state,
             }
@@ -1783,11 +1784,17 @@ impl WorkspaceDb {
         }
     }
 
-    async fn all_paths_exist_with_a_directory(paths: &[PathBuf], fs: &dyn Fs) -> bool {
+    async fn all_paths_exist_with_a_directory(
+        paths: &[PathBuf],
+        fs: &dyn Fs,
+        timestamp: Option<DateTime<Utc>>,
+    ) -> bool {
         let mut any_dir = false;
         for path in paths {
             match fs.metadata(path).await.ok().flatten() {
-                None => return false,
+                None => {
+                    return timestamp.is_some_and(|t| Utc::now() - t < chrono::Duration::days(7));
+                }
                 Some(meta) => {
                     if meta.is_dir {
                         any_dir = true;
@@ -1843,7 +1850,9 @@ impl WorkspaceDb {
             // If a local workspace points to WSL, this check will cause us to wait for the
             // WSL VM and file server to boot up. This can block for many seconds.
             // Supported scenarios use remote workspaces.
-            if !has_wsl_path && Self::all_paths_exist_with_a_directory(paths.paths(), fs).await {
+            if !has_wsl_path
+                && Self::all_paths_exist_with_a_directory(paths.paths(), fs, Some(timestamp)).await
+            {
                 result.push((id, SerializedWorkspaceLocation::Local, paths, timestamp));
             } else {
                 delete_tasks.push(self.delete_workspace_by_id(id));
@@ -1903,7 +1912,7 @@ impl WorkspaceDb {
                     window_id,
                 });
             } else {
-                if Self::all_paths_exist_with_a_directory(paths.paths(), fs).await {
+                if Self::all_paths_exist_with_a_directory(paths.paths(), fs, None).await {
                     workspaces.push(SessionWorkspace {
                         workspace_id,
                         location: SerializedWorkspaceLocation::Local,
@@ -3877,7 +3886,6 @@ mod tests {
             window_10,
             MultiWorkspaceState {
                 active_workspace_id: Some(WorkspaceId(2)),
-                sidebar_open: true,
             },
         )
         .await;
@@ -3886,7 +3894,6 @@ mod tests {
             window_20,
             MultiWorkspaceState {
                 active_workspace_id: Some(WorkspaceId(3)),
-                sidebar_open: false,
             },
         )
         .await;
@@ -3924,23 +3931,20 @@ mod tests {
         // Should produce 3 groups: window 10, window 20, and the orphan.
         assert_eq!(results.len(), 3);
 
-        // Window 10 group: 2 workspaces, active_workspace_id = 2, sidebar open.
+        // Window 10 group: 2 workspaces, active_workspace_id = 2.
         let group_10 = &results[0];
         assert_eq!(group_10.workspaces.len(), 2);
         assert_eq!(group_10.state.active_workspace_id, Some(WorkspaceId(2)));
-        assert_eq!(group_10.state.sidebar_open, true);
 
-        // Window 20 group: 1 workspace, active_workspace_id = 3, sidebar closed.
+        // Window 20 group: 1 workspace, active_workspace_id = 3.
         let group_20 = &results[1];
         assert_eq!(group_20.workspaces.len(), 1);
         assert_eq!(group_20.state.active_workspace_id, Some(WorkspaceId(3)));
-        assert_eq!(group_20.state.sidebar_open, false);
 
         // Orphan group: no window_id, so state is default.
         let group_none = &results[2];
         assert_eq!(group_none.workspaces.len(), 1);
         assert_eq!(group_none.state.active_workspace_id, None);
-        assert_eq!(group_none.state.sidebar_open, false);
     }
 
     #[gpui::test]
@@ -4357,6 +4361,116 @@ mod tests {
         assert!(
             DB.workspace_for_id(workspace2_db_id).is_none(),
             "Pending removal task should have deleted the workspace row when awaited"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_create_workspace_bounds_observer_uses_fresh_id(cx: &mut gpui::TestAppContext) {
+        use crate::multi_workspace::MultiWorkspace;
+        use feature_flags::FeatureFlagAppExt;
+        use project::Project;
+
+        crate::tests::init_test(cx);
+
+        cx.update(|cx| {
+            cx.set_staff(true);
+            cx.update_flags(true, vec!["agent-v2".to_string()]);
+        });
+
+        let fs = fs::FakeFs::new(cx.executor());
+        let project = Project::test(fs.clone(), [], cx).await;
+
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+
+        multi_workspace.update_in(cx, |mw, _, cx| {
+            mw.set_random_database_id(cx);
+        });
+
+        multi_workspace.update_in(cx, |mw, window, cx| {
+            mw.create_workspace(window, cx);
+        });
+
+        cx.run_until_parked();
+
+        let new_workspace_db_id =
+            multi_workspace.read_with(cx, |mw, cx| mw.workspace().read(cx).database_id());
+        assert!(
+            new_workspace_db_id.is_some(),
+            "After run_until_parked, the workspace should have a database_id"
+        );
+
+        let workspace_id = new_workspace_db_id.unwrap();
+
+        assert!(
+            DB.workspace_for_id(workspace_id).is_some(),
+            "The workspace row should exist in the DB"
+        );
+
+        cx.simulate_resize(gpui::size(px(1024.0), px(768.0)));
+
+        // Advance the clock past the 100ms debounce timer so the bounds
+        // observer task fires
+        cx.executor().advance_clock(Duration::from_millis(200));
+        cx.run_until_parked();
+
+        let serialized = DB
+            .workspace_for_id(workspace_id)
+            .expect("workspace row should still exist");
+        assert!(
+            serialized.window_bounds.is_some(),
+            "The bounds observer should write bounds for the workspace's real DB ID, \
+             even when the workspace was created via create_workspace (where the ID \
+             is assigned asynchronously after construction)."
+        );
+    }
+
+    #[gpui::test]
+    async fn test_flush_serialization_writes_bounds(cx: &mut gpui::TestAppContext) {
+        use crate::multi_workspace::MultiWorkspace;
+        use feature_flags::FeatureFlagAppExt;
+        use project::Project;
+
+        crate::tests::init_test(cx);
+
+        cx.update(|cx| {
+            cx.set_staff(true);
+            cx.update_flags(true, vec!["agent-v2".to_string()]);
+        });
+
+        let fs = fs::FakeFs::new(cx.executor());
+        let dir = tempfile::TempDir::with_prefix("flush_bounds_test").unwrap();
+        fs.insert_tree(dir.path(), json!({})).await;
+
+        let project = Project::test(fs.clone(), [dir.path()], cx).await;
+
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+
+        let workspace_id = DB.next_id().await.unwrap();
+        multi_workspace.update_in(cx, |mw, _, cx| {
+            mw.workspace().update(cx, |ws, _cx| {
+                ws.set_database_id(workspace_id);
+            });
+        });
+
+        let task = multi_workspace.update_in(cx, |mw, window, cx| {
+            mw.workspace()
+                .update(cx, |ws, cx| ws.flush_serialization(window, cx))
+        });
+        task.await;
+
+        let after = DB
+            .workspace_for_id(workspace_id)
+            .expect("workspace row should exist after flush_serialization");
+        assert!(
+            !after.paths.is_empty(),
+            "flush_serialization should have written paths via save_workspace"
+        );
+        assert!(
+            after.window_bounds.is_some(),
+            "flush_serialization should ensure window bounds are persisted to the DB \
+             before the process exits."
         );
     }
 }

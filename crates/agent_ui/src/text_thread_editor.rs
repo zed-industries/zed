@@ -1191,11 +1191,11 @@ impl TextThreadEditor {
                                     Button::new("show-error", "Error")
                                         .color(Color::Error)
                                         .selected_label_color(Color::Error)
-                                        .selected_icon_color(Color::Error)
-                                        .icon(IconName::XCircle)
-                                        .icon_color(Color::Error)
-                                        .icon_size(IconSize::XSmall)
-                                        .icon_position(IconPosition::Start)
+                                        .start_icon(
+                                            Icon::new(IconName::XCircle)
+                                                .size(IconSize::XSmall)
+                                                .color(Color::Error),
+                                        )
                                         .tooltip(Tooltip::text("View Details"))
                                         .on_click({
                                             let text_thread = text_thread.clone();
@@ -1495,7 +1495,7 @@ impl TextThreadEditor {
             return;
         };
 
-        // Get buffer info for the delegate call (even if empty, AcpThreadView ignores these
+        // Get buffer info for the delegate call (even if empty, ThreadView ignores these
         // params and calls insert_selections which handles both terminal and buffer)
         if let Some((selections, buffer)) = maybe!({
             let editor = workspace
@@ -1509,9 +1509,16 @@ impl TextThreadEditor {
                     .selections
                     .all_adjusted(&editor.display_snapshot(cx))
                     .into_iter()
-                    .filter_map(|s| {
-                        (!s.is_empty())
-                            .then(|| snapshot.anchor_after(s.start)..snapshot.anchor_before(s.end))
+                    .map(|s| {
+                        let (start, end) = if s.is_empty() {
+                            let row = multi_buffer::MultiBufferRow(s.start.row);
+                            let line_start = text::Point::new(s.start.row, 0);
+                            let line_end = text::Point::new(s.start.row, snapshot.line_len(row));
+                            (line_start, line_end)
+                        } else {
+                            (s.start, s.end)
+                        };
+                        snapshot.anchor_after(start)..snapshot.anchor_before(end)
                     })
                     .collect::<Vec<_>>()
             });
@@ -2280,20 +2287,11 @@ impl TextThreadEditor {
 
         PickerPopoverMenu::new(
             self.language_model_selector.clone(),
-            ButtonLike::new("active-model")
-                .selected_style(ButtonStyle::Tinted(TintColor::Accent))
-                .child(
-                    h_flex()
-                        .gap_0p5()
-                        .child(provider_icon_element)
-                        .child(
-                            Label::new(model_name)
-                                .color(color)
-                                .size(LabelSize::Small)
-                                .ml_0p5(),
-                        )
-                        .child(Icon::new(icon).color(color).size(IconSize::XSmall)),
-                ),
+            Button::new("active-model", model_name)
+                .color(color)
+                .label_size(LabelSize::Small)
+                .start_icon(provider_icon_element)
+                .end_icon(Icon::new(icon).color(color).size(IconSize::XSmall)),
             tooltip,
             gpui::Corner::BottomRight,
             cx,

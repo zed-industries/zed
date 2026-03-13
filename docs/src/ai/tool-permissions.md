@@ -92,8 +92,20 @@ For example, a tool called `create_issue` on a server called `github` would be `
 
 ```json [settings]
 {
-  "pattern": "your-regex-here",
-  "case_sensitive": false
+  "agent": {
+    "tool_permissions": {
+      "tools": {
+        "edit_file": {
+          "always_allow": [
+            {
+              "pattern": "your-regex-here",
+              "case_sensitive": false
+            }
+          ]
+        }
+      }
+    }
+  }
 }
 ```
 

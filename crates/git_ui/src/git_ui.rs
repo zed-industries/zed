@@ -50,7 +50,6 @@ pub mod worktree_picker;
 pub fn init(cx: &mut App) {
     editor::set_blame_renderer(blame_ui::GitBlameRenderer, cx);
     commit_view::init(cx);
-    file_history_view::init(cx);
 
     cx.observe_new(|editor: &mut Editor, _, cx| {
         conflict_view::register_editor(editor, editor.buffer().clone(), cx);
@@ -63,6 +62,7 @@ pub fn init(cx: &mut App) {
         git_panel::register(workspace);
         repository_selector::register(workspace);
         git_picker::register(workspace);
+        conflict_view::register_conflict_notification(workspace, cx);
 
         let project = workspace.project().read(cx);
         if project.is_read_only(cx) {
@@ -872,8 +872,7 @@ impl Render for GitCloneModal {
                     .child(
                         Button::new("learn-more", "Learn More")
                             .label_size(LabelSize::Small)
-                            .icon(IconName::ArrowUpRight)
-                            .icon_size(IconSize::XSmall)
+                            .end_icon(Icon::new(IconName::ArrowUpRight).size(IconSize::XSmall))
                             .on_click(|_, _, cx| {
                                 cx.open_url("https://github.com/git-guides/git-clone");
                             }),

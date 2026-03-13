@@ -410,11 +410,13 @@ Configure formatting in Settings ({#kb zed::OpenSettings}) under Languages > HTM
 
 ```json [settings]
 {
-  "HTML+ERB": {
-    "formatter": {
-      "external": {
-        "command": "erb-formatter",
-        "arguments": ["--stdin-filename", "{buffer_path}"]
+  "languages": {
+    "HTML+ERB": {
+      "formatter": {
+        "external": {
+          "command": "erb-formatter",
+          "arguments": ["--stdin-filename", "{buffer_path}"]
+        }
       }
     }
   }
