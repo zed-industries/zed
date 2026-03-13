@@ -139,6 +139,11 @@ pub struct TerminalSettingsContent {
     /// Default: 320
     #[serde(serialize_with = "crate::serialize_optional_f32_with_two_decimal_places")]
     pub default_height: Option<f32>,
+    /// Top margin of the terminal (in pixels).
+    ///
+    /// Default: 4
+    #[serde(serialize_with = "crate::serialize_optional_f32_with_two_decimal_places")]
+    pub margin_top: Option<f32>,
     /// The maximum number of lines to keep in the scrollback history.
     /// Maximum allowed value is 100_000, all values above that will be treated as 100_000.
     /// 0 disables the scrolling.

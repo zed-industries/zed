@@ -6203,7 +6203,7 @@ fn terminal_page() -> SettingsPage {
         ]
     }
 
-    fn layout_settings_section() -> [SettingsPageItem; 3] {
+    fn layout_settings_section() -> [SettingsPageItem; 4] {
         [
             SettingsPageItem::SectionHeader("Layout Settings"),
             SettingsPageItem::SettingItem(SettingItem {
@@ -6237,6 +6237,24 @@ fn terminal_page() -> SettingsPage {
                             .terminal
                             .get_or_insert_default()
                             .default_height = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Top Margin",
+                description: "Space between the terminal content and the upper border (in pixels).",
+                field: Box::new(SettingField {
+                    json_path: Some("terminal.margin_top"),
+                    pick: |settings_content| {
+                        settings_content.terminal.as_ref()?.margin_top.as_ref()
+                    },
+                    write: |settings_content, value| {
+                        settings_content
+                            .terminal
+                            .get_or_insert_default()
+                            .margin_top = value;
                     },
                 }),
                 metadata: None,

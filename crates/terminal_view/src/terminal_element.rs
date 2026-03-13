@@ -50,6 +50,7 @@ pub struct LayoutState {
     display_offset: usize,
     hyperlink_tooltip: Option<AnyElement>,
     gutter: Pixels,
+    top_padding: Pixels,
     block_below_cursor_element: Option<AnyElement>,
     base_text_style: TextStyle,
     content_mode: ContentMode,
@@ -951,6 +952,7 @@ impl Element for TerminalElement {
                 let player_color = theme.players().local();
                 let match_color = theme.colors().search_match_background;
                 let gutter;
+                let top_padding;
                 let (dimensions, line_height_px) = {
                     let rem_size = window.rem_size();
                     let font_pixels = text_style.font_size.to_pixels(rem_size);
@@ -962,9 +964,11 @@ impl Element for TerminalElement {
                         .unwrap()
                         .width;
                     gutter = cell_width;
+                    top_padding = TerminalSettings::get_global(cx).margin_top;
 
                     let mut size = bounds.size;
                     size.width -= gutter;
+                    size.height -= top_padding;
 
                     // https://github.com/zed-industries/zed/issues/2750
                     // if the terminal is one column wide, rendering 🦀
@@ -975,6 +979,7 @@ impl Element for TerminalElement {
 
                     let mut origin = bounds.origin;
                     origin.x += gutter;
+                    origin.y += top_padding;
 
                     (
                         TerminalBounds::new(px(line_height), cell_width, Bounds { origin, size }),
@@ -1219,6 +1224,7 @@ impl Element for TerminalElement {
                     display_offset,
                     hyperlink_tooltip,
                     gutter,
+                    top_padding,
                     block_below_cursor_element,
                     base_text_style: text_style,
                     content_mode,
@@ -1242,8 +1248,9 @@ impl Element for TerminalElement {
             let scroll_top = self.terminal_view.read(cx).scroll_top;
 
             window.paint_quad(fill(bounds, layout.background_color));
-            let origin =
-                bounds.origin + Point::new(layout.gutter, px(0.)) - Point::new(px(0.), scroll_top);
+            let origin = bounds.origin
+                + Point::new(layout.gutter, layout.top_padding)
+                - Point::new(px(0.), scroll_top);
 
             let marked_text_cloned: Option<String> = {
                 let ime_state = &self.terminal_view.read(cx).ime_state;

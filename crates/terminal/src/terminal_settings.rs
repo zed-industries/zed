@@ -42,6 +42,7 @@ pub struct TerminalSettings {
     pub dock: TerminalDockPosition,
     pub default_width: Pixels,
     pub default_height: Pixels,
+    pub margin_top: Pixels,
     pub detect_venv: VenvSettings,
     pub max_scroll_history_lines: Option<usize>,
     pub scroll_multiplier: f32,
@@ -109,6 +110,7 @@ impl settings::Settings for TerminalSettings {
             dock: user_content.dock.unwrap(),
             default_width: px(user_content.default_width.unwrap()),
             default_height: px(user_content.default_height.unwrap()),
+            margin_top: px(user_content.margin_top.unwrap()),
             detect_venv: project_content.detect_venv.unwrap(),
             scroll_multiplier: user_content.scroll_multiplier.unwrap(),
             max_scroll_history_lines: user_content.max_scroll_history_lines,
@@ -175,5 +177,51 @@ impl From<CursorShape> for AlacCursorStyle {
             shape: value.into(),
             blinking: false,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use gpui::{App, UpdateGlobal};
+    use settings::{Settings, SettingsStore};
+
+    #[gpui::test]
+    fn test_margin_top_default(cx: &mut App) {
+        let settings_store = SettingsStore::test(cx);
+        cx.set_global(settings_store);
+
+        let settings = TerminalSettings::get_global(cx);
+        assert_eq!(settings.margin_top, px(4.0));
+    }
+
+    #[gpui::test]
+    fn test_margin_top_custom_value(cx: &mut App) {
+        let settings_store = SettingsStore::test(cx);
+        cx.set_global(settings_store);
+
+        SettingsStore::update_global(cx, |store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.terminal.get_or_insert_default().margin_top = Some(10.0);
+            });
+        });
+
+        let settings = TerminalSettings::get_global(cx);
+        assert_eq!(settings.margin_top, px(10.0));
+    }
+
+    #[gpui::test]
+    fn test_margin_top_zero(cx: &mut App) {
+        let settings_store = SettingsStore::test(cx);
+        cx.set_global(settings_store);
+
+        SettingsStore::update_global(cx, |store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.terminal.get_or_insert_default().margin_top = Some(0.0);
+            });
+        });
+
+        let settings = TerminalSettings::get_global(cx);
+        assert_eq!(settings.margin_top, px(0.0));
     }
 }
