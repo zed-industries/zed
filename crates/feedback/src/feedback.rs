@@ -112,9 +112,8 @@ pub fn init(cx: &mut App) {
 }
 
 pub fn installed_extensions_for_clipboard(cx: &App) -> String {
-    ExtensionStore::try_global(cx)
-        .map(|store| format_installed_extensions_for_clipboard(store.read(cx)))
-        .unwrap_or_else(|| "Installed extensions: unavailable".to_string())
+    let store = ExtensionStore::global(cx);
+    format_installed_extensions_for_clipboard(store.read(cx))
 }
 
 fn format_installed_extensions_for_clipboard(store: &ExtensionStore) -> String {
