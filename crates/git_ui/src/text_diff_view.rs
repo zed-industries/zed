@@ -2,7 +2,10 @@
 
 use anyhow::Result;
 use buffer_diff::BufferDiff;
-use editor::{Editor, EditorEvent, MultiBuffer, ToPoint, actions::DiffClipboardWithSelectionData};
+use editor::{
+    Editor, EditorEvent, EditorSettings, MultiBuffer, SplittableEditor, ToPoint,
+    actions::DiffClipboardWithSelectionData,
+};
 use futures::{FutureExt, select_biased};
 use gpui::{
     AnyElement, App, AppContext as _, AsyncApp, Context, Entity, EventEmitter, FocusHandle,
@@ -10,6 +13,7 @@ use gpui::{
 };
 use language::{self, Buffer, Point};
 use project::Project;
+use settings::Settings;
 use std::{
     any::{Any, TypeId},
     cmp,
@@ -22,13 +26,13 @@ use ui::{Color, Icon, IconName, Label, LabelCommon as _, SharedString};
 use util::paths::PathExt;
 
 use workspace::{
-    Item, ItemHandle as _, ItemNavHistory, Workspace,
+    Item, ItemNavHistory, Workspace,
     item::{ItemEvent, SaveOptions, TabContentParams},
     searchable::SearchableItemHandle,
 };
 
 pub struct TextDiffView {
-    diff_editor: Entity<Editor>,
+    diff_editor: Entity<SplittableEditor>,
     title: SharedString,
     path: Option<SharedString>,
     buffer_changes_tx: watch::Sender<()>,
@@ -47,41 +51,71 @@ impl TextDiffView {
         let source_editor = diff_data.editor.clone();
 
         let selection_data = source_editor.update(cx, |editor, cx| {
-            let multibuffer = editor.buffer().read(cx);
-            let source_buffer = multibuffer.as_singleton()?;
+            let multibuffer = editor.buffer();
             let selections = editor.selections.all::<Point>(&editor.display_snapshot(cx));
-            let buffer_snapshot = source_buffer.read(cx);
             let first_selection = selections.first()?;
+
+            // Get the source buffer at the selection position. For a singleton multibuffer
+            // the multibuffer Points are identical to buffer-local Points. For a
+            // multi-excerpt multibuffer (e.g. search results, diagnostics, split view) we
+            // use point_to_buffer_point to find the excerpt's underlying buffer and convert
+            // the selection coordinates into buffer-local space.
+            let (source_buffer, buffer_start, buffer_end, is_singleton) =
+                if let Some(singleton) = multibuffer.read(cx).as_singleton() {
+                    (singleton, first_selection.start, first_selection.end, true)
+                } else {
+                    let (buf, buf_start, _) = multibuffer
+                        .read(cx)
+                        .point_to_buffer_point(first_selection.start, cx)?;
+                    let buf_end = multibuffer
+                        .read(cx)
+                        .point_to_buffer_point(first_selection.end, cx)
+                        .map(|(_, pt, _)| pt)
+                        .unwrap_or(buf_start);
+                    (buf, buf_start, buf_end, false)
+                };
+
+            let buffer_snapshot = source_buffer.read(cx);
             let max_point = buffer_snapshot.max_point();
 
             if first_selection.is_empty() {
                 let full_range = Point::new(0, 0)..max_point;
-                return Some((source_buffer, full_range));
+                let mb_range = if is_singleton {
+                    full_range.clone()
+                } else {
+                    first_selection.start..first_selection.end
+                };
+                return Some((source_buffer, full_range, mb_range));
             }
 
-            let start = first_selection.start;
-            let end = first_selection.end;
-            let expanded_start = Point::new(start.row, 0);
-
-            let expanded_end = if end.column > 0 {
-                let next_row = end.row + 1;
+            let expanded_start = Point::new(buffer_start.row, 0);
+            let expanded_end = if buffer_end.column > 0 {
+                let next_row = buffer_end.row + 1;
                 cmp::min(max_point, Point::new(next_row, 0))
             } else {
-                end
+                buffer_end
             };
-            Some((source_buffer, expanded_start..expanded_end))
+
+            // Multibuffer-space expanded range used only to update the editor selection
+            // highlight; it mirrors the same line-boundary expansion applied above.
+            let mb_expanded_start = Point::new(first_selection.start.row, 0);
+            let mb_expanded_end = if first_selection.end.column > 0 {
+                Point::new(first_selection.end.row + 1, 0)
+            } else {
+                first_selection.end
+            };
+
+            Some((source_buffer, expanded_start..expanded_end, mb_expanded_start..mb_expanded_end))
         });
 
-        let Some((source_buffer, expanded_selection_range)) = selection_data else {
+        let Some((source_buffer, expanded_selection_range, mb_selection_range)) = selection_data else {
             log::warn!("There should always be at least one selection in Zed. This is a bug.");
             return None;
         };
 
         source_editor.update(cx, |source_editor, cx| {
             source_editor.change_selections(Default::default(), window, cx, |s| {
-                s.select_ranges(vec![
-                    expanded_selection_range.start..expanded_selection_range.end,
-                ]);
+                s.select_ranges(vec![mb_selection_range]);
             })
         });
 
@@ -102,11 +136,11 @@ impl TextDiffView {
         );
 
         let task = window.spawn(cx, async move |cx| {
-            let project = workspace.update(cx, |workspace, _| workspace.project().clone())?;
-
             update_diff_buffer(&diff_buffer, &source_buffer, &clipboard_buffer, cx).await?;
 
             workspace.update_in(cx, |workspace, window, cx| {
+                let project = workspace.project().clone();
+                let workspace_entity = cx.entity();
                 let diff_view = cx.new(|cx| {
                     TextDiffView::new(
                         clipboard_buffer,
@@ -115,6 +149,7 @@ impl TextDiffView {
                         expanded_selection_range,
                         diff_buffer,
                         project,
+                        workspace_entity,
                         window,
                         cx,
                     )
@@ -139,6 +174,7 @@ impl TextDiffView {
         source_range: Range<Point>,
         diff_buffer: Entity<BufferDiff>,
         project: Entity<Project>,
+        workspace: Entity<Workspace>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -151,15 +187,24 @@ impl TextDiffView {
             multibuffer
         });
         let diff_editor = cx.new(|cx| {
-            let mut editor = Editor::for_multibuffer(multibuffer, Some(project), window, cx);
-            editor.start_temporary_diff_override();
-            editor.disable_diagnostics(cx);
-            editor.set_expand_all_diff_hunks(cx);
-            editor.set_render_diff_hunk_controls(
+            let splittable = SplittableEditor::new(
+                EditorSettings::get_global(cx).diff_view_style,
+                multibuffer,
+                project,
+                workspace,
+                window,
+                cx,
+            );
+            splittable.set_render_diff_hunk_controls(
                 Arc::new(|_, _, _, _, _, _, _, _| gpui::Empty.into_any_element()),
                 cx,
             );
-            editor
+            splittable.rhs_editor().update(cx, |editor, cx| {
+                editor.start_temporary_diff_override();
+                editor.disable_diagnostics(cx);
+                editor.set_expand_all_diff_hunks(cx);
+            });
+            splittable
         });
 
         let (buffer_changes_tx, mut buffer_changes_rx) = watch::channel(());
@@ -329,12 +374,14 @@ impl Item for TextDiffView {
         &'a self,
         type_id: TypeId,
         self_handle: &'a Entity<Self>,
-        _: &'a App,
+        cx: &'a App,
     ) -> Option<gpui::AnyEntity> {
         if type_id == TypeId::of::<Self>() {
             Some(self_handle.clone().into())
-        } else if type_id == TypeId::of::<Editor>() {
+        } else if type_id == TypeId::of::<SplittableEditor>() {
             Some(self.diff_editor.clone().into())
+        } else if type_id == TypeId::of::<Editor>() {
+            Some(self.diff_editor.read(cx).rhs_editor().clone().into())
         } else {
             None
         }
@@ -349,7 +396,7 @@ impl Item for TextDiffView {
         cx: &App,
         f: &mut dyn FnMut(gpui::EntityId, &dyn project::ProjectItem),
     ) {
-        self.diff_editor.for_each_project_item(cx, f)
+        self.diff_editor.read(cx).for_each_project_item(cx, f)
     }
 
     fn set_nav_history(
@@ -358,7 +405,8 @@ impl Item for TextDiffView {
         _: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.diff_editor.update(cx, |editor, _| {
+        let rhs = self.diff_editor.read(cx).rhs_editor().clone();
+        rhs.update(cx, |editor, _| {
             editor.set_nav_history(Some(nav_history));
         });
     }
@@ -440,10 +488,10 @@ impl Render for TextDiffView {
 mod tests {
     use super::*;
     use editor::{MultiBufferOffset, test::editor_test_context::assert_state_with_diff};
-    use gpui::{TestAppContext, VisualContext};
+    use gpui::{BorrowAppContext, TestAppContext, VisualContext};
     use project::{FakeFs, Project};
     use serde_json::json;
-    use settings::SettingsStore;
+    use settings::{DiffViewStyle, SettingsStore};
     use unindent::unindent;
     use util::{path, test::marked_text_ranges};
     use workspace::MultiWorkspace;
@@ -452,6 +500,11 @@ mod tests {
         cx.update(|cx| {
             let settings_store = SettingsStore::test(cx);
             cx.set_global(settings_store);
+            cx.update_global::<SettingsStore, _>(|store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings.editor.diff_view_style = Some(DiffViewStyle::Unified);
+                });
+            });
             theme::init(theme::LoadThemes::JustBase, cx);
         });
     }
@@ -715,7 +768,9 @@ mod tests {
         cx.executor().run_until_parked();
 
         assert_state_with_diff(
-            &diff_view.read_with(cx, |diff_view, _| diff_view.diff_editor.clone()),
+            &diff_view.read_with(cx, |diff_view, cx| {
+                diff_view.diff_editor.read(cx).rhs_editor().clone()
+            }),
             cx,
             expected_diff,
         );
