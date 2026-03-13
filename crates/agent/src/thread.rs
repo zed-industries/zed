@@ -759,6 +759,46 @@ impl ToolPermissionContext {
             true
         };
 
+        // For terminal commands with multiple pipeline commands, use DropdownWithPatterns
+        // to let users individually select which command patterns to always allow.
+        if tool_name == TerminalTool::NAME && shell_supports_always_allow {
+            if let Some(input) = input_values.first() {
+                let all_patterns = extract_all_terminal_patterns(input);
+                if all_patterns.len() > 1 {
+                    let mut choices = Vec::new();
+                    choices.push(acp_thread::PermissionOptionChoice {
+                        allow: acp::PermissionOption::new(
+                            acp::PermissionOptionId::new(format!("always_allow:{}", tool_name)),
+                            format!("Always for {}", tool_name.replace('_', " ")),
+                            acp::PermissionOptionKind::AllowAlways,
+                        ),
+                        deny: acp::PermissionOption::new(
+                            acp::PermissionOptionId::new(format!("always_deny:{}", tool_name)),
+                            format!("Always for {}", tool_name.replace('_', " ")),
+                            acp::PermissionOptionKind::RejectAlways,
+                        ),
+                    });
+                    choices.push(acp_thread::PermissionOptionChoice {
+                        allow: acp::PermissionOption::new(
+                            acp::PermissionOptionId::new("allow"),
+                            "Only this time",
+                            acp::PermissionOptionKind::AllowOnce,
+                        ),
+                        deny: acp::PermissionOption::new(
+                            acp::PermissionOptionId::new("deny"),
+                            "Only this time",
+                            acp::PermissionOptionKind::RejectOnce,
+                        ),
+                    });
+                    return acp_thread::PermissionOptions::DropdownWithPatterns {
+                        choices,
+                        patterns: all_patterns,
+                        tool_name: tool_name.clone(),
+                    };
+                }
+            }
+        }
+
         let extract_for_value = |value: &str| -> (Option<String>, Option<String>) {
             if tool_name == TerminalTool::NAME {
                 (
@@ -3733,6 +3773,54 @@ impl ToolCallEventStream {
                                 .set_tool_default_permission(&tool, ToolPermissionMode::Deny);
                         });
                     });
+                }
+                return Err(anyhow!("Permission to run tool denied by user"));
+            }
+
+            // Handle "always allow multiple patterns" - e.g., "always_allow_patterns:terminal\n^cargo\\b\n^tail\\b"
+            if let Some(rest) = response_str.strip_prefix("always_allow_patterns:") {
+                let mut parts = rest.splitn(2, '\n');
+                if let (Some(pattern_tool_name), Some(patterns_str)) = (parts.next(), parts.next()) {
+                    let pattern_tool_name = pattern_tool_name.to_string();
+                    let patterns: Vec<String> = patterns_str.split('\n').filter(|s| !s.is_empty()).map(|s| s.to_string()).collect();
+                    if let Some(fs) = fs.clone() {
+                        cx.update(|cx| {
+                            update_settings_file(fs, cx, move |settings, _| {
+                                for pattern in patterns {
+                                    settings
+                                        .agent
+                                        .get_or_insert_default()
+                                        .add_tool_allow_pattern(&pattern_tool_name, pattern);
+                                }
+                            });
+                        });
+                    }
+                } else {
+                    log::error!("Failed to parse always allow patterns: missing newline separator in '{rest}'");
+                }
+                return Ok(());
+            }
+
+            // Handle "always deny multiple patterns" - e.g., "always_deny_patterns:terminal\n^cargo\\b\n^tail\\b"
+            if let Some(rest) = response_str.strip_prefix("always_deny_patterns:") {
+                let mut parts = rest.splitn(2, '\n');
+                if let (Some(pattern_tool_name), Some(patterns_str)) = (parts.next(), parts.next()) {
+                    let pattern_tool_name = pattern_tool_name.to_string();
+                    let patterns: Vec<String> = patterns_str.split('\n').filter(|s| !s.is_empty()).map(|s| s.to_string()).collect();
+                    if let Some(fs) = fs.clone() {
+                        cx.update(|cx| {
+                            update_settings_file(fs, cx, move |settings, _| {
+                                for pattern in patterns {
+                                    settings
+                                        .agent
+                                        .get_or_insert_default()
+                                        .add_tool_deny_pattern(&pattern_tool_name, pattern);
+                                }
+                            });
+                        });
+                    }
+                } else {
+                    log::error!("Failed to parse always deny patterns: missing newline separator in '{rest}'");
                 }
                 return Err(anyhow!("Permission to run tool denied by user"));
             }

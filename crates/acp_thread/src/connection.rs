@@ -451,10 +451,26 @@ impl PermissionOptionChoice {
     }
 }
 
+/// Pairs a tool's permission pattern with its display name
+///
+/// For example, a pattern of `^cargo\\s+build(\\s|$)` would display as `cargo
+/// build`. It's handy to keep these together rather than trying to derive
+/// one from the other.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PermissionPattern {
+    pub pattern: String,
+    pub display_name: String,
+}
+
 #[derive(Debug, Clone)]
 pub enum PermissionOptions {
     Flat(Vec<acp::PermissionOption>),
     Dropdown(Vec<PermissionOptionChoice>),
+    DropdownWithPatterns {
+        choices: Vec<PermissionOptionChoice>,
+        patterns: Vec<PermissionPattern>,
+        tool_name: String,
+    },
 }
 
 impl PermissionOptions {
@@ -462,6 +478,7 @@ impl PermissionOptions {
         match self {
             PermissionOptions::Flat(options) => options.is_empty(),
             PermissionOptions::Dropdown(options) => options.is_empty(),
+            PermissionOptions::DropdownWithPatterns { choices, .. } => choices.is_empty(),
         }
     }
 
@@ -480,6 +497,17 @@ impl PermissionOptions {
                     None
                 }
             }),
+            PermissionOptions::DropdownWithPatterns { choices, .. } => {
+                choices.iter().find_map(|choice| {
+                    if choice.allow.kind == kind {
+                        Some(&choice.allow)
+                    } else if choice.deny.kind == kind {
+                        Some(&choice.deny)
+                    } else {
+                        None
+                    }
+                })
+            }
         }
     }
 
