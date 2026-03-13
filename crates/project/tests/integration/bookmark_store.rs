@@ -60,7 +60,7 @@ mod integration {
         cx: &mut TestAppContext,
     ) -> BTreeMap<Arc<Path>, Vec<SerializedBookmark>> {
         project.read_with(cx, |project, cx| {
-            project.bookmark_store().read(cx).all_source_bookmarks(cx)
+            project.bookmark_store().read(cx).all_serialized_bookmarks(cx)
         })
     }
 
@@ -120,7 +120,7 @@ mod integration {
     }
 
     #[gpui::test]
-    async fn test_all_source_bookmarks_empty(cx: &mut TestAppContext) {
+    async fn test_all_serialized_bookmarks_empty(cx: &mut TestAppContext) {
         init_test(cx);
         cx.executor().allow_parking();
 
@@ -133,7 +133,7 @@ mod integration {
     }
 
     #[gpui::test]
-    async fn test_all_source_bookmarks_single_file(cx: &mut TestAppContext) {
+    async fn test_all_serialized_bookmarks_single_file(cx: &mut TestAppContext) {
         init_test(cx);
         cx.executor().allow_parking();
 
@@ -155,7 +155,7 @@ mod integration {
     }
 
     #[gpui::test]
-    async fn test_all_source_bookmarks_multiple_files(cx: &mut TestAppContext) {
+    async fn test_all_serialized_bookmarks_multiple_files(cx: &mut TestAppContext) {
         init_test(cx);
         cx.executor().allow_parking();
 
@@ -189,7 +189,7 @@ mod integration {
     }
 
     #[gpui::test]
-    async fn test_all_source_bookmarks_after_toggle_off(cx: &mut TestAppContext) {
+    async fn test_all_serialized_bookmarks_after_toggle_off(cx: &mut TestAppContext) {
         init_test(cx);
         cx.executor().allow_parking();
 
@@ -212,7 +212,7 @@ mod integration {
     }
 
     #[gpui::test]
-    async fn test_all_source_bookmarks_with_clear(cx: &mut TestAppContext) {
+    async fn test_all_serialized_bookmarks_with_clear(cx: &mut TestAppContext) {
         init_test(cx);
         cx.executor().allow_parking();
 
@@ -239,7 +239,7 @@ mod integration {
     }
 
     #[gpui::test]
-    async fn test_all_source_bookmarks_returns_sorted_by_path(cx: &mut TestAppContext) {
+    async fn test_all_serialized_bookmarks_returns_sorted_by_path(cx: &mut TestAppContext) {
         init_test(cx);
         cx.executor().allow_parking();
 
@@ -271,7 +271,7 @@ mod integration {
     }
 
     #[gpui::test]
-    async fn test_all_source_bookmarks_deduplicates_same_row(cx: &mut TestAppContext) {
+    async fn test_all_serialized_bookmarks_deduplicates_same_row(cx: &mut TestAppContext) {
         init_test(cx);
         cx.executor().allow_parking();
 

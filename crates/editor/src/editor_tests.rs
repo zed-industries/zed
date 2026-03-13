@@ -26030,7 +26030,7 @@ impl BookmarkTestContext {
 
     fn all_bookmarks(&self) -> BTreeMap<Arc<Path>, Vec<SerializedBookmark>> {
         self.project.read_with(&self.cx, |project, cx| {
-            project.bookmark_store().read(cx).all_source_bookmarks(cx)
+            project.bookmark_store().read(cx).all_serialized_bookmarks(cx)
         })
     }
 
