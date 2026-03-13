@@ -10,8 +10,9 @@ use db::kvp::KEY_VALUE_STORE;
 use editor::Editor;
 use feature_flags::{AgentV2FeatureFlag, FeatureFlagViewExt as _};
 use gpui::{
-    Action as _, AnyElement, App, Context, Entity, FocusHandle, Focusable, ListState, Pixels,
-    Render, SharedString, WeakEntity, Window, actions, list, prelude::*, px,
+    Action, AnyElement, App, AsyncWindowContext, Context, Entity, EventEmitter, FocusHandle,
+    Focusable, ListState, Pixels, Render, SharedString, Task, WeakEntity, Window, actions, list,
+    prelude::*, px,
 };
 use menu::{Cancel, Confirm, SelectFirst, SelectLast, SelectNext, SelectPrevious};
 use project::Event as ProjectEvent;
@@ -28,8 +29,11 @@ use ui::{
 use util::ResultExt as _;
 use util::path_list::PathList;
 use workspace::{
-    MultiWorkspace, MultiWorkspaceEvent, ToggleWorkspaceSidebar, Workspace, multi_workspace_enabled,
+    MultiWorkspace, MultiWorkspaceEvent, Workspace,
+    dock::{DockPosition, Panel, PanelEvent},
+    multi_workspace_enabled,
 };
+use zed_actions::assistant::ToggleThreadsSidebar;
 use zed_actions::editor::{MoveDown, MoveUp};
 
 actions!(
@@ -261,6 +265,23 @@ pub struct Sidebar {
 }
 
 impl Sidebar {
+    pub fn load(
+        _workspace: WeakEntity<Workspace>,
+        mut cx: AsyncWindowContext,
+    ) -> Task<anyhow::Result<Entity<Self>>> {
+        let result = cx
+            .update(|window, cx| {
+                let multi_workspace = window
+                    .root::<MultiWorkspace>()
+                    .flatten()
+                    .ok_or_else(|| anyhow::anyhow!("no MultiWorkspace root found"))?;
+                Ok(cx.new(|cx| Self::new(multi_workspace, window, cx)))
+            })
+            .map_err(|e| anyhow::anyhow!("failed to access window: {e}"))
+            .and_then(|r| r);
+        Task::ready(result)
+    }
+
     pub fn new(
         multi_workspace: Entity<MultiWorkspace>,
         window: &mut Window,
@@ -1716,25 +1737,19 @@ impl Sidebar {
             .into_any_element()
     }
 
-    fn render_thread_list_header(
-        &self,
-        docked_right: bool,
-        cx: &mut Context<Self>,
-    ) -> impl IntoElement {
+    fn render_thread_list_header(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let has_query = self.has_filter_query(cx);
 
         h_flex()
             .h(Tab::container_height(cx))
             .flex_none()
             .gap_1p5()
+            .px_1p5()
             .border_b_1()
             .border_color(cx.theme().colors().border)
-            .when(!docked_right, |this| {
-                this.child(self.render_sidebar_toggle_button(false, cx))
-            })
             .child(self.render_filter_input())
             .when(has_query, |this| {
-                this.when(!docked_right, |this| this.pr_1p5()).child(
+                this.child(
                     IconButton::new("clear_filter", IconName::Close)
                         .shape(IconButtonShape::Square)
                         .tooltip(Tooltip::text("Clear Search"))
@@ -1743,11 +1758,6 @@ impl Sidebar {
                             this.update_entries(cx);
                         })),
                 )
-            })
-            .when(docked_right, |this| {
-                this.pl_2()
-                    .pr_0p5()
-                    .child(self.render_sidebar_toggle_button(true, cx))
             })
     }
 
@@ -1768,40 +1778,6 @@ impl Sidebar {
                     .on_click(cx.listener(|this, _, window, cx| {
                         this.show_archive(window, cx);
                     })),
-            )
-    }
-
-    fn render_sidebar_toggle_button(
-        &self,
-        docked_right: bool,
-        cx: &mut Context<Self>,
-    ) -> impl IntoElement {
-        let icon = if docked_right {
-            IconName::ThreadsSidebarRightOpen
-        } else {
-            IconName::ThreadsSidebarLeftOpen
-        };
-
-        h_flex()
-            .h_full()
-            .px_1()
-            .map(|this| {
-                if docked_right {
-                    this.pr_1p5().border_l_1()
-                } else {
-                    this.border_r_1()
-                }
-            })
-            .border_color(cx.theme().colors().border_variant)
-            .child(
-                IconButton::new("sidebar-close-toggle", icon)
-                    .icon_size(IconSize::Small)
-                    .tooltip(move |_, cx| {
-                        Tooltip::for_action("Close Threads Sidebar", &ToggleWorkspaceSidebar, cx)
-                    })
-                    .on_click(|_, window, cx| {
-                        window.dispatch_action(ToggleWorkspaceSidebar.boxed_clone(), cx);
-                    }),
             )
     }
 }
@@ -1936,6 +1912,68 @@ impl Focusable for Sidebar {
     }
 }
 
+impl EventEmitter<PanelEvent> for Sidebar {}
+
+impl Panel for Sidebar {
+    fn persistent_name() -> &'static str {
+        "ThreadsSidebar"
+    }
+
+    fn panel_key() -> &'static str {
+        "threads_sidebar"
+    }
+
+    fn position(&self, _window: &Window, cx: &App) -> DockPosition {
+        AgentSettings::get_global(cx).dock.into()
+    }
+
+    fn position_is_valid(&self, position: DockPosition) -> bool {
+        position != DockPosition::Bottom
+    }
+
+    fn set_position(
+        &mut self,
+        _position: DockPosition,
+        _window: &mut Window,
+        _cx: &mut Context<Self>,
+    ) {
+        // Position is derived from agent settings and follows the agent panel
+    }
+
+    fn size(&self, _window: &Window, _cx: &App) -> Pixels {
+        self.width
+    }
+
+    fn set_size(&mut self, size: Option<Pixels>, _window: &mut Window, cx: &mut Context<Self>) {
+        self.set_width(size, cx);
+    }
+
+    fn icon(&self, _window: &Window, cx: &App) -> Option<IconName> {
+        let settings = AgentSettings::get_global(cx);
+        (settings.enabled(cx) && settings.button).then_some(IconName::ThreadsSidebarLeftClosed)
+    }
+
+    fn icon_tooltip(&self, _window: &Window, _cx: &App) -> Option<&'static str> {
+        Some("Threads Sidebar")
+    }
+
+    fn toggle_action(&self) -> Box<dyn Action> {
+        Box::new(ToggleThreadsSidebar)
+    }
+
+    fn activation_priority(&self) -> u32 {
+        4
+    }
+
+    fn enabled(&self, cx: &App) -> bool {
+        AgentSettings::get_global(cx).enabled(cx)
+    }
+
+    fn starts_open(&self, _window: &Window, _cx: &App) -> bool {
+        self.is_open
+    }
+}
+
 impl Render for Sidebar {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let ui_font = theme::setup_ui_font(window, cx);
@@ -1961,7 +1999,7 @@ impl Render for Sidebar {
             .bg(cx.theme().colors().surface_background)
             .map(|this| match self.view {
                 SidebarView::ThreadList => this
-                    .child(self.render_thread_list_header(docked_right, cx))
+                    .child(self.render_thread_list_header(cx))
                     .child(
                         v_flex()
                             .relative()
@@ -2071,11 +2109,9 @@ mod tests {
             });
         });
         cx.run_until_parked();
-        let sidebar = panel.read_with(cx, |panel, _cx| {
-            panel
-                .sidebar
-                .clone()
-                .expect("AgentPanel should have created a sidebar")
+        let multi_workspace_entity = multi_workspace.clone();
+        let sidebar = workspace.update_in(cx, |_, window, cx| {
+            cx.new(|cx| Sidebar::new(multi_workspace_entity, window, cx))
         });
         (sidebar, panel)
     }

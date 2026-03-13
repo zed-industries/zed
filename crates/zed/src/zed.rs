@@ -707,12 +707,24 @@ async fn initialize_agent_panel(
         })?
         .await?;
 
+    workspace_handle
+        .update_in(&mut cx, |workspace, window, cx| {
+            setup_or_teardown_ai_panel(workspace, window, cx, |workspace, cx| {
+                agent_ui::sidebar::Sidebar::load(workspace, cx)
+            })
+        })?
+        .await?;
+
     workspace_handle.update_in(&mut cx, |workspace, window, cx| {
         let prompt_builder = prompt_builder.clone();
         cx.observe_global_in::<SettingsStore>(window, move |workspace, window, cx| {
             let prompt_builder = prompt_builder.clone();
             setup_or_teardown_ai_panel(workspace, window, cx, move |workspace, cx| {
                 agent_ui::AgentPanel::load(workspace, prompt_builder, cx)
+            })
+            .detach_and_log_err(cx);
+            setup_or_teardown_ai_panel(workspace, window, cx, |workspace, cx| {
+                agent_ui::sidebar::Sidebar::load(workspace, cx)
             })
             .detach_and_log_err(cx);
         })
@@ -1031,6 +1043,15 @@ fn register_actions(
              window: &mut Window,
              cx: &mut Context<Workspace>| {
                 workspace.toggle_panel_focus::<TerminalPanel>(window, cx);
+            },
+        )
+        .register_action(
+            |workspace: &mut Workspace,
+             _: &zed_actions::assistant::ToggleThreadsSidebar,
+             window: &mut Window,
+             cx: &mut Context<Workspace>| {
+                workspace
+                    .toggle_panel_focus::<agent_ui::sidebar::Sidebar>(window, cx);
             },
         )
         .register_action({

@@ -66,9 +66,8 @@ use fs::Fs;
 use git::repository::validate_worktree_directory;
 use gpui::{
     Action, Animation, AnimationExt, AnyElement, AnyView, App, AsyncWindowContext, ClipboardItem,
-    Corner, DismissEvent, DragMoveEvent, Entity, EventEmitter, ExternalPaths, FocusHandle,
-    Focusable, KeyContext, MouseButton, Pixels, Subscription, Task, UpdateGlobal, WeakEntity,
-    deferred, prelude::*, pulsating_between,
+    Corner, DismissEvent, Entity, EventEmitter, ExternalPaths, FocusHandle, Focusable, KeyContext,
+    Pixels, Subscription, Task, UpdateGlobal, WeakEntity, prelude::*, pulsating_between,
 };
 use language::LanguageRegistry;
 use language_model::{ConfigurationError, LanguageModelRegistry};
@@ -80,76 +79,25 @@ use search::{BufferSearchBar, buffer_search};
 use settings::{Settings, update_settings_file};
 use theme::ThemeSettings;
 use ui::{
-    Button, ButtonLike, Callout, ContextMenu, ContextMenuEntry, DocumentationSide, Indicator,
-    KeyBinding, PopoverMenu, PopoverMenuHandle, SpinnerLabel, Tab, TintColor, Tooltip, prelude::*,
+    Button, ButtonLike, Callout, ContextMenu, ContextMenuEntry, DocumentationSide, KeyBinding,
+    PopoverMenu, PopoverMenuHandle, SpinnerLabel, Tab, TintColor, Tooltip, prelude::*,
     utils::WithRemSize,
 };
 use util::{ResultExt as _, debug_panic};
 use workspace::{
-    CollaboratorId, DraggedSelection, DraggedSidebar, DraggedTab, FocusWorkspaceSidebar,
-    MultiWorkspace, OpenResult, SIDEBAR_RESIZE_HANDLE_SIZE, ToggleWorkspaceSidebar, ToggleZoom,
-    ToolbarItemView, Workspace, WorkspaceId,
+    CollaboratorId, DraggedSelection, DraggedTab, OpenResult, ToggleZoom, ToolbarItemView,
+    Workspace, WorkspaceId,
     dock::{DockPosition, Panel, PanelEvent},
-    multi_workspace_enabled,
 };
 use zed_actions::{
     DecreaseBufferFontSize, IncreaseBufferFontSize, ResetBufferFontSize,
     agent::{OpenAcpOnboardingModal, OpenSettings, ResetAgentZoom, ResetOnboarding},
-    assistant::{OpenRulesLibrary, Toggle, ToggleFocus},
+    assistant::{OpenRulesLibrary, Toggle, ToggleAgentDrawer, ToggleFocus},
 };
 
 const AGENT_PANEL_KEY: &str = "agent_panel";
 const RECENTLY_UPDATED_MENU_LIMIT: usize = 6;
 const DEFAULT_THREAD_TITLE: &str = "New Thread";
-
-#[derive(Default)]
-struct SidebarsByWindow(
-    collections::HashMap<gpui::WindowId, gpui::WeakEntity<crate::sidebar::Sidebar>>,
-);
-
-impl gpui::Global for SidebarsByWindow {}
-
-pub(crate) fn sidebar_is_open(window: &Window, cx: &App) -> bool {
-    if !multi_workspace_enabled(cx) {
-        return false;
-    }
-    let window_id = window.window_handle().window_id();
-    cx.try_global::<SidebarsByWindow>()
-        .and_then(|sidebars| sidebars.0.get(&window_id)?.upgrade())
-        .is_some_and(|sidebar| sidebar.read(cx).is_open())
-}
-
-fn find_or_create_sidebar_for_window(
-    window: &mut Window,
-    cx: &mut App,
-) -> Option<Entity<crate::sidebar::Sidebar>> {
-    let window_id = window.window_handle().window_id();
-    let multi_workspace = window.root::<MultiWorkspace>().flatten()?;
-
-    if !cx.has_global::<SidebarsByWindow>() {
-        cx.set_global(SidebarsByWindow::default());
-    }
-
-    cx.global_mut::<SidebarsByWindow>()
-        .0
-        .retain(|_, weak| weak.upgrade().is_some());
-
-    let existing = cx
-        .global::<SidebarsByWindow>()
-        .0
-        .get(&window_id)
-        .and_then(|weak| weak.upgrade());
-
-    if let Some(sidebar) = existing {
-        return Some(sidebar);
-    }
-
-    let sidebar = cx.new(|cx| crate::sidebar::Sidebar::new(multi_workspace, window, cx));
-    cx.global_mut::<SidebarsByWindow>()
-        .0
-        .insert(window_id, sidebar.downgrade());
-    Some(sidebar)
-}
 
 fn read_serialized_panel(workspace_id: workspace::WorkspaceId) -> Option<SerializedAgentPanel> {
     let scope = KEY_VALUE_STORE.scoped(AGENT_PANEL_KEY);
@@ -472,35 +420,26 @@ pub fn init(cx: &mut App) {
                         });
                     }
                 })
-                .register_action(|workspace, _: &ToggleWorkspaceSidebar, window, cx| {
-                    if !multi_workspace_enabled(cx) {
+                .register_action(|workspace, _: &ToggleAgentDrawer, _window, cx| {
+                    let Some(panel) = workspace.panel::<AgentPanel>(cx) else {
                         return;
-                    }
-                    if let Some(panel) = workspace.panel::<AgentPanel>(cx) {
-                        if let Some(sidebar) = panel.read(cx).sidebar.clone() {
-                            let was_open = sidebar.read(cx).is_open();
-                            sidebar.update(cx, |sidebar, cx| {
-                                sidebar.toggle(window, cx);
-                            });
-                            // When closing the sidebar, restore focus to the active pane
-                            // to avoid "zombie focus" on the now-hidden sidebar elements
-                            if was_open {
-                                let active_pane = workspace.active_pane().clone();
-                                let pane_focus = active_pane.read(cx).focus_handle(cx);
-                                window.focus(&pane_focus, cx);
+                    };
+                    let panel_view: AnyView = panel.into();
+                    let dock_position = agent_panel_dock_position(cx);
+                    match dock_position {
+                        DockPosition::Right => {
+                            if workspace.right_drawer_view().is_none() {
+                                workspace.set_right_drawer(panel_view, cx);
+                            } else {
+                                workspace.toggle_right_drawer(cx);
                             }
                         }
-                    }
-                })
-                .register_action(|workspace, _: &FocusWorkspaceSidebar, window, cx| {
-                    if !multi_workspace_enabled(cx) {
-                        return;
-                    }
-                    if let Some(panel) = workspace.panel::<AgentPanel>(cx) {
-                        if let Some(sidebar) = panel.read(cx).sidebar.clone() {
-                            sidebar.update(cx, |sidebar, cx| {
-                                sidebar.focus_or_unfocus(workspace, window, cx);
-                            });
+                        DockPosition::Left | DockPosition::Bottom => {
+                            if workspace.left_drawer_view().is_none() {
+                                workspace.set_left_drawer(panel_view, cx);
+                            } else {
+                                workspace.toggle_left_drawer(cx);
+                            }
                         }
                     }
                 });
@@ -898,7 +837,6 @@ pub struct AgentPanel {
     last_configuration_error_telemetry: Option<String>,
     on_boarding_upsell_dismissed: AtomicBool,
     _active_view_observation: Option<Subscription>,
-    pub(crate) sidebar: Option<Entity<crate::sidebar::Sidebar>>,
 }
 
 impl AgentPanel {
@@ -1224,16 +1162,10 @@ impl AgentPanel {
             last_configuration_error_telemetry: None,
             on_boarding_upsell_dismissed: AtomicBool::new(OnboardingUpsell::dismissed()),
             _active_view_observation: None,
-            sidebar: None,
         };
 
         // Initial sync of agent servers from extensions
         panel.sync_agent_servers_from_extensions(cx);
-
-        cx.defer_in(window, move |this, window, cx| {
-            this.sidebar = find_or_create_sidebar_for_window(window, cx);
-            cx.notify();
-        });
 
         panel
     }
@@ -3236,7 +3168,7 @@ impl Panel for AgentPanel {
     }
 
     fn toggle_action(&self) -> Box<dyn Action> {
-        Box::new(ToggleFocus)
+        Box::new(ToggleAgentDrawer)
     }
 
     fn activation_priority(&self) -> u32 {
@@ -3744,127 +3676,6 @@ impl AgentPanel {
                 y: px(1.0),
             })
     }
-
-    fn sidebar_info(&self, cx: &App) -> Option<(AnyView, Pixels, bool)> {
-        if !multi_workspace_enabled(cx) {
-            return None;
-        }
-        let sidebar = self.sidebar.as_ref()?;
-        let is_open = sidebar.read(cx).is_open();
-        let width = sidebar.read(cx).width(cx);
-        let view: AnyView = sidebar.clone().into();
-        Some((view, width, is_open))
-    }
-
-    fn render_sidebar_toggle(&self, docked_right: bool, cx: &Context<Self>) -> Option<AnyElement> {
-        if !multi_workspace_enabled(cx) {
-            return None;
-        }
-        let sidebar = self.sidebar.as_ref()?;
-        let sidebar_read = sidebar.read(cx);
-        if sidebar_read.is_open() {
-            return None;
-        }
-        let has_notifications = sidebar_read.has_notifications(cx);
-
-        let icon = if docked_right {
-            IconName::ThreadsSidebarRightClosed
-        } else {
-            IconName::ThreadsSidebarLeftClosed
-        };
-
-        Some(
-            h_flex()
-                .h_full()
-                .px_1()
-                .map(|this| {
-                    if docked_right {
-                        this.border_l_1()
-                    } else {
-                        this.border_r_1()
-                    }
-                })
-                .border_color(cx.theme().colors().border_variant)
-                .child(
-                    IconButton::new("toggle-workspace-sidebar", icon)
-                        .icon_size(IconSize::Small)
-                        .when(has_notifications, |button| {
-                            button
-                                .indicator(Indicator::dot().color(Color::Accent))
-                                .indicator_border_color(Some(
-                                    cx.theme().colors().tab_bar_background,
-                                ))
-                        })
-                        .tooltip(move |_, cx| {
-                            Tooltip::for_action("Open Threads Sidebar", &ToggleWorkspaceSidebar, cx)
-                        })
-                        .on_click(|_, window, cx| {
-                            window.dispatch_action(ToggleWorkspaceSidebar.boxed_clone(), cx);
-                        }),
-                )
-                .into_any_element(),
-        )
-    }
-
-    fn render_sidebar(&self, cx: &Context<Self>) -> Option<AnyElement> {
-        let (sidebar_view, sidebar_width, is_open) = self.sidebar_info(cx)?;
-        if !is_open {
-            return None;
-        }
-
-        let docked_right = agent_panel_dock_position(cx) == DockPosition::Right;
-        let sidebar = self.sidebar.as_ref()?.downgrade();
-
-        let resize_handle = deferred(
-            div()
-                .id("sidebar-resize-handle")
-                .absolute()
-                .when(docked_right, |this| {
-                    this.left(-SIDEBAR_RESIZE_HANDLE_SIZE / 2.)
-                })
-                .when(!docked_right, |this| {
-                    this.right(-SIDEBAR_RESIZE_HANDLE_SIZE / 2.)
-                })
-                .top(px(0.))
-                .h_full()
-                .w(SIDEBAR_RESIZE_HANDLE_SIZE)
-                .cursor_col_resize()
-                .on_drag(DraggedSidebar, |dragged, _, _, cx| {
-                    cx.stop_propagation();
-                    cx.new(|_| dragged.clone())
-                })
-                .on_mouse_down(MouseButton::Left, |_, _, cx| {
-                    cx.stop_propagation();
-                })
-                .on_mouse_up(MouseButton::Left, move |event, _, cx| {
-                    if event.click_count == 2 {
-                        sidebar
-                            .update(cx, |sidebar, cx| {
-                                sidebar.set_width(None, cx);
-                            })
-                            .ok();
-                        cx.stop_propagation();
-                    }
-                })
-                .occlude(),
-        );
-
-        Some(
-            div()
-                .id("sidebar-container")
-                .relative()
-                .h_full()
-                .w(sidebar_width)
-                .flex_shrink_0()
-                .when(docked_right, |this| this.border_l_1())
-                .when(!docked_right, |this| this.border_r_1())
-                .border_color(cx.theme().colors().border)
-                .child(sidebar_view)
-                .child(resize_handle)
-                .into_any_element(),
-        )
-    }
-
     fn render_toolbar(&self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let agent_server_store = self.project.read(cx).agent_server_store().clone();
         let focus_handle = self.focus_handle(cx);
@@ -4261,12 +4072,6 @@ impl AgentPanel {
         let use_v2_empty_toolbar =
             has_v2_flag && is_empty_state && !is_in_history_or_config && !is_text_thread;
 
-        let is_sidebar_open = self
-            .sidebar
-            .as_ref()
-            .map(|s| s.read(cx).is_open())
-            .unwrap_or(false);
-
         let base_container = h_flex()
             .id("agent-panel-toolbar")
             .h(Tab::container_height(cx))
@@ -4341,10 +4146,7 @@ impl AgentPanel {
                     h_flex()
                         .size_full()
                         .gap_1()
-                        .when(is_sidebar_open || docked_right, |this| this.pl_1())
-                        .when(!docked_right, |this| {
-                            this.children(self.render_sidebar_toggle(false, cx))
-                        })
+                        .when(docked_right, |this| this.pl_1())
                         .child(agent_selector_menu)
                         .child(self.render_start_thread_in_selector(cx)),
                 )
@@ -4362,10 +4164,7 @@ impl AgentPanel {
                                 cx,
                             ))
                         })
-                        .child(self.render_panel_options_menu(window, cx))
-                        .when(docked_right, |this| {
-                            this.children(self.render_sidebar_toggle(true, cx))
-                        }),
+                        .child(self.render_panel_options_menu(window, cx)),
                 )
                 .into_any_element()
         } else {
@@ -4393,14 +4192,11 @@ impl AgentPanel {
                     h_flex()
                         .size_full()
                         .map(|this| {
-                            if is_sidebar_open || docked_right {
+                            if docked_right {
                                 this.pl_1().gap_1()
                             } else {
                                 this.pl_0().gap_0p5()
                             }
-                        })
-                        .when(!docked_right, |this| {
-                            this.children(self.render_sidebar_toggle(false, cx))
                         })
                         .child(match &self.active_view {
                             ActiveView::History { .. } | ActiveView::Configuration => {
@@ -4425,10 +4221,7 @@ impl AgentPanel {
                                 cx,
                             ))
                         })
-                        .child(self.render_panel_options_menu(window, cx))
-                        .when(docked_right, |this| {
-                            this.children(self.render_sidebar_toggle(true, cx))
-                        }),
+                        .child(self.render_panel_options_menu(window, cx)),
                 )
                 .into_any_element()
         }
@@ -4973,44 +4766,14 @@ impl Render for AgentPanel {
             })
             .children(self.render_trial_end_upsell(window, cx));
 
-        let sidebar = self.render_sidebar(cx);
-        let has_sidebar = sidebar.is_some();
-        let docked_right = agent_panel_dock_position(cx) == DockPosition::Right;
-
-        let panel = h_flex()
-            .size_full()
-            .when(has_sidebar, |this| {
-                this.on_drag_move(cx.listener(
-                    move |this, e: &DragMoveEvent<DraggedSidebar>, _window, cx| {
-                        if let Some(sidebar) = &this.sidebar {
-                            let width = if docked_right {
-                                e.bounds.right() - e.event.position.x
-                            } else {
-                                e.event.position.x
-                            };
-                            sidebar.update(cx, |sidebar, cx| {
-                                sidebar.set_width(Some(width), cx);
-                            });
-                        }
-                    },
-                ))
-            })
-            .map(|this| {
-                if docked_right {
-                    this.child(content).children(sidebar)
-                } else {
-                    this.children(sidebar).child(content)
-                }
-            });
-
         match self.active_view.which_font_size_used() {
             WhichFontSize::AgentFont => {
                 WithRemSize::new(ThemeSettings::get_global(cx).agent_ui_font_size(cx))
                     .size_full()
-                    .child(panel)
+                    .child(content)
                     .into_any()
             }
-            _ => panel.into_any(),
+            _ => content.into_any(),
         }
     }
 }
