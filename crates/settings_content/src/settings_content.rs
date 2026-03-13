@@ -571,6 +571,11 @@ pub struct CallSettingsContent {
     ///
     /// Default: false
     pub share_on_join: Option<bool>,
+
+    /// Whether to play a ring tone when an incoming call notification is shown.
+    ///
+    /// Default: true
+    pub play_incoming_call_ring: Option<bool>,
 }
 
 #[with_fallible_options]

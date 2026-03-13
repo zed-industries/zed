@@ -426,6 +426,8 @@
     "mute_on_join": false,
     // Share your project when you are the first to join a channel
     "share_on_join": false,
+    // Play a ring tone when an incoming call notification is shown
+    "play_incoming_call_ring": true,
   },
   // Toolbar related settings
   "toolbar": {

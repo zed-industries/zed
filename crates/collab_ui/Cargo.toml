@@ -30,6 +30,7 @@ test-support = [
 
 [dependencies]
 anyhow.workspace = true
+audio.workspace = true
 call.workspace = true
 channel.workspace = true
 chrono.workspace = true
