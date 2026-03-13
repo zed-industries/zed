@@ -1950,7 +1950,6 @@ impl MultiBuffer {
     }
 
     // If point is at the end of the buffer, the last excerpt is returned
-    #[deprecated(note = "FIXME")]
     pub fn point_to_buffer_point<T: ToPoint>(
         &self,
         point: T,

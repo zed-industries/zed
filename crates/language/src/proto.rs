@@ -174,11 +174,11 @@ pub fn serialize_selection(selection: &Selection<Anchor>) -> proto::Selection {
         id: selection.id as u64,
         start: Some(proto::EditorAnchor {
             anchor: Some(serialize_anchor(&selection.start)),
-            excerpt_id: 0,
+            excerpt_id: None,
         }),
         end: Some(proto::EditorAnchor {
             anchor: Some(serialize_anchor(&selection.end)),
-            excerpt_id: 0,
+            excerpt_id: None,
         }),
         reversed: selection.reversed,
     }

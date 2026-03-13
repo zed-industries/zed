@@ -212,7 +212,7 @@ message Selection {
 }
 
 message EditorAnchor {
-    uint64 excerpt_id = 1;
+    optional uint64 excerpt_id = 1;
     Anchor anchor = 2;
 }
 

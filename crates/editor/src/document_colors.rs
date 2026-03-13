@@ -8,7 +8,7 @@ use language::point_from_lsp;
 use multi_buffer::Anchor;
 use project::{DocumentColor, InlayId};
 use settings::Settings as _;
-use text::{Bias, BufferId, OffsetRangeExt as _};
+use text::{Bias, BufferId};
 use ui::{App, Context, Window};
 use util::post_inc;
 

@@ -23446,7 +23446,12 @@ impl Editor {
                     let start = highlight.range.start.to_display_point(&snapshot);
                     let end = highlight.range.end.to_display_point(&snapshot);
                     let start_row = start.row().0;
-                    let end_row = if !highlight.range.end.text_anchor.is_max() && end.column() == 0
+                    let end_row = if !highlight
+                        .range
+                        .end
+                        .text_anchor()
+                        .is_some_and(|s| s.is_max())
+                        && end.column() == 0
                     {
                         end.row().0.saturating_sub(1)
                     } else {
@@ -23904,18 +23909,16 @@ impl Editor {
                         return Some(Task::ready(Ok(Vec::new())));
                     };
 
-                    let buffer = editor.buffer.read_with(cx, |buffer, cx| {
-                        let snapshot = buffer.snapshot(cx);
+                    let (buffer, buffer_anchor) =
+                        editor.buffer.read_with(cx, |multibuffer, cx| {
+                            let multibuffer_snapshot = multibuffer.snapshot(cx);
+                            let buffer_anchor = multibuffer_snapshot
+                                .anchor_to_buffer_anchor(current_execution_position)?;
+                            let buffer = multibuffer.buffer(buffer_anchor.buffer_id)?;
+                            Some((buffer, buffer_anchor))
+                        })?;
 
-                        let excerpt = snapshot.excerpt_containing(
-                            current_execution_position..current_execution_position,
-                        )?;
-
-                        editor.buffer.read(cx).buffer(excerpt.buffer_id())
-                    })?;
-
-                    let range =
-                        buffer.read(cx).anchor_before(0)..current_execution_position.text_anchor;
+                    let range = buffer.read(cx).anchor_before(0)..buffer_anchor;
 
                     project.inline_values(buffer, range, cx)
                 })

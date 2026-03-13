@@ -275,13 +275,6 @@ impl SelectionsCollection {
             .unwrap()
     }
 
-    pub fn newest_excerpt_anchor(
-        &self,
-        snapshot: &DisplaySnapshot,
-    ) -> Option<Selection<ExcerptAnchor>> {
-        todo!()
-    }
-
     pub fn newest<D>(&self, snapshot: &DisplaySnapshot) -> Selection<D>
     where
         D: MultiBufferDimension + Sub + AddAssign<<D as Sub>::Output> + Ord,
@@ -555,13 +548,11 @@ impl SelectionsCollection {
                 );
                 assert!(
                     snapshot.can_resolve(&selection.start),
-                    "disjoint selection start is not resolvable for the given snapshot:\n{selection:?}, {excerpt:?}",
-                    excerpt = snapshot.buffer_for_excerpt(selection.start.excerpt_id).map(|snapshot| snapshot.remote_id()),
+                    "disjoint selection start is not resolvable for the given snapshot:\n{selection:?}",
                 );
                 assert!(
                     snapshot.can_resolve(&selection.end),
-                    "disjoint selection end is not resolvable for the given snapshot: {selection:?}, {excerpt:?}",
-                    excerpt = snapshot.buffer_for_excerpt(selection.end.excerpt_id).map(|snapshot| snapshot.remote_id()),
+                    "disjoint selection start is not resolvable for the given snapshot:\n{selection:?}",
                 );
             });
             assert!(
@@ -580,17 +571,11 @@ impl SelectionsCollection {
                 );
                 assert!(
                     snapshot.can_resolve(&selection.start),
-                    "pending selection start is not resolvable for the given snapshot: {pending:?}, {excerpt:?}",
-                    excerpt = snapshot
-                        .buffer_for_excerpt(selection.start.excerpt_id)
-                        .map(|snapshot| snapshot.remote_id()),
+                    "pending selection start is not resolvable for the given snapshot: {pending:?}",
                 );
                 assert!(
                     snapshot.can_resolve(&selection.end),
-                    "pending selection end is not resolvable for the given snapshot: {pending:?}, {excerpt:?}",
-                    excerpt = snapshot
-                        .buffer_for_excerpt(selection.end.excerpt_id)
-                        .map(|snapshot| snapshot.remote_id()),
+                    "pending selection end is not resolvable for the given snapshot: {pending:?}",
                 );
             }
         }

@@ -347,10 +347,18 @@ impl Anchor {
         }
     }
 
+    #[deprecated(note = "use text_anchor()")]
     pub fn excerpt_anchor(&self) -> Option<ExcerptAnchor> {
         match self {
             Anchor::Min | Anchor::Max => None,
             Anchor::Excerpt(excerpt_anchor) => Some(*excerpt_anchor),
+        }
+    }
+
+    pub fn text_anchor(&self) -> Option<text::Anchor> {
+        match self {
+            Anchor::Min | Anchor::Max => None,
+            Anchor::Excerpt(excerpt_anchor) => Some(excerpt_anchor.text_anchor()),
         }
     }
 
