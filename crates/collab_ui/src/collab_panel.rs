@@ -38,7 +38,7 @@ use util::{ResultExt, TryFutureExt, maybe};
 use workspace::{
     CopyRoomId, Deafen, LeaveCall, MultiWorkspace, Mute, OpenChannelNotes, OpenChannelNotesById,
     ScreenShare, ShareProject, Workspace,
-    dock::{DockPosition, Panel, PanelEvent},
+    dock::{DockPosition, Panel, PanelEvent, PanelIconButton},
     notifications::{DetachAndPromptErr, NotifyResultExt},
 };
 
@@ -3191,20 +3191,16 @@ impl Panel for CollabPanel {
         });
     }
 
-    fn icon(&self, _window: &Window, _cx: &App) -> ui::IconName {
-        ui::IconName::UserGroup
-    }
-
-    fn icon_tooltip(&self, _window: &Window, _cx: &App) -> &'static str {
-        "Collab Panel"
+    fn icon_button(&self, _window: &Window, _cx: &App) -> PanelIconButton {
+        PanelIconButton {
+            icon: ui::IconName::UserGroup,
+            tooltip: "Collab Panel",
+            action: Box::new(ToggleFocus),
+        }
     }
 
     fn enabled(&self, cx: &App) -> bool {
         CollaborationPanelSettings::get_global(cx).button
-    }
-
-    fn toggle_action(&self) -> Box<dyn gpui::Action> {
-        Box::new(ToggleFocus)
     }
 
     fn persistent_name() -> &'static str {

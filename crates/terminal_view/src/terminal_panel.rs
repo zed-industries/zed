@@ -32,7 +32,7 @@ use workspace::{
     MoveItemToPaneInDirection, MovePaneDown, MovePaneLeft, MovePaneRight, MovePaneUp, Pane,
     PaneGroup, SplitDirection, SplitDown, SplitLeft, SplitMode, SplitRight, SplitUp, SwapPaneDown,
     SwapPaneLeft, SwapPaneRight, SwapPaneUp, ToggleZoom, Workspace,
-    dock::{DockPosition, Panel, PanelEvent, PanelHandle},
+    dock::{DockPosition, Panel, PanelEvent, PanelHandle, PanelIconButton},
     item::SerializableItem,
     move_active_item, pane,
 };
@@ -1613,16 +1613,12 @@ impl Panel for TerminalPanel {
         TERMINAL_PANEL_KEY
     }
 
-    fn icon(&self, _window: &Window, _cx: &App) -> IconName {
-        IconName::TerminalAlt
-    }
-
-    fn icon_tooltip(&self, _window: &Window, _cx: &App) -> &'static str {
-        "Terminal Panel"
-    }
-
-    fn toggle_action(&self) -> Box<dyn gpui::Action> {
-        Box::new(ToggleFocus)
+    fn icon_button(&self, _window: &Window, _cx: &App) -> PanelIconButton {
+        PanelIconButton {
+            icon: IconName::TerminalAlt,
+            tooltip: "Terminal Panel",
+            action: Box::new(ToggleFocus),
+        }
     }
 
     fn pane(&self) -> Option<Entity<Pane>> {

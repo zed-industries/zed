@@ -26,6 +26,12 @@ pub enum PanelEvent {
 
 pub use proto::PanelId;
 
+pub struct PanelIconButton {
+    pub icon: ui::IconName,
+    pub tooltip: &'static str,
+    pub action: Box<dyn Action>,
+}
+
 pub trait Panel: Focusable + EventEmitter<PanelEvent> + Render + Sized {
     fn persistent_name() -> &'static str;
     fn panel_key() -> &'static str;
@@ -34,9 +40,7 @@ pub trait Panel: Focusable + EventEmitter<PanelEvent> + Render + Sized {
     fn set_position(&mut self, position: DockPosition, window: &mut Window, cx: &mut Context<Self>);
     fn size(&self, window: &Window, cx: &App) -> Pixels;
     fn set_size(&mut self, size: Option<Pixels>, window: &mut Window, cx: &mut Context<Self>);
-    fn icon(&self, window: &Window, cx: &App) -> ui::IconName;
-    fn icon_tooltip(&self, window: &Window, cx: &App) -> &'static str;
-    fn toggle_action(&self) -> Box<dyn Action>;
+    fn icon_button(&self, window: &Window, cx: &App) -> PanelIconButton;
     fn is_zoomed(&self, _window: &Window, _cx: &App) -> bool {
         false
     }
@@ -71,9 +75,7 @@ pub trait PanelHandle: Send + Sync {
     fn pane(&self, cx: &App) -> Option<Entity<Pane>>;
     fn size(&self, window: &Window, cx: &App) -> Pixels;
     fn set_size(&self, size: Option<Pixels>, window: &mut Window, cx: &mut App);
-    fn icon(&self, window: &Window, cx: &App) -> ui::IconName;
-    fn icon_tooltip(&self, window: &Window, cx: &App) -> &'static str;
-    fn toggle_action(&self, window: &Window, cx: &App) -> Box<dyn Action>;
+    fn icon_button(&self, window: &Window, cx: &App) -> PanelIconButton;
     fn panel_focus_handle(&self, cx: &App) -> FocusHandle;
     fn to_any(&self) -> AnyView;
     fn activation_priority(&self, cx: &App) -> u32;
@@ -151,16 +153,8 @@ where
         self.update(cx, |this, cx| this.set_size(size, window, cx))
     }
 
-    fn icon(&self, window: &Window, cx: &App) -> ui::IconName {
-        self.read(cx).icon(window, cx)
-    }
-
-    fn icon_tooltip(&self, window: &Window, cx: &App) -> &'static str {
-        self.read(cx).icon_tooltip(window, cx)
-    }
-
-    fn toggle_action(&self, _: &Window, cx: &App) -> Box<dyn Action> {
-        self.read(cx).toggle_action()
+    fn icon_button(&self, window: &Window, cx: &App) -> PanelIconButton {
+        self.read(cx).icon_button(window, cx)
     }
 
     fn to_any(&self) -> AnyView {
@@ -908,8 +902,11 @@ impl Render for PanelButtons {
                 if !entry.panel.enabled(cx) {
                     return None;
                 }
-                let icon = entry.panel.icon(window, cx);
-                let icon_tooltip = entry.panel.icon_tooltip(window, cx);
+                let PanelIconButton {
+                    icon,
+                    tooltip: icon_tooltip,
+                    action: toggle_action,
+                } = entry.panel.icon_button(window, cx);
                 let name = entry.panel.persistent_name();
                 let panel = entry.panel.clone();
 
@@ -922,9 +919,7 @@ impl Render for PanelButtons {
 
                     (action, tooltip)
                 } else {
-                    let action = entry.panel.toggle_action(window, cx);
-
-                    (action, icon_tooltip.into())
+                    (toggle_action, icon_tooltip.into())
                 };
 
                 let focus_handle = dock.focus_handle(cx);
@@ -1073,16 +1068,12 @@ pub mod test {
             self.size = size.unwrap_or(px(300.));
         }
 
-        fn icon(&self, _window: &Window, _: &App) -> ui::IconName {
-            ui::IconName::Cog
-        }
-
-        fn icon_tooltip(&self, _window: &Window, _cx: &App) -> &'static str {
-            "Test Panel"
-        }
-
-        fn toggle_action(&self) -> Box<dyn Action> {
-            ToggleTestPanel.boxed_clone()
+        fn icon_button(&self, _window: &Window, _cx: &App) -> PanelIconButton {
+            PanelIconButton {
+                icon: ui::IconName::Cog,
+                tooltip: "Test Panel",
+                action: ToggleTestPanel.boxed_clone(),
+            }
         }
 
         fn is_zoomed(&self, _window: &Window, _: &App) -> bool {

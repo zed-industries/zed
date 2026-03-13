@@ -42,7 +42,7 @@ use workspace::SplitDirection;
 use workspace::item::SaveOptions;
 use workspace::{
     Item, Pane, Workspace,
-    dock::{DockPosition, Panel, PanelEvent},
+    dock::{DockPosition, Panel, PanelEvent, PanelIconButton},
 };
 use zed_actions::debug_panel::ToggleFocus;
 
@@ -1579,20 +1579,16 @@ impl Panel for DebugPanel {
         Some(proto::PanelId::DebugPanel)
     }
 
-    fn icon(&self, _window: &Window, _cx: &App) -> IconName {
-        IconName::Debug
-    }
-
-    fn icon_tooltip(&self, _window: &Window, _cx: &App) -> &'static str {
-        "Debug Panel"
+    fn icon_button(&self, _window: &Window, _cx: &App) -> PanelIconButton {
+        PanelIconButton {
+            icon: IconName::Debug,
+            tooltip: "Debug Panel",
+            action: Box::new(ToggleFocus),
+        }
     }
 
     fn enabled(&self, cx: &App) -> bool {
         DebuggerSettings::get_global(cx).button
-    }
-
-    fn toggle_action(&self) -> Box<dyn Action> {
-        Box::new(ToggleFocus)
     }
 
     fn pane(&self) -> Option<Entity<Pane>> {

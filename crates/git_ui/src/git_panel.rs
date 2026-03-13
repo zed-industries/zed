@@ -76,7 +76,7 @@ use util::{ResultExt, TryFutureExt, maybe, rel_path::RelPath};
 use workspace::SERIALIZATION_THROTTLE_TIME;
 use workspace::{
     Workspace,
-    dock::{DockPosition, Panel, PanelEvent},
+    dock::{DockPosition, Panel, PanelEvent, PanelIconButton},
     notifications::{DetachAndPromptErr, ErrorMessagePrompt, NotificationId, NotifyResultExt},
 };
 
@@ -5730,20 +5730,16 @@ impl Panel for GitPanel {
         cx.notify();
     }
 
-    fn icon(&self, _: &Window, _cx: &App) -> ui::IconName {
-        ui::IconName::GitBranchAlt
-    }
-
-    fn icon_tooltip(&self, _window: &Window, _cx: &App) -> &'static str {
-        "Git Panel"
+    fn icon_button(&self, _window: &Window, _cx: &App) -> PanelIconButton {
+        PanelIconButton {
+            icon: ui::IconName::GitBranchAlt,
+            tooltip: "Git Panel",
+            action: Box::new(ToggleFocus),
+        }
     }
 
     fn enabled(&self, cx: &App) -> bool {
         GitPanelSettings::get_global(cx).button
-    }
-
-    fn toggle_action(&self) -> Box<dyn Action> {
-        Box::new(ToggleFocus)
     }
 
     fn activation_priority(&self) -> u32 {

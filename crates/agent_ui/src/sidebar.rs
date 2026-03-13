@@ -30,7 +30,7 @@ use util::ResultExt as _;
 use util::path_list::PathList;
 use workspace::{
     MultiWorkspace, MultiWorkspaceEvent, Workspace,
-    dock::{DockPosition, Panel, PanelEvent},
+    dock::{DockPosition, Panel, PanelEvent, PanelIconButton},
     multi_workspace_enabled,
 };
 use zed_actions::assistant::ToggleThreadsSidebar;
@@ -2026,16 +2026,12 @@ impl Panel for Sidebar {
         self.set_width(size, cx);
     }
 
-    fn icon(&self, _window: &Window, _cx: &App) -> IconName {
-        IconName::ThreadsSidebarLeftClosed
-    }
-
-    fn icon_tooltip(&self, _window: &Window, _cx: &App) -> &'static str {
-        "Threads Sidebar"
-    }
-
-    fn toggle_action(&self) -> Box<dyn Action> {
-        Box::new(ToggleThreadsSidebar)
+    fn icon_button(&self, _window: &Window, _cx: &App) -> PanelIconButton {
+        PanelIconButton {
+            icon: IconName::ThreadsSidebarLeftClosed,
+            tooltip: "Threads Sidebar",
+            action: Box::new(ToggleThreadsSidebar),
+        }
     }
 
     fn activation_priority(&self) -> u32 {
