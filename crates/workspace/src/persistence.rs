@@ -1831,6 +1831,10 @@ impl WorkspaceDb {
                 continue;
             }
 
+            if paths.is_empty() {
+                continue;
+            }
+
             let has_wsl_path = if cfg!(windows) {
                 paths
                     .paths()
@@ -4266,6 +4270,69 @@ mod tests {
         assert!(
             restored_ids.contains(&ws1_id),
             "Remaining workspace should still appear in session restoration list"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_recent_workspaces_on_disk_preserves_empty_session_workspace(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let fake_file_system = fs::FakeFs::new(cx.executor());
+        let workspace_database = WorkspaceDb::open_test_db(
+            "test_recent_workspaces_on_disk_preserves_empty_session_workspace",
+        )
+        .await;
+
+        let workspace_id = workspace_database.next_id().await.unwrap();
+        let session_id = "empty-session-workspace";
+
+        workspace_database
+            .save_workspace(SerializedWorkspace {
+                id: workspace_id,
+                paths: PathList::default(),
+                location: SerializedWorkspaceLocation::Local,
+                center_group: Default::default(),
+                window_bounds: Default::default(),
+                display: Default::default(),
+                docks: Default::default(),
+                centered_layout: false,
+                session_id: Some(session_id.to_owned()),
+                breakpoints: Default::default(),
+                window_id: Some(11),
+                user_toolchains: Default::default(),
+            })
+            .await;
+
+        let session_locations_before_cleanup = workspace_database
+            .last_session_workspace_locations(session_id, None, fake_file_system.as_ref())
+            .await
+            .unwrap();
+        assert!(
+            session_locations_before_cleanup
+                .iter()
+                .any(|workspace| workspace.workspace_id == workspace_id),
+            "empty workspace should be restorable by session before cleanup"
+        );
+
+        let _recent_workspaces = workspace_database
+            .recent_workspaces_on_disk(fake_file_system.as_ref())
+            .await
+            .unwrap();
+
+        assert!(
+            workspace_database.workspace_for_id(workspace_id).is_some(),
+            "recent_workspaces_on_disk should not delete empty session workspaces"
+        );
+
+        let session_locations_after_cleanup = workspace_database
+            .last_session_workspace_locations(session_id, None, fake_file_system.as_ref())
+            .await
+            .unwrap();
+        assert!(
+            session_locations_after_cleanup
+                .iter()
+                .any(|workspace| workspace.workspace_id == workspace_id),
+            "empty workspace should remain restorable by session after cleanup"
         );
     }
 
