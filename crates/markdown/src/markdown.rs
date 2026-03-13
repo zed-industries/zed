@@ -2299,6 +2299,40 @@ mod tests {
         render_markdown_with_language_registry(markdown, None, cx)
     }
 
+    fn render_markdown_with_style(
+        markdown: &str,
+        style: MarkdownStyle,
+        cx: &mut TestAppContext,
+    ) -> RenderedText {
+        struct TestWindow;
+
+        impl Render for TestWindow {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                div()
+            }
+        }
+
+        ensure_theme_initialized(cx);
+
+        let (_, cx) = cx.add_window_view(|_, _| TestWindow);
+        let markdown = cx.new(|cx| Markdown::new(markdown.to_string().into(), None, None, cx));
+        cx.run_until_parked();
+        let (rendered, _) = cx.draw(
+            Default::default(),
+            size(px(600.0), px(600.0)),
+            |_window, _cx| {
+                MarkdownElement::new(markdown, style).code_block_renderer(
+                    CodeBlockRenderer::Default {
+                        copy_button: false,
+                        copy_button_on_hover: false,
+                        border: false,
+                    },
+                )
+            },
+        );
+        rendered.text
+    }
+
     fn render_markdown_with_language_registry(
         markdown: &str,
         language_registry: Option<Arc<LanguageRegistry>>,
@@ -2357,6 +2391,33 @@ mod tests {
         let word_range = rendered.surrounding_word_range(5); // Simulate click on space between "Hello" and "world", expect highlighting word to the left
         let selected_text = rendered.text_for_range(word_range);
         assert_eq!(selected_text, "Hello");
+    }
+
+    #[gpui::test]
+    fn test_code_blocks_wrap_when_horizontal_scroll_is_disabled(cx: &mut TestAppContext) {
+        let markdown = format!("```text\n{}\n```", "abcdefghijklmnopqrstuvwxyz".repeat(40));
+
+        let wrapped = render_markdown_with_style(
+            &markdown,
+            MarkdownStyle {
+                code_block_overflow_x_scroll: false,
+                ..MarkdownStyle::default()
+            },
+            cx,
+        );
+        let scrolling = render_markdown_with_style(
+            &markdown,
+            MarkdownStyle {
+                code_block_overflow_x_scroll: true,
+                ..MarkdownStyle::default()
+            },
+            cx,
+        );
+
+        assert!(
+            wrapped.lines.len() > scrolling.lines.len(),
+            "Expected wrapped code blocks to render across more visual lines"
+        );
     }
 
     #[gpui::test]

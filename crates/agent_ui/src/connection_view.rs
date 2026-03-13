@@ -1958,10 +1958,7 @@ impl ConnectionView {
                                     .map(|view| div().w_full().child(view)),
                             )
                             .children(description.map(|desc| {
-                                self.render_markdown(
-                                    desc.clone(),
-                                    MarkdownStyle::themed(MarkdownFont::Agent, window, cx),
-                                )
+                                self.render_markdown(desc.clone(), agent_markdown_style(window, cx))
                             }))
                         }
                     })
@@ -2738,12 +2735,21 @@ impl Render for ConnectionView {
     }
 }
 
+fn agent_markdown_style(window: &Window, cx: &App) -> MarkdownStyle {
+    let wrap_long_lines = AgentSettings::get_global(cx).wrap_long_lines;
+
+    MarkdownStyle {
+        code_block_overflow_x_scroll: !wrap_long_lines,
+        ..MarkdownStyle::themed(MarkdownFont::Agent, window, cx)
+    }
+}
+
 fn plan_label_markdown_style(
     status: &acp::PlanEntryStatus,
     window: &Window,
     cx: &App,
 ) -> MarkdownStyle {
-    let default_md_style = MarkdownStyle::themed(MarkdownFont::Agent, window, cx);
+    let default_md_style = agent_markdown_style(window, cx);
 
     MarkdownStyle {
         base_text_style: TextStyle {
@@ -2773,7 +2779,9 @@ pub(crate) mod tests {
     use assistant_text_thread::TextThreadStore;
     use editor::MultiBufferOffset;
     use fs::FakeFs;
-    use gpui::{EventEmitter, TestAppContext, VisualTestContext};
+    use gpui::{
+        Context, EventEmitter, Render, TestAppContext, VisualTestContext, Window, px, size,
+    };
     use parking_lot::Mutex;
     use project::Project;
     use serde_json::json;
@@ -2787,6 +2795,14 @@ pub(crate) mod tests {
     use crate::agent_panel;
 
     use super::*;
+
+    struct TestWindow;
+
+    impl Render for TestWindow {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            div()
+        }
+    }
 
     #[gpui::test]
     async fn test_drop(cx: &mut TestAppContext) {
@@ -3625,6 +3641,56 @@ pub(crate) mod tests {
                 .iter()
                 .any(|window| window.downcast::<AgentNotification>().is_some()),
             "Expected no notification when notify_when_agent_waiting is Never"
+        );
+    }
+
+    #[gpui::test]
+    fn test_agent_markdown_style_respects_wrap_long_lines_setting(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let (_, cx) = cx.add_window_view(|_, _| TestWindow);
+        cx.run_until_parked();
+
+        cx.update(|cx| {
+            AgentSettings::override_global(
+                AgentSettings {
+                    wrap_long_lines: true,
+                    ..AgentSettings::get_global(cx).clone()
+                },
+                cx,
+            );
+        });
+        cx.draw(
+            Default::default(),
+            size(px(400.0), px(200.0)),
+            |window, cx| {
+                assert!(
+                    !agent_markdown_style(window, cx).code_block_overflow_x_scroll,
+                    "Expected code blocks to wrap when wrap_long_lines is enabled"
+                );
+                div()
+            },
+        );
+
+        cx.update(|cx| {
+            AgentSettings::override_global(
+                AgentSettings {
+                    wrap_long_lines: false,
+                    ..AgentSettings::get_global(cx).clone()
+                },
+                cx,
+            );
+        });
+        cx.draw(
+            Default::default(),
+            size(px(400.0), px(200.0)),
+            |window, cx| {
+                assert!(
+                    agent_markdown_style(window, cx).code_block_overflow_x_scroll,
+                    "Expected code blocks to keep horizontal scrolling when wrap_long_lines is disabled"
+                );
+                div()
+            },
         );
     }
 

@@ -111,6 +111,10 @@ pub struct AgentSettingsContent {
     ///
     /// Default: true
     pub expand_terminal_card: Option<bool>,
+    /// Whether to wrap long lines in agent markdown content like file previews, tool output, and plans.
+    ///
+    /// Default: true
+    pub wrap_long_lines: Option<bool>,
     /// Whether clicking the stop button on a running terminal tool should also cancel the agent's generation.
     /// Note that this only applies to the stop button, not to ctrl+c inside the terminal.
     ///
