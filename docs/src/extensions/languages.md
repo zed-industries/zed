@@ -60,7 +60,7 @@ repository = "https://github.com/gleam-lang/tree-sitter-gleam"
 rev = "58b7cac8fc14c92b0677c542610d8738c373fa81"
 ```
 
-The `repository` field must specify where the Tree-sitter grammar should be loaded from. For remote repositories, the `rev` field is required and must contain a Git revision to use, such as the SHA of a Git commit. If you're developing an extension locally and want to load a grammar from the local filesystem, you can use a `file://` URL for `repository`; in that case, `rev` is optional. An extension can provide multiple grammars by referencing multiple tree-sitter repositories.
+The `repository` field must specify where the Tree-sitter grammar should be loaded from. For remote repositories, the `rev` field is required and must contain a Git revision to use, such as the SHA of a Git commit, and `path` can optionally point to a grammar subdirectory inside that repository. If you're developing an extension locally and want to load a grammar from the local filesystem, you can use a `file://` URL for `repository`; in that case, it must point directly at the grammar root and `rev` and `path` are not supported. An extension can provide multiple grammars by referencing multiple tree-sitter repositories.
 
 ## Tree-sitter Queries
 

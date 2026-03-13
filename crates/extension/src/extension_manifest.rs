@@ -299,25 +299,23 @@ pub enum ExtensionLibraryKind {
 }
 
 #[derive(Clone, PartialEq, Eq, Debug)]
-pub enum GrammarRepositorySource {
-    Local { repository: String },
-    Remote { repository: String, rev: String },
-}
-
-#[derive(Clone, PartialEq, Eq, Debug)]
-pub struct GrammarManifestEntry {
-    pub path: Option<String>,
-    pub source: GrammarRepositorySource,
+pub enum GrammarManifestEntry {
+    Local {
+        path: String,
+    },
+    Remote {
+        repository: String,
+        rev: String,
+        path: Option<String>,
+    },
 }
 
 impl Default for GrammarManifestEntry {
     fn default() -> Self {
-        Self {
+        Self::Remote {
+            repository: String::new(),
+            rev: String::new(),
             path: None,
-            source: GrammarRepositorySource::Remote {
-                repository: String::new(),
-                rev: String::new(),
-            },
         }
     }
 }
@@ -332,8 +330,15 @@ impl GrammarManifestEntry {
                 ));
             }
 
-            GrammarRepositorySource::Local {
-                repository: raw.repository,
+            if raw.path.is_some() {
+                return Err(format!(
+                    "`path` is not supported for local grammar repository `{}`; point `repository` directly at the grammar root",
+                    raw.repository
+                ));
+            }
+
+            Self::Local {
+                path: raw.repository,
             }
         } else {
             let rev = raw.rev.ok_or_else(|| {
@@ -342,16 +347,14 @@ impl GrammarManifestEntry {
                     raw.repository
                 )
             })?;
-            GrammarRepositorySource::Remote {
+            Self::Remote {
                 repository: raw.repository,
                 rev,
+                path: raw.path,
             }
         };
 
-        Ok(Self {
-            path: raw.path,
-            source,
-        })
+        Ok(source)
     }
 }
 
@@ -369,17 +372,19 @@ impl Serialize for GrammarManifestEntry {
     where
         S: Serializer,
     {
-        let (repository, rev) = match &self.source {
-            GrammarRepositorySource::Local { repository } => (repository.clone(), None),
-            GrammarRepositorySource::Remote { repository, rev } => {
-                (repository.clone(), Some(rev.clone()))
-            }
+        let (repository, rev, path) = match self {
+            Self::Local { path } => (path.clone(), None, None),
+            Self::Remote {
+                repository,
+                rev,
+                path,
+            } => (repository.clone(), Some(rev.clone()), path.clone()),
         };
 
         RawGrammarManifestEntry {
             repository,
             rev,
-            path: self.path.clone(),
+            path,
         }
         .serialize(serializer)
     }
@@ -701,12 +706,10 @@ path = "grammar"
 
         assert_eq!(
             entry,
-            GrammarManifestEntry {
+            GrammarManifestEntry::Remote {
+                repository: "https://github.com/tree-sitter/tree-sitter-rust".to_string(),
+                rev: "abc123".to_string(),
                 path: Some("grammar".to_string()),
-                source: GrammarRepositorySource::Remote {
-                    repository: "https://github.com/tree-sitter/tree-sitter-rust".to_string(),
-                    rev: "abc123".to_string(),
-                },
             }
         );
     }
@@ -723,12 +726,10 @@ commit = "def456"
 
         assert_eq!(
             entry,
-            GrammarManifestEntry {
+            GrammarManifestEntry::Remote {
+                repository: "https://github.com/tree-sitter/tree-sitter-rust".to_string(),
+                rev: "def456".to_string(),
                 path: None,
-                source: GrammarRepositorySource::Remote {
-                    repository: "https://github.com/tree-sitter/tree-sitter-rust".to_string(),
-                    rev: "def456".to_string(),
-                },
             }
         );
     }
@@ -744,13 +745,23 @@ repository = "file:///tmp/tree-sitter-rust"
 
         assert_eq!(
             entry,
-            GrammarManifestEntry {
-                path: None,
-                source: GrammarRepositorySource::Local {
-                    repository: "file:///tmp/tree-sitter-rust".to_string(),
-                },
+            GrammarManifestEntry::Local {
+                path: "file:///tmp/tree-sitter-rust".to_string(),
             }
         );
+    }
+
+    #[test]
+    fn reject_local_grammar_manifest_entry_with_path() {
+        let error = toml::from_str::<GrammarManifestEntry>(
+            r#"
+repository = "file:///tmp/tree-sitter-rust"
+path = "grammar"
+"#,
+        )
+        .expect_err("local grammar entry with path should fail");
+
+        assert!(error.to_string().contains("`path` is not supported"));
     }
 
     #[test]

@@ -1,6 +1,6 @@
 use crate::{
-    ExtensionLibraryKind, ExtensionManifest, GrammarManifestEntry, GrammarRepositorySource,
-    build_debug_adapter_schema_path, parse_wasm_extension_version,
+    ExtensionLibraryKind, ExtensionManifest, GrammarManifestEntry, build_debug_adapter_schema_path,
+    parse_wasm_extension_version,
 };
 use ::fs::Fs;
 use anyhow::{Context as _, Result, bail};
@@ -239,35 +239,35 @@ impl ExtensionBuilder {
         let mut grammar_wasm_path = grammar_output_dir.clone();
         grammar_wasm_path.set_extension("wasm");
 
-        let grammar_repo_dir = match &grammar_metadata.source {
-            GrammarRepositorySource::Remote { repository, rev } => {
+        let grammar_repo_dir = match grammar_metadata {
+            GrammarManifestEntry::Remote {
+                repository,
+                rev,
+                path,
+            } => {
                 log::info!("checking out {grammar_name} parser");
                 self.checkout_repo(&grammar_output_dir, repository, rev)
                     .await?;
-                grammar_output_dir
+                path.as_ref()
+                    .map(|path| grammar_output_dir.join(path))
+                    .unwrap_or(grammar_output_dir)
             }
-            GrammarRepositorySource::Local { repository } => {
+            GrammarManifestEntry::Local { path } => {
                 log::info!("using local grammar source for {grammar_name} parser");
-                Self::local_grammar_repository_path(grammar_name, repository)?
+                if let Some(parent_directory) = grammar_wasm_path.parent() {
+                    fs::create_dir_all(parent_directory).with_context(|| {
+                        format!(
+                            "failed to create grammar output directory {}",
+                            parent_directory.display()
+                        )
+                    })?;
+                }
+
+                Self::local_grammar_repository_path(grammar_name, path)?
             }
         };
 
-        if let Some(parent_directory) = grammar_wasm_path.parent() {
-            fs::create_dir_all(parent_directory).with_context(|| {
-                format!(
-                    "failed to create grammar output directory {}",
-                    parent_directory.display()
-                )
-            })?;
-        }
-
-        let base_grammar_path = grammar_metadata
-            .path
-            .as_ref()
-            .map(|path| grammar_repo_dir.join(path))
-            .unwrap_or(grammar_repo_dir);
-
-        let src_path = base_grammar_path.join("src");
+        let src_path = grammar_repo_dir.join("src");
         let parser_path = src_path.join("parser.c");
         let scanner_path = src_path.join("scanner.c");
 
@@ -705,12 +705,10 @@ async fn populate_defaults(
                     if !manifest.grammars.contains_key(grammar_name) {
                         manifest.grammars.insert(
                             grammar_name.into(),
-                            GrammarManifestEntry {
+                            GrammarManifestEntry::Remote {
+                                repository: grammar_config.repository,
+                                rev: grammar_config.commit,
                                 path: grammar_config.path,
-                                source: crate::GrammarRepositorySource::Remote {
-                                    repository: grammar_config.repository,
-                                    rev: grammar_config.commit,
-                                },
                             },
                         );
                     }
