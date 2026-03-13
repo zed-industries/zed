@@ -9,7 +9,7 @@ use crate::tasks::workflows::{
         self, BASH_SHELL, CommonJobConditions, FluentBuilder, NamedJob,
         cache_rust_dependencies_namespace, named,
     },
-    vars::{PathCondition, StepOutput, WorkflowInput, one_workflow_per_non_main_branch},
+    vars::{PathCondition, StepOutput, WorkflowInput, one_workflow_per_non_main_branch_and_token},
 };
 
 pub(crate) const ZED_EXTENSION_CLI_SHA: &str = "03d8e9aee95ea6117d75a48bcac2e19241f6e667";
@@ -34,7 +34,7 @@ pub(crate) fn extension_tests() -> Workflow {
         should_check_extension.guard(check_extension()),
     ];
 
-    let tests_pass = with_extension_defaults(tests_pass(&jobs));
+    let tests_pass = tests_pass(&jobs, &[]);
 
     let working_directory = WorkflowInput::string("working-directory", Some(".".to_owned()));
 
@@ -45,7 +45,9 @@ pub(crate) fn extension_tests() -> Workflow {
                     .add_input(working_directory.name, working_directory.call_input()),
             ),
         )
-        .concurrency(one_workflow_per_non_main_branch())
+        .concurrency(one_workflow_per_non_main_branch_and_token(
+            "extension-tests",
+        ))
         .add_env(("CARGO_TERM_COLOR", "always"))
         .add_env(("RUST_BACKTRACE", 1))
         .add_env(("CARGO_INCREMENTAL", 0))

@@ -216,12 +216,8 @@ jobs:
         RESULT_ORCHESTRATE: ${{ needs.orchestrate.result }}
         RESULT_CHECK_RUST: ${{ needs.check_rust.result }}
         RESULT_CHECK_EXTENSION: ${{ needs.check_extension.result }}
-    defaults:
-      run:
-        shell: bash -euxo pipefail {0}
-        working-directory: ${{ inputs.working-directory }}
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref_name }}-${{ github.ref_name == 'main' && github.sha || 'anysha' }}
+  group: ${{ github.workflow }}-${{ github.ref_name }}-${{ github.ref_name == 'main' && github.sha || 'anysha' }}extension-tests
   cancel-in-progress: true
 defaults:
   run:
