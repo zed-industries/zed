@@ -34,7 +34,7 @@ pub(crate) fn extension_tests() -> Workflow {
         should_check_extension.guard(check_extension()),
     ];
 
-    let tests_pass = with_extension_defaults(tests_pass(&jobs, &[]));
+    let tests_pass = tests_pass(&jobs, &[]);
 
     let working_directory = WorkflowInput::string("working-directory", Some(".".to_owned()));
 
