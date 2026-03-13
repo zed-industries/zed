@@ -4712,6 +4712,12 @@ impl Project {
         }
     }
 
+    pub fn notify_user_focused_path(&mut self, project_path: &ProjectPath, cx: &mut Context<Self>) {
+        self.lsp_store.update(cx, |lsp_store, cx| {
+            lsp_store.on_user_focused_project_path(project_path, cx)
+        });
+    }
+
     pub fn language_servers_running_disk_based_diagnostics<'a>(
         &'a self,
         cx: &'a App,

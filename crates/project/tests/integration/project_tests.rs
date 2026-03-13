@@ -1928,6 +1928,106 @@ async fn test_managing_language_servers(cx: &mut gpui::TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_did_focus_sent_on_user_focus(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/dir"),
+        json!({
+            "one.rs": "const ONE: i32 = 1;",
+            "two.rs": "const TWO: i32 = 2;",
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
+    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+    language_registry.add(rust_lang());
+
+    let mut fake_servers = language_registry.register_fake_lsp(
+        "Rust",
+        FakeLspAdapter {
+            name: "focus-lang-server",
+            ..Default::default()
+        },
+    );
+
+    let worktree_id = project.read_with(cx, |project, cx| {
+        project.worktrees(cx).next().unwrap().read(cx).id()
+    });
+
+    let (_first_buffer, _first_handle) = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer_with_lsp(path!("/dir/one.rs"), cx)
+        })
+        .await
+        .unwrap();
+    let (_second_buffer, _second_handle) = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer_with_lsp(path!("/dir/two.rs"), cx)
+        })
+        .await
+        .unwrap();
+    cx.executor().run_until_parked();
+
+    let mut fake_server = fake_servers.next().await.unwrap();
+
+    let opened = [
+        fake_server
+            .receive_notification::<lsp::notification::DidOpenTextDocument>()
+            .await
+            .text_document
+            .uri,
+        fake_server
+            .receive_notification::<lsp::notification::DidOpenTextDocument>()
+            .await
+            .text_document
+            .uri,
+    ];
+    assert_set_eq!(
+        opened,
+        [
+            lsp::Uri::from_file_path(path!("/dir/one.rs")).unwrap(),
+            lsp::Uri::from_file_path(path!("/dir/two.rs")).unwrap(),
+        ]
+    );
+
+    let first_path = ProjectPath {
+        worktree_id,
+        path: rel_path("one.rs").into(),
+    };
+    project.update(cx, |project, cx| {
+        project.notify_user_focused_path(&first_path, cx);
+    });
+    cx.executor().run_until_parked();
+    let focus = fake_server
+        .receive_notification::<lsp::DidFocusTextDocument>()
+        .await;
+    assert_eq!(
+        focus.text_document.uri,
+        lsp::Uri::from_file_path(path!("/dir/one.rs")).unwrap()
+    );
+    assert!(focus.user_initiated);
+
+    let second_path = ProjectPath {
+        worktree_id,
+        path: rel_path("two.rs").into(),
+    };
+    project.update(cx, |project, cx| {
+        project.notify_user_focused_path(&second_path, cx);
+    });
+    cx.executor().run_until_parked();
+    let focus = fake_server
+        .receive_notification::<lsp::DidFocusTextDocument>()
+        .await;
+    assert_eq!(
+        focus.text_document.uri,
+        lsp::Uri::from_file_path(path!("/dir/two.rs")).unwrap()
+    );
+}
+
+#[gpui::test]
 async fn test_language_server_relative_path(cx: &mut gpui::TestAppContext) {
     init_test(cx);
 
