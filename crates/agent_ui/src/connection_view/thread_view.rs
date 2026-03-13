@@ -3557,6 +3557,7 @@ impl ThreadView {
         let message_editor = self.message_editor.clone();
         let workspace = self.workspace.clone();
         let supports_images = self.prompt_capabilities.borrow().image;
+        let supports_embedded_context = self.prompt_capabilities.borrow().embedded_context;
 
         let has_editor_selection = workspace
             .upgrade()
@@ -3669,6 +3670,21 @@ impl ThreadView {
                                     zed_actions::agent::AddSelectionToThread.boxed_clone(),
                                     cx,
                                 );
+                            }
+                        }),
+                )
+                .item(
+                    ContextMenuEntry::new("Branch Diff")
+                        .icon(IconName::GitBranch)
+                        .icon_color(Color::Muted)
+                        .icon_size(IconSize::XSmall)
+                        .disabled(!supports_embedded_context)
+                        .handler({
+                            move |window, cx| {
+                                message_editor.focus_handle(cx).focus(window, cx);
+                                message_editor.update(cx, |editor, cx| {
+                                    editor.insert_context_type("diff", window, cx);
+                                });
                             }
                         }),
                 )
