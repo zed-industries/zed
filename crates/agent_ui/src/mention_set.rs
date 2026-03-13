@@ -694,7 +694,7 @@ mod tests {
 /// Inserts a list of images into the editor as context mentions.
 /// This is the shared implementation used by both paste and file picker operations.
 pub(crate) async fn insert_images_as_context(
-    images: Vec<gpui::Image>,
+    images: Vec<(gpui::Image, Option<PathBuf>)>,
     editor: Entity<Editor>,
     mention_set: Entity<MentionSet>,
     workspace: WeakEntity<Workspace>,
@@ -704,9 +704,15 @@ pub(crate) async fn insert_images_as_context(
         return;
     }
 
-    let replacement_text = MentionUri::PastedImage.as_link().to_string();
+    for (image, path) in images {
+        let mention_uri = match &path {
+            Some(abs_path) => MentionUri::File {
+                abs_path: abs_path.clone(),
+            },
+            None => MentionUri::PastedImage,
+        };
+        let replacement_text = mention_uri.as_link().to_string();
 
-    for image in images {
         let Some((excerpt_id, text_anchor, multibuffer_anchor)) = editor
             .update_in(cx, |editor, window, cx| {
                 let snapshot = editor.snapshot(window, cx);
@@ -740,11 +746,11 @@ pub(crate) async fn insert_images_as_context(
                 excerpt_id,
                 text_anchor,
                 content_len,
-                MentionUri::PastedImage.name().into(),
-                IconName::Image.path().into(),
-                None,
-                None,
-                None,
+                mention_uri.name().into(),
+                mention_uri.icon_path(cx),
+                mention_uri.tooltip_text(),
+                Some(mention_uri.clone()),
+                Some(workspace.clone()),
                 Some(Task::ready(Ok(image.clone())).shared()),
                 editor.clone(),
                 window,
@@ -772,7 +778,7 @@ pub(crate) async fn insert_images_as_context(
             .shared();
 
         mention_set.update(cx, |mention_set, _cx| {
-            mention_set.insert_mention(crease_id, MentionUri::PastedImage, task.clone())
+            mention_set.insert_mention(crease_id, mention_uri, task.clone())
         });
 
         if task
@@ -800,7 +806,7 @@ pub(crate) fn paste_images_as_context(
     let clipboard = cx.read_from_clipboard()?;
     Some(window.spawn(cx, async move |mut cx| {
         use itertools::Itertools;
-        let (mut images, paths) = clipboard
+        let (clipboard_images, paths) = clipboard
             .into_entries()
             .filter_map(|entry| match entry {
                 ClipboardEntry::Image(image) => Some(Either::Left(image)),
@@ -809,35 +815,40 @@ pub(crate) fn paste_images_as_context(
             })
             .partition_map::<Vec<_>, Vec<_>, _, _, _>(std::convert::identity);
 
+        // Clipboard images don't have a file path
+        let mut images: Vec<(gpui::Image, Option<PathBuf>)> = clipboard_images
+            .into_iter()
+            .map(|img| (img, None))
+            .collect();
+
+        // Images from external paths preserve their file path
         if !paths.is_empty() {
-            images.extend(
-                cx.background_spawn(async move {
+            let path_images = cx
+                .background_spawn(async move {
                     let mut images = vec![];
                     for path in paths.into_iter().flat_map(|paths| paths.paths().to_owned()) {
-                        let Ok(content) = async_fs::read(path).await else {
+                        let Ok(content) = async_fs::read(&path).await else {
                             continue;
                         };
                         let Ok(format) = image::guess_format(&content) else {
                             continue;
                         };
-                        images.push(gpui::Image::from_bytes(
-                            match format {
-                                image::ImageFormat::Png => gpui::ImageFormat::Png,
-                                image::ImageFormat::Jpeg => gpui::ImageFormat::Jpeg,
-                                image::ImageFormat::WebP => gpui::ImageFormat::Webp,
-                                image::ImageFormat::Gif => gpui::ImageFormat::Gif,
-                                image::ImageFormat::Bmp => gpui::ImageFormat::Bmp,
-                                image::ImageFormat::Tiff => gpui::ImageFormat::Tiff,
-                                image::ImageFormat::Ico => gpui::ImageFormat::Ico,
-                                _ => continue,
-                            },
-                            content,
-                        ));
+                        let gpui_format = match format {
+                            image::ImageFormat::Png => gpui::ImageFormat::Png,
+                            image::ImageFormat::Jpeg => gpui::ImageFormat::Jpeg,
+                            image::ImageFormat::WebP => gpui::ImageFormat::Webp,
+                            image::ImageFormat::Gif => gpui::ImageFormat::Gif,
+                            image::ImageFormat::Bmp => gpui::ImageFormat::Bmp,
+                            image::ImageFormat::Tiff => gpui::ImageFormat::Tiff,
+                            image::ImageFormat::Ico => gpui::ImageFormat::Ico,
+                            _ => continue,
+                        };
+                        images.push((gpui::Image::from_bytes(gpui_format, content), Some(path)));
                     }
                     images
                 })
-                .await,
-            );
+                .await;
+            images.extend(path_images);
         }
 
         cx.update(|_window, cx| {

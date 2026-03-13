@@ -829,6 +829,44 @@ impl MessageEditor {
                     let http_client = workspace.read(cx).client().http_client();
 
                     for (anchor, content_len, mention_uri) in all_mentions {
+                        // For image files, load a preview image
+                        let image_preview = if let MentionUri::File { ref abs_path } = mention_uri {
+                            let extension = abs_path
+                                .extension()
+                                .and_then(|e| e.to_str())
+                                .unwrap_or_default();
+                            if gpui::Img::extensions().contains(&extension)
+                                && !extension.contains("svg")
+                            {
+                                let path = abs_path.clone();
+                                Some(
+                                    cx.spawn(async move |_, _| {
+                                        let content = async_fs::read(&path)
+                                            .await
+                                            .map_err(|e| e.to_string())?;
+                                        let format = image::guess_format(&content)
+                                            .map_err(|e| e.to_string())?;
+                                        let gpui_format = match format {
+                                            image::ImageFormat::Png => gpui::ImageFormat::Png,
+                                            image::ImageFormat::Jpeg => gpui::ImageFormat::Jpeg,
+                                            image::ImageFormat::WebP => gpui::ImageFormat::Webp,
+                                            image::ImageFormat::Gif => gpui::ImageFormat::Gif,
+                                            image::ImageFormat::Bmp => gpui::ImageFormat::Bmp,
+                                            image::ImageFormat::Tiff => gpui::ImageFormat::Tiff,
+                                            image::ImageFormat::Ico => gpui::ImageFormat::Ico,
+                                            _ => return Err("Unsupported image format".to_string()),
+                                        };
+                                        Ok(Arc::new(gpui::Image::from_bytes(gpui_format, content)))
+                                    })
+                                    .shared(),
+                                )
+                            } else {
+                                None
+                            }
+                        } else {
+                            None
+                        };
+
                         let Some((crease_id, tx)) = insert_crease_for_mention(
                             anchor.excerpt_id,
                             anchor.text_anchor,
@@ -838,7 +876,7 @@ impl MessageEditor {
                             mention_uri.tooltip_text(),
                             Some(mention_uri.clone()),
                             Some(self.workspace.clone()),
-                            None,
+                            image_preview,
                             self.editor.clone(),
                             window,
                             cx,
@@ -1198,7 +1236,7 @@ impl MessageEditor {
                         continue;
                     };
 
-                    images.push(gpui::Image::from_bytes(format, content));
+                    images.push((gpui::Image::from_bytes(format, content), Some(path)));
                 }
 
                 crate::mention_set::insert_images_as_context(
