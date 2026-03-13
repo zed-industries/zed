@@ -869,7 +869,7 @@ impl BlockMap {
             edits = edits.compose(merged_edits);
         }
 
-        let edits = edits.into_inner();
+        let mut edits = edits.into_inner();
         if edits.is_empty() {
             return;
         }
@@ -879,13 +879,37 @@ impl BlockMap {
         let mut cursor = transforms.cursor::<WrapRow>(());
         let mut last_block_ix = 0;
         let mut blocks_in_edit = Vec::new();
-        let mut edits = edits.into_iter().peekable();
 
         let mut inlay_point_cursor = wrap_snapshot.inlay_point_cursor();
         let mut tab_point_cursor = wrap_snapshot.tab_point_cursor();
         let mut fold_point_cursor = wrap_snapshot.fold_point_cursor();
         let mut wrap_point_cursor = wrap_snapshot.wrap_point_cursor();
 
+        if companion_view.is_some() {
+            for edit in &mut edits {
+                if edit.new.start > wrap_snapshot.max_point().row() {
+                    continue;
+                }
+                let rows_before =
+                    edit.new.start - wrap_snapshot.prev_excerpt_boundary(edit.new.start);
+                edit.new.start -= rows_before;
+                edit.old.start = edit.old.start.saturating_sub(rows_before);
+            }
+
+            let mut unmerged_edits = std::mem::take(&mut edits).into_iter().peekable();
+            while let Some(mut edit) = unmerged_edits.next() {
+                while let Some(next_edit) = unmerged_edits.peek()
+                    && (next_edit.old.start <= edit.old.end || next_edit.new.start <= edit.new.end)
+                {
+                    edit.old.end = next_edit.old.end.max(edit.old.end);
+                    edit.new.end = next_edit.new.end.max(edit.new.end);
+                    unmerged_edits.next();
+                }
+                edits.push(edit);
+            }
+        }
+
+        let mut edits = edits.into_iter().peekable();
         while let Some(edit) = edits.next() {
             let span = ztracing::debug_span!("while edits", edit = ?edit);
             let _enter = span.enter();
@@ -1326,28 +1350,7 @@ impl BlockMap {
             };
             let edit_for_first_point = excerpt.patch.edit_for_old_position(first_point);
 
-            // Because we calculate spacers based on differences in wrap row
-            // counts between the RHS and LHS for corresponding buffer points,
-            // we need to calibrate our expectations based on the difference
-            // in counts before the start of the edit. This difference in
-            // counts should have been balanced already by spacers above this
-            // edit, so we only need to insert spacers for when the difference
-            // in counts diverges from that baseline value.
-            let (our_baseline, their_baseline) = if edit_for_first_point.old.start < first_point {
-                // Case 1: We are inside a hunk/group--take the start of the hunk/group on both sides as the baseline.
-                (
-                    edit_for_first_point.old.start,
-                    edit_for_first_point.new.start,
-                )
-            } else if first_point.row > excerpt.source_excerpt_range.start.row {
-                // Case 2: We are not inside a hunk/group--go back by one row to find the baseline.
-                let prev_point = Point::new(first_point.row - 1, 0);
-                let edit_for_prev_point = excerpt.patch.edit_for_old_position(prev_point);
-                (prev_point, edit_for_prev_point.new.end)
-            } else {
-                // Case 3: We are at the start of the excerpt--no previous row to use as the baseline.
-                (first_point, edit_for_first_point.new.start)
-            };
+            let (our_baseline, their_baseline) = (first_point, edit_for_first_point.new.start);
             let our_baseline = our_wrapper(our_baseline, Bias::Left);
             let their_baseline = companion_wrapper(
                 their_baseline.min(excerpt.target_excerpt_range.end),
