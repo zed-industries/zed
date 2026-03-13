@@ -1,7 +1,7 @@
 use gpui::{AnyView, ClickEvent};
 use ui_macros::RegisterComponent;
 
-use crate::{Divider, DividerColor, prelude::*};
+use crate::prelude::*;
 use crate::{IconButton, IconName, Tooltip};
 
 #[derive(IntoElement, RegisterComponent)]
