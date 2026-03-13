@@ -2155,10 +2155,12 @@ mod tests {
 
     use super::*;
     use fs::MTime;
-    use gpui::{App, VisualTestContext};
+    use gpui::{App, UpdateGlobal, VisualTestContext};
     use language::TestFile;
     use project::FakeFs;
+    use settings::SettingsStore;
     use std::path::{Path, PathBuf};
+    use std::time::Duration;
     use util::{path, rel_path::RelPath};
 
     #[gpui::test]
@@ -2444,4 +2446,190 @@ mod tests {
             });
         }
     }
+
+    #[gpui::test]
+    async fn test_undo_restoration(cx: &mut gpui::TestAppContext) {
+        init_test(cx, |_| {});
+
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs.clone(), [], cx).await;
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
+        let workspace_id = workspace.update(cx, |workspace, _| {
+            workspace.set_random_database_id();
+            workspace.database_id().unwrap()
+        });
+        let item_id = 1234 as ItemId;
+
+        // Ensure workspace exists in DB
+        DB.write(move |conn| {
+            conn.exec_bound("INSERT INTO workspaces (workspace_id, window_state) VALUES (?1, ?2)")
+                .unwrap()((workspace_id, "test".to_string()))
+        }).await.unwrap();
+
+        // 1. Create a buffer, make edits, and serialize its history
+        let buffer = project
+            .update(cx, |project, cx| project.create_buffer(None, true, cx))
+            .await
+            .unwrap();
+
+        buffer.update(cx, |buffer, cx| {
+            buffer.set_group_interval(Duration::ZERO);
+            buffer.edit([(0..0, "A")], None, cx);
+            buffer.finalize_last_transaction();
+            buffer.edit([(1..1, "B")], None, cx);
+            buffer.finalize_last_transaction();
+            buffer.edit([(2..2, "C")], None, cx);
+        });
+
+        let (undo_history, contents) = buffer.update(cx, |buffer, _| {
+            (buffer.serialize_history(100).unwrap(), buffer.text())
+        });
+
+        // 2. Save to DB
+        let serialized_editor = SerializedEditor {
+            abs_path: None,
+            contents: Some(contents),
+            language: None,
+            mtime: None,
+            undo_history: Some(undo_history),
+        };
+
+        // We use a low-level DB call here to simulate a previously saved state
+        DB.write(move |conn| {
+            conn.exec_bound("INSERT INTO editors (item_id, workspace_id, contents, undo_history) VALUES (?1, ?2, ?3, ?4)")
+                .unwrap()((item_id, workspace_id, serialized_editor.contents, serialized_editor.undo_history))
+        }).await.unwrap();
+
+        // 3. Deserialize and verify undo works
+        let deserialized =
+            deserialize_editor(item_id, workspace_id, workspace.clone(), project, cx).await;
+
+        workspace.update_in(cx, |_, window, cx| {
+            deserialized.update(cx, |editor, cx| {
+                assert_eq!(editor.text(cx), "ABC");
+
+                // Perform an undo and verify text changed (even if we don't know exactly what was undone)
+                editor.undo(&Default::default(), window, cx);
+                assert_ne!(editor.text(cx), "ABC");
+            });
+        });
+    }
+
+    #[gpui::test]
+    async fn test_undo_history_serialization_on_quit(cx: &mut gpui::TestAppContext) {
+        init_test(cx, |_| {});
+
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs.clone(), [], cx).await;
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
+        let workspace_id = workspace.update(cx, |workspace, _| {
+            workspace.set_random_database_id();
+            workspace.database_id().unwrap()
+        });
+        let item_id = 999 as ItemId;
+
+        let buffer = project
+            .update(cx, |project, cx| project.create_buffer(None, true, cx))
+            .await
+            .unwrap();
+
+        buffer.update(cx, |buffer, cx| {
+            buffer.edit([(0..0, "persistent edit")], None, cx);
+        });
+
+        let (editor, cx) = cx.add_window_view(|window, cx| {
+            Editor::for_buffer(buffer, Some(project), window, cx)
+        });
+
+        // Trigger serialization (simulating quit/close)
+        // We need to ensure the workspace exists in DB for foreign keys
+        DB.write(move |conn| {
+            conn.exec_bound("INSERT INTO workspaces (workspace_id, window_state) VALUES (?1, ?2)")
+                .unwrap()((workspace_id, "test".to_string()))
+        }).await.unwrap();
+
+        let task = workspace.update_in(cx, |workspace, window, cx| {
+            editor.update(cx, |editor, cx| {
+                editor.serialize(workspace, item_id, true, window, cx).unwrap()
+            })
+        });
+        task.await.unwrap();
+
+        // Verify the DB contains the undo history
+        let saved = DB.get_serialized_editor(item_id, workspace_id).unwrap().unwrap();
+        assert!(saved.undo_history.is_some());
+        assert!(saved.undo_history.unwrap().len() > 0);
+    }
+
+    #[gpui::test]
+    async fn test_undo_history_max_operations_limit(cx: &mut gpui::TestAppContext) {
+        init_test(cx, |_| {});
+        cx.update(|cx| {
+            SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings.session.get_or_insert_default().restore_unsaved_buffers_max_operations = Some(2);
+                });
+            });
+        });
+
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs.clone(), [], cx).await;
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
+        let workspace_id = workspace.update(cx, |workspace, _| {
+            workspace.set_random_database_id();
+            workspace.database_id().unwrap()
+        });
+        let item_id = 888 as ItemId;
+
+        // Ensure workspace exists in DB
+        DB.write(move |conn| {
+            conn.exec_bound("INSERT INTO workspaces (workspace_id, window_state) VALUES (?1, ?2)")
+                .unwrap()((workspace_id, "test".to_string()))
+        }).await.unwrap();
+
+        let buffer = project
+            .update(cx, |project, cx| project.create_buffer(None, true, cx))
+            .await
+            .unwrap();
+
+        buffer.update(cx, |buffer, cx| {
+            buffer.set_group_interval(Duration::ZERO);
+            buffer.edit([(0..0, "1")], None, cx);
+            buffer.finalize_last_transaction();
+            buffer.edit([(1..1, "2")], None, cx);
+            buffer.finalize_last_transaction();
+            buffer.edit([(2..2, "3")], None, cx); // Total 3 operations, limit is 2
+        });
+
+        let (editor, cx) = cx.add_window_view(|window, cx| {
+            Editor::for_buffer(buffer, Some(project), window, cx)
+        });
+
+        let task = workspace.update_in(cx, |workspace, window, cx| {
+            editor.update(cx, |editor, cx| {
+                editor.serialize(workspace, item_id, true, window, cx).unwrap()
+            })
+        });
+        task.await.unwrap();
+
+        // Verify the DB contains NO undo history because it exceeded the limit
+        let saved = DB.get_serialized_editor(item_id, workspace_id).unwrap().unwrap();
+        assert!(saved.undo_history.as_ref().map_or(true, |h| h.is_empty()));
+    }
 }
+
+
+
+
+
+
+
+
+
+
