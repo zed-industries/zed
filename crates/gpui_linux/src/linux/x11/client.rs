@@ -1021,8 +1021,13 @@ impl X11Client {
                         return Some(());
                     }
 
-                    // should be called after key_get_one_sym
-                    state.xkb.update_key(code, xkbc::KeyDirection::Down);
+                    log::debug!(
+                        "x11 KeyPress: keycode={}, keysym={}, key={:?}, key_char={:?}",
+                        code.raw(),
+                        xkbc::keysym_get_name(keysym),
+                        keystroke.key,
+                        keystroke.key_char,
+                    );
 
                     if let Some(mut compose_state) = state.compose_state.take() {
                         compose_state.feed(keysym);
@@ -1090,9 +1095,6 @@ impl X11Client {
                     if keysym.is_modifier_key() {
                         return Some(());
                     }
-
-                    // should be called after key_get_one_sym
-                    state.xkb.update_key(code, xkbc::KeyDirection::Up);
 
                     keystroke
                 };
@@ -2593,18 +2595,35 @@ fn valid_scale_factor(scale_factor: f32) -> bool {
     scale_factor.is_sign_positive() && scale_factor.is_normal()
 }
 
+/// Sync xkb depressed modifier state from the X11 event's modifier bits.
+///
+/// This is needed because fast macro key sequences (e.g. Shift+[) can have
+/// their XkbStateNotify events arrive out of order, making the xkb state stale.
+/// The event's own `state` field is authoritative for depressed modifiers at
+/// the time of the key press.
+///
+/// Only depressed modifiers are overridden — latched/locked modifiers and all
+/// layout groups are preserved from the current xkb state to avoid breaking
+/// multi-layout keyboard configurations.
 #[inline]
 fn update_xkb_mask_from_event_state(xkb: &mut xkbc::State, event_state: xproto::KeyButMask) {
-    let depressed_mods = event_state.remove((ModMask::LOCK | ModMask::M2).bits());
+    // KeyButMask contains both modifier bits (0-7) and mouse button bits (8-15).
+    // Strip CapsLock and NumLock (they're tracked as locked, not depressed),
+    // and strip button bits which aren't modifier state.
+    let modifier_bits_only: u32 = u16::from(event_state) as u32 & 0xFF;
+    let depressed_mods = modifier_bits_only & !((ModMask::LOCK | ModMask::M2).bits() as u32);
+
     let latched_mods = xkb.serialize_mods(xkbc::STATE_MODS_LATCHED);
     let locked_mods = xkb.serialize_mods(xkbc::STATE_MODS_LOCKED);
+    let depressed_layout = xkb.serialize_layout(xkbc::STATE_LAYOUT_DEPRESSED);
+    let latched_layout = xkb.serialize_layout(xkbc::STATE_LAYOUT_LATCHED);
     let locked_layout = xkb.serialize_layout(xkbc::STATE_LAYOUT_LOCKED);
     xkb.update_mask(
-        depressed_mods.into(),
+        depressed_mods,
         latched_mods,
         locked_mods,
-        0,
-        0,
+        depressed_layout,
+        latched_layout,
         locked_layout,
     );
 }
