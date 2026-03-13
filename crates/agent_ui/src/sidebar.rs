@@ -1436,6 +1436,8 @@ impl Sidebar {
                 );
             });
         }
+
+        self.update_entries(cx);
     }
 
     fn open_workspace_and_activate_thread(
