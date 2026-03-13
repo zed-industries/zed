@@ -18434,23 +18434,30 @@ impl Editor {
         offset: i8,
     ) -> Task<Result<()>> {
         let editor_snapshot = self.snapshot(window, cx);
-        let Some((excerpt_id, _, buffer_snapshot)) = editor_snapshot.as_singleton() else {
+
+        // We don't care about multi-buffer symbols
+        let Some((excerpt_id, _, _)) = editor_snapshot.as_singleton() else {
             return Task::ready(Ok(()));
         };
 
-        let task = self.buffer_outline_items(buffer_snapshot.remote_id(), cx);
-        let multi_snapshot = self.buffer().read(cx).snapshot(cx);
         let cursor_offset = self
             .selections
-            .newest::<MultiBufferOffset>(&self.display_snapshot(cx))
+            .newest::<MultiBufferOffset>(&editor_snapshot.display_snapshot)
             .head();
 
         cx.spawn_in(window, async move |editor, wcx| -> Result<()> {
-            let Some(editor) = editor.upgrade() else {
+            let Ok(Some(remote_id)) = editor.update(wcx, |ed, cx| {
+                let buffer = ed.buffer.read(cx).as_singleton()?;
+                Some(buffer.read(cx).remote_id())
+            }) else {
                 return Ok(());
             };
 
+            let task = editor.update(wcx, |ed, cx| ed.buffer_outline_items(remote_id, cx))?;
             let outline_items: Vec<OutlineItem<text::Anchor>> = task.await;
+
+            let multi_snapshot = editor_snapshot.buffer();
+            let buffer_range = |range: &Range<_>| Anchor::range_in_buffer(excerpt_id, range.clone()).to_offset(multi_snapshot);
 
             wcx.update_window(wcx.window_handle(), |_, window, acx| {
                 let current_idx = outline_items
@@ -18458,17 +18465,14 @@ impl Editor {
                     .enumerate()
                     .filter_map(|(idx, item)| {
                         // Find the closest outline item by distance between outline text and cursor location
-                        let source_range =
-                            Anchor::range_in_buffer(excerpt_id, item.source_range_for_text.clone());
-                        let source_range = source_range.to_offset(&multi_snapshot);
+                        let source_range = buffer_range(&item.source_range_for_text);
                         let distance_to_closest_endpoint = cmp::min(
                             (source_range.start.0 as isize - cursor_offset.0 as isize).abs(),
                             (source_range.end.0 as isize - cursor_offset.0 as isize).abs(),
                         );
 
                         // Candidate outline item must also contain the cursor
-                        let range = Anchor::range_in_buffer(excerpt_id, item.range.clone());
-                        let range = range.to_offset(&multi_snapshot);
+                        let range = buffer_range(&item.range);
                         range
                             .contains(&cursor_offset)
                             .then_some((distance_to_closest_endpoint, idx))
@@ -18477,14 +18481,11 @@ impl Editor {
                     .map(|(_, idx)| idx);
 
                 let Some(idx) = current_idx else {
+                    log::warn!("no enclosing symbols found");
                     return;
                 };
 
-                let source_range = Anchor::range_in_buffer(
-                    excerpt_id,
-                    outline_items[idx].source_range_for_text.clone(),
-                );
-                let source_range = source_range.to_offset(&multi_snapshot);
+                let source_range = buffer_range(&outline_items[idx].source_range_for_text);
 
                 // If we're inside an outline item but the cursor position does not overlap with the outline text,
                 // and if the direction of movement is towards the outline text, we can stay within the same outline
@@ -18504,14 +18505,17 @@ impl Editor {
 
                 let range =
                     Anchor::range_in_buffer(excerpt_id, outline_items[offset_idx].range.clone());
-                editor.update(acx, |editor, ecx| {
-                    editor.change_selections(
-                        SelectionEffects::scroll(Autoscroll::center()),
-                        window,
-                        ecx,
-                        |s| s.select_ranges([range.start..range.start]),
-                    );
-                });
+
+                let _ = editor
+                    .update(acx, |editor, ecx| {
+                        editor.change_selections(
+                            SelectionEffects::scroll(Autoscroll::center()),
+                            window,
+                            ecx,
+                            |s| s.select_ranges([range.start..range.start]),
+                        );
+                    })
+                    .ok();
             })?;
 
             Ok(())
