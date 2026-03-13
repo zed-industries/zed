@@ -10,7 +10,7 @@ use language_model::LanguageModelRegistry;
 use language_models::provider::open_ai_compatible::{AvailableModel, ModelCapabilities};
 use settings::{OpenAiCompatibleSettingsContent, update_settings_file};
 use ui::{
-    Banner, Checkbox, KeyBinding, Modal, ModalFooter, ModalHeader, Section, ToggleState, Tooltip,
+    Banner, Checkbox, KeyBinding, Modal, ModalFooter, ModalHeader, Section, ToggleState,
     WithScrollbar, prelude::*,
 };
 use ui_input::InputField;
