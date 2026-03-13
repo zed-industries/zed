@@ -2320,6 +2320,9 @@ impl DisplaySnapshot {
                 if !line_indent.is_line_blank()
                     && line_indent.raw_len() <= start_line_indent.raw_len()
                 {
+                    if self.is_inside_multiline_literal(row) {
+                        continue;
+                    }
                     let prev_row = row - 1;
                     end = Some(Point::new(
                         prev_row,
@@ -2353,6 +2356,30 @@ impl DisplaySnapshot {
             })
         } else {
             None
+        }
+    }
+
+    fn is_inside_multiline_literal(&self, row: u32) -> bool {
+        let point = Point::new(row, 0);
+        let Some((node, _)) = self.buffer_snapshot().syntax_ancestor(point..point) else {
+            return false;
+        };
+
+        let mut current = node;
+        loop {
+            let kind = current.kind();
+            if current.start_position().row != current.end_position().row
+                && (kind.contains("string")
+                    || kind.contains("comment")
+                    || kind.contains("heredoc"))
+            {
+                return true;
+            }
+            if let Some(parent) = current.parent() {
+                current = parent;
+            } else {
+                return false;
+            }
         }
     }
 
