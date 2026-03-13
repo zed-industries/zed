@@ -3093,7 +3093,11 @@ mod tests {
             );
             multi_buffer
         });
-        let excerpt_ids = multi_buffer.read_with(cx, |mb, _| mb.excerpt_ids());
+        let excerpt_start_anchors = multi_buffer
+            .read_with(cx, |mb, _| {
+                mb.snapshot(cx).excerpts().map(|e| e.start_anchor())
+            })
+            .collect::<Vec<_>>();
 
         let font = test_font();
         let font_size = px(14.);
@@ -3126,9 +3130,9 @@ mod tests {
         assert_eq!(
             blocks,
             vec![
-                (0..1, BlockId::ExcerptBoundary(excerpt_ids[0])), // path, header
-                (3..4, BlockId::ExcerptBoundary(excerpt_ids[1])), // path, header
-                (6..7, BlockId::ExcerptBoundary(excerpt_ids[2])), // path, header
+                (0..1, BlockId::ExcerptBoundary(excerpt_start_anchors[0])), // path, header
+                (3..4, BlockId::ExcerptBoundary(excerpt_start_anchors[1])), // path, header
+                (6..7, BlockId::ExcerptBoundary(excerpt_start_anchors[2])), // path, header
             ]
         );
     }
@@ -3444,13 +3448,13 @@ mod tests {
                 ],
                 cx,
             );
-            assert_eq!(multibuffer.read(cx).excerpt_ids().len(), 6);
+            assert_eq!(multibuffer.read(cx).snapshot(cx).excerpts().count(), 6);
             multibuffer
         });
         let buffer_snapshot = cx.update(|cx| buffer.read(cx).snapshot(cx));
         let buffer_ids = buffer_snapshot
             .excerpts()
-            .map(|(_, buffer_snapshot, _)| buffer_snapshot.remote_id())
+            .map(|excerpt| excerpt.buffer_id())
             .dedup()
             .collect::<Vec<_>>();
         assert_eq!(buffer_ids.len(), 3);
@@ -3797,7 +3801,7 @@ mod tests {
         let buffer_snapshot = cx.update(|cx| buffer.read(cx).snapshot(cx));
         let buffer_ids = buffer_snapshot
             .excerpts()
-            .map(|(_, buffer_snapshot, _)| buffer_snapshot.remote_id())
+            .map(|excerpt| excerpt.buffer_id())
             .dedup()
             .collect::<Vec<_>>();
         assert_eq!(buffer_ids.len(), 1);
@@ -4008,7 +4012,9 @@ mod tests {
                     let (unfolded_buffers, folded_buffers) = buffer.read_with(cx, |buffer, _| {
                         let folded_buffers: Vec<_> =
                             block_map.block_map.folded_buffers.iter().cloned().collect();
-                        let mut unfolded_buffers = buffer.excerpt_buffer_ids();
+                        let mut unfolded_buffers = buffer_snapshot
+                            .buffer_ids_for_range(Anchor::Min..Anchor::Max)
+                            .collect::<Vec<_>>();
                         unfolded_buffers.dedup();
                         log::debug!("All buffers {unfolded_buffers:?}");
                         log::debug!("Folded buffers {folded_buffers:?}");
@@ -4036,12 +4042,13 @@ mod tests {
                             log::info!("Folding {buffer_to_fold:?}");
                             let related_excerpts = buffer_snapshot
                                 .excerpts()
-                                .filter_map(|(excerpt_id, buffer, range)| {
-                                    if buffer.remote_id() == buffer_to_fold {
+                                .filter_map(|excerpt| {
+                                    if excerpt.buffer_id() == buffer_to_fold {
                                         Some((
-                                            excerpt_id,
-                                            buffer
-                                                .text_for_range(range.context)
+                                            excerpt.start_anchor(),
+                                            excerpt
+                                                .buffer_snapshot()
+                                                .text_for_range(excerpt.range().context)
                                                 .collect::<String>(),
                                         ))
                                     } else {
@@ -4515,7 +4522,7 @@ mod tests {
         let buffer_snapshot = cx.update(|cx| buffer.read(cx).snapshot(cx));
         let buffer_ids = buffer_snapshot
             .excerpts()
-            .map(|(_, buffer_snapshot, _)| buffer_snapshot.remote_id())
+            .map(|excerpt| excerpt.buffer_id())
             .dedup()
             .collect::<Vec<_>>();
         assert_eq!(buffer_ids.len(), 1);
@@ -4560,7 +4567,7 @@ mod tests {
         let buffer_snapshot = cx.update(|cx| buffer.read(cx).snapshot(cx));
         let buffer_ids = buffer_snapshot
             .excerpts()
-            .map(|(_, buffer_snapshot, _)| buffer_snapshot.remote_id())
+            .map(|excerpt| excerpt.buffer_id())
             .dedup()
             .collect::<Vec<_>>();
         assert_eq!(buffer_ids.len(), 1);
@@ -4632,10 +4639,12 @@ mod tests {
         let subscription =
             rhs_multibuffer.update(cx, |rhs_multibuffer, _| rhs_multibuffer.subscribe());
 
-        let lhs_excerpt_id =
-            lhs_multibuffer.read_with(cx, |mb, cx| mb.snapshot(cx).excerpts().next().unwrap().0);
-        let rhs_excerpt_id =
-            rhs_multibuffer.read_with(cx, |mb, cx| mb.snapshot(cx).excerpts().next().unwrap().0);
+        let lhs_start_anchor = lhs_multibuffer.read_with(cx, |mb, cx| {
+            mb.snapshot(cx).excerpts().next().unwrap().start_anchor()
+        });
+        let rhs_excerpt_id = rhs_multibuffer.read_with(cx, |mb, cx| {
+            mb.snapshot(cx).excerpts().next().unwrap().start_anchor()
+        });
 
         let lhs_buffer_snapshot = cx.update(|cx| lhs_multibuffer.read(cx).snapshot(cx));
         let (mut _lhs_inlay_map, lhs_inlay_snapshot) = InlayMap::new(lhs_buffer_snapshot);
@@ -4663,7 +4672,7 @@ mod tests {
                 convert_rhs_rows_to_lhs,
                 convert_lhs_rows_to_rhs,
             );
-            c.add_excerpt_mapping(lhs_excerpt_id, rhs_excerpt_id);
+            c.add_excerpt_mapping(lhs_start_anchor, rhs_excerpt_id);
             c
         });
 
