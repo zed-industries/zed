@@ -328,26 +328,26 @@
 ; JSX elements
 (jsx_opening_element
   [
-    (identifier) @type
+    (identifier) @tag.component
     (member_expression
-      object: (identifier) @type
-      property: (property_identifier) @type)
+      object: (identifier) @tag.component
+      property: (property_identifier) @tag.component)
   ])
 
 (jsx_closing_element
   [
-    (identifier) @type
+    (identifier) @tag.component
     (member_expression
-      object: (identifier) @type
-      property: (property_identifier) @type)
+      object: (identifier) @tag.component
+      property: (property_identifier) @tag.component)
   ])
 
 (jsx_self_closing_element
   [
-    (identifier) @type
+    (identifier) @tag.component
     (member_expression
-      object: (identifier) @type
-      property: (property_identifier) @type)
+      object: (identifier) @tag.component
+      property: (property_identifier) @tag.component)
   ])
 
 (jsx_opening_element
