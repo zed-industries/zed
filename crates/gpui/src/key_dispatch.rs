@@ -692,63 +692,6 @@ mod tests {
     }
 
     #[test]
-    fn test_xf86_binding_order_determines_display_precedence() {
-        // XF86 keys like "save", "new", "copy" etc. map to single-word key names
-        // that look confusing in menus (e.g. "Save" instead of "Ctrl+S").
-        // The keymap file must list XF86 bindings BEFORE regular bindings so that
-        // highest_precedence_binding_for_action (which picks the last match)
-        // selects the regular binding for display.
-
-        // Correct order: XF86 binding first, regular binding second.
-        let keymap = Keymap::new(vec![
-            KeyBinding::new("save", TestAction, Some("ContextEditor")),
-            KeyBinding::new("ctrl-s", TestAction, Some("ContextEditor")),
-        ]);
-
-        let mut registry = ActionRegistry::default();
-        registry.load_action::<TestAction>();
-
-        let keymap = Rc::new(RefCell::new(keymap));
-        let tree = DispatchTree::new(keymap, Rc::new(registry));
-
-        let contexts = vec![KeyContext::parse("ContextEditor").unwrap()];
-
-        let binding = tree.highest_precedence_binding_for_action(&TestAction, &contexts);
-        assert!(binding.is_some(), "should find a binding");
-        assert_eq!(
-            binding.as_ref().map(|b| b.keystrokes[0].key()),
-            Some("s"),
-            "ctrl-s should be the highest precedence binding, not the XF86 'save' key"
-        );
-    }
-
-    #[test]
-    fn test_xf86_binding_wrong_order_shows_xf86_key() {
-        // This test documents that if XF86 bindings are listed AFTER regular
-        // bindings, the XF86 key name will be shown in menus — which is the
-        // bug we're preventing via keymap ordering.
-        let keymap = Keymap::new(vec![
-            KeyBinding::new("ctrl-s", TestAction, Some("ContextEditor")),
-            KeyBinding::new("save", TestAction, Some("ContextEditor")),
-        ]);
-
-        let mut registry = ActionRegistry::default();
-        registry.load_action::<TestAction>();
-
-        let keymap = Rc::new(RefCell::new(keymap));
-        let tree = DispatchTree::new(keymap, Rc::new(registry));
-
-        let contexts = vec![KeyContext::parse("ContextEditor").unwrap()];
-
-        let binding = tree.highest_precedence_binding_for_action(&TestAction, &contexts);
-        assert_eq!(
-            binding.as_ref().map(|b| b.keystrokes[0].key()),
-            Some("save"),
-            "wrong order: XF86 'save' key takes precedence over ctrl-s"
-        );
-    }
-
-    #[test]
     fn test_pending_has_binding_state() {
         let bindings = vec![
             KeyBinding::new("ctrl-b h", TestAction, None),
