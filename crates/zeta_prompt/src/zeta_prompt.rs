@@ -310,10 +310,7 @@ pub fn write_cursor_excerpt_section_for_format(
     context: &str,
     editable_range: &Range<usize>,
     cursor_offset: usize,
-    max_tokens: usize,
-) -> bool {
-    let prompt_start = prompt.len();
-
+) {
     match format {
         ZetaFormat::V0112MiddleAtEnd => v0112_middle_at_end::write_cursor_excerpt_section(
             prompt,
@@ -375,14 +372,6 @@ pub fn write_cursor_excerpt_section_for_format(
             ));
         }
     }
-
-    let cursor_section_len = prompt.len() - prompt_start;
-    if estimate_tokens(cursor_section_len) > max_tokens {
-        prompt.truncate(prompt_start);
-        return false;
-    }
-
-    true
 }
 
 fn build_v0306_cursor_prefix(
@@ -447,49 +436,39 @@ pub fn format_prompt_with_budget_for_format(
         input_related_files
     };
 
-    match format {
+    let prompt = match format {
         ZetaFormat::V0211SeedCoder
         | ZetaFormat::V0304SeedNoEdits
         | ZetaFormat::V0306SeedMultiRegions => {
             let mut cursor_section = String::new();
-            let wrote_cursor_section = write_cursor_excerpt_section_for_format(
+            write_cursor_excerpt_section_for_format(
                 format,
                 &mut cursor_section,
                 path,
                 context,
                 &editable_range,
                 cursor_offset,
-                max_tokens,
             );
 
-            if !wrote_cursor_section {
-                return None;
-            }
-
-            Some(seed_coder::assemble_fim_prompt(
+            seed_coder::assemble_fim_prompt(
                 context,
                 &editable_range,
                 &cursor_section,
                 &input.events,
                 related_files,
                 max_tokens,
-            ))
+            )
         }
         _ => {
             let mut cursor_section = String::new();
-            let wrote_cursor_section = write_cursor_excerpt_section_for_format(
+            write_cursor_excerpt_section_for_format(
                 format,
                 &mut cursor_section,
                 path,
                 context,
                 &editable_range,
                 cursor_offset,
-                max_tokens,
             );
-
-            if !wrote_cursor_section {
-                return None;
-            }
 
             let cursor_tokens = estimate_tokens(cursor_section.len());
             let budget_after_cursor = max_tokens.saturating_sub(cursor_tokens);
@@ -515,9 +494,13 @@ pub fn format_prompt_with_budget_for_format(
             prompt.push_str(&related_files_section);
             prompt.push_str(&edit_history_section);
             prompt.push_str(&cursor_section);
-            Some(prompt)
+            prompt
         }
+    };
+    if estimate_tokens(prompt.len()) >= max_tokens {
+        return None;
     }
+    return Some(prompt);
 }
 
 pub fn filter_redundant_excerpts(
@@ -4122,9 +4105,8 @@ mod tests {
         );
 
         assert_eq!(
-            format_with_budget(&input, 10000),
-            Some(
-                indoc! {r#"
+            format_with_budget(&input, 10000).unwrap(),
+            indoc! {r#"
                 <|file_sep|>related.rs
                 fn helper() {}
                 <|file_sep|>edit history
@@ -4142,8 +4124,7 @@ mod tests {
                 suffix
                 <|fim_middle|>updated
             "#}
-                .to_string()
-            )
+            .to_string()
         );
     }
 
@@ -4161,9 +4142,8 @@ mod tests {
         );
 
         assert_eq!(
-            format_with_budget(&input, 10000),
-            Some(
-                indoc! {r#"
+            format_with_budget(&input, 10000).unwrap(),
+            indoc! {r#"
                 <|file_sep|>r1.rs
                 a
                 <|file_sep|>r2.rs
@@ -4180,14 +4160,12 @@ mod tests {
                 <|fim_suffix|>
                 <|fim_middle|>updated
             "#}
-                .to_string()
-            )
+            .to_string()
         );
 
         assert_eq!(
-            format_with_budget(&input, 50),
-            Some(
-                indoc! {r#"
+            format_with_budget(&input, 50).unwrap(),
+            indoc! {r#"
                 <|file_sep|>r1.rs
                 a
                 <|file_sep|>r2.rs
@@ -4199,8 +4177,7 @@ mod tests {
                 <|fim_suffix|>
                 <|fim_middle|>updated
             "#}
-                .to_string()
-            )
+            .to_string()
         );
     }
 
@@ -4236,9 +4213,8 @@ mod tests {
         );
 
         assert_eq!(
-            format_with_budget(&input, 10000),
-            Some(
-                indoc! {r#"
+            format_with_budget(&input, 10000).unwrap(),
+            indoc! {r#"
                 <|file_sep|>big.rs
                 first excerpt
                 ...
@@ -4252,14 +4228,12 @@ mod tests {
                 <|fim_suffix|>
                 <|fim_middle|>updated
             "#}
-                .to_string()
-            )
+            .to_string()
         );
 
         assert_eq!(
-            format_with_budget(&input, 50),
-            Some(
-                indoc! {r#"
+            format_with_budget(&input, 50).unwrap(),
+            indoc! {r#"
                 <|file_sep|>big.rs
                 first excerpt
                 ...
@@ -4270,8 +4244,7 @@ mod tests {
                 <|fim_suffix|>
                 <|fim_middle|>updated
             "#}
-                .to_string()
-            )
+            .to_string()
         );
     }
 
@@ -4310,9 +4283,8 @@ mod tests {
 
         // With large budget, both files included; rendered in stable lexicographic order.
         assert_eq!(
-            format_with_budget(&input, 10000),
-            Some(
-                indoc! {r#"
+            format_with_budget(&input, 10000).unwrap(),
+            indoc! {r#"
                 <|file_sep|>file_a.rs
                 low priority content
                 <|file_sep|>file_b.rs
@@ -4324,8 +4296,7 @@ mod tests {
                 <|fim_suffix|>
                 <|fim_middle|>updated
             "#}
-                .to_string()
-            )
+            .to_string()
         );
 
         // With tight budget, only file_b (lower order) fits.
@@ -4333,9 +4304,8 @@ mod tests {
         // file_b header (7) + excerpt (7) = 14 tokens, which fits.
         // file_a would need another 14 tokens, which doesn't fit.
         assert_eq!(
-            format_with_budget(&input, 52),
-            Some(
-                indoc! {r#"
+            format_with_budget(&input, 52).unwrap(),
+            indoc! {r#"
                 <|file_sep|>file_b.rs
                 high priority content
                 <|file_sep|>test.rs
@@ -4345,8 +4315,7 @@ mod tests {
                 <|fim_suffix|>
                 <|fim_middle|>updated
             "#}
-                .to_string()
-            )
+            .to_string()
         );
     }
 
@@ -4484,49 +4453,7 @@ mod tests {
             vec![make_related_file("related.rs", "helper\n")],
         );
 
-        assert_eq!(
-            format_with_budget(&input, 30).unwrap(),
-            indoc! {r#"
-                <|file_sep|>test.rs
-                <|fim_prefix|>
-                <|fim_middle|>current
-                fn <|user_cursor|>main() {}
-                <|fim_suffix|>
-                <|fim_middle|>updated
-            "#}
-            .to_string()
-        );
-    }
-
-    #[test]
-    fn test_cursor_region_stays_within_budget_when_cursor_line_exceeds_budget() {
-        let oversized_line = format!("{}{}", "a".repeat(120), "\n");
-        let input = make_input(&oversized_line, 0..oversized_line.len(), 60, vec![], vec![]);
-        let max_tokens = 20;
-
-        let (context, editable_range, _, cursor_offset) =
-            resolve_cursor_region(&input, ZetaFormat::V0114180EditableRegion);
-        let mut cursor_section = String::new();
-        let wrote_cursor_section = write_cursor_excerpt_section_for_format(
-            ZetaFormat::V0114180EditableRegion,
-            &mut cursor_section,
-            input.cursor_path.as_ref(),
-            context,
-            &editable_range,
-            cursor_offset,
-            max_tokens,
-        );
-
-        assert!(!wrote_cursor_section);
-        assert!(cursor_section.is_empty());
-        assert_eq!(
-            format_prompt_with_budget_for_format(
-                &input,
-                ZetaFormat::V0114180EditableRegion,
-                max_tokens,
-            ),
-            None
-        );
+        assert!(format_with_budget(&input, 30).is_none())
     }
 
     fn format_seed_coder(input: &ZetaPromptInput) -> String {
