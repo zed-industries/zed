@@ -19,10 +19,9 @@ jobs:
         fetch-depth: 2
     - id: detect
       name: extension_auto_bump::detect_changed_extensions
-      run: |
-        COMPARE_REV="$(git rev-parse HEAD~1)"
-        CHANGED_FILES="$(git diff --name-only "$COMPARE_REV" "$GITHUB_SHA")"
-
+      run: |+
+        COMPARE_REV=\"$(git rev-parse HEAD~1)\
+        CHANGED_FILES=\"$(git diff --name-only \"$COMPARE_REV\" \"$GITHUB_SHA\")\"
         # Detect changed extension directories (excluding extensions/workflows)
         CHANGED_EXTENSIONS=$(echo "$CHANGED_FILES" | grep -oP '^extensions/[^/]+(?=/)' | sort -u | grep -v '^extensions/workflows$' || true)
         if [ -n "$CHANGED_EXTENSIONS" ]; then
@@ -31,6 +30,7 @@ jobs:
             EXTENSIONS_JSON="[]"
         fi
         echo "changed_extensions=$EXTENSIONS_JSON" >> "$GITHUB_OUTPUT"
+
     outputs:
       changed_extensions: ${{ steps.detect.outputs.changed_extensions }}
     timeout-minutes: 5

@@ -1,11 +1,12 @@
 use gh_workflow::{
     Event, Expression, Input, Job, Level, Permissions, Push, Strategy, UsesJob, Workflow,
 };
-use indoc::indoc;
+use indoc::formatdoc;
 use serde_json::json;
 
 use crate::tasks::workflows::{
     extensions::WithAppSecrets,
+    run_tests::DETECT_CHANGED_EXTENSIONS_SCRIPT,
     runners,
     steps::{self, CommonJobConditions, NamedJob, named},
     vars::{StepOutput, one_workflow_per_non_main_branch},
@@ -28,20 +29,15 @@ pub(crate) fn extension_auto_bump() -> Workflow {
 }
 
 fn detect_changed_extensions() -> NamedJob {
-    let step = named::bash(indoc! {r#"
-        COMPARE_REV="$(git rev-parse HEAD~1)"
-        CHANGED_FILES="$(git diff --name-only "$COMPARE_REV" "$GITHUB_SHA")"
+    let script = formatdoc!(
+        r#"
+        COMPARE_REV=\"$(git rev-parse HEAD~1)\
+        CHANGED_FILES=\"$(git diff --name-only \"$COMPARE_REV\" \"$GITHUB_SHA\")\"
+        {DETECT_CHANGED_EXTENSIONS_SCRIPT}
+        "#
+    );
 
-        # Detect changed extension directories (excluding extensions/workflows)
-        CHANGED_EXTENSIONS=$(echo "$CHANGED_FILES" | grep -oP '^extensions/[^/]+(?=/)' | sort -u | grep -v '^extensions/workflows$' || true)
-        if [ -n "$CHANGED_EXTENSIONS" ]; then
-            EXTENSIONS_JSON=$(echo "$CHANGED_EXTENSIONS" | jq -R -s -c 'split("\n") | map(select(length > 0))')
-        else
-            EXTENSIONS_JSON="[]"
-        fi
-        echo "changed_extensions=$EXTENSIONS_JSON" >> "$GITHUB_OUTPUT"
-    "#})
-    .id("detect");
+    let step = named::bash(script).id("detect");
 
     let output = StepOutput::new(&step, "changed_extensions");
 

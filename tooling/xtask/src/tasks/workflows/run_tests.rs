@@ -247,16 +247,7 @@ fn orchestrate_impl(
     }
 
     if include_extension_filter {
-        script.push_str(indoc::indoc! {r#"
-        # Detect changed extension directories (excluding extensions/workflows)
-        CHANGED_EXTENSIONS=$(echo "$CHANGED_FILES" | grep -oP '^extensions/[^/]+(?=/)' | sort -u | grep -v '^extensions/workflows$' || true)
-        if [ -n "$CHANGED_EXTENSIONS" ]; then
-            EXTENSIONS_JSON=$(echo "$CHANGED_EXTENSIONS" | jq -R -s -c 'split("\n") | map(select(length > 0))')
-        else
-            EXTENSIONS_JSON="[]"
-        fi
-        echo "changed_extensions=$EXTENSIONS_JSON" >> "$GITHUB_OUTPUT"
-        "#});
+        script.push_str(DETECT_CHANGED_EXTENSIONS_SCRIPT);
 
         outputs.insert(
             "changed_extensions".to_owned(),
@@ -331,6 +322,20 @@ pub fn tests_pass(jobs: &[NamedJob], extra_job_names: &[&str]) -> NamedJob {
 
     named::job(job)
 }
+
+/// Bash script snippet that detects changed extension directories from `$CHANGED_FILES`.
+/// Assumes `$CHANGED_FILES` is already set. Outputs `changed_extensions` as a JSON array
+/// to `$GITHUB_OUTPUT`.
+pub(crate) const DETECT_CHANGED_EXTENSIONS_SCRIPT: &str = indoc::indoc! {r#"
+    # Detect changed extension directories (excluding extensions/workflows)
+    CHANGED_EXTENSIONS=$(echo "$CHANGED_FILES" | grep -oP '^extensions/[^/]+(?=/)' | sort -u | grep -v '^extensions/workflows$' || true)
+    if [ -n "$CHANGED_EXTENSIONS" ]; then
+        EXTENSIONS_JSON=$(echo "$CHANGED_EXTENSIONS" | jq -R -s -c 'split("\n") | map(select(length > 0))')
+    else
+        EXTENSIONS_JSON="[]"
+    fi
+    echo "changed_extensions=$EXTENSIONS_JSON" >> "$GITHUB_OUTPUT"
+"#};
 
 const TS_QUERY_LS_FILE: &str = "ts_query_ls-x86_64-unknown-linux-gnu.tar.gz";
 const CI_TS_QUERY_RELEASE: &str = "tags/v3.15.1";
