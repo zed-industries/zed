@@ -17,11 +17,13 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::Settings;
 use ui::{
-    ButtonLike, Divider, DividerColor, IconButtonShape, KeyBinding, TextSize, Vector, VectorName,
-    prelude::*,
+    ButtonLike, Divider, DividerColor, IconButtonShape, KeyBinding, TextSize, Tooltip, Vector,
+    VectorName, prelude::*,
 };
 use util::ResultExt;
-use zed_actions::{Extensions, OpenOnboarding, OpenSettings, agent, command_palette};
+use zed_actions::{
+    ChangeKeybinding, Extensions, OpenOnboarding, OpenSettings, agent, command_palette,
+};
 
 #[derive(PartialEq, Clone, Debug, Deserialize, Serialize, JsonSchema, Action)]
 #[action(namespace = welcome)]
@@ -562,7 +564,19 @@ impl WelcomePage {
                             .children(tip.mentioned_actions.iter().map(|action| {
                                 let action_name = humanize_action_name(action.name());
                                 let action_clone = action.boxed_clone();
+                                let change_keybinding_action = action.boxed_clone();
                                 let focus_handle = focus.clone();
+                                let has_binding = window
+                                    .highest_precedence_binding_for_action_in(
+                                        action.as_ref(),
+                                        focus,
+                                    )
+                                    .or_else(|| {
+                                        window.highest_precedence_binding_for_action(
+                                            action.as_ref(),
+                                        )
+                                    })
+                                    .is_some();
                                 ButtonLike::new(SharedString::from(format!(
                                     "tip-action-{action_name}"
                                 )))
@@ -574,13 +588,39 @@ impl WelcomePage {
                                         .child(
                                             Label::new(action_name).size(LabelSize::Small),
                                         )
-                                        .child(KeyBinding::for_action_in(
-                                            action.as_ref(), focus, cx,
-                                        )),
+                                        .when(has_binding, |this| {
+                                            this.child(KeyBinding::for_action_in(
+                                                action.as_ref(),
+                                                focus,
+                                                cx,
+                                            ))
+                                        })
+                                        .when(!has_binding, |this| {
+                                            this.child(
+                                                Label::new("No shortcut")
+                                                    .size(LabelSize::Small)
+                                                    .color(Color::Muted),
+                                            )
+                                        }),
                                 )
+                                .when(!has_binding, |this| {
+                                    this.tooltip(Tooltip::text(
+                                        "Right-click to add a keybinding",
+                                    ))
+                                })
                                 .on_click(move |_, window, cx| {
                                     focus_handle
                                         .dispatch_action(&*action_clone, window, cx);
+                                })
+                                .on_right_click(move |_, window, cx| {
+                                    window.dispatch_action(
+                                        Box::new(ChangeKeybinding {
+                                            action: change_keybinding_action
+                                                .name()
+                                                .to_string(),
+                                        }),
+                                        cx,
+                                    );
                                 })
                             })),
                     )
