@@ -1,11 +1,11 @@
-use std::rc::Rc;
+use std::{path::PathBuf, rc::Rc};
 
 use acp_thread::{AgentConnection, LoadError};
 use agent_servers::{AgentServer, AgentServerDelegate};
 use anyhow::Result;
 use collections::HashMap;
 use futures::{FutureExt, future::Shared};
-use gpui::{AppContext, Context, Entity, EventEmitter, SharedString, Subscription, Task};
+use gpui::{App, AppContext, Context, Entity, EventEmitter, SharedString, Subscription, Task};
 use project::{AgentServerStore, AgentServersUpdated, Project};
 use watch::Receiver;
 
@@ -161,7 +161,11 @@ impl AgentConnectionStore {
         let (new_version_tx, new_version_rx) = watch::channel::<Option<String>>(None);
 
         let agent_server_store = self.project.read(cx).agent_server_store().clone();
-        let delegate = AgentServerDelegate::new(agent_server_store, Some(new_version_tx));
+        let delegate = AgentServerDelegate::new(
+            agent_server_store,
+            Some(new_version_tx),
+            self.startup_cwd(cx),
+        );
 
         let connect_task = server.connect(delegate, cx);
         let connect_task = cx.spawn(async move |_this, cx| match connect_task.await {
@@ -178,5 +182,53 @@ impl AgentConnectionStore {
             },
         });
         (new_version_rx, connect_task)
+    }
+
+    fn startup_cwd(&self, cx: &App) -> Option<PathBuf> {
+        let project = self.project.read(cx);
+        if !project.is_local() {
+            return None;
+        }
+
+        project
+            .active_project_directory(cx)
+            .map(|path| path.to_path_buf())
+            .or_else(|| {
+                project.visible_worktrees(cx).find_map(|worktree| {
+                    worktree.read(cx).root_dir().map(|path| path.to_path_buf())
+                })
+            })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use gpui::TestAppContext;
+    use project::{FakeFs, Project};
+    use std::path::Path;
+
+    fn init_test(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            let settings_store = settings::SettingsStore::test(cx);
+            cx.set_global(settings_store);
+            theme::init(theme::LoadThemes::JustBase, cx);
+        });
+    }
+
+    #[gpui::test]
+    async fn test_startup_cwd_uses_visible_project_root(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree("/project", serde_json::json!({ "src": { "main.rs": "" } }))
+            .await;
+
+        let project = Project::test(fs, [Path::new("/project")], cx).await;
+        let store = cx.update(|cx| cx.new(|cx| AgentConnectionStore::new(project, cx)));
+
+        store.read_with(cx, |store, cx| {
+            assert_eq!(store.startup_cwd(cx), Some(PathBuf::from("/project")));
+        });
     }
 }
