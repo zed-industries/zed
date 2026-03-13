@@ -1,32 +1,33 @@
-use crate::{RemoveHistory, RemoveSelectedThread};
-use assistant_text_thread::{SavedTextThreadMetadata, TextThreadStore};
-use chrono::{Datelike, Local, NaiveDate, TimeDelta, Utc};
+use crate::thread_history::ThreadHistory;
+use crate::{AgentPanel, ConnectionView, RemoveHistory, RemoveSelectedThread};
+use acp_thread::AgentSessionInfo;
+use chrono::{Datelike as _, Local, NaiveDate, TimeDelta, Utc};
 use editor::{Editor, EditorEvent};
 use fuzzy::StringMatchCandidate;
 use gpui::{
-    App, Entity, EventEmitter, FocusHandle, Focusable, Task, UniformListScrollHandle, Window,
-    uniform_list,
+    AnyElement, App, Entity, EventEmitter, FocusHandle, Focusable, ScrollStrategy, Task,
+    UniformListScrollHandle, WeakEntity, Window, uniform_list,
 };
 use std::{fmt::Display, ops::Range};
 use text::Bias;
 use time::{OffsetDateTime, UtcOffset};
 use ui::{
-    HighlightedLabel, IconButtonShape, ListItem, ListItemSpacing, Tab, Tooltip, WithScrollbar,
-    prelude::*,
+    ElementId, HighlightedLabel, IconButtonShape, ListItem, ListItemSpacing, Tab, Tooltip,
+    WithScrollbar, prelude::*,
 };
 
 const DEFAULT_TITLE: &SharedString = &SharedString::new_static("New Thread");
 
-fn thread_title(entry: &SavedTextThreadMetadata) -> &SharedString {
-    if entry.title.is_empty() {
-        DEFAULT_TITLE
-    } else {
-        &entry.title
-    }
+pub(crate) fn thread_title(entry: &AgentSessionInfo) -> &SharedString {
+    entry
+        .title
+        .as_ref()
+        .filter(|title| !title.is_empty())
+        .unwrap_or(DEFAULT_TITLE)
 }
 
-pub struct TextThreadHistory {
-    pub(crate) text_thread_store: Entity<TextThreadStore>,
+pub struct ThreadHistoryView {
+    history: Entity<ThreadHistory>,
     scroll_handle: UniformListScrollHandle,
     selected_index: usize,
     hovered_index: Option<usize>,
@@ -35,24 +36,24 @@ pub struct TextThreadHistory {
     visible_items: Vec<ListItemType>,
     local_timezone: UtcOffset,
     confirming_delete_history: bool,
-    _update_task: Task<()>,
+    _visible_items_task: Task<()>,
     _subscriptions: Vec<gpui::Subscription>,
 }
 
 enum ListItemType {
     BucketSeparator(TimeBucket),
     Entry {
-        entry: SavedTextThreadMetadata,
+        entry: AgentSessionInfo,
         format: EntryTimeFormat,
     },
     SearchResult {
-        entry: SavedTextThreadMetadata,
+        entry: AgentSessionInfo,
         positions: Vec<usize>,
     },
 }
 
 impl ListItemType {
-    fn history_entry(&self) -> Option<&SavedTextThreadMetadata> {
+    fn history_entry(&self) -> Option<&AgentSessionInfo> {
         match self {
             ListItemType::Entry { entry, .. } => Some(entry),
             ListItemType::SearchResult { entry, .. } => Some(entry),
@@ -61,15 +62,15 @@ impl ListItemType {
     }
 }
 
-pub enum TextThreadHistoryEvent {
-    Open(SavedTextThreadMetadata),
+pub enum ThreadHistoryViewEvent {
+    Open(AgentSessionInfo),
 }
 
-impl EventEmitter<TextThreadHistoryEvent> for TextThreadHistory {}
+impl EventEmitter<ThreadHistoryViewEvent> for ThreadHistoryView {}
 
-impl TextThreadHistory {
-    pub(crate) fn new(
-        text_thread_store: Entity<TextThreadStore>,
+impl ThreadHistoryView {
+    pub fn new(
+        history: Entity<ThreadHistory>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -90,14 +91,14 @@ impl TextThreadHistory {
                 }
             });
 
-        let store_subscription = cx.observe(&text_thread_store, |this, _, cx| {
+        let history_subscription = cx.observe(&history, |this, _, cx| {
             this.update_visible_items(true, cx);
         });
 
         let scroll_handle = UniformListScrollHandle::default();
 
         let mut this = Self {
-            text_thread_store,
+            history,
             scroll_handle,
             selected_index: 0,
             hovered_index: None,
@@ -109,22 +110,19 @@ impl TextThreadHistory {
             .unwrap(),
             search_query: SharedString::default(),
             confirming_delete_history: false,
-            _subscriptions: vec![search_editor_subscription, store_subscription],
-            _update_task: Task::ready(()),
+            _subscriptions: vec![search_editor_subscription, history_subscription],
+            _visible_items_task: Task::ready(()),
         };
         this.update_visible_items(false, cx);
         this
     }
 
-    pub fn is_empty(&self) -> bool {
-        self.visible_items.is_empty()
+    pub fn history(&self) -> &Entity<ThreadHistory> {
+        &self.history
     }
 
     fn update_visible_items(&mut self, preserve_selected_item: bool, cx: &mut Context<Self>) {
-        let entries = self.text_thread_store.update(cx, |store, _| {
-            store.ordered_text_threads().cloned().collect::<Vec<_>>()
-        });
-
+        let entries = self.history.read(cx).sessions().to_vec();
         let new_list_items = if self.search_query.is_empty() {
             self.add_list_separators(entries, cx)
         } else {
@@ -136,7 +134,7 @@ impl TextThreadHistory {
             None
         };
 
-        self._update_task = cx.spawn(async move |this, cx| {
+        self._visible_items_task = cx.spawn(async move |this, cx| {
             let new_visible_items = new_list_items.await;
             this.update(cx, |this, cx| {
                 let new_selected_index = if let Some(history_entry) = selected_history_entry {
@@ -145,7 +143,7 @@ impl TextThreadHistory {
                         .position(|visible_entry| {
                             visible_entry
                                 .history_entry()
-                                .is_some_and(|entry| entry.path == history_entry.path)
+                                .is_some_and(|entry| entry.session_id == history_entry.session_id)
                         })
                         .unwrap_or(0)
                 } else {
@@ -162,7 +160,7 @@ impl TextThreadHistory {
 
     fn add_list_separators(
         &self,
-        entries: Vec<SavedTextThreadMetadata>,
+        entries: Vec<AgentSessionInfo>,
         cx: &App,
     ) -> Task<Vec<ListItemType>> {
         cx.background_spawn(async move {
@@ -171,8 +169,13 @@ impl TextThreadHistory {
             let today = Local::now().naive_local().date();
 
             for entry in entries.into_iter() {
-                let entry_date = entry.mtime.naive_local().date();
-                let entry_bucket = TimeBucket::from_dates(today, entry_date);
+                let entry_bucket = entry
+                    .updated_at
+                    .map(|timestamp| {
+                        let entry_date = timestamp.with_timezone(&Local).naive_local().date();
+                        TimeBucket::from_dates(today, entry_date)
+                    })
+                    .unwrap_or(TimeBucket::All);
 
                 if Some(entry_bucket) != bucket {
                     bucket = Some(entry_bucket);
@@ -190,7 +193,7 @@ impl TextThreadHistory {
 
     fn filter_search_results(
         &self,
-        entries: Vec<SavedTextThreadMetadata>,
+        entries: Vec<AgentSessionInfo>,
         cx: &App,
     ) -> Task<Vec<ListItemType>> {
         let query = self.search_query.clone();
@@ -231,16 +234,16 @@ impl TextThreadHistory {
         self.visible_items.is_empty() && !self.search_query.is_empty()
     }
 
-    fn selected_history_entry(&self) -> Option<&SavedTextThreadMetadata> {
+    fn selected_history_entry(&self) -> Option<&AgentSessionInfo> {
         self.get_history_entry(self.selected_index)
     }
 
-    fn get_history_entry(&self, visible_items_ix: usize) -> Option<&SavedTextThreadMetadata> {
+    fn get_history_entry(&self, visible_items_ix: usize) -> Option<&AgentSessionInfo> {
         self.visible_items.get(visible_items_ix)?.history_entry()
     }
 
     fn set_selected_index(&mut self, mut index: usize, bias: Bias, cx: &mut Context<Self>) {
-        if self.visible_items.is_empty() {
+        if self.visible_items.len() == 0 {
             self.selected_index = 0;
             return;
         }
@@ -257,7 +260,7 @@ impl TextThreadHistory {
                     }
                 }
                 Bias::Right => {
-                    if index == self.visible_items.len() - 1 {
+                    if index >= self.visible_items.len() - 1 {
                         0
                     } else {
                         index + 1
@@ -266,15 +269,9 @@ impl TextThreadHistory {
             };
         }
         self.selected_index = index;
-        cx.notify();
-    }
-
-    fn select_next(&mut self, _: &menu::SelectNext, _window: &mut Window, cx: &mut Context<Self>) {
-        if self.selected_index == self.visible_items.len() - 1 {
-            self.set_selected_index(0, Bias::Right, cx);
-        } else {
-            self.set_selected_index(self.selected_index + 1, Bias::Right, cx);
-        }
+        self.scroll_handle
+            .scroll_to_item(index, ScrollStrategy::Top);
+        cx.notify()
     }
 
     fn select_previous(
@@ -287,6 +284,14 @@ impl TextThreadHistory {
             self.set_selected_index(self.visible_items.len() - 1, Bias::Left, cx);
         } else {
             self.set_selected_index(self.selected_index - 1, Bias::Left, cx);
+        }
+    }
+
+    fn select_next(&mut self, _: &menu::SelectNext, _window: &mut Window, cx: &mut Context<Self>) {
+        if self.selected_index == self.visible_items.len() - 1 {
+            self.set_selected_index(0, Bias::Right, cx);
+        } else {
+            self.set_selected_index(self.selected_index + 1, Bias::Right, cx);
         }
     }
 
@@ -311,7 +316,7 @@ impl TextThreadHistory {
         let Some(entry) = self.get_history_entry(ix) else {
             return;
         };
-        cx.emit(TextThreadHistoryEvent::Open(entry.clone()));
+        cx.emit(ThreadHistoryViewEvent::Open(entry.clone()));
     }
 
     fn remove_selected_thread(
@@ -327,16 +332,23 @@ impl TextThreadHistory {
         let Some(entry) = self.get_history_entry(visible_item_ix) else {
             return;
         };
-
-        let task = self
-            .text_thread_store
-            .update(cx, |store, cx| store.delete_local(entry.path.clone(), cx));
-        task.detach_and_log_err(cx);
+        if !self.history.read(cx).supports_delete() {
+            return;
+        }
+        let session_id = entry.session_id.clone();
+        self.history.update(cx, |history, cx| {
+            history
+                .delete_session(&session_id, cx)
+                .detach_and_log_err(cx);
+        });
     }
 
     fn remove_history(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
-        self.text_thread_store.update(cx, |store, cx| {
-            store.delete_all_local(cx).detach_and_log_err(cx)
+        if !self.history.read(cx).supports_delete() {
+            return;
+        }
+        self.history.update(cx, |history, cx| {
+            history.delete_sessions(cx).detach_and_log_err(cx);
         });
         self.confirming_delete_history = false;
         cx.notify();
@@ -394,7 +406,7 @@ impl TextThreadHistory {
 
     fn render_history_entry(
         &self,
-        entry: &SavedTextThreadMetadata,
+        entry: &AgentSessionInfo,
         format: EntryTimeFormat,
         ix: usize,
         highlight_positions: Vec<usize>,
@@ -402,23 +414,29 @@ impl TextThreadHistory {
     ) -> AnyElement {
         let selected = ix == self.selected_index;
         let hovered = Some(ix) == self.hovered_index;
-        let entry_time = entry.mtime.with_timezone(&Utc);
-        let timestamp = entry_time.timestamp();
-
-        let display_text = match format {
-            EntryTimeFormat::DateAndTime => {
+        let entry_time = entry.updated_at;
+        let display_text = match (format, entry_time) {
+            (EntryTimeFormat::DateAndTime, Some(entry_time)) => {
                 let now = Utc::now();
                 let duration = now.signed_duration_since(entry_time);
                 let days = duration.num_days();
 
                 format!("{}d", days)
             }
-            EntryTimeFormat::TimeOnly => format.format_timestamp(timestamp, self.local_timezone),
+            (EntryTimeFormat::TimeOnly, Some(entry_time)) => {
+                format.format_timestamp(entry_time.timestamp(), self.local_timezone)
+            }
+            (_, None) => "—".to_string(),
         };
 
         let title = thread_title(entry).clone();
-        let full_date =
-            EntryTimeFormat::DateAndTime.format_timestamp(timestamp, self.local_timezone);
+        let full_date = entry_time
+            .map(|time| {
+                EntryTimeFormat::DateAndTime.format_timestamp(time.timestamp(), self.local_timezone)
+            })
+            .unwrap_or_else(|| "Unknown".to_string());
+
+        let supports_delete = self.history.read(cx).supports_delete();
 
         h_flex()
             .w_full()
@@ -453,9 +471,10 @@ impl TextThreadHistory {
                         } else if this.hovered_index == Some(ix) {
                             this.hovered_index = None;
                         }
+
                         cx.notify();
                     }))
-                    .end_slot::<IconButton>(if hovered {
+                    .end_slot::<IconButton>(if hovered && supports_delete {
                         Some(
                             IconButton::new("delete", IconName::Trash)
                                 .shape(IconButtonShape::Square)
@@ -464,7 +483,7 @@ impl TextThreadHistory {
                                 .tooltip(move |_window, cx| {
                                     Tooltip::for_action("Delete", &RemoveSelectedThread, cx)
                                 })
-                                .on_click(cx.listener(move |this, _, _window, cx| {
+                                .on_click(cx.listener(move |this, _, _, cx| {
                                     this.remove_thread(ix, cx);
                                     cx.stop_propagation()
                                 })),
@@ -472,30 +491,33 @@ impl TextThreadHistory {
                     } else {
                         None
                     })
-                    .on_click(cx.listener(move |this, _, _window, cx| {
-                        this.confirm_entry(ix, cx);
-                    })),
+                    .on_click(cx.listener(move |this, _, _, cx| this.confirm_entry(ix, cx))),
             )
             .into_any_element()
     }
 }
 
-impl Render for TextThreadHistory {
+impl Focusable for ThreadHistoryView {
+    fn focus_handle(&self, cx: &App) -> FocusHandle {
+        self.search_editor.focus_handle(cx)
+    }
+}
+
+impl Render for ThreadHistoryView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let has_no_history = !self.text_thread_store.read(cx).has_saved_text_threads();
+        let has_no_history = self.history.read(cx).is_empty();
+        let supports_delete = self.history.read(cx).supports_delete();
 
         v_flex()
-            .size_full()
             .key_context("ThreadHistory")
+            .size_full()
             .bg(cx.theme().colors().panel_background)
             .on_action(cx.listener(Self::select_previous))
             .on_action(cx.listener(Self::select_next))
             .on_action(cx.listener(Self::select_first))
             .on_action(cx.listener(Self::select_last))
             .on_action(cx.listener(Self::confirm))
-            .on_action(cx.listener(|this, _: &RemoveSelectedThread, window, cx| {
-                this.remove_selected_thread(&RemoveSelectedThread, window, cx);
-            }))
+            .on_action(cx.listener(Self::remove_selected_thread))
             .on_action(cx.listener(|this, _: &RemoveHistory, window, cx| {
                 this.remove_history(window, cx);
             }))
@@ -525,7 +547,7 @@ impl Render for TextThreadHistory {
 
                 if has_no_history {
                     view.justify_center().items_center().child(
-                        Label::new("You don't have any past text threads yet.")
+                        Label::new("You don't have any past threads yet.")
                             .size(LabelSize::Small)
                             .color(Color::Muted),
                     )
@@ -536,7 +558,7 @@ impl Render for TextThreadHistory {
                 } else {
                     view.child(
                         uniform_list(
-                            "text-thread-history",
+                            "thread-history",
                             self.visible_items.len(),
                             cx.processor(|this, range: Range<usize>, window, cx| {
                                 this.render_list_items(range, window, cx)
@@ -550,7 +572,7 @@ impl Render for TextThreadHistory {
                     .vertical_scrollbar_for(&self.scroll_handle, window, cx)
                 }
             })
-            .when(!has_no_history, |this| {
+            .when(!has_no_history && supports_delete, |this| {
                 this.child(
                     h_flex()
                         .p_2()
@@ -577,7 +599,7 @@ impl Render for TextThreadHistory {
                                         .flex_wrap()
                                         .gap_1()
                                         .child(
-                                            Label::new("Delete all text threads?")
+                                            Label::new("Delete all threads?")
                                                 .size(LabelSize::Small),
                                         )
                                         .child(
@@ -615,9 +637,132 @@ impl Render for TextThreadHistory {
     }
 }
 
-impl Focusable for TextThreadHistory {
-    fn focus_handle(&self, cx: &App) -> FocusHandle {
-        self.search_editor.focus_handle(cx)
+#[derive(IntoElement)]
+pub struct HistoryEntryElement {
+    entry: AgentSessionInfo,
+    thread_view: WeakEntity<ConnectionView>,
+    selected: bool,
+    hovered: bool,
+    supports_delete: bool,
+    on_hover: Box<dyn Fn(&bool, &mut Window, &mut App) + 'static>,
+}
+
+impl HistoryEntryElement {
+    pub fn new(entry: AgentSessionInfo, thread_view: WeakEntity<ConnectionView>) -> Self {
+        Self {
+            entry,
+            thread_view,
+            selected: false,
+            hovered: false,
+            supports_delete: false,
+            on_hover: Box::new(|_, _, _| {}),
+        }
+    }
+
+    pub fn supports_delete(mut self, supports_delete: bool) -> Self {
+        self.supports_delete = supports_delete;
+        self
+    }
+
+    pub fn hovered(mut self, hovered: bool) -> Self {
+        self.hovered = hovered;
+        self
+    }
+
+    pub fn on_hover(mut self, on_hover: impl Fn(&bool, &mut Window, &mut App) + 'static) -> Self {
+        self.on_hover = Box::new(on_hover);
+        self
+    }
+}
+
+impl RenderOnce for HistoryEntryElement {
+    fn render(self, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
+        let id = ElementId::Name(self.entry.session_id.0.clone().into());
+        let title = thread_title(&self.entry).clone();
+        let formatted_time = self
+            .entry
+            .updated_at
+            .map(|timestamp| {
+                let now = chrono::Utc::now();
+                let duration = now.signed_duration_since(timestamp);
+
+                if duration.num_days() > 0 {
+                    format!("{}d", duration.num_days())
+                } else if duration.num_hours() > 0 {
+                    format!("{}h ago", duration.num_hours())
+                } else if duration.num_minutes() > 0 {
+                    format!("{}m ago", duration.num_minutes())
+                } else {
+                    "Just now".to_string()
+                }
+            })
+            .unwrap_or_else(|| "Unknown".to_string());
+
+        ListItem::new(id)
+            .rounded()
+            .toggle_state(self.selected)
+            .spacing(ListItemSpacing::Sparse)
+            .start_slot(
+                h_flex()
+                    .w_full()
+                    .gap_2()
+                    .justify_between()
+                    .child(Label::new(title).size(LabelSize::Small).truncate())
+                    .child(
+                        Label::new(formatted_time)
+                            .color(Color::Muted)
+                            .size(LabelSize::XSmall),
+                    ),
+            )
+            .on_hover(self.on_hover)
+            .end_slot::<IconButton>(if (self.hovered || self.selected) && self.supports_delete {
+                Some(
+                    IconButton::new("delete", IconName::Trash)
+                        .shape(IconButtonShape::Square)
+                        .icon_size(IconSize::XSmall)
+                        .icon_color(Color::Muted)
+                        .tooltip(move |_window, cx| {
+                            Tooltip::for_action("Delete", &RemoveSelectedThread, cx)
+                        })
+                        .on_click({
+                            let thread_view = self.thread_view.clone();
+                            let session_id = self.entry.session_id.clone();
+
+                            move |_event, _window, cx| {
+                                if let Some(thread_view) = thread_view.upgrade() {
+                                    thread_view.update(cx, |thread_view, cx| {
+                                        thread_view.delete_history_entry(&session_id, cx);
+                                    });
+                                }
+                            }
+                        }),
+                )
+            } else {
+                None
+            })
+            .on_click({
+                let thread_view = self.thread_view.clone();
+                let entry = self.entry;
+
+                move |_event, window, cx| {
+                    if let Some(workspace) = thread_view
+                        .upgrade()
+                        .and_then(|view| view.read(cx).workspace().upgrade())
+                    {
+                        if let Some(panel) = workspace.read(cx).panel::<AgentPanel>(cx) {
+                            panel.update(cx, |panel, cx| {
+                                panel.load_agent_thread(
+                                    entry.session_id.clone(),
+                                    entry.cwd.clone(),
+                                    entry.title.clone(),
+                                    window,
+                                    cx,
+                                );
+                            });
+                        }
+                    }
+                }
+            })
     }
 }
 
@@ -628,20 +773,18 @@ pub enum EntryTimeFormat {
 }
 
 impl EntryTimeFormat {
-    fn format_timestamp(self, timestamp: i64, timezone: UtcOffset) -> String {
-        let datetime = OffsetDateTime::from_unix_timestamp(timestamp)
-            .unwrap_or_else(|_| OffsetDateTime::now_utc())
-            .to_offset(timezone);
+    fn format_timestamp(&self, timestamp: i64, timezone: UtcOffset) -> String {
+        let timestamp = OffsetDateTime::from_unix_timestamp(timestamp).unwrap();
 
         match self {
-            EntryTimeFormat::DateAndTime => datetime.format(&time::macros::format_description!(
-                "[month repr:short] [day], [year]"
-            )),
-            EntryTimeFormat::TimeOnly => {
-                datetime.format(&time::macros::format_description!("[hour]:[minute]"))
-            }
+            EntryTimeFormat::DateAndTime => time_format::format_localized_timestamp(
+                timestamp,
+                OffsetDateTime::now_utc(),
+                timezone,
+                time_format::TimestampFormat::EnhancedAbsolute,
+            ),
+            EntryTimeFormat::TimeOnly => time_format::format_time(timestamp.to_offset(timezone)),
         }
-        .unwrap_or_default()
     }
 }
 
@@ -707,30 +850,33 @@ impl Display for TimeBucket {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use chrono::NaiveDate;
 
     #[test]
     fn test_time_bucket_from_dates() {
-        let today = NaiveDate::from_ymd_opt(2023, 1, 15).unwrap();
+        let today = NaiveDate::from_ymd_opt(2025, 1, 15).unwrap();
 
-        let date = today;
-        assert_eq!(TimeBucket::from_dates(today, date), TimeBucket::Today);
+        assert_eq!(TimeBucket::from_dates(today, today), TimeBucket::Today);
 
-        let date = NaiveDate::from_ymd_opt(2023, 1, 14).unwrap();
-        assert_eq!(TimeBucket::from_dates(today, date), TimeBucket::Yesterday);
+        let yesterday = NaiveDate::from_ymd_opt(2025, 1, 14).unwrap();
+        assert_eq!(
+            TimeBucket::from_dates(today, yesterday),
+            TimeBucket::Yesterday
+        );
 
-        let date = NaiveDate::from_ymd_opt(2023, 1, 13).unwrap();
-        assert_eq!(TimeBucket::from_dates(today, date), TimeBucket::ThisWeek);
+        let this_week = NaiveDate::from_ymd_opt(2025, 1, 13).unwrap();
+        assert_eq!(
+            TimeBucket::from_dates(today, this_week),
+            TimeBucket::ThisWeek
+        );
 
-        let date = NaiveDate::from_ymd_opt(2023, 1, 11).unwrap();
-        assert_eq!(TimeBucket::from_dates(today, date), TimeBucket::ThisWeek);
+        let past_week = NaiveDate::from_ymd_opt(2025, 1, 7).unwrap();
+        assert_eq!(
+            TimeBucket::from_dates(today, past_week),
+            TimeBucket::PastWeek
+        );
 
-        let date = NaiveDate::from_ymd_opt(2023, 1, 8).unwrap();
-        assert_eq!(TimeBucket::from_dates(today, date), TimeBucket::PastWeek);
-
-        let date = NaiveDate::from_ymd_opt(2023, 1, 5).unwrap();
-        assert_eq!(TimeBucket::from_dates(today, date), TimeBucket::PastWeek);
-
-        let date = NaiveDate::from_ymd_opt(2023, 1, 1).unwrap();
-        assert_eq!(TimeBucket::from_dates(today, date), TimeBucket::All);
+        let old = NaiveDate::from_ymd_opt(2024, 12, 1).unwrap();
+        assert_eq!(TimeBucket::from_dates(today, old), TimeBucket::All);
     }
 }

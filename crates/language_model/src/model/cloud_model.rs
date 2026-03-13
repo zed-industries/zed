@@ -30,6 +30,13 @@ impl fmt::Display for PaymentRequiredError {
 pub struct LlmApiToken(Arc<RwLock<Option<String>>>);
 
 impl LlmApiToken {
+    pub fn global(cx: &App) -> Self {
+        RefreshLlmTokenListener::global(cx)
+            .read(cx)
+            .llm_api_token
+            .clone()
+    }
+
     pub async fn acquire(
         &self,
         client: &Arc<Client>,
@@ -102,13 +109,16 @@ struct GlobalRefreshLlmTokenListener(Entity<RefreshLlmTokenListener>);
 
 impl Global for GlobalRefreshLlmTokenListener {}
 
-pub struct RefreshLlmTokenEvent;
+pub struct LlmTokenRefreshedEvent;
 
 pub struct RefreshLlmTokenListener {
+    client: Arc<Client>,
+    user_store: Entity<UserStore>,
+    llm_api_token: LlmApiToken,
     _subscription: Subscription,
 }
 
-impl EventEmitter<RefreshLlmTokenEvent> for RefreshLlmTokenListener {}
+impl EventEmitter<LlmTokenRefreshedEvent> for RefreshLlmTokenListener {}
 
 impl RefreshLlmTokenListener {
     pub fn register(client: Arc<Client>, user_store: Entity<UserStore>, cx: &mut App) {
@@ -128,21 +138,39 @@ impl RefreshLlmTokenListener {
             }
         });
 
-        let subscription = cx.subscribe(&user_store, |_this, _user_store, event, cx| {
+        let subscription = cx.subscribe(&user_store, |this, _user_store, event, cx| {
             if matches!(event, client::user::Event::OrganizationChanged) {
-                cx.emit(RefreshLlmTokenEvent);
+                this.refresh(cx);
             }
         });
 
         Self {
+            client,
+            user_store,
+            llm_api_token: LlmApiToken::default(),
             _subscription: subscription,
         }
+    }
+
+    fn refresh(&self, cx: &mut Context<Self>) {
+        let client = self.client.clone();
+        let llm_api_token = self.llm_api_token.clone();
+        let organization_id = self
+            .user_store
+            .read(cx)
+            .current_organization()
+            .map(|o| o.id.clone());
+        cx.spawn(async move |this, cx| {
+            llm_api_token.refresh(&client, organization_id).await?;
+            this.update(cx, |_this, cx| cx.emit(LlmTokenRefreshedEvent))
+        })
+        .detach_and_log_err(cx);
     }
 
     fn handle_refresh_llm_token(this: Entity<Self>, message: &MessageToClient, cx: &mut App) {
         match message {
             MessageToClient::UserUpdated => {
-                this.update(cx, |_this, cx| cx.emit(RefreshLlmTokenEvent));
+                this.update(cx, |this, cx| this.refresh(cx));
             }
         }
     }

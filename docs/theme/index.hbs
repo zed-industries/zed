@@ -424,6 +424,31 @@
         <script src="{{ path_to_root }}elasticlunr.min.js"></script>
         <script src="{{ path_to_root }}mark.min.js"></script>
         <script src="{{ path_to_root }}searcher.js"></script>
+
+        <script>
+           (function () {
+                // Check for focused search result and bring into the view
+                const ensureVisible = () => {
+                    const focused = document.querySelector("#searchresults li.focus");
+
+                    if (focused) {
+                        focused.scrollIntoView({
+                            block: "nearest",
+                            inline: "nearest"
+                        });
+                    }
+                };
+
+                // 1. Listen for arrow key events
+                // 2. Wait for DOM to update
+                // 3. Call envsureVisible
+                document.addEventListener("keydown", function (e) {
+                    if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+                        requestAnimationFrame(ensureVisible);
+                    }
+                });
+            })();
+        </script>
         {{/if}}
 
         <script src="{{ path_to_root }}clipboard.min.js"></script>
