@@ -287,7 +287,7 @@ impl TerminalView {
             block_below_cursor: None,
             scroll_top: Pixels::ZERO,
             scroll_handle,
-            needs_serialize: false,
+            needs_serialize: true,
             custom_title: None,
             ime_state: None,
             self_handle: cx.entity().downgrade(),
@@ -1724,6 +1724,7 @@ impl SerializableItem for TerminalView {
         let workspace_id = self.workspace_id?;
         let cwd = terminal.working_directory();
         let custom_title = self.custom_title.clone();
+        let terminal_uuid = terminal.terminal_id().to_string();
         self.needs_serialize = false;
 
         Some(cx.background_spawn(async move {
@@ -1734,6 +1735,9 @@ impl SerializableItem for TerminalView {
             }
             TERMINAL_DB
                 .save_custom_title(item_id, workspace_id, custom_title)
+                .await?;
+            TERMINAL_DB
+                .save_terminal_uuid(item_id, workspace_id, terminal_uuid)
                 .await?;
             Ok(())
         }))
@@ -1752,7 +1756,7 @@ impl SerializableItem for TerminalView {
         cx: &mut App,
     ) -> Task<anyhow::Result<Entity<Self>>> {
         window.spawn(cx, async move |cx| {
-            let (cwd, custom_title) = cx
+            let (cwd, custom_title, terminal_uuid) = cx
                 .update(|_window, cx| {
                     let from_db = TERMINAL_DB
                         .get_working_directory(item_id, workspace_id)
@@ -1773,13 +1777,24 @@ impl SerializableItem for TerminalView {
                         .log_err()
                         .flatten()
                         .filter(|title| !title.trim().is_empty());
-                    (cwd, custom_title)
+                    let terminal_uuid = TERMINAL_DB
+                        .get_terminal_uuid(item_id, workspace_id)
+                        .log_err()
+                        .flatten()
+                        .filter(|uuid| !uuid.trim().is_empty());
+                    (cwd, custom_title, terminal_uuid)
                 })
                 .ok()
-                .unwrap_or((None, None));
+                .unwrap_or((None, None, None));
 
             let terminal = project
-                .update(cx, |project, cx| project.create_terminal_shell(cwd, cx))
+                .update(cx, |project, cx| {
+                    if let Some(terminal_uuid) = terminal_uuid {
+                        project.create_terminal_shell_with_id(cwd, terminal_uuid, cx)
+                    } else {
+                        project.create_terminal_shell(cwd, cx)
+                    }
+                })
                 .await?;
             cx.update(|window, cx| {
                 cx.new(|cx| {
