@@ -1220,7 +1220,7 @@ impl SerializableItem for Editor {
                         buffer.set_language_registry(language_registry);
                         let mut restored = false;
                         if let Some(history) = undo_history {
-                            if let Err(e) = buffer.restore_history(&history, cx) {
+                            if let Err(e) = buffer.restore_history(&history, true, cx) {
                                 log::error!("Failed to restore undo history: {:?}", e);
                             } else {
                                 restored = true;
@@ -1248,6 +1248,7 @@ impl SerializableItem for Editor {
                 abs_path: Some(abs_path),
                 contents,
                 mtime,
+                undo_history,
                 ..
             } => {
                 let opened_buffer = project.update(cx, |project, cx| {
@@ -1265,9 +1266,37 @@ impl SerializableItem for Editor {
                             .await
                             .context("Failed to open path in project")?;
 
+                        let mut restored = false;
+                        if let Some(history) = undo_history {
+                            let should_restore = mtime.is_none()
+                                || buffer.read_with(cx, |b, _| b.saved_mtime() == mtime);
+                            if should_restore {
+                                buffer.update(cx, |buffer, cx| {
+                                    if let Err(e) =
+                                        buffer.restore_history(&history, contents.is_some(), cx)
+                                    {
+                                        log::error!("Failed to restore undo history: {:?}", e);
+                                    } else {
+                                        restored = true;
+                                    }
+                                });
+                            }
+                        }
+
                         if let Some(contents) = contents {
                             buffer.update(cx, |buffer, cx| {
-                                restore_serialized_buffer_contents(buffer, contents, mtime, cx);
+                                if restored {
+                                    if mtime.is_some() {
+                                        buffer.did_reload(
+                                            buffer.version(),
+                                            buffer.line_ending(),
+                                            mtime,
+                                            cx,
+                                        );
+                                    }
+                                } else {
+                                    restore_serialized_buffer_contents(buffer, contents, mtime, cx);
+                                }
                             });
                         }
 
@@ -1295,9 +1324,39 @@ impl SerializableItem for Editor {
                                     format!("Failed to open buffer for {abs_path:?}")
                                 })?;
 
+                            let mut restored = false;
+                            if let Some(history) = undo_history {
+                                let should_restore = mtime.is_none()
+                                    || buffer.read_with(cx, |b, _| b.saved_mtime() == mtime);
+                                if should_restore {
+                                    buffer.update(cx, |buffer, cx| {
+                                        if let Err(e) =
+                                            buffer.restore_history(&history, contents.is_some(), cx)
+                                        {
+                                            log::error!("Failed to restore undo history: {:?}", e);
+                                        } else {
+                                            restored = true;
+                                        }
+                                    });
+                                }
+                            }
+
                             if let Some(contents) = contents {
                                 buffer.update(cx, |buffer, cx| {
-                                    restore_serialized_buffer_contents(buffer, contents, mtime, cx);
+                                    if restored {
+                                        if mtime.is_some() {
+                                            buffer.did_reload(
+                                                buffer.version(),
+                                                buffer.line_ending(),
+                                                mtime,
+                                                cx,
+                                            );
+                                        }
+                                    } else {
+                                        restore_serialized_buffer_contents(
+                                            buffer, contents, mtime, cx,
+                                        );
+                                    }
                                 });
                             }
 
@@ -1377,8 +1436,10 @@ impl SerializableItem for Editor {
         let is_dirty = buffer.read(cx).is_dirty();
         let mtime = buffer.read(cx).saved_mtime();
 
-        let max_ops = ProjectSettings::get_global(cx).session.restore_unsaved_buffers_max_operations;
-        let undo_history = if serialize_dirty_buffers && is_dirty {
+        let max_ops = ProjectSettings::get_global(cx)
+            .session
+            .restore_unsaved_buffers_max_operations;
+        let undo_history = if serialize_dirty_buffers {
             buffer.read(cx).serialize_history(max_ops).ok()
         } else {
             None
