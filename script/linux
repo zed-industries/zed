@@ -40,6 +40,7 @@ if [[ -n $apt ]]; then
     cmake
     clang
     lld
+    llvm
     jq
     git
     curl

@@ -119,10 +119,12 @@ else
     fi
 fi
 
-# Strip debug symbols and save them for upload to DigitalOcean
-objcopy --strip-debug "${target_dir}/${target_triple}/release/zed"
-objcopy --strip-debug "${target_dir}/${target_triple}/release/cli"
-objcopy --strip-debug "${target_dir}/${remote_server_triple}/release/remote_server"
+# Strip debug symbols and save them for upload to DigitalOcean.
+# We use llvm-objcopy because GNU objcopy on older distros (e.g. Ubuntu 20.04)
+# doesn't understand CREL sections produced by newer LLVM.
+llvm-objcopy --strip-debug "${target_dir}/${target_triple}/release/zed"
+llvm-objcopy --strip-debug "${target_dir}/${target_triple}/release/cli"
+llvm-objcopy --strip-debug "${target_dir}/${remote_server_triple}/release/remote_server"
 
 # Ensure that remote_server does not depend on libssl nor libcrypto, as we got rid of these deps.
 if ldd "${target_dir}/${remote_server_triple}/release/remote_server" | grep -q 'libcrypto\|libssl'; then
