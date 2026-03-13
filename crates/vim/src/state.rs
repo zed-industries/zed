@@ -233,6 +233,8 @@ pub struct VimGlobals {
     pub recorded_selection: RecordedSelection,
 
     pub recording_register: Option<char>,
+    pub recording_register_for_dot: Option<char>,
+    pub recorded_register: Option<char>,
     pub last_recorded_register: Option<char>,
     pub last_replayed_register: Option<char>,
     pub replayer: Option<Replayer>,
@@ -919,6 +921,7 @@ impl VimGlobals {
                 self.dot_recording = false;
                 self.recorded_actions = std::mem::take(&mut self.recording_actions);
                 self.recorded_count = self.recording_count.take();
+                self.recorded_register = self.recording_register_for_dot.take();
                 self.stop_recording_after_next_action = false;
             }
         }
@@ -946,6 +949,7 @@ impl VimGlobals {
                 self.dot_recording = false;
                 self.recorded_actions = std::mem::take(&mut self.recording_actions);
                 self.recorded_count = self.recording_count.take();
+                self.recorded_register = self.recording_register_for_dot.take();
                 self.stop_recording_after_next_action = false;
             }
         }
