@@ -3268,6 +3268,7 @@ impl ProjectPanel {
             files: false,
             directories: true,
             multiple: false,
+            initial_directory: None,
             prompt: Some("Download".into()),
         });
 

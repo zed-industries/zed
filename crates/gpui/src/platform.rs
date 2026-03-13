@@ -1480,6 +1480,8 @@ pub struct PathPromptOptions {
     pub directories: bool,
     /// Should the prompt allow multiple files to be selected?
     pub multiple: bool,
+    /// The initial directory shown by the prompt, when supported.
+    pub initial_directory: Option<PathBuf>,
     /// The prompt to show to a user when selecting a path
     pub prompt: Option<SharedString>,
 }

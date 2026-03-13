@@ -80,7 +80,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
 }
 
 fn general_page() -> SettingsPage {
-    fn general_settings_section() -> [SettingsPageItem; 8] {
+    fn general_settings_section() -> [SettingsPageItem; 9] {
         [
             SettingsPageItem::SectionHeader("General Settings"),
             SettingsPageItem::SettingItem(SettingItem {
@@ -153,6 +153,24 @@ fn general_page() -> SettingsPage {
                     },
                 }),
                 metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Default Project Folder",
+                description: "The default folder opened first when using 'Open a new project'. Use an absolute path or a home-relative path (e.g. ~/projects). Set to null to use the platform default.",
+                field: Box::new(SettingField {
+                    json_path: Some("default_project_folder"),
+                    pick: |settings_content| {
+                        settings_content.workspace.default_project_folder.as_ref().or(DEFAULT_EMPTY_STRING)
+                    },
+                    write: |settings_content, value| {
+                        settings_content.workspace.default_project_folder = value;
+                    },
+                }),
+                metadata: Some(Box::new(SettingsFieldMetadata {
+                    placeholder: Some("~/programs"),
+                    ..Default::default()
+                })),
                 files: USER,
             }),
             SettingsPageItem::SettingItem(SettingItem {

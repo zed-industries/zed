@@ -1156,6 +1156,7 @@ impl MessageEditor {
             files: true,
             directories: false,
             multiple: true,
+            initial_directory: None,
             prompt: Some("Select Images".into()),
         });
 

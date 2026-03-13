@@ -1106,6 +1106,21 @@ fn file_open_dialog(
     unsafe {
         folder_dialog.SetOptions(dialog_options)?;
 
+        if let Some(initial_directory) = options.initial_directory.as_ref()
+            && !initial_directory.to_string_lossy().is_empty()
+            && let Some(full_path) = initial_directory
+                .canonicalize()
+                .context("failed to canonicalize initial directory")
+                .log_err()
+        {
+            let path_item: IShellItem =
+                SHCreateItemFromParsingName(&HSTRING::from(SanitizedPath::new(&full_path).to_string()), None)?;
+            folder_dialog
+                .SetFolder(&path_item)
+                .context("failed to set dialog folder")
+                .log_err();
+        }
+
         if let Some(prompt) = options.prompt {
             let prompt: &str = &prompt;
             folder_dialog.SetOkButtonLabel(&HSTRING::from(prompt))?;

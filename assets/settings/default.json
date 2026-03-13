@@ -197,6 +197,10 @@
   // Whether to use the system provided dialogs for Open and Save As.
   // When set to false, Zed will use the built-in keyboard-first pickers.
   "use_system_path_prompts": true,
+  // The default folder opened first when using "Open a new project".
+  // Use an absolute path or a home-relative path (e.g. "~/projects").
+  // Set to `null` to use the platform default.
+  "default_project_folder": null,
   // Whether to use the system provided dialogs for prompts, such as confirmation
   // prompts.
   // When set to false, Zed will use its built-in prompts. Note that on Linux,

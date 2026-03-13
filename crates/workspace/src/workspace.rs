@@ -681,6 +681,13 @@ pub fn prompt_for_open_path_and_open(
     window: &mut Window,
     cx: &mut Context<Workspace>,
 ) {
+    let options = PathPromptOptions {
+        initial_directory: options
+            .initial_directory
+            .or_else(|| WorkspaceSettings::get_global(cx).default_project_folder.clone()),
+        ..options
+    };
+
     let paths = workspace.prompt_for_open_path(
         options,
         DirectoryLister::Local(workspace.project().clone(), app_state.fs.clone()),
@@ -735,6 +742,7 @@ pub fn init(app_state: Arc<AppState>, cx: &mut App) {
                             files: true,
                             directories: true,
                             multiple: true,
+                            initial_directory: None,
                             prompt: None,
                         },
                         cx,
@@ -753,6 +761,7 @@ pub fn init(app_state: Arc<AppState>, cx: &mut App) {
                             files: true,
                             directories,
                             multiple: true,
+                            initial_directory: None,
                             prompt: None,
                         },
                         cx,
@@ -1264,6 +1273,7 @@ type PromptForOpenPath = Box<
     dyn Fn(
         &mut Workspace,
         DirectoryLister,
+        PathPromptOptions,
         &mut Window,
         &mut Context<Workspace>,
     ) -> oneshot::Receiver<Option<Vec<PathBuf>>>,
@@ -2535,11 +2545,12 @@ impl Workspace {
     ) -> oneshot::Receiver<Option<Vec<PathBuf>>> {
         if !lister.is_local(cx) || !WorkspaceSettings::get_global(cx).use_system_path_prompts {
             let prompt = self.on_prompt_for_open_path.take().unwrap();
-            let rx = prompt(self, lister, window, cx);
+            let rx = prompt(self, lister, path_prompt_options, window, cx);
             self.on_prompt_for_open_path = Some(prompt);
             rx
         } else {
             let (tx, rx) = oneshot::channel();
+            let fallback_path_prompt_options = path_prompt_options.clone();
             let abs_path = cx.prompt_for_paths(path_prompt_options);
 
             cx.spawn_in(window, async move |workspace, cx| {
@@ -2555,7 +2566,13 @@ impl Workspace {
                         let rx = workspace.update_in(cx, |workspace, window, cx| {
                             workspace.show_portal_error(err.to_string(), cx);
                             let prompt = workspace.on_prompt_for_open_path.take().unwrap();
-                            let rx = prompt(workspace, lister, window, cx);
+                            let rx = prompt(
+                                workspace,
+                                lister,
+                                fallback_path_prompt_options,
+                                window,
+                                cx,
+                            );
                             workspace.on_prompt_for_open_path = Some(prompt);
                             rx
                         })?;
@@ -3360,6 +3377,7 @@ impl Workspace {
                 files: false,
                 directories: true,
                 multiple: true,
+                initial_directory: None,
                 prompt: None,
             },
             DirectoryLister::Project(self.project.clone()),
