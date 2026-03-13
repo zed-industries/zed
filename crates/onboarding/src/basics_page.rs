@@ -10,7 +10,7 @@ use theme::{
     ThemeSettings,
 };
 use ui::{
-    Divider, ParentElement as _, StatefulInteractiveElement, SwitchField, TintColor,
+    Divider, Icon, ParentElement as _, StatefulInteractiveElement, SwitchField, TintColor,
     ToggleButtonGroup, ToggleButtonGroupSize, ToggleButtonSimple, ToggleButtonWithIcon, Tooltip,
     prelude::*, rems_from_px,
 };
@@ -477,8 +477,7 @@ fn render_setting_import_button(
         .toggle_state(imported)
         .tab_index(tab_index)
         .when(imported, |this| {
-            this.icon(IconName::Check)
-                .icon_size(IconSize::Small)
+            this.end_icon(Icon::new(IconName::Check).size(IconSize::Small))
                 .color(Color::Success)
         })
         .on_click(move |_, window, cx| {

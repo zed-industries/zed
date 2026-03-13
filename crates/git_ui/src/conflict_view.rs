@@ -453,10 +453,11 @@ fn render_conflict_buttons(
             this.child(Divider::vertical()).child(
                 Button::new("resolve-with-agent", "Resolve with Agent")
                     .label_size(LabelSize::Small)
-                    .icon(IconName::ZedAssistant)
-                    .icon_position(IconPosition::Start)
-                    .icon_size(IconSize::Small)
-                    .icon_color(Color::Muted)
+                    .start_icon(
+                        Icon::new(IconName::ZedAssistant)
+                            .size(IconSize::Small)
+                            .color(Color::Muted),
+                    )
                     .on_click({
                         let conflict = conflict.clone();
                         move |_, window, cx| {

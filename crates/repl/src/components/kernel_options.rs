@@ -6,7 +6,9 @@ use gpui::{AnyView, DismissEvent, FontWeight, SharedString, Task};
 use picker::{Picker, PickerDelegate};
 use project::WorktreeId;
 use std::sync::Arc;
-use ui::{ListItem, ListItemSpacing, PopoverMenu, PopoverMenuHandle, PopoverTrigger, prelude::*};
+use ui::{
+    Icon, ListItem, ListItemSpacing, PopoverMenu, PopoverMenuHandle, PopoverTrigger, prelude::*,
+};
 
 type OnSelect = Box<dyn Fn(KernelSpecification, &mut Window, &mut App)>;
 
@@ -431,10 +433,11 @@ impl PickerDelegate for KernelPickerDelegate {
                 .gap_4()
                 .child(
                     Button::new("kernel-docs", "Kernel Docs")
-                        .icon(IconName::ArrowUpRight)
-                        .icon_size(IconSize::Small)
-                        .icon_color(Color::Muted)
-                        .icon_position(IconPosition::End)
+                        .end_icon(
+                            Icon::new(IconName::ArrowUpRight)
+                                .size(IconSize::Small)
+                                .color(Color::Muted),
+                        )
                         .on_click(move |_, _, cx| cx.open_url(KERNEL_DOCS_URL)),
                 )
                 .into_any(),

@@ -2347,9 +2347,7 @@ impl CollabPanel {
                     .gap_2()
                     .child(
                         Button::new("sign_in", button_label)
-                            .icon_color(Color::Muted)
-                            .icon(IconName::Github)
-                            .icon_position(IconPosition::Start)
+                            .start_icon(Icon::new(IconName::Github).color(Color::Muted))
                             .style(ButtonStyle::Filled)
                             .full_width()
                             .disabled(is_signing_in)
@@ -2597,9 +2595,9 @@ impl CollabPanel {
             Section::Channels => {
                 Some(
                     h_flex()
-                        .gap_1()
                         .child(
                             IconButton::new("filter-active-channels", IconName::ListFilter)
+                                .icon_size(IconSize::Small)
                                 .toggle_state(self.filter_active_channels)
                                 .when(!self.filter_active_channels, |button| {
                                     button.visible_on_hover("section-header")

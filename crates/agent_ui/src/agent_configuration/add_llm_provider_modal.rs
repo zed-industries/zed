@@ -340,10 +340,11 @@ impl AddLlmProviderModal {
                     .child(Label::new("Models").size(LabelSize::Small))
                     .child(
                         Button::new("add-model", "Add Model")
-                            .icon(IconName::Plus)
-                            .icon_position(IconPosition::Start)
-                            .icon_size(IconSize::XSmall)
-                            .icon_color(Color::Muted)
+                            .start_icon(
+                                Icon::new(IconName::Plus)
+                                    .size(IconSize::XSmall)
+                                    .color(Color::Muted),
+                            )
                             .label_size(LabelSize::Small)
                             .on_click(cx.listener(|this, _, window, cx| {
                                 this.input.add_model(window, cx);
@@ -446,10 +447,11 @@ impl AddLlmProviderModal {
             .when(has_more_than_one_model, |this| {
                 this.child(
                     Button::new(("remove-model", ix), "Remove Model")
-                        .icon(IconName::Trash)
-                        .icon_position(IconPosition::Start)
-                        .icon_size(IconSize::XSmall)
-                        .icon_color(Color::Muted)
+                        .start_icon(
+                            Icon::new(IconName::Trash)
+                                .size(IconSize::XSmall)
+                                .color(Color::Muted),
+                        )
                         .label_size(LabelSize::Small)
                         .style(ButtonStyle::Outlined)
                         .full_width()

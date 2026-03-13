@@ -1775,10 +1775,11 @@ impl Sidebar {
                 )
                 .full_width()
                 .style(ButtonStyle::Outlined)
-                .icon(IconName::Plus)
-                .icon_color(Color::Muted)
-                .icon_size(IconSize::Small)
-                .icon_position(IconPosition::Start)
+                .start_icon(
+                    Icon::new(IconName::Plus)
+                        .size(IconSize::Small)
+                        .color(Color::Muted),
+                )
                 .toggle_state(is_selected)
                 .on_click(cx.listener(move |this, _, window, cx| {
                     this.selection = None;
@@ -1833,10 +1834,11 @@ impl Sidebar {
                     .full_width()
                     .label_size(LabelSize::Small)
                     .style(ButtonStyle::Outlined)
-                    .icon(IconName::Archive)
-                    .icon_color(Color::Muted)
-                    .icon_size(IconSize::XSmall)
-                    .icon_position(IconPosition::Start)
+                    .start_icon(
+                        Icon::new(IconName::Archive)
+                            .size(IconSize::XSmall)
+                            .color(Color::Muted),
+                    )
                     .on_click(cx.listener(|this, _, window, cx| {
                         this.show_archive(window, cx);
                     })),

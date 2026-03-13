@@ -1117,10 +1117,11 @@ impl NotebookEditor {
                     worktree_id,
                     Button::new("kernel-selector", kernel_name.clone())
                         .label_size(LabelSize::Small)
-                        .icon(status_icon)
-                        .icon_size(IconSize::Small)
-                        .icon_color(status_color)
-                        .icon_position(IconPosition::Start),
+                        .start_icon(
+                            Icon::new(status_icon)
+                                .size(IconSize::Small)
+                                .color(status_color),
+                        ),
                     Tooltip::text(format!(
                         "Kernel: {} ({}). Click to change.",
                         kernel_name,

@@ -16,7 +16,7 @@ use std::{
 };
 use ui::{
     DocumentationAside, DocumentationSide, HighlightedLabel, KeyBinding, LabelSize, ListItem,
-    ListItemSpacing, PopoverMenuHandle, TintColor, Tooltip, prelude::*,
+    ListItemSpacing, PopoverMenuHandle, Tooltip, prelude::*,
 };
 
 /// Trait for types that can provide and manage agent profiles
@@ -192,11 +192,7 @@ impl Render for ProfileSelector {
             .disabled(self.disabled)
             .label_size(LabelSize::Small)
             .color(Color::Muted)
-            .icon(icon)
-            .icon_size(IconSize::XSmall)
-            .icon_position(IconPosition::End)
-            .icon_color(Color::Muted)
-            .selected_style(ButtonStyle::Tinted(TintColor::Accent));
+            .end_icon(Icon::new(icon).size(IconSize::XSmall).color(Color::Muted));
 
         let disabled = self.disabled;
 
