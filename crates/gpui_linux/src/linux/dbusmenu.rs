@@ -7,21 +7,116 @@ use std::sync::{
 };
 use std::time::Duration;
 
-use calloop::channel::Sender as CalloopSender;
+use calloop::{LoopHandle, channel::Sender as CalloopSender};
 use gpui::{Action, KeyContext, KeybindingKeystroke, Keymap, OsAction, OwnedMenu, OwnedMenuItem};
+use util::ResultExt as _;
 use zbus::zvariant::{OwnedValue, Value};
+
+use std::rc::Weak;
+use std::cell::RefCell;
+
+pub trait GlobalMenuState {
+    fn linux_common(&mut self) -> &mut crate::linux::LinuxCommon;
+}
+
+pub fn setup_global_menu_sources<D: 'static, T: GlobalMenuState + 'static>(
+    dbus_menu_server: &DBusMenuServer,
+    loop_handle: &LoopHandle<D>,
+    client: Weak<RefCell<T>>,
+    mut on_connected: impl FnMut(&mut T) + 'static,
+) {
+    dbus_menu_server.install_global_menu_sources(
+        loop_handle,
+        {
+            let client = client.clone();
+            move |action| {
+                if let Some(client) = client.upgrade() {
+                    let mut state = client.borrow_mut();
+                    if let Some(callback) = state.linux_common().callbacks.app_menu_action.as_mut() {
+                        callback(action.as_ref());
+                    }
+                }
+            }
+        },
+        {
+            let client = client.clone();
+            move |request| {
+                if let Some(client) = client.upgrade() {
+                    let (dbus_menu_server, mut validate_app_menu_command, mut will_open_app_menu) = {
+                        let mut state = client.borrow_mut();
+                        let common = state.linux_common();
+                        (
+                            common.dbus_menu_server.clone(),
+                            common.callbacks.validate_app_menu_command.take(),
+                            common.callbacks.will_open_app_menu.take(),
+                        )
+                    };
+                    
+                    let request_ids = request.ids;
+                    if let Some(callback) = will_open_app_menu.as_mut() {
+                        callback();
+                    }
+
+                    let (valid_ids, id_errors) = dbus_menu_server
+                        .as_ref()
+                        .map(|dbus_menu_server| {
+                            dbus_menu_server.classify_ids(&request_ids)
+                        })
+                        .unwrap_or_else(|| (Vec::new(), request_ids.clone()));
+
+                    let refreshed_ids = match (
+                        dbus_menu_server.as_ref(),
+                        validate_app_menu_command.as_mut(),
+                    ) {
+                        (Some(dbus_menu_server), Some(validate_callback)) => {
+                            dbus_menu_server.refresh_enabled_states_inner(validate_callback)
+                        }
+                        _ => Vec::new(),
+                    };
+
+                    let updated_ids = if refreshed_ids.is_empty() {
+                        Vec::new()
+                    } else {
+                        valid_ids
+                    };
+
+                    let mut state = client.borrow_mut();
+                    let common = state.linux_common();
+                    if common.callbacks.validate_app_menu_command.is_none() {
+                        common.callbacks.validate_app_menu_command = validate_app_menu_command;
+                    }
+                    if common.callbacks.will_open_app_menu.is_none() {
+                        common.callbacks.will_open_app_menu = will_open_app_menu;
+                    }
+
+                    let _ = request.responded.send(
+                        AboutToShowResponse {
+                            updated_ids,
+                            id_errors,
+                        },
+                    );
+                }
+            }
+        },
+        {
+            let client = client.clone();
+            move || {
+                if let Some(client) = client.upgrade() {
+                    let mut state = client.borrow_mut();
+                    on_connected(&mut state);
+                }
+            }
+        },
+    );
+}
 
 pub const DBUSMENU_OBJECT_PATH: &str = "/MenuBar";
 
 type ActionCallback = dyn Fn(Box<dyn Action>) + Send + Sync;
-type WillOpenCallback = dyn Fn() + Send + Sync;
+type ConnectedCallback = dyn Fn() + Send + Sync;
 
 #[derive(Clone)]
 pub enum DBusMenuCommand {
-    EnsureExported {
-        object_path: String,
-        responded: std::sync::mpsc::Sender<bool>,
-    },
     LayoutUpdated {
         revision: u32,
         parent: i32,
@@ -32,15 +127,17 @@ pub enum DBusMenuCommand {
         removed_props: Vec<(i32, Vec<String>)>,
         object_paths: Vec<String>,
     },
-    Unexport {
-        object_path: String,
-    },
     Shutdown,
 }
 
-pub struct ValidateRequest {
-    pub action: Box<dyn Action>,
-    pub responded: std::sync::mpsc::Sender<bool>,
+pub struct AboutToShowRequest {
+    pub ids: Vec<i32>,
+    pub responded: std::sync::mpsc::Sender<AboutToShowResponse>,
+}
+
+pub struct AboutToShowResponse {
+    pub updated_ids: Vec<i32>,
+    pub id_errors: Vec<i32>,
 }
 
 struct MenuItemEntry {
@@ -59,12 +156,10 @@ struct MenuState {
 pub struct DBusMenuServer {
     state: Arc<Mutex<MenuState>>,
     action_callback: Arc<Mutex<Option<Box<ActionCallback>>>>,
-    will_open_callback: Arc<Mutex<Option<Arc<WillOpenCallback>>>>,
+    connected_callback: Arc<Mutex<Option<Box<ConnectedCallback>>>>,
     command_sender: Arc<Mutex<Option<async_channel::Sender<DBusMenuCommand>>>>,
-    validate_sender: Arc<Mutex<Option<CalloopSender<ValidateRequest>>>>,
+    about_to_show_sender: Arc<Mutex<Option<CalloopSender<AboutToShowRequest>>>>,
     connected: Arc<AtomicBool>,
-    object_paths: Arc<Mutex<HashSet<String>>>,
-    exported_paths: Arc<Mutex<HashSet<String>>>,
 }
 
 impl DBusMenuServer {
@@ -80,21 +175,13 @@ impl DBusMenuServer {
             },
         );
 
-        let mut object_paths = HashSet::new();
-        object_paths.insert(DBUSMENU_OBJECT_PATH.to_string());
-
-        let mut exported_paths = HashSet::new();
-        exported_paths.insert(DBUSMENU_OBJECT_PATH.to_string());
-
         Self {
             state: Arc::new(Mutex::new(MenuState { items, revision: 1 })),
             action_callback: Arc::new(Mutex::new(None)),
-            will_open_callback: Arc::new(Mutex::new(None)),
+            connected_callback: Arc::new(Mutex::new(None)),
             command_sender: Arc::new(Mutex::new(None)),
-            validate_sender: Arc::new(Mutex::new(None)),
+            about_to_show_sender: Arc::new(Mutex::new(None)),
             connected: Arc::new(AtomicBool::new(false)),
-            object_paths: Arc::new(Mutex::new(object_paths)),
-            exported_paths: Arc::new(Mutex::new(exported_paths)),
         }
     }
 
@@ -107,17 +194,193 @@ impl DBusMenuServer {
         }
     }
 
-    pub fn set_validate_sender(&self, sender: CalloopSender<ValidateRequest>) {
-        match self.validate_sender.lock() {
+    pub fn spawn_dbus_menu_thread(
+        &self,
+        service_name: String,
+        object_path: String,
+        unique_name_sender: Option<CalloopSender<String>>,
+    ) -> Option<std::thread::JoinHandle<()>> {
+        let (dbus_command_tx, dbus_command_rx) = async_channel::unbounded();
+        self.set_command_sender(dbus_command_tx);
+
+        let dbus_menu_server = self.clone();
+        std::thread::Builder::new()
+            .name("dbus-menu".into())
+            .spawn(move || {
+                smol::block_on(async move {
+                    let builder = match zbus::connection::Builder::session()
+                        .and_then(|builder| builder.name(service_name.as_str()))
+                        .and_then(|builder| {
+                            builder.serve_at(object_path.as_str(), dbus_menu_server.clone())
+                        }) {
+                        Ok(builder) => builder,
+                        Err(error) => {
+                            log::error!("Failed to configure DBus connection: {error}");
+                            return;
+                        }
+                    };
+
+                    let connection = match builder.build().await {
+                        Ok(connection) => connection,
+                        Err(error) => {
+                            log::error!("Failed to build DBus connection: {error}");
+                            return;
+                        }
+                    };
+
+                    dbus_menu_server.mark_connected();
+                    log::info!("DBusMenu server started on {service_name}");
+
+                    if let Some(unique_name_sender) = unique_name_sender {
+                        if let Some(unique_name) = connection.unique_name() {
+                            if let Err(error) = unique_name_sender.send(unique_name.to_string()) {
+                                log::error!("Failed to send DBusMenu unique name: {error}");
+                            }
+                        }
+                    }
+
+                    while let Ok(command) = dbus_command_rx.recv().await {
+                        match command {
+                            DBusMenuCommand::LayoutUpdated {
+                                revision,
+                                parent,
+                                object_paths,
+                            } => {
+                                for object_path in object_paths {
+                                    let emitter =
+                                        match zbus::object_server::SignalEmitter::new(
+                                            &connection,
+                                            object_path.as_str(),
+                                        ) {
+                                            Ok(emitter) => emitter,
+                                            Err(error) => {
+                                                log::error!(
+                                                    "Failed to build DBusMenu signal emitter for {object_path}: {error}"
+                                                );
+                                                continue;
+                                            }
+                                        };
+                                    if let Err(error) = DBusMenuServer::layout_updated(
+                                        &emitter,
+                                        revision,
+                                        parent,
+                                    )
+                                    .await
+                                    {
+                                        log::error!(
+                                            "Failed to emit DBusMenu LayoutUpdated signal for {object_path}: {error}"
+                                        );
+                                    }
+                                }
+                            }
+                            DBusMenuCommand::ItemsPropertiesUpdated {
+                                updated_props,
+                                removed_props,
+                                object_paths,
+                            } => {
+                                for object_path in object_paths {
+                                    let emitter =
+                                        match zbus::object_server::SignalEmitter::new(
+                                            &connection,
+                                            object_path.as_str(),
+                                        ) {
+                                            Ok(emitter) => emitter,
+                                            Err(error) => {
+                                                log::error!(
+                                                    "Failed to build DBusMenu signal emitter for {object_path}: {error}"
+                                                );
+                                                continue;
+                                            }
+                                        };
+                                    if let Err(error) = DBusMenuServer::items_properties_updated(
+                                        &emitter,
+                                        updated_props.clone(),
+                                        removed_props.clone(),
+                                    )
+                                    .await
+                                    {
+                                        log::error!(
+                                            "Failed to emit DBusMenu ItemsPropertiesUpdated for {object_path}: {error}"
+                                        );
+                                    }
+                                }
+                            }
+                            DBusMenuCommand::Shutdown => {
+                                break;
+                            }
+                        }
+                    }
+                });
+            })
+            .log_err()
+    }
+
+    pub fn install_global_menu_sources<D: 'static>(
+        &self,
+        loop_handle: &LoopHandle<D>,
+        mut action_handler: impl FnMut(Box<dyn Action>) + 'static,
+        mut about_to_show_handler: impl FnMut(AboutToShowRequest) + 'static,
+        mut connected_handler: impl FnMut() + 'static,
+    ) {
+        let (action_tx, action_rx) = calloop::channel::channel::<Box<dyn Action>>();
+        let (about_to_show_tx, about_to_show_rx) =
+            calloop::channel::channel::<AboutToShowRequest>();
+        let (connected_tx, connected_rx) = calloop::channel::channel::<()>();
+
+        self.set_action_callback(Box::new(move |action| {
+            if let Err(error) = action_tx.send(action) {
+                log::error!("Failed to send DBus menu action: {error}");
+            }
+        }));
+        self.set_about_to_show_sender(about_to_show_tx);
+        self.set_connected_callback(Box::new(move || {
+            if let Err(error) = connected_tx.send(()) {
+                log::error!("Failed to send DBusMenu connected event: {error}");
+            }
+        }));
+
+        loop_handle
+            .insert_source(action_rx, move |event, _, _| {
+                if let calloop::channel::Event::Msg(action) = event {
+                    action_handler(action);
+                }
+            })
+            .log_err();
+
+        loop_handle
+            .insert_source(about_to_show_rx, move |event, _, _| {
+                if let calloop::channel::Event::Msg(request) = event {
+                    about_to_show_handler(request);
+                }
+            })
+            .log_err();
+
+        loop_handle
+            .insert_source(connected_rx, move |event, _, _| {
+                if let calloop::channel::Event::Msg(()) = event {
+                    connected_handler();
+                }
+            })
+            .log_err();
+    }
+
+    pub fn set_about_to_show_sender(&self, sender: CalloopSender<AboutToShowRequest>) {
+        match self.about_to_show_sender.lock() {
             Ok(mut slot) => *slot = Some(sender),
             Err(error) => {
-                log::error!("Failed to store DBusMenu validate sender: {error}");
+                log::error!("Failed to store DBusMenu about-to-show sender: {error}");
             }
         }
     }
 
     pub fn mark_connected(&self) {
         self.connected.store(true, Ordering::SeqCst);
+
+        if let Ok(callback) = self.connected_callback.lock() {
+            if let Some(callback) = callback.as_ref() {
+                callback();
+            }
+        }
 
         let revision = match self.state.lock() {
             Ok(state) => state.revision,
@@ -133,12 +396,6 @@ impl DBusMenuServer {
         self.connected.load(Ordering::SeqCst)
     }
 
-    pub fn note_exported(&self, object_path: String) {
-        if let Ok(mut exported_paths) = self.exported_paths.lock() {
-            exported_paths.insert(object_path);
-        }
-    }
-
     pub fn set_action_callback(&self, callback: Box<ActionCallback>) {
         if let Ok(mut slot) = self.action_callback.lock() {
             *slot = Some(callback);
@@ -147,11 +404,11 @@ impl DBusMenuServer {
         }
     }
 
-    pub fn set_will_open_callback(&self, callback: Arc<WillOpenCallback>) {
-        if let Ok(mut slot) = self.will_open_callback.lock() {
+    pub fn set_connected_callback(&self, callback: Box<ConnectedCallback>) {
+        if let Ok(mut slot) = self.connected_callback.lock() {
             *slot = Some(callback);
         } else {
-            log::error!("Failed to store DBusMenu will-open callback due to lock poisoning");
+            log::error!("Failed to store DBusMenu connected callback due to lock poisoning");
         }
     }
 
@@ -191,102 +448,6 @@ impl DBusMenuServer {
         self.request_layout_updated(revision);
     }
 
-    pub fn ensure_exported_blocking(&self, object_path: String, timeout: Duration) -> bool {
-        let should_export = match self.object_paths.lock() {
-            Ok(mut paths) => paths.insert(object_path.clone()),
-            Err(error) => {
-                log::error!("Failed to update DBusMenu object paths: {error}");
-                return false;
-            }
-        };
-        if !should_export {
-            return true;
-        }
-
-        if match self.exported_paths.lock() {
-            Ok(exported_paths) => exported_paths.contains(&object_path),
-            Err(error) => {
-                log::error!("Failed to read exported DBusMenu paths: {error}");
-                false
-            }
-        } {
-            return true;
-        }
-
-        if !self.is_connected() {
-            return false;
-        }
-
-        let sender = match self.command_sender.lock() {
-            Ok(sender) => sender.clone(),
-            Err(error) => {
-                log::error!("Failed to read DBusMenu command sender: {error}");
-                return false;
-            }
-        };
-        let Some(sender) = sender else {
-            return false;
-        };
-
-        let (responded_tx, responded_rx) = std::sync::mpsc::channel();
-        if let Err(error) = sender.try_send(DBusMenuCommand::EnsureExported {
-            object_path: object_path.clone(),
-            responded: responded_tx,
-        }) {
-            log::error!("Failed to send DBusMenu export request: {error}");
-            return false;
-        }
-
-        let exported = match responded_rx.recv_timeout(timeout) {
-            Ok(ok) => ok,
-            Err(error) => {
-                log::error!("Timed out exporting DBusMenu object at {object_path}: {error}");
-                false
-            }
-        };
-
-        if exported {
-            let revision = match self.state.lock() {
-                Ok(state) => state.revision,
-                Err(error) => {
-                    log::error!("Failed to read DBusMenu revision after export: {error}");
-                    return true;
-                }
-            };
-            self.request_layout_updated_for_paths(revision, vec![object_path]);
-        }
-
-        exported
-    }
-
-    pub fn unexport_object_path(&self, object_path: String) {
-        if object_path == DBUSMENU_OBJECT_PATH {
-            return;
-        }
-
-        if let Ok(mut object_paths) = self.object_paths.lock() {
-            object_paths.remove(&object_path);
-        }
-        if let Ok(mut exported_paths) = self.exported_paths.lock() {
-            exported_paths.remove(&object_path);
-        }
-
-        let sender = match self.command_sender.lock() {
-            Ok(sender) => sender.clone(),
-            Err(error) => {
-                log::error!("Failed to read DBusMenu command sender: {error}");
-                return;
-            }
-        };
-        let Some(sender) = sender else {
-            return;
-        };
-
-        if let Err(error) = sender.try_send(DBusMenuCommand::Unexport { object_path }) {
-            log::error!("Failed to queue DBusMenu unexport request: {error}");
-        }
-    }
-
     pub fn shutdown(&self) {
         let sender = match self.command_sender.lock() {
             Ok(sender) => sender.clone(),
@@ -304,115 +465,76 @@ impl DBusMenuServer {
         }
     }
 
-    pub fn refresh_enabled_states(&self, validate: &mut dyn FnMut(&dyn Action) -> bool) {
+    pub fn refresh_enabled_states(&self, validate: &mut dyn FnMut(&dyn Action) -> bool) -> bool {
+        let updated_ids = self.refresh_enabled_states_inner(validate);
+        !updated_ids.is_empty()
+    }
+
+    pub fn refresh_enabled_states_inner(
+        &self,
+        validate: &mut dyn FnMut(&dyn Action) -> bool,
+    ) -> Vec<i32> {
+        let items_to_check: Vec<(i32, Box<dyn Action>, bool)> = {
+            let state = match self.state.lock() {
+                Ok(state) => state,
+                Err(error) => {
+                    log::error!("Failed to access DBusMenu state for enable refresh: {error}");
+                    return Vec::new();
+                }
+            };
+            state
+                .items
+                .iter()
+                .filter_map(|(id, entry)| {
+                    let previous_enabled = entry.enabled?;
+                    let action = entry.action.as_ref()?.boxed_clone();
+                    Some((*id, action, previous_enabled))
+                })
+                .collect()
+        };
+
         let mut updated_props: Vec<(i32, HashMap<String, OwnedValue>)> = Vec::new();
+        let mut updates: Vec<(i32, bool, OwnedValue)> = Vec::new();
+
+        for (id, action, previous_enabled) in items_to_check {
+            let enabled = validate(action.as_ref());
+            if enabled == previous_enabled {
+                continue;
+            }
+            if let Some(value) = owned_bool(enabled) {
+                let mut props = HashMap::new();
+                props.insert("enabled".to_string(), value.clone());
+                updated_props.push((id, props));
+                updates.push((id, enabled, value));
+            }
+        }
+
+        if updates.is_empty() {
+            return Vec::new();
+        }
 
         {
             let mut state = match self.state.lock() {
                 Ok(state) => state,
                 Err(error) => {
-                    log::error!("Failed to access DBusMenu state for enable refresh: {error}");
-                    return;
+                    log::error!("Failed to update DBusMenu state after refresh: {error}");
+                    return Vec::new();
                 }
             };
-
-            for (id, entry) in state.items.iter_mut() {
-                let Some(previous_enabled) = entry.enabled else {
-                    continue;
-                };
-                let Some(action) = entry.action.as_ref() else {
-                    continue;
-                };
-
-                let enabled = validate(action.as_ref());
-                if enabled == previous_enabled {
-                    continue;
-                }
-
-                entry.enabled = Some(enabled);
-                if let Some(value) = owned_bool(enabled) {
-                    entry
-                        .properties
-                        .insert("enabled".to_string(), value.clone());
-                    let mut props = HashMap::new();
-                    props.insert("enabled".to_string(), value);
-                    updated_props.push((*id, props));
+            for (id, enabled, value) in &updates {
+                if let Some(entry) = state.items.get_mut(id) {
+                    entry.enabled = Some(*enabled);
+                    entry.properties.insert("enabled".to_string(), value.clone());
                 }
             }
-        }
-
-        if updated_props.is_empty() {
-            return;
         }
 
         self.request_items_properties_updated(updated_props, Vec::new());
-    }
-
-    fn validate_enabled(&self, action: &dyn Action) -> Option<bool> {
-        let sender = match self.validate_sender.lock() {
-            Ok(sender) => sender,
-            Err(error) => {
-                log::error!("Failed to read DBusMenu validate sender: {error}");
-                return None;
-            }
-        };
-        let Some(sender) = sender.as_ref() else {
-            return None;
-        };
-
-        let (responded_tx, responded_rx) = std::sync::mpsc::channel();
-        let request = ValidateRequest {
-            action: action.boxed_clone(),
-            responded: responded_tx,
-        };
-
-        if let Err(error) = sender.send(request) {
-            log::error!("Failed to send DBusMenu validate request: {error}");
-            return None;
-        }
-
-        responded_rx.recv_timeout(Duration::from_millis(20)).ok()
-    }
-
-    fn get_layout_node(
-        &self,
-        id: i32,
-        remaining_depth: i32,
-    ) -> Option<(i32, HashMap<String, OwnedValue>, Vec<OwnedValue>)> {
-        let state = match self.state.lock() {
-            Ok(state) => state,
-            Err(error) => {
-                log::error!("Failed to read DBusMenu state: {error}");
-                return None;
-            }
-        };
-        let entry = state.items.get(&id)?;
-
-        let properties = entry.properties.clone();
-        let children = if remaining_depth == 0 {
-            Vec::new()
-        } else {
-            let child_ids = entry.children.clone();
-            drop(state);
-            let mut result = Vec::new();
-            for child_id in child_ids {
-                if let Some(child_node) = self.get_layout_node(child_id, remaining_depth - 1) {
-                    let variant =
-                        Value::from(zbus::zvariant::Structure::from(child_node)).try_into();
-                    if let Ok(value) = variant {
-                        result.push(value);
-                    }
-                }
-            }
-            result
-        };
-
-        Some((id, properties, children))
+        updates.iter().map(|(id, _, _)| *id).collect()
     }
 
     fn request_layout_updated(&self, revision: u32) {
-        let object_paths = self.object_paths();
-        self.request_layout_updated_for_paths(revision, object_paths);
+        self.request_layout_updated_for_paths(revision, vec![DBUSMENU_OBJECT_PATH.to_string()]);
     }
 
     fn request_layout_updated_for_paths(&self, revision: u32, object_paths: Vec<String>) {
@@ -445,8 +567,11 @@ impl DBusMenuServer {
         updated_props: Vec<(i32, HashMap<String, OwnedValue>)>,
         removed_props: Vec<(i32, Vec<String>)>,
     ) {
-        let object_paths = self.object_paths();
-        self.request_items_properties_updated_for_paths(updated_props, removed_props, object_paths);
+        self.request_items_properties_updated_for_paths(
+            updated_props, 
+            removed_props, 
+            vec![DBUSMENU_OBJECT_PATH.to_string()]
+        );
     }
 
     fn request_items_properties_updated_for_paths(
@@ -479,47 +604,89 @@ impl DBusMenuServer {
         }
     }
 
-    fn object_paths(&self) -> Vec<String> {
-        match self.object_paths.lock() {
-            Ok(paths) => paths.iter().cloned().collect(),
+    pub fn classify_ids(&self, ids: &[i32]) -> (Vec<i32>, Vec<i32>) {
+        let state = match self.state.lock() {
+            Ok(state) => state,
             Err(error) => {
-                log::error!("Failed to read DBusMenu object paths: {error}");
-                vec![DBUSMENU_OBJECT_PATH.to_string()]
+                log::error!("Failed to read DBusMenu state for id lookup: {error}");
+                return (Vec::new(), ids.to_vec());
+            }
+        };
+
+        let mut valid = Vec::new();
+        let mut errors = Vec::new();
+
+        for id in ids {
+            if state.items.contains_key(id) {
+                valid.push(*id);
+            } else {
+                errors.push(*id);
             }
         }
+
+        (valid, errors)
     }
 }
 
 #[zbus::interface(name = "com.canonical.dbusmenu")]
 impl DBusMenuServer {
-    async fn about_to_show(&self, _id: i32) -> zbus::fdo::Result<bool> {
-        let callback = match self.will_open_callback.lock() {
-            Ok(callback) => callback.clone(),
-            Err(_) => {
-                return Err(zbus::fdo::Error::Failed(
-                    "Failed to access will-open callback".to_string(),
-                ));
-            }
+    async fn about_to_show(&self, id: i32) -> zbus::fdo::Result<bool> {
+        let sender = match self.about_to_show_sender.lock() {
+            Ok(sender) => sender.clone(),
+            Err(_) => return Ok(false),
         };
-        if let Some(callback) = callback {
-            callback();
+        let Some(sender) = sender else {
+            return Ok(false);
+        };
+
+        let (responded_tx, responded_rx) = std::sync::mpsc::channel();
+        if sender
+            .send(AboutToShowRequest {
+                ids: vec![id],
+                responded: responded_tx,
+            })
+            .is_err()
+        {
+            return Ok(false);
         }
-        Ok(false)
+
+        match responded_rx.recv_timeout(Duration::from_millis(50)) {
+            Ok(response) => Ok(!response.updated_ids.is_empty()),
+            Err(_) => Ok(false),
+        }
     }
 
-    async fn about_to_show_group(&self, _ids: Vec<i32>) -> zbus::fdo::Result<(Vec<i32>, Vec<i32>)> {
-        let callback = match self.will_open_callback.lock() {
-            Ok(callback) => callback.clone(),
-            Err(_) => {
-                return Err(zbus::fdo::Error::Failed(
-                    "Failed to access will-open callback".to_string(),
-                ));
-            }
+    async fn about_to_show_group(
+        &self,
+        ids: Vec<i32>,
+    ) -> zbus::fdo::Result<(Vec<i32>, Vec<i32>)> {
+        let sender = match self.about_to_show_sender.lock() {
+            Ok(sender) => sender.clone(),
+            Err(_) => return Ok((Vec::new(), Vec::new())),
         };
-        if let Some(callback) = callback {
-            callback();
+        let Some(sender) = sender else {
+            return Ok((Vec::new(), Vec::new()));
+        };
+
+        let (responded_tx, responded_rx) = std::sync::mpsc::channel();
+        if sender
+            .send(AboutToShowRequest {
+                ids,
+                responded: responded_tx,
+            })
+            .is_err()
+        {
+            return Ok((Vec::new(), Vec::new()));
         }
-        Ok((Vec::new(), Vec::new()))
+
+        let response = responded_rx
+            .recv_timeout(Duration::from_millis(50))
+            .unwrap_or(AboutToShowResponse {
+                updated_ids: Vec::new(),
+                id_errors: Vec::new(),
+            });
+
+        Ok((response.updated_ids, response.id_errors))
     }
 
     async fn event(
@@ -537,10 +704,12 @@ impl DBusMenuServer {
             let state = self.state.lock().map_err(|_| {
                 zbus::fdo::Error::Failed("Failed to access DBusMenu state".to_string())
             })?;
-            state
-                .items
-                .get(&id)
-                .and_then(|entry| entry.action.as_ref().map(|a| a.boxed_clone()))
+            let entry = state.items.get(&id);
+            let enabled = entry.and_then(|e| e.enabled).unwrap_or(true);
+            if !enabled {
+                return Ok(());
+            }
+            entry.and_then(|entry| entry.action.as_ref().map(|a| a.boxed_clone()))
         };
 
         if let Some(action) = action {
@@ -558,8 +727,9 @@ impl DBusMenuServer {
     async fn get_group_properties(
         &self,
         ids: Vec<i32>,
-        _property_names: Vec<String>,
+        property_names: Vec<String>,
     ) -> zbus::fdo::Result<Vec<(i32, HashMap<String, OwnedValue>)>> {
+        let property_filter = build_property_filter(&property_names);
         let entries = {
             let state = self.state.lock().map_err(|_| {
                 zbus::fdo::Error::Failed("Failed to access DBusMenu state".to_string())
@@ -567,65 +737,33 @@ impl DBusMenuServer {
             ids.into_iter()
                 .filter_map(|id| {
                     state.items.get(&id).map(|entry| {
-                        (
-                            id,
-                            entry.properties.clone(),
-                            entry.action.as_ref().map(|action| action.boxed_clone()),
-                        )
+                        (id, filter_properties(entry.properties.clone(), &property_filter))
                     })
                 })
                 .collect::<Vec<_>>()
         };
 
-        let mut updated: Vec<(i32, bool, OwnedValue)> = Vec::new();
-        let mut result = Vec::with_capacity(entries.len());
-
-        for (id, mut properties, action) in entries {
-            if let Some(action) = action {
-                if let Some(enabled) = self.validate_enabled(action.as_ref()) {
-                    if let Some(value) = owned_bool(enabled) {
-                        properties.insert("enabled".to_string(), value.clone());
-                        updated.push((id, enabled, value));
-                    }
-                }
-            }
-            result.push((id, properties));
-        }
-
-        if !updated.is_empty() {
-            if let Ok(mut state) = self.state.lock() {
-                for (id, enabled, value) in updated {
-                    if let Some(entry) = state.items.get_mut(&id) {
-                        entry.enabled = Some(enabled);
-                        entry.properties.insert("enabled".to_string(), value);
-                    }
-                }
-            }
-        }
-
-        Ok(result)
+        Ok(entries)
     }
 
     async fn get_layout(
         &self,
         parent_id: i32,
         recursion_depth: i32,
-        _property_names: Vec<String>,
+        property_names: Vec<String>,
     ) -> zbus::fdo::Result<(u32, (i32, HashMap<String, OwnedValue>, Vec<OwnedValue>))> {
-        let revision = self
-            .state
-            .lock()
-            .map_err(|_| {
-                zbus::fdo::Error::Failed("Failed to access DBusMenu revision".to_string())
-            })?
-            .revision;
+        let property_filter = build_property_filter(&property_names);
+        let state = self.state.lock().map_err(|_| {
+            zbus::fdo::Error::Failed("Failed to access DBusMenu state".to_string())
+        })?;
+        let revision = state.revision;
         let depth = if recursion_depth < 0 {
             i32::MAX
         } else {
             recursion_depth
         };
-
-        let layout = self.get_layout_node(parent_id, depth).ok_or_else(|| {
+        let layout = collect_layout_node_filtered(&state, parent_id, depth, &property_filter)
+            .ok_or_else(|| {
             zbus::fdo::Error::InvalidArgs(format!("Unknown menu item id: {parent_id}"))
         })?;
 
@@ -633,34 +771,6 @@ impl DBusMenuServer {
     }
 
     async fn get_property(&self, id: i32, name: &str) -> zbus::fdo::Result<OwnedValue> {
-        if name == "enabled" {
-            let action = {
-                let state = self.state.lock().map_err(|_| {
-                    zbus::fdo::Error::Failed("Failed to access DBusMenu state".to_string())
-                })?;
-                state
-                    .items
-                    .get(&id)
-                    .and_then(|entry| entry.action.as_ref().map(|action| action.boxed_clone()))
-            };
-
-            if let Some(action) = action {
-                if let Some(enabled) = self.validate_enabled(action.as_ref())
-                    && let Some(value) = owned_bool(enabled)
-                {
-                    if let Ok(mut state) = self.state.lock() {
-                        if let Some(entry) = state.items.get_mut(&id) {
-                            entry.enabled = Some(enabled);
-                            entry
-                                .properties
-                                .insert("enabled".to_string(), value.clone());
-                        }
-                    }
-                    return Ok(value);
-                }
-            }
-        }
-
         let state = self
             .state
             .lock()
@@ -726,6 +836,56 @@ fn root_properties() -> HashMap<String, OwnedValue> {
     props
 }
 
+fn build_property_filter(property_names: &[String]) -> Option<HashSet<String>> {
+    if property_names.is_empty() {
+        None
+    } else {
+        Some(property_names.iter().cloned().collect())
+    }
+}
+
+fn filter_properties(
+    properties: HashMap<String, OwnedValue>,
+    filter: &Option<HashSet<String>>,
+) -> HashMap<String, OwnedValue> {
+    match filter {
+        Some(filter) => properties
+            .into_iter()
+            .filter(|(name, _)| filter.contains(name))
+            .collect(),
+        None => properties,
+    }
+}
+
+fn collect_layout_node_filtered(
+    state: &MenuState,
+    id: i32,
+    remaining_depth: i32,
+    filter: &Option<HashSet<String>>,
+) -> Option<(i32, HashMap<String, OwnedValue>, Vec<OwnedValue>)> {
+    let entry = state.items.get(&id)?;
+    let properties = filter_properties(entry.properties.clone(), filter);
+
+    let children = if remaining_depth == 0 {
+        Vec::new()
+    } else {
+        let mut result = Vec::new();
+        for &child_id in &entry.children {
+            if let Some(child_node) =
+                collect_layout_node_filtered(state, child_id, remaining_depth - 1, filter)
+            {
+                let variant = Value::from(zbus::zvariant::Structure::from(child_node)).try_into();
+                if let Ok(value) = variant {
+                    result.push(value);
+                }
+            }
+        }
+        result
+    };
+
+    Some((id, properties, children))
+}
+
 fn build_menu_tree(
     items: &mut HashMap<i32, MenuItemEntry>,
     next_id: &mut i32,
@@ -780,6 +940,7 @@ fn build_menu_tree(
                 action,
                 checked,
                 os_action,
+                checkable,
                 ..
             } => {
                 let mut props = HashMap::new();
@@ -818,14 +979,14 @@ fn build_menu_tree(
                     }
                 }
 
-                if *checked {
+                if *checkable {
                     let toggle_type = Value::Str("checkmark".into());
                     if let Ok(value) = toggle_type.try_into() {
                         props.insert("toggle-type".to_string(), value);
                     } else {
                         log::error!("Failed to encode DBusMenu toggle-type");
                     }
-                    let toggle_state = Value::I32(1);
+                    let toggle_state = if *checked { Value::I32(1) } else { Value::I32(0) };
                     if let Ok(value) = toggle_state.try_into() {
                         props.insert("toggle-state".to_string(), value);
                     } else {
@@ -863,9 +1024,6 @@ fn build_menu_tree(
     );
 }
 
-pub fn object_path_for_window(window_id: u32) -> String {
-    format!("{DBUSMENU_OBJECT_PATH}/window_{window_id}")
-}
 
 pub fn global_menu_env_override() -> Option<bool> {
     match std::env::var("ZED_GLOBAL_MENU").ok().as_deref() {
@@ -930,14 +1088,21 @@ fn dbus_shortcut_for_action(action: &dyn Action, keymap: &Keymap) -> Option<Owne
         .or_else(|| keymap.bindings_for_action(action).next());
 
     let keystrokes = binding?.keystrokes();
-    if keystrokes.len() != 1 {
-        return None;
-    }
-
-    dbus_shortcut_for_keystroke(&keystrokes[0])
+    dbus_shortcut_for_keystrokes(keystrokes)
 }
 
-fn dbus_shortcut_for_keystroke(keystroke: &KeybindingKeystroke) -> Option<OwnedValue> {
+fn dbus_shortcut_for_keystrokes(keystrokes: &[KeybindingKeystroke]) -> Option<OwnedValue> {
+    if keystrokes.is_empty() {
+        return None;
+    }
+    let mut shortcut: Vec<Vec<String>> = Vec::with_capacity(keystrokes.len());
+    for keystroke in keystrokes {
+        shortcut.push(dbus_keys_for_keystroke(keystroke)?);
+    }
+    Value::from(shortcut).try_into().ok()
+}
+
+fn dbus_keys_for_keystroke(keystroke: &KeybindingKeystroke) -> Option<Vec<String>> {
     let mut keys: Vec<String> = Vec::new();
 
     let modifiers = keystroke.modifiers();
@@ -953,14 +1118,57 @@ fn dbus_shortcut_for_keystroke(keystroke: &KeybindingKeystroke) -> Option<OwnedV
     if modifiers.platform {
         keys.push("Super".to_string());
     }
-    if modifiers.function {
-        keys.push("Fn".to_string());
+
+    keys.push(normalize_dbus_key(keystroke.key())?);
+
+    Some(keys)
+}
+
+fn normalize_dbus_key(key: &str) -> Option<String> {
+    let normalized = match key {
+        "enter" | "return" => "Return".to_string(),
+        "escape" => "Escape".to_string(),
+        "tab" => "Tab".to_string(),
+        "backspace" => "BackSpace".to_string(),
+        "delete" => "Delete".to_string(),
+        "insert" => "Insert".to_string(),
+        "home" => "Home".to_string(),
+        "end" => "End".to_string(),
+        "pageup" => "PageUp".to_string(),
+        "pagedown" => "PageDown".to_string(),
+        "left" => "Left".to_string(),
+        "right" => "Right".to_string(),
+        "up" => "Up".to_string(),
+        "down" => "Down".to_string(),
+        "space" => "space".to_string(),
+        _ => {
+            if let Some(suffix) = key.strip_prefix('f') {
+                if !suffix.is_empty() && suffix.chars().all(|c| c.is_ascii_digit()) {
+                    format!("F{suffix}")
+                } else {
+                    key.to_string()
+                }
+            } else if key.len() == 1 {
+                let mut chars = key.chars();
+                let ch = chars.next()?;
+                if chars.next().is_some() {
+                    key.to_string()
+                } else if ch.is_ascii_alphabetic() {
+                    ch.to_ascii_uppercase().to_string()
+                } else {
+                    key.to_string()
+                }
+            } else {
+                key.to_string()
+            }
+        }
+    };
+
+    if normalized.is_empty() {
+        None
+    } else {
+        Some(normalized)
     }
-
-    keys.push(keystroke.key().to_string());
-
-    let shortcut: Vec<Vec<String>> = vec![keys];
-    Value::from(shortcut).try_into().ok()
 }
 
 fn is_rtl_locale() -> bool {

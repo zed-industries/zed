@@ -4,7 +4,6 @@ use std::{
     os::fd::{AsRawFd, BorrowedFd},
     path::PathBuf,
     rc::{Rc, Weak},
-    sync::Arc,
     time::{Duration, Instant},
 };
 
@@ -95,7 +94,7 @@ use crate::linux::{
     xdg_desktop_portal::{Event as XDPEvent, XDPEventSource},
 };
 use gpui::{
-    Action, AnyWindowHandle, Bounds, Capslock, CursorStyle, DevicePixels, DisplayId, FileDropEvent,
+    AnyWindowHandle, Bounds, Capslock, CursorStyle, DevicePixels, DisplayId, FileDropEvent,
     ForegroundExecutor, KeyDownEvent, KeyUpEvent, Keystroke, Modifiers, ModifiersChangedEvent,
     MouseButton, MouseDownEvent, MouseExitEvent, MouseMoveEvent, MouseUpEvent, NavigationDirection,
     Pixels, PlatformDisplay, PlatformInput, PlatformKeyboardLayout, PlatformWindow, Point,
@@ -268,6 +267,8 @@ pub(crate) struct WaylandClientState {
     dbus_service_name: Option<String>,
     #[cfg(feature = "global-menu")]
     dbus_menu_thread: Option<std::thread::JoinHandle<()>>,
+    #[cfg(feature = "global-menu")]
+    appmenu_objects: HashMap<ObjectId, org_kde_kwin_appmenu::OrgKdeKwinAppmenu>,
     pub common: LinuxCommon,
 }
 
@@ -407,10 +408,10 @@ impl WaylandClientStatePtr {
         let mut state = client.borrow_mut();
 
         #[cfg(feature = "global-menu")]
-        if let Some(dbus_menu_server) = state.common.dbus_menu_server.as_ref() {
-            let object_path =
-                crate::linux::dbusmenu::object_path_for_window(surface_id.protocol_id());
-            dbus_menu_server.unexport_object_path(object_path);
+        {
+            if let Some(appmenu) = state.appmenu_objects.remove(surface_id) {
+                appmenu.release();
+            }
         }
 
         let closed_window = state.windows.remove(surface_id).unwrap();
@@ -453,6 +454,12 @@ impl Drop for WaylandClient {
         }
 
         let mut state = self.0.borrow_mut();
+
+        #[cfg(feature = "global-menu")]
+        for (_, appmenu) in state.appmenu_objects.drain() {
+            appmenu.release();
+        }
+
         state.windows.clear();
 
         if let Some(wl_pointer) = &state.wl_pointer {
@@ -467,6 +474,13 @@ impl Drop for WaylandClient {
         if let Some(text_input) = &state.text_input {
             text_input.destroy();
         }
+    }
+}
+
+#[cfg(feature = "global-menu")]
+impl crate::linux::dbusmenu::GlobalMenuState for WaylandClientState {
+    fn linux_common(&mut self) -> &mut crate::linux::LinuxCommon {
+        &mut self.common
     }
 }
 
@@ -696,6 +710,8 @@ impl WaylandClient {
             dbus_service_name: None,
             #[cfg(feature = "global-menu")]
             dbus_menu_thread: None,
+            #[cfg(feature = "global-menu")]
+            appmenu_objects: HashMap::default(),
         }));
 
         WaylandSource::new(conn, event_queue)
@@ -716,314 +732,41 @@ impl WaylandClient {
                 let dbus_menu_server = crate::linux::dbusmenu::DBusMenuServer::new();
                 let service_name = format!("com.zed.dbusmenu.pid{}", std::process::id());
 
-                // Channel for sending menu actions from the DBus thread to the main thread.
-                let (action_tx, action_rx) = calloop::channel::channel::<Box<dyn Action>>();
-                let (will_open_tx, will_open_rx) = calloop::channel::channel::<()>();
-                let (validate_tx, validate_rx) =
-                    calloop::channel::channel::<crate::linux::dbusmenu::ValidateRequest>();
-
-                dbus_menu_server.set_action_callback({
-                    let action_tx = action_tx.clone();
-                    Box::new(move |action| {
-                        if let Err(error) = action_tx.send(action) {
-                            log::error!(
-                                "Failed to send DBus menu action to the Wayland event loop: {error}"
-                            );
-                        }
-                    })
-                });
-                dbus_menu_server.set_will_open_callback({
-                    let will_open_tx = will_open_tx.clone();
-                    Arc::new(move || {
-                        if let Err(error) = will_open_tx.send(()) {
-                            log::error!(
-                                "Failed to send DBus menu open notification to the Wayland event loop: {error}"
-                            );
-                        }
-                    })
-                });
-                dbus_menu_server.set_validate_sender(validate_tx);
-
-                state
-                    .borrow()
-                    .loop_handle
-                    .insert_source(action_rx, {
-                        let client = Rc::downgrade(&state);
-                        move |event, _, _| {
-                            if let calloop::channel::Event::Msg(action) = event {
-                                if let Some(client) = client.upgrade() {
-                                    let mut state = client.borrow_mut();
-                                    if let Some(callback) =
-                                        state.common.callbacks.app_menu_action.as_mut()
-                                    {
-                                        callback(action.as_ref());
-                                    }
-                                }
-                            }
-                        }
-                    })
-                    .log_err();
-
-                state
-                    .borrow()
-                    .loop_handle
-                    .insert_source(will_open_rx, {
-                        let client = Rc::downgrade(&state);
-                        move |event, _, _| {
-                            if let calloop::channel::Event::Msg(()) = event {
-                                if let Some(client) = client.upgrade() {
-                                    let (
-                                        dbus_menu_server,
-                                        mut validate_app_menu_command,
-                                        mut will_open_app_menu,
-                                    ) = {
-                                        let mut state = client.borrow_mut();
-                                        (
-                                            state.common.dbus_menu_server.clone(),
-                                            state.common.callbacks.validate_app_menu_command.take(),
-                                            state.common.callbacks.will_open_app_menu.take(),
-                                        )
-                                    };
-
-                                    if let Some(callback) = will_open_app_menu.as_mut() {
-                                        callback();
-                                    }
-                                    if let (Some(dbus_menu_server), Some(validate_callback)) = (
-                                        dbus_menu_server.as_ref(),
-                                        validate_app_menu_command.as_mut(),
-                                    ) {
-                                        dbus_menu_server.refresh_enabled_states(validate_callback);
-                                    }
-
-                                    let mut state = client.borrow_mut();
-                                    if state.common.callbacks.validate_app_menu_command.is_none() {
-                                        state.common.callbacks.validate_app_menu_command =
-                                            validate_app_menu_command;
-                                    }
-                                    if state.common.callbacks.will_open_app_menu.is_none() {
-                                        state.common.callbacks.will_open_app_menu =
-                                            will_open_app_menu;
-                                    }
-                                }
-                            }
-                        }
-                    })
-                    .log_err();
-
-                state
-                    .borrow()
-                    .loop_handle
-                    .insert_source(validate_rx, {
-                        let client = Rc::downgrade(&state);
-                        move |event, _, _| {
-                            if let calloop::channel::Event::Msg(request) = event {
-                                if let Some(client) = client.upgrade() {
-                                    let enabled = {
-                                        let mut state = client.borrow_mut();
-                                        match state
-                                            .common
-                                            .callbacks
-                                            .validate_app_menu_command
-                                            .as_mut()
-                                        {
-                                            Some(validate) => validate(request.action.as_ref()),
-                                            None => true,
-                                        }
-                                    };
-
-                                    if let Err(error) = request.responded.send(enabled) {
-                                        log::error!(
-                                            "Failed to send DBusMenu validate response: {error}"
-                                        );
-                                    }
-                                }
-                            }
-                        }
-                    })
-                    .log_err();
-
-                let refresh_interval = Duration::from_millis(250);
-                state
-                    .borrow()
-                    .loop_handle
-                    .insert_source(Timer::from_duration(refresh_interval), {
-                        let client = Rc::downgrade(&state);
-                        move |event_timestamp, _, _| {
-                            let Some(client) = client.upgrade() else {
-                                return TimeoutAction::Drop;
+                crate::linux::dbusmenu::setup_global_menu_sources(
+                    &dbus_menu_server,
+                    &state.borrow().loop_handle,
+                    Rc::downgrade(&state),
+                    move |state| {
+                        let (service_name, dbus_menu_server, appmenus) = {
+                            let Some(service_name) = state.dbus_service_name.as_ref().cloned() else {
+                                return;
                             };
-                            let (dbus_menu_server, mut validate_app_menu_command) = {
-                                let mut state = client.borrow_mut();
-                                (
-                                    state.common.dbus_menu_server.clone(),
-                                    state.common.callbacks.validate_app_menu_command.take(),
-                                )
+                            let Some(dbus_menu_server) = state.common.dbus_menu_server.clone() else {
+                                return;
                             };
+                            let appmenus = state
+                                .appmenu_objects
+                                .iter()
+                                .map(|(surface_id, appmenu)| (surface_id.clone(), appmenu.clone()))
+                                .collect::<Vec<_>>();
+                            (service_name, dbus_menu_server, appmenus)
+                        };
 
-                            if let (Some(dbus_menu_server), Some(validate_callback)) = (
-                                dbus_menu_server.as_ref(),
-                                validate_app_menu_command.as_mut(),
-                            ) {
-                                dbus_menu_server.refresh_enabled_states(validate_callback);
-                            }
-
-                            let mut state = client.borrow_mut();
-                            if state.common.callbacks.validate_app_menu_command.is_none() {
-                                state.common.callbacks.validate_app_menu_command =
-                                    validate_app_menu_command;
-                            }
-                            TimeoutAction::ToInstant(event_timestamp + refresh_interval)
+                        for (_, appmenu) in appmenus {
+                            appmenu.set_address(service_name.clone(), crate::linux::dbusmenu::DBUSMENU_OBJECT_PATH.to_string());
                         }
-                    })
-                    .log_err();
+                    },
+                );
 
                 state.borrow_mut().common.dbus_menu_server = Some(dbus_menu_server.clone());
                 state.borrow_mut().dbus_service_name = Some(service_name.clone());
 
                 let object_path = crate::linux::dbusmenu::DBUSMENU_OBJECT_PATH.to_string();
-                let (dbus_command_tx, dbus_command_rx) = async_channel::unbounded();
-                dbus_menu_server.set_command_sender(dbus_command_tx);
-                let dbus_menu_thread = std::thread::Builder::new()
-                    .name("dbus-menu".into())
-                    .spawn(move || {
-                        smol::block_on(async move {
-                            let dbus_menu_server_for_service = dbus_menu_server.clone();
-                            let builder = match zbus::connection::Builder::session()
-                                .and_then(|builder| builder.name(service_name.as_str()))
-                                .and_then(|builder| {
-                                    builder.serve_at(
-                                        object_path.as_str(),
-                                        dbus_menu_server_for_service,
-                                    )
-                                }) {
-                                Ok(builder) => builder,
-                                Err(error) => {
-                                    log::error!("Failed to configure DBus connection: {error}");
-                                    return;
-                                }
-                            };
-
-                            let connection = match builder.build().await {
-                                Ok(connection) => connection,
-                                Err(error) => {
-                                    log::error!("Failed to build DBus connection: {error}");
-                                    return;
-                                }
-                            };
-
-                            dbus_menu_server.mark_connected();
-                            log::info!("DBusMenu server started on {service_name}");
-
-                            while let Ok(command) = dbus_command_rx.recv().await {
-                                match command {
-                                    crate::linux::dbusmenu::DBusMenuCommand::EnsureExported {
-                                        object_path,
-                                        responded,
-                                    } => {
-                                        let result = connection
-                                            .object_server()
-                                            .at(object_path.as_str(), dbus_menu_server.clone())
-                                            .await;
-                                        let ok = result.is_ok();
-                                        if ok {
-                                            dbus_menu_server.note_exported(object_path);
-                                        }
-                                        if let Err(error) = responded.send(ok) {
-                                            log::error!(
-                                                "Failed to send DBusMenu export response: {error}"
-                                            );
-                                        }
-                                    }
-                                    crate::linux::dbusmenu::DBusMenuCommand::LayoutUpdated {
-                                        revision,
-                                        parent,
-                                        object_paths,
-                                    } => {
-                                        for object_path in object_paths {
-                                            let emitter = match zbus::object_server::SignalEmitter::new(
-                                                &connection,
-                                                object_path.as_str(),
-                                            ) {
-                                                Ok(emitter) => emitter,
-                                                Err(error) => {
-                                                    log::error!(
-                                                        "Failed to build DBusMenu signal emitter for {object_path}: {error}"
-                                                    );
-                                                    continue;
-                                                }
-                                            };
-                                            if let Err(error) =
-                                                crate::linux::dbusmenu::DBusMenuServer::layout_updated(
-                                                    &emitter,
-                                                    revision,
-                                                    parent,
-                                                )
-                                                .await
-                                            {
-                                                log::error!(
-                                                    "Failed to emit DBusMenu LayoutUpdated signal for {object_path}: {error}"
-                                                );
-                                            }
-                                        }
-                                    }
-                                    crate::linux::dbusmenu::DBusMenuCommand::ItemsPropertiesUpdated {
-                                        updated_props,
-                                        removed_props,
-                                        object_paths,
-                                    } => {
-                                        for object_path in object_paths {
-                                            let emitter = match zbus::object_server::SignalEmitter::new(
-                                                &connection,
-                                                object_path.as_str(),
-                                            ) {
-                                                Ok(emitter) => emitter,
-                                                Err(error) => {
-                                                    log::error!(
-                                                        "Failed to build DBusMenu signal emitter for {object_path}: {error}"
-                                                    );
-                                                    continue;
-                                                }
-                                            };
-                                            if let Err(error) =
-                                                crate::linux::dbusmenu::DBusMenuServer::items_properties_updated(
-                                                    &emitter,
-                                                    updated_props.clone(),
-                                                    removed_props.clone(),
-                                                )
-                                                .await
-                                            {
-                                                log::error!(
-                                                    "Failed to emit DBusMenu ItemsPropertiesUpdated for {object_path}: {error}"
-                                                );
-                                            }
-                                        }
-                                    }
-                                    crate::linux::dbusmenu::DBusMenuCommand::Unexport {
-                                        object_path,
-                                    } => {
-                                        let result = connection
-                                            .object_server()
-                                            .remove::<crate::linux::dbusmenu::DBusMenuServer, _>(
-                                                object_path.as_str(),
-                                            )
-                                            .await;
-                                        match result {
-                                            Ok(_) => {}
-                                            Err(error) => {
-                                                log::error!(
-                                                    "Failed to unexport DBusMenu object at {object_path}: {error}"
-                                                );
-                                            }
-                                        }
-                                    }
-                                    crate::linux::dbusmenu::DBusMenuCommand::Shutdown => {
-                                        break;
-                                    }
-                                }
-                            }
-                        });
-                    })
-                    .log_err();
+                let dbus_menu_thread = dbus_menu_server.spawn_dbus_menu_thread(
+                    service_name.clone(),
+                    object_path,
+                    None,
+                );
 
                 if let Some(thread) = dbus_menu_thread {
                     state.borrow_mut().dbus_menu_thread = Some(thread);
@@ -1137,21 +880,15 @@ impl LinuxClient for WaylandClient {
             state.dbus_service_name.as_ref(),
         ) {
             let dbus_menu_server = state.common.dbus_menu_server.clone();
-            let mut object_path =
-                crate::linux::dbusmenu::object_path_for_window(surface_id.protocol_id());
-            if let Some(dbus_menu_server) = dbus_menu_server.as_ref() {
-                if !dbus_menu_server
-                    .ensure_exported_blocking(object_path.clone(), Duration::from_millis(250))
-                {
-                    object_path = crate::linux::dbusmenu::DBUSMENU_OBJECT_PATH.to_string();
-                }
-            } else {
-                object_path = crate::linux::dbusmenu::DBUSMENU_OBJECT_PATH.to_string();
-            }
-
             let surface = window.0.surface();
             let appmenu = appmenu_manager.create(&surface, &state.globals.qh, ());
-            appmenu.set_address(service_name.clone(), object_path);
+            if let Some(_dbus_menu_server) =
+                dbus_menu_server.as_ref().filter(|server| server.is_connected())
+            {
+                let object_path = crate::linux::dbusmenu::DBUSMENU_OBJECT_PATH.to_string();
+                appmenu.set_address(service_name.clone(), object_path);
+            }
+            state.appmenu_objects.insert(surface_id.clone(), appmenu);
         }
 
         Ok(Box::new(window))
