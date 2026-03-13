@@ -947,6 +947,40 @@ impl LspButton {
                 });
                 updated = true;
             }
+            LspStoreEvent::LanguageServerAdded(new_server_id, new_server_name, worktree_id) => {
+                self.server_state.update(cx, |state, cx| {
+                    for servers_for_path in state
+                        .language_servers
+                        .servers_per_buffer_abs_path
+                        .values_mut()
+                    {
+                        let path_worktree_id = servers_for_path
+                            .worktree
+                            .as_ref()
+                            .and_then(|w| w.upgrade())
+                            .map(|w| w.read(cx).id());
+
+                        if path_worktree_id != *worktree_id {
+                            continue;
+                        }
+
+                        let old_ids: Vec<_> = servers_for_path
+                            .servers
+                            .iter()
+                            .filter(|(old_id, name)| {
+                                *old_id != new_server_id && name.as_ref() == Some(new_server_name)
+                            })
+                            .map(|(id, _)| *id)
+                            .collect();
+
+                        for old_id in old_ids {
+                            let name = servers_for_path.servers.remove(&old_id).flatten();
+                            servers_for_path.servers.insert(*new_server_id, name);
+                        }
+                    }
+                });
+                updated = true;
+            }
             _ => {}
         };
 
