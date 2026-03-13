@@ -2036,7 +2036,7 @@ impl Panel for Sidebar {
 
     fn secondary_button(&self, _window: &Window, _cx: &App) -> Option<PanelIconButton> {
         Some(PanelIconButton {
-            icon: IconName::Ai,
+            icon: IconName::ZedAssistant,
             tooltip: "Agent Drawer",
             action: Box::new(ToggleAgentDrawer),
         })
