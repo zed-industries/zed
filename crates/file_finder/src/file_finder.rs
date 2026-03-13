@@ -844,7 +844,11 @@ impl FileFinderDelegate {
         cx: &mut Context<FileFinder>,
     ) -> Self {
         Self::subscribe_to_updates(&project, window, cx);
-        let channel_store = ChannelStore::try_global(cx);
+        let channel_store = if FileFinderSettings::get_global(cx).include_channels {
+            ChannelStore::try_global(cx)
+        } else {
+            None
+        };
         Self {
             file_finder,
             workspace,
