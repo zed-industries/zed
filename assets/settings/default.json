@@ -1454,12 +1454,16 @@
     "enable_status": true,
     // Whether to enable git diff display.
     "enable_diff": true,
-    // Control whether the git gutter is shown. May take 2 values:
+    // Control whether the git gutter is shown. May take 3 values:
     // 1. Show the gutter
     //      "git_gutter": "tracked_files"
-    // 2. Hide the gutter
+    // 2. Show the gutter with per-line signs
+    //      "git_gutter": "tracked_files_with_signs"
+    // 3. Hide the gutter
     //      "git_gutter": "hide"
     "git_gutter": "tracked_files",
+    // Minimum contrast used when rendering diff hunk signs in the gutter.
+    "git_gutter_sign_minimum_contrast": 70.0,
     /// Sets the debounce threshold (in milliseconds) after which changes are reflected in the git gutter.
     ///
     /// Default: 0
