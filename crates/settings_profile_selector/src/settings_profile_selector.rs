@@ -7,7 +7,24 @@ use settings::{ActiveSettingsProfileName, SettingsStore};
 use ui::{HighlightedLabel, ListItem, ListItemSpacing, prelude::*};
 use workspace::{ModalView, Workspace};
 
+const SETTINGS_PROFILES_TIP_MESSAGE: &str = "\
+Define settings profiles in your `settings.json` to switch configurations \
+on the fly. Create named profiles under `\"profiles\"` with any settings \
+you want \u{2014} font sizes, themes, panel layouts \u{2014} then toggle between them \
+with `settings profile selector: toggle`. Great for switching between \
+coding, presenting, and writing modes.";
+
 pub fn init(cx: &mut App) {
+    workspace::welcome::register_tip(
+        workspace::welcome::Tip {
+            title: "Quick-Swap Settings with Profiles".into(),
+            message: SETTINGS_PROFILES_TIP_MESSAGE.into(),
+            icon: Some(IconName::Settings),
+            mentioned_actions: vec![Box::new(zed_actions::settings_profile_selector::Toggle)],
+        },
+        cx,
+    );
+
     cx.on_action(|_: &zed_actions::settings_profile_selector::Toggle, cx| {
         workspace::with_active_or_new_workspace(cx, |workspace, window, cx| {
             toggle_settings_profile_selector(workspace, window, cx);

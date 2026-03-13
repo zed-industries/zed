@@ -717,14 +717,36 @@ pub fn prompt_for_open_path_and_open(
     .detach();
 }
 
-const MESSAGE: &str = r#"
-command palette is good. use it
+const COMMAND_PALETTE_TIP_MESSAGE: &str = "\
+The command palette is your gateway to every action in Zed. \
+Open it to quickly find and run any command, toggle settings, \
+or navigate your project \u{2014} all without leaving the keyboard.";
 
-hey look markdown:
-```json
-{"fun": "times"}
-```
-"#;
+const PROSE_WRITING_TIP_MESSAGE: &str = "\
+Want a distraction-free writing environment? \
+Use `workspace: close all docks` to hide panels, \
+`workspace: close inactive tabs and panes` to clean up, \
+then `workspace: toggle centered layout` to center your content. \
+Chain all three with `action::Sequence` in your keymap for a one-key zen mode.";
+
+const SEQUENCE_ACTIONS_TIP_MESSAGE: &str = "\
+Want one keybinding to do multiple things? \
+Use `action::Sequence` in your keymap to chain actions together. \
+For example, you could close all docks, clean up tabs, \
+and toggle centered layout \u{2014} all with a single keystroke.";
+
+const AUTOSAVE_TIP_MESSAGE: &str = "\
+Tired of forgetting to save before running tests? \
+Add `\"autosave\": \"on_focus_change\"` to your settings, \
+and Zed will automatically save your files whenever you switch \
+to a terminal or another application.";
+
+const OPEN_IN_NEW_PANE_TIP_MESSAGE: &str = "\
+When opening a file from the project panel or file finder, \
+hold `cmd` (macOS) or `ctrl` (Linux/Windows) to open it in a new pane \
+to the right instead of replacing your current tab. \
+When jumping to a definition, hold `alt` in addition to `cmd`/`ctrl` \
+for the same effect.";
 
 pub fn init(app_state: Arc<AppState>, cx: &mut App) {
     component::init();
@@ -735,9 +757,45 @@ pub fn init(app_state: Arc<AppState>, cx: &mut App) {
     welcome::register_tip(
         welcome::Tip {
             title: "Master the Command Palette".into(),
-            message: MESSAGE.into(),
+            message: COMMAND_PALETTE_TIP_MESSAGE.into(),
             icon: Some(ui::IconName::Sparkle),
             mentioned_actions: vec![Box::new(zed_actions::command_palette::Toggle)],
+        },
+        cx,
+    );
+    welcome::register_tip(
+        welcome::Tip {
+            title: "Set Up a Prose-Writing Focus".into(),
+            message: PROSE_WRITING_TIP_MESSAGE.into(),
+            icon: Some(ui::IconName::CursorIBeam),
+            mentioned_actions: vec![Box::new(ToggleCenteredLayout)],
+        },
+        cx,
+    );
+    welcome::register_tip(
+        welcome::Tip {
+            title: "Sequence Multiple Actions".into(),
+            message: SEQUENCE_ACTIONS_TIP_MESSAGE.into(),
+            icon: Some(ui::IconName::PlayFilled),
+            mentioned_actions: vec![],
+        },
+        cx,
+    );
+    welcome::register_tip(
+        welcome::Tip {
+            title: "Auto-Save on Focus Change".into(),
+            message: AUTOSAVE_TIP_MESSAGE.into(),
+            icon: Some(ui::IconName::Settings),
+            mentioned_actions: vec![Box::new(zed_actions::OpenSettings)],
+        },
+        cx,
+    );
+    welcome::register_tip(
+        welcome::Tip {
+            title: "Open Files in a New Pane".into(),
+            message: OPEN_IN_NEW_PANE_TIP_MESSAGE.into(),
+            icon: Some(ui::IconName::Split),
+            mentioned_actions: vec![],
         },
         cx,
     );

@@ -97,9 +97,26 @@ actions!(
 #[action(namespace = terminal)]
 pub struct RenameTerminal;
 
+const TMUX_SESSION_TIP_MESSAGE: &str = "\
+If you use tmux, configure Zed's terminal to automatically attach to a \
+project-specific session. Set `\"terminal\": { \"shell\": { \
+\"with_arguments\": { \"program\": \"/bin/zsh\", \"args\": [\"-c\", \
+\"tmux new-session -A -s \\\"$(basename \\\"$PWD\\\")\\\"\"] } } }` in \
+your settings. Each project gets its own persistent tmux session.";
+
 pub fn init(cx: &mut App) {
     assistant_slash_command::init(cx);
     terminal_panel::init(cx);
+
+    workspace::welcome::register_tip(
+        workspace::welcome::Tip {
+            title: "Project-Specific Tmux Sessions".into(),
+            message: TMUX_SESSION_TIP_MESSAGE.into(),
+            icon: Some(ui::IconName::Terminal),
+            mentioned_actions: vec![],
+        },
+        cx,
+    );
 
     register_serializable_item::<TerminalView>(cx);
 

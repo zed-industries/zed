@@ -443,7 +443,23 @@ impl FoldedAncestors {
     }
 }
 
+const COMPARE_MARKED_FILES_TIP_MESSAGE: &str = "\
+Need to compare two files? In the project panel, select multiple files \
+(hold `cmd`/`ctrl` while clicking), then right-click and choose \
+\"Compare Marked Files\" to open a diff view of the two most recently \
+selected files.";
+
 pub fn init(cx: &mut App) {
+    workspace::welcome::register_tip(
+        workspace::welcome::Tip {
+            title: "Compare Marked Files".into(),
+            message: COMPARE_MARKED_FILES_TIP_MESSAGE.into(),
+            icon: Some(ui::IconName::Diff),
+            mentioned_actions: vec![Box::new(CompareMarkedFiles)],
+        },
+        cx,
+    );
+
     cx.observe_new(|workspace: &mut Workspace, _, _| {
         workspace.register_action(|workspace, _: &ToggleFocus, window, cx| {
             workspace.toggle_panel_focus::<ProjectPanel>(window, cx);

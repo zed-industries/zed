@@ -332,6 +332,46 @@ pub enum HideMouseCursorOrigin {
     MovementAction,
 }
 
+const CURSOR_FOR_EVERY_LINE_TIP_MESSAGE: &str = "\
+Need a cursor on every line to manipulate text in bulk? \
+Select a block of text, then use `editor: split selection into lines` \
+to place a cursor at the end of each line. \
+Now you can edit all lines simultaneously with multicursors.";
+
+const COPY_AND_TRIM_TIP_MESSAGE: &str = "\
+When copying indented code, extra leading whitespace can be annoying. \
+Use `editor: copy and trim` instead of a regular copy \u{2014} \
+it strips the common leading indentation from the selected lines, \
+giving you a cleaner paste.";
+
+const DIFF_CLIPBOARD_TIP_MESSAGE: &str = "\
+Found two similar code blocks and need to spot the differences? \
+Copy one block to your clipboard, select the other, then run \
+`editor: diff clipboard with selection` from the command palette. \
+The diff view shows exactly what varies between them.";
+
+const SELECTIONS_IN_MULTIBUFFER_TIP_MESSAGE: &str = "\
+When using multicursors across a large file, reviewing scattered \
+selections can be tedious. Run `editor: open selections in multibuffer` \
+to consolidate all your selections into a compact view where \
+they're just a few lines apart.";
+
+const QUICK_NEW_LINES_TIP_MESSAGE: &str = "\
+No need to move your cursor to the end of a line before pressing Enter. \
+Use `editor: newline below` to start a new line below the current one, \
+or `editor: newline above` to insert one above \u{2014} \
+your cursor jumps right to the new line.";
+
+const RUN_NEAREST_TEST_TIP_MESSAGE: &str = "\
+Iterating on a test? Use `editor: spawn nearest task` to run the test \
+closest to your cursor. It's the most convenient keyboard-driven way \
+to repeatedly run a single test without navigating to the terminal.";
+
+const SELECT_ALL_MATCHES_TIP_MESSAGE: &str = "\
+Place your cursor on a word and use `editor: select all matches` \
+to instantly create selections on every occurrence of that word \
+in the buffer. Then edit them all at once with multicursors.";
+
 pub fn init(cx: &mut App) {
     cx.set_global(GlobalBlameRenderer(Arc::new(())));
     cx.set_global(breadcrumbs::RenderBreadcrumbText(render_breadcrumb_text));
@@ -387,6 +427,70 @@ pub fn init(cx: &mut App) {
         )) as Arc<dyn ErasedEditor>
     });
     _ = multi_buffer::EXCERPT_CONTEXT_LINES.set(multibuffer_context_lines);
+
+    workspace::welcome::register_tip(
+        workspace::welcome::Tip {
+            title: "A Cursor for Every Line".into(),
+            message: CURSOR_FOR_EVERY_LINE_TIP_MESSAGE.into(),
+            icon: Some(ui::IconName::CursorIBeam),
+            mentioned_actions: vec![Box::new(SplitSelectionIntoLines::default())],
+        },
+        cx,
+    );
+    workspace::welcome::register_tip(
+        workspace::welcome::Tip {
+            title: "Copy and Trim".into(),
+            message: COPY_AND_TRIM_TIP_MESSAGE.into(),
+            icon: Some(ui::IconName::Copy),
+            mentioned_actions: vec![Box::new(CopyAndTrim)],
+        },
+        cx,
+    );
+    workspace::welcome::register_tip(
+        workspace::welcome::Tip {
+            title: "Diff Clipboard With Selection".into(),
+            message: DIFF_CLIPBOARD_TIP_MESSAGE.into(),
+            icon: Some(ui::IconName::Diff),
+            mentioned_actions: vec![Box::new(DiffClipboardWithSelection)],
+        },
+        cx,
+    );
+    workspace::welcome::register_tip(
+        workspace::welcome::Tip {
+            title: "Gather Your Selections in a Multibuffer".into(),
+            message: SELECTIONS_IN_MULTIBUFFER_TIP_MESSAGE.into(),
+            icon: Some(ui::IconName::SelectAll),
+            mentioned_actions: vec![Box::new(OpenSelectionsInMultibuffer)],
+        },
+        cx,
+    );
+    workspace::welcome::register_tip(
+        workspace::welcome::Tip {
+            title: "Quick New Lines Above and Below".into(),
+            message: QUICK_NEW_LINES_TIP_MESSAGE.into(),
+            icon: Some(ui::IconName::Return),
+            mentioned_actions: vec![Box::new(NewlineBelow), Box::new(NewlineAbove)],
+        },
+        cx,
+    );
+    workspace::welcome::register_tip(
+        workspace::welcome::Tip {
+            title: "Run the Nearest Test".into(),
+            message: RUN_NEAREST_TEST_TIP_MESSAGE.into(),
+            icon: Some(ui::IconName::PlayFilled),
+            mentioned_actions: vec![Box::new(SpawnNearestTask::default())],
+        },
+        cx,
+    );
+    workspace::welcome::register_tip(
+        workspace::welcome::Tip {
+            title: "Select All Matches".into(),
+            message: SELECT_ALL_MATCHES_TIP_MESSAGE.into(),
+            icon: Some(ui::IconName::SelectAll),
+            mentioned_actions: vec![Box::new(SelectAllMatches)],
+        },
+        cx,
+    );
 }
 
 pub fn set_blame_renderer(renderer: impl BlameRenderer + 'static, cx: &mut App) {

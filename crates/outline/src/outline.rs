@@ -22,6 +22,13 @@ use ui::{ListItem, ListItemSpacing, prelude::*};
 use util::ResultExt;
 use workspace::{DismissDecision, ModalView};
 
+const OUTLINE_TIP_MESSAGE: &str = "\
+The outline modal (`outline: toggle`) filters symbols by name. But if you include \
+a space in your query, it also matches contextual keywords like visibility modifiers \
+and declaration types. Try queries like `pub fn` to find all public functions, \
+`trait ` (with a trailing space) for trait definitions, or `impl Foo for` to find \
+trait implementations.";
+
 pub fn init(cx: &mut App) {
     cx.observe_new(OutlineView::register).detach();
     zed_actions::outline::TOGGLE_OUTLINE
@@ -33,6 +40,16 @@ pub fn init(cx: &mut App) {
             toggle(editor, &Default::default(), window, cx);
         })
         .ok();
+
+    workspace::welcome::register_tip(
+        workspace::welcome::Tip {
+            title: "Filter by Context in the Outline".into(),
+            message: OUTLINE_TIP_MESSAGE.into(),
+            icon: Some(ui::IconName::ListTree),
+            mentioned_actions: vec![Box::new(zed_actions::outline::ToggleOutline)],
+        },
+        cx,
+    );
 }
 
 pub fn toggle(

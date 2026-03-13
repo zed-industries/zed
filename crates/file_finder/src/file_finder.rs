@@ -88,7 +88,24 @@ pub struct FileFinder {
     init_modifiers: Option<Modifiers>,
 }
 
+const TELESCOPE_TIP_MESSAGE: &str = "\
+Prefer a fuzzy file finder like Vim's Telescope? Install `television` on \
+your system, then create a custom task in `tasks.json` with \
+`\"command\": \"zed \\\"$(tv files)\\\"\"` and `\"hide\": \"always\"`. Bind it to \
+`cmd-p` / `ctrl-p` using `task::Spawn` for a Telescope-like experience \
+right in Zed.";
+
 pub fn init(cx: &mut App) {
+    workspace::welcome::register_tip(
+        workspace::welcome::Tip {
+            title: "Emulate Vim's Telescope".into(),
+            message: TELESCOPE_TIP_MESSAGE.into(),
+            icon: Some(ui::IconName::MagnifyingGlass),
+            mentioned_actions: vec![],
+        },
+        cx,
+    );
+
     cx.observe_new(FileFinder::register).detach();
     cx.observe_new(OpenPathPrompt::register).detach();
     cx.observe_new(OpenPathPrompt::register_new_path).detach();

@@ -9,6 +9,18 @@ use workspace::Workspace;
 
 mod modal;
 
+const CUSTOMIZE_TASKS_TIP_MESSAGE: &str = "\
+Need to tweak a task before running it? In the task modal (`task: spawn`), press \
+`tab` to expand any task into its full command. Edit it however you like \u{2014} for example, \
+add `RUST_BACKTRACE=1` \u{2014} then press `alt-enter` to run it as a oneshot task. The \
+modified task is saved to your history for easy reuse.";
+
+const LAZYGIT_TASK_TIP_MESSAGE: &str = "\
+Want a full-featured Git TUI inside Zed? Add a Lazygit task to your `tasks.json` \
+with `\"command\": \"lazygit\"`, `\"reveal_target\": \"center\"`, and \
+`\"use_new_terminal\": true`. Then bind it to a keybinding like `cmd-shift-g` using \
+`task::Spawn` with `{ \"task_name\": \"LazyGit\" }` for instant access.";
+
 pub use modal::{Rerun, ShowAttachModal, Spawn, TaskOverrides, TasksModal};
 
 pub fn init(cx: &mut App) {
@@ -93,6 +105,25 @@ pub fn init(cx: &mut App) {
         },
     )
     .detach();
+
+    workspace::welcome::register_tip(
+        workspace::welcome::Tip {
+            title: "Customize Tasks on the Fly".into(),
+            message: CUSTOMIZE_TASKS_TIP_MESSAGE.into(),
+            icon: Some(ui::IconName::Terminal),
+            mentioned_actions: vec![],
+        },
+        cx,
+    );
+    workspace::welcome::register_tip(
+        workspace::welcome::Tip {
+            title: "Lazygit as a Task".into(),
+            message: LAZYGIT_TASK_TIP_MESSAGE.into(),
+            icon: Some(ui::IconName::Terminal),
+            mentioned_actions: vec![],
+        },
+        cx,
+    );
 }
 
 fn spawn_task_or_modal(

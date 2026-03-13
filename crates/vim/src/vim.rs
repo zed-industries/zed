@@ -275,9 +275,21 @@ actions!(
     ]
 );
 
+const SEND_KEYSTROKES_TIP_MESSAGE: &str = "In Vim mode, you can map keybindings to replay sequences of keystrokes — just like Vim macros but permanent. Use `workspace::SendKeystrokes` in your keymap. For example, in visual mode, `\"\\d\": [\"workspace::SendKeystrokes\", \"\\\" a s dbg!( ctrl-r a ) escape\"]` wraps a selection with `dbg!()` in Rust.";
+
 /// Initializes the `vim` crate.
 pub fn init(cx: &mut App) {
     VimGlobals::register(cx);
+
+    workspace::welcome::register_tip(
+        workspace::welcome::Tip {
+            title: "Custom Vim Macros with SendKeystrokes".into(),
+            message: SEND_KEYSTROKES_TIP_MESSAGE.into(),
+            icon: Some(ui::IconName::Keyboard),
+            mentioned_actions: vec![],
+        },
+        cx,
+    );
 
     cx.observe_new(Vim::register).detach();
 

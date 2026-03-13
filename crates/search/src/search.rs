@@ -20,10 +20,41 @@ pub mod project_search;
 pub(crate) mod search_bar;
 pub mod search_status_button;
 
+const SELECT_ALL_REGEX_MATCHES_TIP_MESSAGE: &str = "\
+Need to edit every occurrence of a complex pattern? Open buffer search, enable the regex \
+filter, type your pattern, then press `alt-enter` (or click the 'Select All Matches' button). \
+Every match becomes a selection you can edit simultaneously \u{2014} far more powerful than simple \
+find-and-replace.";
+
+const MULTIPLE_PROJECT_SEARCH_TABS_TIP_MESSAGE: &str = "\
+By default, project search reuses a single tab. Want to keep multiple searches open? In an \
+existing search tab, type your new query and press `cmd-enter` (macOS) / `ctrl-enter` \
+(Windows/Linux) to open results in a new tab. You can also rebind `cmd-shift-f` to \
+`workspace::NewSearch` for fresh tabs every time.";
+
 pub fn init(cx: &mut App) {
     menu::init();
     buffer_search::init(cx);
     project_search::init(cx);
+
+    workspace::welcome::register_tip(
+        workspace::welcome::Tip {
+            title: "Select All Regex Matches".into(),
+            message: SELECT_ALL_REGEX_MATCHES_TIP_MESSAGE.into(),
+            icon: Some(ui::IconName::Regex),
+            mentioned_actions: vec![Box::new(SelectAllMatches)],
+        },
+        cx,
+    );
+    workspace::welcome::register_tip(
+        workspace::welcome::Tip {
+            title: "Multiple Project Search Tabs".into(),
+            message: MULTIPLE_PROJECT_SEARCH_TABS_TIP_MESSAGE.into(),
+            icon: Some(ui::IconName::MagnifyingGlass),
+            mentioned_actions: vec![Box::new(workspace::NewSearch)],
+        },
+        cx,
+    );
 }
 
 actions!(

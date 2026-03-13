@@ -26,7 +26,24 @@ actions!(
     ]
 );
 
+const FILE_TYPES_TIP_MESSAGE: &str = "\
+Zed doesn't recognize your file extension? Use the `file_types` setting to \
+map it permanently. For example, `\"file_types\": { \"JavaScript\": \
+[\"*.jsm\"] }` makes Zed treat `.jsm` files as JavaScript — with full \
+syntax highlighting and language server support. Check the extensions store \
+first, though, in case direct support already exists.";
+
 pub fn init(cx: &mut App) {
+    workspace::welcome::register_tip(
+        workspace::welcome::Tip {
+            title: "Map Unknown File Types to Known Languages".into(),
+            message: FILE_TYPES_TIP_MESSAGE.into(),
+            icon: Some(ui::IconName::FileCode),
+            mentioned_actions: vec![],
+        },
+        cx,
+    );
+
     cx.observe_new(LanguageSelector::register).detach();
 }
 
