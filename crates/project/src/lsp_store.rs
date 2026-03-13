@@ -3967,6 +3967,7 @@ impl BufferLspData {
             semantic_tokens
                 .latest_invalidation_requests
                 .remove(&for_server);
+            semantic_tokens.invalidate_update();
         }
 
         if let Some(folding_ranges) = &mut self.folding_ranges {

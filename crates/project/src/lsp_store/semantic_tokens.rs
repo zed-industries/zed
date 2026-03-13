@@ -610,6 +610,12 @@ pub struct SemanticTokensData {
     update: Option<(Global, SemanticTokensTask)>,
 }
 
+impl SemanticTokensData {
+    pub(super) fn invalidate_update(&mut self) {
+        self.update = None;
+    }
+}
+
 /// All the semantic token tokens for a buffer.
 ///
 /// This aggregates semantic tokens from multiple language servers in a specific order.
