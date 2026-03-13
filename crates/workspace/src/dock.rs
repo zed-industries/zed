@@ -34,7 +34,7 @@ pub trait Panel: Focusable + EventEmitter<PanelEvent> + Render + Sized {
     fn set_position(&mut self, position: DockPosition, window: &mut Window, cx: &mut Context<Self>);
     fn size(&self, window: &Window, cx: &App) -> Pixels;
     fn set_size(&mut self, size: Option<Pixels>, window: &mut Window, cx: &mut Context<Self>);
-    fn icon(&self, window: &Window, cx: &App) -> Option<ui::IconName>;
+    fn icon(&self, window: &Window, cx: &App) -> ui::IconName;
     fn icon_tooltip(&self, window: &Window, cx: &App) -> &'static str;
     fn toggle_action(&self) -> Box<dyn Action>;
     fn is_zoomed(&self, _window: &Window, _cx: &App) -> bool {
@@ -71,7 +71,7 @@ pub trait PanelHandle: Send + Sync {
     fn pane(&self, cx: &App) -> Option<Entity<Pane>>;
     fn size(&self, window: &Window, cx: &App) -> Pixels;
     fn set_size(&self, size: Option<Pixels>, window: &mut Window, cx: &mut App);
-    fn icon(&self, window: &Window, cx: &App) -> Option<ui::IconName>;
+    fn icon(&self, window: &Window, cx: &App) -> ui::IconName;
     fn icon_tooltip(&self, window: &Window, cx: &App) -> &'static str;
     fn toggle_action(&self, window: &Window, cx: &App) -> Box<dyn Action>;
     fn panel_focus_handle(&self, cx: &App) -> FocusHandle;
@@ -151,7 +151,7 @@ where
         self.update(cx, |this, cx| this.set_size(size, window, cx))
     }
 
-    fn icon(&self, window: &Window, cx: &App) -> Option<ui::IconName> {
+    fn icon(&self, window: &Window, cx: &App) -> ui::IconName {
         self.read(cx).icon(window, cx)
     }
 
@@ -905,7 +905,10 @@ impl Render for PanelButtons {
             .iter()
             .enumerate()
             .filter_map(|(i, entry)| {
-                let icon = entry.panel.icon(window, cx)?;
+                if !entry.panel.enabled(cx) {
+                    return None;
+                }
+                let icon = entry.panel.icon(window, cx);
                 let icon_tooltip = entry.panel.icon_tooltip(window, cx);
                 let name = entry.panel.persistent_name();
                 let panel = entry.panel.clone();
@@ -1070,8 +1073,8 @@ pub mod test {
             self.size = size.unwrap_or(px(300.));
         }
 
-        fn icon(&self, _window: &Window, _: &App) -> Option<ui::IconName> {
-            None
+        fn icon(&self, _window: &Window, _: &App) -> ui::IconName {
+            ui::IconName::Cog
         }
 
         fn icon_tooltip(&self, _window: &Window, _cx: &App) -> &'static str {

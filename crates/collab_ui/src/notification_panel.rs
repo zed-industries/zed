@@ -659,21 +659,20 @@ impl Panel for NotificationPanel {
         }
     }
 
-    fn icon(&self, _: &Window, cx: &App) -> Option<IconName> {
-        let show_button = NotificationPanelSettings::get_global(cx).button;
-        if !show_button {
-            return None;
-        }
-
+    fn icon(&self, _: &Window, _cx: &App) -> IconName {
         if self.unseen_notifications.is_empty() {
-            return Some(IconName::Bell);
+            IconName::Bell
+        } else {
+            IconName::BellDot
         }
-
-        Some(IconName::BellDot)
     }
 
     fn icon_tooltip(&self, _window: &Window, _cx: &App) -> &'static str {
         "Notification Panel"
+    }
+
+    fn enabled(&self, cx: &App) -> bool {
+        NotificationPanelSettings::get_global(cx).button
     }
 
     fn toggle_action(&self) -> Box<dyn gpui::Action> {

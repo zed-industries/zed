@@ -5730,12 +5730,16 @@ impl Panel for GitPanel {
         cx.notify();
     }
 
-    fn icon(&self, _: &Window, cx: &App) -> Option<ui::IconName> {
-        Some(ui::IconName::GitBranchAlt).filter(|_| GitPanelSettings::get_global(cx).button)
+    fn icon(&self, _: &Window, _cx: &App) -> ui::IconName {
+        ui::IconName::GitBranchAlt
     }
 
     fn icon_tooltip(&self, _window: &Window, _cx: &App) -> &'static str {
         "Git Panel"
+    }
+
+    fn enabled(&self, cx: &App) -> bool {
+        GitPanelSettings::get_global(cx).button
     }
 
     fn toggle_action(&self) -> Box<dyn Action> {

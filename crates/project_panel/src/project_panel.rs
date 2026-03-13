@@ -7057,14 +7057,16 @@ impl Panel for ProjectPanel {
         });
     }
 
-    fn icon(&self, _: &Window, cx: &App) -> Option<IconName> {
-        ProjectPanelSettings::get_global(cx)
-            .button
-            .then_some(IconName::FileTree)
+    fn icon(&self, _: &Window, _cx: &App) -> IconName {
+        IconName::FileTree
     }
 
     fn icon_tooltip(&self, _window: &Window, _cx: &App) -> &'static str {
         "Project Panel"
+    }
+
+    fn enabled(&self, cx: &App) -> bool {
+        ProjectPanelSettings::get_global(cx).button
     }
 
     fn toggle_action(&self) -> Box<dyn Action> {

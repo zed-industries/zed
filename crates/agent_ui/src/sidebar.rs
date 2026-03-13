@@ -2026,9 +2026,8 @@ impl Panel for Sidebar {
         self.set_width(size, cx);
     }
 
-    fn icon(&self, _window: &Window, cx: &App) -> Option<IconName> {
-        let settings = AgentSettings::get_global(cx);
-        (settings.enabled(cx) && settings.button).then_some(IconName::ThreadsSidebarLeftClosed)
+    fn icon(&self, _window: &Window, _cx: &App) -> IconName {
+        IconName::ThreadsSidebarLeftClosed
     }
 
     fn icon_tooltip(&self, _window: &Window, _cx: &App) -> &'static str {
@@ -2044,7 +2043,8 @@ impl Panel for Sidebar {
     }
 
     fn enabled(&self, cx: &App) -> bool {
-        AgentSettings::get_global(cx).enabled(cx)
+        let settings = AgentSettings::get_global(cx);
+        settings.enabled(cx) && settings.button
     }
 
     fn starts_open(&self, _window: &Window, _cx: &App) -> bool {

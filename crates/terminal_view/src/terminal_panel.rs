@@ -1613,14 +1613,8 @@ impl Panel for TerminalPanel {
         TERMINAL_PANEL_KEY
     }
 
-    fn icon(&self, _window: &Window, cx: &App) -> Option<IconName> {
-        if (self.is_enabled(cx) || !self.has_no_terminals(cx))
-            && TerminalSettings::get_global(cx).button
-        {
-            Some(IconName::TerminalAlt)
-        } else {
-            None
-        }
+    fn icon(&self, _window: &Window, _cx: &App) -> IconName {
+        IconName::TerminalAlt
     }
 
     fn icon_tooltip(&self, _window: &Window, _cx: &App) -> &'static str {
@@ -1637,6 +1631,11 @@ impl Panel for TerminalPanel {
 
     fn activation_priority(&self) -> u32 {
         1
+    }
+
+    fn enabled(&self, cx: &App) -> bool {
+        (self.is_enabled(cx) || !self.has_no_terminals(cx))
+            && TerminalSettings::get_global(cx).button
     }
 }
 

@@ -5017,14 +5017,16 @@ impl Panel for OutlinePanel {
         });
     }
 
-    fn icon(&self, _: &Window, cx: &App) -> Option<IconName> {
-        OutlinePanelSettings::get_global(cx)
-            .button
-            .then_some(IconName::ListTree)
+    fn icon(&self, _: &Window, _cx: &App) -> IconName {
+        IconName::ListTree
     }
 
     fn icon_tooltip(&self, _window: &Window, _: &App) -> &'static str {
         "Outline Panel"
+    }
+
+    fn enabled(&self, cx: &App) -> bool {
+        OutlinePanelSettings::get_global(cx).button
     }
 
     fn toggle_action(&self) -> Box<dyn Action> {

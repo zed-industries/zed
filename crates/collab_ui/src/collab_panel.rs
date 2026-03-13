@@ -3191,14 +3191,16 @@ impl Panel for CollabPanel {
         });
     }
 
-    fn icon(&self, _window: &Window, cx: &App) -> Option<ui::IconName> {
-        CollaborationPanelSettings::get_global(cx)
-            .button
-            .then_some(ui::IconName::UserGroup)
+    fn icon(&self, _window: &Window, _cx: &App) -> ui::IconName {
+        ui::IconName::UserGroup
     }
 
     fn icon_tooltip(&self, _window: &Window, _cx: &App) -> &'static str {
         "Collab Panel"
+    }
+
+    fn enabled(&self, cx: &App) -> bool {
+        CollaborationPanelSettings::get_global(cx).button
     }
 
     fn toggle_action(&self) -> Box<dyn gpui::Action> {
