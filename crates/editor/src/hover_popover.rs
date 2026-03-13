@@ -1225,7 +1225,7 @@ mod tests {
                         MarkdownEvent::SubstitutedText(parsed) => {
                             rendered_text.push_str(parsed.as_str())
                         }
-                        MarkdownEvent::Text | MarkdownEvent::Code => {
+                        MarkdownEvent::Text | MarkdownEvent::Code { .. } => {
                             rendered_text.push_str(&text[range.clone()])
                         }
                         _ => {}

@@ -1,5 +1,6 @@
 pub mod parser;
 mod path_range;
+mod source_spans;
 
 use base64::Engine as _;
 use futures::FutureExt as _;
@@ -10,6 +11,7 @@ use language::LanguageName;
 use log::Level;
 pub use path_range::{LineCol, PathWithRange};
 use settings::Settings as _;
+pub use source_spans::MarkdownSpan;
 use theme::ThemeSettings;
 use ui::Checkbox;
 use ui::CopyButton;
@@ -36,6 +38,7 @@ use language::{CharClassifier, Language, LanguageRegistry, Rope};
 use parser::CodeBlockMetadata;
 use parser::{MarkdownEvent, MarkdownTag, MarkdownTagEnd, parse_links_only, parse_markdown};
 use pulldown_cmark::Alignment;
+use source_spans::{MarkdownRangeResolver, SourceSpanBuilder};
 use sum_tree::TreeMap;
 use theme::SyntaxTheme;
 use ui::{ScrollAxes, Scrollbars, WithScrollbar, prelude::*};
@@ -455,18 +458,24 @@ impl Markdown {
     }
 
     pub fn selected_text(&self) -> Option<String> {
-        if self.selection.end <= self.selection.start {
+        let mut range = self.clamp_source_range(self.selection.start..self.selection.end);
+        if self.parsed_markdown.source == self.source {
+            range = MarkdownRangeResolver::new(self.parsed_markdown.spans()).resolve(range);
+        }
+
+        if range.is_empty() {
             None
         } else {
-            Some(self.source[self.selection.start..self.selection.end].to_string())
+            Some(self.source[range].to_string())
         }
     }
 
     fn copy(&self, text: &RenderedText, _: &mut Window, cx: &mut Context<Self>) {
-        if self.selection.end <= self.selection.start {
+        let selection = self.clamp_source_range(self.selection.start..self.selection.end);
+        if selection.is_empty() {
             return;
         }
-        let text = text.text_for_range(self.selection.start..self.selection.end);
+        let text = text.text_for_range(selection);
         cx.write_to_clipboard(ClipboardItem::new_string(text));
     }
 
@@ -475,15 +484,26 @@ impl Markdown {
             cx.write_to_clipboard(ClipboardItem::new_string(text));
             return;
         }
-        if self.selection.end <= self.selection.start {
+
+        let Some(text) = self.selected_text() else {
             return;
-        }
-        let text = self.source[self.selection.start..self.selection.end].to_string();
+        };
         cx.write_to_clipboard(ClipboardItem::new_string(text));
     }
 
     fn capture_selection_for_context_menu(&mut self) {
         self.context_menu_selected_text = self.selected_text();
+    }
+
+    fn clamp_source_range(&self, selection: Range<usize>) -> Range<usize> {
+        let source_length = self.source.len();
+        let start = selection.start.min(source_length);
+        let end = selection.end.min(source_length);
+        if start <= end {
+            start..end
+        } else {
+            start..start
+        }
     }
 
     fn parse(&mut self, cx: &mut Context<Self>) {
@@ -510,6 +530,7 @@ impl Markdown {
                 return (
                     ParsedMarkdown {
                         events: Arc::from(parse_links_only(source.as_ref())),
+                        spans: Arc::from([]),
                         source,
                         languages_by_name: TreeMap::default(),
                         languages_by_path: TreeMap::default(),
@@ -519,6 +540,7 @@ impl Markdown {
             }
 
             let (events, language_names, paths) = parse_markdown(&source);
+            let mut source_span_builder = SourceSpanBuilder::new();
             let mut images_by_source_offset = HashMap::default();
             let mut languages_by_name = TreeMap::default();
             let mut languages_by_path = TreeMap::default();
@@ -547,6 +569,7 @@ impl Markdown {
             }
 
             for (range, event) in &events {
+                source_span_builder.push_event(range, event);
                 if let MarkdownEvent::Start(MarkdownTag::Image { dest_url, .. }) = event
                     && let Some(data_url) = dest_url.strip_prefix("data:")
                 {
@@ -570,11 +593,13 @@ impl Markdown {
                     }
                 }
             }
+            let spans: Vec<MarkdownSpan> = source_span_builder.into();
 
             (
                 ParsedMarkdown {
                     source,
                     events: Arc::from(events),
+                    spans: Arc::from(spans),
                     languages_by_name,
                     languages_by_path,
                 },
@@ -683,6 +708,7 @@ impl Selection {
 pub struct ParsedMarkdown {
     pub source: SharedString,
     pub events: Arc<[(Range<usize>, MarkdownEvent)]>,
+    pub spans: Arc<[MarkdownSpan]>,
     pub languages_by_name: TreeMap<SharedString, Arc<Language>>,
     pub languages_by_path: TreeMap<Arc<str>, Arc<Language>>,
 }
@@ -694,6 +720,10 @@ impl ParsedMarkdown {
 
     pub fn events(&self) -> &Arc<[(Range<usize>, MarkdownEvent)]> {
         &self.events
+    }
+
+    pub fn spans(&self) -> &[MarkdownSpan] {
+        &self.spans
     }
 }
 
@@ -1452,7 +1482,7 @@ impl Element for MarkdownElement {
                 MarkdownEvent::SubstitutedText(text) => {
                     builder.push_text(text, range.clone());
                 }
-                MarkdownEvent::Code => {
+                MarkdownEvent::Code { .. } => {
                     builder.push_text_style(self.style.inline_code.clone());
                     builder.push_text(&parsed_markdown.source[range.clone()], range.clone());
                     builder.pop_text_style();
@@ -2229,9 +2259,17 @@ impl RenderedText {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use gpui::{TestAppContext, size};
+    use gpui::{TestAppContext, VisualTestContext, size};
     use language::{Language, LanguageConfig, LanguageMatcher};
     use std::sync::Arc;
+
+    struct TestWindow;
+
+    impl Render for TestWindow {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            div()
+        }
+    }
 
     fn ensure_theme_initialized(cx: &mut TestAppContext) {
         cx.update(|cx| {
@@ -2299,25 +2337,26 @@ mod tests {
         render_markdown_with_language_registry(markdown, None, cx)
     }
 
+    fn create_markdown<'a>(
+        source: &str,
+        language_registry: Option<Arc<LanguageRegistry>>,
+        cx: &'a mut TestAppContext,
+    ) -> (Entity<Markdown>, &'a mut VisualTestContext) {
+        ensure_theme_initialized(cx);
+
+        let (_, cx) = cx.add_window_view(|_, _| TestWindow);
+        let markdown =
+            cx.new(|cx| Markdown::new(source.to_string().into(), language_registry, None, cx));
+        cx.run_until_parked();
+        (markdown, cx)
+    }
+
     fn render_markdown_with_language_registry(
         markdown: &str,
         language_registry: Option<Arc<LanguageRegistry>>,
         cx: &mut TestAppContext,
     ) -> RenderedText {
-        struct TestWindow;
-
-        impl Render for TestWindow {
-            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
-                div()
-            }
-        }
-
-        ensure_theme_initialized(cx);
-
-        let (_, cx) = cx.add_window_view(|_, _| TestWindow);
-        let markdown =
-            cx.new(|cx| Markdown::new(markdown.to_string().into(), language_registry, None, cx));
-        cx.run_until_parked();
+        let (markdown, cx) = create_markdown(markdown, language_registry, cx);
         let (rendered, _) = cx.draw(
             Default::default(),
             size(px(600.0), px(600.0)),
@@ -2332,6 +2371,21 @@ mod tests {
             },
         );
         rendered.text
+    }
+
+    fn selected_text_for(
+        source: &str,
+        selection: Range<usize>,
+        cx: &mut TestAppContext,
+    ) -> Option<String> {
+        let (markdown, cx) = create_markdown(source, None, cx);
+        cx.update(|_, cx| {
+            markdown.update(cx, |markdown, _| {
+                markdown.selection.start = selection.start;
+                markdown.selection.end = selection.end;
+                markdown.selected_text()
+            })
+        })
     }
 
     #[gpui::test]
@@ -2516,6 +2570,43 @@ mod tests {
         // which extract directly from the source. With the bug, this would be 5..10
         // which includes the closing backtick at position 9.
         assert_eq!(word_range, 5..9);
+    }
+
+    #[gpui::test]
+    fn test_selected_text_matches_source_for_range(cx: &mut TestAppContext) {
+        let source = "[Test of selection](link)";
+        let selection = 1..5;
+        let selected_text = selected_text_for(source, selection, cx);
+        assert_eq!(selected_text, Some("Test".to_string()));
+    }
+
+    #[gpui::test]
+    fn test_selected_text_clamps_end_overflow(cx: &mut TestAppContext) {
+        let selected_text = selected_text_for("abc", 0..999, cx);
+        assert_eq!(selected_text, Some("abc".to_string()));
+    }
+
+    #[gpui::test]
+    fn test_selected_text_returns_none_for_reversed_range(cx: &mut TestAppContext) {
+        let selected_text = selected_text_for("abcdef", 5..2, cx);
+        assert_eq!(selected_text, None);
+    }
+
+    #[gpui::test]
+    fn test_selected_text_falls_back_to_raw_clamped_range_when_parse_is_stale(
+        cx: &mut TestAppContext,
+    ) {
+        let (markdown, cx) = create_markdown("**How**", None, cx);
+        let selected_text = cx.update(|_, cx| {
+            markdown.update(cx, |markdown, _| {
+                markdown.source = "How".into();
+                markdown.selection.start = 0;
+                markdown.selection.end = 3;
+                markdown.selected_text()
+            })
+        });
+
+        assert_eq!(selected_text, Some("How".to_string()));
     }
 
     #[gpui::test]
