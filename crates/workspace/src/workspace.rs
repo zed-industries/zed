@@ -4778,6 +4778,15 @@ impl Workspace {
             pane::Event::JoinIntoNext => {
                 self.join_pane_into_next(pane.clone(), window, cx);
             }
+            pane::Event::JoinIntoNextAsInactive => {
+                self.join_pane_into_next_as_inactive(pane.clone(), window, cx);
+            }
+            pane::Event::JoinIntoPrevious => {
+                self.join_pane_into_previous(pane.clone(), window, cx);
+            }
+            pane::Event::JoinIntoPreviousAsInactive => {
+                self.join_pane_into_previous_as_inactive(pane.clone(), window, cx);
+            }
             pane::Event::JoinAll => {
                 self.join_all_panes(window, cx);
             }
@@ -4949,21 +4958,77 @@ impl Workspace {
         cx.notify();
     }
 
+    fn find_next_pane(&mut self, cx: &mut Context<Self>) -> Option<Entity<Pane>> {
+        self.find_pane_in_direction(SplitDirection::Right, cx)
+            .or_else(|| self.find_pane_in_direction(SplitDirection::Down, cx))
+            .or_else(|| self.find_pane_in_direction(SplitDirection::Left, cx))
+            .or_else(|| self.find_pane_in_direction(SplitDirection::Up, cx))
+    }
+
+    fn find_previous_pane(&mut self, cx: &mut Context<Self>) -> Option<Entity<Pane>> {
+        self.find_pane_in_direction(SplitDirection::Left, cx)
+            .or_else(|| self.find_pane_in_direction(SplitDirection::Up, cx))
+            .or_else(|| self.find_pane_in_direction(SplitDirection::Right, cx))
+            .or_else(|| self.find_pane_in_direction(SplitDirection::Down, cx))
+    }
+
     pub fn join_pane_into_next(
         &mut self,
         pane: Entity<Pane>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let next_pane = self
-            .find_pane_in_direction(SplitDirection::Right, cx)
-            .or_else(|| self.find_pane_in_direction(SplitDirection::Down, cx))
-            .or_else(|| self.find_pane_in_direction(SplitDirection::Left, cx))
-            .or_else(|| self.find_pane_in_direction(SplitDirection::Up, cx));
-        let Some(next_pane) = next_pane else {
+        let Some(next_pane) = self.find_next_pane(cx) else {
             return;
         };
         move_all_items(&pane, &next_pane, window, cx);
+        cx.notify();
+    }
+
+    pub fn join_pane_into_next_as_inactive(
+        &mut self,
+        pane: Entity<Pane>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(next_pane) = self.find_next_pane(cx) else {
+            return;
+        };
+        let active_item = next_pane.read(cx).active_item();
+        move_all_items(&pane, &next_pane, window, cx);
+        if let Some(active_item) = active_item {
+            self.activate_item(active_item.as_ref(), true, true, window, cx);
+        }
+        cx.notify();
+    }
+
+    pub fn join_pane_into_previous(
+        &mut self,
+        pane: Entity<Pane>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(previous_pane) = self.find_previous_pane(cx) else {
+            return;
+        };
+        move_all_items(&pane, &previous_pane, window, cx);
+        cx.notify();
+    }
+
+    pub fn join_pane_into_previous_as_inactive(
+        &mut self,
+        pane: Entity<Pane>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(previous_pane) = self.find_previous_pane(cx) else {
+            return;
+        };
+        let active_item = previous_pane.read(cx).active_item();
+        move_all_items(&pane, &previous_pane, window, cx);
+        if let Some(active_item) = active_item {
+            self.activate_item(active_item.as_ref(), true, true, window, cx);
+        }
         cx.notify();
     }
 
@@ -11694,6 +11759,206 @@ mod tests {
         workspace.update(cx, |workspace, _cx| {
             let active_pane = workspace.active_pane();
             assert_eq!(top_pane_id, active_pane.entity_id());
+        });
+    }
+
+    #[gpui::test]
+    async fn test_join_pane_into_next_as_inactive(cx: &mut gpui::TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, None, cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
+
+        // Create two panes: left and right
+        // Left has left_item active, right has right_item active
+        let left_item = cx.new(|cx| {
+            TestItem::new(cx).with_project_items(&[TestProjectItem::new(1, "left.txt", cx)])
+        });
+        let right_item = cx.new(|cx| {
+            TestItem::new(cx).with_project_items(&[TestProjectItem::new(2, "right.txt", cx)])
+        });
+
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.add_item_to_active_pane(
+                Box::new(left_item.clone()),
+                None,
+                false,
+                window,
+                cx,
+            );
+            workspace.split_pane(
+                workspace.active_pane().clone(),
+                SplitDirection::Right,
+                window,
+                cx,
+            );
+        });
+
+        let right_pane = workspace.update_in(cx, |workspace, window, cx| {
+            let right_pane = workspace.active_pane().clone();
+            workspace.add_item_to_active_pane(
+                Box::new(right_item.clone()),
+                None,
+                false,
+                window,
+                cx,
+            );
+            // Focus back to left pane
+            workspace.activate_previous_pane(window, cx);
+            right_pane
+        });
+
+        cx.executor().run_until_parked();
+
+        workspace.update_in(cx, |workspace, window, cx| {
+            // Active pane is left, join into right (as inactive)
+            assert_ne!(workspace.active_pane().entity_id(), right_pane.entity_id());
+            workspace
+                .join_pane_into_next_as_inactive(workspace.active_pane().clone(), window, cx);
+        });
+
+        workspace.update(cx, |workspace, cx| {
+            let active_pane = workspace.active_pane();
+            assert_eq!(active_pane.entity_id(), right_pane.entity_id());
+            assert_eq!(2, active_pane.read(cx).items_len());
+            // The right pane's original active item should still be active
+            assert_eq!(
+                active_pane.read(cx).active_item().unwrap().item_id(),
+                right_item.item_id()
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_join_pane_into_previous(cx: &mut gpui::TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, None, cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
+
+        let left_item = cx.new(|cx| {
+            TestItem::new(cx).with_project_items(&[TestProjectItem::new(1, "left.txt", cx)])
+        });
+        let right_item = cx.new(|cx| {
+            TestItem::new(cx).with_project_items(&[TestProjectItem::new(2, "right.txt", cx)])
+        });
+
+        let left_pane = workspace.update_in(cx, |workspace, window, cx| {
+            let left_pane = workspace.active_pane().clone();
+            workspace.add_item_to_active_pane(
+                Box::new(left_item.clone()),
+                None,
+                false,
+                window,
+                cx,
+            );
+            workspace.split_pane(
+                workspace.active_pane().clone(),
+                SplitDirection::Right,
+                window,
+                cx,
+            );
+            left_pane
+        });
+
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.add_item_to_active_pane(
+                Box::new(right_item.clone()),
+                None,
+                false,
+                window,
+                cx,
+            );
+        });
+
+        cx.executor().run_until_parked();
+
+        workspace.update_in(cx, |workspace, window, cx| {
+            assert_ne!(workspace.active_pane().entity_id(), left_pane.entity_id());
+            workspace.join_pane_into_previous(workspace.active_pane().clone(), window, cx);
+        });
+
+        workspace.update(cx, |workspace, cx| {
+            let active_pane = workspace.active_pane();
+            assert_eq!(active_pane.entity_id(), left_pane.entity_id());
+            assert_eq!(2, active_pane.read(cx).items_len());
+            let item_ids: HashSet<_> = active_pane
+                .read(cx)
+                .items()
+                .map(|item| item.item_id())
+                .collect();
+            assert!(item_ids.contains(&left_item.item_id()));
+            assert!(item_ids.contains(&right_item.item_id()));
+        });
+    }
+
+    #[gpui::test]
+    async fn test_join_pane_into_previous_as_inactive(cx: &mut gpui::TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, None, cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
+
+        let left_item = cx.new(|cx| {
+            TestItem::new(cx).with_project_items(&[TestProjectItem::new(1, "left.txt", cx)])
+        });
+        let right_item = cx.new(|cx| {
+            TestItem::new(cx).with_project_items(&[TestProjectItem::new(2, "right.txt", cx)])
+        });
+
+        let left_pane = workspace.update_in(cx, |workspace, window, cx| {
+            let left_pane = workspace.active_pane().clone();
+            workspace.add_item_to_active_pane(
+                Box::new(left_item.clone()),
+                None,
+                false,
+                window,
+                cx,
+            );
+            workspace.split_pane(
+                workspace.active_pane().clone(),
+                SplitDirection::Right,
+                window,
+                cx,
+            );
+            left_pane
+        });
+
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.add_item_to_active_pane(
+                Box::new(right_item.clone()),
+                None,
+                false,
+                window,
+                cx,
+            );
+        });
+
+        cx.executor().run_until_parked();
+
+        workspace.update_in(cx, |workspace, window, cx| {
+            assert_ne!(workspace.active_pane().entity_id(), left_pane.entity_id());
+            workspace.join_pane_into_previous_as_inactive(
+                workspace.active_pane().clone(),
+                window,
+                cx,
+            );
+        });
+
+        workspace.update(cx, |workspace, cx| {
+            let active_pane = workspace.active_pane();
+            assert_eq!(active_pane.entity_id(), left_pane.entity_id());
+            assert_eq!(2, active_pane.read(cx).items_len());
+            assert_eq!(
+                active_pane.read(cx).active_item().unwrap().item_id(),
+                left_item.item_id()
+            );
         });
     }
 
