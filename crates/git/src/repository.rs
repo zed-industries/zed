@@ -1034,6 +1034,7 @@ impl RealGitRepository {
             self.any_git_binary_path.clone(),
             self.working_directory()
                 .with_context(|| "Can't run git commands without a working directory")?,
+            self.path(),
             self.executor.clone(),
             self.is_trusted(),
         ))
@@ -1088,6 +1089,7 @@ pub async fn get_git_committer(cx: &AsyncApp) -> GitCommitter {
     let git = GitBinary::new(
         git_binary_path.unwrap_or(PathBuf::from("git")),
         paths::home_dir().clone(),
+        paths::home_dir().join(".git"),
         cx.background_executor().clone(),
         true,
     );
@@ -2244,6 +2246,7 @@ impl GitRepository for RealGitRepository {
         cx: AsyncApp,
     ) -> BoxFuture<'_, Result<RemoteCommandOutput>> {
         let working_directory = self.working_directory();
+        let git_directory = self.path();
         let executor = cx.background_executor().clone();
         let git_binary_path = self.system_git_binary_path.clone();
         let is_trusted = self.is_trusted();
@@ -2255,6 +2258,7 @@ impl GitRepository for RealGitRepository {
             let git = GitBinary::new(
                 git_binary_path,
                 working_directory,
+                git_directory,
                 executor.clone(),
                 is_trusted,
             );
@@ -2286,6 +2290,7 @@ impl GitRepository for RealGitRepository {
         cx: AsyncApp,
     ) -> BoxFuture<'_, Result<RemoteCommandOutput>> {
         let working_directory = self.working_directory();
+        let git_directory = self.path();
         let executor = cx.background_executor().clone();
         let git_binary_path = self.system_git_binary_path.clone();
         let is_trusted = self.is_trusted();
@@ -2297,6 +2302,7 @@ impl GitRepository for RealGitRepository {
             let git = GitBinary::new(
                 git_binary_path,
                 working_directory,
+                git_directory,
                 executor.clone(),
                 is_trusted,
             );
@@ -2326,6 +2332,7 @@ impl GitRepository for RealGitRepository {
         cx: AsyncApp,
     ) -> BoxFuture<'_, Result<RemoteCommandOutput>> {
         let working_directory = self.working_directory();
+        let git_directory = self.path();
         let remote_name = format!("{}", fetch_options);
         let git_binary_path = self.system_git_binary_path.clone();
         let executor = cx.background_executor().clone();
@@ -2338,6 +2345,7 @@ impl GitRepository for RealGitRepository {
             let git = GitBinary::new(
                 git_binary_path,
                 working_directory,
+                git_directory,
                 executor.clone(),
                 is_trusted,
             );
@@ -2990,6 +2998,7 @@ async fn exclude_files(git: &GitBinary) -> Result<GitExcludeOverride> {
 pub(crate) struct GitBinary {
     git_binary_path: PathBuf,
     working_directory: PathBuf,
+    git_directory: PathBuf,
     executor: BackgroundExecutor,
     index_file_path: Option<PathBuf>,
     envs: HashMap<String, String>,
@@ -3000,12 +3009,14 @@ impl GitBinary {
     pub(crate) fn new(
         git_binary_path: PathBuf,
         working_directory: PathBuf,
+        git_directory: PathBuf,
         executor: BackgroundExecutor,
         is_trusted: bool,
     ) -> Self {
         Self {
             git_binary_path,
             working_directory,
+            git_directory,
             executor,
             index_file_path: None,
             envs: HashMap::default(),
@@ -3051,12 +3062,9 @@ impl GitBinary {
 
         // Copy the default index file so that Git doesn't have to rebuild the
         // whole index from scratch. This might fail if this is an empty repository.
-        smol::fs::copy(
-            self.working_directory.join(".git").join("index"),
-            &index_file_path,
-        )
-        .await
-        .ok();
+        smol::fs::copy(self.git_directory.join("index"), &index_file_path)
+            .await
+            .ok();
 
         self.index_file_path = Some(index_file_path.clone());
         let result = f(self).await;
@@ -3070,19 +3078,13 @@ impl GitBinary {
     }
 
     pub async fn with_exclude_overrides(&self) -> Result<GitExcludeOverride> {
-        let path = self
-            .working_directory
-            .join(".git")
-            .join("info")
-            .join("exclude");
+        let path = self.git_directory.join("info").join("exclude");
 
         GitExcludeOverride::new(path).await
     }
 
     fn path_for_index_id(&self, id: Uuid) -> PathBuf {
-        self.working_directory
-            .join(".git")
-            .join(format!("index-{}.tmp", id))
+        self.git_directory.join(format!("index-{}.tmp", id))
     }
 
     pub async fn run<S>(&self, args: &[S]) -> Result<String>
@@ -3405,6 +3407,7 @@ mod tests {
         let git = GitBinary::new(
             PathBuf::from("git"),
             dir.path().to_path_buf(),
+            dir.path().join(".git"),
             cx.executor(),
             false,
         );
@@ -3418,6 +3421,7 @@ mod tests {
         let git = GitBinary::new(
             PathBuf::from("git"),
             dir.path().to_path_buf(),
+            dir.path().join(".git"),
             cx.executor(),
             false,
         );
@@ -3437,6 +3441,7 @@ mod tests {
         let git = GitBinary::new(
             PathBuf::from("git"),
             dir.path().to_path_buf(),
+            dir.path().join(".git"),
             cx.executor(),
             false,
         );
@@ -3462,6 +3467,7 @@ mod tests {
         let git = GitBinary::new(
             PathBuf::from("git"),
             dir.path().to_path_buf(),
+            dir.path().join(".git"),
             cx.executor(),
             true,
         );
@@ -3480,6 +3486,7 @@ mod tests {
         let git = GitBinary::new(
             PathBuf::from("git"),
             dir.path().to_path_buf(),
+            dir.path().join(".git"),
             cx.executor(),
             true,
         );
@@ -3491,6 +3498,27 @@ mod tests {
         assert!(
             !output.status.success(),
             "hooksPath should NOT be overridden for trusted repos"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_path_for_index_id_uses_real_git_directory(cx: &mut TestAppContext) {
+        cx.executor().allow_parking();
+        let working_directory = PathBuf::from("/code/worktree");
+        let git_directory = PathBuf::from("/code/repo/.git/modules/worktree");
+        let git = GitBinary::new(
+            PathBuf::from("git"),
+            working_directory,
+            git_directory.clone(),
+            cx.executor(),
+            false,
+        );
+
+        let path = git.path_for_index_id(Uuid::nil());
+
+        assert_eq!(
+            path,
+            git_directory.join(format!("index-{}.tmp", Uuid::nil()))
         );
     }
 
@@ -4380,13 +4408,20 @@ mod tests {
         /// Force a Git garbage collection on the repository.
         fn gc(&self) -> BoxFuture<'_, Result<()>> {
             let working_directory = self.working_directory();
+            let git_directory = self.path();
             let git_binary_path = self.any_git_binary_path.clone();
             let executor = self.executor.clone();
             self.executor
                 .spawn(async move {
                     let git_binary_path = git_binary_path.clone();
                     let working_directory = working_directory?;
-                    let git = GitBinary::new(git_binary_path, working_directory, executor, true);
+                    let git = GitBinary::new(
+                        git_binary_path,
+                        working_directory,
+                        git_directory,
+                        executor,
+                        true,
+                    );
                     git.run(&["gc", "--prune"]).await?;
                     Ok(())
                 })
