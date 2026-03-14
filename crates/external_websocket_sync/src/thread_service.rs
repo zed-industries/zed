@@ -142,44 +142,85 @@ fn throttled_send_message_added(
 ) -> bool {
     init_streaming_throttle();
     let key = format!("{}:{}", acp_thread_id, entry_idx);
+    let thread_prefix = format!("{}:", acp_thread_id);
     let now = Instant::now();
 
-    let throttle_map = STREAMING_THROTTLE.lock();
-    let Some(map) = throttle_map.as_ref() else { return false };
-    let mut map = map.write();
+    // Hold locks only while reading/mutating state, collect messages to send after release.
+    let mut stale_pending: Vec<PendingMessage> = Vec::new();
+    let mut current_to_send: Option<PendingMessage> = None;
+    let sent: bool;
 
-    let state = map.entry(key).or_insert_with(|| StreamingThrottleState {
-        last_sent: Instant::now() - STREAMING_THROTTLE_INTERVAL, // Allow first send immediately
-        pending_content: None,
-    });
+    {
+        let throttle_map = STREAMING_THROTTLE.lock();
+        let Some(map) = throttle_map.as_ref() else { return false };
+        let mut map = map.write();
 
-    if now.duration_since(state.last_sent) >= STREAMING_THROTTLE_INTERVAL {
-        // Enough time has passed — send immediately
-        state.last_sent = now;
-        state.pending_content = None;
-        drop(map);
-        drop(throttle_map);
+        // Flush pending content for all OTHER entries in this thread.
+        // This ensures each entry's final content (e.g. tool call
+        // "Status: Completed") is sent before we move on, rather than
+        // waiting for the end-of-turn flush.
+        for (k, state) in map.iter_mut() {
+            if k.starts_with(&thread_prefix) && *k != key {
+                if let Some(pending) = state.pending_content.take() {
+                    state.last_sent = now;
+                    stale_pending.push(pending);
+                }
+            }
+        }
 
+        let state = map.entry(key).or_insert_with(|| StreamingThrottleState {
+            last_sent: Instant::now() - STREAMING_THROTTLE_INTERVAL,
+            pending_content: None,
+        });
+
+        if now.duration_since(state.last_sent) >= STREAMING_THROTTLE_INTERVAL {
+            state.last_sent = now;
+            state.pending_content = None;
+            current_to_send = Some(PendingMessage {
+                acp_thread_id: acp_thread_id.to_string(),
+                message_id: entry_idx.to_string(),
+                role: role.to_string(),
+                content,
+                entry_type: entry_type.to_string(),
+            });
+            sent = true;
+        } else {
+            state.pending_content = Some(PendingMessage {
+                acp_thread_id: acp_thread_id.to_string(),
+                message_id: entry_idx.to_string(),
+                role: role.to_string(),
+                content,
+                entry_type: entry_type.to_string(),
+            });
+            sent = false;
+        }
+    } // locks released
+
+    // Send stale pending messages from other entries first
+    for pending in stale_pending {
         let _ = crate::send_websocket_event(SyncEvent::MessageAdded {
-            acp_thread_id: acp_thread_id.to_string(),
-            message_id: entry_idx.to_string(),
-            role: role.to_string(),
-            content,
-            entry_type: entry_type.to_string(),
+            acp_thread_id: pending.acp_thread_id,
+            message_id: pending.message_id,
+            role: pending.role,
+            content: pending.content,
+            entry_type: pending.entry_type,
             timestamp: chrono::Utc::now().timestamp(),
         });
-        true
-    } else {
-        // Too soon — store as pending (will be flushed before message_completed)
-        state.pending_content = Some(PendingMessage {
-            acp_thread_id: acp_thread_id.to_string(),
-            message_id: entry_idx.to_string(),
-            role: role.to_string(),
-            content,
-            entry_type: entry_type.to_string(),
-        });
-        false
     }
+
+    // Then send the current entry if not throttled
+    if let Some(msg) = current_to_send {
+        let _ = crate::send_websocket_event(SyncEvent::MessageAdded {
+            acp_thread_id: msg.acp_thread_id,
+            message_id: msg.message_id,
+            role: msg.role,
+            content: msg.content,
+            entry_type: msg.entry_type,
+            timestamp: chrono::Utc::now().timestamp(),
+        });
+    }
+
+    sent
 }
 
 /// Flush all pending throttled messages for a given thread and clean up throttle state.
