@@ -20,6 +20,9 @@ use util::ResultExt;
 use crate::STARTUP_TIME;
 
 const MAX_HANG_TRACES: usize = 3;
+const MAX_CRASH_GROUPS: usize = 5;
+const MAX_SERVER_LOGS: usize = 5;
+const MAX_LOG_HISTORY_FILES: u32 = 5;
 
 pub fn init(client: Arc<Client>, cx: &mut App) {
     monitor_hangs(cx);
@@ -45,6 +48,11 @@ pub fn init(client: Arc<Client>, cx: &mut App) {
         })
         .detach()
     }
+
+    cx.background_spawn(async move {
+        cleanup_old_log_files();
+    })
+    .detach();
 
     cx.observe_new(move |project: &mut Project, _, cx| {
         let client = client.clone();
@@ -154,6 +162,182 @@ fn cleanup_old_hang_traces() {
                 std::fs::remove_file(entry.path()).log_err();
             }
         }
+    }
+}
+
+fn cleanup_old_log_files() {
+    cleanup_old_crash_files(paths::logs_dir());
+    cleanup_old_server_logs(paths::logs_dir(), paths::remote_server_state_dir());
+    cleanup_old_zed_log_history(paths::logs_dir());
+}
+
+fn cleanup_old_crash_files(logs_dir: &std::path::Path) {
+    let Some(entries) = std::fs::read_dir(logs_dir)
+        .with_context(|| format!("Failed to read logs directory {}", logs_dir.display()))
+        .log_err()
+    else {
+        return;
+    };
+
+    let mut crash_groups: Vec<(String, std::time::SystemTime)> = Vec::new();
+
+    for entry in entries.filter_map(|entry| entry.ok()) {
+        if !entry
+            .file_type()
+            .map(|file_type| file_type.is_file())
+            .log_err()
+            .unwrap_or(false)
+        {
+            continue;
+        }
+
+        let path = entry.path();
+        if path.extension() != Some(OsStr::new("dmp")) {
+            continue;
+        }
+
+        let Some(stem) = path.file_stem().and_then(|s| s.to_str()).map(String::from) else {
+            continue;
+        };
+
+        let modified = entry
+            .metadata()
+            .and_then(|m| m.modified())
+            .unwrap_or(std::time::UNIX_EPOCH);
+        crash_groups.push((stem, modified));
+    }
+
+    if crash_groups.len() <= MAX_CRASH_GROUPS {
+        return;
+    }
+
+    crash_groups.sort_unstable_by(|a, b| b.1.cmp(&a.1));
+
+    for (session_id, _) in crash_groups.into_iter().skip(MAX_CRASH_GROUPS) {
+        let dmp = logs_dir.join(format!("{}.dmp", session_id));
+        let json = logs_dir.join(format!("{}.json", session_id));
+        fs::remove_file(dmp).log_err();
+        fs::remove_file(json).log_err();
+    }
+}
+
+fn is_server_active(identifier: &str, server_state_dir: &std::path::Path) -> bool {
+    let pid_file = server_state_dir.join(identifier).join("server.pid");
+    let Ok(contents) = std::fs::read_to_string(&pid_file) else {
+        return false;
+    };
+
+    let Ok(pid) = contents.trim().parse::<u32>() else {
+        return false;
+    };
+
+    let system = sysinfo::System::new_with_specifics(
+        sysinfo::RefreshKind::nothing().with_processes(sysinfo::ProcessRefreshKind::nothing()),
+    );
+    system.process(sysinfo::Pid::from_u32(pid)).is_some()
+}
+
+fn cleanup_old_server_logs(logs_dir: &std::path::Path, server_state_dir: &std::path::Path) {
+    let Some(entries) = std::fs::read_dir(logs_dir)
+        .with_context(|| format!("Failed to read logs directory {}", logs_dir.display()))
+        .log_err()
+    else {
+        return;
+    };
+
+    let mut inactive_logs: Vec<(std::path::PathBuf, std::time::SystemTime)> = Vec::new();
+
+    for entry in entries.filter_map(|entry| entry.ok()) {
+        if !entry
+            .file_type()
+            .map(|file_type| file_type.is_file())
+            .log_err()
+            .unwrap_or(false)
+        {
+            continue;
+        }
+
+        let path = entry.path();
+        let Some(file_name) = path.file_name().and_then(|n| n.to_str()) else {
+            continue;
+        };
+
+        let Some(identifier) = file_name
+            .strip_prefix("server-")
+            .and_then(|rest| rest.strip_suffix(".log"))
+        else {
+            continue;
+        };
+
+        if is_server_active(identifier, server_state_dir) {
+            continue;
+        }
+
+        let modified = entry
+            .metadata()
+            .and_then(|m| m.modified())
+            .unwrap_or(std::time::UNIX_EPOCH);
+        inactive_logs.push((path, modified));
+    }
+
+    if inactive_logs.len() <= MAX_SERVER_LOGS {
+        return;
+    }
+
+    inactive_logs.sort_by(|a, b| b.1.cmp(&a.1));
+    for (path, _) in inactive_logs.into_iter().skip(MAX_SERVER_LOGS) {
+        fs::remove_file(path).log_err();
+    }
+}
+
+fn cleanup_old_zed_log_history(logs_dir: &std::path::Path) {
+    let Some(entries) = std::fs::read_dir(logs_dir)
+        .with_context(|| format!("Failed to read logs directory {}", logs_dir.display()))
+        .log_err()
+    else {
+        return;
+    };
+
+    let history_file_count_limit = (MAX_LOG_HISTORY_FILES as usize).saturating_sub(1);
+    let mut history_logs: Vec<(std::path::PathBuf, std::time::SystemTime)> = Vec::new();
+
+    for entry in entries.filter_map(|entry| entry.ok()) {
+        if !entry
+            .file_type()
+            .map(|file_type| file_type.is_file())
+            .log_err()
+            .unwrap_or(false)
+        {
+            continue;
+        }
+
+        let path = entry.path();
+        let Some(file_name) = path.file_name().and_then(|file_name| file_name.to_str()) else {
+            continue;
+        };
+
+        if file_name
+            .strip_prefix("Zed.log.")
+            .and_then(|index| index.parse::<usize>().ok())
+            .is_none()
+        {
+            continue;
+        }
+
+        let modified = entry
+            .metadata()
+            .and_then(|metadata| metadata.modified())
+            .unwrap_or(std::time::UNIX_EPOCH);
+        history_logs.push((path, modified));
+    }
+
+    if history_logs.len() <= history_file_count_limit {
+        return;
+    }
+
+    history_logs.sort_by(|a, b| b.1.cmp(&a.1));
+    for (path, _) in history_logs.into_iter().skip(history_file_count_limit) {
+        fs::remove_file(path).log_err();
     }
 }
 
@@ -491,5 +675,41 @@ impl FormExt for Form {
             Some(value) => self.text(label.into(), value.into()),
             None => self,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn cleanup_old_zed_log_history_removes_oldest_history_files() -> anyhow::Result<()> {
+        let logs_dir =
+            std::env::temp_dir().join(format!("zed-log-history-cleanup-{}", uuid::Uuid::new_v4()));
+
+        std::fs::create_dir_all(&logs_dir)?;
+        std::fs::write(logs_dir.join("Zed.log"), [])?;
+        std::fs::write(logs_dir.join("Zed.log.2"), [])?;
+        std::fs::write(logs_dir.join("Zed.log.3"), [])?;
+        std::fs::write(logs_dir.join("Zed.log.4"), [])?;
+        std::fs::write(logs_dir.join("Zed.log.6"), [])?;
+        std::fs::write(logs_dir.join("Zed.log.8"), [])?;
+        std::fs::write(logs_dir.join("Zed.log.old"), [])?;
+        std::fs::write(logs_dir.join("unrelated.log"), [])?;
+
+        cleanup_old_zed_log_history(&logs_dir);
+
+        assert!(logs_dir.join("Zed.log").exists());
+        assert!(!logs_dir.join("Zed.log.2").exists());
+        assert!(logs_dir.join("Zed.log.3").exists());
+        assert!(logs_dir.join("Zed.log.4").exists());
+        assert!(logs_dir.join("Zed.log.6").exists());
+        assert!(logs_dir.join("Zed.log.8").exists());
+        assert!(logs_dir.join("Zed.log.old").exists());
+        assert!(logs_dir.join("unrelated.log").exists());
+
+        std::fs::remove_dir_all(&logs_dir)?;
+
+        Ok(())
     }
 }
