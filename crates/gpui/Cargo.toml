@@ -70,13 +70,16 @@ chrono.workspace = true
 profiling.workspace = true
 rand.workspace = true
 raw-window-handle = "0.6"
+regex.workspace = true
 refineable.workspace = true
 scheduler.workspace = true
 resvg = { version = "0.45.0", default-features = false, features = [
     "text",
     "system-fonts",
     "memmap-fonts",
+    "raster-images"
 ] }
+util.workspace = true
 usvg = { version = "0.45.0", default-features = false }
 util_macros.workspace = true
 schemars.workspace = true
@@ -148,7 +151,6 @@ gpui_platform.workspace = true
 lyon = { version = "1.0", features = ["extra"] }
 rand.workspace = true
 scheduler = { workspace = true, features = ["test-support"] }
-unicode-segmentation.workspace = true
 gpui_util = { workspace = true }
 proptest = { workspace = true }
 
