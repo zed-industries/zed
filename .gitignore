@@ -5,7 +5,7 @@
 **/.direnv
 *.wasm
 *.xcodeproj
-!ios/ZedApp.xcodeproj
+!ios/Zed.xcodeproj
 .DS_Store
 .blob_store
 .build
