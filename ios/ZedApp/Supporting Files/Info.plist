@@ -41,10 +41,6 @@
     <array>
         <string>arm64</string>
     </array>
-    <key>UIDeviceFamily</key>
-    <array>
-        <integer>2</integer>
-    </array>
     <key>UIAppFonts</key>
     <array>
         <!-- Phase 0: No bundled fonts yet. Add FiraCode, JetBrainsMono in Phase 4. -->
