@@ -3584,6 +3584,9 @@ impl ProjectPanel {
                 &selected_path,
                 excluded_entry.as_deref(),
             )?;
+            if let Some(parent) = settings_path.parent() {
+                fs.create_dir(parent).await?;
+            }
             fs.atomic_write(settings_path, new_text.clone()).await?;
 
             this.update_in(cx, |this, window, cx| -> anyhow::Result<()> {
@@ -3637,6 +3640,9 @@ impl ProjectPanel {
 
             let new_text =
                 update_project_panel_show_excluded_in_text(&old_text, next_show_excluded)?;
+            if let Some(parent) = settings_path.parent() {
+                fs.create_dir(parent).await?;
+            }
             fs.atomic_write(settings_path, new_text.clone()).await?;
 
             this.update_in(cx, |this, window, cx| -> anyhow::Result<()> {
@@ -4098,6 +4104,25 @@ impl ProjectPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.update_visible_entries_with_reveal(
+            new_selected_entry,
+            focus_filename_editor,
+            autoscroll,
+            None,
+            window,
+            cx,
+        );
+    }
+
+    fn update_visible_entries_with_reveal(
+        &mut self,
+        new_selected_entry: Option<(WorktreeId, ProjectEntryId)>,
+        focus_filename_editor: bool,
+        autoscroll: bool,
+        force_reveal_path: Option<(WorktreeId, Arc<RelPath>)>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let now = Instant::now();
         let settings = ProjectPanelSettings::get_global(cx);
         let auto_collapse_dirs = settings.auto_fold_dirs;
@@ -4168,8 +4193,40 @@ impl ProjectPanel {
                                 entry_iter.advance();
                                 continue;
                             }
+                            let is_force_revealed = force_reveal_path.as_ref().is_some_and(
+                                |(force_reveal_worktree_id, force_reveal_path)| {
+                                    *force_reveal_worktree_id == worktree_id
+                                        && (entry.path.as_ref() == force_reveal_path.as_ref()
+                                            || force_reveal_path.starts_with(&entry.path))
+                                },
+                            );
                             let is_excluded = exclusion_settings.is_path_excluded(&entry.path);
-                            if !exclusion_settings.show_excluded && is_excluded {
+                            if !exclusion_settings.show_excluded
+                                && is_excluded
+                                && !is_force_revealed
+                            {
+                                if auto_collapse_dirs
+                                    && let Some(folded_entry_id) =
+                                        auto_folded_ancestors.last().copied()
+                                    && let Some(folded_entry) =
+                                        worktree_snapshot.entry_for_id(folded_entry_id)
+                                {
+                                    let mut ancestors = auto_folded_ancestors.clone();
+                                    if ancestors.len() > 1 {
+                                        ancestors.reverse();
+                                        new_state.ancestors.insert(
+                                            folded_entry.id,
+                                            FoldedAncestors {
+                                                current_ancestor_depth: 0,
+                                                ancestors,
+                                            },
+                                        );
+                                    }
+                                    visible_worktree_entries.push(GitEntry {
+                                        entry: folded_entry.to_owned(),
+                                        git_summary: entry.git_summary,
+                                    });
+                                }
                                 auto_folded_ancestors.clear();
                                 if entry.kind.is_dir() && entry_iter.advance_to_sibling() {
                                     continue;
@@ -4234,8 +4291,9 @@ impl ProjectPanel {
                                 }
                             }
                             auto_folded_ancestors.clear();
-                            if (!hide_gitignore || !entry.is_ignored)
-                                && (!hide_hidden || !entry.is_hidden)
+                            if is_force_revealed
+                                || ((!hide_gitignore || !entry.is_ignored)
+                                    && (!hide_hidden || !entry.is_hidden))
                             {
                                 visible_worktree_entries.push(entry.to_owned());
                             }
@@ -4250,8 +4308,9 @@ impl ProjectPanel {
                                 false
                             };
                             if precedes_new_entry
-                                && (!hide_gitignore || !entry.is_ignored)
-                                && (!hide_hidden || !entry.is_hidden)
+                                && (is_force_revealed
+                                    || ((!hide_gitignore || !entry.is_ignored)
+                                        && (!hide_hidden || !entry.is_hidden)))
                             {
                                 visible_worktree_entries.push(Self::create_new_git_entry(
                                     entry.entry,
@@ -6380,11 +6439,14 @@ impl ProjectPanel {
             .context("can't reveal a non-existent entry in the project panel")?;
         let worktree = worktree.read(cx);
         let worktree_id = worktree.id();
+        let revealed_path = worktree
+            .entry_for_id(entry_id)
+            .map(|entry| entry.path.clone());
         let is_excluded = worktree.entry_for_id(entry_id).is_some_and(|entry| {
             let exclusion_settings = self.project_panel_exclusion_settings(worktree_id, cx);
             !exclusion_settings.show_excluded && exclusion_settings.is_path_excluded(&entry.path)
         });
-        if is_excluded {
+        if skip_ignored && is_excluded {
             anyhow::bail!("can't reveal an excluded entry in the project panel");
         }
         let is_ignored = worktree
@@ -6419,7 +6481,16 @@ impl ProjectPanel {
         }
 
         self.expand_entry(worktree_id, entry_id, cx);
-        self.update_visible_entries(Some((worktree_id, entry_id)), false, true, window, cx);
+        self.update_visible_entries_with_reveal(
+            Some((worktree_id, entry_id)),
+            false,
+            true,
+            (!skip_ignored)
+                .then(|| revealed_path.map(|path| (worktree_id, path)))
+                .flatten(),
+            window,
+            cx,
+        );
         self.marked_entries.clear();
         self.marked_entries.push(SelectedEntry {
             worktree_id,

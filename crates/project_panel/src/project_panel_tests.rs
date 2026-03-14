@@ -10040,6 +10040,138 @@ async fn test_show_excluded_displays_excluded_entries(cx: &mut gpui::TestAppCont
 }
 
 #[gpui::test]
+async fn test_explicit_reveal_shows_excluded_entry_when_show_excluded_is_false(
+    cx: &mut gpui::TestAppContext,
+) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        "/root",
+        json!({
+            "build": {
+                "generated": {
+                    "file.txt": "",
+                }
+            },
+            "src": {
+                "main.rs": "",
+            }
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), ["/root".as_ref()], cx).await;
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let workspace = window
+        .read_with(cx, |mw, _| mw.workspace().clone())
+        .unwrap();
+    let cx = &mut VisualTestContext::from_window(window.into(), cx);
+    let panel = workspace.update_in(cx, ProjectPanel::new);
+    cx.run_until_parked();
+
+    set_project_panel_local_settings(
+        &panel,
+        r#"
+        {
+          "project_panel": {
+            "show_excluded": false,
+            "excluded_entries": ["build"]
+          }
+        }
+        "#,
+        cx,
+    );
+
+    let excluded_file = find_project_entry(&panel, "root/build/generated/file.txt", cx)
+        .expect("excluded file should exist in the worktree");
+    panel.update(cx, |panel, cx| {
+        panel.project.update(cx, |_, cx| {
+            cx.emit(project::Event::RevealInProjectPanel(excluded_file))
+        })
+    });
+    cx.run_until_parked();
+
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..10, cx),
+        &[
+            "v root",
+            "    v build  <== excluded",
+            "        v generated  <== excluded",
+            "              file.txt  <== selected  <== marked  <== excluded",
+            "    > src",
+        ],
+    );
+}
+
+#[gpui::test]
+async fn test_excluding_compact_child_preserves_visible_folded_ancestor(
+    cx: &mut gpui::TestAppContext,
+) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        "/root",
+        json!({
+            "a": {
+                "b": {
+                    "c": {
+                        "file.txt": "",
+                    }
+                }
+            },
+            "src": {
+                "main.rs": "",
+            }
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), ["/root".as_ref()], cx).await;
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let workspace = window
+        .read_with(cx, |mw, _| mw.workspace().clone())
+        .unwrap();
+    let cx = &mut VisualTestContext::from_window(window.into(), cx);
+    let panel = workspace.update_in(cx, ProjectPanel::new);
+    cx.run_until_parked();
+
+    cx.update(|_, cx| {
+        let settings = *ProjectPanelSettings::get_global(cx);
+        ProjectPanelSettings::override_global(
+            ProjectPanelSettings {
+                auto_fold_dirs: true,
+                ..settings
+            },
+            cx,
+        );
+    });
+    panel.update_in(cx, |panel, window, cx| {
+        panel.update_visible_entries(None, false, false, window, cx);
+    });
+    cx.run_until_parked();
+
+    set_project_panel_local_settings(
+        &panel,
+        r#"
+        {
+          "project_panel": {
+            "show_excluded": false,
+            "excluded_entries": ["a/b/c"]
+          }
+        }
+        "#,
+        cx,
+    );
+
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..10, cx),
+        &["v root", "    > a/b", "    > src"],
+    );
+}
+
+#[gpui::test]
 async fn test_toggle_show_excluded_updates_visibility_and_project_settings(
     cx: &mut gpui::TestAppContext,
 ) {
