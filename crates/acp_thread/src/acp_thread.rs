@@ -725,15 +725,20 @@ impl ToolCallContent {
                     cx,
                 ))))
             }
-            acp::ToolCallContent::Diff(diff) => Ok(Some(Self::Diff(cx.new(|cx| {
-                Diff::finalized(
-                    diff.path.to_string_lossy().into_owned(),
-                    diff.old_text,
-                    diff.new_text,
-                    language_registry,
-                    cx,
-                )
-            })))),
+            acp::ToolCallContent::Diff(diff) => {
+                let old_text = diff
+                    .old_text
+                    .or_else(|| std::fs::read_to_string(&diff.path).log_err());
+                Ok(Some(Self::Diff(cx.new(|cx| {
+                    Diff::finalized(
+                        diff.path.to_string_lossy().into_owned(),
+                        old_text,
+                        diff.new_text,
+                        language_registry,
+                        cx,
+                    )
+                }))))
+            }
             acp::ToolCallContent::Terminal(acp::Terminal { terminal_id, .. }) => terminals
                 .get(&terminal_id)
                 .cloned()
