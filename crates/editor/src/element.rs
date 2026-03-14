@@ -115,7 +115,7 @@ struct SelectionLayout {
     cursor_shape: CursorShape,
     is_newest: bool,
     is_local: bool,
-    range: Range<DisplayPoint>,
+    ranges: SmallVec<[Range<DisplayPoint>; 1]>,
     active_rows: Range<DisplayRow>,
     user_name: Option<SharedString>,
 }
@@ -128,7 +128,7 @@ struct InlineBlameLayout {
 }
 
 impl SelectionLayout {
-    fn new<T: ToPoint + ToDisplayPoint + Clone>(
+    fn new<T: ToPoint + ToDisplayPoint + Copy>(
         selection: Selection<T>,
         line_mode: bool,
         cursor_offset: bool,
@@ -139,20 +139,22 @@ impl SelectionLayout {
         user_name: Option<SharedString>,
     ) -> Self {
         let point_selection = selection.map(|p| p.to_point(map.buffer_snapshot()));
-        let display_selection = point_selection.map(|p| p.to_display_point(map));
-        let mut range = display_selection.range();
-        let mut head = display_selection.head();
+        let mut point_range = point_selection.range();
+        let mut head = point_selection.head().to_display_point(map);
         let mut active_rows = map.prev_line_boundary(point_selection.start).1.row()
             ..map.next_line_boundary(point_selection.end).1.row();
 
         // vim visual line mode
         if line_mode {
-            let point_range = map.expand_to_line(point_selection.range());
-            range = point_range.start.to_display_point(map)..point_range.end.to_display_point(map);
+            point_range = map.expand_to_line(point_range);
         }
 
+        let start_offset = map.buffer_snapshot().point_to_offset(point_range.start);
+        let end_offset = map.buffer_snapshot().point_to_offset(point_range.end);
+        let mut ranges = map.display_point_ranges_for_buffer_range(start_offset..end_offset);
+
         // any vim visual mode (including line mode)
-        if cursor_offset && !range.is_empty() && !selection.reversed {
+        if cursor_offset && !ranges.is_empty() && !selection.reversed {
             if head.column() > 0 {
                 head = map.clip_point(DisplayPoint::new(head.row(), head.column() - 1), Bias::Left);
             } else if head.row().0 > 0 && head != map.max_point() {
@@ -167,7 +169,9 @@ impl SelectionLayout {
                 // on the newline containing a multi-buffer divider
                 // in which case the clip_point may have moved the head up
                 // an additional row.
-                range.end = DisplayPoint::new(head.row().next_row(), 0);
+                if let Some(last_range) = ranges.last_mut() {
+                    last_range.end = DisplayPoint::new(head.row().next_row(), 0);
+                }
                 active_rows.end = head.row();
             }
         }
@@ -177,7 +181,7 @@ impl SelectionLayout {
             cursor_shape,
             is_newest,
             is_local,
-            range,
+            ranges,
             active_rows,
             user_name,
         }
@@ -3625,12 +3629,14 @@ impl EditorElement {
         let highlight_iter = highlight_ranges.iter().cloned();
         let selection_iter = selections.iter().flat_map(|(player_color, layouts)| {
             let color = player_color.selection;
-            layouts.iter().filter_map(move |selection_layout| {
-                if selection_layout.range.start != selection_layout.range.end {
-                    Some((selection_layout.range.clone(), color))
-                } else {
-                    None
-                }
+            layouts.iter().flat_map(move |selection_layout| {
+                selection_layout.ranges.iter().filter_map(move |range| {
+                    if range.start != range.end {
+                        Some((range.clone(), color))
+                    } else {
+                        None
+                    }
+                })
             })
         });
         let mut per_row_map = vec![Vec::new(); rows.len()];
@@ -5614,7 +5620,7 @@ impl EditorElement {
             .flat_map(|word_diff| {
                 let display_ranges = snapshot
                     .display_snapshot
-                    .isomorphic_display_point_ranges_for_buffer_range(
+                    .display_point_ranges_for_buffer_range(
                         word_diff.start..word_diff.end,
                     );
 
@@ -6609,18 +6615,20 @@ impl EditorElement {
 
             for (player_color, selections) in &layout.selections {
                 for selection in selections.iter() {
-                    self.paint_highlighted_range(
-                        selection.range.clone(),
-                        true,
-                        player_color.selection,
-                        corner_radius,
-                        corner_radius * 2.,
-                        layout,
-                        window,
-                    );
+                    for range in &selection.ranges {
+                        self.paint_highlighted_range(
+                            range.clone(),
+                            true,
+                            player_color.selection,
+                            corner_radius,
+                            corner_radius * 2.,
+                            layout,
+                            window,
+                        );
 
-                    if selection.is_local && !selection.range.is_empty() {
-                        invisible_display_ranges.push(selection.range.clone());
+                        if selection.is_local && !range.is_empty() {
+                            invisible_display_ranges.push(range.clone());
+                        }
                     }
                 }
             }
@@ -7897,7 +7905,7 @@ impl EditorElement {
                         let end = range.end.to_display_point(display_snapshot);
                         let selection_layout = SelectionLayout {
                             head: start,
-                            range: start..end,
+                            ranges: smallvec![start..end],
                             cursor_shape: CursorShape::Bar,
                             is_newest: false,
                             is_local: false,
@@ -12904,14 +12912,14 @@ mod tests {
             DisplayPoint::new(DisplayRow(0), 6)
         );
         assert_eq!(
-            local_selections[0].range,
-            DisplayPoint::new(DisplayRow(0), 0)..DisplayPoint::new(DisplayRow(1), 0)
+            local_selections[0].ranges.as_slice(),
+            &[(DisplayPoint::new(DisplayRow(0), 0)..DisplayPoint::new(DisplayRow(1), 0))]
         );
 
         // moves cursor back one column
         assert_eq!(
-            local_selections[1].range,
-            DisplayPoint::new(DisplayRow(3), 2)..DisplayPoint::new(DisplayRow(3), 3)
+            local_selections[1].ranges.as_slice(),
+            &[(DisplayPoint::new(DisplayRow(3), 2)..DisplayPoint::new(DisplayRow(3), 3))]
         );
         assert_eq!(
             local_selections[1].head,
@@ -12920,8 +12928,8 @@ mod tests {
 
         // leaves cursor on the max point
         assert_eq!(
-            local_selections[2].range,
-            DisplayPoint::new(DisplayRow(5), 6)..DisplayPoint::new(DisplayRow(6), 0)
+            local_selections[2].ranges.as_slice(),
+            &[(DisplayPoint::new(DisplayRow(5), 6)..DisplayPoint::new(DisplayRow(6), 0))]
         );
         assert_eq!(
             local_selections[2].head,
@@ -13300,7 +13308,7 @@ mod tests {
                 cursor_shape: CursorShape::Bar,
                 is_newest: true,
                 is_local: true,
-                range: DisplayPoint::new(DisplayRow(1), 5)..DisplayPoint::new(DisplayRow(3), 7),
+                ranges: smallvec![DisplayPoint::new(DisplayRow(1), 5)..DisplayPoint::new(DisplayRow(3), 7)],
                 active_rows: DisplayRow(1)..DisplayRow(4),
                 user_name: None,
             };
@@ -13349,7 +13357,7 @@ mod tests {
                 cursor_shape: CursorShape::Bar,
                 is_newest: true,
                 is_local: true,
-                range: DisplayPoint::new(DisplayRow(1), 5)..DisplayPoint::new(DisplayRow(3), 0),
+                ranges: smallvec![DisplayPoint::new(DisplayRow(1), 5)..DisplayPoint::new(DisplayRow(3), 0)],
                 active_rows: DisplayRow(1)..DisplayRow(3),
                 user_name: None,
             };

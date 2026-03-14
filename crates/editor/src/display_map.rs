@@ -1752,15 +1752,14 @@ impl DisplaySnapshot {
     }
 
     /// Converts a buffer offset range into one or more `DisplayPoint` ranges
-    /// that cover only actual buffer text, excluding any inlay hint text that
-    /// falls within the range.
-    pub fn isomorphic_display_point_ranges_for_buffer_range(
+    /// that cover the actual buffer text, including any logically selected inlay hint text.
+    pub fn display_point_ranges_for_buffer_range(
         &self,
         range: Range<MultiBufferOffset>,
     ) -> SmallVec<[Range<DisplayPoint>; 1]> {
         let inlay_snapshot = self.inlay_snapshot();
         inlay_snapshot
-            .buffer_offset_to_inlay_ranges(range)
+            .display_ranges_for_buffer_range(range)
             .map(|inlay_range| {
                 let inlay_point_to_display_point = |inlay_point: InlayPoint, bias: Bias| {
                     let fold_point = self.fold_snapshot().to_fold_point(inlay_point, bias);
@@ -4004,7 +4003,7 @@ pub mod tests {
     }
 
     #[gpui::test]
-    fn test_isomorphic_display_point_ranges_for_buffer_range(cx: &mut gpui::TestAppContext) {
+    fn test_display_point_ranges_for_buffer_range(cx: &mut gpui::TestAppContext) {
         cx.update(|cx| init_test(cx, &|_| {}));
 
         let buffer = cx.new(|cx| Buffer::local("let x = 5;\n", cx));
@@ -4028,7 +4027,7 @@ pub mod tests {
 
         // Without inlays, a buffer range maps to a single display range.
         let snapshot = map.update(cx, |map, cx| map.snapshot(cx));
-        let ranges = snapshot.isomorphic_display_point_ranges_for_buffer_range(
+        let ranges = snapshot.display_point_ranges_for_buffer_range(
             MultiBufferOffset(4)..MultiBufferOffset(9),
         );
         assert_eq!(ranges.len(), 1);
@@ -4052,34 +4051,32 @@ pub mod tests {
         assert_eq!(snapshot.text(), "let x: i32 = 5;\n");
 
         // A buffer range [4..9] ("x = 5") now spans across the inlay.
-        // It should be split into two display ranges that skip the inlay text.
-        let ranges = snapshot.isomorphic_display_point_ranges_for_buffer_range(
+        // It successfully merges both pieces and the inlay since it's fully covered.
+        let ranges = snapshot.display_point_ranges_for_buffer_range(
             MultiBufferOffset(4)..MultiBufferOffset(9),
         );
         assert_eq!(
             ranges.len(),
-            2,
-            "expected the range to be split around the inlay, got: {:?}",
-            ranges,
+            1,
+            "Range should NOT be split around the inlay hint because it is selected."
         );
-        // First sub-range: buffer [4, 5) → "x" at display columns 4..5
         assert_eq!(ranges[0].start, DisplayPoint::new(DisplayRow(0), 4));
-        assert_eq!(ranges[0].end, DisplayPoint::new(DisplayRow(0), 5));
-        // Second sub-range: buffer [5, 9) → " = 5" at display columns 10..14
-        // (shifted right by the 5-char ": i32" inlay)
-        assert_eq!(ranges[1].start, DisplayPoint::new(DisplayRow(0), 10));
-        assert_eq!(ranges[1].end, DisplayPoint::new(DisplayRow(0), 14));
+        assert_eq!(ranges[0].end, DisplayPoint::new(DisplayRow(0), 14));
 
-        // A range entirely before the inlay is not split.
-        let ranges = snapshot.isomorphic_display_point_ranges_for_buffer_range(
+        // A range ending immediately at the inlay.
+        let ranges = snapshot.display_point_ranges_for_buffer_range(
             MultiBufferOffset(0)..MultiBufferOffset(5),
         );
-        assert_eq!(ranges.len(), 1);
+        // The inlay WILL be included because its anchor is Bias::Right.
+        assert_eq!(ranges.len(), 2);
         assert_eq!(ranges[0].start, DisplayPoint::new(DisplayRow(0), 0));
         assert_eq!(ranges[0].end, DisplayPoint::new(DisplayRow(0), 5));
+        assert_eq!(ranges[1].start, DisplayPoint::new(DisplayRow(0), 5));
+        assert_eq!(ranges[1].end, DisplayPoint::new(DisplayRow(0), 10));
 
-        // A range entirely after the inlay is not split.
-        let ranges = snapshot.isomorphic_display_point_ranges_for_buffer_range(
+        // A range entirely after the inlay is not split. Bias::Right matches <= range.end and > range.start
+        // 5 is NOT > 5, so it is NOT included.
+        let ranges = snapshot.display_point_ranges_for_buffer_range(
             MultiBufferOffset(5)..MultiBufferOffset(9),
         );
         assert_eq!(ranges.len(), 1);
