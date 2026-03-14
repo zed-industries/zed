@@ -188,3 +188,35 @@ Rules emerge from validated patterns, not one-off observations. The workflow is:
 1. Agent notes a pattern during a session.
 2. Team validates the pattern in code review.
 3. A dedicated commit adds the rule with context on *why* it exists.
+
+## iPad Port (Thin Client)
+
+This branch ports Zed to iPadOS as a **remote thin client**. The iPad renders UI and
+handles input; all compute (LSP, git, file I/O, terminals, extensions) runs on a remote
+host via `zed --headless` over SSH. The AI agent panel is the one exception — LLM API
+calls go directly from iPad to providers over HTTPS, while agent tool invocations proxy
+through the remote protocol.
+
+**Hard constraints on iOS:**
+- No `posix_spawn`/`fork`/`exec`/`std::process::Command` — kernel-level prohibited
+- No AppKit — iOS uses UIKit exclusively
+- No system `ssh` binary — must use embedded Rust SSH library (`russh`)
+- App sandbox: no access outside container without security-scoped bookmarks
+- No swap space: Jetsam kills apps via SIGKILL under memory pressure
+
+**Key directories for this port:**
+- `ios/` — Xcode project, Swift host app, entitlements
+- `crates/zed-ios/` — Rust staticlib entry point, Keychain bridge, network monitor
+- `crates/gpui/src/platform/ios/` — GPUI iOS platform layer (Metal + UIKit + CoreText)
+
+**For the full architecture, phase plan, and technical details:**
+Read `docs/ios-port-plan.md` when working on iOS-related code. It covers the SSH
+transport rewrite, GPUI platform trait implementation (~40+ methods), agent settings
+sync from remote host, Metal renderer porting, and all four development phases.
+
+**Build the iOS target:**
+```bash
+rustup target add aarch64-apple-ios aarch64-apple-ios-sim
+cargo build -p zed-ios --target aarch64-apple-ios --release --no-default-features --features ios
+xcodebuild -project ios/ZedApp.xcodeproj -scheme ZedApp -destination 'platform=iOS Simulator,name=iPad Pro 13-inch (M4)' build
+```

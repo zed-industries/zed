@@ -1,0 +1,27 @@
+[package]
+name = "zed-ios"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[lib]
+crate-type = ["staticlib"]
+
+# TODO: Add dependencies as Phase 0 progresses
+# [dependencies]
+# gpui = { path = "../gpui", default-features = false, features = ["ios"] }
+# workspace = { path = "../workspace" }
+# editor = { path = "../editor" }
+# remote = { path = "../remote" }
+# agent = { path = "../agent" }
+# agent_ui = { path = "../agent_ui" }
+# settings = { path = "../settings" }
+# theme = { path = "../theme" }
+# paths = { path = "../paths" }
+# russh = "0.57"
+# russh-keys = "0.57"
+# objc2 = "0.6"
+# objc2-foundation = "0.3"
+# objc2-ui-kit = "0.3"
+# block2 = "0.6"
+# dispatch2 = "0.2"
