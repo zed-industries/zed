@@ -1173,6 +1173,12 @@
   // 4. Save when idle for a certain amount of time:
   //     "autosave": { "after_delay": {"milliseconds": 500} },
   "autosave": "off",
+  // Which edited buffers to save before running a task. This can be overridden by task configuration.
+  //
+  // Options:
+  // - "all": save all edited buffers
+  // - "none": don't save any buffers
+  "save_before_task_run": "all",
   // Maximum number of tabs per pane. Unset for unlimited.
   "max_tabs": null,
   // Settings related to the editor's tab bar.

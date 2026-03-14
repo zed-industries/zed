@@ -1338,7 +1338,7 @@ fn keymap_page() -> SettingsPage {
 }
 
 fn editor_page() -> SettingsPage {
-    fn auto_save_section() -> [SettingsPageItem; 2] {
+    fn auto_save_section() -> [SettingsPageItem; 3] {
         [
             SettingsPageItem::SectionHeader("Auto Save"),
             SettingsPageItem::DynamicItem(DynamicItem {
@@ -1433,6 +1433,21 @@ fn editor_page() -> SettingsPage {
                         settings::AutosaveSettingDiscriminants::OnWindowChange => vec![],
                     })
                     .collect(),
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Save before running a task",
+                description: "Which edited buffers to save before running a task. Can be overriden in task configuration.",
+                field: Box::new(SettingField {
+                    pick: |settings_content| {
+                        settings_content.workspace.save_before_task_run.as_ref()
+                    },
+                    write: |settings_content, value| {
+                        settings_content.workspace.save_before_task_run = value
+                    },
+                    json_path: Some("workspace.save_before_run"),
+                }),
+                metadata: None,
+                files: USER | PROJECT,
             }),
         ]
     }

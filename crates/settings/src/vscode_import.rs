@@ -955,6 +955,11 @@ impl VsCodeSettings {
                 "onWindowChange" => Some(AutosaveSetting::OnWindowChange),
                 _ => None,
             }),
+            save_before_task_run: self.read_enum("task.saveBeforeRun", |s| match s {
+                "always" => Some(SaveBeforeTaskRun::All),
+                "never" => Some(SaveBeforeTaskRun::None),
+                _ => None,
+            }),
             bottom_dock_layout: None,
             centered_layout: None,
             close_on_file_delete: None,
