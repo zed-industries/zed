@@ -9924,6 +9924,65 @@ async fn test_toggle_excluded_updates_existing_project_panel_block_without_dupli
 }
 
 #[gpui::test]
+async fn test_toggle_excluded_preserves_symlinked_project_settings(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        "/root",
+        json!({
+            ".zed": {},
+            "shared": {
+                "project-settings.json": "{\n  \"project_panel\": {\n    \"show_excluded\": false,\n    \"excluded_entries\": [\".cargo\"]\n  }\n}",
+            },
+            ".cargo": {},
+            "file.txt": "",
+        }),
+    )
+    .await;
+    let target_path = PathBuf::from("/root/shared/project-settings.json");
+    fs.insert_symlink("/root/.zed/settings.json", target_path.clone())
+        .await;
+
+    let project = Project::test(fs.clone(), ["/root".as_ref()], cx).await;
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let workspace = window
+        .read_with(cx, |mw, _| mw.workspace().clone())
+        .unwrap();
+    let cx = &mut VisualTestContext::from_window(window.into(), cx);
+    let panel = workspace.update_in(cx, ProjectPanel::new);
+    cx.run_until_parked();
+
+    select_path(&panel, "root/file.txt", cx);
+    toggle_excluded(&panel, cx);
+
+    let settings_metadata = fs
+        .metadata(Path::new("/root/.zed/settings.json"))
+        .await
+        .unwrap()
+        .expect("settings symlink should exist");
+    assert!(settings_metadata.is_symlink);
+    assert_eq!(
+        fs.read_link(Path::new("/root/.zed/settings.json"))
+            .await
+            .unwrap(),
+        target_path
+    );
+
+    let settings: serde_json::Value =
+        serde_json::from_str(&fs.load(target_path.as_path()).await.unwrap()).unwrap();
+    assert_eq!(
+        settings,
+        json!({
+            "project_panel": {
+                "show_excluded": false,
+                "excluded_entries": [".cargo", "file.txt"]
+            }
+        }),
+    );
+}
+
+#[gpui::test]
 async fn test_toggle_excluded_hides_directory_subtree_when_show_excluded_is_false(
     cx: &mut gpui::TestAppContext,
 ) {

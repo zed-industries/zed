@@ -3587,7 +3587,17 @@ impl ProjectPanel {
             if let Some(parent) = settings_path.parent() {
                 fs.create_dir(parent).await?;
             }
-            fs.atomic_write(settings_path, new_text.clone()).await?;
+            let write_path = if fs.is_file(&settings_path).await {
+                fs.canonicalize(&settings_path).await.with_context(|| {
+                    format!(
+                        "Failed to canonicalize project settings path {:?}",
+                        settings_path
+                    )
+                })?
+            } else {
+                settings_path.clone()
+            };
+            fs.atomic_write(write_path, new_text.clone()).await?;
 
             this.update_in(cx, |this, window, cx| -> anyhow::Result<()> {
                 cx.update_global::<SettingsStore, _>(|settings, cx| {
@@ -3643,7 +3653,17 @@ impl ProjectPanel {
             if let Some(parent) = settings_path.parent() {
                 fs.create_dir(parent).await?;
             }
-            fs.atomic_write(settings_path, new_text.clone()).await?;
+            let write_path = if fs.is_file(&settings_path).await {
+                fs.canonicalize(&settings_path).await.with_context(|| {
+                    format!(
+                        "Failed to canonicalize project settings path {:?}",
+                        settings_path
+                    )
+                })?
+            } else {
+                settings_path.clone()
+            };
+            fs.atomic_write(write_path, new_text.clone()).await?;
 
             this.update_in(cx, |this, window, cx| -> anyhow::Result<()> {
                 cx.update_global::<SettingsStore, _>(|settings, cx| {
