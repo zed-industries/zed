@@ -3782,6 +3782,16 @@ Positive integer values
 
 `boolean` values
 
+## Default Project Folder
+
+- Description: The default folder opened first when using "Open a new project". Use an absolute path or a home-relative path (e.g. `~/projects`). Set to `null` to use the platform default.
+- Setting: `default_project_folder`
+- Default: `null`
+
+**Options**
+
+`string` or `null`
+
 ## Use System Path Prompts
 
 - Description: Whether to use the system provided dialogs for Open and Save As. When set to false, Zed will use the built-in keyboard-first pickers.

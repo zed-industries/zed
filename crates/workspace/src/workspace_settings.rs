@@ -1,8 +1,10 @@
 use std::num::NonZeroUsize;
+use std::path::PathBuf;
 
 use crate::DockPosition;
 use collections::HashMap;
 use serde::Deserialize;
+use util::paths::expand_tilde;
 pub use settings::{
     AutosaveSetting, BottomDockLayout, EncodingDisplayOptions, InactiveOpacity,
     PaneSplitDirectionHorizontal, PaneSplitDirectionVertical, RegisterSetting,
@@ -23,6 +25,7 @@ pub struct WorkspaceSettings {
     pub restore_on_file_reopen: bool,
     pub drop_target_size: f32,
     pub use_system_path_prompts: bool,
+    pub default_project_folder: Option<PathBuf>,
     pub use_system_prompts: bool,
     pub command_aliases: HashMap<String, String>,
     pub max_tabs: Option<NonZeroUsize>,
@@ -95,6 +98,10 @@ impl Settings for WorkspaceSettings {
             restore_on_file_reopen: workspace.restore_on_file_reopen.unwrap(),
             drop_target_size: workspace.drop_target_size.unwrap(),
             use_system_path_prompts: workspace.use_system_path_prompts.unwrap(),
+            default_project_folder: workspace
+                .default_project_folder
+                .as_deref()
+                .and_then(validate_default_project_folder),
             use_system_prompts: workspace.use_system_prompts.unwrap(),
             command_aliases: workspace.command_aliases.clone(),
             max_tabs: workspace.max_tabs,
@@ -114,6 +121,41 @@ impl Settings for WorkspaceSettings {
             zoomed_padding: workspace.zoomed_padding.unwrap(),
             window_decorations: workspace.window_decorations.unwrap(),
         }
+    }
+}
+
+fn validate_default_project_folder(path: &str) -> Option<PathBuf> {
+    let expanded = expand_tilde(path);
+    if !expanded.is_dir() {
+        log::warn!("default_project_folder {path:?} is not an existing directory; ignoring");
+        return None;
+    }
+    Some(expanded)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn validate_default_project_folder_accepts_existing_directory() {
+        let dir = tempfile::tempdir().expect("tempdir should be created");
+        let path = dir.path().to_string_lossy().into_owned();
+        assert_eq!(validate_default_project_folder(&path).as_deref(), Some(dir.path()));
+    }
+
+    #[test]
+    fn validate_default_project_folder_rejects_nonexistent_directory() {
+        let dir = tempfile::tempdir().expect("tempdir should be created");
+        let missing = dir.path().join("does-not-exist");
+        assert!(validate_default_project_folder(missing.to_string_lossy().as_ref()).is_none());
+    }
+
+    #[test]
+    fn expand_tilde_uses_home_directory() {
+        let home = util::paths::home_dir().clone();
+        assert_eq!(expand_tilde("~"), home);
+        assert_eq!(expand_tilde("~/programs"), home.join("programs"));
     }
 }
 

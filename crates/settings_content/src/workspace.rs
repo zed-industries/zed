@@ -73,6 +73,12 @@ pub struct WorkspaceSettingsContent {
     ///
     /// Default: true
     pub use_system_path_prompts: Option<bool>,
+    /// The default folder opened first when using "Open a new project".
+    /// Use an absolute path or a home-relative path (e.g. `~/projects`).
+    /// Set to `null` to use the platform default.
+    ///
+    /// Default: null
+    pub default_project_folder: Option<String>,
     /// Whether to use the system provided prompts.
     /// When set to false, Zed will use the built-in prompts.
     /// Note that this setting has no effect on Linux, where Zed will always

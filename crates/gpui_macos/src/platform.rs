@@ -708,6 +708,12 @@ impl Platform for MacPlatform {
                     panel.setCanChooseFiles_(options.files.to_objc());
                     panel.setAllowsMultipleSelection_(options.multiple.to_objc());
 
+                    if let Some(initial_directory) = options.initial_directory {
+                        let path = ns_string(initial_directory.to_string_lossy().as_ref());
+                        let url = NSURL::fileURLWithPath_isDirectory_(nil, path, true.to_objc());
+                        panel.setDirectoryURL(url);
+                    }
+
                     panel.setCanCreateDirectories(true.to_objc());
                     panel.setResolvesAliases_(false.to_objc());
                     let done_tx = Cell::new(Some(done_tx));

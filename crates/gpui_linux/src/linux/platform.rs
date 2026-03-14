@@ -339,16 +339,27 @@ impl<P: LinuxClient + 'static> Platform for LinuxPlatform<P> {
                     "Open File"
                 };
 
-                let request = match ashpd::desktop::file_chooser::OpenFileRequest::default()
+                let builder = ashpd::desktop::file_chooser::OpenFileRequest::default()
                     .identifier(identifier.await)
                     .modal(true)
                     .title(title)
                     .accept_label(options.prompt.as_ref().map(gpui::SharedString::as_str))
                     .multiple(options.multiple)
-                    .directory(options.directories)
-                    .send()
-                    .await
-                {
+                    .directory(options.directories);
+
+                let builder = if let Some(initial_directory) = options.initial_directory {
+                    match builder.current_folder(initial_directory) {
+                        Ok(builder) => builder,
+                        Err(error) => {
+                            let _ = done_tx.send(Err(error.into()));
+                            return;
+                        }
+                    }
+                } else {
+                    builder
+                };
+
+                let request = match builder.send().await {
                     Ok(request) => request,
                     Err(err) => {
                         let result = match err {
