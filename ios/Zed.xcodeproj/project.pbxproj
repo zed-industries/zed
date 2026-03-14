@@ -330,7 +330,7 @@
 					Security,
 					"$(inherited)",
 				);
-				PRODUCT_BUNDLE_IDENTIFIER = dev.zed.app;
+				PRODUCT_BUNDLE_IDENTIFIER = dev.zed.ipad.app;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = iphoneos;
 				SUPPORTS_MACCATALYST = NO;
@@ -371,7 +371,7 @@
 					Security,
 					"$(inherited)",
 				);
-				PRODUCT_BUNDLE_IDENTIFIER = dev.zed.app;
+				PRODUCT_BUNDLE_IDENTIFIER = dev.zed.ipad.app;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = iphoneos;
 				SUPPORTS_MACCATALYST = NO;
