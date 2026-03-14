@@ -69,7 +69,7 @@ pub fn init(cx: &mut App) {
                 .detach();
             })
             .register_action(|_, _: &CopyInstalledExtensionsIntoClipboard, window, cx| {
-                let clipboard_text = installed_extensions_for_clipboard(cx);
+                let clipboard_text = format_installed_extensions_for_clipboard(cx);
                 cx.write_to_clipboard(ClipboardItem::new_string(clipboard_text.clone()));
                 drop(window.prompt(
                     PromptLevel::Info,
@@ -111,12 +111,9 @@ pub fn init(cx: &mut App) {
     .detach();
 }
 
-pub fn installed_extensions_for_clipboard(cx: &App) -> String {
+fn format_installed_extensions_for_clipboard(cx: &mut App) -> String {
     let store = ExtensionStore::global(cx);
-    format_installed_extensions_for_clipboard(store.read(cx))
-}
-
-fn format_installed_extensions_for_clipboard(store: &ExtensionStore) -> String {
+    let store = store.read(cx);
     let mut top_lines = Vec::with_capacity(store.extension_index.extensions.len());
     let mut bottom_lines = Vec::with_capacity(store.extension_index.extensions.len());
 
