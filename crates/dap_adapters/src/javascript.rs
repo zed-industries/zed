@@ -6,7 +6,7 @@ use gpui::AsyncApp;
 use serde_json::Value;
 use std::{path::PathBuf, sync::OnceLock};
 use task::DebugRequest;
-use util::{ResultExt, maybe, shell::ShellKind};
+use util::{maybe, shell::ShellKind};
 
 use crate::*;
 
@@ -141,7 +141,13 @@ impl JsDebugAdapter {
                 file_name.starts_with(&file_name_prefix)
             })
             .await
-            .context("Couldn't find JavaScript dap directory")?
+            .with_context(|| {
+                format!(
+                    "JavaScript debug adapter not found in {}. \
+                     It may need to be downloaded — check your network connection and try again.",
+                    adapter_path.display()
+                )
+            })?
             .join(Self::ADAPTER_PATH)
         };
 
@@ -510,16 +516,39 @@ impl DebugAdapter for JsDebugAdapter {
     ) -> Result<DebugAdapterBinary> {
         if self.checked.set(()).is_ok() {
             delegate.output_to_console(format!("Checking latest version of {}...", self.name()));
-            if let Some(version) = self.fetch_latest_adapter_version(delegate).await.log_err() {
-                adapters::download_adapter_from_github(
-                    self.name(),
-                    version,
-                    adapters::DownloadedFileType::GzipTar,
-                    delegate.as_ref(),
-                )
-                .await?;
-            } else {
-                delegate.output_to_console(format!("{} debug adapter is up to date", self.name()));
+            match self.fetch_latest_adapter_version(delegate).await {
+                Ok(version) => {
+                    adapters::download_adapter_from_github(
+                        self.name(),
+                        version,
+                        adapters::DownloadedFileType::GzipTar,
+                        delegate.as_ref(),
+                    )
+                    .await?;
+                }
+                Err(error) => {
+                    let adapter_path =
+                        paths::debug_adapters_dir().join(self.name().as_ref());
+                    let file_name_prefix = format!("{}_", self.name());
+                    let has_cached_adapter =
+                        util::fs::find_file_name_in_dir(adapter_path.as_path(), |file_name| {
+                            file_name.starts_with(&file_name_prefix)
+                        })
+                        .await
+                        .is_some();
+
+                    if has_cached_adapter {
+                        delegate.output_to_console(format!(
+                            "Failed to fetch latest version, using cached adapter: {error}"
+                        ));
+                    } else {
+                        return Err(error).context(
+                            "Failed to download JavaScript debug adapter \
+                             (no cached version available). \
+                             Check your network connection and try again.",
+                        );
+                    }
+                }
             }
         }
 
@@ -549,6 +578,69 @@ impl DebugAdapter for JsDebugAdapter {
 
     fn prefer_thread_name(&self) -> bool {
         true
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn test_get_installed_binary_error_contains_path_and_guidance() {
+        // Use a path that definitely doesn't exist to simulate a missing adapter
+        let adapter_path = PathBuf::from("/tmp/nonexistent_debug_adapters/JavaScript");
+        let file_name_prefix = format!("{}_", JsDebugAdapter::ADAPTER_NAME);
+
+        let result = smol::block_on(util::fs::find_file_name_in_dir(
+            adapter_path.as_path(),
+            |file_name| file_name.starts_with(&file_name_prefix),
+        ));
+
+        assert!(result.is_none());
+
+        // Verify our error formatting matches what get_installed_binary produces
+        let error = result
+            .with_context(|| {
+                format!(
+                    "JavaScript debug adapter not found in {}. \
+                     It may need to be downloaded — check your network connection and try again.",
+                    adapter_path.display()
+                )
+            })
+            .unwrap_err();
+
+        let error_message = format!("{:#}", error);
+        assert!(
+            error_message.contains("debug_adapters"),
+            "Error should include the adapter path, got: {error_message}"
+        );
+        assert!(
+            error_message.contains("network connection"),
+            "Error should include actionable guidance, got: {error_message}"
+        );
+    }
+
+    #[test]
+    fn test_normalize_task_type() {
+        let cases = vec![
+            ("node", "pwa-node"),
+            ("pwa-node", "pwa-node"),
+            ("node-terminal", "pwa-node"),
+            ("chrome", "pwa-chrome"),
+            ("pwa-chrome", "pwa-chrome"),
+            ("edge", "pwa-msedge"),
+            ("msedge", "pwa-msedge"),
+            ("pwa-edge", "pwa-msedge"),
+            ("pwa-msedge", "pwa-msedge"),
+            ("unknown", "unknown"),
+        ];
+
+        for (input, expected) in cases {
+            let mut value = json!(input);
+            normalize_task_type(&mut value);
+            assert_eq!(value, json!(expected), "normalize_task_type({input:?})");
+        }
     }
 }
 
