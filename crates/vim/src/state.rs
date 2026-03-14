@@ -151,6 +151,23 @@ pub enum Operator {
         replaced_char: Option<char>,
     },
     HelixSurroundDelete,
+    HelixJump {
+        behaviour: HelixJumpBehaviour,
+        first_char: Option<char>,
+        labels: Vec<HelixJumpLabel>,
+    },
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct HelixJumpLabel {
+    pub label: [char; 2],
+    pub range: Range<Anchor>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum HelixJumpBehaviour {
+    Move,
+    Extend,
 }
 
 #[derive(Default, Clone, Debug)]
@@ -1055,6 +1072,7 @@ impl Operator {
             Operator::HelixMatch => "helix_m",
             Operator::HelixNext { .. } => "helix_next",
             Operator::HelixPrevious { .. } => "helix_previous",
+            Operator::HelixJump { .. } => "gw",
             Operator::HelixSurroundAdd => "helix_ms",
             Operator::HelixSurroundReplace { .. } => "helix_mr",
             Operator::HelixSurroundDelete => "helix_md",
@@ -1082,6 +1100,7 @@ impl Operator {
             Operator::HelixMatch => "m".to_string(),
             Operator::HelixNext { .. } => "]".to_string(),
             Operator::HelixPrevious { .. } => "[".to_string(),
+            Operator::HelixJump { .. } => "gw".to_string(),
             Operator::HelixSurroundAdd => "ms".to_string(),
             Operator::HelixSurroundReplace {
                 replaced_char: None,
@@ -1112,7 +1131,8 @@ impl Operator {
             | Operator::ChangeSurrounds {
                 target: Some(_), ..
             }
-            | Operator::DeleteSurrounds => true,
+            | Operator::DeleteSurrounds
+            | Operator::HelixJump { .. } => true,
             Operator::Change
             | Operator::Delete
             | Operator::Yank
@@ -1181,7 +1201,8 @@ impl Operator {
             | Operator::Register
             | Operator::RecordRegister
             | Operator::ReplayRegister
-            | Operator::HelixMatch => false,
+            | Operator::HelixMatch
+            | Operator::HelixJump { .. } => false,
         }
     }
 }
