@@ -15,9 +15,9 @@
             <BuildableReference
                BuildableIdentifier = "primary"
                BlueprintIdentifier = "AA0000000000000000000050"
-               BuildableName = "ZedApp.app"
-               BlueprintName = "ZedApp"
-               ReferencedContainer = "container:ZedApp.xcodeproj">
+               BuildableName = "Zed.app"
+               BlueprintName = "Zed"
+               ReferencedContainer = "container:Zed.xcodeproj">
             </BuildableReference>
          </BuildActionEntry>
       </BuildActionEntries>
@@ -44,9 +44,9 @@
          <BuildableReference
             BuildableIdentifier = "primary"
             BlueprintIdentifier = "AA0000000000000000000050"
-            BuildableName = "ZedApp.app"
-            BlueprintName = "ZedApp"
-            ReferencedContainer = "container:ZedApp.xcodeproj">
+            BuildableName = "Zed.app"
+            BlueprintName = "Zed"
+            ReferencedContainer = "container:Zed.xcodeproj">
          </BuildableReference>
       </BuildableProductRunnable>
    </LaunchAction>
@@ -61,9 +61,9 @@
          <BuildableReference
             BuildableIdentifier = "primary"
             BlueprintIdentifier = "AA0000000000000000000050"
-            BuildableName = "ZedApp.app"
-            BlueprintName = "ZedApp"
-            ReferencedContainer = "container:ZedApp.xcodeproj">
+            BuildableName = "Zed.app"
+            BlueprintName = "Zed"
+            ReferencedContainer = "container:Zed.xcodeproj">
          </BuildableReference>
       </BuildableProductRunnable>
    </ProfileAction>

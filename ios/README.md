@@ -52,7 +52,7 @@ install `xcode-build-server` and run it once from the `ios/` directory:
 
 ```bash
 brew install xcode-build-server
-cd ios && xcode-build-server config -project ZedApp.xcodeproj -scheme ZedApp
+cd ios && xcode-build-server config -project Zed.xcodeproj -scheme Zed
 ```
 
 This generates `ios/buildServer.json` (gitignored) which tells sourcekit-lsp to
@@ -65,11 +65,11 @@ a shell script build phase that runs before Swift compilation.
 
 ```bash
 # Build and run on the iPad Pro simulator
-xcodebuild -project ios/ZedApp.xcodeproj -scheme ZedApp \
+xcodebuild -project ios/Zed.xcodeproj -scheme Zed \
   -destination 'platform=iOS Simulator,name=iPad Pro 13-inch (M4)' \
   -configuration Debug CODE_SIGNING_ALLOWED=NO
 
-# For a physical device, open ZedApp.xcodeproj in Xcode and run from there
+# For a physical device, open Zed.xcodeproj in Xcode and run from there
 # (requires an Apple Developer account for code signing)
 ```
 

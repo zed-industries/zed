@@ -16,9 +16,9 @@
 		AA0000000000000000000010 /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDelegate.swift; sourceTree = "<group>"; };
 		AA0000000000000000000011 /* SceneDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SceneDelegate.swift; sourceTree = "<group>"; };
 		AA0000000000000000000012 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
-		AA0000000000000000000013 /* ZedApp-Bridging-Header.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = "ZedApp-Bridging-Header.h"; sourceTree = "<group>"; };
-		AA0000000000000000000014 /* ZedApp.Entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.Entitlements; path = ZedApp.Entitlements; sourceTree = "<group>"; };
-		AA0000000000000000000015 /* ZedApp.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = ZedApp.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		AA0000000000000000000013 /* Zed-Bridging-Header.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = "Zed-Bridging-Header.h"; sourceTree = "<group>"; };
+		AA0000000000000000000014 /* Zed.Entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.Entitlements; path = Zed.Entitlements; sourceTree = "<group>"; };
+		AA0000000000000000000015 /* Zed.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Zed.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		AA0000000000000000000016 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
@@ -36,7 +36,7 @@
 		AA0000000000000000000002 = {
 			isa = PBXGroup;
 			children = (
-				AA0000000000000000000004 /* ZedApp */,
+				AA0000000000000000000004 /* Zed */,
 				AA0000000000000000000003 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -44,22 +44,22 @@
 		AA0000000000000000000003 /* Products */ = {
 			isa = PBXGroup;
 			children = (
-				AA0000000000000000000015 /* ZedApp.app */,
+				AA0000000000000000000015 /* Zed.app */,
 			);
 			name = Products;
 			sourceTree = "<group>";
 		};
-		AA0000000000000000000004 /* ZedApp */ = {
+		AA0000000000000000000004 /* Zed */ = {
 			isa = PBXGroup;
 			children = (
 				AA0000000000000000000016 /* Assets.xcassets */,
 				AA0000000000000000000010 /* AppDelegate.swift */,
 				AA0000000000000000000011 /* SceneDelegate.swift */,
-				AA0000000000000000000013 /* ZedApp-Bridging-Header.h */,
+				AA0000000000000000000013 /* Zed-Bridging-Header.h */,
 				AA0000000000000000000005 /* Supporting Files */,
 				AA0000000000000000000006 /* Entitlements */,
 			);
-			path = ZedApp;
+			path = Zed;
 			sourceTree = "<group>";
 		};
 		AA0000000000000000000005 /* Supporting Files */ = {
@@ -73,7 +73,7 @@
 		AA0000000000000000000006 /* Entitlements */ = {
 			isa = PBXGroup;
 			children = (
-				AA0000000000000000000014 /* ZedApp.Entitlements */,
+				AA0000000000000000000014 /* Zed.Entitlements */,
 			);
 			path = Entitlements;
 			sourceTree = "<group>";
@@ -81,9 +81,9 @@
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
-		AA0000000000000000000050 /* ZedApp */ = {
+		AA0000000000000000000050 /* Zed */ = {
 			isa = PBXNativeTarget;
-			buildConfigurationList = AA0000000000000000000045 /* Build configuration list for PBXNativeTarget "ZedApp" */;
+			buildConfigurationList = AA0000000000000000000045 /* Build configuration list for PBXNativeTarget "Zed" */;
 			buildPhases = (
 				AA0000000000000000000033 /* Cargo — Build zed-ios staticlib */,
 				AA0000000000000000000030 /* Sources */,
@@ -94,9 +94,9 @@
 			);
 			dependencies = (
 			);
-			name = ZedApp;
-			productName = ZedApp;
-			productReference = AA0000000000000000000015 /* ZedApp.app */;
+			name = Zed;
+			productName = Zed;
+			productReference = AA0000000000000000000015 /* Zed.app */;
 			productType = "com.apple.product-type.application";
 		};
 /* End PBXNativeTarget section */
@@ -115,7 +115,7 @@
 					};
 				};
 			};
-			buildConfigurationList = AA0000000000000000000042 /* Build configuration list for PBXProject "ZedApp" */;
+			buildConfigurationList = AA0000000000000000000042 /* Build configuration list for PBXProject "Zed" */;
 			compatibilityVersion = "Xcode 14.0";
 			developmentRegion = en;
 			hasScannedForEncodings = 0;
@@ -128,7 +128,7 @@
 			projectDirPath = "";
 			projectRoot = "";
 			targets = (
-				AA0000000000000000000050 /* ZedApp */,
+				AA0000000000000000000050 /* Zed */,
 			);
 		};
 /* End PBXProject section */
@@ -304,11 +304,11 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIconDev;
-				CODE_SIGN_ENTITLEMENTS = ZedApp/Entitlements/ZedApp.Entitlements;
+				CODE_SIGN_ENTITLEMENTS = Zed/Entitlements/Zed.Entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				GENERATE_INFOPLIST_FILE = NO;
-				INFOPLIST_FILE = "ZedApp/Supporting Files/Info.plist";
+				INFOPLIST_FILE = "Zed/Supporting Files/Info.plist";
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
 				LIBRARY_SEARCH_PATHS = (
 					"$(BUILT_PRODUCTS_DIR)",
@@ -330,12 +330,12 @@
 					Security,
 					"$(inherited)",
 				);
-				PRODUCT_BUNDLE_IDENTIFIER = dev.zed.ZedApp;
+				PRODUCT_BUNDLE_IDENTIFIER = dev.zed.Zed;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = iphoneos;
 				SUPPORTS_MACCATALYST = NO;
 				SWIFT_EMIT_LOC_STRINGS = YES;
-				SWIFT_OBJC_BRIDGING_HEADER = "ZedApp/ZedApp-Bridging-Header.h";
+				SWIFT_OBJC_BRIDGING_HEADER = "Zed/Zed-Bridging-Header.h";
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = 2;
 			};
@@ -345,11 +345,11 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
-				CODE_SIGN_ENTITLEMENTS = ZedApp/Entitlements/ZedApp.Entitlements;
+				CODE_SIGN_ENTITLEMENTS = Zed/Entitlements/Zed.Entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				GENERATE_INFOPLIST_FILE = NO;
-				INFOPLIST_FILE = "ZedApp/Supporting Files/Info.plist";
+				INFOPLIST_FILE = "Zed/Supporting Files/Info.plist";
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
 				LIBRARY_SEARCH_PATHS = (
 					"$(BUILT_PRODUCTS_DIR)",
@@ -371,12 +371,12 @@
 					Security,
 					"$(inherited)",
 				);
-				PRODUCT_BUNDLE_IDENTIFIER = dev.zed.ZedApp;
+				PRODUCT_BUNDLE_IDENTIFIER = dev.zed.Zed;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = iphoneos;
 				SUPPORTS_MACCATALYST = NO;
 				SWIFT_EMIT_LOC_STRINGS = YES;
-				SWIFT_OBJC_BRIDGING_HEADER = "ZedApp/ZedApp-Bridging-Header.h";
+				SWIFT_OBJC_BRIDGING_HEADER = "Zed/Zed-Bridging-Header.h";
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = 2;
 			};
@@ -385,7 +385,7 @@
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
-		AA0000000000000000000042 /* Build configuration list for PBXProject "ZedApp" */ = {
+		AA0000000000000000000042 /* Build configuration list for PBXProject "Zed" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
 				AA0000000000000000000040 /* Debug */,
@@ -394,7 +394,7 @@
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
 		};
-		AA0000000000000000000045 /* Build configuration list for PBXNativeTarget "ZedApp" */ = {
+		AA0000000000000000000045 /* Build configuration list for PBXNativeTarget "Zed" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
 				AA0000000000000000000043 /* Debug */,

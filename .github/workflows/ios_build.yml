@@ -43,8 +43,8 @@ jobs:
     - name: Build Xcode project (device)
       run: |
         xcodebuild \
-          -project ios/ZedApp.xcodeproj \
-          -scheme ZedApp \
+          -project ios/Zed.xcodeproj \
+          -scheme Zed \
           -destination 'generic/platform=iOS' \
           -configuration Debug \
           CODE_SIGNING_ALLOWED=NO \
