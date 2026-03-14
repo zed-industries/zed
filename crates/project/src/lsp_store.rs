@@ -6643,6 +6643,7 @@ impl LspStore {
         completions: Rc<RefCell<Box<[Completion]>>>,
         completion_index: usize,
         push_to_history: bool,
+        all_commit_ranges: Vec<Range<language::Anchor>>,
         cx: &mut Context<Self>,
     ) -> Task<Result<Option<Transaction>>> {
         if let Some((client, project_id)) = self.upstream_client() {
@@ -6659,6 +6660,11 @@ impl LspStore {
                             new_text: completion.new_text,
                             source: completion.source,
                         })),
+                        all_commit_ranges: all_commit_ranges
+                            .iter()
+                            .cloned()
+                            .map(language::proto::serialize_anchor_range)
+                            .collect(),
                     }
                 };
 
@@ -6752,12 +6758,15 @@ impl LspStore {
                             let has_overlap = if is_file_start_auto_import {
                                 false
                             } else {
-                                let start_within = primary.start.cmp(&range.start, buffer).is_le()
-                                    && primary.end.cmp(&range.start, buffer).is_ge();
-                                let end_within = range.start.cmp(&primary.end, buffer).is_le()
-                                    && range.end.cmp(&primary.end, buffer).is_ge();
-                                let result = start_within || end_within;
-                                result
+                                all_commit_ranges.iter().any(|commit_range| {
+                                    let start_within =
+                                        commit_range.start.cmp(&range.start, buffer).is_le()
+                                            && commit_range.end.cmp(&range.start, buffer).is_ge();
+                                    let end_within =
+                                        range.start.cmp(&commit_range.end, buffer).is_le()
+                                            && range.end.cmp(&commit_range.end, buffer).is_ge();
+                                    start_within || end_within
+                                })
                             };
 
                             //Skip additional edits which overlap with the primary completion edit
@@ -10418,13 +10427,19 @@ impl LspStore {
         envelope: TypedEnvelope<proto::ApplyCompletionAdditionalEdits>,
         mut cx: AsyncApp,
     ) -> Result<proto::ApplyCompletionAdditionalEditsResponse> {
-        let (buffer, completion) = this.update(&mut cx, |this, cx| {
+        let (buffer, completion, all_commit_ranges) = this.update(&mut cx, |this, cx| {
             let buffer_id = BufferId::new(envelope.payload.buffer_id)?;
             let buffer = this.buffer_store.read(cx).get_existing(buffer_id)?;
             let completion = Self::deserialize_completion(
                 envelope.payload.completion.context("invalid completion")?,
             )?;
-            anyhow::Ok((buffer, completion))
+            let all_commit_ranges = envelope
+                .payload
+                .all_commit_ranges
+                .into_iter()
+                .map(language::proto::deserialize_anchor_range)
+                .collect::<Result<Vec<_>, _>>()?;
+            anyhow::Ok((buffer, completion, all_commit_ranges))
         })?;
 
         let apply_additional_edits = this.update(&mut cx, |this, cx| {
@@ -10444,6 +10459,7 @@ impl LspStore {
                 }]))),
                 0,
                 false,
+                all_commit_ranges,
                 cx,
             )
         });
