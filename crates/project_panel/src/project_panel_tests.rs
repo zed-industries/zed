@@ -9114,6 +9114,13 @@ fn toggle_excluded(panel: &Entity<ProjectPanel>, cx: &mut VisualTestContext) {
     cx.run_until_parked();
 }
 
+fn toggle_show_excluded(panel: &Entity<ProjectPanel>, cx: &mut VisualTestContext) {
+    panel.update_in(cx, |panel, window, cx| {
+        panel.toggle_show_excluded(&ToggleShowExcluded, window, cx);
+    });
+    cx.run_until_parked();
+}
+
 /// Test that missing sort_mode field defaults to DirectoriesFirst
 #[gpui::test]
 async fn test_sort_mode_default_fallback(cx: &mut gpui::TestAppContext) {
@@ -9812,9 +9819,7 @@ fn init_test_with_editor(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-async fn test_toggle_excluded_hides_file_and_writes_project_settings(
-    cx: &mut gpui::TestAppContext,
-) {
+async fn test_toggle_excluded_enables_show_excluded_by_default(cx: &mut gpui::TestAppContext) {
     init_test(cx);
 
     let fs = FakeFs::new(cx.executor());
@@ -9843,7 +9848,11 @@ async fn test_toggle_excluded_hides_file_and_writes_project_settings(
 
     assert_eq!(
         visible_entries_as_strings(&panel, 0..10, cx),
-        &["v root  <== selected", "    > dir"],
+        &[
+            "v root",
+            "    > dir",
+            "      file.txt  <== selected  <== excluded",
+        ],
     );
 
     let settings: serde_json::Value = serde_json::from_str(
@@ -9856,6 +9865,7 @@ async fn test_toggle_excluded_hides_file_and_writes_project_settings(
         settings,
         json!({
             "project_panel": {
+                "show_excluded": true,
                 "excluded_entries": ["file.txt"]
             }
         }),
@@ -9917,7 +9927,9 @@ async fn test_toggle_excluded_updates_existing_project_panel_block_without_dupli
 }
 
 #[gpui::test]
-async fn test_toggle_excluded_hides_directory_subtree(cx: &mut gpui::TestAppContext) {
+async fn test_toggle_excluded_hides_directory_subtree_when_show_excluded_is_false(
+    cx: &mut gpui::TestAppContext,
+) {
     init_test(cx);
 
     let fs = FakeFs::new(cx.executor());
@@ -9946,12 +9958,39 @@ async fn test_toggle_excluded_hides_directory_subtree(cx: &mut gpui::TestAppCont
     let panel = workspace.update_in(cx, ProjectPanel::new);
     cx.run_until_parked();
 
+    set_project_panel_local_settings(
+        &panel,
+        r#"
+        {
+          "project_panel": {
+            "show_excluded": false
+          }
+        }
+        "#,
+        cx,
+    );
     select_path(&panel, "root/build", cx);
     toggle_excluded(&panel, cx);
 
     assert_eq!(
         visible_entries_as_strings(&panel, 0..10, cx),
         &["v root  <== selected", "    > src"],
+    );
+
+    let settings: serde_json::Value = serde_json::from_str(
+        &fs.load(Path::new("/root/.zed/settings.json"))
+            .await
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(
+        settings,
+        json!({
+            "project_panel": {
+                "show_excluded": false,
+                "excluded_entries": ["build"]
+            }
+        }),
     );
 }
 
@@ -10000,6 +10039,102 @@ async fn test_show_excluded_displays_excluded_entries(cx: &mut gpui::TestAppCont
             "    > build  <== excluded",
             "      file.txt  <== excluded",
         ],
+    );
+}
+
+#[gpui::test]
+async fn test_toggle_show_excluded_updates_visibility_and_project_settings(
+    cx: &mut gpui::TestAppContext,
+) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        "/root",
+        json!({
+            "build": {
+                "generated.rs": "",
+            },
+            "src": {
+                "main.rs": "",
+            }
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), ["/root".as_ref()], cx).await;
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let workspace = window
+        .read_with(cx, |mw, _| mw.workspace().clone())
+        .unwrap();
+    let cx = &mut VisualTestContext::from_window(window.into(), cx);
+    let panel = workspace.update_in(cx, ProjectPanel::new);
+    cx.run_until_parked();
+
+    set_project_panel_local_settings(
+        &panel,
+        r#"
+        {
+          "project_panel": {
+            "show_excluded": false,
+            "excluded_entries": ["build"]
+          }
+        }
+        "#,
+        cx,
+    );
+
+    select_path(&panel, "root/src/main.rs", cx);
+    toggle_show_excluded(&panel, cx);
+
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..10, cx),
+        &[
+            "v root",
+            "    > build  <== excluded",
+            "    v src",
+            "          main.rs  <== selected",
+        ],
+    );
+
+    let settings: serde_json::Value = serde_json::from_str(
+        &fs.load(Path::new("/root/.zed/settings.json"))
+            .await
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(
+        settings,
+        json!({
+            "project_panel": {
+                "show_excluded": true,
+                "excluded_entries": ["build"]
+            }
+        }),
+    );
+
+    select_path(&panel, "root/build", cx);
+    toggle_show_excluded(&panel, cx);
+
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..10, cx),
+        &["v root  <== selected", "    > src"],
+    );
+
+    let settings: serde_json::Value = serde_json::from_str(
+        &fs.load(Path::new("/root/.zed/settings.json"))
+            .await
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(
+        settings,
+        json!({
+            "project_panel": {
+                "show_excluded": false,
+                "excluded_entries": ["build"]
+            }
+        }),
     );
 }
 

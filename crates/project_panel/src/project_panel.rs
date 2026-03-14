@@ -295,7 +295,6 @@ struct SelectedExclusionState {
     worktree_id: WorktreeId,
     path: Arc<RelPath>,
     excluded_entry: Option<String>,
-    next_selection: Option<(WorktreeId, ProjectEntryId)>,
 }
 
 /// Permanently deletes the selected file or directory.
@@ -379,6 +378,8 @@ actions!(
         ToggleHideHidden,
         /// Toggles whether the selected project entry is excluded from the project panel.
         ToggleExcluded,
+        /// Toggles whether excluded project entries are visible in the project panel.
+        ToggleShowExcluded,
         /// Starts a new search in the selected directory.
         NewSearchInDirectory,
         /// Unfolds the selected directory.
@@ -1378,7 +1379,6 @@ impl ProjectPanel {
 
     fn selected_exclusion_state(&self, cx: &App) -> Option<SelectedExclusionState> {
         let (worktree, entry) = self.selected_sub_entry(cx)?;
-        let entry_id = entry.id;
         let path = entry.path.clone();
         if path.is_empty() {
             return None;
@@ -1390,21 +1390,71 @@ impl ProjectPanel {
         let excluded_entry = exclusion_settings
             .nearest_excluded_entry(&path)
             .map(str::to_string);
-        let next_selection = if excluded_entry.is_none() && !exclusion_settings.show_excluded {
-            let parent_path = path.parent().unwrap_or(RelPath::empty());
-            worktree
-                .entry_for_path(parent_path)
-                .map(|parent| (worktree_id, parent.id))
-        } else {
-            Some((worktree_id, entry_id))
-        };
 
         Some(SelectedExclusionState {
             worktree_id,
             path,
             excluded_entry,
-            next_selection,
         })
+    }
+
+    fn project_panel_settings_path(&self, worktree_id: WorktreeId, cx: &App) -> Option<PathBuf> {
+        self.project
+            .read(cx)
+            .worktree_for_id(worktree_id, cx)
+            .map(|worktree| {
+                worktree
+                    .read(cx)
+                    .abs_path()
+                    .join(Path::new(".zed/settings.json"))
+            })
+    }
+
+    fn current_project_panel_settings_target(&self, cx: &App) -> Option<(WorktreeId, PathBuf)> {
+        let worktree_id = self
+            .selection
+            .map(|selection| selection.worktree_id)
+            .or_else(|| {
+                self.project
+                    .read(cx)
+                    .visible_worktrees(cx)
+                    .next()
+                    .map(|worktree| worktree.read(cx).id())
+            })?;
+        self.project_panel_settings_path(worktree_id, cx)
+            .map(|path| (worktree_id, path))
+    }
+
+    fn current_selected_path_for_worktree(
+        &self,
+        worktree_id: WorktreeId,
+        cx: &App,
+    ) -> Option<Arc<RelPath>> {
+        let (worktree, entry) = self.selected_sub_entry(cx)?;
+        (worktree.read(cx).id() == worktree_id).then_some(entry.path.clone())
+    }
+
+    fn visible_selection_for_path(
+        &self,
+        worktree_id: WorktreeId,
+        selected_path: &RelPath,
+        cx: &App,
+    ) -> Option<(WorktreeId, ProjectEntryId)> {
+        let project = self.project.read(cx);
+        let worktree = project.worktree_for_id(worktree_id, cx)?;
+        let worktree = worktree.read(cx);
+        let exclusion_settings = self.project_panel_exclusion_settings(worktree_id, cx);
+        let visible_path = if exclusion_settings.show_excluded {
+            Some(selected_path)
+        } else {
+            selected_path
+                .ancestors()
+                .find(|ancestor| !exclusion_settings.is_path_excluded(ancestor))
+        }?;
+
+        worktree
+            .entry_for_path(visible_path)
+            .map(|entry| (worktree_id, entry.id))
     }
 
     fn is_unfoldable(&self, entry: &Entry, worktree: &Worktree) -> bool {
@@ -3514,22 +3564,12 @@ impl ProjectPanel {
         };
 
         let worktree_id = exclusion_state.worktree_id;
-        let settings_path =
-            self.project
-                .read(cx)
-                .worktree_for_id(worktree_id, cx)
-                .map(|worktree| {
-                    worktree
-                        .read(cx)
-                        .abs_path()
-                        .join(Path::new(".zed/settings.json"))
-                });
+        let settings_path = self.project_panel_settings_path(worktree_id, cx);
         let Some(settings_path) = settings_path else {
             return;
         };
 
         let fs = self.fs.clone();
-        let next_selection = exclusion_state.next_selection;
         let excluded_entry = exclusion_state.excluded_entry.clone();
         let selected_path = exclusion_state.path.clone();
         cx.spawn_in(window, async move |this, cx| {
@@ -3556,6 +3596,8 @@ impl ProjectPanel {
                         cx,
                     )
                 })?;
+                let next_selection =
+                    this.visible_selection_for_path(worktree_id, selected_path.as_ref(), cx);
                 this.update_visible_entries(next_selection, false, false, window, cx);
                 Ok(())
             })??;
@@ -3564,6 +3606,60 @@ impl ProjectPanel {
         })
         .detach_and_prompt_err(
             "Failed to update project panel exclusions",
+            window,
+            cx,
+            |_, _, _| None,
+        );
+    }
+
+    fn toggle_show_excluded(
+        &mut self,
+        _: &ToggleShowExcluded,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some((worktree_id, settings_path)) = self.current_project_panel_settings_target(cx)
+        else {
+            return;
+        };
+
+        let next_show_excluded = !self
+            .project_panel_exclusion_settings(worktree_id, cx)
+            .show_excluded;
+        let selected_path = self.current_selected_path_for_worktree(worktree_id, cx);
+        let fs = self.fs.clone();
+        cx.spawn_in(window, async move |this, cx| {
+            let old_text = if fs.is_file(&settings_path).await {
+                fs.load(&settings_path).await?
+            } else {
+                "{}".to_string()
+            };
+
+            let new_text =
+                update_project_panel_show_excluded_in_text(&old_text, next_show_excluded)?;
+            fs.atomic_write(settings_path, new_text.clone()).await?;
+
+            this.update_in(cx, |this, window, cx| -> anyhow::Result<()> {
+                cx.update_global::<SettingsStore, _>(|settings, cx| {
+                    settings.set_local_settings(
+                        worktree_id,
+                        LocalSettingsPath::InWorktree(RelPath::empty().into()),
+                        LocalSettingsKind::Settings,
+                        Some(&new_text),
+                        cx,
+                    )
+                })?;
+                let next_selection = selected_path.as_deref().and_then(|selected_path| {
+                    this.visible_selection_for_path(worktree_id, selected_path, cx)
+                });
+                this.update_visible_entries(next_selection, false, false, window, cx);
+                Ok(())
+            })??;
+
+            Ok(())
+        })
+        .detach_and_prompt_err(
+            "Failed to update project panel visibility",
             window,
             cx,
             |_, _, _| None,
@@ -6680,6 +6776,7 @@ impl Render for ProjectPanel {
                 .on_action(cx.listener(Self::unfold_directory))
                 .on_action(cx.listener(Self::fold_directory))
                 .on_action(cx.listener(Self::toggle_excluded))
+                .on_action(cx.listener(Self::toggle_show_excluded))
                 .on_action(cx.listener(Self::remove_from_project))
                 .on_action(cx.listener(Self::compare_marked_files))
                 .when(!project.is_read_only(cx), |el| {
@@ -7191,10 +7288,9 @@ impl Render for ProjectPanel {
     }
 }
 
-fn update_project_panel_exclusions_in_text(
+fn update_project_panel_settings_in_text(
     old_text: &str,
-    selected_path: &RelPath,
-    excluded_entry_to_remove: Option<&str>,
+    update: impl FnOnce(&mut ProjectSettingsContent),
 ) -> Result<String> {
     let old_content = if old_text.trim().is_empty() {
         ProjectSettingsContent::default()
@@ -7202,32 +7298,15 @@ fn update_project_panel_exclusions_in_text(
         parse_json_with_comments::<ProjectSettingsContent>(old_text)?
     };
     let mut new_content = old_content.clone();
-    let project_panel = new_content.project_panel.get_or_insert_default();
-    let mut excluded_entries = normalize_project_panel_excluded_entries(
-        project_panel.excluded_entries.take().unwrap_or_default(),
-    );
+    update(&mut new_content);
 
-    if let Some(excluded_entry_to_remove) = excluded_entry_to_remove {
-        excluded_entries.retain(|entry| entry != excluded_entry_to_remove);
-    } else {
-        let selected_path = selected_path.as_unix_str();
-        excluded_entries.retain(|entry| {
-            !entry
-                .strip_prefix(selected_path)
-                .is_some_and(|suffix| suffix.starts_with('/'))
-        });
-        excluded_entries.push(selected_path.to_string());
-        excluded_entries.sort();
-        excluded_entries.dedup();
-    }
-
-    if excluded_entries.is_empty() {
-        project_panel.excluded_entries = None;
-    } else {
-        project_panel.excluded_entries = Some(excluded_entries);
-    }
-
-    if project_panel.excluded_entries.is_none() && project_panel.show_excluded.is_none() {
+    if new_content
+        .project_panel
+        .as_ref()
+        .is_some_and(|project_panel| {
+            project_panel.excluded_entries.is_none() && project_panel.show_excluded.is_none()
+        })
+    {
         new_content.project_panel = None;
     }
 
@@ -7247,6 +7326,55 @@ fn update_project_panel_exclusions_in_text(
     );
 
     Ok(text)
+}
+
+fn update_project_panel_exclusions_in_text(
+    old_text: &str,
+    selected_path: &RelPath,
+    excluded_entry_to_remove: Option<&str>,
+) -> Result<String> {
+    update_project_panel_settings_in_text(old_text, |new_content| {
+        let project_panel = new_content.project_panel.get_or_insert_default();
+        let mut excluded_entries = normalize_project_panel_excluded_entries(
+            project_panel.excluded_entries.take().unwrap_or_default(),
+        );
+
+        if let Some(excluded_entry_to_remove) = excluded_entry_to_remove {
+            excluded_entries.retain(|entry| entry != excluded_entry_to_remove);
+        } else {
+            let selected_path = selected_path.as_unix_str();
+            excluded_entries.retain(|entry| {
+                !entry
+                    .strip_prefix(selected_path)
+                    .is_some_and(|suffix| suffix.starts_with('/'))
+            });
+            excluded_entries.push(selected_path.to_string());
+            excluded_entries.sort();
+            excluded_entries.dedup();
+
+            if project_panel.show_excluded.is_none() {
+                project_panel.show_excluded = Some(true);
+            }
+        }
+
+        if excluded_entries.is_empty() {
+            project_panel.excluded_entries = None;
+        } else {
+            project_panel.excluded_entries = Some(excluded_entries);
+        }
+    })
+}
+
+fn update_project_panel_show_excluded_in_text(
+    old_text: &str,
+    show_excluded: bool,
+) -> Result<String> {
+    update_project_panel_settings_in_text(old_text, |new_content| {
+        new_content
+            .project_panel
+            .get_or_insert_default()
+            .show_excluded = Some(show_excluded);
+    })
 }
 
 fn normalize_project_panel_excluded_entries(entries: Vec<String>) -> Vec<String> {
