@@ -5,6 +5,55 @@ use ui::{Color, IconName, SharedString};
 use util::ResultExt;
 use workspace::{self, Workspace};
 
+pub(crate) fn normalize_repository_input(input: &str) -> Option<String> {
+    let trimmed = input.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+
+    if trimmed.contains("://") || trimmed.starts_with("git@") {
+        return Some(trimmed.to_string());
+    }
+
+    let trimmed = trimmed
+        .strip_prefix("https://")
+        .or_else(|| trimmed.strip_prefix("http://"))
+        .unwrap_or(trimmed);
+
+    if let Some(path) = trimmed
+        .strip_prefix("github.com/")
+        .or_else(|| trimmed.strip_prefix("www.github.com/"))
+    {
+        let path = path.trim_end_matches('/');
+        if path.is_empty() {
+            return None;
+        }
+        if path.ends_with(".git") {
+            return Some(format!("https://github.com/{path}"));
+        }
+        return Some(format!("https://github.com/{path}.git"));
+    }
+
+    let mut segments = trimmed.split('/');
+    let owner = segments.next().unwrap_or_default();
+    let repository = segments.next().unwrap_or_default();
+    let has_more_segments = segments.next().is_some();
+
+    if !owner.is_empty()
+        && !repository.is_empty()
+        && !has_more_segments
+        && !owner.contains(char::is_whitespace)
+        && !repository.contains(char::is_whitespace)
+    {
+        if repository.ends_with(".git") {
+            return Some(format!("https://github.com/{owner}/{repository}"));
+        }
+        return Some(format!("https://github.com/{owner}/{repository}.git"));
+    }
+
+    Some(input.trim().to_string())
+}
+
 pub fn clone_and_open(
     repo_url: SharedString,
     workspace: WeakEntity<Workspace>,
