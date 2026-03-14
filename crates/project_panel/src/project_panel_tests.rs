@@ -9999,6 +9999,53 @@ async fn test_toggle_excluded_preserves_symlinked_project_settings(cx: &mut gpui
 }
 
 #[gpui::test]
+async fn test_toggle_excluded_is_unavailable_for_multi_selection(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        "/root",
+        json!({
+            "file-a.txt": "",
+            "file-b.txt": "",
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), ["/root".as_ref()], cx).await;
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let workspace = window
+        .read_with(cx, |mw, _| mw.workspace().clone())
+        .unwrap();
+    let cx = &mut VisualTestContext::from_window(window.into(), cx);
+    let panel = workspace.update_in(cx, ProjectPanel::new);
+    cx.run_until_parked();
+
+    select_path_with_mark(&panel, "root/file-a.txt", cx);
+    select_path_with_mark(&panel, "root/file-b.txt", cx);
+
+    panel.update(cx, |panel, cx| {
+        assert!(
+            panel.selected_exclusion_state(cx).is_none(),
+            "exclude action should be unavailable for multi-selection"
+        );
+    });
+
+    let visible_entries_before = visible_entries_as_strings(&panel, 0..10, cx);
+    toggle_excluded(&panel, cx);
+
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..10, cx),
+        visible_entries_before,
+        "multi-selection should not change project panel visibility"
+    );
+    assert!(
+        !fs.is_file(Path::new("/root/.zed/settings.json")).await,
+        "multi-selection should not write project settings"
+    );
+}
+
+#[gpui::test]
 async fn test_toggle_excluded_hides_directory_subtree_when_show_excluded_is_false(
     cx: &mut gpui::TestAppContext,
 ) {

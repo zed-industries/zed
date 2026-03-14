@@ -1377,7 +1377,15 @@ impl ProjectPanel {
             .collect()
     }
 
+    fn has_single_effective_entry(&self) -> bool {
+        self.effective_entries().len() == 1
+    }
+
     fn selected_exclusion_state(&self, cx: &App) -> Option<SelectedExclusionState> {
+        if !self.has_single_effective_entry() {
+            return None;
+        }
+
         let (worktree, entry) = self.selected_sub_entry(cx)?;
         let path = entry.path.clone();
         if path.is_empty() {
@@ -3560,6 +3568,10 @@ impl ProjectPanel {
     }
 
     fn toggle_excluded(&mut self, _: &ToggleExcluded, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.has_single_effective_entry() {
+            return;
+        }
+
         let Some(exclusion_state) = self.selected_exclusion_state(cx) else {
             return;
         };
