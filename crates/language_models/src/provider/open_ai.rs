@@ -825,7 +825,7 @@ impl OpenAiEventMapper {
                     let entry = self.tool_calls_by_index.entry(tool_call.index).or_default();
 
                     if let Some(tool_id) = tool_call.id.clone() {
-                        if !tool_id.is_empty() {
+                        if !tool_id.is_empty() && entry.id.is_empty() {
                             entry.id = tool_id;
                         }
                     }
@@ -2420,7 +2420,7 @@ mod tests {
         let tool_use = tool_use_events[0];
         assert_eq!(tool_use.name.as_ref(), "get_weather");
         assert!(
-            !tool_use.id.0.is_empty(),
+            !tool_use.id.to_string().is_empty(),
             "tool call id must not be empty when API omits it"
         );
         assert_eq!(
