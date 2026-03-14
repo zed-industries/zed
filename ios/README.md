@@ -45,6 +45,19 @@ The Swift host is three files and about 60 lines of code. The maintenance burden
 is negligible compared to what would be required to replicate the iOS build
 pipeline without Xcode.
 
+## Editor setup
+
+For Swift language server support (UIKit completions, error highlighting) in Zed,
+install `xcode-build-server` and run it once from the `ios/` directory:
+
+```bash
+brew install xcode-build-server
+cd ios && xcode-build-server config -project ZedApp.xcodeproj -scheme ZedApp
+```
+
+This generates `ios/buildServer.json` (gitignored) which tells sourcekit-lsp to
+use the iOS SDK instead of the macOS SDK.
+
 ## Building
 
 The Xcode project drives the full build. The `cargo build` step is wired in as
