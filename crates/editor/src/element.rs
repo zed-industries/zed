@@ -56,9 +56,10 @@ use language::{IndentGuideSettings, language_settings::ShowWhitespaceSetting};
 use markdown::Markdown;
 use multi_buffer::{
     Anchor, ExcerptId, ExcerptInfo, ExpandExcerptDirection, ExpandInfo, MultiBufferPoint,
-    MultiBufferRow, RowInfo,
+    MultiBufferRow, RowInfo, ToOffset,
 };
 
+use crate::ScrollbarDirtyState;
 use edit_prediction_types::EditPredictionGranularity;
 use project::{
     DisableAiSettings, Entry, ProjectPath,
@@ -6978,15 +6979,7 @@ impl EditorElement {
             return;
         };
         let any_scrollbar_dragged = self.editor.read(cx).scroll_manager.any_scrollbar_dragged();
-        
-        // get active scope for active scope marker painting
-        let scrollbar_settings = EditorSettings::get_global(cx).scrollbar;
-        let active_scope = if scrollbar_settings.active_scope_markers {
-            self.editor.update(cx, |editor, cx| editor.current_scope_boundary(window, cx))
-        } else {
-            None
-        };
-        
+
         for (scrollbar_layout, axis) in scrollbars_layout.iter_scrollbars() {
             let hitbox = &scrollbar_layout.hitbox;
             if scrollbars_layout.visible {
@@ -7022,71 +7015,27 @@ impl EditorElement {
                         // paint whatever markers have already been computed.
                         self.refresh_slow_scrollbar_markers(layout, scrollbar_layout, window, cx);
 
-                        let markers = self.editor.read(cx).scrollbar_marker_state.markers.clone();
-                        for marker in markers.iter().chain(&fast_markers) {
+                        let buffer_markers = self
+                            .editor
+                            .read(cx)
+                            .scrollbar_marker_state
+                            .buffer_markers
+                            .clone();
+                        let scope_markers = self
+                            .editor
+                            .read(cx)
+                            .scrollbar_marker_state
+                            .scope_markers
+                            .clone();
+
+                        for marker in buffer_markers
+                            .iter()
+                            .chain(scope_markers.iter())
+                            .chain(&fast_markers)
+                        {
                             let mut marker = marker.clone();
                             marker.bounds.origin += hitbox.origin;
                             window.paint_quad(marker);
-                        }
-                    
-                        // active scope marker/indicator painting logic
-                        if let Some((start_row, end_row)) = active_scope {
-                            let snapshot = &layout.position_map.snapshot;
-                            let display_snapshot = &snapshot.display_snapshot;
-                            
-                            let start_display_row = snapshot
-                                .buffer_snapshot()
-                                .anchor_before(Point::new(start_row, 0))
-                                .to_display_point(display_snapshot)
-                                .row();
-                            let end_display_row = snapshot
-                                .buffer_snapshot()
-                                .anchor_before(Point::new(end_row, 0))
-                                .to_display_point(display_snapshot)
-                                .row();
-                            
-                            let color = cx.theme().colors().scrollbar_active_scope_marker;
-                            
-                            // Create colored ranges for start and end rows
-                            let active_scope_ranges = vec![
-                                ColoredRange {
-                                    start: start_display_row,
-                                    end: start_display_row,
-                                    color,
-                                },
-                                ColoredRange {
-                                    start: end_display_row,
-                                    end: end_display_row,
-                                    color,
-                                },
-                            ];
-                            
-                            // Use marker_quads_for_ranges to get correctly positioned Y coordinates
-                            let active_scope_markers = scrollbar_layout.marker_quads_for_ranges(
-                                active_scope_ranges.into_iter(),
-                                None
-                            );
-                            
-                            for marker in active_scope_markers {
-                                // get the center of the marker
-                                let global_y_origin = marker.bounds.origin.y + hitbox.origin.y;
-                                let center_y = global_y_origin + (marker.bounds.size.height / 2.0);
-                            
-                                // define marker size(square) and padding
-                                let marker_size = px(4.0);
-                                let right_padding = px(2.0);
-                                
-                                //move marker to right
-                                let marker_x = hitbox.bounds.right() - marker_size - right_padding;
-                            
-                                window.paint_quad(gpui::fill(
-                                    Bounds::new(
-                                        point(marker_x, center_y - (marker_size / 2.0)),
-                                        size(marker_size, marker_size),
-                                    ),
-                                    color,
-                                ));
-                            }
                         }
                     }
 
@@ -7307,166 +7256,251 @@ impl EditorElement {
             let snapshot = layout.position_map.snapshot.clone();
             let theme = cx.theme().clone();
             let scrollbar_settings = EditorSettings::get_global(cx).scrollbar;
-    
-            editor.scrollbar_marker_state.dirty = false;
+
+            // Capture current state so background task can reuse buffer markers when only the cursor moved.
+            let dirty_reason = editor.scrollbar_marker_state.dirty;
+            let cursor_offset = editor
+                .selections
+                .newest_anchor()
+                .head()
+                .to_offset(&snapshot.buffer_snapshot());
+            let previous_scrollbar_size = editor.scrollbar_marker_state.scrollbar_size;
+            editor.scrollbar_marker_state.dirty = ScrollbarDirtyState::Clean;
             editor.scrollbar_marker_state.pending_refresh =
-                Some(cx.spawn_in(window, async move |editor, cx| {
-                    let scrollbar_size = scrollbar_layout.hitbox.size;
-                    let scrollbar_markers = cx
-                        .background_spawn(async move {
-                            let max_point = snapshot.display_snapshot.buffer_snapshot().max_point();
-                            let mut marker_quads = Vec::new();
-                            if scrollbar_settings.git_diff {
-                                let marker_row_ranges =
-                                    snapshot.buffer_snapshot().diff_hunks().map(|hunk| {
-                                        let start_display_row =
-                                            MultiBufferPoint::new(hunk.row_range.start.0, 0)
-                                                .to_display_point(&snapshot.display_snapshot)
-                                                .row();
-                                        let mut end_display_row =
-                                            MultiBufferPoint::new(hunk.row_range.end.0, 0)
-                                                .to_display_point(&snapshot.display_snapshot)
-                                                .row();
-                                        if end_display_row != start_display_row {
-                                            end_display_row.0 -= 1;
-                                        }
-                                        let color = match &hunk.status().kind {
-                                            DiffHunkStatusKind::Added => {
-                                                theme.colors().version_control_added
-                                            }
-                                            DiffHunkStatusKind::Modified => {
-                                                theme.colors().version_control_modified
-                                            }
-                                            DiffHunkStatusKind::Deleted => {
-                                                theme.colors().version_control_deleted
-                                            }
-                                        };
-                                        ColoredRange {
-                                            start: start_display_row,
-                                            end: end_display_row,
-                                            color,
-                                        }
-                                    });
+                Some(
+                    cx.spawn_in(window, async move |editor, cx| {
+                        let scrollbar_size = scrollbar_layout.hitbox.size;
+                        let (buffer_markers, scope_markers) = cx
+                            .background_spawn(async move {
+                                let max_point =
+                                    snapshot.display_snapshot.buffer_snapshot().max_point();
 
-                                marker_quads.extend(
-                                    scrollbar_layout
-                                        .marker_quads_for_ranges(marker_row_ranges, Some(0)),
-                                );
-                            }
-
-                            for (background_highlight_id, (_, background_ranges)) in
-                                background_highlights.iter()
-                            {
-                                let is_search_highlights = *background_highlight_id
-                                    == HighlightKey::Type(TypeId::of::<BufferSearchHighlights>());
-                                let is_text_highlights = *background_highlight_id
-                                    == HighlightKey::Type(TypeId::of::<SelectedTextHighlight>());
-                                let is_symbol_occurrences = *background_highlight_id
-                                    == HighlightKey::Type(TypeId::of::<DocumentHighlightRead>())
-                                    || *background_highlight_id
-                                        == HighlightKey::Type(
-                                            TypeId::of::<DocumentHighlightWrite>(),
-                                        );
-                                if (is_search_highlights && scrollbar_settings.search_results)
-                                    || (is_text_highlights && scrollbar_settings.selected_text)
-                                    || (is_symbol_occurrences && scrollbar_settings.selected_symbol)
+                                let mut buffer_quads: Vec<PaintQuad> = Vec::new();
+                                if dirty_reason == ScrollbarDirtyState::BufferChanged
+                                    || previous_scrollbar_size != scrollbar_size
                                 {
-                                    let mut color = theme.status().info;
-                                    if is_symbol_occurrences {
-                                        color.fade_out(0.5);
+                                    if scrollbar_settings.git_diff {
+                                        let marker_row_ranges =
+                                            snapshot.buffer_snapshot().diff_hunks().map(|hunk| {
+                                                let start_display_row = MultiBufferPoint::new(
+                                                    hunk.row_range.start.0,
+                                                    0,
+                                                )
+                                                .to_display_point(&snapshot.display_snapshot)
+                                                .row();
+                                                let mut end_display_row =
+                                                    MultiBufferPoint::new(hunk.row_range.end.0, 0)
+                                                        .to_display_point(
+                                                            &snapshot.display_snapshot,
+                                                        )
+                                                        .row();
+                                                if end_display_row != start_display_row {
+                                                    end_display_row.0 -= 1;
+                                                }
+                                                let color = match &hunk.status().kind {
+                                                    DiffHunkStatusKind::Added => {
+                                                        theme.colors().version_control_added
+                                                    }
+                                                    DiffHunkStatusKind::Modified => {
+                                                        theme.colors().version_control_modified
+                                                    }
+                                                    DiffHunkStatusKind::Deleted => {
+                                                        theme.colors().version_control_deleted
+                                                    }
+                                                };
+                                                ColoredRange {
+                                                    start: start_display_row,
+                                                    end: end_display_row,
+                                                    color,
+                                                }
+                                            });
+
+                                        buffer_quads.extend(
+                                            scrollbar_layout.marker_quads_for_ranges(
+                                                marker_row_ranges,
+                                                Some(0),
+                                            ),
+                                        );
                                     }
-                                    let marker_row_ranges = background_ranges.iter().map(|range| {
-                                        let display_start = range
-                                            .start
-                                            .to_display_point(&snapshot.display_snapshot);
-                                        let display_end =
-                                            range.end.to_display_point(&snapshot.display_snapshot);
-                                        ColoredRange {
-                                            start: display_start.row(),
-                                            end: display_end.row(),
-                                            color,
+
+                                    for (background_highlight_id, (_, background_ranges)) in
+                                        background_highlights.iter()
+                                    {
+                                        let is_search_highlights = *background_highlight_id
+                                            == HighlightKey::Type(TypeId::of::<
+                                                BufferSearchHighlights,
+                                            >(
+                                            ));
+                                        let is_text_highlights = *background_highlight_id
+                                            == HighlightKey::Type(TypeId::of::<
+                                                SelectedTextHighlight,
+                                            >(
+                                            ));
+                                        let is_symbol_occurrences = *background_highlight_id
+                                            == HighlightKey::Type(TypeId::of::<
+                                                DocumentHighlightRead,
+                                            >(
+                                            ))
+                                            || *background_highlight_id
+                                                == HighlightKey::Type(TypeId::of::<
+                                                    DocumentHighlightWrite,
+                                                >(
+                                                ));
+                                        if (is_search_highlights
+                                            && scrollbar_settings.search_results)
+                                            || (is_text_highlights
+                                                && scrollbar_settings.selected_text)
+                                            || (is_symbol_occurrences
+                                                && scrollbar_settings.selected_symbol)
+                                        {
+                                            let mut color = theme.status().info;
+                                            if is_symbol_occurrences {
+                                                color.fade_out(0.5);
+                                            }
+                                            let marker_row_ranges =
+                                                background_ranges.iter().map(|range| {
+                                                    let display_start =
+                                                        range.start.to_display_point(
+                                                            &snapshot.display_snapshot,
+                                                        );
+                                                    let display_end = range.end.to_display_point(
+                                                        &snapshot.display_snapshot,
+                                                    );
+                                                    ColoredRange {
+                                                        start: display_start.row(),
+                                                        end: display_end.row(),
+                                                        color,
+                                                    }
+                                                });
+                                            buffer_quads.extend(
+                                                scrollbar_layout.marker_quads_for_ranges(
+                                                    marker_row_ranges,
+                                                    Some(1),
+                                                ),
+                                            );
                                         }
-                                    });
-                                    marker_quads.extend(
-                                        scrollbar_layout
-                                            .marker_quads_for_ranges(marker_row_ranges, Some(1)),
-                                    );
+                                    }
+
+                                    if scrollbar_settings.diagnostics != ScrollbarDiagnostics::None
+                                    {
+                                        let diagnostics = snapshot
+                                            .buffer_snapshot()
+                                            .diagnostics_in_range::<Point>(Point::zero()..max_point)
+                                            // Don't show diagnostics the user doesn't care about
+                                            .filter(|diagnostic| {
+                                                match (
+                                                    scrollbar_settings.diagnostics,
+                                                    diagnostic.diagnostic.severity,
+                                                ) {
+                                                    (ScrollbarDiagnostics::All, _) => true,
+                                                    (
+                                                        ScrollbarDiagnostics::Error,
+                                                        lsp::DiagnosticSeverity::ERROR,
+                                                    ) => true,
+                                                    (
+                                                        ScrollbarDiagnostics::Warning,
+                                                        lsp::DiagnosticSeverity::ERROR
+                                                        | lsp::DiagnosticSeverity::WARNING,
+                                                    ) => true,
+                                                    (
+                                                        ScrollbarDiagnostics::Information,
+                                                        lsp::DiagnosticSeverity::ERROR
+                                                        | lsp::DiagnosticSeverity::WARNING
+                                                        | lsp::DiagnosticSeverity::INFORMATION,
+                                                    ) => true,
+                                                    (_, _) => false,
+                                                }
+                                            })
+                                            .sorted_by_key(|diagnostic| {
+                                                // We want to sort by severity, in order to paint the most severe diagnostics last.
+                                                std::cmp::Reverse(diagnostic.diagnostic.severity)
+                                            });
+
+                                        let marker_row_ranges =
+                                            diagnostics.into_iter().map(|diagnostic| {
+                                                let start_display = diagnostic
+                                                    .range
+                                                    .start
+                                                    .to_display_point(&snapshot.display_snapshot);
+                                                let end_display = diagnostic
+                                                    .range
+                                                    .end
+                                                    .to_display_point(&snapshot.display_snapshot);
+                                                let color = match diagnostic.diagnostic.severity {
+                                                    lsp::DiagnosticSeverity::ERROR => {
+                                                        theme.status().error
+                                                    }
+                                                    lsp::DiagnosticSeverity::WARNING => {
+                                                        theme.status().warning
+                                                    }
+                                                    lsp::DiagnosticSeverity::INFORMATION => {
+                                                        theme.status().info
+                                                    }
+                                                    _ => theme.status().hint,
+                                                };
+                                                ColoredRange {
+                                                    start: start_display.row(),
+                                                    end: end_display.row(),
+                                                    color,
+                                                }
+                                            });
+                                        buffer_quads.extend(
+                                            scrollbar_layout.marker_quads_for_ranges(
+                                                marker_row_ranges,
+                                                Some(2),
+                                            ),
+                                        );
+                                    }
                                 }
-                            }
-
-                            if scrollbar_settings.diagnostics != ScrollbarDiagnostics::None {
-                                let diagnostics = snapshot
-                                    .buffer_snapshot()
-                                    .diagnostics_in_range::<Point>(Point::zero()..max_point)
-                                    // Don't show diagnostics the user doesn't care about
-                                    .filter(|diagnostic| {
-                                        match (
-                                            scrollbar_settings.diagnostics,
-                                            diagnostic.diagnostic.severity,
-                                        ) {
-                                            (ScrollbarDiagnostics::All, _) => true,
-                                            (
-                                                ScrollbarDiagnostics::Error,
-                                                lsp::DiagnosticSeverity::ERROR,
-                                            ) => true,
-                                            (
-                                                ScrollbarDiagnostics::Warning,
-                                                lsp::DiagnosticSeverity::ERROR
-                                                | lsp::DiagnosticSeverity::WARNING,
-                                            ) => true,
-                                            (
-                                                ScrollbarDiagnostics::Information,
-                                                lsp::DiagnosticSeverity::ERROR
-                                                | lsp::DiagnosticSeverity::WARNING
-                                                | lsp::DiagnosticSeverity::INFORMATION,
-                                            ) => true,
-                                            (_, _) => false,
-                                        }
-                                    })
-                                    // We want to sort by severity, in order to paint the most severe diagnostics last.
-                                    .sorted_by_key(|diagnostic| {
-                                        std::cmp::Reverse(diagnostic.diagnostic.severity)
-                                    });
-
-                                let marker_row_ranges = diagnostics.into_iter().map(|diagnostic| {
-                                    let start_display = diagnostic
-                                        .range
-                                        .start
-                                        .to_display_point(&snapshot.display_snapshot);
-                                    let end_display = diagnostic
-                                        .range
-                                        .end
-                                        .to_display_point(&snapshot.display_snapshot);
-                                    let color = match diagnostic.diagnostic.severity {
-                                        lsp::DiagnosticSeverity::ERROR => theme.status().error,
-                                        lsp::DiagnosticSeverity::WARNING => theme.status().warning,
-                                        lsp::DiagnosticSeverity::INFORMATION => theme.status().info,
-                                        _ => theme.status().hint,
-                                    };
-                                    ColoredRange {
-                                        start: start_display.row(),
-                                        end: end_display.row(),
-                                        color,
+                                
+                                let mut scope_quads: Vec<PaintQuad> = Vec::new();
+                                if scrollbar_settings.active_scope_markers {
+                                    if let Some((start_row, end_row)) =
+                                        Editor::current_scope_boundary(&snapshot, cursor_offset)
+                                    {
+                                        let color = theme.colors().scrollbar_active_scope_marker;
+                                        let scope_ranges = vec![
+                                            ColoredRange {
+                                                start: start_row,
+                                                end: start_row,
+                                                color,
+                                            },
+                                            ColoredRange {
+                                                start: end_row,
+                                                end: end_row,
+                                                color,
+                                            },
+                                        ];
+                                        scope_quads.extend(
+                                            scrollbar_layout
+                                                .marker_quads_for_ranges(scope_ranges, Some(2)),
+                                        );
                                     }
-                                });
-                                marker_quads.extend(
-                                    scrollbar_layout
-                                        .marker_quads_for_ranges(marker_row_ranges, Some(2)),
-                                );
+                                }
+
+                                (Arc::from(buffer_quads), Arc::from(scope_quads))
+                            })
+                            .await;
+
+                        editor.update(cx, |editor, cx| {
+                            match dirty_reason {
+                                ScrollbarDirtyState::CursorMoved => {
+                                    editor.scrollbar_marker_state.scope_markers = scope_markers;
+                                }
+                                ScrollbarDirtyState::BufferChanged => {
+                                    editor.scrollbar_marker_state.buffer_markers = buffer_markers;
+                                    editor.scrollbar_marker_state.scope_markers = scope_markers;
+                                }
+                                ScrollbarDirtyState::Clean => {}
                             }
-                            Arc::from(marker_quads)
-                        })
-                        .await;
+                            editor.scrollbar_marker_state.scrollbar_size = scrollbar_size;
+                            editor.scrollbar_marker_state.pending_refresh = None;
+                            cx.notify();
+                        })?;
 
-                    editor.update(cx, |editor, cx| {
-                        editor.scrollbar_marker_state.markers = scrollbar_markers;
-                        editor.scrollbar_marker_state.scrollbar_size = scrollbar_size;
-                        editor.scrollbar_marker_state.pending_refresh = None;
-                        cx.notify();
-                    })?;
-
-                    Ok(())
-                }));
+                        Ok(())
+                    }),
+                );
         });
     }
 

@@ -735,17 +735,26 @@ type BackgroundHighlight = (
 );
 type GutterHighlight = (fn(&App) -> Hsla, Vec<Range<Anchor>>);
 
+#[derive(Debug, PartialEq, Clone, Copy, Default)]
+enum ScrollbarDirtyState {
+    #[default]
+    Clean,
+    CursorMoved,
+    BufferChanged,
+}
+
 #[derive(Default)]
 struct ScrollbarMarkerState {
     scrollbar_size: Size<Pixels>,
-    dirty: bool,
-    markers: Arc<[PaintQuad]>,
+    dirty: ScrollbarDirtyState,
+    buffer_markers: Arc<[PaintQuad]>,
+    scope_markers: Arc<[PaintQuad]>,
     pending_refresh: Option<Task<Result<()>>>,
 }
 
 impl ScrollbarMarkerState {
     fn should_refresh(&self, scrollbar_size: Size<Pixels>) -> bool {
-        self.pending_refresh.is_none() && (self.scrollbar_size != scrollbar_size || self.dirty)
+      self.pending_refresh.is_none() && (self.scrollbar_size != scrollbar_size || self.dirty != ScrollbarDirtyState::Clean)
     }
 }
 
@@ -3508,6 +3517,10 @@ impl Editor {
             self.refresh_document_highlights(cx);
             refresh_linked_ranges(self, window, cx);
 
+            if self.scrollbar_marker_state.dirty == ScrollbarDirtyState::Clean {
+                self.scrollbar_marker_state.dirty = ScrollbarDirtyState::CursorMoved;
+            }
+            
             self.refresh_selected_text_highlights(false, window, cx);
             self.refresh_matching_bracket_highlights(window, cx);
             self.update_visible_edit_prediction(window, cx);
@@ -3749,21 +3762,19 @@ impl Editor {
     }
     
     // Returns the start and end row of the current scope the cursor is in, if any
-    pub fn current_scope_boundary(&self, window: &Window, cx: &mut App) -> Option<(u32, u32)> {
-        let snapshot = self.snapshot(window, cx);
-        let buffer_snapshot = snapshot.buffer_snapshot();
-        
-        let head = self.selections.newest_anchor().head();
-        let cursor_offset = head.to_offset(&buffer_snapshot);
-        
-        let (open_range, close_range) = buffer_snapshot
-            .enclosing_bracket_ranges(cursor_offset..cursor_offset)?
-            .last()?;
-    
-        // Extract the row numbers
-        let start_row = open_range.start.to_point(&buffer_snapshot).row;
-        let end_row = close_range.start.to_point(&buffer_snapshot).row;
-    
+    pub fn current_scope_boundary(
+        snapshot: &EditorSnapshot,
+        cursor_offset: MultiBufferOffset,
+    ) -> Option<(DisplayRow, DisplayRow)> {
+      let start_row = buffer_snapshot
+          .anchor_before(open_range.start.to_point(&buffer_snapshot))
+          .to_display_point(&snapshot.display_snapshot)
+          .row();
+      let end_row = buffer_snapshot
+          .anchor_before(close_range.start.to_point(&buffer_snapshot))
+          .to_display_point(&snapshot.display_snapshot)
+          .row();
+      
         Some((start_row, end_row))
     }
 
@@ -19970,7 +19981,7 @@ impl Editor {
 
         cx.notify();
 
-        self.scrollbar_marker_state.dirty = true;
+        self.scrollbar_marker_state.dirty = ScrollbarDirtyState::BufferChanged;
         self.folds_did_change(cx);
     }
 
@@ -20080,7 +20091,7 @@ impl Editor {
         }
 
         cx.notify();
-        self.scrollbar_marker_state.dirty = true;
+        self.scrollbar_marker_state.dirty = ScrollbarDirtyState::BufferChanged;
         self.active_indent_guides_state.dirty = true;
     }
 
@@ -22921,7 +22932,7 @@ impl Editor {
             HighlightKey::Type(TypeId::of::<T>()),
             (Arc::new(color_fetcher), Arc::from(ranges)),
         );
-        self.scrollbar_marker_state.dirty = true;
+        self.scrollbar_marker_state.dirty = ScrollbarDirtyState::BufferChanged;
         cx.notify();
     }
 
@@ -22936,7 +22947,7 @@ impl Editor {
             HighlightKey::TypePlus(TypeId::of::<T>(), key),
             (Arc::new(color_fetcher), Arc::from(ranges)),
         );
-        self.scrollbar_marker_state.dirty = true;
+        self.scrollbar_marker_state.dirty = ScrollbarDirtyState::BufferChanged;
         cx.notify();
     }
 
@@ -22948,7 +22959,7 @@ impl Editor {
             .background_highlights
             .remove(&HighlightKey::Type(TypeId::of::<T>()))?;
         if !text_highlights.1.is_empty() {
-            self.scrollbar_marker_state.dirty = true;
+            self.scrollbar_marker_state.dirty = ScrollbarDirtyState::BufferChanged;
             cx.notify();
         }
         Some(text_highlights)
@@ -23435,7 +23446,7 @@ impl Editor {
     ) {
         match event {
             multi_buffer::Event::Edited { edited_buffer } => {
-                self.scrollbar_marker_state.dirty = true;
+                self.scrollbar_marker_state.dirty = ScrollbarDirtyState::BufferChanged;
                 self.active_indent_guides_state.dirty = true;
                 self.refresh_active_diagnostics(cx);
                 self.refresh_code_actions(window, cx);
@@ -23579,7 +23590,7 @@ impl Editor {
         }
         self.refresh_active_diagnostics(cx);
         self.refresh_inline_diagnostics(true, window, cx);
-        self.scrollbar_marker_state.dirty = true;
+        self.scrollbar_marker_state.dirty = ScrollbarDirtyState::BufferChanged;
         cx.notify();
     }
 
