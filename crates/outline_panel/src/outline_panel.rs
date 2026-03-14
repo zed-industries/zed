@@ -2409,7 +2409,12 @@ impl OutlinePanel {
             FsEntry::File(FsEntryFile {
                 worktree_id, entry, ..
             }) => {
-                let name = self.entry_name(worktree_id, entry, cx);
+                let name = if string_match.is_none() && self.query(cx).is_some() {
+                    self.breadcrumb_path(rendered_entry, cx)
+                        .unwrap_or_else(|| self.entry_name(worktree_id, entry, cx))
+                } else {
+                    self.entry_name(worktree_id, entry, cx)
+                };
                 let color =
                     entry_git_aware_label_color(entry.git_summary, entry.is_ignored, is_active);
                 let icon = if settings.file_icons {
@@ -2432,7 +2437,14 @@ impl OutlinePanel {
                 )
             }
             FsEntry::Directory(directory) => {
-                let name = self.entry_name(&directory.worktree_id, &directory.entry, cx);
+                let name = if string_match.is_none() && self.query(cx).is_some() {
+                    self.breadcrumb_path(rendered_entry, cx)
+                        .unwrap_or_else(|| {
+                            self.entry_name(&directory.worktree_id, &directory.entry, cx)
+                        })
+                } else {
+                    self.entry_name(&directory.worktree_id, &directory.entry, cx)
+                };
 
                 let is_expanded = !self.collapsed_entries.contains(&CollapsedEntry::Dir(
                     directory.worktree_id,
@@ -2526,7 +2538,14 @@ impl OutlinePanel {
             _ => false,
         };
         let (item_id, label_element, icon) = {
-            let name = self.dir_names_string(&folded_dir.entries, folded_dir.worktree_id, cx);
+            let name = if string_match.is_none() && self.query(cx).is_some() {
+                self.folded_dirs_breadcrumb_path(folded_dir, cx)
+                    .unwrap_or_else(|| {
+                        self.dir_names_string(&folded_dir.entries, folded_dir.worktree_id, cx)
+                    })
+            } else {
+                self.dir_names_string(&folded_dir.entries, folded_dir.worktree_id, cx)
+            };
 
             let is_expanded = folded_dir.entries.iter().all(|dir| {
                 !self
@@ -3681,6 +3700,37 @@ impl OutlinePanel {
         }
     }
 
+    fn breadcrumb_path(&self, entry: &FsEntry, cx: &App) -> Option<String> {
+        let path = self.relative_path(entry, cx)?;
+        let components: Vec<_> = path
+            .as_std_path()
+            .components()
+            .map(|c| c.as_os_str().to_string_lossy().into_owned())
+            .collect();
+        if components.len() <= 1 {
+            return None;
+        }
+        Some(components.join(" / "))
+    }
+
+    fn folded_dirs_breadcrumb_path(
+        &self,
+        folded_dir: &FoldedDirsEntry,
+        _cx: &App,
+    ) -> Option<String> {
+        let last_entry = folded_dir.entries.last()?;
+        let components: Vec<_> = last_entry
+            .path
+            .as_std_path()
+            .components()
+            .map(|c| c.as_os_str().to_string_lossy().into_owned())
+            .collect();
+        if components.len() <= 1 {
+            return None;
+        }
+        Some(components.join(" / "))
+    }
+
     fn update_cached_entries(
         &mut self,
         debounce: Option<Duration>,
@@ -4098,6 +4148,25 @@ impl OutlinePanel {
             .map(|string_match| (string_match.candidate_id, string_match))
             .collect::<HashMap<_, _>>();
 
+            // Find parent Fs/FoldedDirs entries that should be kept as context
+            // for matched Outline/Search children.
+            let mut parent_indices_to_keep = HashSet::default();
+            let mut current_parent_index: Option<usize> = None;
+            for (index, cached_entry) in generation_state.entries.iter().enumerate() {
+                match &cached_entry.entry {
+                    PanelEntry::Fs(_) | PanelEntry::FoldedDirs(_) => {
+                        current_parent_index = Some(index);
+                    }
+                    PanelEntry::Outline(_) | PanelEntry::Search(_) => {
+                        if matched_ids.contains_key(&index) {
+                            if let Some(parent_idx) = current_parent_index {
+                                parent_indices_to_keep.insert(parent_idx);
+                            }
+                        }
+                    }
+                }
+            }
+
             let mut id = 0;
             generation_state.entries.retain_mut(|cached_entry| {
                 let retain = match matched_ids.remove(&id) {
@@ -4105,11 +4174,39 @@ impl OutlinePanel {
                         cached_entry.string_match = Some(string_match);
                         true
                     }
-                    None => false,
+                    None => parent_indices_to_keep.contains(&id),
                 };
                 id += 1;
                 retain
             });
+
+            // Flatten depths for parent-context entries (those kept without a direct match).
+            // Entries with string_match == None after retain are parent-context entries.
+            {
+                let mut in_parent_context = false;
+                let mut parent_context_depth = 0;
+                for cached_entry in &mut generation_state.entries {
+                    match &cached_entry.entry {
+                        PanelEntry::Fs(_) | PanelEntry::FoldedDirs(_) => {
+                            if cached_entry.string_match.is_none() {
+                                in_parent_context = true;
+                                parent_context_depth = cached_entry.depth;
+                                cached_entry.depth = 0;
+                            } else {
+                                in_parent_context = false;
+                            }
+                        }
+                        _ => {
+                            if in_parent_context {
+                                cached_entry.depth = cached_entry
+                                    .depth
+                                    .saturating_sub(parent_context_depth)
+                                    .max(1);
+                            }
+                        }
+                    }
+                }
+            }
 
             (
                 generation_state.entries,
@@ -5723,6 +5820,8 @@ mod tests {
         cx.run_until_parked();
 
         outline_panel.update(cx, |outline_panel, cx| {
+            // Parent file entries are now preserved as context for matched children,
+            // shown with flattened depths (parent at depth 0, children at depth 1).
             assert_eq!(
                 display_entries(
                     &project,
@@ -5731,12 +5830,23 @@ mod tests {
                     None,
                     cx,
                 ),
-                all_matches
-                    .lines()
-                    .skip(1) // `/rust-analyzer/` is a root entry with path `` and it will be filtered out
-                    .filter(|item| item.contains(filter_text))
-                    .collect::<Vec<_>>()
-                    .join("\n"),
+                r#"  crates/
+      inlay_hints/
+fn_lifetime_fn.rs
+  search: match config.«param_names_for_lifetime_elision_hints» {
+  search: allocated_lifetimes.push(if config.«param_names_for_lifetime_elision_hints» {
+  search: Some(it) if config.«param_names_for_lifetime_elision_hints» => {
+  search: InlayHintsConfig { «param_names_for_lifetime_elision_hints»: true, ..TEST_CONFIG },
+      inlay_hints.rs
+        search: pub «param_names_for_lifetime_elision_hints»: bool,
+        search: «param_names_for_lifetime_elision_hints»: self
+      static_index.rs
+        search: «param_names_for_lifetime_elision_hints»: false,
+    rust-analyzer/src/
+        analysis_stats.rs
+          search: «param_names_for_lifetime_elision_hints»: true,
+config.rs
+  search: «param_names_for_lifetime_elision_hints»: self"#,
             );
         });
 
