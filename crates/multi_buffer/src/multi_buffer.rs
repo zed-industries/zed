@@ -3075,6 +3075,39 @@ impl MultiBuffer {
         cx.notify();
     }
 
+    /// Advance the cached version for a buffer to its current version without
+    /// computing incremental edits. Used after `restore_history` replaces a
+    /// buffer's CRDT state, which makes incremental edit tracking invalid.
+    pub fn force_resync_buffer(&self, buffer: &Entity<Buffer>, cx: &App) {
+        let buffer = buffer.read(cx);
+        let buffer_id = buffer.remote_id();
+        if let Some(buffer_state) = self.buffers.get(&buffer_id) {
+            *buffer_state.last_version.borrow_mut() = buffer.version().clone();
+            buffer_state
+                .last_non_text_state_update_count
+                .set(buffer.non_text_state_update_count());
+
+            let mut snapshot = self.snapshot.borrow_mut();
+            let new_excerpts = {
+                let mut new_excerpts = SumTree::default();
+                let mut cursor =
+                    snapshot.excerpts.cursor::<Dimensions<Option<&Locator>, ExcerptOffset>>(());
+                for locator in &buffer_state.excerpts {
+                    new_excerpts.append(cursor.slice(&Some(locator), Bias::Left), ());
+                    if let Some(old_excerpt) = cursor.item() {
+                        let mut new_excerpt = old_excerpt.clone();
+                        new_excerpt.buffer = Arc::new(buffer.snapshot());
+                        new_excerpts.push(new_excerpt, ());
+                        cursor.next();
+                    }
+                }
+                new_excerpts.append(cursor.suffix(), ());
+                new_excerpts
+            };
+            snapshot.excerpts = new_excerpts;
+        }
+    }
+
     #[ztracing::instrument(skip_all)]
     fn sync(&self, cx: &App) {
         let changed = self.buffer_changed_since_sync.replace(false);

@@ -174,6 +174,9 @@ pub struct SettingsContent {
     /// Configuration for the Notification Panel
     pub notification_panel: Option<NotificationPanelSettingsContent>,
 
+    /// Configuration for persistent undo/redo history.
+    pub persist_history: Option<PersistHistorySettingsContent>,
+
     pub proxy: Option<String>,
 
     /// The URL of the Zed server to connect to.
@@ -1247,5 +1250,32 @@ impl From<u64> for DelayMs {
 impl std::fmt::Display for DelayMs {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}ms", self.0)
+    }
+}
+
+#[cfg(test)]
+mod schema_tests {
+    use super::*;
+
+    #[test]
+    fn test_settings_content_schema_contains_persist_history() {
+        let mut generator = schemars::generate::SchemaSettings::draft2019_09().into_generator();
+        let schema = generator.root_schema_for::<SettingsContent>();
+        let schema_str = serde_json::to_string(&schema).unwrap();
+        assert!(
+            schema_str.contains("\"persist_history\""),
+            "SettingsContent schema must contain 'persist_history' property"
+        );
+    }
+
+    #[test]
+    fn test_user_settings_content_schema_contains_persist_history() {
+        let mut generator = schemars::generate::SchemaSettings::draft2019_09().into_generator();
+        let schema = generator.root_schema_for::<UserSettingsContent>();
+        let schema_str = serde_json::to_string(&schema).unwrap();
+        assert!(
+            schema_str.contains("\"persist_history\""),
+            "UserSettingsContent schema must contain 'persist_history' property"
+        );
     }
 }

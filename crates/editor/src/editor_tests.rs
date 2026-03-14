@@ -66,7 +66,7 @@ use util::{
 };
 use workspace::{
     CloseActiveItem, CloseAllItems, CloseOtherItems, MultiWorkspace, NavigationEntry, OpenOptions,
-    ViewId,
+    SaveIntent, ViewId,
     item::{FollowEvent, FollowableItem, Item, ItemHandle, SaveOptions},
     register_project_item,
 };
@@ -26454,6 +26454,213 @@ async fn test_apply_code_lens_actions_with_commands(cx: &mut gpui::TestAppContex
         actions, new_actions,
         "Code lens are queried for the same range and should get the same set back, but without additional LSP queries now"
     );
+}
+
+#[gpui::test]
+async fn test_editor_persists_selections_across_close_reopen(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let fs = FakeFs::new(cx.executor());
+    let text = r#"fn main() {
+    println!("hello");
+    println!("world");
+}"#;
+    fs.insert_tree(
+        path!("/project"),
+        json!({
+            "main.rs": text,
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs, [path!("/project").as_ref()], cx).await;
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
+    let worktree_id = workspace.update(cx, |workspace, cx| {
+        workspace.project().update(cx, |project, cx| {
+            project.worktrees(cx).next().unwrap().read(cx).id()
+        })
+    });
+
+    let pane = workspace.update(cx, |workspace, _| workspace.active_pane().clone());
+
+    // Open the file and set multi-cursor selections
+    let editor = workspace
+        .update_in(cx, |workspace, window, cx| {
+            workspace.open_path(
+                (worktree_id, rel_path("main.rs")),
+                Some(pane.downgrade()),
+                true,
+                window,
+                cx,
+            )
+        })
+        .unwrap()
+        .await
+        .downcast::<Editor>()
+        .unwrap();
+
+    let expected_selections = vec![
+        Point::new(0, 3)..Point::new(0, 7),
+        Point::new(1, 4)..Point::new(1, 12),
+        Point::new(2, 4)..Point::new(2, 12),
+    ];
+    editor.update_in(cx, |editor, window, cx| {
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+            s.select_ranges(expected_selections.clone());
+        });
+    });
+
+    // Close the file
+    pane.update_in(cx, |pane, window, cx| {
+        pane.close_all_items(&CloseAllItems::default(), window, cx)
+    })
+    .await
+    .unwrap();
+    drop(editor);
+    pane.update(cx, |pane, _| {
+        assert!(pane.active_item().is_none());
+    });
+
+    // Reopen the same file
+    let editor_reopened = workspace
+        .update_in(cx, |workspace, window, cx| {
+            workspace.open_path(
+                (worktree_id, rel_path("main.rs")),
+                Some(pane.downgrade()),
+                true,
+                window,
+                cx,
+            )
+        })
+        .unwrap()
+        .await
+        .downcast::<Editor>()
+        .unwrap();
+
+    // Verify selections were restored
+    pane.update(cx, |pane, cx| {
+        let open_editor = pane.active_item().unwrap().downcast::<Editor>().unwrap();
+        open_editor.update(cx, |editor, cx| {
+            assert_eq!(
+                editor.display_text(cx),
+                text,
+                "File text should be unchanged after reopen",
+            );
+            assert_eq!(
+                editor
+                    .selections
+                    .all::<Point>(&editor.display_snapshot(cx))
+                    .into_iter()
+                    .map(|s| s.range())
+                    .collect::<Vec<_>>(),
+                expected_selections,
+                "Selections should be restored after close and reopen",
+            );
+        })
+    });
+    drop(editor_reopened);
+}
+
+#[gpui::test]
+async fn test_editor_persists_selections_for_untitled_buffer_after_save(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    cx.update(|cx| {
+        register_project_item::<Editor>(cx);
+    });
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(path!("/project"), json!({})).await;
+    let project = Project::test(fs, [path!("/project").as_ref()], cx).await;
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
+    let worktree_id = workspace.update(cx, |workspace, cx| {
+        workspace.project().update(cx, |project, cx| {
+            project.worktrees(cx).next().unwrap().read(cx).id()
+        })
+    });
+    let pane = workspace.update(cx, |workspace, _| workspace.active_pane().clone());
+
+    // Create an untitled buffer
+    let editor = workspace
+        .update_in(cx, |workspace, window, cx| {
+            Editor::new_in_workspace(workspace, window, cx)
+        })
+        .await
+        .unwrap();
+
+    // Type content and set selections before saving
+    editor.update_in(cx, |editor, window, cx| {
+        editor.handle_input("fn main() {\n    hello();\n    world();\n}", window, cx);
+    });
+    editor.update_in(cx, |editor, window, cx| {
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+            s.select_ranges(vec![
+                Point::new(1, 4)..Point::new(1, 11),
+                Point::new(2, 4)..Point::new(2, 11),
+            ]);
+        });
+    });
+
+    // Save the untitled buffer to a file (triggers FileHandleChanged)
+    let save_task = workspace.update_in(cx, |workspace, window, cx| {
+        workspace.save_active_item(SaveIntent::Save, window, cx)
+    });
+    cx.executor().run_until_parked();
+    cx.simulate_new_path_selection(|_| Some(PathBuf::from(path!("/project/new_file.rs"))));
+    save_task.await.unwrap();
+    cx.executor().run_until_parked();
+
+    let expected_selections = vec![
+        Point::new(1, 4)..Point::new(1, 11),
+        Point::new(2, 4)..Point::new(2, 11),
+    ];
+
+    // Close the editor
+    pane.update_in(cx, |pane, window, cx| {
+        pane.close_all_items(&CloseAllItems::default(), window, cx)
+    })
+    .await
+    .unwrap();
+    drop(editor);
+    pane.update(cx, |pane, _| {
+        assert!(pane.active_item().is_none());
+    });
+
+    // Reopen the file by path
+    let _editor_reopened = workspace
+        .update_in(cx, |workspace, window, cx| {
+            workspace.open_path(
+                (worktree_id, rel_path("new_file.rs")),
+                Some(pane.downgrade()),
+                true,
+                window,
+                cx,
+            )
+        })
+        .unwrap()
+        .await
+        .downcast::<Editor>()
+        .unwrap();
+
+    // Verify selections were restored
+    pane.update(cx, |pane, cx| {
+        let open_editor = pane.active_item().unwrap().downcast::<Editor>().unwrap();
+        open_editor.update(cx, |editor, cx| {
+            assert_eq!(
+                editor
+                    .selections
+                    .all::<Point>(&editor.display_snapshot(cx))
+                    .into_iter()
+                    .map(|s| s.range())
+                    .collect::<Vec<_>>(),
+                expected_selections,
+                "Selections should be restored after saving untitled buffer, closing, and reopening",
+            );
+        })
+    });
 }
 
 #[gpui::test]

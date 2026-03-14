@@ -2520,6 +2520,19 @@ impl Buffer {
         self.text.merge_transactions(transaction, destination);
     }
 
+    /// Rebuilds the buffer's CRDT state from persisted base text and operations,
+    /// then restores the undo/redo stacks. Used to restore persisted undo history.
+    pub fn restore_history(
+        &mut self,
+        base_text: String,
+        undo_stack: Vec<Transaction>,
+        redo_stack: Vec<Transaction>,
+        operations: Vec<text::Operation>,
+    ) {
+        self.text
+            .restore_history(base_text, undo_stack, redo_stack, operations);
+    }
+
     /// Waits for the buffer to receive operations with the given timestamps.
     pub fn wait_for_edits<It: IntoIterator<Item = clock::Lamport>>(
         &mut self,

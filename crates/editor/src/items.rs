@@ -3,7 +3,7 @@ use crate::{
     EditorSettings, ExcerptId, ExcerptRange, FormatTarget, MultiBuffer, MultiBufferSnapshot,
     NavigationData, ReportEditorEvent, SelectionEffects, ToPoint as _,
     display_map::HighlightKey,
-    editor_settings::SeedQuerySetting,
+    editor_settings::{PersistHistorySettings, SeedQuerySetting},
     persistence::{DB, SerializedEditor},
     scroll::{ScrollAnchor, ScrollOffset},
 };
@@ -22,7 +22,7 @@ use language::{
     SelectionGoal, proto::serialize_anchor as serialize_text_anchor,
 };
 use lsp::DiagnosticSeverity;
-use multi_buffer::MultiBufferOffset;
+use multi_buffer::{MultiBufferOffset, ToOffset};
 use project::{
     File, Project, ProjectItem as _, ProjectPath, lsp_store::FormatTrigger,
     project_settings::ProjectSettings, search::SearchQuery,
@@ -64,6 +64,58 @@ use zed_actions::preview::{
 };
 
 pub const MAX_TAB_TITLE_LEN: usize = 24;
+
+fn blob_path_for(abs_path: &Path) -> PathBuf {
+    use sha2::Digest as _;
+    let mut hasher = sha2::Sha256::new();
+    hasher.update(abs_path.as_os_str().as_encoded_bytes());
+    let hash = hasher.finalize();
+    db::database_dir()
+        .join("persist_history")
+        .join(format!("{}.bin", hex::encode(hash)))
+}
+
+fn compute_content_hash(rope: &rope::Rope) -> String {
+    use sha2::Digest as _;
+    let mut hasher = sha2::Sha256::new();
+    for chunk in rope.chunks() {
+        hasher.update(chunk.as_bytes());
+    }
+    hex::encode(hasher.finalize())
+}
+
+fn prune_persist_history(workspace_id: WorkspaceId, cx: &App) -> Task<()> {
+    use settings::Settings as _;
+    let enabled = PersistHistorySettings::get_global(cx).enabled;
+
+    if !enabled {
+        return Task::ready(());
+    }
+
+    cx.background_spawn(async move {
+        let paths = match DB.get_persist_history_paths(workspace_id) {
+            Ok(paths) => paths,
+            Err(err) => {
+                log::warn!("Failed to query undo history paths for pruning: {err}");
+                return;
+            }
+        };
+
+        for abs_path in paths {
+            if smol::fs::metadata(&abs_path).await.is_err() {
+                DB.delete_persist_history(workspace_id, Arc::from(abs_path.as_path()))
+                    .await
+                    .log_err();
+                let blob_path = blob_path_for(&abs_path);
+                if let Err(err) = smol::fs::remove_file(&blob_path).await {
+                    if err.kind() != std::io::ErrorKind::NotFound {
+                        log::warn!("Failed to remove undo history blob {blob_path:?}: {err}");
+                    }
+                }
+            }
+        }
+    })
+}
 
 impl FollowableItem for Editor {
     fn remote_id(&self) -> Option<ViewId> {
@@ -1029,6 +1081,10 @@ impl Item for Editor {
                 self.load_folds_from_db(workspace_id, file_path, window, cx);
             }
         }
+
+        if let Some(workspace_id) = workspace.database_id() {
+            self.restore_persist_history(workspace_id, window, cx);
+        }
     }
 
     fn pane_changed(&mut self, new_pane_id: EntityId, cx: &mut Context<Self>) {
@@ -1138,7 +1194,14 @@ impl SerializableItem for Editor {
         _window: &mut Window,
         cx: &mut App,
     ) -> Task<Result<()>> {
-        workspace::delete_unloaded_items(alive_items, workspace_id, "editors", &DB, cx)
+        let editor_cleanup =
+            workspace::delete_unloaded_items(alive_items, workspace_id, "editors", &DB, cx);
+        let prune = prune_persist_history(workspace_id, cx);
+        cx.background_spawn(async move {
+            editor_cleanup.await?;
+            prune.await;
+            Ok(())
+        })
     }
 
     fn deserialize(
@@ -1224,6 +1287,7 @@ impl SerializableItem for Editor {
                             let mut editor = Editor::for_buffer(buffer, Some(project), window, cx);
 
                             editor.read_metadata_from_db(item_id, workspace_id, window, cx);
+                            editor.restore_persist_history(workspace_id, window, cx);
                             editor
                         })
                     })
@@ -1262,6 +1326,7 @@ impl SerializableItem for Editor {
                                     Editor::for_buffer(buffer, Some(project), window, cx);
 
                                 editor.read_metadata_from_db(item_id, workspace_id, window, cx);
+                                editor.restore_persist_history(workspace_id, window, cx);
                                 editor
                             })
                         })
@@ -1322,6 +1387,7 @@ impl SerializableItem for Editor {
                         let mut editor = Editor::for_buffer(buffer, Some(project), window, cx);
 
                         editor.read_metadata_from_db(item_id, workspace_id, window, cx);
+                        editor.restore_persist_history(workspace_id, window, cx);
                         editor
                     })
                 })
@@ -1370,6 +1436,17 @@ impl SerializableItem for Editor {
 
         let is_dirty = buffer.read(cx).is_dirty();
         let mtime = buffer.read(cx).saved_mtime();
+
+        // Write undo history on save (not on every buffer edit)
+        if let Some(abs_path_ref) = abs_path.as_ref() {
+            if let Some(task) = self.write_persist_history(
+                workspace_id,
+                Arc::from(abs_path_ref.as_path()),
+                cx,
+            ) {
+                task.detach();
+            }
+        }
 
         let snapshot = buffer.read(cx).snapshot();
 
@@ -1498,6 +1575,227 @@ fn clip_ranges<'a>(
 impl EventEmitter<SearchEvent> for Editor {}
 
 impl Editor {
+    fn write_persist_history(
+        &self,
+        workspace_id: WorkspaceId,
+        abs_path: Arc<Path>,
+        cx: &App,
+    ) -> Option<Task<()>> {
+        use settings::Settings as _;
+        let enabled = PersistHistorySettings::get_global(cx).enabled;
+
+        if !enabled {
+            return None;
+        }
+
+        let buffer = self.buffer().read(cx).as_singleton()?;
+        let buffer = buffer.read(cx);
+
+        // Only write when file has been saved and buffer matches disk content
+        if buffer.is_dirty() {
+            return None;
+        }
+
+        let mtime = buffer.saved_mtime()?;
+        let (mtime_seconds, mtime_nanos) = mtime.to_seconds_and_nanos_for_persistence()?;
+
+        let max_entries = PersistHistorySettings::get_global(cx).max_entries as usize;
+        let undo_stack = buffer.undo_stack();
+        let redo_stack = buffer.redo_stack();
+
+        // Apply max_entries: keep the most recent N entries from undo_stack.
+        // undo_stack is oldest-first, so keep the tail.
+        let undo_start = undo_stack.len().saturating_sub(max_entries);
+        let undo_entries: Vec<_> = undo_stack[undo_start..].to_vec();
+        let redo_entries: Vec<_> = redo_stack.to_vec();
+
+        let total_entries = undo_entries.len() + redo_entries.len();
+        if total_entries == 0 {
+            return None;
+        }
+
+        let operations = buffer.operations().clone();
+        let base_text = buffer.base_text().clone();
+
+        // Compute content hash from buffer text (not dirty, so matches disk)
+        let content_hash = compute_content_hash(buffer.as_rope());
+
+        let blob_path = blob_path_for(&abs_path);
+
+        Some(cx.background_spawn(async move {
+            let blob = match text::history_serde::encode_history(
+                &base_text,
+                &undo_entries,
+                &redo_entries,
+                &operations,
+            ) {
+                Ok(bytes) => bytes,
+                Err(err) => {
+                    log::warn!("Failed to encode undo history for {abs_path:?}: {err}");
+                    return;
+                }
+            };
+
+            if let Some(parent) = blob_path.parent() {
+                if let Err(err) = smol::fs::create_dir_all(parent).await {
+                    log::warn!("Failed to create persist_history dir: {err}");
+                    return;
+                }
+            }
+
+            if let Err(err) = smol::fs::write(&blob_path, &blob).await {
+                log::warn!("Failed to write undo history blob for {abs_path:?}: {err}");
+                return;
+            }
+
+            DB.save_persist_history_meta(
+                workspace_id,
+                abs_path.clone(),
+                content_hash,
+                mtime_seconds as i64,
+                mtime_nanos as i32,
+            )
+            .await
+            .log_err();
+        }))
+    }
+
+    fn restore_persist_history(
+        &mut self,
+        workspace_id: WorkspaceId,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        use settings::Settings as _;
+        let enabled = PersistHistorySettings::get_global(cx).enabled;
+        if !enabled {
+            return;
+        }
+
+        let buffer_handle = match self.buffer().read(cx).as_singleton() {
+            Some(buffer) => buffer.clone(),
+            None => return,
+        };
+
+        let abs_path: Arc<Path> = {
+            let buffer = buffer_handle.read(cx);
+            match File::from_dyn(buffer.file()) {
+                Some(file) => Arc::from(file.abs_path(cx)),
+                None => return,
+            }
+        };
+
+        let blob_path = blob_path_for(&abs_path);
+
+        cx.spawn_in(window, async move |this, cx| {
+            let meta = match DB.get_persist_history_meta(workspace_id, &abs_path) {
+                Ok(Some(meta)) => meta,
+                Ok(None) => return Ok(()),
+                Err(err) => {
+                    log::debug!("Failed to read persist_history_meta for {abs_path:?}: {err}");
+                    return Ok(());
+                }
+            };
+            let (stored_hash, _mtime_seconds, _mtime_nanos, _last_accessed_at) = meta;
+
+            let blob_bytes = match smol::fs::read(&blob_path).await {
+                Ok(bytes) => bytes,
+                Err(_) => return Ok(()),
+            };
+
+            let current_hash = match this.read_with(cx, |editor, cx| {
+                let buffer = editor.buffer().read(cx).as_singleton()?;
+                let buffer = buffer.read(cx);
+                Some(compute_content_hash(buffer.as_rope()))
+            }) {
+                Ok(Some(hash)) => hash,
+                Ok(None) => return Ok(()),
+                Err(err) => return Err(err),
+            };
+
+            if current_hash != stored_hash {
+                log::debug!(
+                    "Undo history hash mismatch for {abs_path:?}: stored={stored_hash}, current={current_hash}; discarding"
+                );
+                return Ok(());
+            }
+
+            let decoded = match text::history_serde::decode_history(&blob_bytes) {
+                Ok(decoded) => decoded,
+                Err(err) => {
+                    log::warn!("Failed to decode undo history for {abs_path:?}: {err}");
+                    return Ok(());
+                }
+            };
+
+            this.update_in(cx, |editor, window, cx| {
+                if let Some(buffer) = editor.buffer().read(cx).as_singleton() {
+                    // Save selection offsets before restoring history, since the
+                    // restore replaces the buffer's CRDT state and invalidates
+                    // all existing anchors.
+                    let selection_offsets: Vec<(MultiBufferOffset, MultiBufferOffset)> = {
+                        let snapshot = editor.buffer().read(cx).snapshot(cx);
+                        editor
+                            .selections
+                            .disjoint_anchors()
+                            .iter()
+                            .map(|s| {
+                                (
+                                    s.start.to_offset(&snapshot),
+                                    s.end.to_offset(&snapshot),
+                                )
+                            })
+                            .collect()
+                    };
+
+                    buffer.update(cx, |buffer, _| {
+                        buffer.restore_history(
+                            decoded.base_text,
+                            decoded.undo_stack,
+                            decoded.redo_stack,
+                            decoded.operations,
+                        );
+                    });
+
+                    // Advance the multi_buffer's cached version to match the
+                    // rebuilt buffer, preventing bogus incremental edit computation.
+                    editor.buffer().read(cx).force_resync_buffer(&buffer, cx);
+
+                    // Re-create selections as valid anchors in the new buffer state.
+                    if !selection_offsets.is_empty() {
+                        let ranges: Vec<std::ops::Range<MultiBufferOffset>> = selection_offsets
+                            .into_iter()
+                            .map(|(start, end)| start..end)
+                            .collect();
+                        editor.change_selections(Default::default(), window, cx, |s| {
+                            s.select_ranges(ranges);
+                        });
+                    }
+
+                    let current_selections = editor.selections.disjoint_anchors_arc();
+                    if !current_selections.is_empty() {
+                        let buffer = buffer.read(cx);
+                        for entry in buffer.undo_stack() {
+                            editor.selection_history.insert_transaction(
+                                entry.transaction_id(),
+                                current_selections.clone(),
+                            );
+                        }
+                        for entry in buffer.redo_stack() {
+                            editor.selection_history.insert_transaction(
+                                entry.transaction_id(),
+                                current_selections.clone(),
+                            );
+                        }
+                    }
+                }
+            })?;
+
+            Ok(())
+        })
+        .detach_and_log_err(cx);
+    }
+
     pub fn update_restoration_data(
         &self,
         cx: &mut Context<Self>,

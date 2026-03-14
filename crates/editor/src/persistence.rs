@@ -223,6 +223,20 @@ impl Domain for EditorDb {
                 PRIMARY KEY(workspace_id, path, start)
             );
         ),
+        sql! (
+            CREATE TABLE persist_history (
+                workspace_id INTEGER NOT NULL,
+                abs_path BLOB NOT NULL,
+                content_hash TEXT NOT NULL,
+                mtime_seconds INTEGER NOT NULL,
+                mtime_nanos INTEGER NOT NULL,
+                last_accessed_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY(workspace_id) REFERENCES workspaces(workspace_id)
+                    ON DELETE CASCADE
+                    ON UPDATE CASCADE,
+                PRIMARY KEY(workspace_id, abs_path)
+            );
+        ),
     ];
 }
 
@@ -328,7 +342,7 @@ impl EditorDb {
         log::debug!("Saving selections for editor {editor_id} in workspace {workspace_id:?}");
         let mut first_selection;
         let mut last_selection = 0_usize;
-        for (count, placeholders) in std::iter::once("(?1, ?2, ?, ?)")
+        for (count, placeholders) in std::iter::once("SELECT ?1, ?2, ?, ?")
             .cycle()
             .take(selections.len())
             .chunks(MAX_QUERY_PLACEHOLDERS / 4)
@@ -339,7 +353,7 @@ impl EditorDb {
                     .inspect(|_| {
                         count += 1;
                     })
-                    .join(", ");
+                    .join(" UNION ALL ");
                 (count, placeholders)
             })
             .collect::<Vec<_>>()
@@ -350,8 +364,9 @@ impl EditorDb {
                 r#"
 DELETE FROM editor_selections WHERE editor_id = ?1 AND workspace_id = ?2;
 
-INSERT OR IGNORE INTO editor_selections (editor_id, workspace_id, start, end)
-VALUES {placeholders};
+INSERT INTO editor_selections (editor_id, workspace_id, start, end)
+SELECT * FROM ({placeholders})
+WHERE EXISTS (SELECT 1 FROM editors WHERE item_id = ?1 AND workspace_id = ?2);
 "#
             );
 
@@ -408,11 +423,158 @@ VALUES {placeholders};
         })
         .await
     }
+
+    query! {
+        pub fn get_persist_history_meta(
+            workspace_id: WorkspaceId,
+            abs_path: &Path
+        ) -> Result<Option<(String, i64, i32, String)>> {
+            SELECT content_hash, mtime_seconds, mtime_nanos, last_accessed_at
+            FROM persist_history
+            WHERE workspace_id = ?1 AND abs_path = ?2
+        }
+    }
+
+    query! {
+        pub fn get_persist_history_paths(
+            workspace_id: WorkspaceId
+        ) -> Result<Vec<PathBuf>> {
+            SELECT abs_path
+            FROM persist_history
+            WHERE workspace_id = ?1
+        }
+    }
+
+    pub async fn save_persist_history_meta(
+        &self,
+        workspace_id: WorkspaceId,
+        abs_path: Arc<Path>,
+        content_hash: String,
+        mtime_seconds: i64,
+        mtime_nanos: i32,
+    ) -> Result<()> {
+        self.write(move |conn| {
+            conn.exec_bound(sql!(
+                INSERT INTO persist_history
+                    (workspace_id, abs_path, content_hash, mtime_seconds, mtime_nanos, last_accessed_at)
+                VALUES (?1, ?2, ?3, ?4, ?5, CURRENT_TIMESTAMP)
+                ON CONFLICT(workspace_id, abs_path) DO UPDATE SET
+                    content_hash = excluded.content_hash,
+                    mtime_seconds = excluded.mtime_seconds,
+                    mtime_nanos = excluded.mtime_nanos,
+                    last_accessed_at = CURRENT_TIMESTAMP;
+            ))?((workspace_id, abs_path.as_ref(), content_hash, mtime_seconds, mtime_nanos))
+        })
+        .await
+    }
+
+    pub async fn delete_persist_history(
+        &self,
+        workspace_id: WorkspaceId,
+        abs_path: Arc<Path>,
+    ) -> Result<()> {
+        self.write(move |conn| {
+            conn.exec_bound(sql!(
+                DELETE FROM persist_history WHERE workspace_id = ?1 AND abs_path = ?2;
+            ))?((workspace_id, abs_path.as_ref()))
+        })
+        .await
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[gpui::test]
+    async fn test_save_and_get_persist_history_meta() {
+        let workspace_id = workspace::WORKSPACE_DB.next_id().await.unwrap();
+
+        let path_a: Arc<Path> = Arc::from(Path::new("/tmp/test_undo_a.rs"));
+        let path_b: Arc<Path> = Arc::from(Path::new("/tmp/test_undo_b.rs"));
+
+        // Test 1: save and retrieve a row with correct field values
+        DB.save_persist_history_meta(
+            workspace_id,
+            path_a.clone(),
+            "abc123hash".to_string(),
+            1000,
+            42,
+        )
+        .await
+        .unwrap();
+
+        let result = DB
+            .get_persist_history_meta(workspace_id, &path_a)
+            .unwrap()
+            .unwrap();
+        let (content_hash, mtime_seconds, mtime_nanos, last_accessed_at) = result;
+        assert_eq!(content_hash, "abc123hash");
+        assert_eq!(mtime_seconds, 1000_i64);
+        assert_eq!(mtime_nanos, 42_i32);
+        assert!(!last_accessed_at.is_empty(), "last_accessed_at should be non-empty");
+
+        // Test 2: upsert — calling save again with a different hash overwrites, not duplicates
+        DB.save_persist_history_meta(
+            workspace_id,
+            path_a.clone(),
+            "newhash456".to_string(),
+            2000,
+            99,
+        )
+        .await
+        .unwrap();
+
+        let result = DB
+            .get_persist_history_meta(workspace_id, &path_a)
+            .unwrap()
+            .unwrap();
+        let (content_hash, mtime_seconds, mtime_nanos, _last_accessed_at) = result;
+        assert_eq!(content_hash, "newhash456");
+        assert_eq!(mtime_seconds, 2000_i64);
+        assert_eq!(mtime_nanos, 99_i32);
+
+        // Test 3: delete removes the row, get returns None
+        DB.delete_persist_history(workspace_id, path_a.clone())
+            .await
+            .unwrap();
+        let deleted = DB.get_persist_history_meta(workspace_id, &path_a).unwrap();
+        assert!(deleted.is_none(), "row should be gone after delete");
+
+        // Test 4: two different paths in the same workspace are independent
+        DB.save_persist_history_meta(
+            workspace_id,
+            path_a.clone(),
+            "hash_for_a".to_string(),
+            100,
+            1,
+        )
+        .await
+        .unwrap();
+        DB.save_persist_history_meta(
+            workspace_id,
+            path_b.clone(),
+            "hash_for_b".to_string(),
+            200,
+            2,
+        )
+        .await
+        .unwrap();
+
+        let result_a = DB
+            .get_persist_history_meta(workspace_id, &path_a)
+            .unwrap()
+            .unwrap();
+        let result_b = DB
+            .get_persist_history_meta(workspace_id, &path_b)
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(result_a.0, "hash_for_a");
+        assert_eq!(result_b.0, "hash_for_b");
+        assert_eq!(result_a.1, 100_i64);
+        assert_eq!(result_b.1, 200_i64);
+    }
 
     #[gpui::test]
     async fn test_save_and_get_serialized_editor() {

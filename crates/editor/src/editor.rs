@@ -3754,6 +3754,43 @@ impl Editor {
         });
     }
 
+    fn refresh_restoration_data(&mut self, cx: &mut Context<Self>) {
+        if self.mode.is_minimap() || !self.buffer().read(cx).is_singleton() {
+            return;
+        }
+
+        let multibuffer_snapshot = self.buffer().read(cx).snapshot(cx);
+        let Some((_, _, buffer_snapshot)) = multibuffer_snapshot.as_singleton() else {
+            return;
+        };
+
+        let selections: Vec<Range<Point>> = self
+            .selections
+            .disjoint_anchors()
+            .iter()
+            .map(|s| {
+                text::ToPoint::to_point(&s.range().start.text_anchor, &buffer_snapshot)
+                    ..text::ToPoint::to_point(&s.range().end.text_anchor, &buffer_snapshot)
+            })
+            .collect();
+
+        let display_snapshot = self
+            .display_map
+            .update(cx, |display_map, cx| display_map.snapshot(cx));
+        let folds: Vec<Range<Point>> = display_snapshot
+            .folds_in_range(MultiBufferOffset(0)..display_snapshot.buffer_snapshot().len())
+            .map(|fold| {
+                text::ToPoint::to_point(&fold.range.start.text_anchor, &buffer_snapshot)
+                    ..text::ToPoint::to_point(&fold.range.end.text_anchor, &buffer_snapshot)
+            })
+            .collect();
+
+        self.update_restoration_data(cx, move |data| {
+            data.selections = selections;
+            data.folds = folds;
+        });
+    }
+
     pub fn sync_selections(
         &mut self,
         other: Entity<Editor>,
@@ -13942,6 +13979,7 @@ impl Editor {
                      If this is occurring, please add details to \
                      https://github.com/zed-industries/zed/issues/22692"
                 );
+                self.move_cursors_to_valid_positions(window, cx);
             }
             self.request_autoscroll(Autoscroll::fit(), cx);
             self.unmark_text(window, cx);
@@ -13972,11 +14010,32 @@ impl Editor {
                      If this is occurring, please add details to \
                      https://github.com/zed-industries/zed/issues/22692"
                 );
+                self.move_cursors_to_valid_positions(window, cx);
             }
             self.request_autoscroll(Autoscroll::fit(), cx);
             self.unmark_text(window, cx);
             self.refresh_edit_prediction(true, false, window, cx);
             cx.emit(EditorEvent::Edited { transaction_id });
+        }
+    }
+
+    fn move_cursors_to_valid_positions(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let snapshot = self.buffer.read(cx).snapshot(cx);
+        let buffer_end = snapshot.len();
+        let ranges: Vec<std::ops::Range<MultiBufferOffset>> = self
+            .selections
+            .disjoint_anchors()
+            .iter()
+            .map(|s| {
+                let start = s.start.to_offset(&snapshot).min(buffer_end);
+                let end = s.end.to_offset(&snapshot).min(buffer_end);
+                start..end
+            })
+            .collect();
+        if !ranges.is_empty() {
+            self.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+                s.select_ranges(ranges);
+            });
         }
     }
 
@@ -23879,8 +23938,11 @@ impl Editor {
             }
             multi_buffer::Event::DirtyChanged => cx.emit(EditorEvent::DirtyChanged),
             multi_buffer::Event::Saved => cx.emit(EditorEvent::Saved),
-            multi_buffer::Event::FileHandleChanged
-            | multi_buffer::Event::Reloaded
+            multi_buffer::Event::FileHandleChanged => {
+                self.refresh_restoration_data(cx);
+                cx.emit(EditorEvent::TitleChanged);
+            }
+            multi_buffer::Event::Reloaded
             | multi_buffer::Event::BufferDiffChanged => cx.emit(EditorEvent::TitleChanged),
             multi_buffer::Event::DiagnosticsUpdated => {
                 self.update_diagnostics_state(window, cx);
