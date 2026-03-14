@@ -192,6 +192,16 @@ pub struct DeploySearch {
     pub included_files: Option<String>,
     #[serde(default)]
     pub excluded_files: Option<String>,
+    #[serde(default)]
+    pub query: Option<String>,
+    #[serde(default)]
+    pub regex: bool,
+    #[serde(default)]
+    pub case_sensitive: bool,
+    #[serde(default)]
+    pub whole_word: bool,
+    #[serde(default)]
+    pub include_ignored: bool,
 }
 
 #[derive(Clone, Copy, PartialEq, Debug, Deserialize, JsonSchema, Default)]
@@ -281,6 +291,11 @@ impl DeploySearch {
             replace_enabled: false,
             included_files: None,
             excluded_files: None,
+            query: None,
+            regex: false,
+            case_sensitive: false,
+            whole_word: false,
+            include_ignored: false,
         }
     }
 }
@@ -4112,12 +4127,7 @@ fn default_render_tab_bar_buttons(
                             .separator()
                             .action(
                                 "Search Project",
-                                DeploySearch {
-                                    replace_enabled: false,
-                                    included_files: None,
-                                    excluded_files: None,
-                                }
-                                .boxed_clone(),
+                                DeploySearch::find().boxed_clone(),
                             )
                             .action("Search Symbols", ToggleProjectSymbols.boxed_clone())
                             .separator()
