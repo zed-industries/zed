@@ -643,10 +643,11 @@ mod tests {
         set_single_caret_at_row(&editor, 3, cx);
         let outline_view = open_outline_view(&workspace, cx);
         cx.run_until_parked();
-        let (selected_candidate_id, expected_deepest_containing_candidate_id) =
-            outline_view.update(cx, |outline_view, cx| {
+        let (selected_candidate_id, expected_deepest_containing_candidate_id) = outline_view
+            .update(cx, |outline_view, cx| {
                 let delegate = &outline_view.delegate;
-                let selected_candidate_id = delegate.matches[delegate.selected_match_index].candidate_id;
+                let selected_candidate_id =
+                    delegate.matches[delegate.selected_match_index].candidate_id;
                 let (buffer, cursor_offset) = delegate.active_editor.update(cx, |editor, cx| {
                     let buffer = editor.buffer().read(cx).snapshot(cx);
                     let cursor_offset = editor
@@ -874,7 +875,11 @@ mod tests {
         })
     }
 
-    fn set_single_caret_at_row(editor: &Entity<Editor>, buffer_row: u32, cx: &mut VisualTestContext) {
+    fn set_single_caret_at_row(
+        editor: &Entity<Editor>,
+        buffer_row: u32,
+        cx: &mut VisualTestContext,
+    ) {
         editor.update_in(cx, |editor, window, cx| {
             editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
                 s.select_ranges([rope::Point::new(buffer_row, 0)..rope::Point::new(buffer_row, 0)])
