@@ -43,7 +43,8 @@ use gpui::{
 use itertools::Itertools;
 use language::{Buffer, File};
 use language_model::{
-    ConfiguredModel, LanguageModelRegistry, LanguageModelRequest, LanguageModelRequestMessage, Role,
+    ConfiguredModel, LanguageModelId, LanguageModelRegistry, LanguageModelRequest,
+    LanguageModelRequestMessage, LanguageModelProviderId, Role, SelectedModel,
 };
 use menu;
 use multi_buffer::ExcerptInfo;
@@ -57,7 +58,7 @@ use project::{
 use prompt_store::{BuiltInPrompt, PromptId, PromptStore, RULES_FILE_NAMES};
 use proto::RpcError;
 use serde::{Deserialize, Serialize};
-use settings::{Settings, SettingsStore, StatusStyle};
+use settings::{LanguageModelSelection, Settings, SettingsStore, StatusStyle};
 use smallvec::SmallVec;
 use std::future::Future;
 use std::ops::Range;
@@ -67,9 +68,9 @@ use strum::{IntoEnumIterator, VariantNames};
 use theme::ThemeSettings;
 use time::OffsetDateTime;
 use ui::{
-    ButtonLike, Checkbox, CommonAnimationExt, ContextMenu, ElevationIndex, IndentGuideColors,
-    PopoverMenu, RenderedIndentGuide, ScrollAxes, Scrollbars, SplitButton, Tooltip, WithScrollbar,
-    prelude::*,
+    ButtonLike, Checkbox, CommonAnimationExt, ContextMenu, ContextMenuEntry, ElevationIndex,
+    IndentGuideColors, PopoverMenu, RenderedIndentGuide, ScrollAxes, Scrollbars, SplitButton,
+    Tooltip, WithScrollbar, prelude::*,
 };
 use util::paths::PathStyle;
 use util::{ResultExt, TryFutureExt, maybe, rel_path::RelPath};
@@ -3996,33 +3997,194 @@ impl GitPanel {
         let editor_focus_handle = self.commit_editor.focus_handle(cx);
 
         Some(
-            IconButton::new("generate-commit-message", IconName::AiEdit)
-                .shape(ui::IconButtonShape::Square)
-                .icon_color(if has_commit_model_configuration_error {
-                    Color::Disabled
-                } else {
-                    Color::Muted
-                })
-                .tooltip(move |_window, cx| {
-                    if !can_commit {
-                        Tooltip::simple("No Changes to Commit", cx)
-                    } else if has_commit_model_configuration_error {
-                        Tooltip::simple("Configure an LLM provider to generate commit messages", cx)
+            SplitButton::new(
+                IconButton::new("generate-commit-message", IconName::AiEdit)
+                    .shape(ui::IconButtonShape::Square)
+                    .icon_color(if has_commit_model_configuration_error {
+                        Color::Disabled
                     } else {
-                        Tooltip::for_action_in(
-                            "Generate Commit Message",
-                            &git::GenerateCommitMessage,
-                            &editor_focus_handle,
-                            cx,
-                        )
-                    }
-                })
-                .disabled(!can_commit || has_commit_model_configuration_error)
-                .on_click(cx.listener(move |this, _event, _window, cx| {
-                    this.generate_commit_message(cx);
-                }))
-                .into_any_element(),
+                        Color::Muted
+                    })
+                    .tooltip(move |_window, cx| {
+                        if !can_commit {
+                            Tooltip::simple("No Changes to Commit", cx)
+                        } else if has_commit_model_configuration_error {
+                            Tooltip::simple("Configure an LLM provider to generate commit messages", cx)
+                        } else {
+                            Tooltip::for_action_in(
+                                "Generate Commit Message",
+                                &git::GenerateCommitMessage,
+                                &editor_focus_handle,
+                                cx,
+                            )
+                        }
+                    })
+                    .disabled(!can_commit || has_commit_model_configuration_error)
+                    .on_click(cx.listener(move |this, _event, _window, cx| {
+                        this.generate_commit_message(cx);
+                    })),
+                self.render_generate_commit_message_menu(cx)
+                    .into_any_element(),
+            )
+            .into_any_element(),
         )
+    }
+
+    fn render_generate_commit_message_menu(&self, cx: &Context<Self>) -> impl IntoElement {
+        let (providers, selected_model) = Self::commit_message_model_options(cx);
+
+        PopoverMenu::new("generate-commit-message-menu")
+            .trigger(
+                ui::ButtonLike::new_rounded_right("generate-commit-message-menu-trigger")
+                    .layer(ui::ElevationIndex::ModalSurface)
+                    .size(ButtonSize::None)
+                    .tooltip(move |_window, cx| Tooltip::simple("Select Commit Message Model", cx))
+                    .child(
+                        h_flex()
+                            .px_1()
+                            .h_full()
+                            .justify_center()
+                            .child(Icon::new(IconName::ChevronDown).size(IconSize::XSmall)),
+                    ),
+            )
+            .menu({
+                let git_panel = cx.entity();
+                move |window, cx| {
+                    Some(ContextMenu::build(window, cx, |context_menu, _, _| {
+                        let mut context_menu = context_menu.header("Commit Message Model");
+
+                        if providers.is_empty() {
+                            return context_menu.item(ContextMenuEntry::new("No models available").disabled(true));
+                        }
+
+                        for (provider_id, provider_name, provider_icon, models) in providers.iter().cloned() {
+                            let selected_model = selected_model.clone();
+                            let git_panel = git_panel.downgrade();
+                            context_menu = context_menu.submenu(provider_name.clone(), {
+                                move |mut provider_menu, _, _| {
+                                    for (model_id, model_name) in models.iter().cloned() {
+                                        let is_selected = selected_model.as_ref().is_some_and(
+                                            |(selected_provider_id, selected_model_id)| {
+                                                *selected_provider_id == provider_id
+                                                    && *selected_model_id == model_id
+                                            },
+                                        );
+                                        let mut entry = ContextMenuEntry::new(model_name)
+                                            .toggleable(IconPosition::Start, is_selected);
+                                        entry = match provider_icon.clone() {
+                                            language_model::IconOrSvg::Svg(path) => {
+                                                entry.custom_icon_svg(path)
+                                            }
+                                            language_model::IconOrSvg::Icon(icon) => entry.icon(icon),
+                                        };
+                                        let git_panel = git_panel.clone();
+                                        let provider_id = provider_id.clone();
+                                        provider_menu = provider_menu.item(entry.handler(move |_, cx| {
+                                            git_panel
+                                                .update(cx, |git_panel, cx| {
+                                                    git_panel.set_commit_message_model(
+                                                        provider_id.clone(),
+                                                        model_id.clone(),
+                                                        cx,
+                                                    );
+                                                })
+                                                .ok();
+                                        }));
+                                    }
+
+                                    provider_menu
+                                }
+                            });
+                        }
+
+                        context_menu
+                    }))
+                }
+            })
+            .anchor(Corner::BottomLeft)
+            .offset(point(px(0.), px(-2.)))
+    }
+
+    fn commit_message_model_options(
+        cx: &App,
+    ) -> (
+        Vec<(
+            LanguageModelProviderId,
+            SharedString,
+            language_model::IconOrSvg,
+            Vec<(LanguageModelId, SharedString)>,
+        )>,
+        Option<(LanguageModelProviderId, LanguageModelId)>,
+    ) {
+        let model_registry = LanguageModelRegistry::read_global(cx);
+        Self::commit_message_model_options_from_registry(model_registry, cx)
+    }
+
+    fn commit_message_model_options_from_registry(
+        model_registry: &LanguageModelRegistry,
+        cx: &App,
+    ) -> (
+        Vec<(
+            LanguageModelProviderId,
+            SharedString,
+            language_model::IconOrSvg,
+            Vec<(LanguageModelId, SharedString)>,
+        )>,
+        Option<(LanguageModelProviderId, LanguageModelId)>,
+    ) {
+        let mut providers = model_registry
+            .visible_providers()
+            .into_iter()
+            .filter_map(|provider| {
+                if !provider.is_authenticated(cx) {
+                    return None;
+                }
+
+                let mut models = provider
+                    .provided_models(cx)
+                    .into_iter()
+                    .map(|model| (model.id(), model.name().0))
+                    .collect::<Vec<_>>();
+                models.sort_by_key(|(_, name)| name.to_lowercase());
+                if models.is_empty() {
+                    None
+                } else {
+                    Some((provider.id(), provider.name().0, provider.icon(), models))
+                }
+            })
+            .collect::<Vec<_>>();
+        providers.sort_by_key(|(_, name, _, _)| name.to_lowercase());
+
+        let selected_model = model_registry
+            .commit_message_model()
+            .map(|model| (model.provider.id(), model.model.id()));
+
+        (providers, selected_model)
+    }
+
+    fn set_commit_message_model(
+        &mut self,
+        provider_id: LanguageModelProviderId,
+        model_id: LanguageModelId,
+        cx: &mut Context<Self>,
+    ) {
+        let selected_model = SelectedModel {
+            provider: provider_id.clone(),
+            model: model_id.clone(),
+        };
+        LanguageModelRegistry::global(cx).update(cx, |registry, cx| {
+            registry.select_commit_message_model(Some(&selected_model), cx)
+        });
+
+        let selection = LanguageModelSelection {
+            provider: provider_id.0.to_string().into(),
+            model: model_id.0.to_string(),
+            enable_thinking: false,
+            effort: None,
+        };
+        settings::update_settings_file(self.fs.clone(), cx, move |settings, _| {
+            settings.agent.get_or_insert_default().commit_message_model = Some(selection)
+        });
     }
 
     pub(crate) fn render_co_authors(&self, cx: &Context<Self>) -> Option<AnyElement> {
@@ -6397,11 +6559,19 @@ mod tests {
         repository::repo_path,
         status::{StatusCode, UnmergedStatus, UnmergedStatusCode},
     };
-    use gpui::{TestAppContext, UpdateGlobal, VisualTestContext};
+    use futures::{future::BoxFuture, stream::BoxStream};
+    use gpui::{AnyView, AsyncApp, TestAppContext, UpdateGlobal, VisualTestContext};
     use indoc::indoc;
+    use language_model::{
+        AuthenticateError, ConfigurationViewTargetAgent, LanguageModel,
+        LanguageModelCompletionError, LanguageModelCompletionEvent, LanguageModelName,
+        LanguageModelProvider, LanguageModelProviderId, LanguageModelProviderName,
+        LanguageModelProviderState, LanguageModelRequest, LanguageModelToolChoice,
+    };
     use project::FakeFs;
     use serde_json::json;
     use settings::SettingsStore;
+    use std::sync::Arc;
     use theme::LoadThemes;
     use util::path;
     use util::rel_path::rel_path;
@@ -7526,6 +7696,170 @@ mod tests {
                 expected_path.map(|s| s.to_string())
             );
         }
+    }
+
+    #[derive(Clone)]
+    struct StaticLanguageModel {
+        id: LanguageModelId,
+        name: LanguageModelName,
+        provider_id: LanguageModelProviderId,
+        provider_name: LanguageModelProviderName,
+    }
+
+    impl LanguageModel for StaticLanguageModel {
+        fn id(&self) -> LanguageModelId {
+            self.id.clone()
+        }
+
+        fn name(&self) -> LanguageModelName {
+            self.name.clone()
+        }
+
+        fn provider_id(&self) -> LanguageModelProviderId {
+            self.provider_id.clone()
+        }
+
+        fn provider_name(&self) -> LanguageModelProviderName {
+            self.provider_name.clone()
+        }
+
+        fn supports_images(&self) -> bool {
+            false
+        }
+
+        fn telemetry_id(&self) -> String {
+            format!("{}/{}", self.provider_id.0, self.id.0)
+        }
+
+        fn max_token_count(&self) -> u64 {
+            10_000
+        }
+
+        fn count_tokens(&self, _request: LanguageModelRequest, _cx: &App) -> BoxFuture<'static, anyhow::Result<u64>> {
+            unimplemented!()
+        }
+
+        fn stream_completion(
+            &self,
+            _request: LanguageModelRequest,
+            _cx: &AsyncApp,
+        ) -> BoxFuture<'static, Result<BoxStream<'static, Result<LanguageModelCompletionEvent, LanguageModelCompletionError>>, LanguageModelCompletionError>> {
+            unimplemented!()
+        }
+
+        fn supports_tools(&self) -> bool {
+            false
+        }
+
+        fn supports_tool_choice(&self, _choice: LanguageModelToolChoice) -> bool {
+            false
+        }
+    }
+
+    #[derive(Clone)]
+    struct StaticLanguageModelProvider {
+        id: LanguageModelProviderId,
+        name: LanguageModelProviderName,
+        authenticated: bool,
+        models: Vec<Arc<dyn LanguageModel>>,
+    }
+
+    impl LanguageModelProviderState for StaticLanguageModelProvider {
+        type ObservableEntity = ();
+
+        fn observable_entity(&self) -> Option<Entity<Self::ObservableEntity>> {
+            None
+        }
+    }
+
+    impl LanguageModelProvider for StaticLanguageModelProvider {
+        fn id(&self) -> LanguageModelProviderId {
+            self.id.clone()
+        }
+
+        fn name(&self) -> LanguageModelProviderName {
+            self.name.clone()
+        }
+
+        fn default_model(&self, _cx: &App) -> Option<Arc<dyn LanguageModel>> {
+            self.models.first().cloned()
+        }
+
+        fn default_fast_model(&self, _cx: &App) -> Option<Arc<dyn LanguageModel>> {
+            self.models.first().cloned()
+        }
+
+        fn provided_models(&self, _cx: &App) -> Vec<Arc<dyn LanguageModel>> {
+            self.models.clone()
+        }
+
+        fn is_authenticated(&self, _cx: &App) -> bool {
+            self.authenticated
+        }
+
+        fn authenticate(&self, _cx: &mut App) -> Task<Result<(), AuthenticateError>> {
+            Task::ready(if self.authenticated {
+                Ok(())
+            } else {
+                Err(AuthenticateError::CredentialsNotFound)
+            })
+        }
+
+        fn configuration_view(
+            &self,
+            _target_agent: ConfigurationViewTargetAgent,
+            _window: &mut Window,
+            _cx: &mut App,
+        ) -> AnyView {
+            panic!("configuration_view is not used in this test")
+        }
+
+        fn reset_credentials(&self, _cx: &mut App) -> Task<anyhow::Result<()>> {
+            Task::ready(Ok(()))
+        }
+    }
+
+    #[gpui::test]
+    fn test_commit_message_model_options_only_include_authenticated_providers(cx: &mut App) {
+        let authenticated_provider = Arc::new(StaticLanguageModelProvider {
+            id: LanguageModelProviderId::from("authenticated".to_string()),
+            name: LanguageModelProviderName::from("Authenticated".to_string()),
+            authenticated: true,
+            models: vec![Arc::new(StaticLanguageModel {
+                id: LanguageModelId::from("auth-model".to_string()),
+                name: LanguageModelName::from("Auth Model".to_string()),
+                provider_id: LanguageModelProviderId::from("authenticated".to_string()),
+                provider_name: LanguageModelProviderName::from("Authenticated".to_string()),
+            })],
+        });
+        let unauthenticated_provider = Arc::new(StaticLanguageModelProvider {
+            id: LanguageModelProviderId::from("unauthenticated".to_string()),
+            name: LanguageModelProviderName::from("Unauthenticated".to_string()),
+            authenticated: false,
+            models: vec![Arc::new(StaticLanguageModel {
+                id: LanguageModelId::from("hidden-model".to_string()),
+                name: LanguageModelName::from("Hidden Model".to_string()),
+                provider_id: LanguageModelProviderId::from("unauthenticated".to_string()),
+                provider_name: LanguageModelProviderName::from("Unauthenticated".to_string()),
+            })],
+        });
+
+        let model_registry = cx.new(|cx| {
+            let mut model_registry = LanguageModelRegistry::default();
+            model_registry.register_provider(authenticated_provider.clone(), cx);
+            model_registry.register_provider(unauthenticated_provider.clone(), cx);
+            model_registry
+        });
+
+        let (providers, selected_model) = model_registry.read_with(cx, |model_registry, cx| {
+            GitPanel::commit_message_model_options_from_registry(model_registry, cx)
+        });
+        assert_eq!(providers.len(), 1);
+        assert_eq!(providers[0].0, LanguageModelProviderId::from("authenticated".to_string()));
+        assert_eq!(providers[0].3.len(), 1);
+        assert_eq!(providers[0].3[0].0, LanguageModelId::from("auth-model".to_string()));
+        assert_eq!(providers[0].3[0].1.as_ref(), "Auth Model");
+        assert!(selected_model.is_none());
     }
 
     #[test]
