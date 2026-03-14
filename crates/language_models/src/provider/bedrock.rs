@@ -417,10 +417,57 @@ impl BedrockLanguageModelProvider {
         }
     }
 
-    fn create_language_model(&self, model: bedrock::Model) -> Arc<dyn LanguageModel> {
+    fn apply_available_model_overrides(
+        models: &mut BTreeMap<String, bedrock::Model>,
+        available_models: &[AvailableModel],
+    ) {
+        for model in available_models {
+            if models.contains_key(&model.name) {
+                continue;
+            }
+
+            models.insert(
+                model.name.clone(),
+                bedrock::Model::Custom {
+                    name: model.name.clone(),
+                    display_name: model.display_name.clone(),
+                    max_tokens: model.max_tokens,
+                    max_output_tokens: model.max_output_tokens,
+                    default_temperature: model.default_temperature,
+                    cache_configuration: model.cache_configuration.as_ref().map(|config| {
+                        bedrock::BedrockModelCacheConfiguration {
+                            max_cache_anchors: config.max_cache_anchors,
+                            min_total_token: config.min_total_token,
+                        }
+                    }),
+                },
+            );
+        }
+    }
+
+    fn metadata_override_for_model(
+        &self,
+        model: &bedrock::Model,
+        cx: &App,
+    ) -> Option<AvailableModel> {
+        if matches!(model, bedrock::Model::Custom { .. }) {
+            return None;
+        }
+
+        AllLanguageModelSettings::get_global(cx)
+            .bedrock
+            .available_models
+            .iter()
+            .find(|override_model| override_model.name == model.id())
+            .cloned()
+    }
+
+    fn create_language_model(&self, model: bedrock::Model, cx: &App) -> Arc<dyn LanguageModel> {
+        let metadata_override = self.metadata_override_for_model(&model, cx);
         Arc::new(BedrockModel {
             id: LanguageModelId::from(model.id().to_string()),
             model,
+            metadata_override,
             http_client: self.http_client.clone(),
             handle: self.handle.clone(),
             state: self.state.clone(),
@@ -444,12 +491,12 @@ impl LanguageModelProvider for BedrockLanguageModelProvider {
     }
 
     fn default_model(&self, _cx: &App) -> Option<Arc<dyn LanguageModel>> {
-        Some(self.create_language_model(bedrock::Model::default()))
+        Some(self.create_language_model(bedrock::Model::default(), _cx))
     }
 
     fn default_fast_model(&self, cx: &App) -> Option<Arc<dyn LanguageModel>> {
         let region = self.state.read(cx).get_region();
-        Some(self.create_language_model(bedrock::Model::default_fast(region.as_str())))
+        Some(self.create_language_model(bedrock::Model::default_fast(region.as_str()), cx))
     }
 
     fn provided_models(&self, cx: &App) -> Vec<Arc<dyn LanguageModel>> {
@@ -461,33 +508,16 @@ impl LanguageModelProvider for BedrockLanguageModelProvider {
             }
         }
 
-        // Override with available models from settings
-        for model in AllLanguageModelSettings::get_global(cx)
-            .bedrock
-            .available_models
-            .iter()
-        {
-            models.insert(
-                model.name.clone(),
-                bedrock::Model::Custom {
-                    name: model.name.clone(),
-                    display_name: model.display_name.clone(),
-                    max_tokens: model.max_tokens,
-                    max_output_tokens: model.max_output_tokens,
-                    default_temperature: model.default_temperature,
-                    cache_configuration: model.cache_configuration.as_ref().map(|config| {
-                        bedrock::BedrockModelCacheConfiguration {
-                            max_cache_anchors: config.max_cache_anchors,
-                            min_total_token: config.min_total_token,
-                        }
-                    }),
-                },
-            );
-        }
+        Self::apply_available_model_overrides(
+            &mut models,
+            &AllLanguageModelSettings::get_global(cx)
+                .bedrock
+                .available_models,
+        );
 
         models
             .into_values()
-            .map(|model| self.create_language_model(model))
+            .map(|model| self.create_language_model(model, cx))
             .collect()
     }
 
@@ -525,6 +555,7 @@ impl LanguageModelProviderState for BedrockLanguageModelProvider {
 struct BedrockModel {
     id: LanguageModelId,
     model: Model,
+    metadata_override: Option<AvailableModel>,
     http_client: AwsHttpClient,
     handle: tokio::runtime::Handle,
     client: OnceCell<BedrockClient>,
@@ -533,6 +564,58 @@ struct BedrockModel {
 }
 
 impl BedrockModel {
+    fn display_name(&self) -> &str {
+        self.metadata_override
+            .as_ref()
+            .and_then(|model| model.display_name.as_deref())
+            .unwrap_or_else(|| self.model.display_name())
+    }
+
+    fn max_token_count_value(&self) -> u64 {
+        self.metadata_override
+            .as_ref()
+            .map(|model| model.max_tokens)
+            .unwrap_or_else(|| self.model.max_token_count())
+    }
+
+    fn max_output_tokens_value(&self) -> u64 {
+        self.metadata_override
+            .as_ref()
+            .and_then(|model| model.max_output_tokens)
+            .unwrap_or_else(|| self.model.max_output_tokens())
+    }
+
+    fn default_temperature_value(&self) -> f32 {
+        self.metadata_override
+            .as_ref()
+            .and_then(|model| model.default_temperature)
+            .unwrap_or_else(|| self.model.default_temperature())
+    }
+
+    fn mode_value(&self) -> BedrockModelMode {
+        self.metadata_override
+            .as_ref()
+            .and_then(|model| model.mode.clone())
+            .map(|mode| match mode {
+                settings::ModelMode::Default => BedrockModelMode::Default,
+                settings::ModelMode::Thinking { budget_tokens } => BedrockModelMode::Thinking {
+                    budget_tokens: budget_tokens.map(u64::from),
+                },
+            })
+            .unwrap_or_else(|| self.model.mode())
+    }
+
+    fn cache_configuration_value(&self) -> Option<bedrock::BedrockModelCacheConfiguration> {
+        self.metadata_override
+            .as_ref()
+            .and_then(|model| model.cache_configuration.as_ref())
+            .map(|config| bedrock::BedrockModelCacheConfiguration {
+                max_cache_anchors: config.max_cache_anchors,
+                min_total_token: config.min_total_token,
+            })
+            .or_else(|| self.model.cache_configuration())
+    }
+
     fn get_or_init_client(&self, cx: &AsyncApp) -> anyhow::Result<&BedrockClient> {
         self.client
             .get_or_try_init_blocking(|| {
@@ -622,7 +705,7 @@ impl LanguageModel for BedrockModel {
     }
 
     fn name(&self) -> LanguageModelName {
-        LanguageModelName::from(self.model.display_name().to_string())
+        LanguageModelName::from(self.display_name().to_string())
     }
 
     fn provider_id(&self) -> LanguageModelProviderId {
@@ -643,7 +726,7 @@ impl LanguageModel for BedrockModel {
 
     fn supports_thinking(&self) -> bool {
         matches!(
-            self.model.mode(),
+            self.mode_value(),
             BedrockModelMode::Thinking { .. } | BedrockModelMode::AdaptiveThinking { .. }
         )
     }
@@ -667,11 +750,11 @@ impl LanguageModel for BedrockModel {
     }
 
     fn max_token_count(&self) -> u64 {
-        self.model.max_token_count()
+        self.max_token_count_value()
     }
 
     fn max_output_tokens(&self) -> Option<u64> {
-        Some(self.model.max_output_tokens())
+        Some(self.max_output_tokens_value())
     }
 
     fn count_tokens(
@@ -716,10 +799,10 @@ impl LanguageModel for BedrockModel {
         let request = match into_bedrock(
             request,
             model_id,
-            self.model.default_temperature(),
-            self.model.max_output_tokens(),
-            self.model.mode(),
-            self.model.supports_caching(),
+            self.default_temperature_value(),
+            self.max_output_tokens_value(),
+            self.mode_value(),
+            self.cache_configuration_value().is_some(),
             self.model.supports_tool_use(),
             use_extended_context,
         ) {
@@ -728,7 +811,7 @@ impl LanguageModel for BedrockModel {
         };
 
         let request = self.stream_completion(request, cx);
-        let display_name = self.model.display_name().to_string();
+        let display_name = self.display_name().to_string();
         let future = self.request_limiter.stream(async move {
             let response = request.await.map_err(|err| match err {
                 BedrockError::Validation(ref msg) => {
@@ -779,8 +862,7 @@ impl LanguageModel for BedrockModel {
     }
 
     fn cache_configuration(&self) -> Option<LanguageModelCacheConfiguration> {
-        self.model
-            .cache_configuration()
+        self.cache_configuration_value()
             .map(|config| LanguageModelCacheConfiguration {
                 max_cache_anchors: config.max_cache_anchors,
                 should_speculate: false,
@@ -804,6 +886,61 @@ fn deny_tool_use_events(
             other => other,
         }
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_available_model_override_preserves_builtin_bedrock_model() {
+        let mut models = BTreeMap::default();
+        models.insert(
+            "claude-sonnet-4-5".to_string(),
+            bedrock::Model::ClaudeSonnet4_5,
+        );
+
+        BedrockLanguageModelProvider::apply_available_model_overrides(
+            &mut models,
+            &[AvailableModel {
+                name: "claude-sonnet-4-5".into(),
+                display_name: Some("Claude Sonnet 4.5 (1M)".into()),
+                max_tokens: 1_000_000,
+                cache_configuration: None,
+                max_output_tokens: Some(64_000),
+                default_temperature: None,
+                mode: None,
+            }],
+        );
+
+        assert!(matches!(
+            models.get("claude-sonnet-4-5"),
+            Some(bedrock::Model::ClaudeSonnet4_5)
+        ));
+    }
+
+    #[test]
+    fn test_available_model_override_adds_custom_bedrock_model_when_missing() {
+        let mut models = BTreeMap::default();
+
+        BedrockLanguageModelProvider::apply_available_model_overrides(
+            &mut models,
+            &[AvailableModel {
+                name: "custom-bedrock-model".into(),
+                display_name: Some("Custom Bedrock Model".into()),
+                max_tokens: 128_000,
+                cache_configuration: None,
+                max_output_tokens: Some(8_192),
+                default_temperature: Some(0.7),
+                mode: None,
+            }],
+        );
+
+        assert!(matches!(
+            models.get("custom-bedrock-model"),
+            Some(bedrock::Model::Custom { .. })
+        ));
+    }
 }
 
 pub fn into_bedrock(
