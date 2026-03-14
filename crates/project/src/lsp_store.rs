@@ -329,6 +329,7 @@ pub struct LocalLspStore {
         HashMap<Option<SharedString>, HashMap<PathBuf, Option<SharedString>>>,
     >,
     restricted_worktrees_tasks: HashMap<WorktreeId, (Subscription, watch::Receiver<bool>)>,
+    language_servers_stopped: bool,
 
     buffers_to_refresh_hash_set: HashSet<BufferId>,
     buffers_to_refresh_queue: VecDeque<BufferId>,
@@ -2699,6 +2700,9 @@ impl LocalLspStore {
         only_register_servers: HashSet<LanguageServerSelector>,
         cx: &mut Context<LspStore>,
     ) {
+        if self.language_servers_stopped {
+            return;
+        }
         let buffer = buffer_handle.read(cx);
         let buffer_id = buffer.remote_id();
 
@@ -4226,6 +4230,7 @@ impl LspStore {
                 buffer_pull_diagnostics_result_ids: HashMap::default(),
                 workspace_pull_diagnostics_result_ids: HashMap::default(),
                 restricted_worktrees_tasks: HashMap::default(),
+                language_servers_stopped: false,
                 watched_manifest_filenames: ManifestProvidersStore::global(cx)
                     .manifest_file_names(),
             }),
@@ -5119,7 +5124,12 @@ impl LspStore {
             .semantic_token_config
             .update_global_mode(new_global_semantic_tokens_mode)
         {
-            self.restart_all_language_servers(cx);
+            let stopped = self
+                .as_local()
+                .is_some_and(|local| local.language_servers_stopped);
+            if !stopped {
+                self.restart_all_language_servers(cx);
+            }
         }
 
         cx.notify();
@@ -5130,6 +5140,9 @@ impl LspStore {
         let Some(local) = self.as_local_mut() else {
             return;
         };
+        if local.language_servers_stopped {
+            return;
+        }
         let mut adapters = BTreeMap::default();
         let get_adapter = {
             let languages = local.languages.clone();
@@ -10837,6 +10850,9 @@ impl LspStore {
     }
 
     pub fn stop_all_language_servers(&mut self, cx: &mut Context<Self>) {
+        if let Some(local) = self.as_local_mut() {
+            local.language_servers_stopped = true;
+        }
         self.shutdown_all_language_servers(cx).detach();
     }
 
@@ -10872,6 +10888,9 @@ impl LspStore {
     }
 
     pub fn restart_all_language_servers(&mut self, cx: &mut Context<Self>) {
+        if let Some(local) = self.as_local_mut() {
+            local.language_servers_stopped = false;
+        }
         let buffers = self.buffer_store.read(cx).buffers().collect();
         self.restart_language_servers_for_buffers(buffers, HashSet::default(), cx);
     }
