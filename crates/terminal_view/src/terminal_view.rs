@@ -1576,12 +1576,16 @@ impl Item for TerminalView {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Vec<(SharedString, Box<dyn gpui::Action>)> {
+        let mut actions: Vec<(SharedString, Box<dyn gpui::Action>)> = Vec::new();
         let terminal = self.terminal.read(cx);
         if terminal.task().is_none() {
-            vec![("Rename".into(), Box::new(RenameTerminal))]
-        } else {
-            Vec::new()
+            actions.push(("Rename".into(), Box::new(RenameTerminal)));
         }
+        actions.push((
+            "Detach Terminal".into(),
+            Box::new(workspace::DetachActiveItem),
+        ));
+        actions
     }
 
     fn buffer_kind(&self, _: &App) -> workspace::item::ItemBufferKind {
