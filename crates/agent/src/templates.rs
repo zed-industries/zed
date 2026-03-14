@@ -39,10 +39,30 @@ pub struct SystemPromptTemplate<'a> {
     pub project: &'a prompt_store::ProjectContext,
     pub available_tools: Vec<SharedString>,
     pub model_name: Option<String>,
+    pub available_skills: String,
 }
 
 impl Template for SystemPromptTemplate<'_> {
     const TEMPLATE_NAME: &'static str = "system_prompt.hbs";
+}
+
+/// Context for a single skill in the skills prompt template.
+#[derive(Serialize)]
+pub struct SkillContext {
+    pub name: String,
+    pub description: String,
+    pub path: String,
+}
+
+/// Template for rendering the available skills section of the system prompt.
+#[derive(Serialize)]
+pub struct SkillsPromptTemplate {
+    pub skills: Vec<SkillContext>,
+    pub has_skills: bool,
+}
+
+impl Template for SkillsPromptTemplate {
+    const TEMPLATE_NAME: &'static str = "skills_prompt.hbs";
 }
 
 /// Handlebars helper for checking if an item is in a list
@@ -80,11 +100,41 @@ mod tests {
         let template = SystemPromptTemplate {
             project: &project,
             available_tools: vec!["echo".into()],
+            available_skills: String::new(),
             model_name: Some("test-model".to_string()),
         };
         let templates = Templates::new();
         let rendered = template.render(&templates).unwrap();
         assert!(rendered.contains("## Fixing Diagnostics"));
         assert!(rendered.contains("test-model"));
+    }
+
+    #[test]
+    fn test_skills_prompt_template() {
+        let templates = Templates::new();
+        let template = SkillsPromptTemplate {
+            skills: vec![SkillContext {
+                name: "test-skill".to_string(),
+                description: "A test skill description".to_string(),
+                path: "/home/user/.config/zed/skills/test-skill".to_string(),
+            }],
+            has_skills: true,
+        };
+        let rendered = template.render(&templates).unwrap();
+        assert!(rendered.contains("## Available Agent Skills"));
+        assert!(rendered.contains(
+            "| test-skill | A test skill description | /home/user/.config/zed/skills/test-skill |"
+        ));
+    }
+
+    #[test]
+    fn test_skills_prompt_template_empty() {
+        let templates = Templates::new();
+        let template = SkillsPromptTemplate {
+            skills: vec![],
+            has_skills: false,
+        };
+        let rendered = template.render(&templates).unwrap();
+        assert!(rendered.is_empty());
     }
 }
