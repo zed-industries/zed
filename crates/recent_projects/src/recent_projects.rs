@@ -935,7 +935,14 @@ impl PickerDelegate for RecentProjectsDelegate {
                                 }
                                 return;
                             } else {
-                                workspace.open_workspace_for_paths(false, paths, window, cx)
+                                workspace
+                                    .open_workspace_for_paths(false, paths, window, cx)
+                                    .detach_and_prompt_err(
+                                        "Failed to open project",
+                                        window,
+                                        cx,
+                                        |_, _, _| None,
+                                    );
                             }
                         }
                         SerializedWorkspaceLocation::Remote(mut connection) => {
@@ -964,14 +971,14 @@ impl PickerDelegate for RecentProjectsDelegate {
                                 )
                                 .await
                             })
+                            .detach_and_prompt_err(
+                                "Failed to open project",
+                                window,
+                                cx,
+                                |_, _, _| None,
+                            );
                         }
                     }
-                    .detach_and_prompt_err(
-                        "Failed to open project",
-                        window,
-                        cx,
-                        |_, _, _| None,
-                    );
                 });
                 cx.emit(DismissEvent);
             }
@@ -1241,8 +1248,8 @@ impl PickerDelegate for RecentProjectsDelegate {
         let focus_handle = self.focus_handle.clone();
         let popover_style = matches!(self.style, ProjectPickerStyle::Popover);
         let open_folder_section = matches!(
-            self.filtered_entries.get(self.selected_index)?,
-            ProjectPickerEntry::OpenFolder { .. }
+            self.filtered_entries.get(self.selected_index),
+            Some(ProjectPickerEntry::OpenFolder { .. })
         );
 
         if popover_style {

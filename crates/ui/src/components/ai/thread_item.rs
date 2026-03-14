@@ -1,9 +1,10 @@
 use crate::{
-    DecoratedIcon, DiffStat, HighlightedLabel, IconDecoration, IconDecorationKind, SpinnerLabel,
-    prelude::*,
+    CommonAnimationExt, DecoratedIcon, DiffStat, GradientFade, HighlightedLabel, IconDecoration,
+    IconDecorationKind, prelude::*,
 };
 
-use gpui::{AnyView, ClickEvent, Hsla, SharedString, linear_color_stop, linear_gradient};
+use gpui::{Animation, AnimationExt, AnyView, ClickEvent, Hsla, SharedString, pulsating_between};
+use std::time::Duration;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum AgentThreadStatus {
@@ -23,9 +24,11 @@ pub struct ThreadItem {
     timestamp: SharedString,
     notified: bool,
     status: AgentThreadStatus,
+    generating_title: bool,
     selected: bool,
     focused: bool,
     hovered: bool,
+    docked_right: bool,
     added: Option<usize>,
     removed: Option<usize>,
     worktree: Option<SharedString>,
@@ -47,9 +50,11 @@ impl ThreadItem {
             timestamp: "".into(),
             notified: false,
             status: AgentThreadStatus::default(),
+            generating_title: false,
             selected: false,
             focused: false,
             hovered: false,
+            docked_right: false,
             added: None,
             removed: None,
             worktree: None,
@@ -87,6 +92,11 @@ impl ThreadItem {
         self
     }
 
+    pub fn generating_title(mut self, generating: bool) -> Self {
+        self.generating_title = generating;
+        self
+    }
+
     pub fn selected(mut self, selected: bool) -> Self {
         self.selected = selected;
         self
@@ -104,6 +114,11 @@ impl ThreadItem {
 
     pub fn removed(mut self, removed: usize) -> Self {
         self.removed = Some(removed);
+        self
+    }
+
+    pub fn docked_right(mut self, docked_right: bool) -> Self {
+        self.docked_right = docked_right;
         self
     }
 
@@ -154,12 +169,12 @@ impl ThreadItem {
 impl RenderOnce for ThreadItem {
     fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
         let color = cx.theme().colors();
-        // let dot_separator = || {
-        //     Label::new("•")
-        //         .size(LabelSize::Small)
-        //         .color(Color::Muted)
-        //         .alpha(0.5)
-        // };
+        let dot_separator = || {
+            Label::new("•")
+                .size(LabelSize::Small)
+                .color(Color::Muted)
+                .alpha(0.5)
+        };
 
         let icon_container = || h_flex().size_4().flex_none().justify_center();
         let agent_icon = if let Some(custom_svg) = self.custom_icon_from_external_svg {
@@ -194,21 +209,38 @@ impl RenderOnce for ThreadItem {
             None
         };
 
-        let icon = if let Some(decoration) = decoration {
+        let is_running = matches!(
+            self.status,
+            AgentThreadStatus::Running | AgentThreadStatus::WaitingForConfirmation
+        );
+
+        let icon = if is_running {
+            icon_container().child(
+                Icon::new(IconName::LoadCircle)
+                    .size(IconSize::Small)
+                    .color(Color::Muted)
+                    .with_rotate_animation(2),
+            )
+        } else if let Some(decoration) = decoration {
             icon_container().child(DecoratedIcon::new(agent_icon, Some(decoration)))
         } else {
             icon_container().child(agent_icon)
         };
 
-        let is_running = matches!(
-            self.status,
-            AgentThreadStatus::Running | AgentThreadStatus::WaitingForConfirmation
-        );
-        let running_or_action = is_running || (self.hovered && self.action_slot.is_some());
-
         let title = self.title;
         let highlight_positions = self.highlight_positions;
-        let title_label = if highlight_positions.is_empty() {
+        let title_label = if self.generating_title {
+            Label::new("New Thread…")
+                .color(Color::Muted)
+                .with_animation(
+                    "generating-title",
+                    Animation::new(Duration::from_secs(2))
+                        .repeat()
+                        .with_easing(pulsating_between(0.4, 0.8)),
+                    |label, delta| label.alpha(delta),
+                )
+                .into_any_element()
+        } else if highlight_positions.is_empty() {
             Label::new(title).into_any_element()
         } else {
             HighlightedLabel::new(title, highlight_positions).into_any_element()
@@ -220,24 +252,20 @@ impl RenderOnce for ThreadItem {
             color.panel_background
         };
 
-        let gradient_overlay = div()
-            .absolute()
-            .top_0()
-            .right(px(-10.0))
-            .w_12()
-            .h_full()
-            .bg(linear_gradient(
-                90.,
-                linear_color_stop(base_bg, 0.6),
-                linear_color_stop(base_bg.opacity(0.0), 0.),
-            ))
-            .group_hover("thread-item", |s| {
-                s.bg(linear_gradient(
-                    90.,
-                    linear_color_stop(color.element_hover, 0.6),
-                    linear_color_stop(color.element_hover.opacity(0.0), 0.),
-                ))
-            });
+        let gradient_overlay =
+            GradientFade::new(base_bg, color.element_hover, color.element_active)
+                .width(px(64.0))
+                .right(px(-10.0))
+                .gradient_stop(0.75)
+                .group_name("thread-item");
+
+        let has_diff_stats = self.added.is_some() || self.removed.is_some();
+        let added_count = self.added.unwrap_or(0);
+        let removed_count = self.removed.unwrap_or(0);
+        let diff_stat_id = self.id.clone();
+        let has_worktree = self.worktree.is_some();
+        let has_timestamp = !self.timestamp.is_empty();
+        let timestamp = self.timestamp;
 
         v_flex()
             .id(self.id.clone())
@@ -246,18 +274,16 @@ impl RenderOnce for ThreadItem {
             .overflow_hidden()
             .cursor_pointer()
             .w_full()
-            .map(|this| {
-                if self.worktree.is_some() {
-                    this.p_2()
-                } else {
-                    this.px_2().py_1()
-                }
-            })
+            .p_1()
             .when(self.selected, |s| s.bg(color.element_active))
             .border_1()
             .border_color(gpui::transparent_black())
-            .when(self.focused, |s| s.border_color(color.panel_focused_border))
+            .when(self.focused, |s| {
+                s.when(self.docked_right, |s| s.border_r_2())
+                    .border_color(color.border_focused)
+            })
             .hover(|s| s.bg(color.element_hover))
+            .active(|s| s.bg(color.element_active))
             .on_hover(self.on_hover)
             .child(
                 h_flex()
@@ -276,20 +302,20 @@ impl RenderOnce for ThreadItem {
                             .when_some(self.tooltip, |this, tooltip| this.tooltip(tooltip)),
                     )
                     .child(gradient_overlay)
-                    .when(running_or_action, |this| {
-                        this.child(
-                            h_flex()
-                                .gap_1()
-                                .when(is_running, |this| {
-                                    this.child(
-                                        icon_container()
-                                            .child(SpinnerLabel::new().color(Color::Accent)),
-                                    )
-                                })
-                                .when(self.hovered, |this| {
-                                    this.when_some(self.action_slot, |this, slot| this.child(slot))
-                                }),
-                        )
+                    .when(self.hovered, |this| {
+                        this.when_some(self.action_slot, |this, slot| {
+                            let overlay = GradientFade::new(
+                                base_bg,
+                                color.element_hover,
+                                color.element_active,
+                            )
+                            .width(px(64.0))
+                            .right(px(6.))
+                            .gradient_stop(0.75)
+                            .group_name("thread-item");
+
+                            this.child(h_flex().relative().child(overlay).child(slot))
+                        })
                     }),
             )
             .when_some(self.worktree, |this, worktree| {
@@ -312,32 +338,48 @@ impl RenderOnce for ThreadItem {
                         .gap_1p5()
                         .child(icon_container()) // Icon Spacing
                         .child(worktree_label)
-                        // TODO: Uncomment the elements below when we're ready to expose this data
-                        // .child(dot_separator())
-                        // .child(
-                        //     Label::new(self.timestamp)
-                        //         .size(LabelSize::Small)
-                        //         .color(Color::Muted),
-                        // )
-                        // .child(
-                        //     Label::new("•")
-                        //         .size(LabelSize::Small)
-                        //         .color(Color::Muted)
-                        //         .alpha(0.5),
-                        // )
-                        // .when(has_no_changes, |this| {
-                        //     this.child(
-                        //         Label::new("No Changes")
-                        //             .size(LabelSize::Small)
-                        //             .color(Color::Muted),
-                        //     )
-                        // })
-                        .when(self.added.is_some() || self.removed.is_some(), |this| {
-                            this.child(DiffStat::new(
-                                self.id,
-                                self.added.unwrap_or(0),
-                                self.removed.unwrap_or(0),
-                            ))
+                        .when(has_diff_stats || has_timestamp, |this| {
+                            this.child(dot_separator())
+                        })
+                        .when(has_diff_stats, |this| {
+                            this.child(
+                                DiffStat::new(diff_stat_id.clone(), added_count, removed_count)
+                                    .tooltip("Unreviewed changes"),
+                            )
+                        })
+                        .when(has_diff_stats && has_timestamp, |this| {
+                            this.child(dot_separator())
+                        })
+                        .when(has_timestamp, |this| {
+                            this.child(
+                                Label::new(timestamp.clone())
+                                    .size(LabelSize::Small)
+                                    .color(Color::Muted),
+                            )
+                        }),
+                )
+            })
+            .when(!has_worktree && (has_diff_stats || has_timestamp), |this| {
+                this.child(
+                    h_flex()
+                        .min_w_0()
+                        .gap_1p5()
+                        .child(icon_container()) // Icon Spacing
+                        .when(has_diff_stats, |this| {
+                            this.child(
+                                DiffStat::new(diff_stat_id, added_count, removed_count)
+                                    .tooltip("Unreviewed Changes"),
+                            )
+                        })
+                        .when(has_diff_stats && has_timestamp, |this| {
+                            this.child(dot_separator())
+                        })
+                        .when(has_timestamp, |this| {
+                            this.child(
+                                Label::new(timestamp.clone())
+                                    .size(LabelSize::Small)
+                                    .color(Color::Muted),
+                            )
                         }),
                 )
             })
@@ -361,21 +403,31 @@ impl Component for ThreadItem {
 
         let thread_item_examples = vec![
             single_example(
-                "Default",
+                "Default (minutes)",
                 container()
                     .child(
                         ThreadItem::new("ti-1", "Linking to the Agent Panel Depending on Settings")
                             .icon(IconName::AiOpenAi)
-                            .timestamp("1:33 AM"),
+                            .timestamp("15m"),
                     )
                     .into_any_element(),
             ),
             single_example(
-                "Notified",
+                "Timestamp Only (hours)",
+                container()
+                    .child(
+                        ThreadItem::new("ti-1b", "Thread with just a timestamp")
+                            .icon(IconName::AiClaude)
+                            .timestamp("3h"),
+                    )
+                    .into_any_element(),
+            ),
+            single_example(
+                "Notified (weeks)",
                 container()
                     .child(
                         ThreadItem::new("ti-2", "Refine thread view scrolling behavior")
-                            .timestamp("12:12 AM")
+                            .timestamp("1w")
                             .notified(true),
                     )
                     .into_any_element(),
@@ -385,7 +437,7 @@ impl Component for ThreadItem {
                 container()
                     .child(
                         ThreadItem::new("ti-2b", "Execute shell command in terminal")
-                            .timestamp("12:15 AM")
+                            .timestamp("2h")
                             .status(AgentThreadStatus::WaitingForConfirmation),
                     )
                     .into_any_element(),
@@ -395,7 +447,7 @@ impl Component for ThreadItem {
                 container()
                     .child(
                         ThreadItem::new("ti-2c", "Failed to connect to language server")
-                            .timestamp("12:20 AM")
+                            .timestamp("5h")
                             .status(AgentThreadStatus::Error),
                     )
                     .into_any_element(),
@@ -406,7 +458,7 @@ impl Component for ThreadItem {
                     .child(
                         ThreadItem::new("ti-3", "Add line numbers option to FileEditBlock")
                             .icon(IconName::AiClaude)
-                            .timestamp("7:30 PM")
+                            .timestamp("23h")
                             .status(AgentThreadStatus::Running),
                     )
                     .into_any_element(),
@@ -417,20 +469,33 @@ impl Component for ThreadItem {
                     .child(
                         ThreadItem::new("ti-4", "Add line numbers option to FileEditBlock")
                             .icon(IconName::AiClaude)
-                            .timestamp("7:37 PM")
+                            .timestamp("2w")
                             .worktree("link-agent-panel"),
                     )
                     .into_any_element(),
             ),
             single_example(
-                "With Changes",
+                "With Changes (months)",
                 container()
                     .child(
                         ThreadItem::new("ti-5", "Managing user and project settings interactions")
                             .icon(IconName::AiClaude)
-                            .timestamp("7:37 PM")
+                            .timestamp("1mo")
                             .added(10)
                             .removed(3),
+                    )
+                    .into_any_element(),
+            ),
+            single_example(
+                "Worktree + Changes + Timestamp",
+                container()
+                    .child(
+                        ThreadItem::new("ti-5b", "Full metadata example")
+                            .icon(IconName::AiClaude)
+                            .worktree("my-project")
+                            .added(42)
+                            .removed(17)
+                            .timestamp("3w"),
                     )
                     .into_any_element(),
             ),
@@ -440,7 +505,7 @@ impl Component for ThreadItem {
                     .child(
                         ThreadItem::new("ti-6", "Refine textarea interaction behavior")
                             .icon(IconName::AiGemini)
-                            .timestamp("3:00 PM")
+                            .timestamp("45m")
                             .selected(true),
                     )
                     .into_any_element(),
@@ -451,8 +516,20 @@ impl Component for ThreadItem {
                     .child(
                         ThreadItem::new("ti-7", "Implement keyboard navigation")
                             .icon(IconName::AiClaude)
-                            .timestamp("4:00 PM")
+                            .timestamp("12h")
                             .focused(true),
+                    )
+                    .into_any_element(),
+            ),
+            single_example(
+                "Focused + Docked Right",
+                container()
+                    .child(
+                        ThreadItem::new("ti-7b", "Focused with right dock border")
+                            .icon(IconName::AiClaude)
+                            .timestamp("1w")
+                            .focused(true)
+                            .docked_right(true),
                     )
                     .into_any_element(),
             ),
@@ -462,9 +539,48 @@ impl Component for ThreadItem {
                     .child(
                         ThreadItem::new("ti-8", "Active and keyboard-focused thread")
                             .icon(IconName::AiGemini)
-                            .timestamp("5:00 PM")
+                            .timestamp("2mo")
                             .selected(true)
                             .focused(true),
+                    )
+                    .into_any_element(),
+            ),
+            single_example(
+                "Hovered with Action Slot",
+                container()
+                    .child(
+                        ThreadItem::new("ti-9", "Hover to see action button")
+                            .icon(IconName::AiClaude)
+                            .timestamp("6h")
+                            .hovered(true)
+                            .action_slot(
+                                IconButton::new("delete", IconName::Trash)
+                                    .icon_size(IconSize::Small)
+                                    .icon_color(Color::Muted),
+                            ),
+                    )
+                    .into_any_element(),
+            ),
+            single_example(
+                "Search Highlight",
+                container()
+                    .child(
+                        ThreadItem::new("ti-10", "Implement keyboard navigation")
+                            .icon(IconName::AiClaude)
+                            .timestamp("4w")
+                            .highlight_positions(vec![0, 1, 2, 3, 4, 5, 6, 7, 8, 9]),
+                    )
+                    .into_any_element(),
+            ),
+            single_example(
+                "Worktree Search Highlight",
+                container()
+                    .child(
+                        ThreadItem::new("ti-11", "Search in worktree name")
+                            .icon(IconName::AiClaude)
+                            .timestamp("3mo")
+                            .worktree("my-project-name")
+                            .worktree_highlight_positions(vec![3, 4, 5, 6, 7, 8, 9, 10, 11]),
                     )
                     .into_any_element(),
             ),

@@ -61,12 +61,8 @@ pub fn init(cx: &mut App) {
 pub static FILTERED_KEYSTROKES: LazyLock<Vec<Vec<Keystroke>>> = LazyLock::new(|| {
     [
         // Modifiers on normal vim commands
-        "g h",
         "g j",
         "g k",
-        "g l",
-        "g $",
-        "g ^",
         // Duplicate keys with "ctrl" held, e.g. "ctrl-w ctrl-a" is duplicate of "ctrl-w a"
         "ctrl-w ctrl-a",
         "ctrl-w ctrl-c",

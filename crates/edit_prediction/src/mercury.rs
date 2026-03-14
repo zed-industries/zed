@@ -1,40 +1,47 @@
 use crate::{
     DebugEvent, EditPredictionFinishedDebugEvent, EditPredictionId, EditPredictionModelInput,
-    EditPredictionStartedDebugEvent, open_ai_response::text_from_response,
+    EditPredictionStartedDebugEvent, EditPredictionStore, open_ai_response::text_from_response,
     prediction::EditPredictionResult, zeta::compute_edits,
 };
 use anyhow::{Context as _, Result};
 use cloud_llm_client::EditPredictionRejectReason;
 use futures::AsyncReadExt as _;
 use gpui::{
-    App, AppContext as _, Entity, Global, SharedString, Task,
-    http_client::{self, AsyncBody, HttpClient, Method},
+    App, AppContext as _, Context, Entity, Global, SharedString, Task,
+    http_client::{self, AsyncBody, HttpClient, Method, StatusCode},
 };
-use language::{OffsetRangeExt as _, ToOffset, ToPoint as _};
+use language::{ToOffset, ToPoint as _};
 use language_model::{ApiKeyState, EnvVar, env_var};
 use release_channel::AppVersion;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::{mem, ops::Range, path::Path, sync::Arc, time::Instant};
-
-use zeta_prompt::{ExcerptRanges, ZetaPromptInput};
+use zeta_prompt::ZetaPromptInput;
 
 const MERCURY_API_URL: &str = "https://api.inceptionlabs.ai/v1/edit/completions";
-const MAX_REWRITE_TOKENS: usize = 150;
-const MAX_CONTEXT_TOKENS: usize = 350;
 
 pub struct Mercury {
     pub api_token: Entity<ApiKeyState>,
+    payment_required_error: bool,
 }
 
 impl Mercury {
     pub fn new(cx: &mut App) -> Self {
         Mercury {
             api_token: mercury_api_token(cx),
+            payment_required_error: false,
         }
     }
 
+    pub fn has_payment_required_error(&self) -> bool {
+        self.payment_required_error
+    }
+
+    pub fn set_payment_required_error(&mut self, payment_required_error: bool) {
+        self.payment_required_error = payment_required_error;
+    }
+
     pub(crate) fn request_prediction(
-        &self,
+        &mut self,
         EditPredictionModelInput {
             buffer,
             snapshot,
@@ -44,7 +51,7 @@ impl Mercury {
             debug_tx,
             ..
         }: EditPredictionModelInput,
-        cx: &mut App,
+        cx: &mut Context<EditPredictionStore>,
     ) -> Task<Result<Option<EditPredictionResult>>> {
         self.api_token.update(cx, |key_state, cx| {
             _ = key_state.load_if_needed(MERCURY_CREDENTIALS_URL, |s| s, cx);
@@ -64,52 +71,47 @@ impl Mercury {
         let active_buffer = buffer.clone();
 
         let result = cx.background_spawn(async move {
-            let (editable_range, context_range) =
-                crate::cursor_excerpt::editable_and_context_ranges_for_cursor_position(
-                    cursor_point,
-                    &snapshot,
-                    MAX_CONTEXT_TOKENS,
-                    MAX_REWRITE_TOKENS,
-                );
+            let cursor_offset = cursor_point.to_offset(&snapshot);
+            let (excerpt_point_range, excerpt_offset_range, cursor_offset_in_excerpt) =
+                crate::cursor_excerpt::compute_cursor_excerpt(&snapshot, cursor_offset);
 
             let related_files = zeta_prompt::filter_redundant_excerpts(
                 related_files,
                 full_path.as_ref(),
-                context_range.start.row..context_range.end.row,
+                excerpt_point_range.start.row..excerpt_point_range.end.row,
             );
 
-            let context_offset_range = context_range.to_offset(&snapshot);
-            let context_start_row = context_range.start.row;
+            let cursor_excerpt: Arc<str> = snapshot
+                .text_for_range(excerpt_point_range.clone())
+                .collect::<String>()
+                .into();
+            let syntax_ranges = crate::cursor_excerpt::compute_syntax_ranges(
+                &snapshot,
+                cursor_offset,
+                &excerpt_offset_range,
+            );
+            let excerpt_ranges = zeta_prompt::compute_legacy_excerpt_ranges(
+                &cursor_excerpt,
+                cursor_offset_in_excerpt,
+                &syntax_ranges,
+            );
 
-            let editable_offset_range = editable_range.to_offset(&snapshot);
-
-            let editable_range_in_excerpt = (editable_offset_range.start
-                - context_offset_range.start)
-                ..(editable_offset_range.end - context_offset_range.start);
-            let context_range_in_excerpt =
-                0..(context_offset_range.end - context_offset_range.start);
+            let editable_offset_range = (excerpt_offset_range.start
+                + excerpt_ranges.editable_350.start)
+                ..(excerpt_offset_range.start + excerpt_ranges.editable_350.end);
 
             let inputs = zeta_prompt::ZetaPromptInput {
                 events,
-                related_files,
+                related_files: Some(related_files),
                 cursor_offset_in_excerpt: cursor_point.to_offset(&snapshot)
-                    - context_offset_range.start,
+                    - excerpt_offset_range.start,
                 cursor_path: full_path.clone(),
-                cursor_excerpt: snapshot
-                    .text_for_range(context_range)
-                    .collect::<String>()
-                    .into(),
+                cursor_excerpt,
                 experiment: None,
-                excerpt_start_row: Some(context_start_row),
-                excerpt_ranges: ExcerptRanges {
-                    editable_150: editable_range_in_excerpt.clone(),
-                    editable_180: editable_range_in_excerpt.clone(),
-                    editable_350: editable_range_in_excerpt.clone(),
-                    editable_150_context_350: context_range_in_excerpt.clone(),
-                    editable_180_context_350: context_range_in_excerpt.clone(),
-                    editable_350_context_150: context_range_in_excerpt.clone(),
-                    ..Default::default()
-                },
+                excerpt_start_row: Some(excerpt_point_range.start.row),
+                excerpt_ranges,
+                syntax_ranges: Some(syntax_ranges),
+                active_buffer_diagnostics: vec![],
                 in_open_source_repo: false,
                 can_collect_data: false,
                 repo_url: None,
@@ -171,6 +173,12 @@ impl Mercury {
 
             let response_received_at = Instant::now();
             if !response.status().is_success() {
+                if response.status() == StatusCode::PAYMENT_REQUIRED {
+                    anyhow::bail!(MercuryPaymentRequiredError(
+                        mercury_payment_required_message(&body),
+                    ));
+                }
+
                 anyhow::bail!(
                     "Request failed with status: {:?}\nBody: {}",
                     response.status(),
@@ -217,9 +225,22 @@ impl Mercury {
             anyhow::Ok((id, edits, snapshot, response_received_at, inputs))
         });
 
-        cx.spawn(async move |cx| {
-            let (id, edits, old_snapshot, response_received_at, inputs) =
-                result.await.context("Mercury edit prediction failed")?;
+        cx.spawn(async move |ep_store, cx| {
+            let result = result.await.context("Mercury edit prediction failed");
+
+            let has_payment_required_error = result
+                .as_ref()
+                .err()
+                .is_some_and(is_mercury_payment_required_error);
+
+            ep_store.update(cx, |store, cx| {
+                store
+                    .mercury
+                    .set_payment_required_error(has_payment_required_error);
+                cx.notify();
+            })?;
+
+            let (id, edits, old_snapshot, response_received_at, inputs) = result?;
             anyhow::Ok(Some(
                 EditPredictionResult::new(
                     EditPredictionId(id.into()),
@@ -260,7 +281,7 @@ fn build_prompt(inputs: &ZetaPromptInput) -> String {
         &mut prompt,
         RECENTLY_VIEWED_SNIPPETS_START..RECENTLY_VIEWED_SNIPPETS_END,
         |prompt| {
-            for related_file in inputs.related_files.iter() {
+            for related_file in inputs.related_files.as_deref().unwrap_or_default().iter() {
                 for related_excerpt in &related_file.excerpts {
                     push_delimited(
                         prompt,
@@ -323,6 +344,33 @@ fn push_delimited(prompt: &mut String, delimiters: Range<&str>, cb: impl FnOnce(
 pub const MERCURY_CREDENTIALS_URL: SharedString =
     SharedString::new_static("https://api.inceptionlabs.ai/v1/edit/completions");
 pub const MERCURY_CREDENTIALS_USERNAME: &str = "mercury-api-token";
+
+#[derive(Debug, thiserror::Error)]
+#[error("{0}")]
+struct MercuryPaymentRequiredError(SharedString);
+
+#[derive(Deserialize)]
+struct MercuryErrorResponse {
+    error: MercuryErrorMessage,
+}
+
+#[derive(Deserialize)]
+struct MercuryErrorMessage {
+    message: String,
+}
+
+fn is_mercury_payment_required_error(error: &anyhow::Error) -> bool {
+    error
+        .downcast_ref::<MercuryPaymentRequiredError>()
+        .is_some()
+}
+
+fn mercury_payment_required_message(body: &[u8]) -> SharedString {
+    serde_json::from_slice::<MercuryErrorResponse>(body)
+        .map(|response| response.error.message.into())
+        .unwrap_or_else(|_| String::from_utf8_lossy(body).trim().to_string().into())
+}
+
 pub static MERCURY_TOKEN_ENV_VAR: std::sync::LazyLock<EnvVar> = env_var!("MERCURY_AI_TOKEN");
 
 struct GlobalMercuryApiKey(Entity<ApiKeyState>);

@@ -35,11 +35,10 @@ impl AgentServer for NativeAgentServer {
 
     fn connect(
         &self,
-        delegate: AgentServerDelegate,
+        _delegate: AgentServerDelegate,
         cx: &mut App,
     ) -> Task<Result<Rc<dyn acp_thread::AgentConnection>>> {
         log::debug!("NativeAgentServer::connect");
-        let project = delegate.project().clone();
         let fs = self.fs.clone();
         let thread_store = self.thread_store.clone();
         let prompt_store = PromptStore::global(cx);
@@ -49,9 +48,8 @@ impl AgentServer for NativeAgentServer {
             let prompt_store = prompt_store.await?;
 
             log::debug!("Creating native agent entity");
-            let agent =
-                NativeAgent::new(project, thread_store, templates, Some(prompt_store), fs, cx)
-                    .await?;
+            let agent = cx
+                .update(|cx| NativeAgent::new(thread_store, templates, Some(prompt_store), fs, cx));
 
             // Create the connection wrapper
             let connection = NativeAgentConnection(agent);

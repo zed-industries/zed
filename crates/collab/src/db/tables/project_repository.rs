@@ -24,6 +24,8 @@ pub struct Model {
     pub head_commit_details: Option<String>,
     pub remote_upstream_url: Option<String>,
     pub remote_origin_url: Option<String>,
+    // JSON array of linked worktree objects
+    pub linked_worktrees: Option<String>,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]

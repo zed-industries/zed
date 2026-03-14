@@ -3,6 +3,7 @@ use component::{example_group, single_example};
 use gpui::{App, FocusHandle, Focusable, Hsla, Length};
 use std::sync::Arc;
 
+use ui::Tooltip;
 use ui::prelude::*;
 
 use crate::ErasedEditor;
@@ -38,6 +39,8 @@ pub struct InputField {
     tab_index: Option<isize>,
     /// Whether this field is a tab stop (can be focused via Tab key).
     tab_stop: bool,
+    /// Whether the field content is masked (for sensitive fields like passwords or API keys).
+    masked: Option<bool>,
 }
 
 impl Focusable for InputField {
@@ -63,6 +66,7 @@ impl InputField {
             min_width: px(192.).into(),
             tab_index: None,
             tab_stop: true,
+            masked: None,
         }
     }
 
@@ -96,6 +100,12 @@ impl InputField {
         self
     }
 
+    /// Sets this field as a masked/sensitive input (e.g., for passwords or API keys).
+    pub fn masked(mut self, masked: bool) -> Self {
+        self.masked = Some(masked);
+        self
+    }
+
     pub fn is_empty(&self, cx: &App) -> bool {
         self.editor().text(cx).trim().is_empty()
     }
@@ -115,11 +125,19 @@ impl InputField {
     pub fn set_text(&self, text: &str, window: &mut Window, cx: &mut App) {
         self.editor().set_text(text, window, cx)
     }
+
+    pub fn set_masked(&self, masked: bool, window: &mut Window, cx: &mut App) {
+        self.editor().set_masked(masked, window, cx)
+    }
 }
 
 impl Render for InputField {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let editor = self.editor.clone();
+
+        if let Some(masked) = self.masked {
+            self.editor.set_masked(masked, window, cx);
+        }
 
         let theme_color = cx.theme().colors();
 
@@ -172,7 +190,31 @@ impl Render for InputField {
                         this.gap_1()
                             .child(Icon::new(icon).size(IconSize::Small).color(Color::Muted))
                     })
-                    .child(self.editor.render(window, cx)),
+                    .child(self.editor.render(window, cx))
+                    .when_some(self.masked, |this, is_masked| {
+                        this.child(
+                            IconButton::new(
+                                "toggle-masked",
+                                if is_masked {
+                                    IconName::Eye
+                                } else {
+                                    IconName::EyeOff
+                                },
+                            )
+                            .icon_size(IconSize::Small)
+                            .icon_color(Color::Muted)
+                            .tooltip(Tooltip::text(if is_masked { "Show" } else { "Hide" }))
+                            .on_click(cx.listener(
+                                |this, _, window, cx| {
+                                    if let Some(ref mut masked) = this.masked {
+                                        *masked = !*masked;
+                                        this.editor.set_masked(*masked, window, cx);
+                                        cx.notify();
+                                    }
+                                },
+                            )),
+                        )
+                    }),
             )
     }
 }
