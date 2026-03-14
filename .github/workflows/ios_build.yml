@@ -50,7 +50,7 @@ jobs:
         xcodebuild \
           -project ios/ZedApp.xcodeproj \
           -scheme ZedApp \
-          -destination 'platform=iOS Simulator,name=iPad Pro 13-inch (M4)' \
+          -destination 'generic/platform=iOS Simulator' \
           -configuration Debug \
           CODE_SIGNING_ALLOWED=NO \
           build
