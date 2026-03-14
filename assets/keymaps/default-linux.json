@@ -907,6 +907,7 @@
       "alt-ctrl-r": "project_panel::RevealInFileManager",
       "ctrl-shift-enter": "workspace::OpenWithSystem",
       "alt-d": "project_panel::CompareMarkedFiles",
+      "alt-shift-e": "project_panel::ToggleShowExcluded",
       "shift-find": "project_panel::NewSearchInDirectory",
       "ctrl-alt-shift-f": "project_panel::NewSearchInDirectory",
       "shift-down": "menu::SelectNext",

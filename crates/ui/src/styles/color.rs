@@ -45,6 +45,8 @@ pub enum Color {
     /// cannot do. In very rare cases, it might be used to indicate dangerous or
     /// destructive action.
     Error,
+    /// A color used for items that are excluded from a project-specific view, such as the project panel.
+    Excluded,
     /// A color used for elements that represent something that is hidden, like
     /// a hidden file, or an element that should be visually de-emphasized.
     Hidden,
@@ -99,6 +101,7 @@ impl Color {
             Color::Deleted => cx.theme().status().deleted,
             Color::Disabled => cx.theme().colors().text_disabled,
             Color::Hidden => cx.theme().status().hidden,
+            Color::Excluded => cx.theme().status().excluded,
             Color::Hint => cx.theme().status().hint,
             Color::Info => cx.theme().status().info,
             Color::Placeholder => cx.theme().colors().text_placeholder,

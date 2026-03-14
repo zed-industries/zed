@@ -967,6 +967,7 @@
       "alt-cmd-r": "project_panel::RevealInFileManager",
       "ctrl-shift-enter": "workspace::OpenWithSystem",
       "alt-d": "project_panel::CompareMarkedFiles",
+      "alt-shift-e": "project_panel::ToggleShowExcluded",
       "cmd-alt-backspace": ["project_panel::Delete", { "skip_prompt": false }],
       "cmd-alt-shift-f": "project_panel::NewSearchInDirectory",
       "shift-down": "menu::SelectNext",

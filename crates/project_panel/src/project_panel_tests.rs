@@ -6,9 +6,13 @@ use menu::Cancel;
 use pretty_assertions::assert_eq;
 use project::FakeFs;
 use serde_json::json;
-use settings::{ProjectPanelAutoOpenSettings, SettingsStore};
+use settings::{LocalSettingsKind, LocalSettingsPath, ProjectPanelAutoOpenSettings, SettingsStore};
 use std::path::{Path, PathBuf};
-use util::{path, paths::PathStyle, rel_path::rel_path};
+use util::{
+    path,
+    paths::PathStyle,
+    rel_path::{RelPath, rel_path},
+};
 use workspace::{
     AppState, ItemHandle, MultiWorkspace, Pane, Workspace,
     item::{Item, ProjectItem},
@@ -9060,12 +9064,77 @@ fn visible_entries_as_strings(
             } else {
                 ""
             };
+            let excluded = if details.is_excluded {
+                "  <== excluded"
+            } else {
+                ""
+            };
 
-            result.push(format!("{indent}{icon}{name}{selected}{marked}"));
+            result.push(format!("{indent}{icon}{name}{selected}{marked}{excluded}"));
         });
     });
 
     result
+}
+
+async fn set_project_panel_local_settings(
+    panel: &Entity<ProjectPanel>,
+    json_text: &str,
+    cx: &mut VisualTestContext,
+) {
+    let (fs, worktree_id, settings_path) = panel.update(cx, |panel, cx| {
+        let worktree = panel
+            .project
+            .read(cx)
+            .visible_worktrees(cx)
+            .next()
+            .expect("expected a worktree");
+        let worktree = worktree.read(cx);
+        (
+            panel.fs.as_fake(),
+            worktree.id(),
+            worktree.abs_path().join(".zed/settings.json"),
+        )
+    });
+
+    if let Some(parent) = settings_path.parent() {
+        fs.create_dir(parent)
+            .await
+            .expect("settings directory should be writable");
+    }
+    fs.atomic_write(settings_path, json_text.to_string())
+        .await
+        .expect("settings file should be writable");
+
+    panel.update_in(cx, |panel, window, cx| {
+        cx.update_global::<SettingsStore, _>(|settings, cx| {
+            settings
+                .set_local_settings(
+                    worktree_id,
+                    LocalSettingsPath::InWorktree(RelPath::empty().into()),
+                    LocalSettingsKind::Settings,
+                    Some(json_text),
+                    cx,
+                )
+                .expect("local settings should parse");
+        });
+        panel.update_visible_entries(None, false, false, window, cx);
+    });
+    cx.run_until_parked();
+}
+
+fn toggle_excluded(panel: &Entity<ProjectPanel>, cx: &mut VisualTestContext) {
+    panel.update_in(cx, |panel, window, cx| {
+        panel.toggle_excluded(&ToggleExcluded, window, cx);
+    });
+    cx.run_until_parked();
+}
+
+fn toggle_show_excluded(panel: &Entity<ProjectPanel>, cx: &mut VisualTestContext) {
+    panel.update_in(cx, |panel, window, cx| {
+        panel.toggle_show_excluded(&ToggleShowExcluded, window, cx);
+    });
+    cx.run_until_parked();
 }
 
 /// Test that missing sort_mode field defaults to DirectoriesFirst
@@ -9763,6 +9832,697 @@ fn init_test_with_editor(cx: &mut TestAppContext) {
             });
         });
     });
+}
+
+#[gpui::test]
+async fn test_toggle_excluded_hides_file_and_writes_project_settings(
+    cx: &mut gpui::TestAppContext,
+) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        "/root",
+        json!({
+            "dir": {
+                "nested.txt": "",
+            },
+            "file.txt": "",
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), ["/root".as_ref()], cx).await;
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let workspace = window
+        .read_with(cx, |mw, _| mw.workspace().clone())
+        .unwrap();
+    let cx = &mut VisualTestContext::from_window(window.into(), cx);
+    let panel = workspace.update_in(cx, ProjectPanel::new);
+    cx.run_until_parked();
+
+    select_path(&panel, "root/file.txt", cx);
+    toggle_excluded(&panel, cx);
+
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..10, cx),
+        &["v root  <== selected", "    > .zed", "    > dir"],
+    );
+
+    let settings: serde_json::Value = serde_json::from_str(
+        &fs.load(Path::new("/root/.zed/settings.json"))
+            .await
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(
+        settings,
+        json!({
+            "project_panel": {
+                "excluded_entries": ["file.txt"]
+            }
+        }),
+    );
+}
+
+#[gpui::test]
+async fn test_toggle_excluded_updates_existing_project_panel_block_without_duplication(
+    cx: &mut gpui::TestAppContext,
+) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        "/root",
+        json!({
+            ".zed": {
+                "settings.json": "{\n  \"project_panel\": {\n    \"show_excluded\": true,\n    \"excluded_entries\": [\".cargo\"]\n  },\n  \"languages\": {\n    \"Markdown\": {\n      \"tab_size\": 2\n    }\n  }\n}",
+            },
+            ".cargo": {},
+            "file.txt": "",
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), ["/root".as_ref()], cx).await;
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let workspace = window
+        .read_with(cx, |mw, _| mw.workspace().clone())
+        .unwrap();
+    let cx = &mut VisualTestContext::from_window(window.into(), cx);
+    let panel = workspace.update_in(cx, ProjectPanel::new);
+    cx.run_until_parked();
+
+    select_path(&panel, "root/file.txt", cx);
+    toggle_excluded(&panel, cx);
+
+    let settings_text = fs
+        .load(Path::new("/root/.zed/settings.json"))
+        .await
+        .unwrap();
+    assert_eq!(settings_text.matches("\"project_panel\"").count(), 1);
+
+    let settings: serde_json::Value = serde_json::from_str(&settings_text).unwrap();
+    assert_eq!(
+        settings,
+        json!({
+            "project_panel": {
+                "show_excluded": true,
+                "excluded_entries": [".cargo", "file.txt"]
+            },
+            "languages": {
+                "Markdown": {
+                    "tab_size": 2
+                }
+            }
+        }),
+    );
+}
+
+#[gpui::test]
+async fn test_toggle_excluded_preserves_symlinked_project_settings(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        "/root",
+        json!({
+            ".zed": {},
+            "shared": {
+                "project-settings.json": "{\n  \"project_panel\": {\n    \"show_excluded\": false,\n    \"excluded_entries\": [\".cargo\"]\n  }\n}",
+            },
+            ".cargo": {},
+            "file.txt": "",
+        }),
+    )
+    .await;
+    let target_path = PathBuf::from("/root/shared/project-settings.json");
+    fs.insert_symlink("/root/.zed/settings.json", target_path.clone())
+        .await;
+
+    let project = Project::test(fs.clone(), ["/root".as_ref()], cx).await;
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let workspace = window
+        .read_with(cx, |mw, _| mw.workspace().clone())
+        .unwrap();
+    let cx = &mut VisualTestContext::from_window(window.into(), cx);
+    let panel = workspace.update_in(cx, ProjectPanel::new);
+    cx.run_until_parked();
+
+    select_path(&panel, "root/file.txt", cx);
+    toggle_excluded(&panel, cx);
+
+    let settings_metadata = fs
+        .metadata(Path::new("/root/.zed/settings.json"))
+        .await
+        .unwrap()
+        .expect("settings symlink should exist");
+    assert!(settings_metadata.is_symlink);
+    assert_eq!(
+        fs.read_link(Path::new("/root/.zed/settings.json"))
+            .await
+            .unwrap(),
+        target_path
+    );
+
+    let settings: serde_json::Value =
+        serde_json::from_str(&fs.load(target_path.as_path()).await.unwrap()).unwrap();
+    assert_eq!(
+        settings,
+        json!({
+            "project_panel": {
+                "show_excluded": false,
+                "excluded_entries": [".cargo", "file.txt"]
+            }
+        }),
+    );
+}
+
+#[gpui::test]
+async fn test_toggle_excluded_is_unavailable_for_multi_selection(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        "/root",
+        json!({
+            "file-a.txt": "",
+            "file-b.txt": "",
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), ["/root".as_ref()], cx).await;
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let workspace = window
+        .read_with(cx, |mw, _| mw.workspace().clone())
+        .unwrap();
+    let cx = &mut VisualTestContext::from_window(window.into(), cx);
+    let panel = workspace.update_in(cx, ProjectPanel::new);
+    cx.run_until_parked();
+
+    select_path_with_mark(&panel, "root/file-a.txt", cx);
+    select_path_with_mark(&panel, "root/file-b.txt", cx);
+
+    panel.update(cx, |panel, cx| {
+        assert!(
+            panel.selected_exclusion_state(cx).is_none(),
+            "exclude action should be unavailable for multi-selection"
+        );
+    });
+
+    let visible_entries_before = visible_entries_as_strings(&panel, 0..10, cx);
+    toggle_excluded(&panel, cx);
+
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..10, cx),
+        visible_entries_before,
+        "multi-selection should not change project panel visibility"
+    );
+    assert!(
+        !fs.is_file(Path::new("/root/.zed/settings.json")).await,
+        "multi-selection should not write project settings"
+    );
+}
+
+#[gpui::test]
+async fn test_toggle_excluded_hides_directory_subtree_when_show_excluded_is_false(
+    cx: &mut gpui::TestAppContext,
+) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        "/root",
+        json!({
+            "build": {
+                "generated.rs": "",
+                "nested": {
+                    "output.txt": "",
+                }
+            },
+            "src": {
+                "main.rs": "",
+            }
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), ["/root".as_ref()], cx).await;
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let workspace = window
+        .read_with(cx, |mw, _| mw.workspace().clone())
+        .unwrap();
+    let cx = &mut VisualTestContext::from_window(window.into(), cx);
+    let panel = workspace.update_in(cx, ProjectPanel::new);
+    cx.run_until_parked();
+
+    set_project_panel_local_settings(
+        &panel,
+        r#"
+        {
+          "project_panel": {
+            "show_excluded": false
+          }
+        }
+        "#,
+        cx,
+    )
+    .await;
+    select_path(&panel, "root/build", cx);
+    toggle_excluded(&panel, cx);
+
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..10, cx),
+        &["v root  <== selected", "    > .zed", "    > src"],
+    );
+
+    let settings: serde_json::Value = serde_json::from_str(
+        &fs.load(Path::new("/root/.zed/settings.json"))
+            .await
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(
+        settings,
+        json!({
+            "project_panel": {
+                "show_excluded": false,
+                "excluded_entries": ["build"]
+            }
+        }),
+    );
+}
+
+#[gpui::test]
+async fn test_show_excluded_displays_excluded_entries(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        "/root",
+        json!({
+            "build": {
+                "generated.rs": "",
+            },
+            "file.txt": "",
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), ["/root".as_ref()], cx).await;
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let workspace = window
+        .read_with(cx, |mw, _| mw.workspace().clone())
+        .unwrap();
+    let cx = &mut VisualTestContext::from_window(window.into(), cx);
+    let panel = workspace.update_in(cx, ProjectPanel::new);
+    cx.run_until_parked();
+
+    set_project_panel_local_settings(
+        &panel,
+        r#"
+        {
+          "project_panel": {
+            "show_excluded": true,
+            "excluded_entries": ["build", "file.txt"]
+          }
+        }
+        "#,
+        cx,
+    )
+    .await;
+
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..10, cx),
+        &[
+            "v root",
+            "    > .zed",
+            "    > build  <== excluded",
+            "      file.txt  <== excluded",
+        ],
+    );
+}
+
+#[gpui::test]
+async fn test_explicit_reveal_shows_excluded_entry_when_show_excluded_is_false(
+    cx: &mut gpui::TestAppContext,
+) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        "/root",
+        json!({
+            "build": {
+                "generated": {
+                    "file.txt": "",
+                }
+            },
+            "src": {
+                "main.rs": "",
+            }
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), ["/root".as_ref()], cx).await;
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let workspace = window
+        .read_with(cx, |mw, _| mw.workspace().clone())
+        .unwrap();
+    let cx = &mut VisualTestContext::from_window(window.into(), cx);
+    let panel = workspace.update_in(cx, ProjectPanel::new);
+    cx.run_until_parked();
+
+    set_project_panel_local_settings(
+        &panel,
+        r#"
+        {
+          "project_panel": {
+            "show_excluded": false,
+            "excluded_entries": ["build"]
+          }
+        }
+        "#,
+        cx,
+    )
+    .await;
+
+    let excluded_file = find_project_entry(&panel, "root/build/generated/file.txt", cx)
+        .expect("excluded file should exist in the worktree");
+    panel.update(cx, |panel, cx| {
+        panel.project.update(cx, |_, cx| {
+            cx.emit(project::Event::RevealInProjectPanel(excluded_file))
+        })
+    });
+    cx.run_until_parked();
+
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..10, cx),
+        &[
+            "v root",
+            "    > .zed",
+            "    v build  <== excluded",
+            "        v generated  <== excluded",
+            "              file.txt  <== selected  <== marked  <== excluded",
+            "    > src",
+        ],
+    );
+}
+
+#[gpui::test]
+async fn test_excluding_compact_child_preserves_visible_folded_ancestor(
+    cx: &mut gpui::TestAppContext,
+) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        "/root",
+        json!({
+            "a": {
+                "b": {
+                    "c": {
+                        "file.txt": "",
+                    }
+                }
+            },
+            "src": {
+                "main.rs": "",
+            }
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), ["/root".as_ref()], cx).await;
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let workspace = window
+        .read_with(cx, |mw, _| mw.workspace().clone())
+        .unwrap();
+    let cx = &mut VisualTestContext::from_window(window.into(), cx);
+    let panel = workspace.update_in(cx, ProjectPanel::new);
+    cx.run_until_parked();
+
+    cx.update(|_, cx| {
+        let settings = *ProjectPanelSettings::get_global(cx);
+        ProjectPanelSettings::override_global(
+            ProjectPanelSettings {
+                auto_fold_dirs: true,
+                ..settings
+            },
+            cx,
+        );
+    });
+    panel.update_in(cx, |panel, window, cx| {
+        panel.update_visible_entries(None, false, false, window, cx);
+    });
+    cx.run_until_parked();
+
+    set_project_panel_local_settings(
+        &panel,
+        r#"
+        {
+          "project_panel": {
+            "show_excluded": false,
+            "excluded_entries": ["a/b/c"]
+          }
+        }
+        "#,
+        cx,
+    )
+    .await;
+
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..10, cx),
+        &["v root", "    > a/b", "    > src"],
+    );
+}
+
+#[gpui::test]
+async fn test_toggle_show_excluded_updates_visibility_and_project_settings(
+    cx: &mut gpui::TestAppContext,
+) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        "/root",
+        json!({
+            "build": {
+                "generated.rs": "",
+            },
+            "src": {
+                "main.rs": "",
+            }
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), ["/root".as_ref()], cx).await;
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let workspace = window
+        .read_with(cx, |mw, _| mw.workspace().clone())
+        .unwrap();
+    let cx = &mut VisualTestContext::from_window(window.into(), cx);
+    let panel = workspace.update_in(cx, ProjectPanel::new);
+    cx.run_until_parked();
+
+    set_project_panel_local_settings(
+        &panel,
+        r#"
+        {
+          "project_panel": {
+            "show_excluded": false,
+            "excluded_entries": ["build"]
+          }
+        }
+        "#,
+        cx,
+    )
+    .await;
+
+    toggle_expand_dir(&panel, "root/src", cx);
+    select_path(&panel, "root/src/main.rs", cx);
+    toggle_show_excluded(&panel, cx);
+
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..10, cx),
+        &[
+            "v root",
+            "    > .zed",
+            "    > build  <== excluded",
+            "    v src",
+            "          main.rs  <== selected",
+        ],
+    );
+
+    let settings: serde_json::Value = serde_json::from_str(
+        &fs.load(Path::new("/root/.zed/settings.json"))
+            .await
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(
+        settings,
+        json!({
+            "project_panel": {
+                "show_excluded": true,
+                "excluded_entries": ["build"]
+            }
+        }),
+    );
+
+    select_path(&panel, "root/build", cx);
+    toggle_show_excluded(&panel, cx);
+
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..10, cx),
+        &[
+            "v root  <== selected",
+            "    > .zed",
+            "    v src",
+            "          main.rs",
+        ],
+    );
+
+    let settings: serde_json::Value = serde_json::from_str(
+        &fs.load(Path::new("/root/.zed/settings.json"))
+            .await
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(
+        settings,
+        json!({
+            "project_panel": {
+                "show_excluded": false,
+                "excluded_entries": ["build"]
+            }
+        }),
+    );
+}
+
+#[gpui::test]
+async fn test_toggle_excluded_cancels_nearest_exclusion_for_descendant(
+    cx: &mut gpui::TestAppContext,
+) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        "/root",
+        json!({
+            ".zed": {
+                "settings.json": "{\n  \"project_panel\": {\n    \"show_excluded\": true,\n    \"excluded_entries\": [\"build\"]\n  }\n}",
+            },
+            "build": {
+                "generated": {
+                    "file.txt": "",
+                }
+            },
+            "src": {
+                "main.rs": "",
+            }
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), ["/root".as_ref()], cx).await;
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let workspace = window
+        .read_with(cx, |mw, _| mw.workspace().clone())
+        .unwrap();
+    let cx = &mut VisualTestContext::from_window(window.into(), cx);
+    let panel = workspace.update_in(cx, ProjectPanel::new);
+    cx.run_until_parked();
+
+    set_project_panel_local_settings(
+        &panel,
+        r#"
+        {
+          "project_panel": {
+            "show_excluded": true,
+            "excluded_entries": ["build"]
+          }
+        }
+        "#,
+        cx,
+    )
+    .await;
+    toggle_expand_dir(&panel, "root/build", cx);
+    toggle_expand_dir(&panel, "root/build/generated", cx);
+    select_path(&panel, "root/build/generated/file.txt", cx);
+
+    toggle_excluded(&panel, cx);
+
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..10, cx),
+        &[
+            "v root",
+            "    > .zed",
+            "    v build",
+            "        v generated",
+            "              file.txt  <== selected",
+            "    > src",
+        ],
+    );
+
+    let settings: serde_json::Value = serde_json::from_str(
+        &fs.load(Path::new("/root/.zed/settings.json"))
+            .await
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(
+        settings,
+        json!({
+            "project_panel": {
+                "show_excluded": true
+            }
+        }),
+    );
+}
+
+#[gpui::test]
+async fn test_project_panel_exclusions_load_from_project_settings_file(
+    cx: &mut gpui::TestAppContext,
+) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        "/root",
+        json!({
+            ".zed": {
+                "settings.json": "{\n  \"project_panel\": {\n    \"excluded_entries\": [\"build/output.log\"]\n  }\n}",
+            },
+            "build": {
+                "output.log": "",
+                "visible.rs": "",
+            },
+            "src": {
+                "main.rs": "",
+            }
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), ["/root".as_ref()], cx).await;
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let workspace = window
+        .read_with(cx, |mw, _| mw.workspace().clone())
+        .unwrap();
+    let cx = &mut VisualTestContext::from_window(window.into(), cx);
+    let panel = workspace.update_in(cx, ProjectPanel::new);
+    cx.run_until_parked();
+
+    toggle_expand_dir(&panel, "root/build", cx);
+
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..10, cx),
+        &["v root", "    v build", "          visible.rs", "    > src"],
+    );
 }
 
 fn set_auto_open_settings(
