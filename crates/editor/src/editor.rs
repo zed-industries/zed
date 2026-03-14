@@ -3766,15 +3766,18 @@ impl Editor {
         snapshot: &EditorSnapshot,
         cursor_offset: MultiBufferOffset,
     ) -> Option<(DisplayRow, DisplayRow)> {
-      let start_row = buffer_snapshot
-          .anchor_before(open_range.start.to_point(&buffer_snapshot))
-          .to_display_point(&snapshot.display_snapshot)
-          .row();
-      let end_row = buffer_snapshot
-          .anchor_before(close_range.start.to_point(&buffer_snapshot))
-          .to_display_point(&snapshot.display_snapshot)
-          .row();
-      
+        let buffer_snapshot = snapshot.buffer_snapshot();
+        let (open_range, close_range) = buffer_snapshot
+            .enclosing_bracket_ranges(cursor_offset..cursor_offset)?
+            .last()?;
+        let start_row = buffer_snapshot
+            .anchor_before(open_range.start.to_point(&buffer_snapshot))
+            .to_display_point(&snapshot.display_snapshot)
+            .row();
+        let end_row = buffer_snapshot
+            .anchor_before(close_range.start.to_point(&buffer_snapshot))
+            .to_display_point(&snapshot.display_snapshot)
+            .row();
         Some((start_row, end_row))
     }
 
