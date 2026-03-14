@@ -1520,7 +1520,6 @@ or
 {
   "session": {
     "restore_unsaved_buffers": true,
-    "restore_unsaved_buffers_max_operations": 1000,
     "trust_all_worktrees": false
   }
 }
@@ -1540,19 +1539,8 @@ or
 
 If this is true, user won't be prompted whether to save/discard dirty files when closing the application.
 
-2.  The maximum number of undo operations to save in the history of unsaved buffers:
 
-```json [settings]
-{
-  "session": {
-    "restore_unsaved_buffers_max_operations": 1000
-  }
-}
-```
-
-When there are more operations than this cap, the history is truncated and the current state is preserved as the base text.
-
-3. Whether or not to skip worktree and workspace trust checks:
+2. Whether or not to skip worktree and workspace trust checks:
 
 ```json [settings]
 {

@@ -48,6 +48,29 @@ fn test_point_for_row_and_column_from_external_source() {
     assert_eq!(snapshot.point_from_external_input(1, 3), Point::new(1, 3));
 }
 
+#[test]
+fn test_history_serialization() {
+    let mut buffer = Buffer::new(ReplicaId::LOCAL, BufferId::new(1).unwrap(), "abc\n");
+    buffer.set_group_interval(Duration::ZERO);
+    buffer.edit([(4..4, "def\n")]);
+    buffer.edit([(8..8, "ghi\n")]);
+    assert_eq!(buffer.text(), "abc\ndef\nghi\n");
+
+    let bytes = buffer.serialize_history().unwrap();
+    let mut restored =
+        Buffer::deserialize_history(&bytes, ReplicaId::LOCAL, BufferId::new(1).unwrap()).unwrap();
+    assert_eq!(restored.text(), "abc\ndef\nghi\n");
+
+    restored.undo();
+    assert_eq!(restored.text(), "abc\ndef\n");
+    restored.undo();
+    assert_eq!(restored.text(), "abc\n");
+    restored.redo();
+    assert_eq!(restored.text(), "abc\ndef\n");
+    restored.redo();
+    assert_eq!(restored.text(), "abc\ndef\nghi\n");
+}
+
 #[gpui::test(iterations = 100)]
 fn test_random_edits(mut rng: StdRng) {
     let operations = env::var("OPERATIONS")
