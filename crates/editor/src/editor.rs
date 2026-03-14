@@ -4456,6 +4456,29 @@ impl Editor {
         cx.propagate();
     }
 
+    pub fn search_query_for_selection(
+        &self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<String> {
+        let snapshot = self.snapshot(window, cx);
+        let selection = self.selections.newest_adjusted(&snapshot.display_snapshot);
+        if selection.is_empty() {
+            return None;
+        }
+
+        let text: String = snapshot
+            .buffer_snapshot()
+            .text_for_range(selection.start..selection.end)
+            .collect();
+
+        if text.contains('\n') {
+            None
+        } else {
+            Some(text)
+        }
+    }
+
     pub fn dismiss_menus_and_popups(
         &mut self,
         is_user_requested: bool,

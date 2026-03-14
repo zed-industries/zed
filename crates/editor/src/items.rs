@@ -1643,24 +1643,19 @@ impl SearchableItem for Editor {
 
     fn query_suggestion(&mut self, window: &mut Window, cx: &mut Context<Self>) -> String {
         let setting = EditorSettings::get_global(cx).seed_search_query_from_cursor;
-        let snapshot = self.snapshot(window, cx);
-        let selection = self.selections.newest_adjusted(&snapshot.display_snapshot);
-        let buffer_snapshot = snapshot.buffer_snapshot();
+        let selection_query = self.search_query_for_selection(window, cx);
 
         match setting {
             SeedQuerySetting::Never => String::new(),
-            SeedQuerySetting::Selection | SeedQuerySetting::Always if !selection.is_empty() => {
-                let text: String = buffer_snapshot
-                    .text_for_range(selection.start..selection.end)
-                    .collect();
-                if text.contains('\n') {
-                    String::new()
-                } else {
-                    text
-                }
-            }
-            SeedQuerySetting::Selection => String::new(),
+            SeedQuerySetting::Selection => selection_query.unwrap_or_default(),
             SeedQuerySetting::Always => {
+                if let Some(selection_query) = selection_query {
+                    return selection_query;
+                }
+
+                let snapshot = self.snapshot(window, cx);
+                let selection = self.selections.newest_adjusted(&snapshot.display_snapshot);
+                let buffer_snapshot = snapshot.buffer_snapshot();
                 let (range, kind) = buffer_snapshot
                     .surrounding_word(selection.start, Some(CharScopeContext::Completion));
                 if kind == Some(CharKind::Word) {
