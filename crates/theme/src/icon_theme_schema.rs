@@ -5,7 +5,13 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-use crate::AppearanceContent;
+#[derive(Debug, PartialEq, Clone, Copy, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum IconAppearanceContent {
+    Light,
+    Dark,
+    Monochrome,
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct IconThemeFamilyContent {
@@ -17,7 +23,7 @@ pub struct IconThemeFamilyContent {
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct IconThemeContent {
     pub name: String,
-    pub appearance: AppearanceContent,
+    pub appearance: IconAppearanceContent,
     #[serde(default)]
     pub directory_icons: DirectoryIconsContent,
     #[serde(default)]
