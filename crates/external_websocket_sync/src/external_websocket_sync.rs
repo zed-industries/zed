@@ -655,6 +655,9 @@ impl ExternalWebSocketSync {
                 acp_thread_id: context_id.to_proto(),
                 message_id: message_id.as_u64().to_string(),
                 role: "assistant".to_string(),
+                entry_type: "text".to_string(),
+                tool_name: String::new(),
+                tool_status: String::new(),
                 content: String::new(), // TODO: get actual content
                 timestamp: chrono::Utc::now().timestamp(),
             };

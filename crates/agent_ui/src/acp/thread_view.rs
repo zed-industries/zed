@@ -1547,8 +1547,9 @@ impl AcpServerView {
                     self.send_queued_message_at_index(0, false, window, cx);
                 }
 
-                // WebSocket event forwarding for Stopped (MessageAdded + MessageCompleted)
-                // is handled by thread_service.rs
+                // WebSocket MessageCompleted is emitted by the persistent subscription's
+                // Stopped handler in thread_service.rs (create_new_thread_sync /
+                // load_thread_from_agent). No action needed here.
 
                 self.history.update(cx, |history, cx| history.refresh(cx));
             }
