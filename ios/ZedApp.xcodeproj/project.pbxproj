@@ -3,7 +3,7 @@
 	archiveVersion = 1;
 	classes = {
 	};
-	objectVersion = 77;
+	objectVersion = 56;
 	objects = {
 
 /* Begin PBXBuildFile section */
@@ -22,8 +22,18 @@
 		AA0000000000000000000016 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
+/* Begin PBXFrameworksBuildPhase section */
+		AA0000000000000000000032 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
 /* Begin PBXGroup section */
-		AA0000000000000000000002 /* MainGroup */ = {
+		AA0000000000000000000002 = {
 			isa = PBXGroup;
 			children = (
 				AA0000000000000000000004 /* ZedApp */,
@@ -145,7 +155,7 @@
 			inputPaths = (
 				"$(PROJECT_DIR)/../crates/zed-ios/src/lib.rs",
 			);
-			name = "Cargo \U2014 Build zed-ios staticlib";
+			name = "Cargo — Build zed-ios staticlib";
 			outputFileListPaths = (
 			);
 			outputPaths = (
@@ -153,7 +163,7 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/bash;
-			shellScript = "\"$PROJECT_DIR/../ios/script/cargo-build-ios\"\n";
+			shellScript = "\"$PROJECT_DIR/../ios/scripts/cargo-build-ios\"\n";
 		};
 /* End PBXShellScriptBuildPhase section */
 
@@ -168,16 +178,6 @@
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXSourcesBuildPhase section */
-
-/* Begin PBXFrameworksBuildPhase section */
-		AA0000000000000000000032 /* Frameworks */ = {
-			isa = PBXFrameworksBuildPhase;
-			buildActionMask = 2147483647;
-			files = (
-			);
-			runOnlyForDeploymentPostprocessing = 0;
-		};
-/* End PBXFrameworksBuildPhase section */
 
 /* Begin XCBuildConfiguration section */
 		AA0000000000000000000040 /* Debug */ = {
@@ -300,10 +300,10 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIconDev;
-				CODE_SIGN_ENTITLEMENTS = "ZedApp/entitlements/ZedApp.entitlements";
+				CODE_SIGN_ENTITLEMENTS = ZedApp/entitlements/ZedApp.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
-				DEVELOPMENT_TEAM = "";
+				DEVELOPMENT_TEAM = 2U6G6353D3;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = "ZedApp/Supporting Files/Info.plist";
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
@@ -315,11 +315,16 @@
 				OTHER_LDFLAGS = (
 					"-lzed_ios",
 					"-lc++",
-					"-framework UIKit",
-					"-framework Metal",
-					"-framework CoreText",
-					"-framework Foundation",
-					"-framework Security",
+					"-framework",
+					UIKit,
+					"-framework",
+					Metal,
+					"-framework",
+					CoreText,
+					"-framework",
+					Foundation,
+					"-framework",
+					Security,
 					"$(inherited)",
 				);
 				PRODUCT_BUNDLE_IDENTIFIER = dev.zed.ZedApp;
@@ -337,10 +342,10 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
-				CODE_SIGN_ENTITLEMENTS = "ZedApp/entitlements/ZedApp.entitlements";
+				CODE_SIGN_ENTITLEMENTS = ZedApp/entitlements/ZedApp.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
-				DEVELOPMENT_TEAM = "";
+				DEVELOPMENT_TEAM = 2U6G6353D3;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = "ZedApp/Supporting Files/Info.plist";
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
@@ -352,11 +357,16 @@
 				OTHER_LDFLAGS = (
 					"-lzed_ios",
 					"-lc++",
-					"-framework UIKit",
-					"-framework Metal",
-					"-framework CoreText",
-					"-framework Foundation",
-					"-framework Security",
+					"-framework",
+					UIKit,
+					"-framework",
+					Metal,
+					"-framework",
+					CoreText,
+					"-framework",
+					Foundation,
+					"-framework",
+					Security,
 					"$(inherited)",
 				);
 				PRODUCT_BUNDLE_IDENTIFIER = dev.zed.ZedApp;
@@ -392,7 +402,6 @@
 			defaultConfigurationName = Release;
 		};
 /* End XCConfigurationList section */
-
 	};
 	rootObject = AA0000000000000000000001 /* Project object */;
 }
