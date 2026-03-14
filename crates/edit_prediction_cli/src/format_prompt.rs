@@ -92,7 +92,7 @@ pub async fn run_format_prompt(
                 zeta2_output_for_patch(prompt_inputs, patch, None, zeta_format).ok()
             });
 
-            example.prompt = Some(ExamplePrompt {
+            example.prompt = prompt.map(|prompt| ExamplePrompt {
                 input: prompt,
                 expected_output,
                 rejected_output,
