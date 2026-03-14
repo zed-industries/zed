@@ -1357,6 +1357,16 @@ impl ToolchainLister for PythonToolchainProvider {
         env: Option<HashMap<String, String>>,
         fs: &dyn Fs,
     ) -> anyhow::Result<Toolchain> {
+        // If the path points to a Python file with PEP 723 inline metadata,
+        // resolve its environment via `uv sync --script`.
+        if path.extension().is_some_and(|ext| ext == "py") && fs.is_file(&path).await {
+            if let Ok(content) = fs.load(&path).await {
+                if let Some(toolchain) = detect_pep723_toolchain(&path, &content, fs).await {
+                    return Ok(toolchain);
+                }
+            }
+        }
+
         let env = env.unwrap_or_default();
         let environment = EnvironmentApi::from_env(&env);
         let locators = pet::locators::create_locators(
@@ -1482,6 +1492,102 @@ impl ToolchainLister for PythonToolchainProvider {
             activation_script
         })
     }
+}
+
+/// Detect a PEP 723 inline script environment for a Python file.
+/// Calls `uv sync --script` to resolve/create the environment and returns a Toolchain if successful.
+pub async fn detect_pep723_toolchain(
+    file_path: &Path,
+    content: &str,
+    fs: &dyn Fs,
+) -> Option<Toolchain> {
+    if !has_pep723_inline_metadata(content) {
+        return None;
+    }
+
+    log::info!(
+        "Detected PEP 723 inline script metadata in {}",
+        file_path.display()
+    );
+
+    let uv_path = which::which("uv").ok()?;
+    let output = new_command(&uv_path)
+        .args(["sync", "--script"])
+        .arg(file_path)
+        .args(["--output-format", "json"])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()
+        .await
+        .log_err()?;
+
+    if !output.status.success() {
+        log::warn!(
+            "uv sync --script failed for {}: {}",
+            file_path.display(),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        return None;
+    }
+
+    let response: UvSyncResponse = serde_json::from_slice(&output.stdout).log_err()?;
+    let python_path = PathBuf::from(&response.sync.environment.python.path);
+    let env_path = PathBuf::from(&response.sync.environment.path);
+    let script_name = file_path
+        .file_stem()
+        .map(|s| s.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "script".to_owned());
+
+    let env = PythonEnvironment {
+        executable: Some(python_path),
+        prefix: Some(env_path),
+        version: Some(response.sync.environment.python.version),
+        kind: Some(PythonEnvironmentKind::Uv),
+        name: Some(script_name),
+        ..Default::default()
+    };
+
+    venv_to_toolchain(env, fs).await
+}
+
+/// Check whether a Python source file contains PEP 723 inline script metadata.
+/// See https://peps.python.org/pep-0723/
+fn has_pep723_inline_metadata(content: &str) -> bool {
+    let mut in_block = false;
+    for line in content.lines() {
+        if !in_block {
+            if line == "# /// script" {
+                in_block = true;
+            }
+        } else if line == "# ///" {
+            return true;
+        } else if !line.starts_with("# ") && line != "#" {
+            return false;
+        }
+    }
+    false
+}
+
+#[derive(Deserialize)]
+struct UvSyncResponse {
+    sync: UvSyncData,
+}
+
+#[derive(Deserialize)]
+struct UvSyncData {
+    environment: UvEnvironment,
+}
+
+#[derive(Deserialize)]
+struct UvEnvironment {
+    path: String,
+    python: UvPython,
+}
+
+#[derive(Deserialize)]
+struct UvPython {
+    path: String,
+    version: String,
 }
 
 async fn venv_to_toolchain(venv: PythonEnvironment, fs: &dyn Fs) -> Option<Toolchain> {
@@ -2996,5 +3102,73 @@ mod tests {
         assert!(enum_values.contains(&serde_json::json!("double")));
         assert!(enum_values.contains(&serde_json::json!("single")));
         assert!(enum_values.contains(&serde_json::json!("preserve")));
+    }
+
+    #[test]
+    fn test_has_pep723_inline_metadata() {
+        use super::has_pep723_inline_metadata;
+
+        assert!(has_pep723_inline_metadata(
+            "\
+# /// script
+# requires-python = \">=3.11\"
+# dependencies = [\"requests\"]
+# ///"
+        ));
+
+        assert!(has_pep723_inline_metadata(
+            "\
+#!/usr/bin/env python3
+# /// script
+# dependencies = []
+# ///
+import sys"
+        ));
+
+        // Empty metadata block is valid.
+        assert!(has_pep723_inline_metadata(
+            "\
+# /// script
+# ///"
+        ));
+
+        // Bare comment line (no trailing space) is allowed inside the block.
+        assert!(has_pep723_inline_metadata(
+            "\
+# /// script
+#
+# dependencies = []
+# ///"
+        ));
+
+        // No metadata at all.
+        assert!(!has_pep723_inline_metadata(
+            "\
+import requests
+print('hi')"
+        ));
+
+        // Opening marker but never closed.
+        assert!(!has_pep723_inline_metadata(
+            "\
+# /// script
+# dependencies = [\"requests\"]"
+        ));
+
+        // Wrong block type (not "script").
+        assert!(!has_pep723_inline_metadata(
+            "\
+# /// tool
+# something = true
+# ///"
+        ));
+
+        // Line inside block that doesn't start with "# " or "#" breaks the block.
+        assert!(!has_pep723_inline_metadata(
+            "\
+# /// script
+import os
+# ///"
+        ));
     }
 }
