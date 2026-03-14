@@ -1,4 +1,5 @@
 pub mod project_panel_settings;
+mod undo;
 mod utils;
 
 use anyhow::{Context as _, Result};
@@ -81,6 +82,8 @@ use zed_actions::{
     workspace::OpenWithSystem,
 };
 
+use crate::undo::{ProjectPanelOperation, UndoManager};
+
 const PROJECT_PANEL_KEY: &str = "ProjectPanel";
 const NEW_ENTRY_ID: ProjectEntryId = ProjectEntryId::MAX;
 
@@ -157,6 +160,7 @@ pub struct ProjectPanel {
     sticky_items_count: usize,
     last_reported_update: Instant,
     update_visible_entries_task: UpdateVisibleEntriesTask,
+    undo_manager: UndoManager,
     state: State,
 }
 
@@ -394,6 +398,8 @@ actions!(
         SelectPrevDirectory,
         /// Opens a diff view to compare two marked files.
         CompareMarkedFiles,
+        /// Undoes the last file operation.
+        Undo,
     ]
 );
 
@@ -893,6 +899,7 @@ impl ProjectPanel {
                     unfolded_dir_ids: Default::default(),
                 },
                 update_visible_entries_task: Default::default(),
+                undo_manager: UndoManager::new(project.clone()),
             };
             this.update_visible_entries(None, false, false, window, cx);
 
@@ -1881,6 +1888,8 @@ impl ProjectPanel {
 
         let edit_task;
         let edited_entry_id;
+        let edited_entry;
+        let new_project_path: ProjectPath;
         if is_new_entry {
             self.selection = Some(SelectedEntry {
                 worktree_id,
@@ -1891,12 +1900,14 @@ impl ProjectPanel {
                 return None;
             }
 
+            edited_entry = None;
             edited_entry_id = NEW_ENTRY_ID;
+            new_project_path = (worktree_id, new_path).into();
             edit_task = self.project.update(cx, |project, cx| {
-                project.create_entry((worktree_id, new_path), is_dir, cx)
+                project.create_entry(new_project_path.clone(), is_dir, cx)
             });
         } else {
-            let new_path = if let Some(parent) = entry.path.clone().parent() {
+            let new_path = if let Some(parent) = entry.path.parent() {
                 parent.join(&filename)
             } else {
                 filename.clone()
@@ -1908,9 +1919,11 @@ impl ProjectPanel {
                 return None;
             }
             edited_entry_id = entry.id;
+            edited_entry = Some(entry);
+            new_project_path = (worktree_id, new_path).into();
             edit_task = self.project.update(cx, |project, cx| {
-                project.rename_entry(entry.id, (worktree_id, new_path).into(), cx)
-            });
+                project.rename_entry(edited_entry_id, new_project_path.clone(), cx)
+            })
         };
 
         if refocus {
@@ -1923,6 +1936,22 @@ impl ProjectPanel {
             let new_entry = edit_task.await;
             project_panel.update(cx, |project_panel, cx| {
                 project_panel.state.edit_state = None;
+
+                // Record the operation if the edit was applied
+                if new_entry.is_ok() {
+                    let operation = if let Some(old_entry) = edited_entry {
+                        ProjectPanelOperation::Rename {
+                            old_path: (worktree_id, old_entry.path).into(),
+                            new_path: new_project_path,
+                        }
+                    } else {
+                        ProjectPanelOperation::Create {
+                            project_path: new_project_path,
+                        }
+                    };
+                    project_panel.undo_manager.record(Some(operation));
+                }
+
                 cx.notify();
             })?;
 
@@ -2173,6 +2202,11 @@ impl ProjectPanel {
         }
     }
 
+    pub fn undo(&mut self, _: &Undo, _window: &mut Window, cx: &mut Context<Self>) {
+        self.undo_manager.undo(cx);
+        cx.notify();
+    }
+
     fn rename_impl(
         &mut self,
         selection: Option<Range<usize>>,
@@ -2360,6 +2394,7 @@ impl ProjectPanel {
                     let project_path = project.path_for_entry(selection.entry_id, cx)?;
                     dirty_buffers +=
                         project.dirty_buffers(cx).any(|path| path == project_path) as usize;
+
                     Some((
                         selection.entry_id,
                         project_path.path.file_name()?.to_string(),
@@ -3077,8 +3112,15 @@ impl ProjectPanel {
                 .filter(|clipboard| !clipboard.items().is_empty())?;
 
             enum PasteTask {
-                Rename(Task<Result<CreatedEntry>>),
-                Copy(Task<Result<Option<Entry>>>),
+                Rename {
+                    task: Task<Result<CreatedEntry>>,
+                    old_path: ProjectPath,
+                    new_path: ProjectPath,
+                },
+                Copy {
+                    task: Task<Result<Option<Entry>>>,
+                    destination: ProjectPath,
+                },
             }
 
             let mut paste_tasks = Vec::new();
@@ -3088,16 +3130,22 @@ impl ProjectPanel {
                 let (new_path, new_disambiguation_range) =
                     self.create_paste_path(clipboard_entry, self.selected_sub_entry(cx)?, cx)?;
                 let clip_entry_id = clipboard_entry.entry_id;
+                let destination: ProjectPath = (worktree_id, new_path).into();
                 let task = if clipboard_entries.is_cut() {
+                    let old_path = self.project.read(cx).path_for_entry(clip_entry_id, cx)?;
                     let task = self.project.update(cx, |project, cx| {
-                        project.rename_entry(clip_entry_id, (worktree_id, new_path).into(), cx)
+                        project.rename_entry(clip_entry_id, destination.clone(), cx)
                     });
-                    PasteTask::Rename(task)
+                    PasteTask::Rename {
+                        task,
+                        old_path,
+                        new_path: destination,
+                    }
                 } else {
                     let task = self.project.update(cx, |project, cx| {
-                        project.copy_entry(clip_entry_id, (worktree_id, new_path).into(), cx)
+                        project.copy_entry(clip_entry_id, destination.clone(), cx)
                     });
-                    PasteTask::Copy(task)
+                    PasteTask::Copy { task, destination }
                 };
                 paste_tasks.push(task);
                 disambiguation_range = new_disambiguation_range.or(disambiguation_range);
@@ -3108,26 +3156,44 @@ impl ProjectPanel {
 
             cx.spawn_in(window, async move |project_panel, mut cx| {
                 let mut last_succeed = None;
+                let mut operations = Vec::new();
+
                 for task in paste_tasks {
                     match task {
-                        PasteTask::Rename(task) => {
+                        PasteTask::Rename {
+                            task,
+                            old_path,
+                            new_path,
+                        } => {
                             if let Some(CreatedEntry::Included(entry)) = task
                                 .await
                                 .notify_workspace_async_err(workspace.clone(), &mut cx)
                             {
+                                operations
+                                    .push(ProjectPanelOperation::Rename { old_path, new_path });
                                 last_succeed = Some(entry);
                             }
                         }
-                        PasteTask::Copy(task) => {
+                        PasteTask::Copy { task, destination } => {
                             if let Some(Some(entry)) = task
                                 .await
                                 .notify_workspace_async_err(workspace.clone(), &mut cx)
                             {
+                                operations.push(ProjectPanelOperation::Create {
+                                    project_path: destination,
+                                });
                                 last_succeed = Some(entry);
                             }
                         }
                     }
                 }
+
+                project_panel
+                    .update(cx, |this, _| {
+                        this.undo_manager.record(operations);
+                    })
+                    .ok();
+
                 // update selection
                 if let Some(entry) = last_succeed {
                     project_panel
@@ -4363,9 +4429,13 @@ impl ProjectPanel {
 
                 cx.spawn_in(window, async move |project_panel, cx| {
                     let mut last_succeed = None;
+                    let mut operations = Vec::new();
                     for task in copy_tasks.into_iter() {
                         if let Some(Some(entry)) = task.await.log_err() {
                             last_succeed = Some(entry.id);
+                            operations.push(ProjectPanelOperation::Create {
+                                project_path: (worktree_id, entry.path).into(),
+                            });
                         }
                     }
                     // update selection
@@ -4376,6 +4446,8 @@ impl ProjectPanel {
                                     worktree_id,
                                     entry_id,
                                 });
+
+                                project_panel.undo_manager.record(operations);
 
                                 // if only one entry was dragged and it was disambiguated, open the rename editor
                                 if item_count == 1 && disambiguation_range.is_some() {
@@ -4426,6 +4498,23 @@ impl ProjectPanel {
                 (info, folded_entries)
             };
 
+            // Capture old paths before moving so we can record undo operations.
+            let old_paths: HashMap<ProjectEntryId, ProjectPath> = {
+                let project = self.project.read(cx);
+                entries
+                    .iter()
+                    .filter_map(|entry| {
+                        let path = project.path_for_entry(entry.entry_id, cx)?;
+                        Some((entry.entry_id, path))
+                    })
+                    .collect()
+            };
+            let destination_worktree_id = self
+                .project
+                .read(cx)
+                .worktree_for_entry(target_entry_id, cx)
+                .map(|wt| wt.read(cx).id());
+
             // Collect move tasks paired with their source entry ID so we can correlate
             // results with folded selections that need refreshing.
             let mut move_tasks: Vec<(ProjectEntryId, Task<Result<CreatedEntry>>)> = Vec::new();
@@ -4441,22 +4530,48 @@ impl ProjectPanel {
 
             let workspace = self.workspace.clone();
             if folded_selection_info.is_empty() {
-                for (_, task) in move_tasks {
-                    let workspace = workspace.clone();
-                    cx.spawn_in(window, async move |_, mut cx| {
-                        task.await.notify_workspace_async_err(workspace, &mut cx);
-                    })
-                    .detach();
-                }
-            } else {
                 cx.spawn_in(window, async move |project_panel, mut cx| {
-                    // Await all move tasks and collect successful results
-                    let mut move_results: Vec<(ProjectEntryId, Entry)> = Vec::new();
+                    let mut operations = Vec::new();
                     for (entry_id, task) in move_tasks {
                         if let Some(CreatedEntry::Included(new_entry)) = task
                             .await
                             .notify_workspace_async_err(workspace.clone(), &mut cx)
                         {
+                            if let (Some(old_path), Some(worktree_id)) =
+                                (old_paths.get(&entry_id), destination_worktree_id)
+                            {
+                                operations.push(ProjectPanelOperation::Rename {
+                                    old_path: old_path.clone(),
+                                    new_path: (worktree_id, new_entry.path).into(),
+                                });
+                            }
+                        }
+                    }
+                    project_panel
+                        .update(cx, |this, _| {
+                            this.undo_manager.record(operations);
+                        })
+                        .ok();
+                })
+                .detach();
+            } else {
+                cx.spawn_in(window, async move |project_panel, mut cx| {
+                    // Await all move tasks and collect successful results
+                    let mut move_results: Vec<(ProjectEntryId, Entry)> = Vec::new();
+                    let mut operations = Vec::new();
+                    for (entry_id, task) in move_tasks {
+                        if let Some(CreatedEntry::Included(new_entry)) = task
+                            .await
+                            .notify_workspace_async_err(workspace.clone(), &mut cx)
+                        {
+                            if let (Some(old_path), Some(worktree_id)) =
+                                (old_paths.get(&entry_id), destination_worktree_id)
+                            {
+                                operations.push(ProjectPanelOperation::Rename {
+                                    old_path: old_path.clone(),
+                                    new_path: (worktree_id, new_entry.path.clone()).into(),
+                                });
+                            }
                             move_results.push((entry_id, new_entry));
                         }
                     }
@@ -4464,6 +4579,12 @@ impl ProjectPanel {
                     if move_results.is_empty() {
                         return;
                     }
+
+                    project_panel
+                        .update(cx, |this, _| {
+                            this.undo_manager.record(operations);
+                        })
+                        .ok();
 
                     // For folded selections, we need to refresh the leaf paths (with suffixes)
                     // because they may not be indexed yet after the parent directory was moved.
@@ -6477,6 +6598,7 @@ impl Render for ProjectPanel {
                 .on_action(cx.listener(Self::fold_directory))
                 .on_action(cx.listener(Self::remove_from_project))
                 .on_action(cx.listener(Self::compare_marked_files))
+                .on_action(cx.listener(Self::undo))
                 .when(!project.is_read_only(cx), |el| {
                     el.on_action(cx.listener(Self::new_file))
                         .on_action(cx.listener(Self::new_directory))
