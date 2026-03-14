@@ -126,7 +126,6 @@ struct ThemeSelectorDelegate {
     /// The currently selected new theme.
     new_theme: Arc<Theme>,
     selection_completed: bool,
-    selected_theme: Option<Arc<Theme>>,
     selected_index: usize,
     selector: WeakEntity<ThemeSelector>,
 }
@@ -188,7 +187,6 @@ impl ThemeSelectorDelegate {
             new_theme: original_theme, // Start with the original theme.
             selected_index,
             selection_completed: false,
-            selected_theme: None,
             selector,
         }
     }
@@ -336,6 +334,7 @@ fn retain_original_opposing_theme(
 
 impl PickerDelegate for ThemeSelectorDelegate {
     type ListItem = ui::ListItem;
+    type StableId = SharedString;
 
     fn placeholder_text(&self, _window: &mut Window, _cx: &mut App) -> Arc<str> {
         "Select Theme...".into()
@@ -394,7 +393,7 @@ impl PickerDelegate for ThemeSelectorDelegate {
         cx: &mut Context<Picker<ThemeSelectorDelegate>>,
     ) {
         self.selected_index = ix;
-        self.selected_theme = self.show_selected_theme(cx);
+        self.show_selected_theme(cx);
     }
 
     fn update_matches(
@@ -436,29 +435,23 @@ impl PickerDelegate for ThemeSelectorDelegate {
                 .await
             };
 
-            this.update(cx, |this, cx| {
+            this.update(cx, |this, _cx| {
                 this.delegate.matches = matches;
-                if query.is_empty() && this.delegate.selected_theme.is_none() {
-                    this.delegate.selected_index = this
-                        .delegate
-                        .selected_index
-                        .min(this.delegate.matches.len().saturating_sub(1));
-                } else if let Some(selected) = this.delegate.selected_theme.as_ref() {
-                    this.delegate.selected_index = this
-                        .delegate
-                        .matches
-                        .iter()
-                        .enumerate()
-                        .find(|(_, mtch)| mtch.string == selected.name)
-                        .map(|(ix, _)| ix)
-                        .unwrap_or_default();
-                } else {
-                    this.delegate.selected_index = 0;
-                }
-                this.delegate.selected_theme = this.delegate.show_selected_theme(cx);
             })
             .log_err();
         })
+    }
+
+    fn match_stable_id(&self, ix: usize) -> Option<SharedString> {
+        self.matches
+            .get(ix)
+            .map(|m| self.themes[m.candidate_id].name.to_string().into())
+    }
+
+    fn find_match_by_stable_id(&self, stable_id: &SharedString) -> Option<usize> {
+        self.matches
+            .iter()
+            .position(|m| self.themes[m.candidate_id].name == stable_id.as_ref())
     }
 
     fn render_match(

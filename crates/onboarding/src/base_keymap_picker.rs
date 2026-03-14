@@ -101,6 +101,7 @@ impl BaseKeymapSelectorDelegate {
 
 impl PickerDelegate for BaseKeymapSelectorDelegate {
     type ListItem = ui::ListItem;
+    type StableId = ();
 
     fn placeholder_text(&self, _window: &mut Window, _cx: &mut App) -> Arc<str> {
         "Select a base keymap...".into()

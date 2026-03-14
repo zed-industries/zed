@@ -32,6 +32,7 @@ impl Delegate {
 
 impl PickerDelegate for Delegate {
     type ListItem = ListItem;
+    type StableId = ();
 
     fn match_count(&self) -> usize {
         self.candidates.len()

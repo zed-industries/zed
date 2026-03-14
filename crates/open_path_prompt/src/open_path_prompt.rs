@@ -251,6 +251,7 @@ impl OpenPathPrompt {
 
 impl PickerDelegate for OpenPathDelegate {
     type ListItem = ui::ListItem;
+    type StableId = ();
 
     fn match_count(&self) -> usize {
         let user_input = if let DirectoryState::Create { user_input, .. } = &self.directory_state {

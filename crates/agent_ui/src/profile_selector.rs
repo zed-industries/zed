@@ -435,6 +435,7 @@ impl ProfilePickerDelegate {
 
 impl PickerDelegate for ProfilePickerDelegate {
     type ListItem = AnyElement;
+    type StableId = ();
 
     fn placeholder_text(&self, _: &mut Window, _: &mut App) -> Arc<str> {
         "Search profiles…".into()

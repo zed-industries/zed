@@ -348,6 +348,7 @@ impl StashListDelegate {
 
 impl PickerDelegate for StashListDelegate {
     type ListItem = ListItem;
+    type StableId = ();
 
     fn placeholder_text(&self, _window: &mut Window, _cx: &mut App) -> Arc<str> {
         "Select a stash…".into()
