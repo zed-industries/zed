@@ -7268,6 +7268,21 @@ impl GlobalAnyActiveCall {
         cx.global()
     }
 }
+
+/// Callbacks for checking agent activity state.
+pub struct AgentActivityCallbacks {
+    pub is_generating_in_workspace: fn(workspace: &Workspace, cx: &App) -> bool,
+}
+
+impl Global for AgentActivityCallbacks {}
+
+impl AgentActivityCallbacks {
+    pub fn is_generating(workspace: &Workspace, cx: &App) -> bool {
+        cx.try_global::<Self>()
+            .is_some_and(|callbacks| (callbacks.is_generating_in_workspace)(workspace, cx))
+    }
+}
+
 /// Workspace-local view of a remote participant's location.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ParticipantLocation {

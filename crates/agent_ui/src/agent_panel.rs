@@ -506,6 +506,14 @@ pub fn init(cx: &mut App) {
         },
     )
     .detach();
+
+    cx.set_global(workspace::AgentActivityCallbacks {
+        is_generating_in_workspace: |workspace, cx| {
+            workspace
+                .panel::<AgentPanel>(cx)
+                .is_some_and(|panel| panel.read(cx).is_any_thread_generating(cx))
+        },
+    });
 }
 
 fn conflict_resource_block(conflict: &ConflictContent) -> acp::ContentBlock {
@@ -2093,6 +2101,25 @@ impl AgentPanel {
                 .map(|r| r.read(cx).thread.clone()),
             _ => None,
         }
+    }
+
+    /// Returns true if any thread (active or background) is currently generating.
+    pub fn is_any_thread_generating(&self, cx: &App) -> bool {
+        if let Some(thread) = self.active_agent_thread(cx) {
+            if thread.read(cx).status() == ThreadStatus::Generating {
+                return true;
+            }
+        }
+
+        for server_view in self.background_threads.values() {
+            if let Some(thread_view) = server_view.read(cx).parent_thread(cx) {
+                if thread_view.read(cx).thread.read(cx).status() == ThreadStatus::Generating {
+                    return true;
+                }
+            }
+        }
+
+        false
     }
 
     /// Returns the primary thread views for all retained connections: the
