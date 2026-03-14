@@ -61,6 +61,7 @@ struct PendingMessage {
     message_id: String,
     role: String,
     content: String,
+    entry_type: String,
 }
 
 /// Initialize the thread registry
@@ -137,6 +138,7 @@ fn throttled_send_message_added(
     entry_idx: usize,
     role: &str,
     content: String,
+    entry_type: &str,
 ) -> bool {
     init_streaming_throttle();
     let key = format!("{}:{}", acp_thread_id, entry_idx);
@@ -163,6 +165,7 @@ fn throttled_send_message_added(
             message_id: entry_idx.to_string(),
             role: role.to_string(),
             content,
+            entry_type: entry_type.to_string(),
             timestamp: chrono::Utc::now().timestamp(),
         });
         true
@@ -173,6 +176,7 @@ fn throttled_send_message_added(
             message_id: entry_idx.to_string(),
             role: role.to_string(),
             content,
+            entry_type: entry_type.to_string(),
         });
         false
     }
@@ -209,6 +213,7 @@ pub fn flush_streaming_throttle(acp_thread_id: &str) {
             message_id: pending.message_id,
             role: pending.role,
             content: pending.content,
+            entry_type: pending.entry_type,
             timestamp: chrono::Utc::now().timestamp(),
         });
     }
@@ -304,12 +309,12 @@ fn ensure_thread_subscription(
                     return;
                 }
                 if let Some(entry) = thread.entries().get(latest_idx) {
-                    let (role, content) = match entry {
+                    let (role, content, entry_type) = match entry {
                         acp_thread::AgentThreadEntry::UserMessage(msg) => {
-                            ("user", msg.content.to_markdown(cx).to_string())
+                            ("user", msg.content.to_markdown(cx).to_string(), "text")
                         }
                         acp_thread::AgentThreadEntry::AssistantMessage(msg) => {
-                            ("assistant", msg.content_only(cx))
+                            ("assistant", msg.content_only(cx), "text")
                         }
                         _ => return,
                     };
@@ -318,6 +323,7 @@ fn ensure_thread_subscription(
                         message_id: latest_idx.to_string(),
                         role: role.to_string(),
                         content,
+                        entry_type: entry_type.to_string(),
                         timestamp: chrono::Utc::now().timestamp(),
                     });
                 }
@@ -325,12 +331,12 @@ fn ensure_thread_subscription(
             AcpThreadEvent::EntryUpdated(entry_idx) => {
                 let thread = thread_entity.read(cx);
                 if let Some(entry) = thread.entries().get(*entry_idx) {
-                    let content = match entry {
+                    let (content, entry_type) = match entry {
                         acp_thread::AgentThreadEntry::AssistantMessage(msg) => {
-                            msg.content_only(cx)
+                            (msg.content_only(cx), "text")
                         }
                         acp_thread::AgentThreadEntry::ToolCall(tool_call) => {
-                            tool_call.to_markdown(cx)
+                            (tool_call.to_markdown(cx), "tool_call")
                         }
                         _ => return,
                     };
@@ -339,6 +345,7 @@ fn ensure_thread_subscription(
                         *entry_idx,
                         "assistant",
                         content,
+                        entry_type,
                     );
                 }
             }

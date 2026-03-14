@@ -186,14 +186,19 @@ pub enum SyncEvent {
         title: String,
     },
     /// Sent while AI is streaming response (same message_id, progressively longer content)
+    /// entry_type distinguishes "text" (assistant prose) from "tool_call" (tool invocation)
     #[serde(rename = "message_added")]
     MessageAdded {
         acp_thread_id: String,
         message_id: String,
         role: String,
         content: String,
+        /// "text" for assistant prose, "tool_call" for tool invocations
+        #[serde(default)]
+        entry_type: String,
         timestamp: i64,
     },
+
     /// Sent when AI finishes responding
     #[serde(rename = "message_completed")]
     MessageCompleted {
@@ -261,7 +266,7 @@ impl SyncEvent {
                     "title": title,
                 })
             ),
-            SyncEvent::MessageAdded { acp_thread_id, message_id, role, content, timestamp } => (
+            SyncEvent::MessageAdded { acp_thread_id, message_id, role, content, entry_type, timestamp } => (
                 "message_added".to_string(),
                 serde_json::json!({
                     "acp_thread_id": acp_thread_id,
@@ -269,6 +274,7 @@ impl SyncEvent {
                     "role": role,
                     "content": content,
                     "timestamp": timestamp,
+                    "entry_type": entry_type,
                 })
             ),
             SyncEvent::MessageCompleted { acp_thread_id, message_id, request_id } => (
