@@ -1,11 +1,11 @@
 use crate::types::TableCell;
 use gpui::{AnyElement, Entity};
 use std::ops::Range;
+use ui::RedistributableColumnsState;
 use ui::Table;
-use ui::TableColumnWidths;
 use ui::TableResizeBehavior;
 use ui::UncheckedTableRow;
-use ui::{DefiniteLength, div, prelude::*};
+use ui::{ColumnWidthConfig, DefiniteLength, div, prelude::*};
 
 use crate::{
     CsvPreviewView,
@@ -15,10 +15,10 @@ use crate::{
 
 impl CsvPreviewView {
     /// Creates a new table.
-    /// Column number is derived from the `TableColumnWidths` entity.
+    /// Column number is derived from the `RedistributableColumnsState` entity.
     pub(crate) fn create_table(
         &self,
-        current_widths: &Entity<TableColumnWidths>,
+        current_widths: &Entity<RedistributableColumnsState>,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let cols = current_widths.read(cx).cols();
@@ -35,24 +35,22 @@ impl CsvPreviewView {
         let mut resize_behaviors = vec![TableResizeBehavior::Resizable; cols];
         resize_behaviors[0] = TableResizeBehavior::None;
 
-        self.create_table_inner(
-            self.engine.contents.rows.len(),
-            widths,
-            resize_behaviors,
-            current_widths,
-            cx,
-        )
+        // Update the entity with the calculated widths and resize behaviors
+        current_widths.update(cx, |state, _cx| {
+            *state =
+                RedistributableColumnsState::new(cols, widths.clone(), resize_behaviors.clone());
+        });
+
+        self.create_table_inner(self.engine.contents.rows.len(), current_widths, cx)
     }
 
     fn create_table_inner(
         &self,
         row_count: usize,
-        widths: UncheckedTableRow<DefiniteLength>,
-        resize_behaviors: UncheckedTableRow<TableResizeBehavior>,
-        current_widths: &Entity<TableColumnWidths>,
+        current_widths: &Entity<RedistributableColumnsState>,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let cols = widths.len();
+        let cols = current_widths.read(cx).cols();
         // Create headers array with interactive elements
         let mut headers = Vec::with_capacity(cols);
 
@@ -78,8 +76,10 @@ impl CsvPreviewView {
         Table::new(cols)
             .interactable(&self.table_interaction_state)
             .striped()
-            .column_widths(widths)
-            .resizable_columns(resize_behaviors, current_widths, cx)
+            .width_config(ColumnWidthConfig::Redistributable {
+                entity: current_widths.clone(),
+                table_width: None,
+            })
             .header(headers)
             .disable_base_style()
             .map(|table| {

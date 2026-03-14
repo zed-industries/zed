@@ -9,7 +9,7 @@ use std::{
 };
 
 use crate::table_data_engine::TableDataEngine;
-use ui::{SharedString, TableColumnWidths, TableInteractionState, prelude::*};
+use ui::{RedistributableColumnsState, SharedString, TableInteractionState, prelude::*};
 use workspace::{Item, SplitDirection, Workspace};
 
 use crate::{parser::EditorState, settings::CsvPreviewSettings, types::TableLikeContent};
@@ -285,18 +285,29 @@ impl PerformanceMetrics {
 
 /// Holds state of column widths for a table component in CSV preview.
 pub(crate) struct ColumnWidths {
-    pub widths: Entity<TableColumnWidths>,
+    pub widths: Entity<RedistributableColumnsState>,
 }
 
 impl ColumnWidths {
     pub(crate) fn new(cx: &mut Context<CsvPreviewView>, cols: usize) -> Self {
         Self {
-            widths: cx.new(|cx| TableColumnWidths::new(cols, cx)),
+            widths: cx.new(|_cx| {
+                RedistributableColumnsState::new(
+                    cols,
+                    vec![ui::DefiniteLength::Fraction(1.0 / cols as f32); cols],
+                    vec![ui::TableResizeBehavior::Resizable; cols],
+                )
+            }),
         }
     }
-    /// Replace the current `TableColumnWidths` entity with a new one for the given column count.
+    /// Replace the current `RedistributableColumnsState` entity with a new one for the given column count.
     pub(crate) fn replace(&self, cx: &mut Context<CsvPreviewView>, cols: usize) {
-        self.widths
-            .update(cx, |entity, cx| *entity = TableColumnWidths::new(cols, cx));
+        self.widths.update(cx, |entity, _cx| {
+            *entity = RedistributableColumnsState::new(
+                cols,
+                vec![ui::DefiniteLength::Fraction(1.0 / cols as f32); cols],
+                vec![ui::TableResizeBehavior::Resizable; cols],
+            )
+        });
     }
 }

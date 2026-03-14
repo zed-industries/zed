@@ -283,7 +283,9 @@ impl EditPredictionContextView {
             .gap_2()
             .child(v_flex().h_full().flex_1().child({
                 let t0 = run.started_at;
-                let mut table = ui::Table::new(2).width(ui::px(300.)).no_ui_font();
+                let mut table = ui::Table::new(2)
+                    .width(ui::px(300.))
+                    .no_ui_font();
                 for (key, value) in &run.metadata {
                     table = table.row(vec![
                         key.into_any_element(),
