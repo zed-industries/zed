@@ -690,13 +690,9 @@ mod tests {
         std::fs::create_dir_all(&logs_dir)?;
         std::fs::write(logs_dir.join("Zed.log"), [])?;
         std::fs::write(logs_dir.join("Zed.log.2"), [])?;
-        std::thread::sleep(std::time::Duration::from_millis(10));
         std::fs::write(logs_dir.join("Zed.log.3"), [])?;
-        std::thread::sleep(std::time::Duration::from_millis(10));
         std::fs::write(logs_dir.join("Zed.log.4"), [])?;
-        std::thread::sleep(std::time::Duration::from_millis(10));
         std::fs::write(logs_dir.join("Zed.log.6"), [])?;
-        std::thread::sleep(std::time::Duration::from_millis(10));
         std::fs::write(logs_dir.join("Zed.log.8"), [])?;
         std::fs::write(logs_dir.join("Zed.log.old"), [])?;
         std::fs::write(logs_dir.join("unrelated.log"), [])?;
