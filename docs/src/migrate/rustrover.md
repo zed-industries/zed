@@ -45,6 +45,8 @@ This maps familiar shortcuts like `Shift Shift` for Search Everywhere, `Cmd+O` f
 
 In editors, the JetBrains keymap also makes `Alt+Left` / `Alt+Right` and `Shift+Alt+Left` / `Shift+Alt+Right` move and select by subword, so identifiers like `camelCase` and `snake_case` behave like RustRover's CamelHumps navigation.
 
+If you want to copy that behavior into another base keymap, see the copy-paste `keymap.json` examples in [Key Bindings](../key-bindings.md#word-and-subword-navigation).
+
 ## Set Up Editor Preferences
 
 You can configure most settings in the Settings Editor ({#kb zed::OpenSettings}). For advanced settings, run `zed: open settings file` from the Command Palette to edit your settings file directly.
