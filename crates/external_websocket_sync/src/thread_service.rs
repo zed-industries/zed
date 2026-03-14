@@ -357,6 +357,9 @@ fn ensure_thread_subscription(
                         acp_thread::AgentThreadEntry::AssistantMessage(msg) => {
                             ("assistant", msg.content_only(cx), "text")
                         }
+                        acp_thread::AgentThreadEntry::ToolCall(tool_call) => {
+                            ("assistant", tool_call.to_markdown(cx), "tool_call")
+                        }
                         _ => return,
                     };
                     let _ = crate::send_websocket_event(SyncEvent::MessageAdded {
