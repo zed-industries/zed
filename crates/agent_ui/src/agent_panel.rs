@@ -3266,48 +3266,49 @@ impl AgentPanel {
 
         let content = match &self.active_view {
             ActiveView::AgentThread { server_view } => {
-                let is_generating_title = server_view
-                    .read(cx)
-                    .as_native_thread(cx)
-                    .map_or(false, |t| t.read(cx).is_generating_title());
+                let server_view_ref = server_view.read(cx);
+                let is_generating_title = server_view_ref.as_native_thread(cx).is_some()
+                    && server_view_ref.parent_thread(cx).map_or(false, |tv| {
+                        tv.read(cx).thread.read(cx).has_provisional_title()
+                    });
 
-                if let Some(title_editor) = server_view
-                    .read(cx)
+                if let Some(title_editor) = server_view_ref
                     .parent_thread(cx)
                     .map(|r| r.read(cx).title_editor.clone())
                 {
-                    let container = div()
-                        .w_full()
-                        .on_action({
-                            let thread_view = server_view.downgrade();
-                            move |_: &menu::Confirm, window, cx| {
-                                if let Some(thread_view) = thread_view.upgrade() {
-                                    thread_view.focus_handle(cx).focus(window, cx);
-                                }
-                            }
-                        })
-                        .on_action({
-                            let thread_view = server_view.downgrade();
-                            move |_: &editor::actions::Cancel, window, cx| {
-                                if let Some(thread_view) = thread_view.upgrade() {
-                                    thread_view.focus_handle(cx).focus(window, cx);
-                                }
-                            }
-                        })
-                        .child(title_editor);
-
                     if is_generating_title {
-                        container
+                        Label::new("New Thread…")
+                            .color(Color::Muted)
+                            .truncate()
                             .with_animation(
                                 "generating_title",
                                 Animation::new(Duration::from_secs(2))
                                     .repeat()
                                     .with_easing(pulsating_between(0.4, 0.8)),
-                                |div, delta| div.opacity(delta),
+                                |label, delta| label.alpha(delta),
                             )
                             .into_any_element()
                     } else {
-                        container.into_any_element()
+                        div()
+                            .w_full()
+                            .on_action({
+                                let thread_view = server_view.downgrade();
+                                move |_: &menu::Confirm, window, cx| {
+                                    if let Some(thread_view) = thread_view.upgrade() {
+                                        thread_view.focus_handle(cx).focus(window, cx);
+                                    }
+                                }
+                            })
+                            .on_action({
+                                let thread_view = server_view.downgrade();
+                                move |_: &editor::actions::Cancel, window, cx| {
+                                    if let Some(thread_view) = thread_view.upgrade() {
+                                        thread_view.focus_handle(cx).focus(window, cx);
+                                    }
+                                }
+                            })
+                            .child(title_editor)
+                            .into_any_element()
                     }
                 } else {
                     Label::new(server_view.read(cx).title(cx))

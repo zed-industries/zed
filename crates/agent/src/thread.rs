@@ -2570,6 +2570,14 @@ impl Thread {
                 .is_some()
             {
                 _ = this.update(cx, |this, cx| this.set_title(title.into(), cx));
+            } else {
+                // Emit TitleUpdated even on failure so that the propagation
+                // chain (agent::Thread → NativeAgent → AcpThread) fires and
+                // clears any provisional title that was set before the turn.
+                _ = this.update(cx, |_, cx| {
+                    cx.emit(TitleUpdated);
+                    cx.notify();
+                });
             }
             _ = this.update(cx, |this, _| this.pending_title_generation = None);
         }));
