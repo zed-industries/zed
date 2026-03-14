@@ -1,16 +1,23 @@
 use core::slice;
-use std::ffi::c_void;
+use std::ffi::{CStr, c_void};
+use std::path::PathBuf;
 
 use cocoa::{
-    appkit::{NSPasteboard, NSPasteboardTypePNG, NSPasteboardTypeString, NSPasteboardTypeTIFF},
+    appkit::{
+        NSFilenamesPboardType, NSPasteboard, NSPasteboardTypePNG, NSPasteboardTypeString,
+        NSPasteboardTypeTIFF,
+    },
     base::{id, nil},
-    foundation::NSData,
+    foundation::{NSData, NSFastEnumeration, NSString},
 };
 use objc::{msg_send, runtime::Object, sel, sel_impl};
+use smallvec::SmallVec;
 use strum::IntoEnumIterator as _;
 
 use crate::ns_string;
-use gpui::{ClipboardEntry, ClipboardItem, ClipboardString, Image, ImageFormat, hash};
+use gpui::{
+    ClipboardEntry, ClipboardItem, ClipboardString, ExternalPaths, Image, ImageFormat, hash,
+};
 
 pub struct Pasteboard {
     inner: id,
@@ -41,8 +48,21 @@ impl Pasteboard {
     }
 
     pub fn read(&self) -> Option<ClipboardItem> {
-        // First, see if it's a string.
         unsafe {
+            // File paths first: Finder also puts a TIFF of the file icon in the clipboard,
+            // so this must precede the image check to avoid loading the icon.
+            if let Some(item) = self.read_external_paths() {
+                return Some(item);
+            }
+
+            // Images before strings: many apps put both image data and a filename/URL
+            // string in the clipboard; without this ordering the string would win.
+            for format in ImageFormat::iter() {
+                if let Some(item) = self.read_image(format) {
+                    return Some(item);
+                }
+            }
+
             let pasteboard_types: id = self.inner.types();
             let string_type: id = ns_string("public.utf8-plain-text");
 
@@ -61,17 +81,34 @@ impl Pasteboard {
                     return Some(self.read_string(bytes));
                 }
             }
-
-            // If it wasn't a string, try the various supported image types.
-            for format in ImageFormat::iter() {
-                if let Some(item) = self.read_image(format) {
-                    return Some(item);
-                }
-            }
         }
 
         // If it wasn't a string or a supported image type, give up.
         None
+    }
+
+    fn read_external_paths(&self) -> Option<ClipboardItem> {
+        unsafe {
+            let filenames = NSPasteboard::propertyListForType(self.inner, NSFilenamesPboardType);
+            if filenames == nil {
+                return None;
+            }
+            let mut paths: SmallVec<[PathBuf; 2]> = SmallVec::new();
+            for file in filenames.iter() {
+                let ptr = NSString::UTF8String(file);
+                if ptr.is_null() {
+                    continue;
+                }
+                let path = CStr::from_ptr(ptr).to_string_lossy().into_owned();
+                paths.push(PathBuf::from(path));
+            }
+            if paths.is_empty() {
+                return None;
+            }
+            Some(ClipboardItem {
+                entries: vec![ClipboardEntry::ExternalPaths(ExternalPaths(paths))],
+            })
+        }
     }
 
     fn read_image(&self, format: ImageFormat) -> Option<ClipboardItem> {
