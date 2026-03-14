@@ -3,7 +3,8 @@ use crate::{
     IconDecorationKind, prelude::*,
 };
 
-use gpui::{AnyView, ClickEvent, Hsla, SharedString};
+use gpui::{Animation, AnimationExt, AnyView, ClickEvent, Hsla, SharedString, pulsating_between};
+use std::time::Duration;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum AgentThreadStatus {
@@ -301,7 +302,7 @@ impl RenderOnce for ThreadItem {
                             .when_some(self.tooltip, |this, tooltip| this.tooltip(tooltip)),
                     )
                     .child(gradient_overlay)
-                    .when(self.hovered || self.selected, |this| {
+                    .when(self.hovered, |this| {
                         this.when_some(self.action_slot, |this, slot| {
                             let overlay = GradientFade::new(
                                 base_bg,
