@@ -219,6 +219,7 @@ members = [
     "crates/worktree_benchmarks",
     "crates/x_ai",
     "crates/zed",
+    "crates/zed-ios",
     "crates/zed_actions",
     "crates/zed_env_vars",
     "crates/zeta_prompt",

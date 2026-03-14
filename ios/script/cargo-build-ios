@@ -1,0 +1,38 @@
+#!/bin/bash
+# Cargo build script invoked as an Xcode build phase.
+# Builds the zed-ios static library and copies libzed_ios.a to BUILT_PRODUCTS_DIR.
+
+set -euo pipefail
+
+REPO_ROOT="$(cd "$PROJECT_DIR/.." && pwd)"
+
+# Select Rust target based on the Xcode platform being built.
+if [ "$PLATFORM_NAME" = "iphonesimulator" ]; then
+    RUST_TARGET="aarch64-apple-ios-sim"
+else
+    RUST_TARGET="aarch64-apple-ios"
+fi
+
+# Map Xcode configuration to cargo profile.
+if [ "$CONFIGURATION" = "Release" ]; then
+    CARGO_FLAGS="--release"
+    CARGO_PROFILE_DIR="release"
+else
+    CARGO_FLAGS=""
+    CARGO_PROFILE_DIR="debug"
+fi
+
+echo "Building zed-ios for $RUST_TARGET ($CONFIGURATION)..."
+
+cd "$REPO_ROOT"
+cargo build \
+    -p zed-ios \
+    --target "$RUST_TARGET" \
+    $CARGO_FLAGS \
+    --no-default-features
+
+LIB_SRC="$REPO_ROOT/target/$RUST_TARGET/$CARGO_PROFILE_DIR/libzed_ios.a"
+LIB_DST="$BUILT_PRODUCTS_DIR/libzed_ios.a"
+
+cp "$LIB_SRC" "$LIB_DST"
+echo "Copied $LIB_SRC → $LIB_DST"

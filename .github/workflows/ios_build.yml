@@ -1,0 +1,58 @@
+name: ios_build
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: '1'
+  CARGO_INCREMENTAL: '0'
+  IPHONEOS_DEPLOYMENT_TARGET: '17.0'
+on:
+  pull_request:
+    branches:
+    - ipad
+    - 'ipad/**'
+  push:
+    branches:
+    - ipad
+    - 'ipad/**'
+
+jobs:
+  ios-sim-build:
+    name: Build iOS simulator target
+    # macOS runner required for Xcode toolchain
+    runs-on: macos-latest
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      with:
+        clean: false
+
+    - name: Pin Xcode version
+      uses: maxim-lobanov/setup-xcode@60606e260d2fc5762a71e64e74b2174e8ea3c8bd
+      with:
+        xcode-version: '16.0'
+
+    - name: Install Rust toolchain
+      uses: dtolnay/rust-toolchain@stable
+      with:
+        targets: aarch64-apple-ios-sim,aarch64-apple-ios
+
+    - name: Cache Rust build artifacts
+      uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6
+      with:
+        key: ios-sim
+
+    - name: Build zed-ios (simulator)
+      run: |
+        cargo build \
+          -p zed-ios \
+          --target aarch64-apple-ios-sim \
+          --no-default-features
+
+    - name: Build Xcode project (simulator)
+      run: |
+        xcodebuild \
+          -project ios/ZedApp.xcodeproj \
+          -scheme ZedApp \
+          -destination 'platform=iOS Simulator,name=iPad Pro 13-inch (M4)' \
+          -configuration Debug \
+          CODE_SIGNING_ALLOWED=NO \
+          build
