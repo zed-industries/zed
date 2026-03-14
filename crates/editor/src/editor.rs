@@ -24014,6 +24014,7 @@ impl Editor {
         {
             let editor_settings = EditorSettings::get_global(cx);
             self.scroll_manager.vertical_scroll_margin = editor_settings.vertical_scroll_margin;
+            self.scroll_manager.smooth_scroll = editor_settings.smooth_scroll.enabled;
             self.show_breadcrumbs = editor_settings.toolbar.breadcrumbs;
             self.cursor_shape = editor_settings.cursor_shape.unwrap_or_default();
             self.hide_mouse_mode = editor_settings.hide_mouse.unwrap_or_default();

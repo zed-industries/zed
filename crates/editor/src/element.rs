@@ -7676,7 +7676,13 @@ impl EditorElement {
                             }
                         };
 
-                        let current_scroll_position = position_map.snapshot.scroll_position();
+                        let current_scroll_position = editor
+                            .scroll_manager
+                            .scroll_animation()
+                            .filter(|animation| animation.is_animating())
+                            .map(|animation| animation.target_position())
+                            .unwrap_or_else(|| position_map.snapshot.scroll_position());
+
                         let x = (current_scroll_position.x * ScrollPixelOffset::from(glyph_width)
                             - ScrollPixelOffset::from(delta.x * scroll_sensitivity))
                             / ScrollPixelOffset::from(glyph_width);
@@ -7691,7 +7697,7 @@ impl EditorElement {
                         }
 
                         if scroll_position != current_scroll_position {
-                            editor.scroll(scroll_position, axis, window, cx);
+                            editor.scroll(scroll_position, axis, None, window, cx);
                             cx.stop_propagation();
                         } else if y < 0. {
                             // Due to clamping, we may fail to detect cases of overscroll to the top;
@@ -9732,6 +9738,14 @@ impl Element for EditorElement {
                             cx,
                         );
                         editor.set_visible_column_count(f64::from(editor_width / em_advance));
+
+                        if let Some(animation) = editor.scroll_manager.update_animation() {
+                            editor.set_scroll_position(animation.position(), window, cx);
+
+                            if animation.is_animating() {
+                                window.request_animation_frame();
+                            }
+                        }
 
                         if matches!(
                             editor.mode,
