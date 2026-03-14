@@ -56,10 +56,8 @@ impl Render for BasedPyrightBanner {
                                 .gap_0p5()
                                 .child(
                                     Button::new("learn-more", "Learn More")
-                                        .icon(IconName::ArrowUpRight)
                                         .label_size(LabelSize::Small)
-                                        .icon_size(IconSize::XSmall)
-                                        .icon_color(Color::Muted)
+                                        .end_icon(Icon::new(IconName::ArrowUpRight).size(IconSize::XSmall).color(Color::Muted))
                                         .on_click(|_, _, cx| {
                                             cx.open_url("https://zed.dev/docs/languages/python")
                                         }),

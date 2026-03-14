@@ -508,8 +508,7 @@ mod tests {
         });
 
         let thread_store = None;
-        let history =
-            cx.update(|window, cx| cx.new(|cx| crate::ThreadHistory::new(None, window, cx)));
+        let history = cx.update(|_window, cx| cx.new(|cx| crate::ThreadHistory::new(None, cx)));
 
         let view_state = cx.new(|_cx| {
             EntryViewState::new(

@@ -108,12 +108,17 @@ pub enum StreamingEditFileMode {
 pub struct Edit {
     /// The exact text to find in the file. This will be matched using fuzzy matching
     /// to handle minor differences in whitespace or formatting.
+    ///
+    /// Always include complete lines. Do not start or end mid-line.
+    /// Be minimal with replacements:
+    /// - For unique lines, include only those lines
+    /// - For non-unique lines, include enough context to identify them
     pub old_text: String,
     /// The text to replace it with
     pub new_text: String,
 }
 
-#[derive(Default, Debug, Deserialize)]
+#[derive(Clone, Default, Debug, Deserialize)]
 struct StreamingEditFileToolPartialInput {
     #[serde(default)]
     display_description: Option<String>,
@@ -127,7 +132,7 @@ struct StreamingEditFileToolPartialInput {
     edits: Option<Vec<PartialEdit>>,
 }
 
-#[derive(Default, Debug, Deserialize)]
+#[derive(Clone, Default, Debug, Deserialize)]
 pub struct PartialEdit {
     #[serde(default)]
     pub old_text: Option<String>,
@@ -309,12 +314,19 @@ impl AgentTool for StreamingEditFileTool {
     ) -> Task<Result<Self::Output, Self::Output>> {
         cx.spawn(async move |cx: &mut AsyncApp| {
             let mut state: Option<EditSession> = None;
+            let mut last_partial: Option<StreamingEditFileToolPartialInput> = None;
             loop {
                 futures::select! {
                     partial = input.recv_partial().fuse() => {
                         let Some(partial_value) = partial else { break };
                         if let Ok(parsed) = serde_json::from_value::<StreamingEditFileToolPartialInput>(partial_value) {
+                            let path_complete = parsed.path.is_some()
+                                && parsed.path.as_ref() == last_partial.as_ref().and_then(|p| p.path.as_ref());
+
+                            last_partial = Some(parsed.clone());
+
                             if state.is_none()
+                                && path_complete
                                 && let StreamingEditFileToolPartialInput {
                                     path: Some(path),
                                     display_description: Some(display_description),
@@ -567,6 +579,17 @@ impl EditSession {
                 })?;
                 let events = self.parser.finalize_edits(&edits);
                 self.process_events(&events, tool, event_stream, cx)?;
+
+                if log::log_enabled!(log::Level::Debug) {
+                    log::debug!("Got edits:");
+                    for edit in &edits {
+                        log::debug!(
+                            "  old_text: '{}', new_text: '{}'",
+                            edit.old_text.replace('\n', "\\n"),
+                            edit.new_text.replace('\n', "\\n")
+                        );
+                    }
+                }
             }
         }
 
@@ -699,6 +722,7 @@ impl EditSession {
                 ToolEditEvent::OldTextChunk {
                     chunk, done: false, ..
                 } => {
+                    log::debug!("old_text_chunk: done=false, chunk='{}'", chunk);
                     self.pipeline.ensure_resolving_old_text(&self.buffer, cx);
 
                     if let Some(EditPipelineEntry::ResolvingOldText { matcher }) =
@@ -725,6 +749,8 @@ impl EditSession {
                     chunk,
                     done: true,
                 } => {
+                    log::debug!("old_text_chunk: done=true, chunk='{}'", chunk);
+
                     self.pipeline.ensure_resolving_old_text(&self.buffer, cx);
 
                     let Some(EditPipelineEntry::ResolvingOldText { matcher }) =
@@ -767,6 +793,14 @@ impl EditSession {
                     let old_text_in_buffer =
                         snapshot.text_for_range(range.clone()).collect::<String>();
 
+                    log::debug!(
+                        "edit[{}] old_text matched at {}..{}: {:?}",
+                        edit_index,
+                        range.start,
+                        range.end,
+                        old_text_in_buffer,
+                    );
+
                     let text_snapshot = self
                         .buffer
                         .read_with(cx, |buffer, _cx| buffer.text_snapshot());
@@ -786,6 +820,8 @@ impl EditSession {
                 ToolEditEvent::NewTextChunk {
                     chunk, done: false, ..
                 } => {
+                    log::debug!("new_text_chunk: done=false, chunk='{}'", chunk);
+
                     let Some(EditPipelineEntry::StreamingNewText {
                         streaming_diff,
                         edit_cursor,
@@ -821,6 +857,8 @@ impl EditSession {
                 ToolEditEvent::NewTextChunk {
                     chunk, done: true, ..
                 } => {
+                    log::debug!("new_text_chunk: done=true, chunk='{}'", chunk);
+
                     let Some(EditPipelineEntry::StreamingNewText {
                         mut streaming_diff,
                         mut edit_cursor,
@@ -834,6 +872,8 @@ impl EditSession {
                     // Flush any remaining reindent buffer + final chunk.
                     let mut final_text = reindenter.push(chunk);
                     final_text.push_str(&reindenter.finish());
+
+                    log::debug!("new_text_chunk: done=true, final_text='{}'", final_text);
 
                     if !final_text.is_empty() {
                         let char_ops = streaming_diff.push_new(&final_text);
@@ -1874,6 +1914,13 @@ mod tests {
         let task = cx.update(|cx| tool.clone().run(input, event_stream, cx));
 
         // Setup + single edit that stays in-progress (no second edit to prove completion)
+        sender.send_partial(json!({
+            "display_description": "Single edit",
+            "path": "root/file.txt",
+            "mode": "edit",
+        }));
+        cx.run_until_parked();
+
         sender.send_partial(json!({
             "display_description": "Single edit",
             "path": "root/file.txt",
@@ -3445,6 +3492,12 @@ mod tests {
         sender.send_partial(json!({
             "display_description": "Overwrite file",
             "path": "root/file.txt",
+        }));
+        cx.run_until_parked();
+
+        sender.send_partial(json!({
+            "display_description": "Overwrite file",
+            "path": "root/file.txt",
             "mode": "write"
         }));
         cx.run_until_parked();
@@ -3517,8 +3570,9 @@ mod tests {
         // Verify buffer still has old content (no content partial yet)
         let buffer = project.update(cx, |project, cx| {
             let path = project.find_project_path("root/file.txt", cx).unwrap();
-            project.get_open_buffer(&path, cx).unwrap()
+            project.open_buffer(path, cx)
         });
+        let buffer = buffer.await.unwrap();
         assert_eq!(
             buffer.read_with(cx, |b, _| b.text()),
             "old line 1\nold line 2\nold line 3\n"
@@ -3700,6 +3754,106 @@ mod tests {
             "action_log.changed_buffers() should be non-empty after streaming write, \
              but no changed buffers were found \u{2014} Accept All / Reject All will not appear"
         );
+    }
+
+    #[gpui::test]
+    async fn test_streaming_edit_file_tool_fields_out_of_order_in_write_mode(
+        cx: &mut TestAppContext,
+    ) {
+        let (tool, _project, _action_log, _fs, _thread) =
+            setup_test(cx, json!({"file.txt": "old_content"})).await;
+        let (sender, input) = ToolInput::<StreamingEditFileToolInput>::test();
+        let (event_stream, _receiver) = ToolCallEventStream::test();
+        let task = cx.update(|cx| tool.clone().run(input, event_stream, cx));
+
+        sender.send_partial(json!({
+            "display_description": "Overwrite file",
+            "mode": "write"
+        }));
+        cx.run_until_parked();
+
+        sender.send_partial(json!({
+            "display_description": "Overwrite file",
+            "mode": "write",
+            "content": "new_content"
+        }));
+        cx.run_until_parked();
+
+        sender.send_partial(json!({
+            "display_description": "Overwrite file",
+            "mode": "write",
+            "content": "new_content",
+            "path": "root"
+        }));
+        cx.run_until_parked();
+
+        // Send final.
+        sender.send_final(json!({
+            "display_description": "Overwrite file",
+            "mode": "write",
+            "content": "new_content",
+            "path": "root/file.txt"
+        }));
+
+        let result = task.await;
+        let StreamingEditFileToolOutput::Success { new_text, .. } = result.unwrap() else {
+            panic!("expected success");
+        };
+        assert_eq!(new_text, "new_content");
+    }
+
+    #[gpui::test]
+    async fn test_streaming_edit_file_tool_fields_out_of_order_in_edit_mode(
+        cx: &mut TestAppContext,
+    ) {
+        let (tool, _project, _action_log, _fs, _thread) =
+            setup_test(cx, json!({"file.txt": "old_content"})).await;
+        let (sender, input) = ToolInput::<StreamingEditFileToolInput>::test();
+        let (event_stream, _receiver) = ToolCallEventStream::test();
+        let task = cx.update(|cx| tool.clone().run(input, event_stream, cx));
+
+        sender.send_partial(json!({
+            "display_description": "Overwrite file",
+            "mode": "edit"
+        }));
+        cx.run_until_parked();
+
+        sender.send_partial(json!({
+            "display_description": "Overwrite file",
+            "mode": "edit",
+            "edits": [{"old_text": "old_content"}]
+        }));
+        cx.run_until_parked();
+
+        sender.send_partial(json!({
+            "display_description": "Overwrite file",
+            "mode": "edit",
+            "edits": [{"old_text": "old_content", "new_text": "new_content"}]
+        }));
+        cx.run_until_parked();
+
+        sender.send_partial(json!({
+            "display_description": "Overwrite file",
+            "mode": "edit",
+            "edits": [{"old_text": "old_content", "new_text": "new_content"}],
+            "path": "root"
+        }));
+        cx.run_until_parked();
+
+        // Send final.
+        sender.send_final(json!({
+            "display_description": "Overwrite file",
+            "mode": "edit",
+            "edits": [{"old_text": "old_content", "new_text": "new_content"}],
+            "path": "root/file.txt"
+        }));
+        cx.run_until_parked();
+
+        let result = task.await;
+        let StreamingEditFileToolOutput::Success { new_text, .. } = result.unwrap() else {
+            panic!("expected success");
+        };
+        assert_eq!(new_text, "new_content");
     }
 
     async fn setup_test_with_fs(

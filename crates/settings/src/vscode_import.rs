@@ -793,7 +793,12 @@ impl VsCodeSettings {
             hide_root: None,
             indent_guides: None,
             indent_size: None,
-            scrollbar: None,
+            scrollbar: self.read_bool("workbench.list.horizontalScrolling").map(
+                |horizontal_scrolling| ProjectPanelScrollbarSettingsContent {
+                    show: None,
+                    horizontal_scroll: Some(horizontal_scrolling),
+                },
+            ),
             show_diagnostics: self
                 .read_bool("problems.decorations.enabled")
                 .and_then(|b| if b { Some(ShowDiagnostics::Off) } else { None }),

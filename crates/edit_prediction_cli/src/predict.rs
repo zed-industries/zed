@@ -2,7 +2,7 @@ use crate::{
     FormatPromptArgs, PredictArgs, PredictionProvider, TeacherBackend,
     anthropic_client::AnthropicClient,
     example::{Example, ExamplePrediction, ExamplePrompt},
-    format_prompt::{TeacherPrompt, run_format_prompt},
+    format_prompt::{TeacherMultiRegionPrompt, TeacherPrompt, run_format_prompt},
     headless::EpAppState,
     load_project::run_load_project,
     openai_client::OpenAiClient,
@@ -57,8 +57,10 @@ pub async fn run_prediction(
         );
     };
 
-    if let PredictionProvider::Teacher(backend) | PredictionProvider::TeacherNonBatching(backend) =
-        provider
+    if let PredictionProvider::Teacher(backend)
+    | PredictionProvider::TeacherMultiRegion(backend)
+    | PredictionProvider::TeacherNonBatching(backend)
+    | PredictionProvider::TeacherMultiRegionNonBatching(backend) = provider
     {
         run_context_retrieval(example, app_state.clone(), example_progress, cx.clone()).await?;
         run_format_prompt(
@@ -71,7 +73,10 @@ pub async fn run_prediction(
         .await?;
 
         let step_progress = example_progress.start(Step::Predict);
-        let batched = matches!(provider, PredictionProvider::Teacher(..));
+        let batched = matches!(
+            provider,
+            PredictionProvider::Teacher(..) | PredictionProvider::TeacherMultiRegion(..)
+        );
         return predict_teacher(
             example,
             backend,
@@ -135,7 +140,9 @@ pub async fn run_prediction(
             PredictionProvider::Sweep => edit_prediction::EditPredictionModel::Sweep,
             PredictionProvider::Mercury => edit_prediction::EditPredictionModel::Mercury,
             PredictionProvider::Teacher(..)
+            | PredictionProvider::TeacherMultiRegion(..)
             | PredictionProvider::TeacherNonBatching(..)
+            | PredictionProvider::TeacherMultiRegionNonBatching(..)
             | PredictionProvider::Repair
             | PredictionProvider::Baseten(_) => {
                 unreachable!()
@@ -403,7 +410,29 @@ async fn predict_anthropic(
             .collect::<Vec<String>>()
             .join("\n");
 
-        let (actual_patch, actual_cursor) = TeacherPrompt::parse(example, &actual_output)?;
+        let parser_provider = if batched {
+            example
+                .prompt
+                .as_ref()
+                .map(|prompt| prompt.provider)
+                .unwrap_or(PredictionProvider::Teacher(backend))
+        } else {
+            match example.prompt.as_ref().map(|prompt| prompt.provider) {
+                Some(PredictionProvider::TeacherMultiRegion(_))
+                | Some(PredictionProvider::TeacherMultiRegionNonBatching(_)) => {
+                    PredictionProvider::TeacherMultiRegionNonBatching(backend)
+                }
+                _ => PredictionProvider::TeacherNonBatching(backend),
+            }
+        };
+
+        let (actual_patch, actual_cursor) = match parser_provider {
+            PredictionProvider::TeacherMultiRegion(_)
+            | PredictionProvider::TeacherMultiRegionNonBatching(_) => {
+                TeacherMultiRegionPrompt::parse(example, &actual_output)?
+            }
+            _ => TeacherPrompt::parse(example, &actual_output)?,
+        };
 
         let prediction = ExamplePrediction {
             actual_patch: Some(actual_patch),
@@ -411,9 +440,20 @@ async fn predict_anthropic(
             actual_cursor,
             error: None,
             provider: if batched {
-                PredictionProvider::Teacher(backend)
+                match example.prompt.as_ref().map(|prompt| prompt.provider) {
+                    Some(PredictionProvider::TeacherMultiRegion(_)) => {
+                        PredictionProvider::TeacherMultiRegion(backend)
+                    }
+                    _ => PredictionProvider::Teacher(backend),
+                }
             } else {
-                PredictionProvider::TeacherNonBatching(backend)
+                match example.prompt.as_ref().map(|prompt| prompt.provider) {
+                    Some(PredictionProvider::TeacherMultiRegion(_))
+                    | Some(PredictionProvider::TeacherMultiRegionNonBatching(_)) => {
+                        PredictionProvider::TeacherMultiRegionNonBatching(backend)
+                    }
+                    _ => PredictionProvider::TeacherNonBatching(backend),
+                }
             },
         };
 
@@ -487,7 +527,29 @@ async fn predict_openai(
             .collect::<Vec<String>>()
             .join("\n");
 
-        let (actual_patch, actual_cursor) = TeacherPrompt::parse(example, &actual_output)?;
+        let parser_provider = if batched {
+            example
+                .prompt
+                .as_ref()
+                .map(|prompt| prompt.provider)
+                .unwrap_or(PredictionProvider::Teacher(backend))
+        } else {
+            match example.prompt.as_ref().map(|prompt| prompt.provider) {
+                Some(PredictionProvider::TeacherMultiRegion(_))
+                | Some(PredictionProvider::TeacherMultiRegionNonBatching(_)) => {
+                    PredictionProvider::TeacherMultiRegionNonBatching(backend)
+                }
+                _ => PredictionProvider::TeacherNonBatching(backend),
+            }
+        };
+
+        let (actual_patch, actual_cursor) = match parser_provider {
+            PredictionProvider::TeacherMultiRegion(_)
+            | PredictionProvider::TeacherMultiRegionNonBatching(_) => {
+                TeacherMultiRegionPrompt::parse(example, &actual_output)?
+            }
+            _ => TeacherPrompt::parse(example, &actual_output)?,
+        };
 
         let prediction = ExamplePrediction {
             actual_patch: Some(actual_patch),
@@ -495,9 +557,20 @@ async fn predict_openai(
             actual_cursor,
             error: None,
             provider: if batched {
-                PredictionProvider::Teacher(backend)
+                match example.prompt.as_ref().map(|prompt| prompt.provider) {
+                    Some(PredictionProvider::TeacherMultiRegion(_)) => {
+                        PredictionProvider::TeacherMultiRegion(backend)
+                    }
+                    _ => PredictionProvider::Teacher(backend),
+                }
             } else {
-                PredictionProvider::TeacherNonBatching(backend)
+                match example.prompt.as_ref().map(|prompt| prompt.provider) {
+                    Some(PredictionProvider::TeacherMultiRegion(_))
+                    | Some(PredictionProvider::TeacherMultiRegionNonBatching(_)) => {
+                        PredictionProvider::TeacherMultiRegionNonBatching(backend)
+                    }
+                    _ => PredictionProvider::TeacherNonBatching(backend),
+                }
             },
         };
 
@@ -591,7 +664,8 @@ pub async fn predict_baseten(
 
 pub async fn sync_batches(provider: Option<&PredictionProvider>) -> anyhow::Result<()> {
     match provider {
-        Some(PredictionProvider::Teacher(backend)) => match backend {
+        Some(PredictionProvider::Teacher(backend))
+        | Some(PredictionProvider::TeacherMultiRegion(backend)) => match backend {
             TeacherBackend::Sonnet45 | TeacherBackend::Sonnet46 => {
                 let llm_client = ANTHROPIC_CLIENT.get_or_init(|| {
                     AnthropicClient::batch(&crate::paths::LLM_CACHE_DB)

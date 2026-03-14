@@ -3,6 +3,7 @@ use anyhow::Context as _;
 #[cfg(not(target_family = "wasm"))]
 use gpui_util::ResultExt;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 pub struct WgpuContext {
     pub instance: wgpu::Instance,
@@ -10,9 +11,10 @@ pub struct WgpuContext {
     pub device: Arc<wgpu::Device>,
     pub queue: Arc<wgpu::Queue>,
     dual_source_blending: bool,
+    device_lost: Arc<AtomicBool>,
 }
 
-#[cfg(not(target_family = "wasm"))]
+#[derive(Clone, Copy)]
 pub struct CompositorGpuHint {
     pub vendor_id: u32,
     pub device_id: u32,
@@ -47,6 +49,17 @@ impl WgpuContext {
                 compositor_gpu.as_ref(),
             ))?;
 
+        let device_lost = Arc::new(AtomicBool::new(false));
+        device.set_device_lost_callback({
+            let device_lost = Arc::clone(&device_lost);
+            move |reason, message| {
+                log::error!("wgpu device lost: reason={reason:?}, message={message}");
+                if reason != wgpu::DeviceLostReason::Destroyed {
+                    device_lost.store(true, Ordering::Relaxed);
+                }
+            }
+        });
+
         log::info!(
             "Selected GPU adapter: {:?} ({:?})",
             adapter.get_info().name,
@@ -59,6 +72,7 @@ impl WgpuContext {
             device: Arc::new(device),
             queue: Arc::new(queue),
             dual_source_blending,
+            device_lost,
         })
     }
 
@@ -86,6 +100,7 @@ impl WgpuContext {
             adapter.get_info().backend
         );
 
+        let device_lost = Arc::new(AtomicBool::new(false));
         let (device, queue, dual_source_blending) = Self::create_device(&adapter).await?;
 
         Ok(Self {
@@ -94,6 +109,7 @@ impl WgpuContext {
             device: Arc::new(device),
             queue: Arc::new(queue),
             dual_source_blending,
+            device_lost,
         })
     }
 
@@ -319,6 +335,17 @@ impl WgpuContext {
 
     pub fn supports_dual_source_blending(&self) -> bool {
         self.dual_source_blending
+    }
+
+    /// Returns true if the GPU device was lost (e.g., due to driver crash, suspend/resume).
+    /// When this returns true, the context should be recreated.
+    pub fn device_lost(&self) -> bool {
+        self.device_lost.load(Ordering::Relaxed)
+    }
+
+    /// Returns a clone of the device_lost flag for sharing with renderers.
+    pub(crate) fn device_lost_flag(&self) -> Arc<AtomicBool> {
+        Arc::clone(&self.device_lost)
     }
 }
 

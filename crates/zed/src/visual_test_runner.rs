@@ -42,61 +42,6 @@ fn main() {
     std::process::exit(1);
 }
 
-// All macOS-specific imports grouped together
-#[cfg(target_os = "macos")]
-use {
-    acp_thread::{AgentConnection, StubAgentConnection},
-    agent_client_protocol as acp,
-    agent_servers::{AgentServer, AgentServerDelegate},
-    anyhow::{Context as _, Result},
-    assets::Assets,
-    chrono::{Duration as ChronoDuration, Utc},
-    editor::display_map::DisplayRow,
-    feature_flags::FeatureFlagAppExt as _,
-    git_ui::project_diff::ProjectDiff,
-    gpui::{
-        App, AppContext as _, Bounds, KeyBinding, Modifiers, SharedString, VisualTestAppContext,
-        WindowBounds, WindowHandle, WindowOptions, point, px, size,
-    },
-    image::RgbaImage,
-    project_panel::ProjectPanel,
-    recent_projects::RecentProjectEntry,
-    settings::{NotifyWhenAgentWaiting, Settings as _},
-    settings_ui::SettingsWindow,
-    std::{
-        any::Any,
-        path::{Path, PathBuf},
-        rc::Rc,
-        sync::Arc,
-        time::Duration,
-    },
-    util::ResultExt as _,
-    workspace::{AppState, MultiWorkspace, Panel as _, Workspace, WorkspaceId},
-    zed_actions::OpenSettingsAt,
-};
-
-// All macOS-specific constants grouped together
-#[cfg(target_os = "macos")]
-mod constants {
-    use std::time::Duration;
-
-    /// Baseline images are stored relative to this file
-    pub const BASELINE_DIR: &str = "crates/zed/test_fixtures/visual_tests";
-
-    /// Embedded test image (Zed app icon) for visual tests.
-    pub const EMBEDDED_TEST_IMAGE: &[u8] = include_bytes!("../resources/app-icon.png");
-
-    /// Threshold for image comparison (0.0 to 1.0)
-    /// Images must match at least this percentage to pass
-    pub const MATCH_THRESHOLD: f64 = 0.99;
-
-    /// Tooltip show delay - must match TOOLTIP_SHOW_DELAY in gpui/src/elements/div.rs
-    pub const TOOLTIP_SHOW_DELAY: Duration = Duration::from_millis(500);
-}
-
-#[cfg(target_os = "macos")]
-use constants::*;
-
 #[cfg(target_os = "macos")]
 fn main() {
     // Set ZED_STATELESS early to prevent file system access to real config directories
@@ -145,6 +90,59 @@ fn main() {
         }
     }
 }
+
+// All macOS-specific imports grouped together
+#[cfg(target_os = "macos")]
+use {
+    acp_thread::{AgentConnection, StubAgentConnection},
+    agent_client_protocol as acp,
+    agent_servers::{AgentServer, AgentServerDelegate},
+    anyhow::{Context as _, Result},
+    assets::Assets,
+    editor::display_map::DisplayRow,
+    feature_flags::FeatureFlagAppExt as _,
+    git_ui::project_diff::ProjectDiff,
+    gpui::{
+        Action as _, App, AppContext as _, Bounds, KeyBinding, Modifiers, SharedString,
+        VisualTestAppContext, WindowBounds, WindowHandle, WindowOptions, point, px, size,
+    },
+    image::RgbaImage,
+    project_panel::ProjectPanel,
+    settings::{NotifyWhenAgentWaiting, Settings as _},
+    settings_ui::SettingsWindow,
+    std::{
+        any::Any,
+        path::{Path, PathBuf},
+        rc::Rc,
+        sync::Arc,
+        time::Duration,
+    },
+    util::ResultExt as _,
+    workspace::{AppState, MultiWorkspace, Panel as _, Workspace},
+    zed_actions::OpenSettingsAt,
+};
+
+// All macOS-specific constants grouped together
+#[cfg(target_os = "macos")]
+mod constants {
+    use std::time::Duration;
+
+    /// Baseline images are stored relative to this file
+    pub const BASELINE_DIR: &str = "crates/zed/test_fixtures/visual_tests";
+
+    /// Embedded test image (Zed app icon) for visual tests.
+    pub const EMBEDDED_TEST_IMAGE: &[u8] = include_bytes!("../resources/app-icon.png");
+
+    /// Threshold for image comparison (0.0 to 1.0)
+    /// Images must match at least this percentage to pass
+    pub const MATCH_THRESHOLD: f64 = 0.99;
+
+    /// Tooltip show delay - must match TOOLTIP_SHOW_DELAY in gpui/src/elements/div.rs
+    pub const TOOLTIP_SHOW_DELAY: Duration = Duration::from_millis(500);
+}
+
+#[cfg(target_os = "macos")]
+use constants::*;
 
 #[cfg(target_os = "macos")]
 fn run_visual_tests(project_path: PathBuf, update_baseline: bool) -> Result<()> {
@@ -202,7 +200,7 @@ fn run_visual_tests(project_path: PathBuf, update_baseline: bool) -> Result<()> 
         });
         prompt_store::init(cx);
         let prompt_builder = prompt_store::PromptBuilder::load(app_state.fs.clone(), false, cx);
-        language_model::init(app_state.client.clone(), cx);
+        language_model::init(app_state.user_store.clone(), app_state.client.clone(), cx);
         language_models::init(app_state.user_store.clone(), app_state.client.clone(), cx);
         git_ui::init(cx);
         project::AgentRegistryStore::init_global(
@@ -2528,16 +2526,6 @@ fn run_multi_workspace_sidebar_visual_tests(
     std::fs::create_dir_all(&workspace1_dir)?;
     std::fs::create_dir_all(&workspace2_dir)?;
 
-    // Create directories for recent projects (they must exist on disk for display)
-    let recent1_dir = canonical_temp.join("tiny-project");
-    let recent2_dir = canonical_temp.join("font-kit");
-    let recent3_dir = canonical_temp.join("ideas");
-    let recent4_dir = canonical_temp.join("tmp");
-    std::fs::create_dir_all(&recent1_dir)?;
-    std::fs::create_dir_all(&recent2_dir)?;
-    std::fs::create_dir_all(&recent3_dir)?;
-    std::fs::create_dir_all(&recent4_dir)?;
-
     // Enable the agent-v2 feature flag so multi-workspace is active
     cx.update(|cx| {
         cx.update_flags(true, vec!["agent-v2".to_string()]);
@@ -2661,106 +2649,85 @@ fn run_multi_workspace_sidebar_visual_tests(
 
     cx.run_until_parked();
 
-    // Create the sidebar and register it on the MultiWorkspace
-    let sidebar = multi_workspace_window
-        .update(cx, |_multi_workspace, window, cx| {
-            let multi_workspace_handle = cx.entity();
-            cx.new(|cx| sidebar::Sidebar::new(multi_workspace_handle, window, cx))
+    // Save test threads to the ThreadStore for each workspace
+    let save_tasks = multi_workspace_window
+        .update(cx, |multi_workspace, _window, cx| {
+            let thread_store = agent::ThreadStore::global(cx);
+            let workspaces = multi_workspace.workspaces().to_vec();
+            let mut tasks = Vec::new();
+
+            for (index, workspace) in workspaces.iter().enumerate() {
+                let workspace_ref = workspace.read(cx);
+                let mut paths = Vec::new();
+                for worktree in workspace_ref.worktrees(cx) {
+                    let worktree_ref = worktree.read(cx);
+                    if worktree_ref.is_visible() {
+                        paths.push(worktree_ref.abs_path().to_path_buf());
+                    }
+                }
+                let path_list = util::path_list::PathList::new(&paths);
+
+                let (session_id, title, updated_at) = match index {
+                    0 => (
+                        "visual-test-thread-0",
+                        "Refine thread view scrolling behavior",
+                        chrono::TimeZone::with_ymd_and_hms(&chrono::Utc, 2024, 6, 15, 10, 30, 0)
+                            .unwrap(),
+                    ),
+                    1 => (
+                        "visual-test-thread-1",
+                        "Add line numbers option to FileEditBlock",
+                        chrono::TimeZone::with_ymd_and_hms(&chrono::Utc, 2024, 6, 15, 11, 0, 0)
+                            .unwrap(),
+                    ),
+                    _ => continue,
+                };
+
+                let task = thread_store.update(cx, |store, cx| {
+                    store.save_thread(
+                        acp::SessionId::new(Arc::from(session_id)),
+                        agent::DbThread {
+                            title: title.to_string().into(),
+                            messages: Vec::new(),
+                            updated_at,
+                            detailed_summary: None,
+                            initial_project_snapshot: None,
+                            cumulative_token_usage: Default::default(),
+                            request_token_usage: Default::default(),
+                            model: None,
+                            profile: None,
+                            imported: false,
+                            subagent_context: None,
+                            speed: None,
+                            thinking_enabled: false,
+                            thinking_effort: None,
+                            ui_scroll_position: None,
+                            draft_prompt: None,
+                        },
+                        path_list,
+                        cx,
+                    )
+                });
+                tasks.push(task);
+            }
+            tasks
         })
-        .context("Failed to create sidebar")?;
+        .context("Failed to create test threads")?;
 
-    multi_workspace_window
-        .update(cx, |multi_workspace, window, cx| {
-            multi_workspace.register_sidebar(sidebar.clone(), window, cx);
-        })
-        .context("Failed to register sidebar")?;
-
-    cx.run_until_parked();
-
-    // Inject recent project entries into the sidebar.
-    // We update the sidebar entity directly (not through the MultiWorkspace window update)
-    // to avoid a re-entrant read panic: rebuild_entries reads MultiWorkspace, so we can't
-    // be inside a MultiWorkspace update when that happens.
-    cx.update(|cx| {
-        sidebar.update(cx, |sidebar, cx| {
-            let now = Utc::now();
-            let today_timestamp = now;
-            let yesterday_timestamp = now - ChronoDuration::days(1);
-            let past_week_timestamp = now - ChronoDuration::days(10);
-            let all_timestamp = now - ChronoDuration::days(60);
-
-            let recent_projects = vec![
-                RecentProjectEntry {
-                    name: "tiny-project".into(),
-                    full_path: recent1_dir.to_string_lossy().to_string().into(),
-                    paths: vec![recent1_dir.clone()],
-                    workspace_id: WorkspaceId::default(),
-                    timestamp: today_timestamp,
-                },
-                RecentProjectEntry {
-                    name: "font-kit".into(),
-                    full_path: recent2_dir.to_string_lossy().to_string().into(),
-                    paths: vec![recent2_dir.clone()],
-                    workspace_id: WorkspaceId::default(),
-                    timestamp: yesterday_timestamp,
-                },
-                RecentProjectEntry {
-                    name: "ideas".into(),
-                    full_path: recent3_dir.to_string_lossy().to_string().into(),
-                    paths: vec![recent3_dir.clone()],
-                    workspace_id: WorkspaceId::default(),
-                    timestamp: past_week_timestamp,
-                },
-                RecentProjectEntry {
-                    name: "tmp".into(),
-                    full_path: recent4_dir.to_string_lossy().to_string().into(),
-                    paths: vec![recent4_dir.clone()],
-                    workspace_id: WorkspaceId::default(),
-                    timestamp: all_timestamp,
-                },
-            ];
-            sidebar.set_test_recent_projects(recent_projects, cx);
-        });
-    });
-
-    // Set thread info directly on the sidebar for visual testing
-    cx.update(|cx| {
-        sidebar.update(cx, |sidebar, _cx| {
-            sidebar.set_test_thread_info(
-                0,
-                "Refine thread view scrolling behavior".into(),
-                ui::AgentThreadStatus::Completed,
-            );
-            sidebar.set_test_thread_info(
-                1,
-                "Add line numbers option to FileEditBlock".into(),
-                ui::AgentThreadStatus::Running,
-            );
-        });
-    });
-
-    // Set last-worked-on thread titles on some recent projects for visual testing
-    cx.update(|cx| {
-        sidebar.update(cx, |sidebar, cx| {
-            sidebar.set_test_recent_project_thread_title(
-                recent1_dir.to_string_lossy().to_string().into(),
-                "Fix flaky test in CI pipeline".into(),
-                cx,
-            );
-            sidebar.set_test_recent_project_thread_title(
-                recent2_dir.to_string_lossy().to_string().into(),
-                "Upgrade font rendering engine".into(),
-                cx,
-            );
-        });
-    });
+    cx.background_executor.allow_parking();
+    for task in save_tasks {
+        cx.foreground_executor
+            .block_test(task)
+            .context("Failed to save test thread")?;
+    }
+    cx.background_executor.forbid_parking();
 
     cx.run_until_parked();
 
     // Open the sidebar
     multi_workspace_window
-        .update(cx, |multi_workspace, window, cx| {
-            multi_workspace.toggle_sidebar(window, cx);
+        .update(cx, |_multi_workspace, window, cx| {
+            window.dispatch_action(workspace::ToggleWorkspaceSidebar.boxed_clone(), cx);
         })
         .context("Failed to toggle sidebar")?;
 
@@ -2909,12 +2876,12 @@ impl gpui::Render for ThreadItemIconDecorationsTestView {
                 container()
                     .child(ThreadItem::new("ti-none", "Default idle thread").timestamp("1:00 AM")),
             )
-            .child(section_label("Blue dot (generation done)"))
+            .child(section_label("Blue dot (notified)"))
             .child(
                 container().child(
                     ThreadItem::new("ti-done", "Generation completed successfully")
                         .timestamp("1:05 AM")
-                        .generation_done(true),
+                        .notified(true),
                 ),
             )
             .child(section_label("Yellow triangle (waiting for confirmation)"))
@@ -2939,18 +2906,17 @@ impl gpui::Render for ThreadItemIconDecorationsTestView {
                     ThreadItem::new("ti-running", "Generating response...")
                         .icon(IconName::AiClaude)
                         .timestamp("1:20 AM")
-                        .running(true),
+                        .status(ui::AgentThreadStatus::Running),
                 ),
             )
             .child(section_label(
-                "Spinner + yellow triangle (running + waiting)",
+                "Spinner + yellow triangle (waiting for confirmation)",
             ))
             .child(
                 container().child(
                     ThreadItem::new("ti-running-waiting", "Running but needs confirmation")
                         .icon(IconName::AiClaude)
                         .timestamp("1:25 AM")
-                        .running(true)
                         .status(ui::AgentThreadStatus::WaitingForConfirmation),
                 ),
             )
@@ -3099,10 +3065,7 @@ fn run_start_thread_in_selector_visual_tests(
 
     // Enable feature flags so the thread target selector renders
     cx.update(|cx| {
-        cx.update_flags(
-            true,
-            vec!["agent-v2".to_string(), "agent-git-worktrees".to_string()],
-        );
+        cx.update_flags(true, vec!["agent-v2".to_string()]);
     });
 
     // Create a temp directory with a real git repo so "New Worktree" is enabled
@@ -3202,24 +3165,10 @@ edition = "2021"
 
     cx.run_until_parked();
 
-    // Create and register the workspace sidebar
-    let sidebar = workspace_window
-        .update(cx, |_multi_workspace, window, cx| {
-            let multi_workspace_handle = cx.entity();
-            cx.new(|cx| sidebar::Sidebar::new(multi_workspace_handle, window, cx))
-        })
-        .context("Failed to create sidebar")?;
-
-    workspace_window
-        .update(cx, |multi_workspace, window, cx| {
-            multi_workspace.register_sidebar(sidebar.clone(), window, cx);
-        })
-        .context("Failed to register sidebar")?;
-
     // Open the sidebar
     workspace_window
-        .update(cx, |multi_workspace, window, cx| {
-            multi_workspace.toggle_sidebar(window, cx);
+        .update(cx, |_multi_workspace, window, cx| {
+            window.dispatch_action(workspace::ToggleWorkspaceSidebar.boxed_clone(), cx);
         })
         .context("Failed to toggle sidebar")?;
 

@@ -5,10 +5,12 @@ use acp_thread::{
     UserMessageId,
 };
 use acp_thread::{AgentConnection, Plan};
-use action_log::{ActionLog, ActionLogTelemetry};
+use action_log::{ActionLog, ActionLogTelemetry, DiffStats};
 use agent::{NativeAgentServer, NativeAgentSessionList, SharedThread, ThreadStore};
 use agent_client_protocol::{self as acp, PromptCapabilities};
-use agent_servers::{AgentServer, AgentServerDelegate};
+use agent_servers::AgentServer;
+#[cfg(test)]
+use agent_servers::AgentServerDelegate;
 use agent_settings::{AgentProfileId, AgentSettings};
 use anyhow::{Result, anyhow};
 use arrayvec::ArrayVec;
@@ -39,12 +41,12 @@ use prompt_store::{PromptId, PromptStore};
 use rope::Point;
 use settings::{NotifyWhenAgentWaiting, Settings as _, SettingsStore};
 use std::cell::RefCell;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Instant;
 use std::{collections::BTreeMap, rc::Rc, time::Duration};
 use terminal_view::terminal_panel::TerminalPanel;
-use text::{Anchor, ToPoint as _};
+use text::Anchor;
 use theme::AgentFontSize;
 use ui::{
     Callout, CircularProgress, CommonAnimationExt, ContextMenu, ContextMenuEntry, CopyButton,
@@ -65,18 +67,21 @@ use super::entry_view_state::EntryViewState;
 use super::thread_history::ThreadHistory;
 use crate::ModeSelector;
 use crate::ModelSelectorPopover;
+use crate::agent_connection_store::{
+    AgentConnectedState, AgentConnectionEntryEvent, AgentConnectionStore,
+};
 use crate::agent_diff::AgentDiff;
 use crate::entry_view_state::{EntryViewEvent, ViewEvent};
 use crate::message_editor::{MessageEditor, MessageEditorEvent};
 use crate::profile_selector::{ProfileProvider, ProfileSelector};
 use crate::ui::{AgentNotification, AgentNotificationEvent};
 use crate::{
-    AgentDiffPane, AgentInitialContent, AgentPanel, AllowAlways, AllowOnce, AuthorizeToolCall,
-    ClearMessageQueue, CycleFavoriteModels, CycleModeSelector, CycleThinkingEffort,
-    EditFirstQueuedMessage, ExpandMessageEditor, Follow, KeepAll, NewThread, OpenAddContextMenu,
-    OpenAgentDiff, OpenHistory, RejectAll, RejectOnce, RemoveFirstQueuedMessage, SendImmediately,
-    SendNextQueuedMessage, ToggleFastMode, ToggleProfileSelector, ToggleThinkingEffortMenu,
-    ToggleThinkingMode, UndoLastReject,
+    Agent, AgentDiffPane, AgentInitialContent, AgentPanel, AllowAlways, AllowOnce,
+    AuthorizeToolCall, ClearMessageQueue, CycleFavoriteModels, CycleModeSelector,
+    CycleThinkingEffort, EditFirstQueuedMessage, ExpandMessageEditor, Follow, KeepAll, NewThread,
+    OpenAddContextMenu, OpenAgentDiff, OpenHistory, RejectAll, RejectOnce,
+    RemoveFirstQueuedMessage, SendImmediately, SendNextQueuedMessage, ToggleFastMode,
+    ToggleProfileSelector, ToggleThinkingEffortMenu, ToggleThinkingMode, UndoLastReject,
 };
 
 const STOPWATCH_THRESHOLD: Duration = Duration::from_secs(30);
@@ -303,13 +308,14 @@ impl EventEmitter<AcpServerViewEvent> for ConnectionView {}
 
 pub struct ConnectionView {
     agent: Rc<dyn AgentServer>,
+    connection_store: Entity<AgentConnectionStore>,
+    connection_key: Agent,
     agent_server_store: Entity<AgentServerStore>,
     workspace: WeakEntity<Workspace>,
     project: Entity<Project>,
     thread_store: Option<Entity<ThreadStore>>,
     prompt_store: Option<Entity<PromptStore>>,
     server_state: ServerState,
-    history: Entity<ThreadHistory>,
     focus_handle: FocusHandle,
     notifications: Vec<WindowHandle<AgentNotification>>,
     notification_subscriptions: HashMap<WindowHandle<AgentNotification>, Vec<Subscription>>,
@@ -399,7 +405,10 @@ impl ConnectionView {
 
 enum ServerState {
     Loading(Entity<LoadingView>),
-    LoadError(LoadError),
+    LoadError {
+        error: LoadError,
+        session_id: Option<acp::SessionId>,
+    },
     Connected(ConnectedServerState),
 }
 
@@ -410,7 +419,9 @@ pub struct ConnectedServerState {
     active_id: Option<acp::SessionId>,
     threads: HashMap<acp::SessionId, Entity<ThreadView>>,
     connection: Rc<dyn AgentConnection>,
+    history: Entity<ThreadHistory>,
     conversation: Entity<Conversation>,
+    _connection_entry_subscription: Subscription,
 }
 
 enum AuthState {
@@ -430,9 +441,8 @@ impl AuthState {
 }
 
 struct LoadingView {
-    title: SharedString,
+    session_id: Option<acp::SessionId>,
     _load_task: Task<()>,
-    _update_title_task: Task<anyhow::Result<()>>,
 }
 
 impl ConnectedServerState {
@@ -452,10 +462,13 @@ impl ConnectedServerState {
     }
 
     pub fn close_all_sessions(&self, cx: &mut App) -> Task<()> {
-        let tasks = self
-            .threads
-            .keys()
-            .map(|id| self.connection.close_session(id, cx));
+        let tasks = self.threads.keys().filter_map(|id| {
+            if self.connection.supports_close_session() {
+                Some(self.connection.clone().close_session(id, cx))
+            } else {
+                None
+            }
+        });
         let task = futures::future::join_all(tasks);
         cx.background_spawn(async move {
             task.await;
@@ -466,13 +479,16 @@ impl ConnectedServerState {
 impl ConnectionView {
     pub fn new(
         agent: Rc<dyn AgentServer>,
-        resume_thread: Option<AgentSessionInfo>,
+        connection_store: Entity<AgentConnectionStore>,
+        connection_key: Agent,
+        resume_session_id: Option<acp::SessionId>,
+        cwd: Option<PathBuf>,
+        title: Option<SharedString>,
         initial_content: Option<AgentInitialContent>,
         workspace: WeakEntity<Workspace>,
         project: Entity<Project>,
         thread_store: Option<Entity<ThreadStore>>,
         prompt_store: Option<Entity<PromptStore>>,
-        history: Entity<ThreadHistory>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -503,6 +519,8 @@ impl ConnectionView {
 
         Self {
             agent: agent.clone(),
+            connection_store: connection_store.clone(),
+            connection_key: connection_key.clone(),
             agent_server_store,
             workspace,
             project: project.clone(),
@@ -510,7 +528,11 @@ impl ConnectionView {
             prompt_store,
             server_state: Self::initial_state(
                 agent.clone(),
-                resume_thread,
+                connection_store,
+                connection_key,
+                resume_session_id,
+                cwd,
+                title,
                 project,
                 initial_content,
                 window,
@@ -519,7 +541,6 @@ impl ConnectionView {
             notifications: Vec::new(),
             notification_subscriptions: HashMap::default(),
             auth_task: None,
-            history,
             _subscriptions: subscriptions,
             focus_handle: cx.focus_handle(),
         }
@@ -536,13 +557,25 @@ impl ConnectionView {
     }
 
     fn reset(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let resume_thread_metadata = self
+        let (resume_session_id, cwd, title) = self
             .active_thread()
-            .and_then(|thread| thread.read(cx).resume_thread_metadata.clone());
+            .map(|thread_view| {
+                let thread = thread_view.read(cx).thread.read(cx);
+                (
+                    Some(thread.session_id().clone()),
+                    thread.cwd().cloned(),
+                    Some(thread.title()),
+                )
+            })
+            .unwrap_or((None, None, None));
 
         let state = Self::initial_state(
             self.agent.clone(),
-            resume_thread_metadata,
+            self.connection_store.clone(),
+            self.connection_key.clone(),
+            resume_session_id,
+            cwd,
+            title,
             self.project.clone(),
             None,
             window,
@@ -566,7 +599,11 @@ impl ConnectionView {
 
     fn initial_state(
         agent: Rc<dyn AgentServer>,
-        resume_thread: Option<AgentSessionInfo>,
+        connection_store: Entity<AgentConnectionStore>,
+        connection_key: Agent,
+        resume_session_id: Option<acp::SessionId>,
+        cwd: Option<PathBuf>,
+        title: Option<SharedString>,
         project: Entity<Project>,
         initial_content: Option<AgentInitialContent>,
         window: &mut Window,
@@ -575,9 +612,12 @@ impl ConnectionView {
         if project.read(cx).is_via_collab()
             && agent.clone().downcast::<NativeAgentServer>().is_none()
         {
-            return ServerState::LoadError(LoadError::Other(
-                "External agents are not yet supported in shared projects.".into(),
-            ));
+            return ServerState::LoadError {
+                error: LoadError::Other(
+                    "External agents are not yet supported in shared projects.".into(),
+                ),
+                session_id: resume_session_id.clone(),
+            };
         }
         let mut worktrees = project.read(cx).visible_worktrees(cx).collect::<Vec<_>>();
         // Pick the first non-single-file worktree for the root directory if there are any,
@@ -598,53 +638,53 @@ impl ConnectionView {
                 }
             })
             .collect();
-        let session_cwd = resume_thread
-            .as_ref()
-            .and_then(|resume| {
-                resume
-                    .cwd
-                    .as_ref()
-                    .filter(|cwd| {
-                        // Validate with the normalized path (rejects `..` traversals),
-                        // but return the original cwd to preserve its path separators.
-                        // On Windows, `normalize_lexically` rebuilds the path with
-                        // backslashes via `PathBuf::push`, which would corrupt
-                        // forward-slash Linux paths used by WSL agents.
-                        util::paths::normalize_lexically(cwd)
-                            .ok()
-                            .is_some_and(|normalized| {
-                                worktree_roots
-                                    .iter()
-                                    .any(|root| normalized.starts_with(root.as_ref()))
-                            })
+        let session_cwd = cwd
+            .filter(|cwd| {
+                // Validate with the normalized path (rejects `..` traversals),
+                // but return the original cwd to preserve its path separators.
+                // On Windows, `normalize_lexically` rebuilds the path with
+                // backslashes via `PathBuf::push`, which would corrupt
+                // forward-slash Linux paths used by WSL agents.
+                util::paths::normalize_lexically(cwd)
+                    .ok()
+                    .is_some_and(|normalized| {
+                        worktree_roots
+                            .iter()
+                            .any(|root| normalized.starts_with(root.as_ref()))
                     })
-                    .map(|path| Arc::from(path.as_path()))
             })
+            .map(|path| path.into())
             .or_else(|| worktree_roots.first().cloned())
             .unwrap_or_else(|| paths::home_dir().as_path().into());
 
-        let (status_tx, mut status_rx) = watch::channel("Loading…".into());
-        let (new_version_available_tx, mut new_version_available_rx) = watch::channel(None);
-        let delegate = AgentServerDelegate::new(
-            project.read(cx).agent_server_store().clone(),
-            project.clone(),
-            Some(status_tx),
-            Some(new_version_available_tx),
-        );
+        let connection_entry = connection_store.update(cx, |store, cx| {
+            store.request_connection(connection_key, agent.clone(), cx)
+        });
 
-        let connect_task = agent.connect(delegate, cx);
+        let connection_entry_subscription =
+            cx.subscribe(&connection_entry, |this, _entry, event, cx| match event {
+                AgentConnectionEntryEvent::NewVersionAvailable(version) => {
+                    if let Some(thread) = this.active_thread() {
+                        thread.update(cx, |thread, cx| {
+                            thread.new_server_version_available = Some(version.clone());
+                            cx.notify();
+                        });
+                    }
+                }
+            });
+
+        let connect_result = connection_entry.read(cx).wait_for_connection();
+
+        let load_session_id = resume_session_id.clone();
         let load_task = cx.spawn_in(window, async move |this, cx| {
-            let connection = match connect_task.await {
-                Ok(connection) => connection,
+            let (connection, history) = match connect_result.await {
+                Ok(AgentConnectedState {
+                    connection,
+                    history,
+                }) => (connection, history),
                 Err(err) => {
                     this.update_in(cx, |this, window, cx| {
-                        if err.downcast_ref::<LoadError>().is_some() {
-                            this.handle_load_error(err, window, cx);
-                        } else if let Some(active) = this.active_thread() {
-                            active.update(cx, |active, cx| active.handle_thread_error(err, cx));
-                        } else {
-                            this.handle_load_error(err, window, cx);
-                        }
+                        this.handle_load_error(load_session_id.clone(), err, window, cx);
                         cx.notify();
                     })
                     .log_err();
@@ -655,17 +695,25 @@ impl ConnectionView {
             telemetry::event!("Agent Thread Started", agent = connection.telemetry_id());
 
             let mut resumed_without_history = false;
-            let result = if let Some(resume) = resume_thread.clone() {
+            let result = if let Some(session_id) = load_session_id.clone() {
                 cx.update(|_, cx| {
                     if connection.supports_load_session() {
-                        connection
-                            .clone()
-                            .load_session(resume, project.clone(), &session_cwd, cx)
+                        connection.clone().load_session(
+                            session_id,
+                            project.clone(),
+                            &session_cwd,
+                            title,
+                            cx,
+                        )
                     } else if connection.supports_resume_session() {
                         resumed_without_history = true;
-                        connection
-                            .clone()
-                            .resume_session(resume, project.clone(), &session_cwd, cx)
+                        connection.clone().resume_session(
+                            session_id,
+                            project.clone(),
+                            &session_cwd,
+                            title,
+                            cx,
+                        )
                     } else {
                         Task::ready(Err(anyhow!(LoadError::Other(
                             "Loading or resuming sessions is not supported by this agent.".into()
@@ -721,8 +769,8 @@ impl ConnectionView {
                             thread,
                             conversation.clone(),
                             resumed_without_history,
-                            resume_thread,
                             initial_content,
+                            history.clone(),
                             window,
                             cx,
                         );
@@ -736,14 +784,6 @@ impl ConnectionView {
                         }
 
                         let id = current.read(cx).thread.read(cx).session_id().clone();
-                        let session_list = if connection.supports_session_history() {
-                            connection.session_list(cx)
-                        } else {
-                            None
-                        };
-                        this.history.update(cx, |history, cx| {
-                            history.set_session_list(session_list, cx);
-                        });
                         this.set_server_state(
                             ServerState::Connected(ConnectedServerState {
                                 connection,
@@ -751,51 +791,28 @@ impl ConnectionView {
                                 active_id: Some(id.clone()),
                                 threads: HashMap::from_iter([(id, current)]),
                                 conversation,
+                                history,
+                                _connection_entry_subscription: connection_entry_subscription,
                             }),
                             cx,
                         );
                     }
                     Err(err) => {
-                        this.handle_load_error(err, window, cx);
+                        this.handle_load_error(
+                            load_session_id.clone(),
+                            LoadError::Other(err.to_string().into()),
+                            window,
+                            cx,
+                        );
                     }
                 };
             })
             .log_err();
         });
 
-        cx.spawn(async move |this, cx| {
-            while let Ok(new_version) = new_version_available_rx.recv().await {
-                if let Some(new_version) = new_version {
-                    this.update(cx, |this, cx| {
-                        if let Some(thread) = this.active_thread() {
-                            thread.update(cx, |thread, _cx| {
-                                thread.new_server_version_available = Some(new_version.into());
-                            });
-                        }
-                        cx.notify();
-                    })
-                    .ok();
-                }
-            }
-        })
-        .detach();
-
-        let loading_view = cx.new(|cx| {
-            let update_title_task = cx.spawn(async move |this, cx| {
-                loop {
-                    let status = status_rx.recv().await?;
-                    this.update(cx, |this: &mut LoadingView, cx| {
-                        this.title = status;
-                        cx.notify();
-                    })?;
-                }
-            });
-
-            LoadingView {
-                title: "Loading…".into(),
-                _load_task: load_task,
-                _update_title_task: update_title_task,
-            }
+        let loading_view = cx.new(|_cx| LoadingView {
+            session_id: resume_session_id,
+            _load_task: load_task,
         });
 
         ServerState::Loading(loading_view)
@@ -807,8 +824,8 @@ impl ConnectionView {
         thread: Entity<AcpThread>,
         conversation: Entity<Conversation>,
         resumed_without_history: bool,
-        resume_thread: Option<AgentSessionInfo>,
         initial_content: Option<AgentInitialContent>,
+        history: Entity<ThreadHistory>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Entity<ThreadView> {
@@ -825,7 +842,7 @@ impl ConnectionView {
                 self.workspace.clone(),
                 self.project.downgrade(),
                 self.thread_store.clone(),
-                self.history.downgrade(),
+                history.downgrade(),
                 self.prompt_store.clone(),
                 prompt_capabilities.clone(),
                 available_commands.clone(),
@@ -956,6 +973,18 @@ impl ConnectionView {
             .unwrap_or_else(|| agent_name.clone());
 
         let agent_icon = self.agent.logo();
+        let agent_icon_from_external_svg = self
+            .agent_server_store
+            .read(cx)
+            .agent_icon(&ExternalAgentServerName(self.agent.name()))
+            .or_else(|| {
+                project::AgentRegistryStore::try_global(cx).and_then(|store| {
+                    store
+                        .read(cx)
+                        .agent(self.agent.name().as_ref())
+                        .and_then(|a| a.icon_path().cloned())
+                })
+            });
 
         let weak = cx.weak_entity();
         cx.new(|cx| {
@@ -965,6 +994,7 @@ impl ConnectionView {
                 conversation,
                 weak,
                 agent_icon,
+                agent_icon_from_external_svg,
                 agent_name,
                 agent_display_name,
                 self.workspace.clone(),
@@ -977,10 +1007,9 @@ impl ConnectionView {
                 prompt_capabilities,
                 available_commands,
                 resumed_without_history,
-                resume_thread,
                 self.project.downgrade(),
                 self.thread_store.clone(),
-                self.history.clone(),
+                history,
                 self.prompt_store.clone(),
                 initial_content,
                 subscriptions,
@@ -1062,6 +1091,8 @@ impl ConnectionView {
                         threads: HashMap::default(),
                         connection,
                         conversation: cx.new(|_cx| Conversation::default()),
+                        history: cx.new(|cx| ThreadHistory::new(None, cx)),
+                        _connection_entry_subscription: Subscription::new(|| {}),
                     }),
                     cx,
                 );
@@ -1073,7 +1104,8 @@ impl ConnectionView {
 
     fn handle_load_error(
         &mut self,
-        err: anyhow::Error,
+        session_id: Option<acp::SessionId>,
+        err: LoadError,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -1087,13 +1119,14 @@ impl ConnectionView {
                 self.focus_handle.focus(window, cx)
             }
         }
-        let load_error = if let Some(load_err) = err.downcast_ref::<LoadError>() {
-            load_err.clone()
-        } else {
-            LoadError::Other(format!("{:#}", err).into())
-        };
-        self.emit_load_error_telemetry(&load_error);
-        self.set_server_state(ServerState::LoadError(load_error), cx);
+        self.emit_load_error_telemetry(&err);
+        self.set_server_state(
+            ServerState::LoadError {
+                error: err,
+                session_id,
+            },
+            cx,
+        );
     }
 
     fn handle_agent_servers_updated(
@@ -1108,7 +1141,7 @@ impl ConnectionView {
         // This handles the case where a thread is restored before authentication completes.
         let should_retry = match &self.server_state {
             ServerState::Loading(_) => false,
-            ServerState::LoadError(_) => true,
+            ServerState::LoadError { .. } => true,
             ServerState::Connected(connected) => {
                 connected.auth_state.is_ok() && connected.has_thread_error(cx)
             }
@@ -1128,11 +1161,11 @@ impl ConnectionView {
         &self.workspace
     }
 
-    pub fn title(&self, cx: &App) -> SharedString {
+    pub fn title(&self, _cx: &App) -> SharedString {
         match &self.server_state {
             ServerState::Connected(_) => "New Thread".into(),
-            ServerState::Loading(loading_view) => loading_view.read(cx).title.clone(),
-            ServerState::LoadError(error) => match error {
+            ServerState::Loading(_) => "Loading…".into(),
+            ServerState::LoadError { error, .. } => match error {
                 LoadError::Unsupported { .. } => format!("Upgrade {}", self.agent.name()).into(),
                 LoadError::FailedToInstall(_) => {
                     format!("Failed to Install {}", self.agent.name()).into()
@@ -1148,6 +1181,17 @@ impl ConnectionView {
             active.update(cx, |active, cx| {
                 active.cancel_generation(cx);
             });
+        }
+    }
+
+    // The parent ID is None if we haven't created a thread yet
+    pub fn parent_id(&self, cx: &App) -> Option<acp::SessionId> {
+        match &self.server_state {
+            ServerState::Connected(_) => self
+                .parent_thread(cx)
+                .map(|thread| thread.read(cx).id.clone()),
+            ServerState::Loading(loading) => loading.read(cx).session_id.clone(),
+            ServerState::LoadError { session_id, .. } => session_id.clone(),
         }
     }
 
@@ -1219,12 +1263,13 @@ impl ConnectionView {
                 }
             }
             AcpThreadEvent::EntryUpdated(index) => {
-                if let Some(entry_view_state) = self
-                    .thread_view(&thread_id)
-                    .map(|active| active.read(cx).entry_view_state.clone())
-                {
+                if let Some(active) = self.thread_view(&thread_id) {
+                    let entry_view_state = active.read(cx).entry_view_state.clone();
                     entry_view_state.update(cx, |view_state, cx| {
                         view_state.sync_entry(*index, thread, window, cx)
+                    });
+                    active.update(cx, |active, cx| {
+                        active.auto_expand_streaming_thought(cx);
                     });
                 }
             }
@@ -1257,6 +1302,7 @@ impl ConnectionView {
                 if let Some(active) = self.thread_view(&thread_id) {
                     active.update(cx, |active, _cx| {
                         active.thread_retry_status.take();
+                        active.clear_auto_expand_tracking();
                     });
                 }
                 if is_subagent {
@@ -1348,7 +1394,13 @@ impl ConnectionView {
                         self.focus_handle.focus(window, cx)
                     }
                 }
-                self.set_server_state(ServerState::LoadError(error.clone()), cx);
+                self.set_server_state(
+                    ServerState::LoadError {
+                        error: error.clone(),
+                        session_id: Some(thread_id),
+                    },
+                    cx,
+                );
             }
             AcpThreadEvent::TitleUpdated => {
                 let title = thread.read(cx).title();
@@ -1360,6 +1412,7 @@ impl ConnectionView {
                         }
                     });
                 }
+                cx.notify();
             }
             AcpThreadEvent::PromptCapabilitiesUpdated => {
                 if let Some(active) = self.thread_view(&thread_id) {
@@ -1382,7 +1435,7 @@ impl ConnectionView {
                     .connection()
                     .auth_methods()
                     .iter()
-                    .any(|method| method.id.0.as_ref() == "claude-login")
+                    .any(|method| method.id().0.as_ref() == "claude-login")
                 {
                     available_commands.push(acp::AvailableCommand::new("login", "Authenticate"));
                     available_commands.push(acp::AvailableCommand::new("logout", "Authenticate"));
@@ -1446,10 +1499,15 @@ impl ConnectionView {
         let agent_telemetry_id = connection.telemetry_id();
 
         // Check for the experimental "terminal-auth" _meta field
-        let auth_method = connection.auth_methods().iter().find(|m| m.id == method);
+        let auth_method = connection.auth_methods().iter().find(|m| m.id() == &method);
 
         if let Some(terminal_auth) = auth_method
-            .and_then(|a| a.meta.as_ref())
+            .and_then(|a| match a {
+                acp::AuthMethod::EnvVar(env_var) => env_var.meta.as_ref(),
+                acp::AuthMethod::Terminal(terminal) => terminal.meta.as_ref(),
+                acp::AuthMethod::Agent(agent) => agent.meta.as_ref(),
+                _ => None,
+            })
             .and_then(|m| m.get("terminal-auth"))
         {
             // Extract terminal auth details from meta
@@ -1630,19 +1688,20 @@ impl ConnectionView {
         let cwd = root_dir.unwrap_or_else(|| paths::home_dir().as_path().into());
 
         let subagent_thread_task = connected.connection.clone().load_session(
-            AgentSessionInfo::new(subagent_id.clone()),
+            subagent_id.clone(),
             self.project.clone(),
             &cwd,
+            None,
             cx,
         );
 
         cx.spawn_in(window, async move |this, cx| {
             let subagent_thread = subagent_thread_task.await?;
             this.update_in(cx, |this, window, cx| {
-                let conversation = this
+                let Some((conversation, history)) = this
                     .as_connected()
-                    .map(|connected| connected.conversation.clone());
-                let Some(conversation) = conversation else {
+                    .map(|connected| (connected.conversation.clone(), connected.history.clone()))
+                else {
                     return;
                 };
                 conversation.update(cx, |conversation, cx| {
@@ -1654,7 +1713,7 @@ impl ConnectionView {
                     conversation,
                     false,
                     None,
-                    None,
+                    history,
                     window,
                     cx,
                 );
@@ -1833,7 +1892,7 @@ impl ConnectionView {
                     .enumerate()
                     .rev()
                     .map(|(ix, method)| {
-                        let (method_id, name) = (method.id.0.clone(), method.name.clone());
+                        let (method_id, name) = (method.id().0.clone(), method.name().to_string());
                         let agent_telemetry_id = connection.telemetry_id();
 
                         Button::new(method_id.clone(), name)
@@ -1845,8 +1904,8 @@ impl ConnectionView {
                                     this.style(ButtonStyle::Outlined)
                                 }
                             })
-                            .when_some(method.description.clone(), |this, description| {
-                                this.tooltip(Tooltip::text(description))
+                            .when_some(method.description(), |this, description| {
+                                this.tooltip(Tooltip::text(description.to_string()))
                             })
                             .on_click({
                                 cx.listener(move |this, _, window, cx| {
@@ -2161,9 +2220,11 @@ impl ConnectionView {
         let agent_name = self.agent.name();
         let workspace = self.workspace.clone();
         let project = self.project.downgrade();
-        let history = self.history.downgrade();
-
-        let Some(thread) = self.active_thread() else {
+        let Some(connected) = self.as_connected() else {
+            return;
+        };
+        let history = connected.history.downgrade();
+        let Some(thread) = connected.active_view() else {
             return;
         };
         let prompt_capabilities = thread.read(cx).prompt_capabilities.clone();
@@ -2291,7 +2352,7 @@ impl ConnectionView {
         }
 
         if let Some(multi_workspace) = window.root::<MultiWorkspace>().flatten() {
-            multi_workspace.read(cx).is_sidebar_open()
+            crate::agent_panel::sidebar_is_open(window, cx)
                 || self.agent_panel_visible(&multi_workspace, cx)
         } else {
             self.workspace
@@ -2556,10 +2617,18 @@ impl ConnectionView {
         })
     }
 
-    pub fn delete_history_entry(&mut self, entry: AgentSessionInfo, cx: &mut Context<Self>) {
-        let task = self.history.update(cx, |history, cx| {
-            history.delete_session(&entry.session_id, cx)
-        });
+    pub fn history(&self) -> Option<&Entity<ThreadHistory>> {
+        self.as_connected().map(|c| &c.history)
+    }
+
+    pub fn delete_history_entry(&mut self, session_id: &acp::SessionId, cx: &mut Context<Self>) {
+        let Some(connected) = self.as_connected() else {
+            return;
+        };
+
+        let task = connected
+            .history
+            .update(cx, |history, cx| history.delete_session(&session_id, cx));
         task.detach_and_log_err(cx);
     }
 }
@@ -2611,6 +2680,7 @@ impl ConnectionView {
 impl Render for ConnectionView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.sync_queued_message_editors(window, cx);
+        let v2_flag = cx.has_flag::<AgentV2FeatureFlag>();
 
         v_flex()
             .track_focus(&self.focus_handle)
@@ -2619,9 +2689,19 @@ impl Render for ConnectionView {
             .child(match &self.server_state {
                 ServerState::Loading { .. } => v_flex()
                     .flex_1()
-                    // .child(self.render_recent_history(cx))
+                    .when(v2_flag, |this| {
+                        this.size_full().items_center().justify_center().child(
+                            Label::new("Loading…").color(Color::Muted).with_animation(
+                                "loading-agent-label",
+                                Animation::new(Duration::from_secs(2))
+                                    .repeat()
+                                    .with_easing(pulsating_between(0.3, 0.7)),
+                                |label, delta| label.alpha(delta),
+                            ),
+                        )
+                    })
                     .into_any(),
-                ServerState::LoadError(e) => v_flex()
+                ServerState::LoadError { error: e, .. } => v_flex()
                     .flex_1()
                     .size_full()
                     .items_center()
@@ -2724,6 +2804,55 @@ pub(crate) mod tests {
     }
 
     #[gpui::test]
+    async fn test_external_source_prompt_requires_manual_send(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let Some(prompt) = crate::ExternalSourcePrompt::new("Write me a script") else {
+            panic!("expected prompt from external source to sanitize successfully");
+        };
+        let initial_content = AgentInitialContent::FromExternalSource(prompt);
+
+        let (thread_view, cx) = setup_thread_view_with_initial_content(
+            StubAgentServer::default_response(),
+            initial_content,
+            cx,
+        )
+        .await;
+
+        active_thread(&thread_view, cx).read_with(cx, |view, cx| {
+            assert!(view.show_external_source_prompt_warning);
+            assert_eq!(view.thread.read(cx).entries().len(), 0);
+            assert_eq!(view.message_editor.read(cx).text(cx), "Write me a script");
+        });
+    }
+
+    #[gpui::test]
+    async fn test_external_source_prompt_warning_clears_after_send(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let Some(prompt) = crate::ExternalSourcePrompt::new("Write me a script") else {
+            panic!("expected prompt from external source to sanitize successfully");
+        };
+        let initial_content = AgentInitialContent::FromExternalSource(prompt);
+
+        let (thread_view, cx) = setup_thread_view_with_initial_content(
+            StubAgentServer::default_response(),
+            initial_content,
+            cx,
+        )
+        .await;
+
+        active_thread(&thread_view, cx).update_in(cx, |view, window, cx| view.send(window, cx));
+        cx.run_until_parked();
+
+        active_thread(&thread_view, cx).read_with(cx, |view, cx| {
+            assert!(!view.show_external_source_prompt_warning);
+            assert_eq!(view.message_editor.read(cx).text(cx), "");
+            assert_eq!(view.thread.read(cx).entries().len(), 2);
+        });
+    }
+
+    #[gpui::test]
     async fn test_notification_for_stop_event(cx: &mut TestAppContext) {
         init_test(cx);
 
@@ -2786,20 +2915,25 @@ pub(crate) mod tests {
         let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
 
         let thread_store = cx.update(|_window, cx| cx.new(|cx| ThreadStore::new(cx)));
-        // Create history without an initial session list - it will be set after connection
-        let history = cx.update(|window, cx| cx.new(|cx| ThreadHistory::new(None, window, cx)));
+        let connection_store =
+            cx.update(|_window, cx| cx.new(|cx| AgentConnectionStore::new(project.clone(), cx)));
 
         let thread_view = cx.update(|window, cx| {
             cx.new(|cx| {
                 ConnectionView::new(
                     Rc::new(StubAgentServer::default_response()),
+                    connection_store,
+                    Agent::Custom {
+                        name: "Test".into(),
+                    },
+                    None,
+                    None,
                     None,
                     None,
                     workspace.downgrade(),
                     project,
                     Some(thread_store),
                     None,
-                    history.clone(),
                     window,
                     cx,
                 )
@@ -2808,6 +2942,14 @@ pub(crate) mod tests {
 
         // Wait for connection to establish
         cx.run_until_parked();
+
+        let history = cx.update(|_window, cx| {
+            thread_view
+                .read(cx)
+                .history()
+                .expect("Missing history")
+                .clone()
+        });
 
         // Initially empty because StubAgentConnection.session_list() returns None
         active_thread(&thread_view, cx).read_with(cx, |view, _cx| {
@@ -2878,7 +3020,6 @@ pub(crate) mod tests {
     async fn test_resume_without_history_adds_notice(cx: &mut TestAppContext) {
         init_test(cx);
 
-        let session = AgentSessionInfo::new(SessionId::new("resume-session"));
         let fs = FakeFs::new(cx.executor());
         let project = Project::test(fs, [], cx).await;
         let (multi_workspace, cx) =
@@ -2886,19 +3027,25 @@ pub(crate) mod tests {
         let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
 
         let thread_store = cx.update(|_window, cx| cx.new(|cx| ThreadStore::new(cx)));
-        let history = cx.update(|window, cx| cx.new(|cx| ThreadHistory::new(None, window, cx)));
+        let connection_store =
+            cx.update(|_window, cx| cx.new(|cx| AgentConnectionStore::new(project.clone(), cx)));
 
         let thread_view = cx.update(|window, cx| {
             cx.new(|cx| {
                 ConnectionView::new(
                     Rc::new(StubAgentServer::new(ResumeOnlyAgentConnection)),
-                    Some(session),
+                    connection_store,
+                    Agent::Custom {
+                        name: "Test".into(),
+                    },
+                    Some(SessionId::new("resume-session")),
+                    None,
+                    None,
                     None,
                     workspace.downgrade(),
                     project,
                     Some(thread_store),
                     None,
-                    history,
                     window,
                     cx,
                 )
@@ -2936,23 +3083,26 @@ pub(crate) mod tests {
         let connection = CwdCapturingConnection::new();
         let captured_cwd = connection.captured_cwd.clone();
 
-        let mut session = AgentSessionInfo::new(SessionId::new("session-1"));
-        session.cwd = Some(PathBuf::from("/project/subdir"));
-
         let thread_store = cx.update(|_window, cx| cx.new(|cx| ThreadStore::new(cx)));
-        let history = cx.update(|window, cx| cx.new(|cx| ThreadHistory::new(None, window, cx)));
+        let connection_store =
+            cx.update(|_window, cx| cx.new(|cx| AgentConnectionStore::new(project.clone(), cx)));
 
         let _thread_view = cx.update(|window, cx| {
             cx.new(|cx| {
                 ConnectionView::new(
                     Rc::new(StubAgentServer::new(connection)),
-                    Some(session),
+                    connection_store,
+                    Agent::Custom {
+                        name: "Test".into(),
+                    },
+                    Some(SessionId::new("session-1")),
+                    Some(PathBuf::from("/project/subdir")),
+                    None,
                     None,
                     workspace.downgrade(),
                     project,
                     Some(thread_store),
                     None,
-                    history,
                     window,
                     cx,
                 )
@@ -2988,23 +3138,26 @@ pub(crate) mod tests {
         let connection = CwdCapturingConnection::new();
         let captured_cwd = connection.captured_cwd.clone();
 
-        let mut session = AgentSessionInfo::new(SessionId::new("session-1"));
-        session.cwd = Some(PathBuf::from("/some/other/path"));
-
         let thread_store = cx.update(|_window, cx| cx.new(|cx| ThreadStore::new(cx)));
-        let history = cx.update(|window, cx| cx.new(|cx| ThreadHistory::new(None, window, cx)));
+        let connection_store =
+            cx.update(|_window, cx| cx.new(|cx| AgentConnectionStore::new(project.clone(), cx)));
 
         let _thread_view = cx.update(|window, cx| {
             cx.new(|cx| {
                 ConnectionView::new(
                     Rc::new(StubAgentServer::new(connection)),
-                    Some(session),
+                    connection_store,
+                    Agent::Custom {
+                        name: "Test".into(),
+                    },
+                    Some(SessionId::new("session-1")),
+                    Some(PathBuf::from("/some/other/path")),
+                    None,
                     None,
                     workspace.downgrade(),
                     project,
                     Some(thread_store),
                     None,
-                    history,
                     window,
                     cx,
                 )
@@ -3040,23 +3193,26 @@ pub(crate) mod tests {
         let connection = CwdCapturingConnection::new();
         let captured_cwd = connection.captured_cwd.clone();
 
-        let mut session = AgentSessionInfo::new(SessionId::new("session-1"));
-        session.cwd = Some(PathBuf::from("/project/../outside"));
-
         let thread_store = cx.update(|_window, cx| cx.new(|cx| ThreadStore::new(cx)));
-        let history = cx.update(|window, cx| cx.new(|cx| ThreadHistory::new(None, window, cx)));
+        let connection_store =
+            cx.update(|_window, cx| cx.new(|cx| AgentConnectionStore::new(project.clone(), cx)));
 
         let _thread_view = cx.update(|window, cx| {
             cx.new(|cx| {
                 ConnectionView::new(
                     Rc::new(StubAgentServer::new(connection)),
-                    Some(session),
+                    connection_store,
+                    Agent::Custom {
+                        name: "Test".into(),
+                    },
+                    Some(SessionId::new("session-1")),
+                    Some(PathBuf::from("/project/../outside")),
+                    None,
                     None,
                     workspace.downgrade(),
                     project,
                     Some(thread_store),
                     None,
-                    history,
                     window,
                     cx,
                 )
@@ -3112,7 +3268,10 @@ pub(crate) mod tests {
                 "Tab title should show the agent name with an error prefix"
             );
             match &view.server_state {
-                ServerState::LoadError(LoadError::Other(msg)) => {
+                ServerState::LoadError {
+                    error: LoadError::Other(msg),
+                    ..
+                } => {
                     assert!(
                         msg.contains("Invalid gzip header"),
                         "Error callout should contain the underlying extraction error, got: {msg}"
@@ -3122,7 +3281,7 @@ pub(crate) mod tests {
                     "Expected LoadError::Other, got: {}",
                     match other {
                         ServerState::Loading(_) => "Loading (stuck!)",
-                        ServerState::LoadError(_) => "LoadError (wrong variant)",
+                        ServerState::LoadError { .. } => "LoadError (wrong variant)",
                         ServerState::Connected(_) => "Connected",
                     }
                 ),
@@ -3351,20 +3510,26 @@ pub(crate) mod tests {
 
         // Set up thread view in workspace 1
         let thread_store = cx.update(|_window, cx| cx.new(|cx| ThreadStore::new(cx)));
-        let history = cx.update(|window, cx| cx.new(|cx| ThreadHistory::new(None, window, cx)));
+        let connection_store =
+            cx.update(|_window, cx| cx.new(|cx| AgentConnectionStore::new(project1.clone(), cx)));
 
         let agent = StubAgentServer::default_response();
         let thread_view = cx.update(|window, cx| {
             cx.new(|cx| {
                 ConnectionView::new(
                     Rc::new(agent),
+                    connection_store,
+                    Agent::Custom {
+                        name: "Test".into(),
+                    },
+                    None,
+                    None,
                     None,
                     None,
                     workspace1.downgrade(),
                     project1.clone(),
                     Some(thread_store),
                     None,
-                    history,
                     window,
                     cx,
                 )
@@ -3521,7 +3686,8 @@ pub(crate) mod tests {
         agent: impl AgentServer + 'static,
         cx: &mut TestAppContext,
     ) -> (Entity<ConnectionView>, &mut VisualTestContext) {
-        let (thread_view, _history, cx) = setup_thread_view_with_history(agent, cx).await;
+        let (thread_view, _history, cx) =
+            setup_thread_view_with_history_and_initial_content(agent, None, cx).await;
         (thread_view, cx)
     }
 
@@ -3533,6 +3699,31 @@ pub(crate) mod tests {
         Entity<ThreadHistory>,
         &mut VisualTestContext,
     ) {
+        let (thread_view, history, cx) =
+            setup_thread_view_with_history_and_initial_content(agent, None, cx).await;
+        (thread_view, history.expect("Missing history"), cx)
+    }
+
+    async fn setup_thread_view_with_initial_content(
+        agent: impl AgentServer + 'static,
+        initial_content: AgentInitialContent,
+        cx: &mut TestAppContext,
+    ) -> (Entity<ConnectionView>, &mut VisualTestContext) {
+        let (thread_view, _history, cx) =
+            setup_thread_view_with_history_and_initial_content(agent, Some(initial_content), cx)
+                .await;
+        (thread_view, cx)
+    }
+
+    async fn setup_thread_view_with_history_and_initial_content(
+        agent: impl AgentServer + 'static,
+        initial_content: Option<AgentInitialContent>,
+        cx: &mut TestAppContext,
+    ) -> (
+        Entity<ConnectionView>,
+        Option<Entity<ThreadHistory>>,
+        &mut VisualTestContext,
+    ) {
         let fs = FakeFs::new(cx.executor());
         let project = Project::test(fs, [], cx).await;
         let (multi_workspace, cx) =
@@ -3540,25 +3731,41 @@ pub(crate) mod tests {
         let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
 
         let thread_store = cx.update(|_window, cx| cx.new(|cx| ThreadStore::new(cx)));
-        let history = cx.update(|window, cx| cx.new(|cx| ThreadHistory::new(None, window, cx)));
+        let connection_store =
+            cx.update(|_window, cx| cx.new(|cx| AgentConnectionStore::new(project.clone(), cx)));
+
+        let agent_key = Agent::Custom {
+            name: "Test".into(),
+        };
 
         let thread_view = cx.update(|window, cx| {
             cx.new(|cx| {
                 ConnectionView::new(
                     Rc::new(agent),
+                    connection_store.clone(),
+                    agent_key.clone(),
                     None,
                     None,
+                    None,
+                    initial_content,
                     workspace.downgrade(),
                     project,
                     Some(thread_store),
                     None,
-                    history.clone(),
                     window,
                     cx,
                 )
             })
         });
         cx.run_until_parked();
+
+        let history = cx.update(|_window, cx| {
+            connection_store
+                .read(cx)
+                .entry(&agent_key)
+                .and_then(|e| e.read(cx).history().cloned())
+        });
+
         (thread_view, history, cx)
     }
 
@@ -3601,8 +3808,16 @@ pub(crate) mod tests {
     }
 
     impl Render for ThreadViewItem {
-        fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
-            self.0.clone().into_any_element()
+        fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+            // Render the title editor in the element tree too. In the real app
+            // it is part of the agent panel
+            let title_editor = self
+                .0
+                .read(cx)
+                .active_thread()
+                .map(|t| t.read(cx).title_editor.clone());
+
+            v_flex().children(title_editor).child(self.0.clone())
         }
     }
 
@@ -3728,6 +3943,7 @@ pub(crate) mod tests {
             AcpThread::new(
                 None,
                 name,
+                None,
                 connection,
                 project,
                 action_log,
@@ -3830,18 +4046,14 @@ pub(crate) mod tests {
 
         fn resume_session(
             self: Rc<Self>,
-            session: AgentSessionInfo,
+            session_id: acp::SessionId,
             project: Entity<Project>,
             _cwd: &Path,
+            _title: Option<SharedString>,
             cx: &mut App,
         ) -> Task<gpui::Result<Entity<AcpThread>>> {
-            let thread = build_test_thread(
-                self,
-                project,
-                "ResumeOnlyAgentConnection",
-                session.session_id,
-                cx,
-            );
+            let thread =
+                build_test_thread(self, project, "ResumeOnlyAgentConnection", session_id, cx);
             Task::ready(Ok(thread))
         }
 
@@ -3888,7 +4100,10 @@ pub(crate) mod tests {
         fn new() -> Self {
             Self {
                 authenticated: Arc::new(Mutex::new(false)),
-                auth_method: acp::AuthMethod::new(Self::AUTH_METHOD_ID, "Test Login"),
+                auth_method: acp::AuthMethod::Agent(acp::AuthMethodAgent::new(
+                    Self::AUTH_METHOD_ID,
+                    "Test Login",
+                )),
             }
         }
     }
@@ -3901,7 +4116,7 @@ pub(crate) mod tests {
         fn new_session(
             self: Rc<Self>,
             project: Entity<Project>,
-            _cwd: &Path,
+            cwd: &Path,
             cx: &mut gpui::App,
         ) -> Task<gpui::Result<Entity<AcpThread>>> {
             if !*self.authenticated.lock() {
@@ -3916,6 +4131,7 @@ pub(crate) mod tests {
                 AcpThread::new(
                     None,
                     "AuthGatedAgent",
+                    Some(cwd.to_path_buf()),
                     self,
                     project,
                     action_log,
@@ -3940,7 +4156,7 @@ pub(crate) mod tests {
             method_id: acp::AuthMethodId,
             _cx: &mut App,
         ) -> Task<gpui::Result<()>> {
-            if method_id == self.auth_method.id {
+            if &method_id == self.auth_method.id() {
                 *self.authenticated.lock() = true;
                 Task::ready(Ok(()))
             } else {
@@ -3977,7 +4193,7 @@ pub(crate) mod tests {
         fn new_session(
             self: Rc<Self>,
             project: Entity<Project>,
-            _cwd: &Path,
+            cwd: &Path,
             cx: &mut gpui::App,
         ) -> Task<gpui::Result<Entity<AcpThread>>> {
             Task::ready(Ok(cx.new(|cx| {
@@ -3985,6 +4201,7 @@ pub(crate) mod tests {
                 AcpThread::new(
                     None,
                     "SaboteurAgentConnection",
+                    Some(cwd.to_path_buf()),
                     self,
                     project,
                     action_log,
@@ -4042,7 +4259,7 @@ pub(crate) mod tests {
         fn new_session(
             self: Rc<Self>,
             project: Entity<Project>,
-            _cwd: &Path,
+            cwd: &Path,
             cx: &mut gpui::App,
         ) -> Task<gpui::Result<Entity<AcpThread>>> {
             Task::ready(Ok(cx.new(|cx| {
@@ -4050,6 +4267,7 @@ pub(crate) mod tests {
                 AcpThread::new(
                     None,
                     "RefusalAgentConnection",
+                    Some(cwd.to_path_buf()),
                     self,
                     project,
                     action_log,
@@ -4125,6 +4343,7 @@ pub(crate) mod tests {
                 AcpThread::new(
                     None,
                     "CwdCapturingConnection",
+                    Some(cwd.to_path_buf()),
                     self.clone(),
                     project,
                     action_log,
@@ -4147,9 +4366,10 @@ pub(crate) mod tests {
 
         fn load_session(
             self: Rc<Self>,
-            session: AgentSessionInfo,
+            session_id: acp::SessionId,
             project: Entity<Project>,
             cwd: &Path,
+            _title: Option<SharedString>,
             cx: &mut App,
         ) -> Task<gpui::Result<Entity<AcpThread>>> {
             *self.captured_cwd.lock() = Some(cwd.to_path_buf());
@@ -4158,10 +4378,11 @@ pub(crate) mod tests {
                 AcpThread::new(
                     None,
                     "CwdCapturingConnection",
+                    Some(cwd.to_path_buf()),
                     self.clone(),
                     project,
                     action_log,
-                    session.session_id,
+                    session_id,
                     watch::Receiver::constant(
                         acp::PromptCapabilities::new()
                             .image(true)
@@ -4254,20 +4475,26 @@ pub(crate) mod tests {
         let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
 
         let thread_store = cx.update(|_window, cx| cx.new(|cx| ThreadStore::new(cx)));
-        let history = cx.update(|window, cx| cx.new(|cx| ThreadHistory::new(None, window, cx)));
+        let connection_store =
+            cx.update(|_window, cx| cx.new(|cx| AgentConnectionStore::new(project.clone(), cx)));
 
         let connection = Rc::new(StubAgentConnection::new());
         let thread_view = cx.update(|window, cx| {
             cx.new(|cx| {
                 ConnectionView::new(
                     Rc::new(StubAgentServer::new(connection.as_ref().clone())),
+                    connection_store,
+                    Agent::Custom {
+                        name: "Test".into(),
+                    },
+                    None,
+                    None,
                     None,
                     None,
                     workspace.downgrade(),
                     project.clone(),
                     Some(thread_store.clone()),
                     None,
-                    history,
                     window,
                     cx,
                 )
@@ -5868,6 +6095,7 @@ pub(crate) mod tests {
         init_test(cx);
 
         let (thread_view, cx) = setup_thread_view(StubAgentServer::default_response(), cx).await;
+        add_to_workspace(thread_view.clone(), cx);
 
         let active = active_thread(&thread_view, cx);
         let title_editor = cx.read(|cx| active.read(cx).title_editor.clone());
@@ -5877,9 +6105,12 @@ pub(crate) mod tests {
             assert!(!editor.read_only(cx));
         });
 
-        title_editor.update_in(cx, |editor, window, cx| {
-            editor.set_text("My Custom Title", window, cx);
-        });
+        cx.focus(&thread_view);
+        cx.focus(&title_editor);
+
+        cx.dispatch_action(editor::actions::DeleteLine);
+        cx.simulate_input("My Custom Title");
+
         cx.run_until_parked();
 
         title_editor.read_with(cx, |editor, cx| {
@@ -5972,6 +6203,7 @@ pub(crate) mod tests {
             AcpThread::new(
                 parent_session_id,
                 "Test Thread",
+                None,
                 connection,
                 project,
                 action_log,
@@ -6308,5 +6540,229 @@ pub(crate) mod tests {
             text, "existing content\n\nqueued message",
             "Main editor should have existing content and queued message separated by two newlines"
         );
+    }
+
+    #[gpui::test]
+    async fn test_close_all_sessions_skips_when_unsupported(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
+
+        let thread_store = cx.update(|_window, cx| cx.new(|cx| ThreadStore::new(cx)));
+        let connection_store =
+            cx.update(|_window, cx| cx.new(|cx| AgentConnectionStore::new(project.clone(), cx)));
+
+        // StubAgentConnection defaults to supports_close_session() -> false
+        let thread_view = cx.update(|window, cx| {
+            cx.new(|cx| {
+                ConnectionView::new(
+                    Rc::new(StubAgentServer::default_response()),
+                    connection_store,
+                    Agent::Custom {
+                        name: "Test".into(),
+                    },
+                    None,
+                    None,
+                    None,
+                    None,
+                    workspace.downgrade(),
+                    project,
+                    Some(thread_store),
+                    None,
+                    window,
+                    cx,
+                )
+            })
+        });
+
+        cx.run_until_parked();
+
+        thread_view.read_with(cx, |view, _cx| {
+            let connected = view.as_connected().expect("Should be connected");
+            assert!(
+                !connected.threads.is_empty(),
+                "There should be at least one thread"
+            );
+            assert!(
+                !connected.connection.supports_close_session(),
+                "StubAgentConnection should not support close"
+            );
+        });
+
+        thread_view
+            .update(cx, |view, cx| {
+                view.as_connected()
+                    .expect("Should be connected")
+                    .close_all_sessions(cx)
+            })
+            .await;
+    }
+
+    #[gpui::test]
+    async fn test_close_all_sessions_calls_close_when_supported(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let (thread_view, cx) =
+            setup_thread_view(StubAgentServer::new(CloseCapableConnection::new()), cx).await;
+
+        cx.run_until_parked();
+
+        let close_capable = thread_view.read_with(cx, |view, _cx| {
+            let connected = view.as_connected().expect("Should be connected");
+            assert!(
+                !connected.threads.is_empty(),
+                "There should be at least one thread"
+            );
+            assert!(
+                connected.connection.supports_close_session(),
+                "CloseCapableConnection should support close"
+            );
+            connected
+                .connection
+                .clone()
+                .into_any()
+                .downcast::<CloseCapableConnection>()
+                .expect("Should be CloseCapableConnection")
+        });
+
+        thread_view
+            .update(cx, |view, cx| {
+                view.as_connected()
+                    .expect("Should be connected")
+                    .close_all_sessions(cx)
+            })
+            .await;
+
+        let closed_count = close_capable.closed_sessions.lock().len();
+        assert!(
+            closed_count > 0,
+            "close_session should have been called for each thread"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_close_session_returns_error_when_unsupported(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let (thread_view, cx) = setup_thread_view(StubAgentServer::default_response(), cx).await;
+
+        cx.run_until_parked();
+
+        let result = thread_view
+            .update(cx, |view, cx| {
+                let connected = view.as_connected().expect("Should be connected");
+                assert!(
+                    !connected.connection.supports_close_session(),
+                    "StubAgentConnection should not support close"
+                );
+                let session_id = connected
+                    .threads
+                    .keys()
+                    .next()
+                    .expect("Should have at least one thread")
+                    .clone();
+                connected.connection.clone().close_session(&session_id, cx)
+            })
+            .await;
+
+        assert!(
+            result.is_err(),
+            "close_session should return an error when close is not supported"
+        );
+        assert!(
+            result.unwrap_err().to_string().contains("not supported"),
+            "Error message should indicate that closing is not supported"
+        );
+    }
+
+    #[derive(Clone)]
+    struct CloseCapableConnection {
+        closed_sessions: Arc<Mutex<Vec<acp::SessionId>>>,
+    }
+
+    impl CloseCapableConnection {
+        fn new() -> Self {
+            Self {
+                closed_sessions: Arc::new(Mutex::new(Vec::new())),
+            }
+        }
+    }
+
+    impl AgentConnection for CloseCapableConnection {
+        fn telemetry_id(&self) -> SharedString {
+            "close-capable".into()
+        }
+
+        fn new_session(
+            self: Rc<Self>,
+            project: Entity<Project>,
+            cwd: &Path,
+            cx: &mut gpui::App,
+        ) -> Task<gpui::Result<Entity<AcpThread>>> {
+            let action_log = cx.new(|_| ActionLog::new(project.clone()));
+            let thread = cx.new(|cx| {
+                AcpThread::new(
+                    None,
+                    "CloseCapableConnection",
+                    Some(cwd.to_path_buf()),
+                    self,
+                    project,
+                    action_log,
+                    SessionId::new("close-capable-session"),
+                    watch::Receiver::constant(
+                        acp::PromptCapabilities::new()
+                            .image(true)
+                            .audio(true)
+                            .embedded_context(true),
+                    ),
+                    cx,
+                )
+            });
+            Task::ready(Ok(thread))
+        }
+
+        fn supports_close_session(&self) -> bool {
+            true
+        }
+
+        fn close_session(
+            self: Rc<Self>,
+            session_id: &acp::SessionId,
+            _cx: &mut App,
+        ) -> Task<Result<()>> {
+            self.closed_sessions.lock().push(session_id.clone());
+            Task::ready(Ok(()))
+        }
+
+        fn auth_methods(&self) -> &[acp::AuthMethod] {
+            &[]
+        }
+
+        fn authenticate(
+            &self,
+            _method_id: acp::AuthMethodId,
+            _cx: &mut App,
+        ) -> Task<gpui::Result<()>> {
+            Task::ready(Ok(()))
+        }
+
+        fn prompt(
+            &self,
+            _id: Option<acp_thread::UserMessageId>,
+            _params: acp::PromptRequest,
+            _cx: &mut App,
+        ) -> Task<gpui::Result<acp::PromptResponse>> {
+            Task::ready(Ok(acp::PromptResponse::new(acp::StopReason::EndTurn)))
+        }
+
+        fn cancel(&self, _session_id: &acp::SessionId, _cx: &mut App) {}
+
+        fn into_any(self: Rc<Self>) -> Rc<dyn Any> {
+            self
+        }
     }
 }
