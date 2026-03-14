@@ -10,7 +10,7 @@ use fs::Fs;
 use language::LanguageName;
 use lsp::LanguageServerName;
 use semver::Version;
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use crate::ExtensionCapability;
 
@@ -298,13 +298,106 @@ pub enum ExtensionLibraryKind {
     Rust,
 }
 
-#[derive(Clone, Default, PartialEq, Eq, Debug, Deserialize, Serialize)]
-pub struct GrammarManifestEntry {
-    pub repository: String,
-    #[serde(alias = "commit")]
-    pub rev: String,
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub enum GrammarManifestEntry {
+    Local {
+        path: String,
+    },
+    Remote {
+        repository: String,
+        rev: String,
+        path: Option<String>,
+    },
+}
+
+impl Default for GrammarManifestEntry {
+    fn default() -> Self {
+        Self::Remote {
+            repository: String::new(),
+            rev: String::new(),
+            path: None,
+        }
+    }
+}
+
+impl GrammarManifestEntry {
+    fn from_raw(raw: RawGrammarManifestEntry) -> std::result::Result<Self, String> {
+        let source = if raw.repository.starts_with("file://") {
+            if raw.rev.is_some() {
+                return Err(format!(
+                    "`rev` is not supported for local grammar repository `{}`; remove `rev` from `file://` repositories",
+                    raw.repository
+                ));
+            }
+
+            if raw.path.is_some() {
+                return Err(format!(
+                    "`path` is not supported for local grammar repository `{}`; point `repository` directly at the grammar root",
+                    raw.repository
+                ));
+            }
+
+            Self::Local {
+                path: raw.repository,
+            }
+        } else {
+            let rev = raw.rev.ok_or_else(|| {
+                format!(
+                    "missing `rev` for grammar repository `{}`; `rev` is only optional for `file://` repositories",
+                    raw.repository
+                )
+            })?;
+            Self::Remote {
+                repository: raw.repository,
+                rev,
+                path: raw.path,
+            }
+        };
+
+        Ok(source)
+    }
+}
+
+#[derive(Clone, PartialEq, Eq, Debug, Deserialize, Serialize)]
+struct RawGrammarManifestEntry {
+    repository: String,
+    #[serde(default, alias = "commit", skip_serializing_if = "Option::is_none")]
+    rev: Option<String>,
     #[serde(default)]
-    pub path: Option<String>,
+    path: Option<String>,
+}
+
+impl Serialize for GrammarManifestEntry {
+    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let (repository, rev, path) = match self {
+            Self::Local { path } => (path.clone(), None, None),
+            Self::Remote {
+                repository,
+                rev,
+                path,
+            } => (repository.clone(), Some(rev.clone()), path.clone()),
+        };
+
+        RawGrammarManifestEntry {
+            repository,
+            rev,
+            path,
+        }
+        .serialize(serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for GrammarManifestEntry {
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let raw = RawGrammarManifestEntry::deserialize(deserializer)?;
+        Self::from_raw(raw).map_err(serde::de::Error::custom)
+    }
 }
 
 #[derive(Clone, Default, PartialEq, Eq, Debug, Deserialize, Serialize)]
@@ -598,5 +691,89 @@ args = ["--serve"]
         assert_eq!(target.archive, "https://example.com/agent-linux-x64.tar.gz");
         assert_eq!(target.cmd, "./agent");
         assert_eq!(target.args, vec!["--serve"]);
+    }
+
+    #[test]
+    fn parse_remote_grammar_manifest_entry() {
+        let entry: GrammarManifestEntry = toml::from_str(indoc::indoc! {r#"
+                repository = "https://github.com/tree-sitter/tree-sitter-rust"
+                rev = "abc123"
+                path = "grammar"
+            "#})
+        .expect("grammar entry should parse");
+
+        assert_eq!(
+            entry,
+            GrammarManifestEntry::Remote {
+                repository: "https://github.com/tree-sitter/tree-sitter-rust".to_string(),
+                rev: "abc123".to_string(),
+                path: Some("grammar".to_string()),
+            }
+        );
+    }
+
+    #[test]
+    fn parse_remote_grammar_manifest_entry_with_commit_alias() {
+        let entry: GrammarManifestEntry = toml::from_str(indoc::indoc! {r#"
+                repository = "https://github.com/tree-sitter/tree-sitter-rust"
+                commit = "def456"
+            "#})
+        .expect("grammar entry should parse");
+
+        assert_eq!(
+            entry,
+            GrammarManifestEntry::Remote {
+                repository: "https://github.com/tree-sitter/tree-sitter-rust".to_string(),
+                rev: "def456".to_string(),
+                path: None,
+            }
+        );
+    }
+
+    #[test]
+    fn parse_local_grammar_manifest_entry_without_rev() {
+        let entry: GrammarManifestEntry = toml::from_str(indoc::indoc! {r#"
+                repository = "file:///tmp/tree-sitter-rust"
+            "#})
+        .expect("local grammar entry should parse");
+
+        assert_eq!(
+            entry,
+            GrammarManifestEntry::Local {
+                path: "file:///tmp/tree-sitter-rust".to_string(),
+            }
+        );
+    }
+
+    #[test]
+    fn reject_local_grammar_manifest_entry_with_path() {
+        let error = toml::from_str::<GrammarManifestEntry>(indoc::indoc! {r#"
+                repository = "file:///tmp/tree-sitter-rust"
+                path = "grammar"
+            "#})
+        .expect_err("local grammar entry with path should fail");
+
+        assert!(error.to_string().contains("`path` is not supported"));
+    }
+
+    #[test]
+    fn reject_local_grammar_manifest_entry_with_rev() {
+        let error = toml::from_str::<GrammarManifestEntry>(indoc::indoc! {r#"
+                repository = "file:///tmp/tree-sitter-rust"
+                rev = "abc123"
+            "#})
+        .expect_err("local grammar entry with rev should fail");
+
+        assert!(error.to_string().contains("`rev` is not supported"));
+    }
+
+    #[test]
+    fn reject_remote_grammar_manifest_entry_without_rev() {
+        let error = toml::from_str::<GrammarManifestEntry>(indoc::indoc! {r#"
+                repository = "https://github.com/tree-sitter/tree-sitter-rust"
+            "#})
+        .expect_err("remote grammar entry without rev should fail");
+
+        assert!(error.to_string().contains("missing `rev`"));
     }
 }
