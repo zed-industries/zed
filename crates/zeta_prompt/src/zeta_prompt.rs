@@ -479,6 +479,7 @@ pub fn format_prompt_with_budget_for_format(
                 "<|file_sep|>",
                 "edit history",
                 budget_after_cursor,
+                max_edit_event_count_for_format(&format),
             );
             let edit_history_tokens = estimate_tokens(edit_history_section.len());
             let budget_after_edit_history = budget_after_cursor.saturating_sub(edit_history_tokens);
@@ -514,6 +515,22 @@ pub fn filter_redundant_excerpts(
     }
     related_files.retain(|file| !file.excerpts.is_empty());
     related_files
+}
+
+pub fn max_edit_event_count_for_format(format: &ZetaFormat) -> usize {
+    match format {
+        ZetaFormat::V0112MiddleAtEnd
+        | ZetaFormat::V0113Ordered
+        | ZetaFormat::V0114180EditableRegion
+        | ZetaFormat::V0120GitMergeMarkers
+        | ZetaFormat::V0131GitMergeMarkersPrefix
+        | ZetaFormat::V0211Prefill
+        | ZetaFormat::V0211SeedCoder
+        | ZetaFormat::v0226Hashline
+        | ZetaFormat::V0304SeedNoEdits
+        | ZetaFormat::V0304VariableEdit
+        | ZetaFormat::V0306SeedMultiRegions => 6,
+    }
 }
 
 pub fn get_prefill_for_format(
@@ -682,6 +699,7 @@ fn format_edit_history_within_budget(
     file_marker: &str,
     edit_history_name: &str,
     max_tokens: usize,
+    max_edit_event_count: usize,
 ) -> String {
     let header = format!("{}{}\n", file_marker, edit_history_name);
     let header_tokens = estimate_tokens(header.len());
@@ -692,7 +710,7 @@ fn format_edit_history_within_budget(
     let mut event_strings: Vec<String> = Vec::new();
     let mut total_tokens = header_tokens;
 
-    for event in events.iter().rev() {
+    for event in events.iter().rev().take(max_edit_event_count) {
         let mut event_str = String::new();
         write_event(&mut event_str, event);
         let event_tokens = estimate_tokens(event_str.len());
@@ -2235,21 +2253,21 @@ pub mod hashline {
                 Case {
                     name: "insert_before_first_and_after_line",
                     original: indoc! {"
-                    a
-                    b
-                "},
+                        a
+                        b
+                    "},
                     model_output: indoc! {"
-                    <|insert|>
-                    HEAD
-                    <|insert|>0:61
-                    MID
-                "},
+                        <|insert|>
+                        HEAD
+                        <|insert|>0:61
+                        MID
+                    "},
                     expected: indoc! {"
-                    HEAD
-                    a
-                    MID
-                    b
-                "},
+                        HEAD
+                        a
+                        MID
+                        b
+                    "},
                 },
             ];
 
@@ -2698,6 +2716,7 @@ pub mod seed_coder {
             FILE_MARKER,
             "edit_history",
             budget_after_cursor,
+            max_edit_event_count_for_format(&ZetaFormat::V0211SeedCoder),
         );
         let edit_history_tokens = estimate_tokens(edit_history_section.len());
         let budget_after_edit_history = budget_after_cursor.saturating_sub(edit_history_tokens);
@@ -3824,7 +3843,13 @@ pub mod zeta1 {
     /// Formats events in zeta1 style (oldest first).
     fn format_zeta1_events(events: &[Arc<Event>]) -> String {
         let mut result = String::new();
-        for event in events {
+        for event in
+            events
+                .iter()
+                .skip(events.len().saturating_sub(max_edit_event_count_for_format(
+                    &ZetaFormat::V0114180EditableRegion,
+                )))
+        {
             let event_string = format_zeta1_event(event);
             if event_string.is_empty() {
                 continue;
@@ -4779,6 +4804,87 @@ mod tests {
                 "### Response:\n",
             ),
         );
+    }
+
+    #[test]
+    fn test_max_event_count() {
+        fn make_numbered_event(index: usize) -> Event {
+            return make_event(
+                &format!("event-{index}.rs"),
+                &format!("-old-{index}\n+new-{index}\n"),
+            );
+        }
+        let input = make_input(
+            "x",
+            0..1,
+            0,
+            (0..3).map(make_numbered_event).collect(),
+            vec![],
+        );
+
+        let edit_history_section = format_edit_history_within_budget(
+            &input.events,
+            "<|file_sep|>",
+            "edit history",
+            usize::MAX,
+            5,
+        );
+
+        assert_eq!(
+            &edit_history_section,
+            indoc!(
+                "
+                <|file_sep|>edit history
+                --- a/event-0.rs
+                +++ b/event-0.rs
+                -old-0
+                +new-0
+                --- a/event-1.rs
+                +++ b/event-1.rs
+                -old-1
+                +new-1
+                --- a/event-2.rs
+                +++ b/event-2.rs
+                -old-2
+                +new-2
+            "
+            )
+        );
+
+        let edit_history_section = format_edit_history_within_budget(
+            &input.events,
+            "<|file_sep|>",
+            "edit history",
+            usize::MAX,
+            2,
+        );
+
+        assert_eq!(
+            &edit_history_section,
+            indoc!(
+                "
+                <|file_sep|>edit history
+                --- a/event-1.rs
+                +++ b/event-1.rs
+                -old-1
+                +new-1
+                --- a/event-2.rs
+                +++ b/event-2.rs
+                -old-2
+                +new-2
+            "
+            )
+        );
+
+        let edit_history_section = format_edit_history_within_budget(
+            &input.events,
+            "<|file_sep|>",
+            "edit history",
+            usize::MAX,
+            0,
+        );
+
+        assert_eq!(&edit_history_section, "");
     }
 
     #[test]

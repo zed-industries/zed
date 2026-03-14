@@ -92,6 +92,8 @@ extend-ignore-re = [
     # AMD GPU Services
     "ags",
     # AMD GPU Services
-    "AGS"
+    "AGS",
+    # Yarn Plug'n'Play
+    "PnP"
 ]
 check-filename = true

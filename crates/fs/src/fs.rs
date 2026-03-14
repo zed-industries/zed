@@ -147,7 +147,7 @@ pub trait Fs: Send + Sync {
         &self,
         abs_dot_git: &Path,
         system_git_binary_path: Option<&Path>,
-    ) -> Option<Arc<dyn GitRepository>>;
+    ) -> Result<Arc<dyn GitRepository>>;
     async fn git_init(&self, abs_work_directory: &Path, fallback_branch_name: String)
     -> Result<()>;
     async fn git_clone(&self, repo_url: &str, abs_work_directory: &Path) -> Result<()>;
@@ -1149,8 +1149,8 @@ impl Fs for RealFs {
         &self,
         dotgit_path: &Path,
         system_git_binary_path: Option<&Path>,
-    ) -> Option<Arc<dyn GitRepository>> {
-        Some(Arc::new(RealGitRepository::new(
+    ) -> Result<Arc<dyn GitRepository>> {
+        Ok(Arc::new(RealGitRepository::new(
             dotgit_path,
             self.bundled_git_binary_path.clone(),
             system_git_binary_path.map(|path| path.to_path_buf()),
@@ -2866,9 +2866,7 @@ impl Fs for FakeFs {
         &self,
         abs_dot_git: &Path,
         _system_git_binary: Option<&Path>,
-    ) -> Option<Arc<dyn GitRepository>> {
-        use util::ResultExt as _;
-
+    ) -> Result<Arc<dyn GitRepository>> {
         self.with_git_state_and_paths(
             abs_dot_git,
             false,
@@ -2884,7 +2882,6 @@ impl Fs for FakeFs {
                 }) as _
             },
         )
-        .log_err()
     }
 
     async fn git_init(

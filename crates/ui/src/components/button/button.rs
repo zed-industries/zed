@@ -2,15 +2,12 @@ use crate::component_prelude::*;
 use gpui::{AnyElement, AnyView, DefiniteLength};
 use ui_macros::RegisterComponent;
 
-use crate::{ButtonCommon, ButtonLike, ButtonSize, ButtonStyle, IconName, IconSize, Label};
+use crate::{ButtonCommon, ButtonLike, ButtonSize, ButtonStyle, Icon, Label};
 use crate::{
-    Color, DynamicSpacing, ElevationIndex, IconPosition, KeyBinding, KeybindingPosition, TintColor,
-    prelude::*,
+    Color, DynamicSpacing, ElevationIndex, KeyBinding, KeybindingPosition, TintColor, prelude::*,
 };
 
-use super::button_icon::ButtonIcon;
-
-/// An element that creates a button with a label and an optional icon.
+/// An element that creates a button with a label and optional icons.
 ///
 /// Common buttons:
 /// - Label, Icon + Label: [`Button`] (this component)
@@ -42,7 +39,7 @@ use super::button_icon::ButtonIcon;
 /// use ui::prelude::*;
 ///
 /// Button::new("button_id", "Click me!")
-///     .icon(IconName::Check)
+///     .start_icon(Icon::new(IconName::Check))
 ///     .toggle_state(true)
 ///     .on_click(|event, window, cx| {
 ///         // Handle click event
@@ -85,12 +82,8 @@ pub struct Button {
     label_size: Option<LabelSize>,
     selected_label: Option<SharedString>,
     selected_label_color: Option<Color>,
-    icon: Option<IconName>,
-    icon_position: Option<IconPosition>,
-    icon_size: Option<IconSize>,
-    icon_color: Option<Color>,
-    selected_icon: Option<IconName>,
-    selected_icon_color: Option<Color>,
+    start_icon: Option<Icon>,
+    end_icon: Option<Icon>,
     key_binding: Option<KeyBinding>,
     key_binding_position: KeybindingPosition,
     alpha: Option<f32>,
@@ -112,12 +105,8 @@ impl Button {
             label_size: None,
             selected_label: None,
             selected_label_color: None,
-            icon: None,
-            icon_position: None,
-            icon_size: None,
-            icon_color: None,
-            selected_icon: None,
-            selected_icon_color: None,
+            start_icon: None,
+            end_icon: None,
             key_binding: None,
             key_binding_position: KeybindingPosition::default(),
             alpha: None,
@@ -149,39 +138,19 @@ impl Button {
         self
     }
 
-    /// Assigns an icon to the button.
-    pub fn icon(mut self, icon: impl Into<Option<IconName>>) -> Self {
-        self.icon = icon.into();
+    /// Sets an icon to display at the start (left) of the button label.
+    ///
+    /// The icon's color will be overridden to `Color::Disabled` when the button is disabled.
+    pub fn start_icon(mut self, icon: impl Into<Option<Icon>>) -> Self {
+        self.start_icon = icon.into();
         self
     }
 
-    /// Sets the position of the icon relative to the label.
-    pub fn icon_position(mut self, icon_position: impl Into<Option<IconPosition>>) -> Self {
-        self.icon_position = icon_position.into();
-        self
-    }
-
-    /// Specifies the size of the button's icon.
-    pub fn icon_size(mut self, icon_size: impl Into<Option<IconSize>>) -> Self {
-        self.icon_size = icon_size.into();
-        self
-    }
-
-    /// Sets the color of the button's icon.
-    pub fn icon_color(mut self, icon_color: impl Into<Option<Color>>) -> Self {
-        self.icon_color = icon_color.into();
-        self
-    }
-
-    /// Chooses an icon to display when the button is in a selected state.
-    pub fn selected_icon(mut self, icon: impl Into<Option<IconName>>) -> Self {
-        self.selected_icon = icon.into();
-        self
-    }
-
-    /// Sets the icon color used when the button is in a selected state.
-    pub fn selected_icon_color(mut self, color: impl Into<Option<Color>>) -> Self {
-        self.selected_icon_color = color.into();
+    /// Sets an icon to display at the end (right) of the button label.
+    ///
+    /// The icon's color will be overridden to `Color::Disabled` when the button is disabled.
+    pub fn end_icon(mut self, icon: impl Into<Option<Icon>>) -> Self {
+        self.end_icon = icon.into();
         self
     }
 
@@ -219,22 +188,24 @@ impl Button {
 impl Toggleable for Button {
     /// Sets the selected state of the button.
     ///
-    /// This method allows the selection state of the button to be specified.
-    /// It modifies the button's appearance to reflect its selected state.
-    ///
     /// # Examples
+    ///
+    /// Create a toggleable button that changes appearance when selected:
     ///
     /// ```
     /// use ui::prelude::*;
+    /// use ui::TintColor;
     ///
-    /// Button::new("button_id", "Click me!")
-    ///     .toggle_state(true)
+    /// let selected = true;
+    ///
+    /// Button::new("toggle_button", "Toggle Me")
+    ///     .start_icon(Icon::new(IconName::Check))
+    ///     .toggle_state(selected)
+    ///     .selected_style(ButtonStyle::Tinted(TintColor::Accent))
     ///     .on_click(|event, window, cx| {
-    ///         // Handle click event
+    ///         // Toggle the selected state
     ///     });
     /// ```
-    ///
-    /// Use [`selected_style`](Button::selected_style) to change the style of the button when it is selected.
     fn toggle_state(mut self, selected: bool) -> Self {
         self.base = self.base.toggle_state(selected);
         self
@@ -242,22 +213,20 @@ impl Toggleable for Button {
 }
 
 impl SelectableButton for Button {
-    /// Sets the style for the button when selected.
+    /// Sets the style for the button in a selected state.
     ///
     /// # Examples
+    ///
+    /// Customize the selected appearance of a button:
     ///
     /// ```
     /// use ui::prelude::*;
     /// use ui::TintColor;
     ///
-    /// Button::new("button_id", "Click me!")
+    /// Button::new("styled_button", "Styled Button")
     ///     .toggle_state(true)
-    ///     .selected_style(ButtonStyle::Tinted(TintColor::Accent))
-    ///     .on_click(|event, window, cx| {
-    ///         // Handle click event
-    ///     });
+    ///     .selected_style(ButtonStyle::Tinted(TintColor::Accent));
     /// ```
-    /// This results in a button with a blue tinted background when selected.
     fn selected_style(mut self, style: ButtonStyle) -> Self {
         self.base = self.base.selected_style(style);
         self
@@ -265,36 +234,27 @@ impl SelectableButton for Button {
 }
 
 impl Disableable for Button {
-    /// Disables the button.
+    /// Disables the button, preventing interaction and changing its appearance.
     ///
-    /// This method allows the button to be disabled. When a button is disabled,
-    /// it doesn't react to user interactions and its appearance is updated to reflect this.
+    /// When disabled, the button's icon and label will use `Color::Disabled`.
     ///
     /// # Examples
+    ///
+    /// Create a disabled button:
     ///
     /// ```
     /// use ui::prelude::*;
     ///
-    /// Button::new("button_id", "Click me!")
-    ///     .disabled(true)
-    ///     .on_click(|event, window, cx| {
-    ///         // Handle click event
-    ///     });
+    /// Button::new("disabled_button", "Can't Click Me")
+    ///     .disabled(true);
     /// ```
-    ///
-    /// This results in a button that is disabled and does not respond to click events.
     fn disabled(mut self, disabled: bool) -> Self {
         self.base = self.base.disabled(disabled);
-        self.key_binding = self
-            .key_binding
-            .take()
-            .map(|binding| binding.disabled(disabled));
         self
     }
 }
 
 impl Clickable for Button {
-    /// Sets the click event handler for the button.
     fn on_click(
         mut self,
         handler: impl Fn(&gpui::ClickEvent, &mut Window, &mut App) + 'static,
@@ -312,42 +272,33 @@ impl Clickable for Button {
 impl FixedWidth for Button {
     /// Sets a fixed width for the button.
     ///
-    /// This function allows a button to have a fixed width instead of automatically growing or shrinking.
-    /// Sets a fixed width for the button.
-    ///
     /// # Examples
+    ///
+    /// Create a button with a fixed width of 100 pixels:
     ///
     /// ```
     /// use ui::prelude::*;
     ///
-    /// Button::new("button_id", "Click me!")
-    ///     .width(px(100.))
-    ///     .on_click(|event, window, cx| {
-    ///         // Handle click event
-    ///     });
+    /// Button::new("fixed_width_button", "Fixed Width")
+    ///     .width(px(100.0));
     /// ```
-    ///
-    /// This sets the button's width to be exactly 100 pixels.
     fn width(mut self, width: impl Into<DefiniteLength>) -> Self {
         self.base = self.base.width(width);
         self
     }
 
-    /// Sets the button to occupy the full width of its container.
+    /// Makes the button take up the full width of its container.
     ///
     /// # Examples
+    ///
+    /// Create a button that takes up the full width of its container:
     ///
     /// ```
     /// use ui::prelude::*;
     ///
-    /// Button::new("button_id", "Click me!")
-    ///     .full_width()
-    ///     .on_click(|event, window, cx| {
-    ///         // Handle click event
-    ///     });
+    /// Button::new("full_width_button", "Full Width")
+    ///     .full_width();
     /// ```
-    ///
-    /// This stretches the button to the full width of its container.
     fn full_width(mut self) -> Self {
         self.base = self.base.full_width();
         self
@@ -355,43 +306,34 @@ impl FixedWidth for Button {
 }
 
 impl ButtonCommon for Button {
-    /// Sets the button's id.
     fn id(&self) -> &ElementId {
         self.base.id()
     }
 
-    /// Sets the visual style of the button using a [`ButtonStyle`].
+    /// Sets the visual style of the button.
     fn style(mut self, style: ButtonStyle) -> Self {
         self.base = self.base.style(style);
         self
     }
 
-    /// Sets the button's size using a [`ButtonSize`].
+    /// Sets the size of the button.
     fn size(mut self, size: ButtonSize) -> Self {
         self.base = self.base.size(size);
         self
     }
 
-    /// Sets a tooltip for the button.
-    ///
-    /// This method allows a tooltip to be set for the button. The tooltip is a function that
-    /// takes a mutable references to [`Window`] and [`App`], and returns an [`AnyView`]. The
-    /// tooltip is displayed when the user hovers over the button.
+    /// Sets a tooltip that appears on hover.
     ///
     /// # Examples
     ///
-    /// ```
-    /// use ui::prelude::*;
-    /// use ui::Tooltip;
+    /// Add a tooltip to a button:
     ///
-    /// Button::new("button_id", "Click me!")
-    ///     .tooltip(Tooltip::text("This is a tooltip"))
-    ///     .on_click(|event, window, cx| {
-    ///         // Handle click event
-    ///     });
     /// ```
+    /// use ui::{Tooltip, prelude::*};
     ///
-    /// This will create a button with a tooltip that displays "This is a tooltip" when hovered over.
+    /// Button::new("tooltip_button", "Hover Me")
+    ///     .tooltip(Tooltip::text("This is a tooltip"));
+    /// ```
     fn tooltip(mut self, tooltip: impl Fn(&mut Window, &mut App) -> AnyView + 'static) -> Self {
         self.base = self.base.tooltip(tooltip);
         self
@@ -436,16 +378,12 @@ impl RenderOnce for Button {
             h_flex()
                 .when(self.truncate, |this| this.min_w_0().overflow_hidden())
                 .gap(DynamicSpacing::Base04.rems(cx))
-                .when(self.icon_position == Some(IconPosition::Start), |this| {
-                    this.children(self.icon.map(|icon| {
-                        ButtonIcon::new(icon)
-                            .disabled(is_disabled)
-                            .toggle_state(is_selected)
-                            .selected_icon(self.selected_icon)
-                            .selected_icon_color(self.selected_icon_color)
-                            .size(self.icon_size)
-                            .color(self.icon_color)
-                    }))
+                .when_some(self.start_icon, |this, icon| {
+                    this.child(if is_disabled {
+                        icon.color(Color::Disabled)
+                    } else {
+                        icon
+                    })
                 })
                 .child(
                     h_flex()
@@ -465,16 +403,12 @@ impl RenderOnce for Button {
                         )
                         .children(self.key_binding),
                 )
-                .when(self.icon_position != Some(IconPosition::Start), |this| {
-                    this.children(self.icon.map(|icon| {
-                        ButtonIcon::new(icon)
-                            .disabled(is_disabled)
-                            .toggle_state(is_selected)
-                            .selected_icon(self.selected_icon)
-                            .selected_icon_color(self.selected_icon_color)
-                            .size(self.icon_size)
-                            .color(self.icon_color)
-                    }))
+                .when_some(self.end_icon, |this, icon| {
+                    this.child(if is_disabled {
+                        icon.color(Color::Disabled)
+                    } else {
+                        icon
+                    })
                 }),
         )
     }
@@ -585,24 +519,28 @@ impl Component for Button {
                         "Buttons with Icons",
                         vec![
                             single_example(
-                                "Icon Start",
-                                Button::new("icon_start", "Icon Start")
-                                    .icon(IconName::Check)
-                                    .icon_position(IconPosition::Start)
+                                "Start Icon",
+                                Button::new("icon_start", "Start Icon")
+                                    .start_icon(Icon::new(IconName::Check))
                                     .into_any_element(),
                             ),
                             single_example(
-                                "Icon End",
-                                Button::new("icon_end", "Icon End")
-                                    .icon(IconName::Check)
-                                    .icon_position(IconPosition::End)
+                                "End Icon",
+                                Button::new("icon_end", "End Icon")
+                                    .end_icon(Icon::new(IconName::Check))
+                                    .into_any_element(),
+                            ),
+                            single_example(
+                                "Both Icons",
+                                Button::new("both_icons", "Both Icons")
+                                    .start_icon(Icon::new(IconName::Check))
+                                    .end_icon(Icon::new(IconName::ChevronDown))
                                     .into_any_element(),
                             ),
                             single_example(
                                 "Icon Color",
                                 Button::new("icon_color", "Icon Color")
-                                    .icon(IconName::Check)
-                                    .icon_color(Color::Accent)
+                                    .start_icon(Icon::new(IconName::Check).color(Color::Accent))
                                     .into_any_element(),
                             ),
                         ],

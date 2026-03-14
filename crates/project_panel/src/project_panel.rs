@@ -2371,6 +2371,11 @@ impl ProjectPanel {
             }
             let answer = if !skip_prompt {
                 let operation = if trash { "Trash" } else { "Delete" };
+                let message_start = if trash {
+                    "Do you want to trash"
+                } else {
+                    "Are you sure you want to permanently delete"
+                };
                 let prompt = match file_paths.first() {
                     Some((_, path)) if file_paths.len() == 1 => {
                         let unsaved_warning = if dirty_buffers > 0 {
@@ -2379,7 +2384,7 @@ impl ProjectPanel {
                             ""
                         };
 
-                        format!("{operation} {path}?{unsaved_warning}")
+                        format!("{message_start} {path}?{unsaved_warning}")
                     }
                     _ => {
                         const CUTOFF_POINT: usize = 10;
@@ -2411,14 +2416,20 @@ impl ProjectPanel {
                         };
 
                         format!(
-                            "Do you want to {} the following {} files?\n{}{unsaved_warning}",
-                            operation.to_lowercase(),
+                            "{message_start} the following {} files?\n{}{unsaved_warning}",
                             file_paths.len(),
                             names.join("\n")
                         )
                     }
                 };
-                Some(window.prompt(PromptLevel::Info, &prompt, None, &[operation, "Cancel"], cx))
+                let detail = (!trash).then_some("This cannot be undone.");
+                Some(window.prompt(
+                    PromptLevel::Info,
+                    &prompt,
+                    detail,
+                    &[operation, "Cancel"],
+                    cx,
+                ))
             } else {
                 None
             };
@@ -6330,6 +6341,7 @@ impl Render for ProjectPanel {
         let panel_settings = ProjectPanelSettings::get_global(cx);
         let indent_size = panel_settings.indent_size;
         let show_indent_guides = panel_settings.indent_guides.show == ShowIndentGuides::Always;
+        let horizontal_scroll = panel_settings.scrollbar.horizontal_scroll;
         let show_sticky_entries = {
             if panel_settings.sticky_scroll {
                 let is_scrollable = self.scroll_handle.is_scrollable();
@@ -6702,10 +6714,14 @@ impl Render for ProjectPanel {
                                 })
                             })
                             .with_sizing_behavior(ListSizingBehavior::Infer)
-                            .with_horizontal_sizing_behavior(
-                                ListHorizontalSizingBehavior::Unconstrained,
-                            )
-                            .with_width_from_item(self.state.max_width_item_index)
+                            .with_horizontal_sizing_behavior(if horizontal_scroll {
+                                ListHorizontalSizingBehavior::Unconstrained
+                            } else {
+                                ListHorizontalSizingBehavior::FitList
+                            })
+                            .when(horizontal_scroll, |list| {
+                                list.with_width_from_item(self.state.max_width_item_index)
+                            })
                             .track_scroll(&self.scroll_handle),
                         )
                         .child(
@@ -6866,13 +6882,17 @@ impl Render for ProjectPanel {
                         .size_full(),
                 )
                 .custom_scrollbars(
-                    Scrollbars::for_settings::<ProjectPanelSettings>()
-                        .tracked_scroll_handle(&self.scroll_handle)
-                        .with_track_along(
-                            ScrollAxes::Horizontal,
-                            cx.theme().colors().panel_background,
-                        )
-                        .notify_content(),
+                    {
+                        let mut scrollbars = Scrollbars::for_settings::<ProjectPanelSettings>()
+                            .tracked_scroll_handle(&self.scroll_handle);
+                        if horizontal_scroll {
+                            scrollbars = scrollbars.with_track_along(
+                                ScrollAxes::Horizontal,
+                                cx.theme().colors().panel_background,
+                            );
+                        }
+                        scrollbars.notify_content()
+                    },
                     window,
                     cx,
                 )
