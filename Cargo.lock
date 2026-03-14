@@ -7529,6 +7529,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "gpui_ios"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-task",
+ "collections",
+ "dispatch2",
+ "futures 0.3.31",
+ "gpui",
+ "log",
+ "parking_lot",
+ "raw-window-handle",
+ "smallvec",
+ "uuid",
+]
+
+[[package]]
 name = "gpui_linux"
 version = "0.1.0"
 dependencies = [
@@ -7634,6 +7651,7 @@ version = "0.1.0"
 dependencies = [
  "console_error_panic_hook",
  "gpui",
+ "gpui_ios",
  "gpui_linux",
  "gpui_macos",
  "gpui_web",
@@ -22089,6 +22107,10 @@ dependencies = [
 [[package]]
 name = "zed-ios"
 version = "0.1.0"
+dependencies = [
+ "gpui_ios",
+ "log",
+]
 
 [[package]]
 name = "zed-reqwest"

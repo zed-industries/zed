@@ -1,0 +1,31 @@
+[package]
+name = "gpui_ios"
+version = "0.1.0"
+edition.workspace = true
+publish.workspace = true
+license = "Apache-2.0"
+
+[lints]
+workspace = true
+
+[lib]
+path = "src/gpui_ios.rs"
+
+[features]
+default = ["gpui/default"]
+test-support = ["gpui/test-support"]
+
+[dependencies]
+gpui.workspace = true
+
+[target.'cfg(target_os = "ios")'.dependencies]
+anyhow.workspace = true
+async-task = "4.7"
+collections.workspace = true
+dispatch2 = "0.3.1"
+futures.workspace = true
+log.workspace = true
+parking_lot.workspace = true
+raw-window-handle = "0.6"
+smallvec.workspace = true
+uuid.workspace = true
