@@ -2370,9 +2370,7 @@ impl DisplaySnapshot {
         loop {
             let kind = current.kind();
             if current.start_position().row != current.end_position().row
-                && (kind.contains("string")
-                    || kind.contains("comment")
-                    || kind.contains("heredoc"))
+                && (kind.contains("string") || kind.contains("comment") || kind.contains("heredoc"))
             {
                 return Some(current.end_position().row as u32);
             }
