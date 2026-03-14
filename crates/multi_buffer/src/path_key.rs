@@ -557,7 +557,7 @@ impl MultiBuffer {
         cx.emit(Event::Edited {
             edited_buffer: None,
         });
-        cx.emit(Event::BufferUpdated {
+        cx.emit(Event::BufferRangesUpdated {
             buffer,
             path_key: path_key.clone(),
             ranges: new_ranges,

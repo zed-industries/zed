@@ -224,7 +224,6 @@ impl CommitView {
                         .buffer()
                         .read(cx)
                         .buffer_anchor_to_anchor(
-                            &message_buffer,
                             Anchor::max_for_buffer(&message_buffer.read(cx).remote_id()),
                             cx,
                         )

@@ -57,10 +57,10 @@ impl Editor {
         multi_buffer_snapshot: &MultiBufferSnapshot,
         cx: &Context<Self>,
     ) -> bool {
-        let Some(excerpt) = multi_buffer_snapshot.excerpt_containing(cursor..cursor) else {
+        let Some(anchor) = multi_buffer_snapshot.anchor_to_buffer_anchor(cursor) else {
             return false;
         };
-        let Some(buffer) = self.buffer.read(cx).buffer(excerpt.buffer_id()) else {
+        let Some(buffer) = self.buffer.read(cx).buffer(anchor.buffer_id) else {
             return false;
         };
         lsp_symbols_enabled(buffer.read(cx), cx)
@@ -72,7 +72,7 @@ impl Editor {
         &self,
         cursor: Anchor,
         multi_buffer_snapshot: &MultiBufferSnapshot,
-        cx: &Context<Self>,
+        _cx: &Context<Self>,
     ) -> Option<(BufferId, Vec<OutlineItem<Anchor>>)> {
         let cursor_text_anchor = multi_buffer_snapshot.anchor_to_buffer_anchor(cursor)?;
         let path_key_index =
@@ -204,13 +204,7 @@ impl Editor {
                         for (buffer_id, items) in &mut highlighted_results {
                             if let Some(buffer) = editor.buffer.read(cx).buffer(*buffer_id) {
                                 let snapshot = buffer.read(cx).snapshot();
-                                apply_highlights(
-                                    items,
-                                    *buffer_id,
-                                    &snapshot,
-                                    &display_snapshot,
-                                    &syntax,
-                                );
+                                apply_highlights(items, &snapshot, &display_snapshot, &syntax);
                             }
                         }
                         editor.lsp_document_symbols.extend(highlighted_results);
@@ -232,7 +226,6 @@ fn lsp_symbols_enabled(buffer: &Buffer, cx: &App) -> bool {
 /// outline items that were built without highlights by the project layer.
 fn apply_highlights(
     items: &mut [OutlineItem<text::Anchor>],
-    buffer_id: BufferId,
     buffer_snapshot: &BufferSnapshot,
     display_snapshot: &DisplaySnapshot,
     syntax_theme: &SyntaxTheme,
@@ -244,7 +237,6 @@ fn apply_highlights(
         if let Some(highlights) = highlights_from_buffer(
             &item.text,
             0,
-            buffer_id,
             buffer_snapshot,
             display_snapshot,
             symbol_range,
@@ -266,7 +258,6 @@ fn apply_highlights(
 fn highlights_from_buffer(
     name: &str,
     name_offset_in_text: usize,
-    buffer_id: BufferId,
     buffer_snapshot: &BufferSnapshot,
     display_snapshot: &DisplaySnapshot,
     symbol_range: Range<usize>,

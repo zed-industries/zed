@@ -28,7 +28,12 @@ pub(crate) fn find_specific_language_server_in_selection<F>(
     cx: &mut App,
     filter_language: F,
     language_server_name: LanguageServerName,
-) -> Option<(Anchor, Arc<Language>, LanguageServerId, Entity<Buffer>)>
+) -> Option<(
+    text::Anchor,
+    Arc<Language>,
+    LanguageServerId,
+    Entity<Buffer>,
+)>
 where
     F: Fn(&Language) -> bool,
 {
@@ -39,7 +44,7 @@ where
         .disjoint_anchors_arc()
         .iter()
         .filter_map(|selection| {
-            let text_anchor = selection.head().text_anchor(&multibuffer_snapshot)?;
+            let text_anchor = multibuffer_snapshot.anchor_to_buffer_anchor(selection.head())?;
             Some((selection.head(), text_anchor))
         })
         .unique_by(|(_, buffer_id)| *buffer_id)
@@ -52,7 +57,7 @@ where
                         .read(cx)
                         .language_server_id_for_name(buffer, &language_server_name, cx)
                 })?;
-                Some((trigger_anchor, language, server_id, buffer))
+                Some((text_anchor, language, server_id, buffer))
             } else {
                 None
             }

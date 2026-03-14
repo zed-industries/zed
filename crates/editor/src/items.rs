@@ -23,7 +23,7 @@ use language::{
     proto::serialize_anchor as serialize_text_anchor,
 };
 use lsp::DiagnosticSeverity;
-use multi_buffer::{ExcerptAnchor, MultiBufferOffset, PathKey};
+use multi_buffer::{MultiBufferOffset, PathKey};
 use project::{
     File, Project, ProjectItem as _, ProjectPath, lsp_store::FormatTrigger,
     project_settings::ProjectSettings, search::SearchQuery,
@@ -34,7 +34,6 @@ use std::{
     any::{Any, TypeId},
     borrow::Cow,
     cmp::{self, Ordering},
-    iter,
     ops::Range,
     path::{Path, PathBuf},
     sync::Arc,
@@ -222,12 +221,12 @@ impl FollowableItem for Editor {
             {
                 prev_entry
                     .ranges
-                    .push(serialize_excerpt_range(excerpt.range()));
+                    .push(serialize_excerpt_range(excerpt.excerpt_range()));
             } else {
                 path_excerpts.push(proto::PathExcerpts {
                     path_key: Some(serialize_path_key(excerpt.path_key())),
                     buffer_id: excerpt.buffer_id().to_proto(),
-                    ranges: vec![serialize_excerpt_range(excerpt.range())],
+                    ranges: vec![serialize_excerpt_range(excerpt.excerpt_range())],
                 });
             }
         }
@@ -282,7 +281,7 @@ impl FollowableItem for Editor {
 
         match update {
             proto::update_view::Variant::Editor(update) => match event {
-                EditorEvent::BufferUpdated {
+                EditorEvent::BufferRangesUpdated {
                     buffer,
                     path_key,
                     ranges,
@@ -372,7 +371,7 @@ impl FollowableItem for Editor {
     ) {
         let buffer = self.buffer.read(cx);
         let buffer = buffer.read(cx);
-        let Some(position) = buffer.as_singleton_anchor(location) else {
+        let Some(position) = buffer.buffer_anchor_to_anchor(location) else {
             return;
         };
         let selection = Selection {
@@ -502,10 +501,9 @@ fn serialize_selection(selection: &Selection<Anchor>) -> proto::Selection {
 }
 
 fn serialize_anchor(anchor: &Anchor) -> proto::EditorAnchor {
-    const FUN_EXCERPT_ID: u64 = 0xcafebabe;
     match anchor {
         Anchor::Min => proto::EditorAnchor {
-            excerpt_id: FUN_EXCERPT_ID,
+            excerpt_id: None,
             anchor: Some(proto::Anchor {
                 replica_id: 0,
                 timestamp: 0,
@@ -515,11 +513,11 @@ fn serialize_anchor(anchor: &Anchor) -> proto::EditorAnchor {
             }),
         },
         Anchor::Excerpt(excerpt_anchor) => proto::EditorAnchor {
-            excerpt_id: FUN_EXCERPT_ID,
+            excerpt_id: None,
             anchor: Some(serialize_text_anchor(&excerpt_anchor.text_anchor())),
         },
         Anchor::Max => proto::EditorAnchor {
-            excerpt_id: FUN_EXCERPT_ID,
+            excerpt_id: None,
             anchor: Some(proto::Anchor {
                 replica_id: 0,
                 timestamp: 0,
@@ -1080,7 +1078,7 @@ impl Item for Editor {
                 f(ItemEvent::UpdateBreadcrumbs);
             }
 
-            EditorEvent::BufferUpdated { .. } | EditorEvent::BuffersRemoved { .. } => {
+            EditorEvent::BufferRangesUpdated { .. } | EditorEvent::BuffersRemoved { .. } => {
                 f(ItemEvent::Edit);
             }
 
@@ -1445,8 +1443,9 @@ impl ProjectItem for Editor {
         cx: &mut Context<Self>,
     ) -> Self {
         let mut editor = Self::for_buffer(buffer.clone(), Some(project), window, cx);
+        let multibuffer_snapshot = editor.buffer().read(cx).snapshot(cx);
 
-        if let Some(excerpt) = editor.buffer().read(cx).snapshot(cx).as_singleton()
+        if let Some(buffer_snapshot) = editor.buffer().read(cx).snapshot(cx).as_singleton()
             && WorkspaceSettings::get(None, cx).restore_on_file_reopen
             && let Some(restoration_data) = Self::project_item_kind()
                 .and_then(|kind| pane.as_ref()?.project_item_restoration_data.get(&kind))
@@ -1458,7 +1457,7 @@ impl ProjectItem for Editor {
         {
             if !restoration_data.folds.is_empty() {
                 editor.fold_ranges(
-                    clip_ranges(&restoration_data.folds, excerpt.buffer_snapshot()),
+                    clip_ranges(&restoration_data.folds, buffer_snapshot),
                     false,
                     window,
                     cx,
@@ -1466,18 +1465,11 @@ impl ProjectItem for Editor {
             }
             if !restoration_data.selections.is_empty() {
                 editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
-                    s.select_ranges(clip_ranges(
-                        &restoration_data.selections,
-                        excerpt.buffer_snapshot(),
-                    ));
+                    s.select_ranges(clip_ranges(&restoration_data.selections, buffer_snapshot));
                 });
             }
             let (top_row, offset) = restoration_data.scroll_position;
-            let anchor = excerpt.anchor(
-                excerpt
-                    .buffer_snapshot()
-                    .anchor_before(Point::new(top_row, 0)),
-            );
+            let anchor = multibuffer_snapshot.anchor_before(Point::new(top_row, 0));
             editor.set_scroll_anchor(ScrollAnchor { anchor, offset }, window, cx);
         }
 
@@ -1870,20 +1862,22 @@ impl SearchableItem for Editor {
                             )
                             .await
                             .into_iter()
-                            .map(|match_range| {
+                            .filter_map(|match_range| {
                                 if let Some(deleted_hunk_anchor) = deleted_hunk_anchor {
                                     let start = search_buffer
                                         .anchor_after(search_range.start + match_range.start);
                                     let end = search_buffer
                                         .anchor_before(search_range.start + match_range.end);
-                                    deleted_hunk_anchor.with_diff_base_anchor(start)
-                                        ..deleted_hunk_anchor.with_diff_base_anchor(end)
+                                    Some(
+                                        deleted_hunk_anchor.with_diff_base_anchor(start)
+                                            ..deleted_hunk_anchor.with_diff_base_anchor(end),
+                                    )
                                 } else {
                                     let start = search_buffer
                                         .anchor_after(search_range.start + match_range.start);
                                     let end = search_buffer
                                         .anchor_before(search_range.start + match_range.end);
-                                    Anchor::range_in_buffer(excerpt_id, start..end)
+                                    buffer.buffer_anchor_range_to_anchor_range(start..end)
                                 }
                             }),
                     );

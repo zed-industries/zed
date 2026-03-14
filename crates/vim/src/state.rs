@@ -879,10 +879,10 @@ impl VimGlobals {
                 let selection = editor
                     .selections
                     .newest::<Point>(&editor.display_snapshot(cx));
-                if let Some((_, buffer, _)) = editor
+                if let Some(buffer) = editor
                     .buffer()
                     .read(cx)
-                    .excerpt_containing(selection.head(), cx)
+                    .buffer_for_anchor(selection.head(), cx)
                 {
                     buffer
                         .read(cx)

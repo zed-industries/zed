@@ -56,7 +56,6 @@ use std::{
     sync::atomic::{self, AtomicUsize},
 };
 use test::build_editor_with_project;
-use text::ToPoint as _;
 use unindent::Unindent;
 use util::{
     assert_set_eq, path,
@@ -959,12 +958,13 @@ async fn test_navigation_history(cx: &mut TestAppContext) {
                 original_scroll_position
             );
 
+            let other_buffer =
+                cx.new(|cx| MultiBuffer::singleton(cx.new(|cx| Buffer::local("test", cx)), cx));
+
             // Ensure we don't panic when navigation data contains invalid anchors *and* points.
-            let mut invalid_anchor = editor
-                .scroll_manager
-                .native_anchor(&editor.display_snapshot(cx), cx)
-                .anchor;
-            invalid_anchor.text_anchor.buffer_id = BufferId::new(999).ok();
+            let invalid_anchor = other_buffer.update(cx, |buffer, cx| {
+                buffer.snapshot(cx).anchor_after(MultiBufferOffset(3))
+            });
             let invalid_point = Point::new(9999, 0);
             editor.navigate(
                 Arc::new(NavigationData {
@@ -12880,7 +12880,7 @@ async fn test_multibuffer_format_during_save(cx: &mut TestAppContext) {
             0,
             cx,
         );
-        assert_eq!(multi_buffer.excerpt_ids().len(), 9);
+        assert_eq!(multi_buffer.read(cx).excerpts().count(), 9);
         multi_buffer
     });
     let multi_buffer_editor = cx.new_window_entity(|window, cx| {
@@ -17889,157 +17889,6 @@ fn test_editing_disjoint_excerpts(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-fn test_refresh_selections(cx: &mut TestAppContext) {
-    init_test(cx, |_| {});
-
-    let buffer = cx.new(|cx| Buffer::local(sample_text(5, 4, 'a'), cx));
-    let multibuffer = cx.new(|cx| {
-        let mut multibuffer = MultiBuffer::new(ReadWrite);
-        multibuffer.set_excerpts_for_path(
-            PathKey::sorted(0),
-            buffer.clone(),
-            [
-                Point::new(0, 0)..Point::new(1, 4),
-                Point::new(3, 0)..Point::new(4, 4),
-            ],
-            0,
-            cx,
-        );
-        multibuffer
-    });
-
-    let editor = cx.add_window(|window, cx| {
-        let mut editor = build_editor(multibuffer.clone(), window, cx);
-        let snapshot = editor.snapshot(window, cx);
-        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
-            s.select_ranges([Point::new(1, 3)..Point::new(1, 3)])
-        });
-        editor.begin_selection(
-            Point::new(2, 1).to_display_point(&snapshot),
-            true,
-            1,
-            window,
-            cx,
-        );
-        assert_eq!(
-            editor.selections.ranges(&editor.display_snapshot(cx)),
-            [
-                Point::new(1, 3)..Point::new(1, 3),
-                Point::new(2, 1)..Point::new(2, 1),
-            ]
-        );
-        editor
-    });
-
-    // Refreshing selections is a no-op when excerpts haven't changed.
-    _ = editor.update(cx, |editor, window, cx| {
-        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| s.refresh());
-        assert_eq!(
-            editor.selections.ranges(&editor.display_snapshot(cx)),
-            [
-                Point::new(1, 3)..Point::new(1, 3),
-                Point::new(2, 1)..Point::new(2, 1),
-            ]
-        );
-    });
-
-    multibuffer.update(cx, |multibuffer, cx| {
-        multibuffer.set_excerpts_for_path(
-            PathKey::sorted(0),
-            buffer.clone(),
-            [Point::new(3, 0)..Point::new(4, 4)],
-            0,
-            cx,
-        );
-    });
-    _ = editor.update(cx, |editor, window, cx| {
-        // Removing an excerpt causes the first selection to become degenerate.
-        assert_eq!(
-            editor.selections.ranges(&editor.display_snapshot(cx)),
-            [
-                Point::new(0, 0)..Point::new(0, 0),
-                Point::new(0, 1)..Point::new(0, 1)
-            ]
-        );
-
-        // Refreshing selections will relocate the first selection to the original buffer
-        // location.
-        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| s.refresh());
-        assert_eq!(
-            editor.selections.ranges(&editor.display_snapshot(cx)),
-            [
-                Point::new(0, 0)..Point::new(0, 0),
-                Point::new(0, 1)..Point::new(0, 1),
-            ]
-        );
-        assert!(editor.selections.pending_anchor().is_some());
-    });
-}
-
-#[gpui::test]
-fn test_refresh_selections_while_selecting_with_mouse(cx: &mut TestAppContext) {
-    init_test(cx, |_| {});
-
-    let buffer = cx.new(|cx| Buffer::local(sample_text(5, 4, 'a'), cx));
-    let multibuffer = cx.new(|cx| {
-        let mut multibuffer = MultiBuffer::new(ReadWrite);
-        multibuffer.set_excerpts_for_path(
-            PathKey::sorted(0),
-            buffer.clone(),
-            [
-                Point::new(0, 0)..Point::new(1, 4),
-                Point::new(3, 0)..Point::new(4, 4),
-            ],
-            0,
-            cx,
-        );
-        assert_eq!(multibuffer.read(cx).text(), "aaaa\nbbbb\ndddd\neeee");
-        multibuffer
-    });
-
-    let editor = cx.add_window(|window, cx| {
-        let mut editor = build_editor(multibuffer.clone(), window, cx);
-        let snapshot = editor.snapshot(window, cx);
-        editor.begin_selection(
-            Point::new(1, 3).to_display_point(&snapshot),
-            false,
-            1,
-            window,
-            cx,
-        );
-        assert_eq!(
-            editor.selections.ranges(&editor.display_snapshot(cx)),
-            [Point::new(1, 3)..Point::new(1, 3)]
-        );
-        editor
-    });
-
-    multibuffer.update(cx, |multibuffer, cx| {
-        multibuffer.set_excerpts_for_path(
-            PathKey::sorted(0),
-            buffer.clone(),
-            [Point::new(3, 0)..Point::new(4, 4)],
-            0,
-            cx,
-        );
-    });
-    _ = editor.update(cx, |editor, window, cx| {
-        assert_eq!(
-            editor.selections.ranges(&editor.display_snapshot(cx)),
-            [Point::new(0, 0)..Point::new(0, 0)]
-        );
-
-        // Ensure we don't panic when selections are refreshed and that the pending selection is finalized.
-        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| s.refresh());
-        assert_eq!(
-            editor.selections.ranges(&editor.display_snapshot(cx)),
-            [Point::new(0, 0)..Point::new(0, 0)]
-        );
-        assert!(editor.selections.pending_anchor().is_some());
-    });
-}
-
-#[gpui::test]
 async fn test_extra_newline_insertion(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
@@ -21450,7 +21299,7 @@ async fn test_toggle_diff_expand_in_multi_buffer(cx: &mut TestAppContext) {
             0,
             cx,
         );
-        assert_eq!(multibuffer.excerpt_ids().len(), 9);
+        assert_eq!(multibuffer.read(cx).excerpts().count(), 9);
         multibuffer
     });
 
@@ -21554,7 +21403,7 @@ async fn test_expand_diff_hunk_at_excerpt_boundary(cx: &mut TestAppContext) {
             0,
             cx,
         );
-        assert_eq!(multibuffer.excerpt_ids().len(), 3);
+        assert_eq!(multibuffer.read(cx).excerpts().count(), 3);
         multibuffer
     });
 
@@ -22323,9 +22172,13 @@ async fn setup_indent_guides_editor(
 
     let buffer_id = cx.update_editor(|editor, window, cx| {
         editor.set_text(text, window, cx);
-        let buffer_ids = editor.buffer().read(cx).excerpt_buffer_ids();
-
-        buffer_ids[0]
+        editor
+            .buffer()
+            .read(cx)
+            .as_singleton()
+            .unwrap()
+            .read(cx)
+            .remote_id()
     });
 
     (buffer_id, cx)
@@ -23092,10 +22945,17 @@ async fn test_adjacent_diff_hunks(executor: BackgroundExecutor, cx: &mut TestApp
         let hunks = editor
             .diff_hunks_in_ranges(&[Anchor::min()..Anchor::max()], &snapshot.buffer_snapshot())
             .collect::<Vec<_>>();
-        let excerpt_id = editor.buffer.read(cx).excerpt_ids()[0];
+        let multibuffer_snapshot = editor.buffer.read(cx).snapshot(cx);
         hunks
             .into_iter()
-            .map(|hunk| Anchor::range_in_buffer(excerpt_id, hunk.buffer_range))
+            .map(|hunk| {
+                multibuffer_snapshot
+                    .buffer_anchor_to_anchor(hunk.buffer_range.start)
+                    .unwrap()
+                    ..multibuffer_snapshot
+                        .buffer_anchor_to_anchor(hunk.buffer_range.end)
+                        .unwrap()
+            })
             .collect::<Vec<_>>()
     });
     assert_eq!(hunk_ranges.len(), 2);
@@ -23182,10 +23042,17 @@ async fn test_adjacent_diff_hunks(executor: BackgroundExecutor, cx: &mut TestApp
         let hunks = editor
             .diff_hunks_in_ranges(&[Anchor::min()..Anchor::max()], &snapshot.buffer_snapshot())
             .collect::<Vec<_>>();
-        let excerpt_id = editor.buffer.read(cx).excerpt_ids()[0];
+        let multibuffer_snapshot = snapshot.buffer_snapshot();
         hunks
             .into_iter()
-            .map(|hunk| Anchor::range_in_buffer(excerpt_id, hunk.buffer_range))
+            .map(|hunk| {
+                multibuffer_snapshot
+                    .buffer_anchor_to_anchor(hunk.buffer_range.start)
+                    .unwrap()
+                    ..multibuffer_snapshot
+                        .buffer_anchor_to_anchor(hunk.buffer_range.end)
+                        .unwrap()
+            })
             .collect::<Vec<_>>()
     });
     assert_eq!(hunk_ranges.len(), 2);
@@ -23247,10 +23114,17 @@ async fn test_toggle_deletion_hunk_at_start_of_file(
         let hunks = editor
             .diff_hunks_in_ranges(&[Anchor::min()..Anchor::max()], &snapshot.buffer_snapshot())
             .collect::<Vec<_>>();
-        let excerpt_id = editor.buffer.read(cx).excerpt_ids()[0];
+        let multibuffer_snapshot = editor.buffer.read(cx).snapshot(cx);
         hunks
             .into_iter()
-            .map(|hunk| Anchor::range_in_buffer(excerpt_id, hunk.buffer_range))
+            .map(|hunk| {
+                multibuffer_snapshot
+                    .buffer_anchor_to_anchor(hunk.buffer_range.start)
+                    .unwrap()
+                    ..multibuffer_snapshot
+                        .buffer_anchor_to_anchor(hunk.buffer_range.end)
+                        .unwrap()
+            })
             .collect::<Vec<_>>()
     });
     assert_eq!(hunk_ranges.len(), 1);
@@ -23350,12 +23224,17 @@ async fn test_expand_first_line_diff_hunk_keeps_deleted_lines_visible(
     // Expanding a diff hunk at the first line inserts deleted lines above the first buffer line.
     cx.update_editor(|editor, window, cx| {
         let snapshot = editor.snapshot(window, cx);
-        let excerpt_id = editor.buffer.read(cx).excerpt_ids()[0];
+        let multibuffer_snapshot = editor.buffer.read(cx).snapshot(cx);
         let hunks = editor
             .diff_hunks_in_ranges(&[Anchor::min()..Anchor::max()], &snapshot.buffer_snapshot())
             .collect::<Vec<_>>();
         assert_eq!(hunks.len(), 1);
-        let hunk_range = Anchor::range_in_buffer(excerpt_id, hunks[0].buffer_range.clone());
+        let hunk_range = multibuffer_snapshot
+            .buffer_anchor_to_anchor(hunks[0].buffer_range.start)
+            .unwrap()
+            ..multibuffer_snapshot
+                .buffer_anchor_to_anchor(hunks[0].buffer_range.end)
+                .unwrap();
         editor.toggle_single_diff_hunk(hunk_range, cx)
     });
     executor.run_until_parked();
@@ -24554,7 +24433,12 @@ async fn test_multi_buffer_navigation_with_folded_buffers(cx: &mut TestAppContex
         );
         let mut editor = Editor::new(EditorMode::full(), multi_buffer.clone(), None, window, cx);
 
-        let buffer_ids = multi_buffer.read(cx).excerpt_buffer_ids();
+        let buffer_ids = multi_buffer
+            .read(cx)
+            .snapshot(cx)
+            .excerpts()
+            .map(|excerpt| excerpt.buffer_id())
+            .collect::<Vec<_>>();
         // fold all but the second buffer, so that we test navigating between two
         // adjacent folded buffers, as well as folded buffers at the start and
         // end the multibuffer
@@ -24912,7 +24796,7 @@ async fn assert_highlighted_edits(
 
     cx.update(|_window, cx| {
         let highlighted_edits = edit_prediction_edit_text(
-            snapshot.as_singleton().unwrap().buffer_snapshot(),
+            snapshot.as_singleton().unwrap(),
             &edits,
             &edit_preview,
             include_deletions,
@@ -29297,7 +29181,7 @@ async fn test_paste_url_from_other_app_creates_markdown_link_selectively_in_mult
         });
         let first_buffer_id = multi_buffer
             .read(cx)
-            .excerpt_buffer_ids()
+            .all_buffer_ids()
             .into_iter()
             .next()
             .unwrap();
@@ -30139,7 +30023,12 @@ async fn test_multibuffer_selections_with_folding(cx: &mut TestAppContext) {
     });
 
     let mut cx = EditorTestContext::for_editor_in(editor.clone(), cx).await;
-    let buffer_ids = cx.multibuffer(|mb, _| mb.excerpt_buffer_ids());
+    let buffer_ids = cx.multibuffer(|mb, cx| {
+        mb.snapshot(cx)
+            .excerpts()
+            .map(|excerpt| excerpt.buffer_id())
+            .collect::<Vec<_>>()
+    });
 
     cx.assert_excerpts_with_selections(indoc! {"
         [EXCERPT]

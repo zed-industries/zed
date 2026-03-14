@@ -232,10 +232,7 @@ impl Editor {
                 else {
                     return Task::ready(Ok(Navigated::No));
                 };
-                let Some(mb_anchor) = self
-                    .buffer()
-                    .read(cx)
-                    .buffer_anchor_to_anchor(&buffer, anchor, cx)
+                let Some(mb_anchor) = self.buffer().read(cx).buffer_anchor_to_anchor(anchor, cx)
                 else {
                     return Task::ready(Ok(Navigated::No));
                 };
@@ -1505,7 +1502,12 @@ mod tests {
             cx.set_state(input);
 
             let (position, snapshot) = cx.editor(|editor, _, cx| {
-                let positions = editor.selections.newest_anchor().head().text_anchor;
+                let positions = editor
+                    .selections
+                    .newest_anchor()
+                    .head()
+                    .text_anchor()
+                    .unwrap();
                 let snapshot = editor
                     .buffer()
                     .clone()

@@ -1,6 +1,6 @@
 use crate::Editor;
 use anyhow::{Context as _, Result};
-use collections::HashMap;
+use collections::{HashMap, HashSet};
 
 use git::{
     GitHostingProviderRegistry, Oid,
@@ -204,7 +204,7 @@ impl GitBlame {
                         git_blame.generate(cx);
                     }
                 }
-                multi_buffer::Event::BufferUpdated { .. }
+                multi_buffer::Event::BufferRangesUpdated { .. }
                 | multi_buffer::Event::BuffersEdited { .. } => git_blame.regenerate_on_edit(cx),
                 _ => {}
             },
@@ -346,10 +346,10 @@ impl GitBlame {
         let Some(multi_buffer) = self.multi_buffer.upgrade() else {
             return;
         };
-        multi_buffer
-            .read(cx)
-            .all_buffer_ids()
-            .for_each(|id| self.sync(cx, id));
+        let buffer_ids: HashSet<_> = multi_buffer.read(cx).all_buffer_ids().collect();
+        for id in buffer_ids {
+            self.sync(cx, id)
+        }
     }
 
     fn sync(&mut self, cx: &mut App, buffer_id: BufferId) {

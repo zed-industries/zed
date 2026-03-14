@@ -739,7 +739,7 @@ fn test_excerpt_events(cx: &mut App) {
         cx.subscribe(
             &leader_multibuffer,
             move |follower, _, event, cx| match event.clone() {
-                Event::BufferUpdated {
+                Event::BufferRangesUpdated {
                     buffer,
                     path_key,
                     ranges,
@@ -879,7 +879,7 @@ fn test_expand_excerpts(cx: &mut App) {
             multibuffer
                 .snapshot(cx)
                 .excerpts()
-                .map(|(_, info)| Anchor::in_buffer(info.path_key_index, info.range.end)),
+                .map(|excerpt| excerpt.multibuffer_range().start),
             1,
             ExpandExcerptDirection::UpAndDown,
             cx,
@@ -2708,7 +2708,7 @@ impl ReferenceMultibuffer {
                             expand_info: expand_direction.zip(region.excerpt_info.clone()).map(
                                 |(direction, excerpt_info)| ExpandInfo {
                                     direction,
-                                    excerpt_range: excerpt_info.range,
+                                    start_anchor: excerpt_info.start_anchor(),
                                 },
                             ),
                         }
@@ -2831,9 +2831,17 @@ async fn test_random_set_ranges(cx: &mut TestAppContext, mut rng: StdRng) {
         let mut last_end = None;
         let mut seen_ranges = Vec::default();
 
-        for (buf, info) in snapshot.excerpts() {
-            let start = info.range.start.to_point(buf);
-            let end = info.range.end.to_point(buf);
+        for info in snapshot.excerpts() {
+            let start = info
+                .excerpt_range()
+                .context
+                .start
+                .to_point(&info.buffer_snapshot());
+            let end = info
+                .excerpt_range()
+                .context
+                .end
+                .to_point(&info.buffer_snapshot());
             seen_ranges.push(start..end);
 
             if let Some(last_end) = last_end.take() {
@@ -2888,10 +2896,7 @@ async fn test_random_multibuffer(cx: &mut TestAppContext, mut rng: StdRng) {
             15..=24 if !reference.excerpts.is_empty() => {
                 multibuffer.update(cx, |multibuffer, cx| {
                     let snapshot = multibuffer.snapshot(cx);
-                    let infos = snapshot
-                        .excerpts()
-                        .map(|(_, info)| info)
-                        .collect::<Vec<_>>();
+                    let infos = snapshot.excerpts().map(|e| e.info()).collect::<Vec<_>>();
                     let mut excerpts = HashSet::default();
                     for _ in 0..rng.random_range(0..infos.len()) {
                         excerpts.extend(infos.choose(&mut rng).cloned());
@@ -3720,7 +3725,6 @@ async fn test_summaries_for_anchors(cx: &mut TestAppContext) {
     let anchor_1 = multibuffer.read_with(cx, |multibuffer, cx| {
         multibuffer
             .buffer_anchor_to_anchor(
-                &buffer_1,
                 text::Anchor::min_for_buffer(buffer_1.read(cx).remote_id()),
                 cx,
             )
@@ -3732,7 +3736,6 @@ async fn test_summaries_for_anchors(cx: &mut TestAppContext) {
     let anchor_2 = multibuffer.read_with(cx, |multibuffer, cx| {
         multibuffer
             .buffer_anchor_to_anchor(
-                &buffer_2,
                 text::Anchor::min_for_buffer(buffer_2.read(cx).remote_id()),
                 cx,
             )
@@ -4223,9 +4226,13 @@ fn assert_excerpts_match(
 ) {
     let mut output = String::new();
     multibuffer.read_with(cx, |multibuffer, cx| {
-        for (buffer, info) in multibuffer.snapshot(cx).excerpts() {
+        for excerpt in multibuffer.snapshot(cx).excerpts() {
             output.push_str("-----\n");
-            output.extend(buffer.text_for_range(info.range));
+            output.extend(
+                excerpt
+                    .buffer_snapshot
+                    .text_for_range(excerpt.buffer_range()),
+            );
             if !output.ends_with('\n') {
                 output.push('\n');
             }
@@ -4445,7 +4452,7 @@ fn assert_position_translation(snapshot: &MultiBufferSnapshot) {
 
 fn assert_line_indents(snapshot: &MultiBufferSnapshot) {
     let max_row = snapshot.max_point().row;
-    let buffer_id = snapshot.excerpts().next().unwrap().1.buffer_id;
+    let buffer_id = snapshot.excerpts().next().unwrap().buffer_id();
     let text = text::Buffer::new(ReplicaId::LOCAL, buffer_id, snapshot.text());
     let mut line_indents = text
         .line_indents_in_row_range(0..max_row + 1)
@@ -4633,7 +4640,7 @@ fn test_random_chunk_bitmaps_with_diffs(cx: &mut App, mut rng: StdRng) {
     let mut diffs = Vec::new();
 
     multibuffer.update(cx, |multibuffer, cx| {
-        for buffer_id in multibuffer.all_buffer_ids() {
+        for buffer_id in multibuffer.all_buffer_ids().collect::<Vec<_>>() {
             if rng.random_bool(0.7) {
                 if let Some(buffer_handle) = multibuffer.buffer(buffer_id) {
                     let buffer_text = buffer_handle.read(cx).text();
@@ -4936,11 +4943,11 @@ fn test_excerpts_containment_functions(cx: &mut App) {
             );
 
             let snapshot = multibuffer.snapshot(cx);
-            let mut infos = snapshot.excerpts().map(|(_, info)| info);
+            let mut excerpts = snapshot.excerpts();
             (
-                infos.next().unwrap(),
-                infos.next().unwrap(),
-                infos.next().unwrap(),
+                excerpts.next().unwrap().info(),
+                excerpts.next().unwrap().info(),
+                excerpts.next().unwrap().info(),
             )
         });
 
@@ -5054,7 +5061,7 @@ fn test_range_to_buffer_ranges(cx: &mut App) {
     );
     assert_eq!(ranges_half_open[0].1, BufferOffset(0)..BufferOffset(7));
     assert_eq!(
-        ranges_half_open[0].0.remote_id(),
+        ranges_half_open[0].0.buffer_id(),
         buffer_1.read(cx).remote_id()
     );
 
@@ -5079,7 +5086,7 @@ fn test_range_to_buffer_ranges(cx: &mut App) {
             );
 
             let snapshot = multibuffer.snapshot(cx);
-            let mut infos = snapshot.excerpts().map(|(_, info)| info);
+            let mut infos = snapshot.excerpts().map(|excerpt| excerpt.info());
             (infos.next().unwrap(), infos.next().unwrap())
         });
 
@@ -5088,14 +5095,13 @@ fn test_range_to_buffer_ranges(cx: &mut App) {
 
     let max_point = snapshot_trailing.max_point();
 
-    let ranges_half_open_max =
-        snapshot_trailing.range_to_buffer_ranges_with_context(Point::zero()..max_point);
+    let ranges_half_open_max = snapshot_trailing.range_to_buffer_ranges(Point::zero()..max_point);
     assert_eq!(
         ranges_half_open_max.len(),
         2,
         "Should include trailing empty excerpts"
     );
-    assert_eq!(ranges_half_open_max[0].2, te_excerpt_1_info.range);
+    assert_eq!(ranges_half_open_max[0].1, BufferOffset(0)..BufferOffset(0));
 }
 
 #[gpui::test]
@@ -5141,7 +5147,8 @@ fn test_cannot_seek_backward_after_excerpt_replacement(cx: &mut TestAppContext) 
 
     let (anchor_in_e_b2, anchor_in_e_b3) = multibuffer.read_with(cx, |multibuffer, cx| {
         let snapshot = multibuffer.snapshot(cx);
-        let excerpt_infos: Vec<ExcerptInfo> = snapshot.excerpts().map(|(_, info)| info).collect();
+        let excerpt_infos: Vec<ExcerptInfo> =
+            snapshot.excerpts().map(|excerpt| excerpt.info()).collect();
         assert_eq!(excerpt_infos.len(), 4, "expected 4 excerpts (3×B + 1×C)");
 
         let e_b2_info = excerpt_infos[1].clone();

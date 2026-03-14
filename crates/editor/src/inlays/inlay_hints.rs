@@ -216,7 +216,7 @@ pub enum InlayHintRefreshReason {
         server_id: LanguageServerId,
         request_id: Option<usize>,
     },
-    ExcerptsRemoved(Vec<ExcerptId>),
+    BuffersRemoved(Vec<BufferId>),
 }
 
 impl Editor {
@@ -282,7 +282,7 @@ impl Editor {
         let debounce = match &reason {
             InlayHintRefreshReason::SettingsChange(_)
             | InlayHintRefreshReason::Toggle(_)
-            | InlayHintRefreshReason::ExcerptsRemoved(_)
+            | InlayHintRefreshReason::BuffersRemoved(_)
             | InlayHintRefreshReason::ModifiersChanged(_) => None,
             _may_need_lsp_call => self.inlay_hints.as_ref().and_then(|inlay_hints| {
                 if invalidate_cache.should_invalidate() {
@@ -303,7 +303,7 @@ impl Editor {
             | InlayHintRefreshReason::ServerRemoved => true,
             InlayHintRefreshReason::NewLinesShown
             | InlayHintRefreshReason::RefreshRequested { .. }
-            | InlayHintRefreshReason::ExcerptsRemoved(_) => false,
+            | InlayHintRefreshReason::BuffersRemoved(_) => false,
             InlayHintRefreshReason::BufferEdited(buffer_id) => {
                 let Some(affected_language) = self
                     .buffer()
@@ -330,7 +330,7 @@ impl Editor {
                 );
 
                 semantics_provider.invalidate_inlay_hints(&invalidate_hints_for_buffers, cx);
-                visible_excerpts.retain(|_, (visible_buffer, _, _)| {
+                visible_excerpts.retain(|(visible_buffer, _, _, _)| {
                     visible_buffer.read(cx).language() == Some(&affected_language)
                 });
                 false
@@ -492,13 +492,13 @@ impl Editor {
                     }
                 }
             }
-            InlayHintRefreshReason::ExcerptsRemoved(excerpts_removed) => {
+            InlayHintRefreshReason::BuffersRemoved(buffers_removed) => {
                 let to_remove = self
                     .display_map
                     .read(cx)
                     .current_inlays()
                     .filter_map(|inlay| {
-                        if excerpts_removed.contains(&inlay.position.excerpt_id) {
+                        if buffers_removed.contains(&inlay.position.text_anchor()?.buffer_id) {
                             Some(inlay.id)
                         } else {
                             None
@@ -591,13 +591,10 @@ impl Editor {
                 })
                 .max_by_key(|hint| hint.id)
             {
-                if let Some(ResolvedHint::Resolved(cached_hint)) = hovered_hint
-                    .position
-                    .text_anchor
-                    .buffer_id
-                    .and_then(|buffer_id| {
+                if let Some(ResolvedHint::Resolved(cached_hint)) =
+                    hovered_hint.position.text_anchor().and_then(|anchor| {
                         lsp_store.update(cx, |lsp_store, cx| {
-                            lsp_store.resolved_hint(buffer_id, hovered_hint.id, cx)
+                            lsp_store.resolved_hint(anchor.buffer_id, hovered_hint.id, cx)
                         })
                     })
                 {
@@ -767,7 +764,9 @@ impl Editor {
         let visible_inlay_hint_ids = self
             .visible_inlay_hints(cx)
             .iter()
-            .filter(|inlay| inlay.position.text_anchor.buffer_id == Some(buffer_id))
+            .filter(|inlay| {
+                inlay.position.text_anchor().map(|anchor| anchor.buffer_id) == Some(buffer_id)
+            })
             .map(|inlay| inlay.id)
             .collect::<Vec<_>>();
         let Some(inlay_hints) = &mut self.inlay_hints else {
@@ -878,13 +877,9 @@ impl Editor {
                 self.visible_inlay_hints(cx)
                     .iter()
                     .filter(|inlay| {
-                        inlay
-                            .position
-                            .text_anchor
-                            .buffer_id
-                            .is_none_or(|buffer_id| {
-                                invalidate_hints_for_buffers.contains(&buffer_id)
-                            })
+                        inlay.position.text_anchor().is_none_or(|anchor| {
+                            invalidate_hints_for_buffers.contains(&anchor.buffer_id)
+                        })
                     })
                     .map(|inlay| inlay.id),
             );
@@ -2260,7 +2255,7 @@ pub mod tests {
             1,
             "Single buffer should produce a single excerpt with visible range"
         );
-        let (_, (excerpt_buffer, _, excerpt_visible_range)) = ranges.into_iter().next().unwrap();
+        let (excerpt_buffer, _, excerpt_visible_range, _) = ranges.into_iter().next().unwrap();
         excerpt_buffer.read_with(cx, |buffer, _| {
             excerpt_visible_range.to_point(&buffer.snapshot())
         })
@@ -2936,7 +2931,7 @@ let c = 3;"#
             .await
             .unwrap();
         let multibuffer = cx.new(|_| MultiBuffer::new(Capability::ReadWrite));
-        let (buffer_1_excerpts, buffer_2_excerpts) = multibuffer.update(cx, |multibuffer, cx| {
+        multibuffer.update(cx, |multibuffer, cx| {
             multibuffer.set_excerpts_for_path(
                 PathKey::sorted(0),
                 buffer_1.clone(),
@@ -2951,14 +2946,7 @@ let c = 3;"#
                 0,
                 cx,
             );
-            let excerpt_ids = multibuffer.excerpt_ids();
-            let buffer_1_excerpts = vec![excerpt_ids[0]];
-            let buffer_2_excerpts = vec![excerpt_ids[1]];
-            (buffer_1_excerpts, buffer_2_excerpts)
         });
-
-        assert!(!buffer_1_excerpts.is_empty());
-        assert!(!buffer_2_excerpts.is_empty());
 
         cx.executor().run_until_parked();
         let editor = cx.add_window(|window, cx| {

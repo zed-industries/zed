@@ -2587,12 +2587,6 @@ impl EditorElement {
         const INLINE_SLOT_CHAR_LIMIT: u32 = 4;
         const MAX_ALTERNATE_DISTANCE: u32 = 8;
 
-        let excerpt_id = snapshot
-            .display_snapshot
-            .buffer_snapshot()
-            .excerpt_containing(buffer_point..buffer_point)
-            .map(|excerpt| excerpt.id());
-
         let is_valid_row = |row_candidate: u32| -> bool {
             // move to other row if folded row
             if snapshot.is_line_folded(MultiBufferRow(row_candidate)) {
@@ -3389,7 +3383,7 @@ impl EditorElement {
             .map(|(ix, row_info)| {
                 let ExpandInfo {
                     direction,
-                    excerpt_range,
+                    start_anchor,
                 } = row_info.expand_info?;
 
                 let icon_name = match direction {
@@ -3418,7 +3412,7 @@ impl EditorElement {
                     .width(width)
                     .on_click(move |_, window, cx| {
                         editor.update(cx, |editor, cx| {
-                            editor.expand_excerpt(excerpt_id, direction, window, cx);
+                            editor.expand_excerpt(start_anchor, direction, window, cx);
                         });
                     })
                     .tooltip(Tooltip::for_action_title(
@@ -3885,7 +3879,7 @@ impl EditorElement {
         selected_buffer_ids: &Vec<BufferId>,
         latest_selection_anchors: &HashMap<BufferId, Anchor>,
         is_row_soft_wrapped: impl Copy + Fn(usize) -> bool,
-        sticky_header_excerpt_id: Option<ExcerptId>,
+        sticky_header_excerpt_id: Option<BufferId>,
         indent_guides: &Option<Vec<IndentGuideLayout>>,
         block_resize_offset: &mut i32,
         window: &mut Window,
@@ -3973,7 +3967,7 @@ impl EditorElement {
                 let mut result = v_flex().id(block_id).w_full().pr(editor_margins.right);
 
                 if self.should_show_buffer_headers() {
-                    let selected = selected_buffer_ids.contains(&first_excerpt.buffer_id);
+                    let selected = selected_buffer_ids.contains(&first_excerpt.buffer_id());
                     let jump_data = header_jump_data(
                         snapshot,
                         block_row_start,
@@ -4028,8 +4022,8 @@ impl EditorElement {
                         latest_selection_anchors,
                     );
 
-                    if sticky_header_excerpt_id != Some(excerpt.id) {
-                        let selected = selected_buffer_ids.contains(&excerpt.buffer_id);
+                    if sticky_header_excerpt_id != Some(excerpt.buffer_id()) {
+                        let selected = selected_buffer_ids.contains(&excerpt.buffer_id());
 
                         result = result.child(div().pr(editor_margins.right).child(
                             self.render_buffer_header(
@@ -4225,7 +4219,7 @@ impl EditorElement {
         selected_buffer_ids: &Vec<BufferId>,
         latest_selection_anchors: &HashMap<BufferId, Anchor>,
         is_row_soft_wrapped: impl Copy + Fn(usize) -> bool,
-        sticky_header_excerpt_id: Option<ExcerptId>,
+        sticky_header_excerpt_id: Option<BufferId>,
         indent_guides: &Option<Vec<IndentGuideLayout>>,
         window: &mut Window,
         cx: &mut App,
@@ -4518,7 +4512,7 @@ impl EditorElement {
 
         let editor_bg_color = cx.theme().colors().editor_background;
 
-        let selected = selected_buffer_ids.contains(&excerpt.buffer_id);
+        let selected = selected_buffer_ids.contains(&excerpt.buffer_id());
 
         let available_width = hitbox.bounds.size.width - right_margin;
 
@@ -8489,7 +8483,7 @@ pub(crate) fn render_buffer_header(
                         })
                         .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                         .on_click(window.listener_for(editor, {
-                            let buffer_id = for_excerpt.buffer_id;
+                            let buffer_id = for_excerpt.buffer_id();
                             move |editor, e: &ClickEvent, window, cx| {
                                 if e.modifiers().alt {
                                     editor.open_excerpts_common(
@@ -10057,7 +10051,8 @@ impl Element for EditorElement {
                                     HashMap::default();
                                 for selection in all_anchor_selections.iter() {
                                     let head = selection.head();
-                                    if let Some(buffer_id) = head.text_anchor.buffer_id {
+                                    if let Some(buffer_id) = head.text_anchor().map(|a| a.buffer_id)
+                                    {
                                         anchors_by_buffer
                                             .entry(buffer_id)
                                             .and_modify(|(latest_id, latest_anchor)| {
@@ -10334,8 +10329,9 @@ impl Element for EditorElement {
                     } else {
                         None
                     };
-                    let sticky_header_excerpt_id =
-                        sticky_header_excerpt.as_ref().map(|top| top.excerpt.id);
+                    let sticky_header_excerpt_id = sticky_header_excerpt
+                        .as_ref()
+                        .map(|top| top.excerpt.buffer_id());
 
                     let buffer = snapshot.buffer_snapshot();
                     let start_buffer_row = MultiBufferRow(start_anchor.to_point(&buffer).row);

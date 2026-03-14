@@ -2339,15 +2339,16 @@ fn start_of_next_sentence(
 
 fn go_to_line(map: &DisplaySnapshot, display_point: DisplayPoint, line: usize) -> DisplayPoint {
     let point = map.display_point_to_point(display_point, Bias::Left);
-    let Some(mut excerpt) = map.buffer_snapshot().excerpt_containing(point..point) else {
+    let snapshot = map.buffer_snapshot();
+    let Some(mut excerpt) = snapshot.excerpt_containing(point..point) else {
         return display_point;
     };
-    let offset = excerpt.buffer().point_to_offset(
+    let offset = excerpt.buffer(snapshot).point_to_offset(
         excerpt
-            .buffer()
+            .buffer(snapshot)
             .clip_point(Point::new((line - 1) as u32, point.column), Bias::Left),
     );
-    let buffer_range = excerpt.buffer_range();
+    let buffer_range = excerpt.buffer_range(snapshot);
     if offset >= buffer_range.start.0 && offset <= buffer_range.end.0 {
         let point = map
             .buffer_snapshot()

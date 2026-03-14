@@ -354,11 +354,12 @@ pub(crate) fn construct_initial_buffer_versions_map<
     }
 
     for (edit_range, _) in edits {
+        let multibuffer = editor.buffer.read(cx);
+        let snapshot = multibuffer.snapshot(cx);
         let edit_range_buffer = editor
             .buffer()
             .read(cx)
-            .excerpt_containing(edit_range.end, cx)
-            .map(|e| e.1);
+            .buffer_for_anchor(snapshot.anchor_before(edit_range.end), cx);
         if let Some(buffer) = edit_range_buffer {
             let (buffer_id, buffer_version) =
                 buffer.read_with(cx, |buffer, _| (buffer.remote_id(), buffer.version.clone()));

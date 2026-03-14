@@ -210,7 +210,7 @@ fn find_mini_delimiters(
 
     let snapshot = &map.buffer_snapshot();
     let mut excerpt = snapshot.excerpt_containing(offset..offset)?;
-    let buffer = excerpt.buffer();
+    let buffer = excerpt.buffer(snapshot);
     let buffer_offset = excerpt.map_offset_to_buffer(offset);
 
     let bracket_filter = |open: Range<usize>, close: Range<usize>| {
@@ -937,7 +937,7 @@ pub fn surrounding_html_tag(
     let snapshot = &map.buffer_snapshot();
     let offset = head.to_offset(map, Bias::Left);
     let mut excerpt = snapshot.excerpt_containing(offset..offset)?;
-    let buffer = excerpt.buffer();
+    let buffer = excerpt.buffer(snapshot);
     let offset = excerpt.map_offset_to_buffer(offset);
 
     // Find the most closest to current offset
@@ -978,7 +978,7 @@ pub fn surrounding_html_tag(
                         first_child.byte_range().end..last_child.byte_range().start
                     };
                     let range = BufferOffset(range.start)..BufferOffset(range.end);
-                    if excerpt.contains_buffer_range(range.clone()) {
+                    if excerpt.contains_buffer_range(range.clone(), snapshot) {
                         let result = excerpt.map_range_from_buffer(range);
                         return Some(
                             result.start.to_display_point(map)..result.end.to_display_point(map),
@@ -1164,7 +1164,7 @@ fn text_object(
     let offset = relative_to.to_offset(map, Bias::Left);
 
     let mut excerpt = snapshot.excerpt_containing(offset..offset)?;
-    let buffer = excerpt.buffer();
+    let buffer = excerpt.buffer(snapshot);
     let offset = excerpt.map_offset_to_buffer(offset);
 
     let mut matches: Vec<Range<usize>> = buffer
@@ -1213,7 +1213,7 @@ fn argument(
 
     // The `argument` vim text object uses the syntax tree, so we operate at the buffer level and map back to the display level
     let mut excerpt = snapshot.excerpt_containing(offset..offset)?;
-    let buffer = excerpt.buffer();
+    let buffer = excerpt.buffer(snapshot);
 
     fn comma_delimited_range_at(
         buffer: &BufferSnapshot,
@@ -1344,7 +1344,7 @@ fn argument(
 
     let result = comma_delimited_range_at(buffer, excerpt.map_offset_to_buffer(offset), around)?;
 
-    if excerpt.contains_buffer_range(result.clone()) {
+    if excerpt.contains_buffer_range(result.clone(), snapshot) {
         let result = excerpt.map_range_from_buffer(result);
         Some(result.start.to_display_point(map)..result.end.to_display_point(map))
     } else {

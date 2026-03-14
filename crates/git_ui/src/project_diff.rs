@@ -504,8 +504,7 @@ impl ProjectDiff {
     pub fn active_path(&self, cx: &App) -> Option<ProjectPath> {
         let editor = self.editor.read(cx).focused_editor().read(cx);
         let position = editor.selections.newest_anchor().head();
-        let multi_buffer = editor.buffer().read(cx);
-        let (_, buffer, _) = multi_buffer.excerpt_containing(position, cx)?;
+        let buffer = editor.buffer().read(cx).buffer_for_anchor(position, cx);
 
         let file = buffer.read(cx).file()?;
         Some(ProjectPath {

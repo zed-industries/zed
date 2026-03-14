@@ -454,11 +454,16 @@ impl SplittableEditor {
                 &rhs_editor,
                 |this, _, event: &EditorEvent, cx| match event {
                     EditorEvent::ExpandExcerptsRequested {
-                        excerpt_ids,
+                        excerpt_anchors,
                         lines,
                         direction,
                     } => {
-                        this.expand_excerpts(excerpt_ids.iter().copied(), *lines, *direction, cx);
+                        this.expand_excerpts(
+                            excerpt_anchors.iter().copied(),
+                            *lines,
+                            *direction,
+                            cx,
+                        );
                     }
                     _ => cx.emit(event.clone()),
                 },
@@ -544,7 +549,7 @@ impl SplittableEditor {
             window,
             |this, _, event: &EditorEvent, window, cx| match event {
                 EditorEvent::ExpandExcerptsRequested {
-                    excerpt_ids,
+                    excerpt_anchors,
                     lines,
                     direction,
                 } => {

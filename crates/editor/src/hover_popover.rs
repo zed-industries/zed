@@ -242,12 +242,12 @@ fn show_hover(
 
     let snapshot = editor.snapshot(window, cx);
 
-    let (buffer, buffer_position) = editor
+    let buffer_position = editor
         .buffer
         .read(cx)
-        .text_anchor_for_position(anchor, cx)?;
-
-    let (excerpt_id, _, _) = editor.buffer().read(cx).excerpt_containing(anchor, cx)?;
+        .snapshot(cx)
+        .anchor_to_buffer_anchor(anchor)?;
+    let buffer = editor.buffer.read(cx).buffer(buffer_position.buffer_id)?;
 
     let language_registry = editor
         .project()

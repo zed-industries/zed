@@ -3329,8 +3329,7 @@ impl OutlinePanel {
             .into_iter()
             .flat_map(|excerpt| excerpt.iter_outlines())
             .flat_map(|outline| {
-                let range = multi_buffer_snapshot
-                    .anchor_range_in_buffer(excerpt_id, outline.range.clone())?;
+                let range = multi_buffer_snapshot.anchor_range_in_buffer(outline.range.clone())?;
                 Some((
                     range.start.to_display_point(&editor_snapshot)
                         ..range.end.to_display_point(&editor_snapshot),
@@ -5244,7 +5243,7 @@ fn subscribe_for_editor_events(
                         outline_panel.update_cached_entries(Some(UPDATE_DEBOUNCE), window, cx);
                     }
                 }
-                EditorEvent::ExcerptsEdited { ids } => {
+                EditorEvent::BuffersEdited { buffer_ids } => {
                     outline_panel.invalidate_outlines(ids);
                     let update_cached_items = outline_panel.update_non_fs_items(window, cx);
                     if update_cached_items {

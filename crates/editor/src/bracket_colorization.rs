@@ -1118,7 +1118,7 @@ mod foo «1{
                 );
             }
 
-            let buffer_snapshot = snapshot.buffer().as_singleton().unwrap().buffer_snapshot();
+            let buffer_snapshot = snapshot.buffer().as_singleton().unwrap();
             for bracket_match in buffer_snapshot
                 .fetch_bracket_ranges(
                     snapshot

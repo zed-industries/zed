@@ -647,8 +647,9 @@ impl TextThreadEditor {
                 if let Some((crease_id, start)) = self.pending_thought_process.take() {
                     self.editor.update(cx, |editor, cx| {
                         let multi_buffer_snapshot = editor.buffer().read(cx).snapshot(cx);
-                        let start_anchor =
-                            multi_buffer_snapshot.as_singleton_anchor(start).unwrap();
+                        let start_anchor = multi_buffer_snapshot
+                            .buffer_anchor_to_anchor(start)
+                            .unwrap();
 
                         editor.display_map.update(cx, |display_map, cx| {
                             display_map.unfold_intersecting(

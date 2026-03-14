@@ -309,12 +309,7 @@ impl From<BlockId> for ElementId {
     fn from(value: BlockId) -> Self {
         match value {
             BlockId::Custom(CustomBlockId(id)) => ("Block", id).into(),
-            BlockId::ExcerptBoundary(anchor) => anchor
-                .excerpt_anchor()
-                .unwrap()
-                .text_anchor()
-                .opaque_id()
-                .into(),
+            BlockId::ExcerptBoundary(anchor) => anchor.text_anchor().unwrap().opaque_id().into(),
             BlockId::FoldedBuffer(id) => ("FoldedBuffer", EntityId::from(id.to_proto())).into(),
             BlockId::Spacer(SpacerId(id)) => ("Spacer", id).into(),
         }
@@ -2040,7 +2035,7 @@ impl BlockMapWriter<'_> {
             } else {
                 self.block_map.folded_buffers.remove(&buffer_id);
             }
-            ranges.extend(multi_buffer.excerpt_ranges_for_buffer(buffer_id, cx));
+            ranges.extend(multi_buffer.range_for_buffer(buffer_id, cx));
             if let Some(companion) = &self.companion
                 && companion.inverse.is_some()
             {
@@ -4046,7 +4041,7 @@ mod tests {
                                             excerpt.start_anchor(),
                                             excerpt
                                                 .buffer_snapshot()
-                                                .text_for_range(excerpt.range().context)
+                                                .text_for_range(excerpt.excerpt_range().context)
                                                 .collect::<String>(),
                                         ))
                                     } else {

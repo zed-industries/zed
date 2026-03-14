@@ -198,7 +198,7 @@ impl MentionSet {
         };
 
         let snapshot = editor.update(cx, |editor, cx| editor.snapshot(window, cx));
-        let Some(start_anchor) = snapshot.buffer_snapshot().as_singleton_anchor(start) else {
+        let Some(start_anchor) = snapshot.buffer_snapshot().buffer_anchor_to_anchor(start) else {
             return Task::ready(());
         };
         let excerpt_id = start_anchor.excerpt_id;
@@ -456,7 +456,7 @@ impl MentionSet {
         };
 
         let snapshot = editor.read(cx).buffer().read(cx).snapshot(cx);
-        let Some(start) = snapshot.as_singleton_anchor(source_range.start) else {
+        let Some(start) = snapshot.buffer_anchor_to_anchor(source_range.start) else {
             return;
         };
 
