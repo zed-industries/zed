@@ -695,6 +695,13 @@ impl KeymapEditor {
                 SearchMode::Normal => {}
             }
 
+            // Filter out NoAction suppression bindings. These are internal markers
+            // created when a user deletes a default binding (to suppress the default
+            // at the GPUI level), not real bindings the user should see.
+            matches.retain(|item| {
+                this.keybindings[item.candidate_id].action().name != gpui::NoAction.name()
+            });
+
             if action_query.is_empty() {
                 matches.sort_by(|item1, item2| {
                     let binding1 = &this.keybindings[item1.candidate_id];

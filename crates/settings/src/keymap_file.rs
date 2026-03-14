@@ -701,6 +701,10 @@ impl KeymapFile {
         tab_size: usize,
         keyboard_mapper: &dyn gpui::PlatformKeyboardMapper,
     ) -> Result<String> {
+        // When replacing a non-user binding's keystroke, we need to also suppress the old
+        // default so it doesn't continue showing under the old keystroke.
+        let mut old_keystroke_suppression: Option<(Option<String>, String)> = None;
+
         match operation {
             // if trying to replace a keybinding that is not user-defined, treat it as an add operation
             KeybindUpdateOperation::Replace {
@@ -708,6 +712,12 @@ impl KeymapFile {
                 source,
                 target,
             } if target_source != KeybindSource::User => {
+                if target.keystrokes_unparsed() != source.keystrokes_unparsed() {
+                    old_keystroke_suppression = Some((
+                        target.context.map(String::from),
+                        target.keystrokes_unparsed(),
+                    ));
+                }
                 operation = KeybindUpdateOperation::Add {
                     source,
                     from: Some(target),
@@ -886,6 +896,28 @@ impl KeymapFile {
             );
             keymap_contents.replace_range(replace_range, &replace_value);
         }
+
+        // If we converted a Replace to Add because the target was a non-user binding,
+        // and the keystroke changed, suppress the old default keystroke with a NoAction
+        // binding so it doesn't continue appearing under the old keystroke.
+        if let Some((context, old_keystrokes)) = old_keystroke_suppression {
+            let mut value = serde_json::Map::with_capacity(2);
+            if let Some(context) = context {
+                value.insert("context".to_string(), context.into());
+            }
+            value.insert("bindings".to_string(), {
+                let mut bindings = serde_json::Map::new();
+                bindings.insert(old_keystrokes, Value::Null);
+                bindings.into()
+            });
+            let (replace_range, replace_value) = append_top_level_array_value_in_json_text(
+                &keymap_contents,
+                &value.into(),
+                tab_size,
+            );
+            keymap_contents.replace_range(replace_range, &replace_value);
+        }
+
         return Ok(keymap_contents);
 
         fn find_binding<'a, 'b>(
@@ -1478,6 +1510,102 @@ mod tests {
                                 "foo": "bar"
                             }
                         ]
+                    }
+                },
+                {
+                    "bindings": {
+                        "ctrl-a": null
+                    }
+                }
+            ]"#
+            .unindent(),
+        );
+
+        // Replacing a non-user binding without changing the keystroke should
+        // not produce a NoAction suppression entry.
+        check_keymap_update(
+            r#"[
+                {
+                    "bindings": {
+                        "ctrl-a": "zed::SomeAction"
+                    }
+                }
+            ]"#
+            .unindent(),
+            KeybindUpdateOperation::Replace {
+                target: KeybindUpdateTarget {
+                    keystrokes: &parse_keystrokes("ctrl-a"),
+                    action_name: "zed::SomeAction",
+                    context: None,
+                    action_arguments: None,
+                },
+                source: KeybindUpdateTarget {
+                    keystrokes: &parse_keystrokes("ctrl-a"),
+                    action_name: "zed::SomeOtherAction",
+                    context: None,
+                    action_arguments: None,
+                },
+                target_keybind_source: KeybindSource::Base,
+            },
+            r#"[
+                {
+                    "bindings": {
+                        "ctrl-a": "zed::SomeAction"
+                    }
+                },
+                {
+                    "bindings": {
+                        "ctrl-a": "zed::SomeOtherAction"
+                    }
+                }
+            ]"#
+            .unindent(),
+        );
+
+        // Replacing a non-user binding with a context and a keystroke change
+        // should produce a suppression entry that preserves the context.
+        check_keymap_update(
+            r#"[
+                {
+                    "context": "SomeContext",
+                    "bindings": {
+                        "ctrl-a": "zed::SomeAction"
+                    }
+                }
+            ]"#
+            .unindent(),
+            KeybindUpdateOperation::Replace {
+                target: KeybindUpdateTarget {
+                    keystrokes: &parse_keystrokes("ctrl-a"),
+                    action_name: "zed::SomeAction",
+                    context: Some("SomeContext"),
+                    action_arguments: None,
+                },
+                source: KeybindUpdateTarget {
+                    keystrokes: &parse_keystrokes("ctrl-b"),
+                    action_name: "zed::SomeOtherAction",
+                    context: Some("SomeContext"),
+                    action_arguments: None,
+                },
+                target_keybind_source: KeybindSource::Default,
+            },
+            r#"[
+                {
+                    "context": "SomeContext",
+                    "bindings": {
+                        "ctrl-a": "zed::SomeAction"
+                    }
+                },
+                {
+                    "context": "SomeContext",
+                    "bindings": {
+                        "ctrl-b": "zed::SomeOtherAction"
+                    }
+                },
+                {
+                    "context": "SomeContext",
+                    "bindings": {
+                        "ctrl-a": null
                     }
                 }
             ]"#
