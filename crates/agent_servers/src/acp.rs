@@ -161,6 +161,7 @@ pub async fn connect(
     server_name: SharedString,
     display_name: SharedString,
     command: AgentServerCommand,
+    startup_cwd: Option<PathBuf>,
     default_mode: Option<acp::SessionModeId>,
     default_model: Option<acp::ModelId>,
     default_config_options: HashMap<String, String>,
@@ -170,6 +171,7 @@ pub async fn connect(
         server_name,
         display_name,
         command.clone(),
+        startup_cwd,
         default_mode,
         default_model,
         default_config_options,
@@ -186,6 +188,7 @@ impl AcpConnection {
         server_name: SharedString,
         display_name: SharedString,
         command: AgentServerCommand,
+        startup_cwd: Option<PathBuf>,
         default_mode: Option<acp::SessionModeId>,
         default_model: Option<acp::ModelId>,
         default_config_options: HashMap<String, String>,
@@ -195,17 +198,21 @@ impl AcpConnection {
         let builder = ShellBuilder::new(&shell, cfg!(windows)).non_interactive();
         let mut child =
             builder.build_std_command(Some(command.path.display().to_string()), &command.args);
+        if let Some(startup_cwd) = startup_cwd.as_ref() {
+            child.current_dir(startup_cwd);
+        }
         child.envs(command.env.iter().flatten());
+        log::debug!(
+            "Spawning external agent server: {:?}, {:?}, cwd: {:?}",
+            command.path,
+            command.args,
+            startup_cwd
+        );
         let mut child = Child::spawn(child, Stdio::piped(), Stdio::piped(), Stdio::piped())?;
 
         let stdout = child.stdout.take().context("Failed to take stdout")?;
         let stdin = child.stdin.take().context("Failed to take stdin")?;
         let stderr = child.stderr.take().context("Failed to take stderr")?;
-        log::debug!(
-            "Spawning external agent server: {:?}, {:?}",
-            command.path,
-            command.args
-        );
         log::trace!("Spawned (pid: {})", child.id());
 
         let sessions = Rc::new(RefCell::new(HashMap::default()));

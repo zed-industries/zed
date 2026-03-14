@@ -15,23 +15,26 @@ use acp_thread::AgentConnection;
 use anyhow::Result;
 use gpui::{App, AppContext, Entity, SharedString, Task};
 use settings::SettingsStore;
-use std::{any::Any, rc::Rc, sync::Arc};
+use std::{any::Any, path::PathBuf, rc::Rc, sync::Arc};
 
 pub use acp::AcpConnection;
 
 pub struct AgentServerDelegate {
     store: Entity<AgentServerStore>,
     new_version_available: Option<watch::Sender<Option<String>>>,
+    startup_cwd: Option<PathBuf>,
 }
 
 impl AgentServerDelegate {
     pub fn new(
         store: Entity<AgentServerStore>,
         new_version_tx: Option<watch::Sender<Option<String>>>,
+        startup_cwd: Option<PathBuf>,
     ) -> Self {
         Self {
             store,
             new_version_available: new_version_tx,
+            startup_cwd,
         }
     }
 }
