@@ -114,8 +114,7 @@ pub fn init(cx: &mut App) {
 fn format_installed_extensions_for_clipboard(cx: &mut App) -> String {
     let store = ExtensionStore::global(cx);
     let store = store.read(cx);
-    let mut top_lines = Vec::with_capacity(store.extension_index.extensions.len());
-    let mut bottom_lines = Vec::with_capacity(store.extension_index.extensions.len());
+    let mut lines = Vec::with_capacity(store.extension_index.extensions.len());
 
     for (extension_id, entry) in store.extension_index.extensions.iter() {
         let line = format!(
@@ -125,25 +124,18 @@ fn format_installed_extensions_for_clipboard(cx: &mut App) -> String {
             entry.manifest.version,
             if entry.dev { " (dev)" } else { "" }
         );
-        if entry.dev {
-            top_lines.push(line);
-        } else {
-            bottom_lines.push(line);
-        }
+        lines.push(line);
     }
 
-    top_lines.sort();
-    bottom_lines.sort();
+    lines.sort();
 
-    top_lines.extend(bottom_lines);
-
-    if top_lines.is_empty() {
+    if lines.is_empty() {
         return "Installed extensions: none".to_string();
     }
 
     format!(
         "Installed extensions ({}):\n{}",
-        top_lines.len(),
-        top_lines.join("\n")
+        lines.len(),
+        lines.join("\n")
     )
 }
