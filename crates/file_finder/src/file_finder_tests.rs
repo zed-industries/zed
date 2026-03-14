@@ -400,6 +400,18 @@ async fn test_absolute_paths(cx: &mut TestAppContext) {
 #[gpui::test]
 async fn test_complex_path(cx: &mut TestAppContext) {
     let app_state = init_test(cx);
+
+    cx.update(|cx| {
+        let settings = *ProjectPanelSettings::get_global(cx);
+        ProjectPanelSettings::override_global(
+            ProjectPanelSettings {
+                hide_root: true,
+                ..settings
+            },
+            cx,
+        );
+    });
+
     app_state
         .fs
         .as_fake()
@@ -1413,6 +1425,18 @@ async fn test_create_file_no_focused_with_multiple_worktrees(cx: &mut TestAppCon
 #[gpui::test]
 async fn test_path_distance_ordering(cx: &mut TestAppContext) {
     let app_state = init_test(cx);
+
+    cx.update(|cx| {
+        let settings = *ProjectPanelSettings::get_global(cx);
+        ProjectPanelSettings::override_global(
+            ProjectPanelSettings {
+                hide_root: true,
+                ..settings
+            },
+            cx,
+        );
+    });
+
     app_state
         .fs
         .as_fake()
@@ -1647,6 +1671,17 @@ async fn test_query_history(cx: &mut gpui::TestAppContext) {
 #[gpui::test]
 async fn test_history_match_positions(cx: &mut gpui::TestAppContext) {
     let app_state = init_test(cx);
+
+    cx.update(|cx| {
+        let settings = *ProjectPanelSettings::get_global(cx);
+        ProjectPanelSettings::override_global(
+            ProjectPanelSettings {
+                hide_root: true,
+                ..settings
+            },
+            cx,
+        );
+    });
 
     app_state
         .fs
@@ -2148,6 +2183,17 @@ async fn test_toggle_panel_new_selections(cx: &mut gpui::TestAppContext) {
 async fn test_search_preserves_history_items(cx: &mut gpui::TestAppContext) {
     let app_state = init_test(cx);
 
+    cx.update(|cx| {
+        let settings = *ProjectPanelSettings::get_global(cx);
+        ProjectPanelSettings::override_global(
+            ProjectPanelSettings {
+                hide_root: true,
+                ..settings
+            },
+            cx,
+        );
+    });
+
     app_state
         .fs
         .as_fake()
@@ -2252,6 +2298,17 @@ async fn test_search_preserves_history_items(cx: &mut gpui::TestAppContext) {
 #[gpui::test]
 async fn test_search_sorts_history_items(cx: &mut gpui::TestAppContext) {
     let app_state = init_test(cx);
+
+    cx.update(|cx| {
+        let settings = *ProjectPanelSettings::get_global(cx);
+        ProjectPanelSettings::override_global(
+            ProjectPanelSettings {
+                hide_root: true,
+                ..settings
+            },
+            cx,
+        );
+    });
 
     app_state
         .fs
@@ -2736,6 +2793,17 @@ async fn test_selected_history_item_stays_selected_on_worktree_updated(cx: &mut 
 async fn test_history_items_vs_very_good_external_match(cx: &mut gpui::TestAppContext) {
     let app_state = init_test(cx);
 
+    cx.update(|cx| {
+        let settings = *ProjectPanelSettings::get_global(cx);
+        ProjectPanelSettings::override_global(
+            ProjectPanelSettings {
+                hide_root: true,
+                ..settings
+            },
+            cx,
+        );
+    });
+
     app_state
         .fs
         .as_fake()
@@ -2783,6 +2851,17 @@ async fn test_history_items_vs_very_good_external_match(cx: &mut gpui::TestAppCo
 #[gpui::test]
 async fn test_nonexistent_history_items_not_shown(cx: &mut gpui::TestAppContext) {
     let app_state = init_test(cx);
+
+    cx.update(|cx| {
+        let settings = *ProjectPanelSettings::get_global(cx);
+        ProjectPanelSettings::override_global(
+            ProjectPanelSettings {
+                hide_root: true,
+                ..settings
+            },
+            cx,
+        );
+    });
 
     app_state
         .fs
@@ -3182,6 +3261,17 @@ async fn test_history_items_uniqueness_for_multiple_worktree_open_all_files(
 #[gpui::test]
 async fn test_selected_match_stays_selected_after_matches_refreshed(cx: &mut gpui::TestAppContext) {
     let app_state = init_test(cx);
+
+    cx.update(|cx| {
+        let settings = *ProjectPanelSettings::get_global(cx);
+        ProjectPanelSettings::override_global(
+            ProjectPanelSettings {
+                hide_root: true,
+                ..settings
+            },
+            cx,
+        );
+    });
 
     app_state.fs.as_fake().insert_tree("/src", json!({})).await;
 
@@ -3779,6 +3869,17 @@ fn assert_match_at_position(
 async fn test_filename_precedence(cx: &mut TestAppContext) {
     let app_state = init_test(cx);
 
+    cx.update(|cx| {
+        let settings = *ProjectPanelSettings::get_global(cx);
+        ProjectPanelSettings::override_global(
+            ProjectPanelSettings {
+                hide_root: true,
+                ..settings
+            },
+            cx,
+        );
+    });
+
     app_state
         .fs
         .as_fake()
@@ -3823,6 +3924,18 @@ async fn test_filename_precedence(cx: &mut TestAppContext) {
 #[gpui::test]
 async fn test_paths_with_starting_slash(cx: &mut TestAppContext) {
     let app_state = init_test(cx);
+
+    cx.update(|cx| {
+        let settings = *ProjectPanelSettings::get_global(cx);
+        ProjectPanelSettings::override_global(
+            ProjectPanelSettings {
+                hide_root: true,
+                ..settings
+            },
+            cx,
+        );
+    });
+
     app_state
         .fs
         .as_fake()

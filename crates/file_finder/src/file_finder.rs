@@ -563,18 +563,21 @@ impl Matches {
                 .extend(history_items.into_iter().map(path_to_entry));
             return;
         };
-        // If several worktress are open we have to set the worktree root names in path prefix
-        let several_worktrees = worktree_store.read(cx).worktrees().count() > 1;
-        let worktree_name_by_id = several_worktrees.then(|| {
-            worktree_store
-                .read(cx)
-                .worktrees()
-                .map(|worktree| {
-                    let snapshot = worktree.read(cx).snapshot();
-                    (snapshot.id(), snapshot.root_name().into())
-                })
-                .collect()
-        });
+
+        let worktree_name_by_id = if should_hide_root_in_entry_path(&worktree_store, cx) {
+            None
+        } else {
+            Some(
+                worktree_store
+                    .read(cx)
+                    .worktrees()
+                    .map(|worktree| {
+                        let snapshot = worktree.read(cx).snapshot();
+                        (snapshot.id(), snapshot.root_name().into())
+                    })
+                    .collect(),
+            )
+        };
         let new_history_matches = matching_history_items(
             history_items,
             currently_opened,
@@ -797,6 +800,16 @@ fn matching_history_items<'a>(
     matching_history_paths
 }
 
+fn should_hide_root_in_entry_path(worktree_store: &Entity<WorktreeStore>, cx: &App) -> bool {
+    let multiple_worktrees = worktree_store
+        .read(cx)
+        .visible_worktrees(cx)
+        .filter(|worktree| !worktree.read(cx).is_single_file())
+        .nth(1)
+        .is_some();
+    ProjectPanelSettings::get_global(cx).hide_root && !multiple_worktrees
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 struct FoundPath {
     project: ProjectPath,
@@ -902,14 +915,12 @@ impl FileFinderDelegate {
             .currently_opened_path
             .as_ref()
             .map(|found_path| Arc::clone(&found_path.project.path));
-        let worktrees = self
-            .project
-            .read(cx)
-            .worktree_store()
+        let worktree_store = self.project.read(cx).worktree_store();
+        let worktrees = worktree_store
             .read(cx)
             .visible_worktrees_and_single_files(cx)
             .collect::<Vec<_>>();
-        let include_root_name = worktrees.len() > 1;
+        let include_root_name = !should_hide_root_in_entry_path(&worktree_store, cx);
         let candidate_sets = worktrees
             .into_iter()
             .map(|worktree| {
@@ -1135,17 +1146,8 @@ impl FileFinderDelegate {
                     if let Some(panel_match) = panel_match {
                         self.labels_for_path_match(&panel_match.0, path_style)
                     } else if let Some(worktree) = worktree {
-                        let multiple_folders_open = self
-                            .project
-                            .read(cx)
-                            .visible_worktrees(cx)
-                            .filter(|worktree| !worktree.read(cx).is_single_file())
-                            .nth(1)
-                            .is_some();
-
-                        let full_path = if ProjectPanelSettings::get_global(cx).hide_root
-                            && !multiple_folders_open
-                        {
+                        let worktree_store = self.project.read(cx).worktree_store();
+                        let full_path = if should_hide_root_in_entry_path(&worktree_store, cx) {
                             entry_path.project.path.clone()
                         } else {
                             worktree.read(cx).root_name().join(&entry_path.project.path)
