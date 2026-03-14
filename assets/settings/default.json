@@ -1391,7 +1391,10 @@
   "diagnostics": {
     // Whether to show the project diagnostics button in the status bar.
     "button": true,
-    // Whether to show warnings or not by default.
+    // Whether to show warnings and info-level diagnostics.
+    //
+    // When true, errors, warnings, and info-level diagnostics are all shown.
+    // When false, only errors are shown.
     //
     // Default: true
     "include_warnings": true,
