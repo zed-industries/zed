@@ -2254,6 +2254,42 @@ impl BufferSnapshot {
         (row_end_offset - row_start_offset) as u32
     }
 
+    pub fn point_for_column_in_range_from_external_source<'a>(
+        range: Range<Point>,
+        text_chunks: impl Iterator<Item = &'a str>,
+        column: u32,
+    ) -> Point {
+        let mut point = range.start;
+        let mut remaining_columns = column;
+
+        for chunk in text_chunks {
+            for character in chunk.chars() {
+                if remaining_columns == 0 {
+                    return point;
+                }
+                remaining_columns -= 1;
+                point.column += character.len_utf8() as u32;
+            }
+        }
+
+        point
+    }
+
+    pub fn point_for_row_and_column_from_external_source(&self, row: u32, column: u32) -> Point {
+        let row = row.min(self.max_point().row);
+        let start = Point::new(row, 0);
+        let end = self.clip_point(
+            Point::new(row, column.saturating_mul(4).saturating_add(1)),
+            Bias::Right,
+        );
+        let range = start..end;
+        Self::point_for_column_in_range_from_external_source(
+            range.clone(),
+            self.text_for_range(range),
+            column,
+        )
+    }
+
     pub fn line_indents_in_row_range(
         &self,
         row_range: Range<u32>,

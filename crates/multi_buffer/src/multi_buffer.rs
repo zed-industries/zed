@@ -2134,7 +2134,7 @@ impl MultiBuffer {
         for (excerpt_id, _, range) in self.excerpts_for_buffer(snapshot.remote_id(), cx) {
             let start = range.context.start.to_point(&snapshot);
             let end = range.context.end.to_point(&snapshot);
-            if start <= point && point < end {
+            if start <= point && point <= end {
                 found = Some((snapshot.clip_point(point, Bias::Left), excerpt_id));
                 break;
             }
