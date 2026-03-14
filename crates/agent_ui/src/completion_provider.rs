@@ -545,8 +545,8 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
             .unwrap_or_else(|| url_to_fetch.to_string());
 
         Some(Completion {
-            replace_range: source_range.clone(),
-            new_text: new_text.clone(),
+            replace_range: source_range,
+            new_text,
             label: CodeLabel::plain(label, None),
             documentation: None,
             source: project::CompletionSource::Custom,
