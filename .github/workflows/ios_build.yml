@@ -32,8 +32,6 @@ jobs:
 
     - name: Install Rust toolchain
       uses: dtolnay/rust-toolchain@stable
-      with:
-        targets: aarch64-apple-ios-sim,aarch64-apple-ios
 
     - name: Cache Rust build artifacts
       uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6
