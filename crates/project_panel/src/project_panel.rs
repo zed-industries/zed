@@ -7246,10 +7246,6 @@ fn update_project_panel_exclusions_in_text(
         &mut edits,
     );
 
-    for (range, replacement) in edits {
-        text.replace_range(range, &replacement);
-    }
-
     Ok(text)
 }
 

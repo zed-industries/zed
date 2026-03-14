@@ -9863,6 +9863,60 @@ async fn test_toggle_excluded_hides_file_and_writes_project_settings(
 }
 
 #[gpui::test]
+async fn test_toggle_excluded_updates_existing_project_panel_block_without_duplication(
+    cx: &mut gpui::TestAppContext,
+) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        "/root",
+        json!({
+            ".zed": {
+                "settings.json": "{\n  \"project_panel\": {\n    \"show_excluded\": true,\n    \"excluded_entries\": [\".cargo\"]\n  },\n  \"languages\": {\n    \"Markdown\": {\n      \"tab_size\": 2\n    }\n  }\n}",
+            },
+            ".cargo": {},
+            "file.txt": "",
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), ["/root".as_ref()], cx).await;
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let workspace = window
+        .read_with(cx, |mw, _| mw.workspace().clone())
+        .unwrap();
+    let cx = &mut VisualTestContext::from_window(window.into(), cx);
+    let panel = workspace.update_in(cx, ProjectPanel::new);
+    cx.run_until_parked();
+
+    select_path(&panel, "root/file.txt", cx);
+    toggle_excluded(&panel, cx);
+
+    let settings_text = fs
+        .load(Path::new("/root/.zed/settings.json"))
+        .await
+        .unwrap();
+    assert_eq!(settings_text.matches("\"project_panel\"").count(), 1);
+
+    let settings: serde_json::Value = serde_json::from_str(&settings_text).unwrap();
+    assert_eq!(
+        settings,
+        json!({
+            "project_panel": {
+                "show_excluded": true,
+                "excluded_entries": [".cargo", "file.txt"]
+            },
+            "languages": {
+                "Markdown": {
+                    "tab_size": 2
+                }
+            }
+        }),
+    );
+}
+
+#[gpui::test]
 async fn test_toggle_excluded_hides_directory_subtree(cx: &mut gpui::TestAppContext) {
     init_test(cx);
 
