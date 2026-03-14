@@ -7668,6 +7668,7 @@ dependencies = [
  "sum_tree",
  "taffy",
  "thiserror 2.0.17",
+ "unicode-segmentation",
  "url",
  "usvg",
  "util",
