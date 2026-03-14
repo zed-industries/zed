@@ -10,6 +10,7 @@
 .blob_store
 .build
 .claude/settings.local.json
+.claude/worktrees/
 .envrc
 .flatpak-builder
 .idea
