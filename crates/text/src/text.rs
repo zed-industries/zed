@@ -486,7 +486,6 @@ impl History {
         }
     }
 
-
     fn pop_redo(&mut self) -> Option<&HistoryEntry> {
         assert_eq!(self.transaction_depth, 0);
         if let Some(entry) = self.redo_stack.pop() {
