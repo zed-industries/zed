@@ -108,6 +108,8 @@ mod tests {
                         role: "assistant".to_string(),
                         content: content.to_string(),
                         entry_type: "text".to_string(),
+                        tool_name: String::new(),
+                        tool_status: String::new(),
                         timestamp: chrono::Utc::now().timestamp(),
                     };
                     zed_to_ext_tx_clone.send(serde_json::to_string(&message_added).unwrap()).unwrap();
@@ -302,6 +304,8 @@ mod tests {
                         role: "assistant".to_string(),
                         content: content.clone(),
                         entry_type: "text".to_string(),
+                        tool_name: String::new(),
+                        tool_status: String::new(),
                         timestamp: chrono::Utc::now().timestamp(),
                     };
                     zed_to_ext_tx_clone.send(serde_json::to_string(&message_added).unwrap()).unwrap();
@@ -441,3 +445,5 @@ mod tests {
 }
 
 entry_type: "text".to_string(),
+                        tool_name: String::new(),
+                        tool_status: String::new(),

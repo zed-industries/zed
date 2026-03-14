@@ -62,6 +62,8 @@ struct PendingMessage {
     role: String,
     content: String,
     entry_type: String,
+    tool_name: String,
+    tool_status: String,
 }
 
 /// Initialize the thread registry
@@ -139,6 +141,8 @@ fn throttled_send_message_added(
     role: &str,
     content: String,
     entry_type: &str,
+    tool_name: &str,
+    tool_status: &str,
 ) -> bool {
     init_streaming_throttle();
     let key = format!("{}:{}", acp_thread_id, entry_idx);
@@ -182,6 +186,8 @@ fn throttled_send_message_added(
                 role: role.to_string(),
                 content,
                 entry_type: entry_type.to_string(),
+                tool_name: tool_name.to_string(),
+                tool_status: tool_status.to_string(),
             });
             sent = true;
         } else {
@@ -191,6 +197,8 @@ fn throttled_send_message_added(
                 role: role.to_string(),
                 content,
                 entry_type: entry_type.to_string(),
+                tool_name: tool_name.to_string(),
+                tool_status: tool_status.to_string(),
             });
             sent = false;
         }
@@ -204,6 +212,8 @@ fn throttled_send_message_added(
             role: pending.role,
             content: pending.content,
             entry_type: pending.entry_type,
+            tool_name: pending.tool_name,
+            tool_status: pending.tool_status,
             timestamp: chrono::Utc::now().timestamp(),
         });
     }
@@ -216,6 +226,8 @@ fn throttled_send_message_added(
             role: msg.role,
             content: msg.content,
             entry_type: msg.entry_type,
+            tool_name: msg.tool_name,
+            tool_status: msg.tool_status,
             timestamp: chrono::Utc::now().timestamp(),
         });
     }
@@ -255,6 +267,8 @@ pub fn flush_streaming_throttle(acp_thread_id: &str) {
             role: pending.role,
             content: pending.content,
             entry_type: pending.entry_type,
+            tool_name: pending.tool_name,
+            tool_status: pending.tool_status,
             timestamp: chrono::Utc::now().timestamp(),
         });
     }
@@ -362,12 +376,20 @@ fn ensure_thread_subscription(
                         }
                         _ => return,
                     };
+                    let (tool_name, tool_status) = match entry {
+                        acp_thread::AgentThreadEntry::ToolCall(tool_call) => {
+                            (tool_call.label.read(cx).source().to_string(), tool_call.status.to_string())
+                        }
+                        _ => (String::new(), String::new()),
+                    };
                     let _ = crate::send_websocket_event(SyncEvent::MessageAdded {
                         acp_thread_id: thread_id_for_sub.clone(),
                         message_id: latest_idx.to_string(),
                         role: role.to_string(),
                         content,
                         entry_type: entry_type.to_string(),
+                        tool_name,
+                        tool_status,
                         timestamp: chrono::Utc::now().timestamp(),
                     });
                 }
@@ -375,12 +397,14 @@ fn ensure_thread_subscription(
             AcpThreadEvent::EntryUpdated(entry_idx) => {
                 let thread = thread_entity.read(cx);
                 if let Some(entry) = thread.entries().get(*entry_idx) {
-                    let (content, entry_type) = match entry {
+                    let (content, entry_type, tool_name, tool_status) = match entry {
                         acp_thread::AgentThreadEntry::AssistantMessage(msg) => {
-                            (msg.content_only(cx), "text")
+                            (msg.content_only(cx), "text", String::new(), String::new())
                         }
                         acp_thread::AgentThreadEntry::ToolCall(tool_call) => {
-                            (tool_call.to_markdown(cx), "tool_call")
+                            let name = tool_call.label.read(cx).source().to_string();
+                            let status = tool_call.status.to_string();
+                            (tool_call.to_markdown(cx), "tool_call", name, status)
                         }
                         _ => return,
                     };
@@ -390,6 +414,8 @@ fn ensure_thread_subscription(
                         "assistant",
                         content,
                         entry_type,
+                        &tool_name,
+                        &tool_status,
                     );
                 }
             }

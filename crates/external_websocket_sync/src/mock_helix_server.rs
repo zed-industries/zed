@@ -721,6 +721,8 @@ mod tests {
             role: "assistant".to_string(),
             content: "Hello, world!".to_string(),
             entry_type: "text".to_string(),
+                tool_name: String::new(),
+                tool_status: String::new(),
             timestamp: 1706000000,
         };
 
@@ -932,6 +934,8 @@ mod tests {
                     role: "assistant".to_string(),
                     content: "Hello".to_string(),
                     entry_type: "text".to_string(),
+                tool_name: String::new(),
+                tool_status: String::new(),
                     timestamp: 0,
                 },
                 "message_added",
@@ -1742,3 +1746,5 @@ mod tests {
 }
 
 entry_type: "text".to_string(),
+                tool_name: String::new(),
+                tool_status: String::new(),
