@@ -1,6 +1,6 @@
 use crate::{
     AbsoluteLength, App, Bounds, DefiniteLength, Edges, Length, Pixels, Point, Size, Style, Window,
-    point, size, util::round_device_pixels_midpoint_down,
+    point, size, util::round_half_toward_zero,
 };
 use collections::{FxHashMap, FxHashSet};
 use stacksafe::{StackSafe, stacksafe};
@@ -239,6 +239,12 @@ impl TaffyLayoutEngine {
         }
 
         let layout = self.taffy.layout(id.into()).expect(EXPECT_MESSAGE);
+
+        // Taffy already rounds positions and sizes via a cumulative edge-based
+        // post-pass (see `round_layout` in taffy). That pass uses absolute
+        // positions to guarantee gap-free abutment between siblings. We must
+        // NOT re-round here — doing so would destroy the cumulative rounding
+        // invariant and could introduce 1-device-pixel gaps or size mismatches.
         let mut bounds = Bounds {
             origin: point(
                 Pixels(layout.location.x / scale_factor),
@@ -369,8 +375,11 @@ impl ToTaffy<taffy::style::Style> for Style {
 
 impl ToTaffy<f32> for AbsoluteLength {
     fn to_taffy(&self, rem_size: Pixels, scale_factor: f32) -> f32 {
-        let logical_pixels = self.to_pixels(rem_size).0;
-        round_device_pixels_midpoint_down((logical_pixels * scale_factor).max(0.0))
+        // Pre-round to integer device pixels so that Taffy's flex algorithm
+        // works with snapped values. Taffy's cumulative edge-based post-pass
+        // then ensures gap-free abutment between siblings.
+        // NOTE: no `.max(0.0)` here — negative values are valid (e.g. margins).
+        round_half_toward_zero(self.to_pixels(rem_size).0 * scale_factor)
     }
 }
 

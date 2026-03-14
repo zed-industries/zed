@@ -57,7 +57,7 @@ use uuid::Uuid;
 
 mod prompts;
 
-use crate::util::{atomic_incr_if_not_zero, round_device_pixels_midpoint_down};
+use crate::util::{atomic_incr_if_not_zero, round_half_toward_zero, round_half_toward_zero_f64};
 pub use prompts::*;
 
 /// Default window size used when no explicit size is provided.
@@ -2112,16 +2112,19 @@ impl Window {
     }
 
     /// Rounds a logical size or coordinate to the nearest device pixel for this window.
+    /// Uses round-half-toward-zero to match the layout engine's rounding policy.
     #[inline]
     pub fn round_to_nearest_device_pixel(&self, value: Pixels) -> Pixels {
         let scale_factor = self.scale_factor();
-        px((value.0 * scale_factor).round() / scale_factor)
+        px(round_half_toward_zero(value.0 * scale_factor) / scale_factor)
     }
 
-    /// Returns the logical length corresponding to one physical device pixel.
+    /// f64 variant of [`Self::round_to_nearest_device_pixel`] for scroll-offset
+    /// arithmetic that must preserve f64 precision.
     #[inline]
-    pub fn one_device_pixel(&self) -> Pixels {
-        px(1.0 / self.scale_factor())
+    pub fn round_f64_to_nearest_device_pixel(&self, value: f64) -> f64 {
+        let scale_factor = f64::from(self.scale_factor());
+        round_half_toward_zero_f64(value * scale_factor) / scale_factor
     }
 
     #[inline]
@@ -2148,13 +2151,21 @@ impl Window {
         )
     }
 
+    /// Converts logical-pixel bounds to device-pixel bounds by rounding origin
+    /// and size independently. This preserves consistent sizes: elements with
+    /// the same logical size always produce the same device-pixel size.
+    ///
+    /// Gap-free abutment between layout siblings is handled upstream by
+    /// Taffy's cumulative edge-based rounding post-pass. For elements
+    /// positioned by Taffy, the values arriving here are already on the
+    /// device-pixel grid and this rounding is effectively a no-op.
     #[inline]
     fn round_bounds_to_device_pixels(&self, bounds: Bounds<Pixels>) -> Bounds<ScaledPixels> {
         let scale_factor = self.scale_factor();
         Bounds {
             origin: point(
-                ScaledPixels((bounds.origin.x.0 * scale_factor).round()),
-                ScaledPixels((bounds.origin.y.0 * scale_factor).round()),
+                ScaledPixels(round_half_toward_zero(bounds.origin.x.0 * scale_factor)),
+                ScaledPixels(round_half_toward_zero(bounds.origin.y.0 * scale_factor)),
             ),
             size: size(
                 self.round_length_to_device_pixels(bounds.size.width),
@@ -2196,7 +2207,7 @@ impl Window {
     #[inline]
     fn round_length_to_device_pixels(&self, value: Pixels) -> ScaledPixels {
         let scaled = (value.0 * self.scale_factor()).max(0.0);
-        ScaledPixels(round_device_pixels_midpoint_down(scaled))
+        ScaledPixels(round_half_toward_zero(scaled))
     }
 
     #[inline]
@@ -3268,8 +3279,8 @@ impl Window {
         };
         let bounds = Bounds {
             origin: point(
-                ScaledPixels((origin.x.0 * scale_factor).round()),
-                ScaledPixels((origin.y.0 * scale_factor).round()),
+                ScaledPixels(round_half_toward_zero(origin.x.0 * scale_factor)),
+                ScaledPixels(round_half_toward_zero(origin.y.0 * scale_factor)),
             ),
             size: size(
                 self.round_nonzero_length_to_device_pixels(width),
@@ -3305,8 +3316,8 @@ impl Window {
         let height = style.thickness;
         let bounds = Bounds {
             origin: point(
-                ScaledPixels((origin.x.0 * scale_factor).round()),
-                ScaledPixels((origin.y.0 * scale_factor).round()),
+                ScaledPixels(round_half_toward_zero(origin.x.0 * scale_factor)),
+                ScaledPixels(round_half_toward_zero(origin.y.0 * scale_factor)),
             ),
             size: size(
                 self.round_nonzero_length_to_device_pixels(width),
@@ -3377,7 +3388,11 @@ impl Window {
                 })?
                 .expect("Callback above only errors or returns Some");
             let bounds = Bounds {
-                origin: point(glyph_origin.x.floor(), glyph_origin.y.round())
+                // X uses floor because subpixel_variant.x captures the fractional
+                // part — the glyph raster already contains the sub-pixel shift.
+                // Y uses round because there is no Y subpixel variant (y: 0),
+                // so rounding gives the most accurate integer placement.
+                origin: point(glyph_origin.x.floor(), ScaledPixels(round_half_toward_zero(glyph_origin.y.0)))
                     + raster_bounds.origin.map(Into::into),
                 size: tile.bounds.size.map(Into::into),
             };
@@ -3468,7 +3483,9 @@ impl Window {
                 .expect("Callback above only errors or returns Some");
 
             let bounds = Bounds {
-                origin: point(glyph_origin.x.floor(), glyph_origin.y.round())
+                // See comment in paint_glyph: floor for X (subpixel variant),
+                // round for Y (no subpixel variant).
+                origin: point(glyph_origin.x.floor(), ScaledPixels(round_half_toward_zero(glyph_origin.y.0)))
                     + raster_bounds.origin.map(Into::into),
                 size: tile.bounds.size.map(Into::into),
             };
@@ -3542,7 +3559,7 @@ impl Window {
             order: 0,
             pad: 0,
             bounds: svg_bounds
-                .map_origin(|origin| origin.round())
+                .map_origin(|v| ScaledPixels(round_half_toward_zero(v.0)))
                 .map_size(|size| size.ceil()),
             content_mask,
             color: color.opacity(element_opacity),

@@ -10473,6 +10473,13 @@ impl Element for EditorElement {
                         }
                     });
 
+                    // Snap scroll pixel position to device-pixel boundaries so
+                    // that all paint coordinates derived from it land on clean
+                    // device pixels. The rounded value is converted back to
+                    // scroll-offset units for consistent use during this frame.
+                    // This rounded scroll_position must NOT be written back to
+                    // the editor's scroll state — doing so would accumulate
+                    // floating-point drift across frames.
                     let scroll_pixel_position = rounded_scroll_pixel_position(
                         window,
                         scroll_position,
@@ -12375,11 +12382,9 @@ fn rounded_scroll_pixel_position(
     em_layout_width: Pixels,
     line_height: Pixels,
 ) -> gpui::Point<ScrollPixelOffset> {
-    let dpi_scale = f64::from(window.scale_factor());
-    let snap_to_device_pixels = |value: f64| (value * dpi_scale).round() / dpi_scale;
     point(
-        snap_to_device_pixels(scroll_position.x * f64::from(em_layout_width)),
-        snap_to_device_pixels(scroll_position.y * f64::from(line_height)),
+        window.round_f64_to_nearest_device_pixel(scroll_position.x * f64::from(em_layout_width)),
+        window.round_f64_to_nearest_device_pixel(scroll_position.y * f64::from(line_height)),
     )
 }
 

@@ -125,14 +125,28 @@ pub(crate) fn atomic_incr_if_not_zero(counter: &AtomicUsize) -> usize {
     }
 }
 
-/// Rounds a device-pixel value to the nearest integer, with .5 ties rounded down.
+/// Rounds to the nearest integer with ±0.5 ties toward zero.
+///
+/// This is the single rounding policy for all device-pixel snapping in the
+/// rendering pipeline. A consistent midpoint rule prevents 1-device-pixel
+/// gaps or overlaps between adjacent elements.
 #[inline]
-pub(crate) fn round_device_pixels_midpoint_down(value: f32) -> f32 {
-    let floor = value.floor();
-    if value - floor > 0.5 {
-        floor + 1.0
+pub(crate) fn round_half_toward_zero(value: f32) -> f32 {
+    if value >= 0.0 {
+        (value - 0.5).ceil()
     } else {
-        floor
+        (value + 0.5).floor()
+    }
+}
+
+/// f64 variant of [`round_half_toward_zero`] for scroll-offset arithmetic
+/// that must preserve f64 precision.
+#[inline]
+pub(crate) fn round_half_toward_zero_f64(value: f64) -> f64 {
+    if value >= 0.0 {
+        (value - 0.5).ceil()
+    } else {
+        (value + 0.5).floor()
     }
 }
 
@@ -143,12 +157,34 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_round_device_pixels_midpoint_down() {
-        assert_eq!(round_device_pixels_midpoint_down(0.5), 0.0);
-        assert_eq!(round_device_pixels_midpoint_down(1.5), 1.0);
-        assert_eq!(round_device_pixels_midpoint_down(2.5), 2.0);
-        assert_eq!(round_device_pixels_midpoint_down(1.5001), 2.0);
-        assert_eq!(round_device_pixels_midpoint_down(-1.5), -2.0);
+    fn test_round_half_toward_zero() {
+        // Midpoint ties go toward zero
+        assert_eq!(round_half_toward_zero(0.5), 0.0);
+        assert_eq!(round_half_toward_zero(1.5), 1.0);
+        assert_eq!(round_half_toward_zero(2.5), 2.0);
+        assert_eq!(round_half_toward_zero(-0.5), 0.0);
+        assert_eq!(round_half_toward_zero(-1.5), -1.0);
+        assert_eq!(round_half_toward_zero(-2.5), -2.0);
+
+        // Non-midpoint values round to nearest
+        assert_eq!(round_half_toward_zero(1.5001), 2.0);
+        assert_eq!(round_half_toward_zero(1.4999), 1.0);
+        assert_eq!(round_half_toward_zero(-1.5001), -2.0);
+        assert_eq!(round_half_toward_zero(-1.4999), -1.0);
+
+        // Integers are unchanged
+        assert_eq!(round_half_toward_zero(0.0), 0.0);
+        assert_eq!(round_half_toward_zero(3.0), 3.0);
+        assert_eq!(round_half_toward_zero(-3.0), -3.0);
+    }
+
+    #[test]
+    fn test_round_half_toward_zero_f64() {
+        assert_eq!(round_half_toward_zero_f64(0.5), 0.0);
+        assert_eq!(round_half_toward_zero_f64(-0.5), 0.0);
+        assert_eq!(round_half_toward_zero_f64(1.5), 1.0);
+        assert_eq!(round_half_toward_zero_f64(-1.5), -1.0);
+        assert_eq!(round_half_toward_zero_f64(2.5001), 3.0);
     }
 
     #[gpui::test]
