@@ -4,6 +4,7 @@ use std::{
     os::fd::{AsRawFd, BorrowedFd},
     path::PathBuf,
     rc::{Rc, Weak},
+    sync::Arc,
     time::{Duration, Instant},
 };
 
@@ -77,10 +78,10 @@ use super::{
 };
 
 use crate::linux::{
-    DOUBLE_CLICK_INTERVAL, LinuxClient, LinuxCommon, LinuxKeyboardLayout, SCROLL_LINES,
-    capslock_from_xkb, cursor_style_to_icon_names, get_xkb_compose_state, is_within_click_distance,
-    keystroke_from_xkb, keystroke_underlying_dead_key, modifiers_from_xkb, open_uri_internal,
-    read_fd, reveal_path_internal,
+    DEFAULT_FONT_FAMILY, DOUBLE_CLICK_INTERVAL, LinuxClient, LinuxCommon, LinuxKeyboardLayout,
+    SCROLL_LINES, capslock_from_xkb, cursor_style_to_icon_names, get_xkb_compose_state,
+    is_within_click_distance, keystroke_from_xkb, keystroke_underlying_dead_key,
+    modifiers_from_xkb, open_uri_internal, read_fd, reveal_path_internal,
     wayland::{
         clipboard::{Clipboard, DataOffer, FILE_LIST_MIME_TYPE, TEXT_MIME_TYPES},
         cursor::Cursor,
@@ -94,9 +95,9 @@ use gpui::{
     AnyWindowHandle, Bounds, Capslock, CursorStyle, DevicePixels, DisplayId, FileDropEvent,
     ForegroundExecutor, KeyDownEvent, KeyUpEvent, Keystroke, Modifiers, ModifiersChangedEvent,
     MouseButton, MouseDownEvent, MouseExitEvent, MouseMoveEvent, MouseUpEvent, NavigationDirection,
-    Pixels, PlatformDisplay, PlatformInput, PlatformKeyboardLayout, PlatformWindow, Point,
-    ScrollDelta, ScrollWheelEvent, SharedString, Size, TaskTiming, TouchPhase, WindowParams, point,
-    profiler, px, size,
+    Pixels, PlatformDisplay, PlatformInput, PlatformKeyboardLayout, PlatformTextSystem,
+    PlatformWindow, Point, ScrollDelta, ScrollWheelEvent, SharedString, Size, TaskTiming,
+    TouchPhase, WindowParams, point, profiler, px, size,
 };
 use gpui_wgpu::{CompositorGpuHint, GpuContext};
 use wayland_protocols::wp::linux_dmabuf::zv1::client::{
@@ -463,6 +464,13 @@ fn wl_output_version(version: u32) -> u32 {
 
 impl WaylandClient {
     pub(crate) fn new() -> Self {
+        // Start font system loading on a background thread immediately.
+        // FontSystem::new() scans all system fonts via fontdb, which takes time.
+        // By running it in parallel with Wayland connection setup, we hide the cost.
+        let font_handle = std::thread::spawn(|| -> Arc<dyn PlatformTextSystem> {
+            Arc::new(crate::linux::CosmicTextSystem::new(DEFAULT_FONT_FAMILY))
+        });
+
         let conn = Connection::connect_to_env().unwrap();
 
         let (globals, event_queue) = registry_queue_init::<WaylandClientStatePtr>(&conn).unwrap();
@@ -501,7 +509,10 @@ impl WaylandClient {
 
         let event_loop = EventLoop::<WaylandClientStatePtr>::try_new().unwrap();
 
-        let (common, main_receiver) = LinuxCommon::new(event_loop.get_signal());
+        // Join the font thread. Font loading ran in parallel with Wayland connection setup above.
+        let text_system = font_handle.join().expect("font system thread panicked");
+        let (common, main_receiver) =
+            LinuxCommon::new_with_text_system(event_loop.get_signal(), text_system);
 
         let handle = event_loop.handle();
         handle

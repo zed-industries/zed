@@ -6,7 +6,7 @@ use calloop::{
 };
 use collections::HashMap;
 use core::str;
-use gpui::{Capslock, TaskTiming, profiler};
+use gpui::{Capslock, PlatformTextSystem, TaskTiming, profiler};
 use http_client::Url;
 use log::Level;
 use smallvec::SmallVec;
@@ -16,6 +16,7 @@ use std::{
     ops::Deref,
     path::PathBuf,
     rc::{Rc, Weak},
+    sync::Arc,
     time::{Duration, Instant},
 };
 use util::ResultExt as _;
@@ -52,7 +53,7 @@ use crate::linux::{
     DEFAULT_CURSOR_ICON_NAME, LinuxClient, capslock_from_xkb, cursor_style_to_icon_names,
     get_xkb_compose_state, is_within_click_distance, keystroke_from_xkb,
     keystroke_underlying_dead_key, log_cursor_icon_warning, modifiers_from_xkb, open_uri_internal,
-    platform::{DOUBLE_CLICK_INTERVAL, SCROLL_LINES},
+    platform::{DEFAULT_FONT_FAMILY, DOUBLE_CLICK_INTERVAL, SCROLL_LINES},
     reveal_path_internal,
     xdg_desktop_portal::{Event as XDPEvent, XDPEventSource},
 };
@@ -299,42 +300,15 @@ pub(crate) struct X11Client(pub(crate) Rc<RefCell<X11ClientState>>);
 
 impl X11Client {
     pub(crate) fn new() -> anyhow::Result<Self> {
+        // Start font system loading on a background thread immediately.
+        // FontSystem::new() scans all system fonts via fontdb, which takes time.
+        // By running it in parallel with XCB + XKB setup, we hide the cost.
+        let font_handle = std::thread::spawn(|| -> Arc<dyn PlatformTextSystem> {
+            Arc::new(crate::linux::CosmicTextSystem::new(DEFAULT_FONT_FAMILY))
+        });
+
         let event_loop = EventLoop::try_new()?;
-
-        let (common, main_receiver) = LinuxCommon::new(event_loop.get_signal());
-
         let handle = event_loop.handle();
-
-        handle
-            .insert_source(main_receiver, {
-                let handle = handle.clone();
-                move |event, _, _: &mut X11Client| {
-                    if let calloop::channel::Event::Msg(runnable) = event {
-                        // Insert the runnables as idle callbacks, so we make sure that user-input and X11
-                        // events have higher priority and runnables are only worked off after the event
-                        // callbacks.
-                        handle.insert_idle(|_| {
-                            let start = Instant::now();
-                            let location = runnable.metadata().location;
-                            let mut timing = TaskTiming {
-                                location,
-                                start,
-                                end: None,
-                            };
-                            profiler::add_task_timing(timing);
-
-                            runnable.run();
-
-                            let end = Instant::now();
-                            timing.end = Some(end);
-                            profiler::add_task_timing(timing);
-                        });
-                    }
-                }
-            })
-            .map_err(|err| {
-                anyhow!("Failed to initialize event loop handling of foreground tasks: {err:?}")
-            })?;
 
         let (xcb_connection, x_root_index) = XCBConnection::connect(None)?;
         xcb_connection.prefetch_extension_information(xkb::X11_EXTENSION_NAME)?;
@@ -433,6 +407,42 @@ impl X11Client {
 
         let screen = &xcb_connection.setup().roots[x_root_index];
         let compositor_gpu = detect_compositor_gpu(&xcb_connection, screen);
+
+        // Join the font thread. Font loading ran in parallel with XCB + XKB setup above.
+        let text_system = font_handle.join().expect("font system thread panicked");
+        let (common, main_receiver) =
+            LinuxCommon::new_with_text_system(event_loop.get_signal(), text_system);
+
+        handle
+            .insert_source(main_receiver, {
+                let handle = handle.clone();
+                move |event, _, _: &mut X11Client| {
+                    if let calloop::channel::Event::Msg(runnable) = event {
+                        // Insert the runnables as idle callbacks, so we make sure that user-input and X11
+                        // events have higher priority and runnables are only worked off after the event
+                        // callbacks.
+                        handle.insert_idle(|_| {
+                            let start = Instant::now();
+                            let location = runnable.metadata().location;
+                            let mut timing = TaskTiming {
+                                location,
+                                start,
+                                end: None,
+                            };
+                            profiler::add_task_timing(timing);
+
+                            runnable.run();
+
+                            let end = Instant::now();
+                            timing.end = Some(end);
+                            profiler::add_task_timing(timing);
+                        });
+                    }
+                }
+            })
+            .map_err(|err| {
+                anyhow!("Failed to initialize event loop handling of foreground tasks: {err:?}")
+            })?;
 
         let xcb_connection = Rc::new(xcb_connection);
 
