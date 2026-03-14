@@ -51,6 +51,7 @@ windows.workspace = true
 
 [target.'cfg(any(target_os = "linux", target_os = "freebsd"))'.dependencies]
 ashpd.workspace = true
+shlex.workspace = true
 
 [dev-dependencies]
 fs = { workspace = true, features = ["test-support"] }
