@@ -28,7 +28,10 @@ use open_ai::{
 };
 use settings::{OpenAiAvailableModel as AvailableModel, Settings, SettingsStore};
 use std::pin::Pin;
-use std::sync::{Arc, LazyLock};
+use std::sync::{
+    Arc, LazyLock,
+    atomic::{AtomicU64, Ordering},
+};
 use strum::IntoEnumIterator;
 use ui::{ButtonLink, ConfiguredApiCard, List, ListBulletItem, prelude::*};
 use ui_input::InputField;
@@ -41,6 +44,7 @@ const PROVIDER_NAME: LanguageModelProviderName = language_model::OPEN_AI_PROVIDE
 
 const API_KEY_ENV_VAR_NAME: &str = "OPENAI_API_KEY";
 static API_KEY_ENV_VAR: LazyLock<EnvVar> = env_var!(API_KEY_ENV_VAR_NAME);
+static TOOL_CALL_ID_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Default, Clone, Debug, PartialEq)]
 pub struct OpenAiSettings {
@@ -821,7 +825,9 @@ impl OpenAiEventMapper {
                     let entry = self.tool_calls_by_index.entry(tool_call.index).or_default();
 
                     if let Some(tool_id) = tool_call.id.clone() {
-                        entry.id = tool_id;
+                        if !tool_id.is_empty() && entry.id.is_empty() {
+                            entry.id = tool_id;
+                        }
                     }
 
                     if let Some(function) = tool_call.function.as_ref() {
@@ -832,6 +838,16 @@ impl OpenAiEventMapper {
                         if let Some(arguments) = function.arguments.clone() {
                             entry.arguments.push_str(&arguments);
                         }
+                    }
+
+                    if entry.id.is_empty() && !entry.name.is_empty() {
+                        let next = TOOL_CALL_ID_COUNTER.fetch_add(1, Ordering::SeqCst);
+                        entry.id = format!("call_{}", next);
+                        log::warn!(
+                            "OpenAI-compatible API did not provide a tool call id for '{}', generated fallback: {}",
+                            entry.name,
+                            entry.id
+                        );
                     }
 
                     if !entry.id.is_empty() && !entry.name.is_empty() {
@@ -859,7 +875,15 @@ impl OpenAiEventMapper {
                 events.push(Ok(LanguageModelCompletionEvent::Stop(StopReason::EndTurn)));
             }
             Some("tool_calls") => {
-                events.extend(self.tool_calls_by_index.drain().map(|(_, tool_call)| {
+                events.extend(self.tool_calls_by_index.drain().map(|(_, mut tool_call)| {
+                    if tool_call.id.is_empty() {
+                        let next = TOOL_CALL_ID_COUNTER.fetch_add(1, Ordering::SeqCst);
+                        tool_call.id = format!("call_{}", next);
+                        log::warn!(
+                            "OpenAI-compatible API did not provide a tool call id for '{}', generated fallback: {}",
+                            tool_call.name, tool_call.id
+                        );
+                    }
                     match parse_tool_arguments(&tool_call.arguments) {
                         Ok(input) => Ok(LanguageModelCompletionEvent::ToolUse(
                             LanguageModelToolUse {
@@ -1447,10 +1471,25 @@ mod tests {
         ResponseReasoningItem, ResponseStatusDetails, ResponseSummary, ResponseUsage,
         StreamEvent as ResponsesStreamEvent,
     };
+    use open_ai::{
+        ChoiceDelta, FunctionChunk, ResponseMessageDelta, ResponseStreamEvent, ToolCallChunk,
+    };
     use pretty_assertions::assert_eq;
     use serde_json::json;
 
     use super::*;
+
+    fn map_stream_events(events: Vec<ResponseStreamEvent>) -> Vec<LanguageModelCompletionEvent> {
+        block_on(async {
+            OpenAiEventMapper::new()
+                .map_stream(Box::pin(futures::stream::iter(events.into_iter().map(Ok))))
+                .collect::<Vec<_>>()
+                .await
+                .into_iter()
+                .map(Result::unwrap)
+                .collect()
+        })
+    }
 
     fn map_response_events(events: Vec<ResponsesStreamEvent>) -> Vec<LanguageModelCompletionEvent> {
         block_on(async {
@@ -2302,6 +2341,92 @@ mod tests {
                 .iter()
                 .any(|e| matches!(e, LanguageModelCompletionEvent::Thinking { .. })),
             "OutputItemDone reasoning should not produce Thinking events (no delta/done text events)"
+        );
+    }
+
+    #[test]
+    fn stream_tool_call_without_id_generates_fallback() {
+        // Simulate an OpenAI-compatible API that never sends tool_call.id in stream deltas.
+        let events = vec![
+            ResponseStreamEvent {
+                choices: vec![ChoiceDelta {
+                    index: 0,
+                    delta: Some(ResponseMessageDelta {
+                        role: None,
+                        content: None,
+                        tool_calls: Some(vec![ToolCallChunk {
+                            index: 0,
+                            id: None,
+                            function: Some(FunctionChunk {
+                                name: Some("get_weather".into()),
+                                arguments: Some("{\"city\":".into()),
+                            }),
+                        }]),
+                        reasoning_content: None,
+                    }),
+                    finish_reason: None,
+                }],
+                usage: None,
+            },
+            ResponseStreamEvent {
+                choices: vec![ChoiceDelta {
+                    index: 0,
+                    delta: Some(ResponseMessageDelta {
+                        role: None,
+                        content: None,
+                        tool_calls: Some(vec![ToolCallChunk {
+                            index: 0,
+                            id: None,
+                            function: Some(FunctionChunk {
+                                name: None,
+                                arguments: Some("\"London\"}".into()),
+                            }),
+                        }]),
+                        reasoning_content: None,
+                    }),
+                    finish_reason: None,
+                }],
+                usage: None,
+            },
+            ResponseStreamEvent {
+                choices: vec![ChoiceDelta {
+                    index: 0,
+                    delta: None,
+                    finish_reason: Some("tool_calls".into()),
+                }],
+                usage: None,
+            },
+        ];
+
+        let mapped = map_stream_events(events);
+
+        let tool_use_events: Vec<_> = mapped
+            .iter()
+            .filter_map(|e| {
+                if let LanguageModelCompletionEvent::ToolUse(tool_use) = e {
+                    Some(tool_use)
+                } else {
+                    None
+                }
+            })
+            .filter(|t| t.is_input_complete)
+            .collect();
+
+        assert_eq!(
+            tool_use_events.len(),
+            1,
+            "expected one complete tool use event"
+        );
+        let tool_use = tool_use_events[0];
+        assert_eq!(tool_use.name.as_ref(), "get_weather");
+        assert!(
+            !tool_use.id.to_string().is_empty(),
+            "tool call id must not be empty when API omits it"
+        );
+        assert_eq!(
+            tool_use.input,
+            json!({"city": "London"}),
+            "tool arguments must be correctly accumulated"
         );
     }
 }
