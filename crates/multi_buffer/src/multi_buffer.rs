@@ -6743,6 +6743,12 @@ impl MultiBufferSnapshot {
             .and_then(|(buffer, offset)| buffer.language_scope_at(offset))
     }
 
+    pub fn language_scopes_at<T: ToOffset>(&self, point: T) -> Vec<LanguageScope> {
+        self.point_to_buffer_offset(point)
+            .map(|(buffer, offset)| buffer.language_scopes_at(offset))
+            .unwrap_or_default()
+    }
+
     pub fn char_classifier_at<T: ToOffset>(&self, point: T) -> CharClassifier {
         self.point_to_buffer_offset(point)
             .map(|(buffer, offset)| buffer.char_classifier_at(offset))
