@@ -1143,6 +1143,7 @@
   // - "combined": Use LSP semantic tokens together with tree-sitter highlighting as base.
   // - "full": Use LSP semantic tokens exclusively to highlight the text, tree-sitter syntax highlighting is off.
   //
+  // "full" may result in reduced/zero syntax highlighting if your LSP doesn't fully support the feature
   // May require language server restart to properly apply.
   "semantic_tokens": "off",
 
