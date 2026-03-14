@@ -3,7 +3,7 @@
 use gpui::Hsla;
 use refineable::Refineable;
 
-use crate::{blue, grass, neutral, red, yellow};
+use crate::{blue, grass, neutral, orange, red, yellow};
 
 #[derive(Refineable, Clone, Debug, PartialEq)]
 #[refineable(Debug, serde::Deserialize)]
@@ -28,6 +28,11 @@ pub struct StatusColors {
     pub error: Hsla,
     pub error_background: Hsla,
     pub error_border: Hsla,
+
+    /// Indicates that something is excluded from a project-specific view, such as the project panel.
+    pub excluded: Hsla,
+    pub excluded_background: Hsla,
+    pub excluded_border: Hsla,
 
     /// Represents a hidden status, such as a file being hidden in a file tree.
     pub hidden: Hsla,
@@ -101,6 +106,9 @@ impl StatusColors {
             error: red().dark().step_9(),
             error_background: red().dark().step_9(),
             error_border: red().dark().step_9(),
+            excluded: orange().dark().step_9(),
+            excluded_background: orange().dark().step_9().opacity(0.25),
+            excluded_border: orange().dark().step_9(),
             hidden: neutral().dark().step_9(),
             hidden_background: neutral().dark().step_9(),
             hidden_border: neutral().dark().step_9(),
@@ -148,6 +156,9 @@ impl StatusColors {
             error: red().light().step_9(),
             error_background: red().light().step_9(),
             error_border: red().light().step_9(),
+            excluded: orange().light().step_9(),
+            excluded_background: orange().light().step_9().opacity(0.25),
+            excluded_border: orange().light().step_9(),
             hidden: neutral().light().step_9(),
             hidden_background: neutral().light().step_9(),
             hidden_border: neutral().light().step_9(),

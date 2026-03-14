@@ -1,15 +1,19 @@
+use anyhow::Context as _;
+use collections::HashSet;
 use editor::EditorSettings;
-use gpui::Pixels;
+use gpui::{App, Pixels, ReadGlobal};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{
     DockSide, ProjectPanelEntrySpacing, ProjectPanelSortMode, RegisterSetting, Settings,
-    ShowDiagnostics, ShowIndentGuides,
+    SettingsLocation, SettingsStore, ShowDiagnostics, ShowIndentGuides,
 };
+use std::path::Path;
 use ui::{
     px,
     scrollbars::{ScrollbarVisibility, ShowScrollbar},
 };
+use util::{ResultExt, paths::PathStyle, rel_path::RelPath};
 
 #[derive(Deserialize, Debug, Clone, Copy, PartialEq, RegisterSetting)]
 pub struct ProjectPanelSettings {
@@ -36,6 +40,38 @@ pub struct ProjectPanelSettings {
     pub auto_open: AutoOpenSettings,
     pub sort_mode: ProjectPanelSortMode,
     pub diagnostic_badges: bool,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, RegisterSetting)]
+pub struct ProjectPanelExclusionSettings {
+    pub show_excluded: bool,
+    excluded_entries: Vec<String>,
+    excluded_entries_lookup: HashSet<String>,
+}
+
+impl ProjectPanelExclusionSettings {
+    pub fn for_worktree<'a>(worktree_id: settings::WorktreeId, cx: &'a App) -> &'a Self {
+        SettingsStore::global(cx).get(Some(SettingsLocation {
+            worktree_id,
+            path: RelPath::empty(),
+        }))
+    }
+
+    pub fn excluded_entries(&self) -> &[String] {
+        &self.excluded_entries
+    }
+
+    pub fn is_path_excluded(&self, path: &RelPath) -> bool {
+        self.nearest_excluded_entry(path).is_some()
+    }
+
+    pub fn nearest_excluded_entry<'a>(&'a self, path: &RelPath) -> Option<&'a str> {
+        path.ancestors().find_map(|ancestor| {
+            self.excluded_entries_lookup
+                .get(ancestor.as_unix_str())
+                .map(String::as_str)
+        })
+    }
 }
 
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
@@ -137,6 +173,33 @@ impl Settings for ProjectPanelSettings {
             },
             sort_mode: project_panel.sort_mode.unwrap(),
             diagnostic_badges: project_panel.diagnostic_badges.unwrap(),
+        }
+    }
+}
+
+impl Settings for ProjectPanelExclusionSettings {
+    fn from_settings(content: &settings::SettingsContent) -> Self {
+        let project_panel = content.project.project_panel.clone().unwrap_or_default();
+        let mut excluded_entries = project_panel
+            .excluded_entries
+            .unwrap_or_default()
+            .into_iter()
+            .filter_map(|path| {
+                RelPath::new(Path::new(&path), PathStyle::local())
+                    .with_context(|| {
+                        format!("Failed to parse project panel excluded entry path {path:?}")
+                    })
+                    .log_err()
+                    .map(|path| path.into_owned().as_unix_str().to_string())
+            })
+            .collect::<Vec<_>>();
+        excluded_entries.sort();
+        excluded_entries.dedup();
+
+        Self {
+            show_excluded: project_panel.show_excluded.unwrap_or(false),
+            excluded_entries_lookup: excluded_entries.iter().cloned().collect(),
+            excluded_entries,
         }
     }
 }

@@ -123,6 +123,18 @@ pub fn status_colors_refinement(colors: &settings::StatusColorsContent) -> Statu
             .error_border
             .as_ref()
             .and_then(|color| try_parse_color(color).ok()),
+        excluded: colors
+            .excluded
+            .as_ref()
+            .and_then(|color| try_parse_color(color).ok()),
+        excluded_background: colors
+            .excluded_background
+            .as_ref()
+            .and_then(|color| try_parse_color(color).ok()),
+        excluded_border: colors
+            .excluded_border
+            .as_ref()
+            .and_then(|color| try_parse_color(color).ok()),
         hidden: colors
             .hidden
             .as_ref()

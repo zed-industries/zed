@@ -501,6 +501,7 @@ impl VsCodeSettings {
                 file_types: self.file_types(),
             },
             worktree: self.worktree_settings_content(),
+            project_panel: None,
             lsp: Default::default(),
             terminal: None,
             dap: Default::default(),

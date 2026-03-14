@@ -5026,6 +5026,41 @@ Run the {#action theme_selector::Toggle} action in the command palette to see a 
 - `on_paste`: Whether to automatically open files after pasting or duplicating them.
 - `on_drop`: Whether to automatically open files dropped from external sources.
 
+### Project Panel Excluded Entries
+
+- Description: Project-scoped entries that should be excluded from the project panel without affecting file scans, search, or other project features.
+- Setting: `project_panel.excluded_entries`
+- Default: `[]`
+
+Add this setting to your project's `.zed/settings.json`.
+
+```json [settings]
+{
+  "project_panel": {
+    "excluded_entries": ["build", "DerivedData", "Sources/Generated.swift"]
+  }
+}
+```
+
+Excluded paths are stored relative to the project root. Excluding a directory also excludes everything inside it.
+
+### Project Panel Show Excluded
+
+- Description: Whether to show excluded project panel entries instead of hiding them.
+- Setting: `project_panel.show_excluded`
+- Default: `false`
+
+Add this setting to your project's `.zed/settings.json`.
+
+```json [settings]
+{
+  "project_panel": {
+    "show_excluded": true,
+    "excluded_entries": ["build"]
+  }
+}
+```
+
 ## Agent
 
 Visit [the Configuration page](../ai/configuration.md) under the AI section to learn more about all the agent-related settings.

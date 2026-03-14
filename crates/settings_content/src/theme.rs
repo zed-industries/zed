@@ -1155,6 +1155,16 @@ pub struct StatusColorsContent {
     #[serde(rename = "error.border")]
     pub error_border: Option<String>,
 
+    /// Indicates that something is excluded from a project-specific view, such as the project panel.
+    #[serde(rename = "excluded")]
+    pub excluded: Option<String>,
+
+    #[serde(rename = "excluded.background")]
+    pub excluded_background: Option<String>,
+
+    #[serde(rename = "excluded.border")]
+    pub excluded_border: Option<String>,
+
     /// Represents a hidden status, such as a file being hidden in a file tree.
     #[serde(rename = "hidden")]
     pub hidden: Option<String>,

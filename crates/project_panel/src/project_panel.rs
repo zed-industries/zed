@@ -37,13 +37,15 @@ use project::{
     git_store::{GitStoreEvent, RepositoryEvent, git_traversal::ChildEntriesGitIter},
     project_settings::GoToDiagnosticSeverityFilter,
 };
-use project_panel_settings::ProjectPanelSettings;
+use project_panel_settings::{ProjectPanelExclusionSettings, ProjectPanelSettings};
 use rayon::slice::ParallelSliceMut;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{
-    DockSide, ProjectPanelEntrySpacing, Settings, SettingsStore, ShowDiagnostics, ShowIndentGuides,
-    update_settings_file,
+    DockSide, LocalSettingsKind, LocalSettingsPath, ProjectPanelEntrySpacing,
+    ProjectSettingsContent, Settings, SettingsStore, ShowDiagnostics, ShowIndentGuides,
+    infer_json_indent_size, parse_json_with_comments, update_settings_file,
+    update_value_in_json_text,
 };
 use smallvec::SmallVec;
 use std::ops::Neg;
@@ -265,6 +267,7 @@ struct EntryDetails {
     path: Arc<RelPath>,
     depth: usize,
     kind: EntryKind,
+    is_excluded: bool,
     is_ignored: bool,
     is_expanded: bool,
     is_selected: bool,
@@ -285,6 +288,14 @@ struct EntryDetails {
 #[derive(Debug, PartialEq, Eq, Clone)]
 struct StickyDetails {
     sticky_index: usize,
+}
+
+#[derive(Debug, Clone)]
+struct SelectedExclusionState {
+    worktree_id: WorktreeId,
+    path: Arc<RelPath>,
+    excluded_entry: Option<String>,
+    next_selection: Option<(WorktreeId, ProjectEntryId)>,
 }
 
 /// Permanently deletes the selected file or directory.
@@ -366,6 +377,8 @@ actions!(
         ToggleHideGitIgnore,
         /// Toggles visibility of hidden files.
         ToggleHideHidden,
+        /// Toggles whether the selected project entry is excluded from the project panel.
+        ToggleExcluded,
         /// Starts a new search in the selected directory.
         NewSearchInDirectory,
         /// Unfolds the selected directory.
@@ -830,6 +843,8 @@ impl ProjectPanel {
             .detach();
 
             let mut project_panel_settings = *ProjectPanelSettings::get_global(cx);
+            let mut project_panel_exclusion_settings =
+                HashMap::<WorktreeId, ProjectPanelExclusionSettings>::default();
             cx.observe_global_in::<SettingsStore>(window, move |this, window, cx| {
                 let new_settings = *ProjectPanelSettings::get_global(cx);
                 if project_panel_settings != new_settings {
@@ -851,6 +866,11 @@ impl ProjectPanel {
                     project_panel_settings = new_settings;
                     this.update_diagnostics(cx);
                     cx.notify();
+                }
+                let new_exclusion_settings = this.project_panel_exclusion_settings_by_worktree(cx);
+                if project_panel_exclusion_settings != new_exclusion_settings {
+                    project_panel_exclusion_settings = new_exclusion_settings;
+                    this.update_visible_entries(None, false, false, window, cx);
                 }
             })
             .detach();
@@ -1167,6 +1187,7 @@ impl ProjectPanel {
             let is_local = project.is_local() || project.is_via_wsl_with_host_interop(cx);
 
             let settings = ProjectPanelSettings::get_global(cx);
+            let exclusion_state = self.selected_exclusion_state(cx);
             let visible_worktrees_count = project.visible_worktrees(cx).count();
             let should_hide_rename = is_root
                 && (cfg!(target_os = "windows")
@@ -1221,6 +1242,16 @@ impl ProjectPanel {
                             })
                             .when(is_foldable, |menu| {
                                 menu.action("Fold Directory", Box::new(FoldDirectory))
+                            })
+                            .when_some(exclusion_state.clone(), |menu, exclusion_state| {
+                                menu.separator().action(
+                                    if exclusion_state.excluded_entry.is_some() {
+                                        "Cancel Exclusion"
+                                    } else {
+                                        "Exclude from Project Panel"
+                                    },
+                                    Box::new(ToggleExcluded),
+                                )
                             })
                             .when(should_show_compare, |menu| {
                                 menu.separator()
@@ -1317,6 +1348,63 @@ impl ProjectPanel {
             }
         }
         false
+    }
+
+    fn project_panel_exclusion_settings<'a>(
+        &self,
+        worktree_id: WorktreeId,
+        cx: &'a App,
+    ) -> &'a ProjectPanelExclusionSettings {
+        ProjectPanelExclusionSettings::for_worktree(worktree_id, cx)
+    }
+
+    fn project_panel_exclusion_settings_by_worktree(
+        &self,
+        cx: &App,
+    ) -> HashMap<WorktreeId, ProjectPanelExclusionSettings> {
+        self.project
+            .read(cx)
+            .visible_worktrees(cx)
+            .map(|worktree| {
+                let worktree_id = worktree.read(cx).id();
+                (
+                    worktree_id,
+                    self.project_panel_exclusion_settings(worktree_id, cx)
+                        .clone(),
+                )
+            })
+            .collect()
+    }
+
+    fn selected_exclusion_state(&self, cx: &App) -> Option<SelectedExclusionState> {
+        let (worktree, entry) = self.selected_sub_entry(cx)?;
+        let entry_id = entry.id;
+        let path = entry.path.clone();
+        if path.is_empty() {
+            return None;
+        }
+
+        let worktree = worktree.read(cx);
+        let worktree_id = worktree.id();
+        let exclusion_settings = self.project_panel_exclusion_settings(worktree_id, cx);
+        let excluded_entry = exclusion_settings
+            .nearest_excluded_entry(&path)
+            .map(str::to_string);
+        let next_selection = if excluded_entry.is_none() && !exclusion_settings.show_excluded {
+            let parent_path = path.parent().unwrap_or(RelPath::empty());
+            worktree
+                .entry_for_path(parent_path)
+                .map(|parent| (worktree_id, parent.id))
+        } else {
+            Some((worktree_id, entry_id))
+        };
+
+        Some(SelectedExclusionState {
+            worktree_id,
+            path,
+            excluded_entry,
+            next_selection,
+        })
     }
 
     fn is_unfoldable(&self, entry: &Entry, worktree: &Worktree) -> bool {
@@ -3420,6 +3508,68 @@ impl ProjectPanel {
         }
     }
 
+    fn toggle_excluded(&mut self, _: &ToggleExcluded, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(exclusion_state) = self.selected_exclusion_state(cx) else {
+            return;
+        };
+
+        let worktree_id = exclusion_state.worktree_id;
+        let settings_path =
+            self.project
+                .read(cx)
+                .worktree_for_id(worktree_id, cx)
+                .map(|worktree| {
+                    worktree
+                        .read(cx)
+                        .abs_path()
+                        .join(Path::new(".zed/settings.json"))
+                });
+        let Some(settings_path) = settings_path else {
+            return;
+        };
+
+        let fs = self.fs.clone();
+        let next_selection = exclusion_state.next_selection;
+        let excluded_entry = exclusion_state.excluded_entry.clone();
+        let selected_path = exclusion_state.path.clone();
+        cx.spawn_in(window, async move |this, cx| {
+            let old_text = if fs.is_file(&settings_path).await {
+                fs.load(&settings_path).await?
+            } else {
+                "{}".to_string()
+            };
+
+            let new_text = update_project_panel_exclusions_in_text(
+                &old_text,
+                &selected_path,
+                excluded_entry.as_deref(),
+            )?;
+            fs.atomic_write(settings_path, new_text.clone()).await?;
+
+            this.update_in(cx, |this, window, cx| -> anyhow::Result<()> {
+                cx.update_global::<SettingsStore, _>(|settings, cx| {
+                    settings.set_local_settings(
+                        worktree_id,
+                        LocalSettingsPath::InWorktree(RelPath::empty().into()),
+                        LocalSettingsKind::Settings,
+                        Some(&new_text),
+                        cx,
+                    )
+                })?;
+                this.update_visible_entries(next_selection, false, false, window, cx);
+                Ok(())
+            })??;
+
+            Ok(())
+        })
+        .detach_and_prompt_err(
+            "Failed to update project panel exclusions",
+            window,
+            cx,
+            |_, _, _| None,
+        );
+    }
+
     fn remove_from_project(
         &mut self,
         _: &RemoveFromProject,
@@ -3872,7 +4022,14 @@ impl ProjectPanel {
 
         let visible_worktrees: Vec<_> = project
             .visible_worktrees(cx)
-            .map(|worktree| worktree.read(cx).snapshot())
+            .map(|worktree| {
+                let worktree = worktree.read(cx);
+                (
+                    worktree.snapshot(),
+                    self.project_panel_exclusion_settings(worktree.id(), cx)
+                        .clone(),
+                )
+            })
             .collect();
         let hide_root = settings.hide_root && visible_worktrees.len() == 1;
         let hide_hidden = settings.hide_hidden;
@@ -3880,7 +4037,7 @@ impl ProjectPanel {
         let visible_entries_task = cx.spawn_in(window, async move |this, cx| {
             let new_state = cx
                 .background_spawn(async move {
-                    for worktree_snapshot in visible_worktrees {
+                    for (worktree_snapshot, exclusion_settings) in visible_worktrees {
                         let worktree_id = worktree_snapshot.id();
 
                         let mut new_entry_parent_id = None;
@@ -3911,6 +4068,15 @@ impl ProjectPanel {
                                         new_entry_kind,
                                     ));
                                     new_entry_parent_id = None;
+                                }
+                                entry_iter.advance();
+                                continue;
+                            }
+                            let is_excluded = exclusion_settings.is_path_excluded(&entry.path);
+                            if !exclusion_settings.show_excluded && is_excluded {
+                                auto_folded_ancestors.clear();
+                                if entry.kind.is_dir() && entry_iter.advance_to_sibling() {
+                                    continue;
                                 }
                                 entry_iter.advance();
                                 continue;
@@ -4128,6 +4294,25 @@ impl ProjectPanel {
                         worktree_id,
                         entry_id,
                     });
+                }
+                let visible_selections = this
+                    .state
+                    .visible_entries
+                    .iter()
+                    .flat_map(|visible| {
+                        visible.entries.iter().map(|entry| SelectedEntry {
+                            worktree_id: visible.worktree_id,
+                            entry_id: entry.id,
+                        })
+                    })
+                    .collect::<HashSet<_>>();
+                this.marked_entries
+                    .retain(|selection| visible_selections.contains(selection));
+                if this
+                    .selection
+                    .is_some_and(|selection| !visible_selections.contains(&selection))
+                {
+                    this.selection = None;
                 }
                 let elapsed = now.elapsed();
                 if this.last_reported_update.elapsed() > Duration::from_secs(3600) {
@@ -5123,6 +5308,11 @@ impl ProjectPanel {
         }
 
         let filename_text_color = details.filename_text_color;
+        let icon_color = if details.is_excluded {
+            Color::Excluded
+        } else {
+            Color::Muted
+        };
         let diagnostic_severity = details.diagnostic_severity;
         let diagnostic_count = details.diagnostic_count;
         let item_colors = get_item_color(is_sticky, cx);
@@ -5621,7 +5811,7 @@ impl ProjectPanel {
                                 .unwrap_or(false);
                             div().child(
                                 DecoratedIcon::new(
-                                    Icon::from_path(icon.clone()).color(Color::Muted),
+                                    Icon::from_path(icon.clone()).color(icon_color),
                                     Some(
                                         IconDecoration::new(
                                             if kind.is_file() {
@@ -5648,7 +5838,7 @@ impl ProjectPanel {
                                 .into_any_element(),
                             )
                         } else {
-                            h_flex().child(Icon::from_path(icon.to_string()).color(Color::Muted))
+                            h_flex().child(Icon::from_path(icon.to_string()).color(icon_color))
                         }
                     } else if let Some((icon_name, color)) =
                         entry_diagnostic_aware_icon_name_and_color(diagnostic_severity)
@@ -6026,8 +6216,14 @@ impl ProjectPanel {
             .get(&(worktree_id, entry.path.clone()))
             .copied();
 
-        let filename_text_color =
-            entry_git_aware_label_color(git_status, entry.is_ignored, is_marked);
+        let is_excluded = self
+            .project_panel_exclusion_settings(worktree_id, cx)
+            .is_path_excluded(&entry.path);
+        let filename_text_color = if is_excluded {
+            Color::Excluded
+        } else {
+            entry_git_aware_label_color(git_status, entry.is_ignored, is_marked)
+        };
 
         let is_cut = self
             .clipboard
@@ -6040,6 +6236,7 @@ impl ProjectPanel {
             path: entry.path.clone(),
             depth,
             kind: entry.kind,
+            is_excluded,
             is_ignored: entry.is_ignored,
             is_expanded,
             is_selected,
@@ -6087,6 +6284,13 @@ impl ProjectPanel {
             .context("can't reveal a non-existent entry in the project panel")?;
         let worktree = worktree.read(cx);
         let worktree_id = worktree.id();
+        let is_excluded = worktree.entry_for_id(entry_id).is_some_and(|entry| {
+            let exclusion_settings = self.project_panel_exclusion_settings(worktree_id, cx);
+            !exclusion_settings.show_excluded && exclusion_settings.is_path_excluded(&entry.path)
+        });
+        if is_excluded {
+            anyhow::bail!("can't reveal an excluded entry in the project panel");
+        }
         let is_ignored = worktree
             .entry_for_id(entry_id)
             .is_none_or(|entry| entry.is_ignored && !entry.is_always_included);
@@ -6475,6 +6679,7 @@ impl Render for ProjectPanel {
                 .on_action(cx.listener(Self::new_search_in_directory))
                 .on_action(cx.listener(Self::unfold_directory))
                 .on_action(cx.listener(Self::fold_directory))
+                .on_action(cx.listener(Self::toggle_excluded))
                 .on_action(cx.listener(Self::remove_from_project))
                 .on_action(cx.listener(Self::compare_marked_files))
                 .when(!project.is_read_only(cx), |el| {
@@ -6984,6 +7189,85 @@ impl Render for ProjectPanel {
                 })
         }
     }
+}
+
+fn update_project_panel_exclusions_in_text(
+    old_text: &str,
+    selected_path: &RelPath,
+    excluded_entry_to_remove: Option<&str>,
+) -> Result<String> {
+    let old_content = if old_text.trim().is_empty() {
+        ProjectSettingsContent::default()
+    } else {
+        parse_json_with_comments::<ProjectSettingsContent>(old_text)?
+    };
+    let mut new_content = old_content.clone();
+    let project_panel = new_content.project_panel.get_or_insert_default();
+    let mut excluded_entries = normalize_project_panel_excluded_entries(
+        project_panel.excluded_entries.take().unwrap_or_default(),
+    );
+
+    if let Some(excluded_entry_to_remove) = excluded_entry_to_remove {
+        excluded_entries.retain(|entry| entry != excluded_entry_to_remove);
+    } else {
+        let selected_path = selected_path.as_unix_str();
+        excluded_entries.retain(|entry| {
+            !entry
+                .strip_prefix(selected_path)
+                .is_some_and(|suffix| suffix.starts_with('/'))
+        });
+        excluded_entries.push(selected_path.to_string());
+        excluded_entries.sort();
+        excluded_entries.dedup();
+    }
+
+    if excluded_entries.is_empty() {
+        project_panel.excluded_entries = None;
+    } else {
+        project_panel.excluded_entries = Some(excluded_entries);
+    }
+
+    if project_panel.excluded_entries.is_none() && project_panel.show_excluded.is_none() {
+        new_content.project_panel = None;
+    }
+
+    let old_value = serde_json::to_value(&old_content)?;
+    let new_value = serde_json::to_value(&new_content)?;
+
+    let mut key_path = Vec::new();
+    let mut edits = Vec::new();
+    let mut text = old_text.to_string();
+    update_value_in_json_text(
+        &mut text,
+        &mut key_path,
+        infer_json_indent_size(old_text),
+        &old_value,
+        &new_value,
+        &mut edits,
+    );
+
+    for (range, replacement) in edits {
+        text.replace_range(range, &replacement);
+    }
+
+    Ok(text)
+}
+
+fn normalize_project_panel_excluded_entries(entries: Vec<String>) -> Vec<String> {
+    let mut excluded_entries = entries
+        .into_iter()
+        .filter_map(|entry| {
+            RelPath::new(Path::new(&entry), PathStyle::local())
+                .with_context(|| {
+                    format!("Failed to parse project panel excluded entry path {entry:?}")
+                })
+                .log_err()
+                .map(|path| path.into_owned().as_unix_str().to_string())
+        })
+        .collect::<Vec<_>>();
+    excluded_entries.sort();
+    excluded_entries.dedup();
+    excluded_entries
 }
 
 impl Render for DraggedProjectEntryView {

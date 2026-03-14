@@ -32,6 +32,7 @@ pub(crate) fn apply_status_color_defaults(status: &mut StatusColorsRefinement) {
         (&status.modified, &mut status.modified_background),
         (&status.conflict, &mut status.conflict_background),
         (&status.error, &mut status.error_background),
+        (&status.excluded, &mut status.excluded_background),
         (&status.hidden, &mut status.hidden_background),
     ] {
         if bg_color.is_none()
@@ -282,6 +283,9 @@ pub(crate) fn zed_default_dark() -> Theme {
                 error: red,
                 error_background: red,
                 error_border: red,
+                excluded: orange,
+                excluded_background: orange,
+                excluded_border: orange,
                 hidden: gray,
                 hidden_background: gray,
                 hidden_border: gray,

@@ -48,6 +48,9 @@ pub struct ProjectSettingsContent {
     #[serde(flatten)]
     pub worktree: WorktreeSettingsContent,
 
+    /// Settings for project-panel-only exclusions.
+    pub project_panel: Option<ProjectPanelProjectSettingsContent>,
+
     /// Configuration for language servers.
     ///
     /// The following settings can be overridden for specific language servers:
@@ -88,6 +91,20 @@ pub struct ProjectSettingsContent {
     ///
     /// Default: false
     pub disable_ai: Option<SaturatingBool>,
+}
+
+#[with_fallible_options]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom)]
+pub struct ProjectPanelProjectSettingsContent {
+    /// Whether to show excluded entries in the project panel.
+    ///
+    /// Default: false
+    pub show_excluded: Option<bool>,
+
+    /// Relative paths from the project root that should be excluded from the project panel.
+    ///
+    /// Default: []
+    pub excluded_entries: Option<Vec<String>>,
 }
 
 #[with_fallible_options]
