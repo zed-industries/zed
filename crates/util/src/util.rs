@@ -727,6 +727,13 @@ pub fn word_consists_of_emojis(s: &str) -> bool {
     prev_end == s.len()
 }
 
+/// Check if a character is an emoji using Unicode properties.
+pub fn is_emoji_character(c: char) -> bool {
+    let mut buf = [0u8; 4];
+    let s = c.encode_utf8(&mut buf);
+    emoji_regex().is_match(s)
+}
+
 /// Similar to `str::split`, but also provides byte-offset ranges of the results. Unlike
 /// `str::split`, this is not generic on pattern types and does not return an `Iterator`.
 pub fn split_str_with_ranges<'s>(
@@ -966,6 +973,27 @@ mod tests {
 
         for (text, expected_result) in words_to_test {
             assert_eq!(word_consists_of_emojis(text), expected_result);
+        }
+    }
+
+    #[test]
+    fn test_char_is_emoji() {
+        let chars_to_test = vec![
+            ('👋', true),
+            ('✅', true),
+            ('©', true),
+            ('♥', true),
+            ('a', false),
+            ('Z', false),
+            ('1', false),
+            (' ', false),
+            ('漢', false),
+            ('中', false),
+            ('カ', false),
+        ];
+
+        for (text, expected_result) in chars_to_test {
+            assert_eq!(is_emoji_character(text), expected_result);
         }
     }
 

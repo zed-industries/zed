@@ -7661,6 +7661,7 @@ dependencies = [
  "rand 0.9.2",
  "raw-window-handle",
  "refineable",
+ "regex",
  "reqwest_client",
  "resvg",
  "scheduler",
@@ -7679,6 +7680,7 @@ dependencies = [
  "unicode-segmentation",
  "url",
  "usvg",
+ "util",
  "util_macros",
  "uuid",
  "waker-fn",
@@ -14486,12 +14488,15 @@ version = "0.45.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a8928798c0a55e03c9ca6c4c6846f76377427d2c1e1f7e6de3c06ae57942df43"
 dependencies = [
+ "gif",
+ "image-webp",
  "log",
  "pico-args",
  "rgb",
  "svgtypes",
  "tiny-skia",
  "usvg",
+ "zune-jpeg",
 ]
 
 [[package]]

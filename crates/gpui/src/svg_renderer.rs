@@ -9,6 +9,23 @@ use std::{
     hash::Hash,
     sync::{Arc, LazyLock},
 };
+use util::is_emoji_character;
+
+/// Emoji font families for each platform
+/// Hardcoded for simplicity
+#[cfg(target_os = "macos")]
+const EMOJI_FONT_FAMILIES: &[&str] = &["Apple Color Emoji", ".AppleColorEmojiUI"];
+
+#[cfg(target_os = "windows")]
+const EMOJI_FONT_FAMILIES: &[&str] = &["Segoe UI Emoji", "Segoe UI Symbol"];
+
+#[cfg(any(target_os = "linux", target_os = "freebsd"))]
+const EMOJI_FONT_FAMILIES: &[&str] = &[
+    "Noto Color Emoji",
+    "Emoji One",
+    "Twitter Color Emoji",
+    "JoyPixels",
+];
 
 /// When rendering SVGs, we render them at twice the size to get a higher-quality result.
 pub const SMOOTH_SVG_SCALE_FACTOR: f32 = 2.;
@@ -52,10 +69,40 @@ impl SvgRenderer {
                 default_font_resolver(font, db)
             },
         );
+        let default_fallback_selection = usvg::FontResolver::default_fallback_selector();
+        let fallback_selection = Box::new(
+            move |ch: char, fonts: &[usvg::fontdb::ID], db: &mut Arc<usvg::fontdb::Database>| {
+                // Check if this is an emoji character
+                if is_emoji_character(ch) {
+                    // Build a list of emoji font families to query
+                    let families: SmallVec<[usvg::fontdb::Family; 8]> = EMOJI_FONT_FAMILIES
+                        .iter()
+                        .map(|&name| usvg::fontdb::Family::Name(name))
+                        .collect();
+
+                    let query = usvg::fontdb::Query {
+                        families: &families,
+                        weight: usvg::fontdb::Weight(400),
+                        stretch: usvg::fontdb::Stretch::Normal,
+                        style: usvg::fontdb::Style::Normal,
+                    };
+
+                    // Query returns the first matching font from the prioritized list
+                    if let Some(id) = db.query(&query) {
+                        if !fonts.contains(&id) {
+                            return Some(id);
+                        }
+                    }
+                }
+
+                // Fall back to default behavior for non-emoji or when no emoji font found
+                default_fallback_selection(ch, fonts, db)
+            },
+        );
         let options = usvg::Options {
             font_resolver: usvg::FontResolver {
                 select_font: font_resolver,
-                select_fallback: usvg::FontResolver::default_fallback_selector(),
+                select_fallback: fallback_selection,
             },
             ..Default::default()
         };
