@@ -17,6 +17,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"log"
 	"net"
@@ -507,11 +508,46 @@ func (d *testDriver) validate() bool {
 				log.Printf("[test-server] Completed interaction %s: %d bytes response, session=%s",
 					truncate(i.ID, 12), len(i.ResponseMessage), truncate(i.SessionID, 12))
 			}
-			// Verify structured response entries are populated
+			// Verify structured response entries are populated and have correct types
 			if len(i.ResponseEntries) == 0 {
-				log.Printf("[test-server] WARNING: Interaction %s has no ResponseEntries (structured entries)", truncate(i.ID, 12))
+				errors = append(errors, fmt.Sprintf("Interaction %s: complete but no ResponseEntries (structured entries missing!)",
+					truncate(i.ID, 12)))
 			} else {
-				log.Printf("[test-server] Interaction %s: %d response_entries", truncate(i.ID, 12), len(i.ResponseEntries))
+				// Parse entries to validate types
+				var entries []struct {
+					Type      string `json:"type"`
+					Content   string `json:"content"`
+					MessageID string `json:"message_id"`
+				}
+				if err := json.Unmarshal(i.ResponseEntries, &entries); err != nil {
+					errors = append(errors, fmt.Sprintf("Interaction %s: failed to parse ResponseEntries: %v",
+						truncate(i.ID, 12), err))
+				} else {
+					hasText := false
+					hasToolCall := false
+					for _, e := range entries {
+						if e.Type == "text" {
+							hasText = true
+						}
+						if e.Type == "tool_call" {
+							hasToolCall = true
+						}
+						if e.Type != "text" && e.Type != "tool_call" {
+							errors = append(errors, fmt.Sprintf("Interaction %s: unexpected entry type %q (expected 'text' or 'tool_call')",
+								truncate(i.ID, 12), e.Type))
+						}
+						if e.Content == "" {
+							errors = append(errors, fmt.Sprintf("Interaction %s: entry %s has empty content",
+								truncate(i.ID, 12), e.MessageID))
+						}
+					}
+					if !hasText {
+						errors = append(errors, fmt.Sprintf("Interaction %s: ResponseEntries has no 'text' entries (expected at least one)",
+							truncate(i.ID, 12)))
+					}
+					log.Printf("[test-server] Interaction %s: %d response_entries (text=%v, tool_call=%v)",
+						truncate(i.ID, 12), len(entries), hasText, hasToolCall)
+				}
 			}
 		}
 	}
