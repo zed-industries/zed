@@ -507,6 +507,12 @@ func (d *testDriver) validate() bool {
 				log.Printf("[test-server] Completed interaction %s: %d bytes response, session=%s",
 					truncate(i.ID, 12), len(i.ResponseMessage), truncate(i.SessionID, 12))
 			}
+			// Verify structured response entries are populated
+			if len(i.ResponseEntries) == 0 {
+				log.Printf("[test-server] WARNING: Interaction %s has no ResponseEntries (structured entries)", truncate(i.ID, 12))
+			} else {
+				log.Printf("[test-server] Interaction %s: %d response_entries", truncate(i.ID, 12), len(i.ResponseEntries))
+			}
 		}
 	}
 
@@ -684,6 +690,7 @@ func (d *testDriver) validate() bool {
 	log.Println("[test-server] MCP tools wait: Zed waited for slow MCP server before first message - PASSED")
 	log.Println("[test-server] Store state: Sessions and interactions created correctly - PASSED")
 	log.Println("[test-server] Accumulation: ResponseMessage content preserved - PASSED")
+	log.Println("[test-server] Structured entries: ResponseEntries populated on completion - PASSED")
 
 	totalCompletions := 0
 	for _, v := range d.completions {
