@@ -2869,14 +2869,23 @@ impl Editor {
         }
 
         let disjoint = self.selections.disjoint_anchors();
-        let snapshot = self.snapshot(window, cx);
-        let snapshot = snapshot.buffer_snapshot();
-        if self.mode == EditorMode::SingleLine
-            && let [selection] = disjoint
+        if matches!(
+            &self.mode,
+            EditorMode::SingleLine | EditorMode::AutoHeight { .. }
+        ) && let [selection] = disjoint
             && selection.start == selection.end
-            && selection.end.to_offset(snapshot) == snapshot.len()
         {
-            key_context.add("end_of_input");
+            let snapshot = self.snapshot(window, cx);
+            let snapshot = snapshot.buffer_snapshot();
+            let caret_offset = selection.end.to_offset(snapshot);
+
+            if caret_offset == MultiBufferOffset(0) {
+                key_context.add("start_of_input");
+            }
+
+            if caret_offset == snapshot.len() {
+                key_context.add("end_of_input");
+            }
         }
 
         if self.has_any_expanded_diff_hunks(cx) {

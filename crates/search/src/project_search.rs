@@ -858,7 +858,7 @@ impl ProjectSearchView {
         }));
 
         let query_editor = cx.new(|cx| {
-            let mut editor = Editor::single_line(window, cx);
+            let mut editor = Editor::auto_height(1, 4, window, cx);
             editor.set_placeholder_text("Search all files…", window, cx);
             editor.set_text(query_text, window, cx);
             editor
@@ -881,7 +881,7 @@ impl ProjectSearchView {
             }),
         );
         let replacement_editor = cx.new(|cx| {
-            let mut editor = Editor::single_line(window, cx);
+            let mut editor = Editor::auto_height(1, 4, window, cx);
             editor.set_placeholder_text("Replace in project…", window, cx);
             if let Some(text) = replacement_text {
                 editor.set_text(text, window, cx);
@@ -2076,7 +2076,11 @@ impl Render for ProjectSearchBar {
             .on_action(
                 cx.listener(|this, action, window, cx| this.next_history_query(action, window, cx)),
             )
-            .child(render_text_input(&search.query_editor, color_override, cx))
+            .child(div().flex_1().py_1().child(render_text_input(
+                &search.query_editor,
+                color_override,
+                cx,
+            )))
             .child(
                 h_flex()
                     .gap_1()
@@ -2234,8 +2238,13 @@ impl Render for ProjectSearchBar {
             .child(mode_column);
 
         let replace_line = search.replace_enabled.then(|| {
-            let replace_column = input_base_styles(InputPanel::Replacement)
-                .child(render_text_input(&search.replacement_editor, None, cx));
+            let replace_column = input_base_styles(InputPanel::Replacement).child(
+                div().flex_1().py_1().child(render_text_input(
+                    &search.replacement_editor,
+                    None,
+                    cx,
+                )),
+            );
 
             let focus_handle = search.replacement_editor.read(cx).focus_handle(cx);
 
