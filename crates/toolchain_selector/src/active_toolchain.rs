@@ -80,16 +80,26 @@ impl ActiveToolchain {
                     this.term = meta.term;
                     cx.notify();
                 });
-                let (worktree_id, path) = active_file
+                let (worktree_id, path, file_relative_path) = active_file
                     .update(cx, |this, cx| {
                         this.file().and_then(|file| {
-                            Some((file.worktree_id(cx), file.path().parent()?.into()))
+                            let worktree_id = file.worktree_id(cx);
+                            let parent = file.path().parent()?.into();
+                            let file_path = file.path().clone();
+                            Some((worktree_id, parent, file_path))
                         })
                     })
                     .ok()
                     .flatten()?;
-                let toolchain =
-                    Self::active_toolchain(workspace, worktree_id, path, language_name, cx).await?;
+                let toolchain = Self::active_toolchain(
+                    workspace,
+                    worktree_id,
+                    path,
+                    file_relative_path,
+                    language_name,
+                    cx,
+                )
+                .await?;
                 this.update(cx, |this, cx| {
                     this.active_toolchain = Some(toolchain);
 
@@ -140,6 +150,7 @@ impl ActiveToolchain {
         workspace: WeakEntity<Workspace>,
         worktree_id: WorktreeId,
         relative_path: Arc<RelPath>,
+        file_relative_path: Arc<RelPath>,
         language_name: LanguageName,
         cx: &mut AsyncWindowContext,
     ) -> Task<Option<Toolchain>> {
@@ -167,6 +178,59 @@ impl ActiveToolchain {
                 let project = workspace
                     .read_with(cx, |this, _| this.project().clone())
                     .ok()?;
+
+                // Try resolving a file-specific toolchain (e.g., PEP 723 inline scripts).
+                let file_abs_path = project.read_with(cx, |this, cx| {
+                    this.worktree_for_id(worktree_id, cx).map(|wt| {
+                        wt.read(cx)
+                            .abs_path()
+                            .join(file_relative_path.as_std_path())
+                    })
+                });
+                if let Some(file_abs_path) = file_abs_path {
+                    let resolve_result = cx
+                        .update(|_, cx| {
+                            project.read(cx).resolve_toolchain(
+                                file_abs_path,
+                                language_name.clone(),
+                                cx,
+                            )
+                        })
+                        .ok();
+                    let resolved = match resolve_result {
+                        Some(task) => task.await.ok(),
+                        None => None,
+                    };
+                    if let Some(toolchain) = resolved {
+                        let worktree_root_path = project.read_with(cx, |this, cx| {
+                            this.worktree_for_id(worktree_id, cx)
+                                .map(|worktree| worktree.read(cx).abs_path())
+                        })?;
+                        workspace::WORKSPACE_DB
+                            .set_toolchain(
+                                workspace_id,
+                                worktree_root_path,
+                                relative_path.clone(),
+                                toolchain.clone(),
+                            )
+                            .await
+                            .ok()?;
+                        project
+                            .update(cx, |this, cx| {
+                                this.activate_toolchain(
+                                    ProjectPath {
+                                        worktree_id,
+                                        path: relative_path.clone(),
+                                    },
+                                    toolchain.clone(),
+                                    cx,
+                                )
+                            })
+                            .await;
+                        return Some(toolchain);
+                    }
+                }
+
                 let Toolchains {
                     toolchains,
                     root_path: relative_path,
