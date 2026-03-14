@@ -11389,6 +11389,119 @@ async fn test_undo_encoding_change(cx: &mut gpui::TestAppContext) {
     });
 }
 
+#[gpui::test]
+async fn test_initial_scan_complete(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/root"),
+        json!({
+            "a": {
+                ".git": {},
+                ".zed": {
+                    "tasks.json": r#"[{"label": "task-a", "command": "echo a"}]"#
+                },
+                "src": { "main.rs": "" }
+            },
+            "b": {
+                ".git": {},
+                ".zed": {
+                    "tasks.json": r#"[{"label": "task-b", "command": "echo b"}]"#
+                },
+                "src": { "lib.rs": "" }
+            },
+        }),
+    )
+    .await;
+
+    // Set up an observer to track Repository creations BEFORE the project is
+    // built. This proves that repos are created during the scan, not after.
+    let repos_created = Rc::new(RefCell::new(Vec::new()));
+    let _observe = {
+        let repos_created = repos_created.clone();
+        cx.update(|cx| {
+            cx.observe_new::<Repository>(move |repo, _, cx| {
+                repos_created.borrow_mut().push(cx.entity().downgrade());
+                let _ = repo;
+            })
+        })
+    };
+
+    let project = Project::test(
+        fs.clone(),
+        [path!("/root/a").as_ref(), path!("/root/b").as_ref()],
+        cx,
+    )
+    .await;
+
+    // Wait for all visible worktrees to finish their initial scan
+    let scan_complete = project.read_with(cx, |project, cx| project.wait_for_initial_scan(cx));
+    scan_complete.await;
+
+    // WorktreeStore should report initial scan as completed
+    project.read_with(cx, |project, cx| {
+        assert!(
+            project.worktree_store().read(cx).initial_scan_completed(),
+            "Expected initial scan to be completed after awaiting wait_for_initial_scan"
+        );
+    });
+
+    // Repositories should have been created during the scan (observed via observe_new)
+    let created_repos = repos_created.borrow();
+    assert_eq!(
+        created_repos.len(),
+        2,
+        "Expected 2 repositories to be created during scan, got {}",
+        created_repos.len()
+    );
+
+    // GitStore should contain both repositories
+    project.read_with(cx, |project, cx| {
+        let git_store = project.git_store().read(cx);
+        assert_eq!(
+            git_store.repositories().len(),
+            2,
+            "Expected 2 repositories in GitStore"
+        );
+    });
+
+    // Wait for any task inventory updates triggered by the scan
+    let tasks_complete = project.update(cx, |project, cx| {
+        project
+            .task_store()
+            .update(cx, |store, _| store.pending_updates_completed())
+    });
+    tasks_complete.await;
+
+    // Verify task inventory has tasks from both worktrees
+    let (inventory, worktree_ids) = project.read_with(cx, |project, cx| {
+        let inventory = project
+            .task_store()
+            .read(cx)
+            .task_inventory()
+            .unwrap()
+            .clone();
+        let worktree_ids: Vec<_> = project
+            .visible_worktrees(cx)
+            .map(|wt| wt.read(cx).id())
+            .collect();
+        (inventory, worktree_ids)
+    });
+
+    // Check tasks for each worktree
+    for worktree_id in &worktree_ids {
+        let tasks = inventory.update(cx, |inventory, cx| {
+            inventory.list_tasks(None, None, Some(*worktree_id), cx)
+        });
+        let task_labels: Vec<String> = tasks.await.into_iter().map(|(_, t)| t.label).collect();
+        assert!(
+            !task_labels.is_empty(),
+            "Expected tasks to be loaded for worktree {worktree_id:?}, got none"
+        );
+    }
+}
+
 pub fn init_test(cx: &mut gpui::TestAppContext) {
     zlog::init_test();
 
