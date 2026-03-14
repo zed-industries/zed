@@ -25,11 +25,6 @@ jobs:
       with:
         clean: false
 
-    - name: Pin Xcode version
-      uses: maxim-lobanov/setup-xcode@60606e260d2fc5762a71e64e74b2174e8ea3c8bd
-      with:
-        xcode-version: '16.0'
-
     - name: Install Rust toolchain
       uses: dtolnay/rust-toolchain@stable
 
