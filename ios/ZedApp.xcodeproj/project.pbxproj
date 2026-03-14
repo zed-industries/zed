@@ -17,7 +17,7 @@
 		AA0000000000000000000011 /* SceneDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SceneDelegate.swift; sourceTree = "<group>"; };
 		AA0000000000000000000012 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		AA0000000000000000000013 /* ZedApp-Bridging-Header.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = "ZedApp-Bridging-Header.h"; sourceTree = "<group>"; };
-		AA0000000000000000000014 /* ZedApp.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = ZedApp.entitlements; sourceTree = "<group>"; };
+		AA0000000000000000000014 /* ZedApp.Entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.Entitlements; path = ZedApp.Entitlements; sourceTree = "<group>"; };
 		AA0000000000000000000015 /* ZedApp.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = ZedApp.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		AA0000000000000000000016 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 /* End PBXFileReference section */
@@ -57,7 +57,7 @@
 				AA0000000000000000000011 /* SceneDelegate.swift */,
 				AA0000000000000000000013 /* ZedApp-Bridging-Header.h */,
 				AA0000000000000000000005 /* Supporting Files */,
-				AA0000000000000000000006 /* entitlements */,
+				AA0000000000000000000006 /* Entitlements */,
 			);
 			path = ZedApp;
 			sourceTree = "<group>";
@@ -70,12 +70,12 @@
 			path = "Supporting Files";
 			sourceTree = "<group>";
 		};
-		AA0000000000000000000006 /* entitlements */ = {
+		AA0000000000000000000006 /* Entitlements */ = {
 			isa = PBXGroup;
 			children = (
-				AA0000000000000000000014 /* ZedApp.entitlements */,
+				AA0000000000000000000014 /* ZedApp.Entitlements */,
 			);
-			path = entitlements;
+			path = Entitlements;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -304,7 +304,7 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIconDev;
-				CODE_SIGN_ENTITLEMENTS = ZedApp/entitlements/ZedApp.entitlements;
+				CODE_SIGN_ENTITLEMENTS = ZedApp/Entitlements/ZedApp.Entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				GENERATE_INFOPLIST_FILE = NO;
@@ -345,7 +345,7 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
-				CODE_SIGN_ENTITLEMENTS = ZedApp/entitlements/ZedApp.entitlements;
+				CODE_SIGN_ENTITLEMENTS = ZedApp/Entitlements/ZedApp.Entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				GENERATE_INFOPLIST_FILE = NO;
