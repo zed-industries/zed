@@ -135,6 +135,12 @@ pub struct AgentSettingsContent {
     ///
     /// Default: 4
     pub message_editor_min_lines: Option<usize>,
+    /// File size threshold in bytes. When a file exceeds this size, the agent will
+    /// receive a tree-sitter outline instead of the full file content when using
+    /// the read_file tool without line ranges.
+    ///
+    /// Default: 16384
+    pub auto_outline_threshold: Option<usize>,
     /// Whether to show turn statistics (elapsed time during generation, final turn duration).
     ///
     /// Default: false
