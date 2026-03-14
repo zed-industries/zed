@@ -104,6 +104,8 @@
   "image_viewer": {
     // The unit for image file sizes: "binary" (KiB, MiB) or decimal (KB, MB)
     "unit": "binary",
+    // How to interpolate scaled images: "linear" (smooth) or "nearest" (sharp pixels)
+    "image_smoothing": "linear",
   },
   // Determines the modifier to be used to add multiple cursors with the mouse. The open hover link mouse gestures will adapt such that it do not conflict with the multicursor modifier.
   //

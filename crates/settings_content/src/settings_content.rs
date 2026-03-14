@@ -1029,6 +1029,35 @@ pub struct ImageViewerSettingsContent {
     ///
     /// Default: "binary"
     pub unit: Option<ImageFileSizeUnit>,
+    /// How to interpolate scaled images.
+    ///
+    /// Default: "linear"
+    pub image_smoothing: Option<ImageSmoothing>,
+}
+
+/// Image interpolation filter mode.
+#[with_fallible_options]
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    MergeFrom,
+    Default,
+    PartialEq,
+    Eq,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum ImageSmoothing {
+    /// Use linear interpolation for smooth scaling.
+    #[default]
+    Linear,
+    /// Use nearest-neighbor interpolation for sharp pixels.
+    Nearest,
 }
 
 #[with_fallible_options]

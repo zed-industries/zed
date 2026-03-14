@@ -331,7 +331,7 @@ impl DirectXRenderer {
                 PrimitiveBatch::SubpixelSprites { texture_id, range } => {
                     self.draw_subpixel_sprites(texture_id, range.start, range.len())
                 }
-                PrimitiveBatch::PolychromeSprites { texture_id, range } => {
+                PrimitiveBatch::PolychromeSprites { texture_id, range, .. } => {
                     self.draw_polychrome_sprites(texture_id, range.start, range.len())
                 }
                 PrimitiveBatch::Surfaces(range) => self.draw_surfaces(&scene.surfaces[range]),
