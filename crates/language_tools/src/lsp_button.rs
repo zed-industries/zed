@@ -20,7 +20,7 @@ use project::{
     LspStore, LspStoreEvent, Worktree, lsp_store::log_store::GlobalLogStore,
     project_settings::ProjectSettings,
 };
-use settings::{Settings as _, SettingsStore};
+use settings::{Settings as _, SettingsStore, update_settings_file};
 use ui::{
     ContextMenu, ContextMenuEntry, Indicator, PopoverMenu, PopoverMenuHandle, Tooltip, prelude::*,
 };
@@ -537,6 +537,46 @@ impl LanguageServerState {
                                             .detach_and_log_err(cx);
                                     })
                                     .ok();
+                            });
+
+                            let lsp_store_for_disable = lsp_store.clone();
+                            let server_selector_for_disable = server_selector.clone();
+                            let server_name_for_disable = submenu_server_name.clone();
+                            let workspace_for_disable = workspace.clone();
+                            submenu = submenu.entry("Disable Server", None, move |_window, cx| {
+                                lsp_store_for_disable
+                                    .update(cx, |lsp_store, cx| {
+                                        lsp_store.suppress_language_server(
+                                            server_name_for_disable.clone(),
+                                        );
+                                        lsp_store
+                                            .stop_language_servers_for_buffers(
+                                                Vec::new(),
+                                                HashSet::from_iter([
+                                                    server_selector_for_disable.clone()
+                                                ]),
+                                                cx,
+                                            )
+                                            .detach_and_log_err(cx);
+                                    })
+                                    .ok();
+
+                                if let Some(workspace) = workspace_for_disable.upgrade() {
+                                    let fs = workspace.read(cx).project().read(cx).fs().clone();
+                                    let server_name = server_name_for_disable.0.to_string();
+                                    update_settings_file(fs, cx, move |content, _| {
+                                        let disabled_entry = format!("!{server_name}");
+                                        let defaults = &mut content.project.all_languages.defaults;
+                                        let servers = defaults
+                                            .language_servers
+                                            .get_or_insert_with(|| vec!["...".to_string()]);
+                                        if let Some(pos) = servers.iter().position(|s| *s == server_name) {
+                                            servers[pos] = disabled_entry;
+                                        } else if !servers.iter().any(|s| *s == disabled_entry) {
+                                            servers.push(disabled_entry);
+                                        }
+                                    });
+                                }
                             });
                         }
 

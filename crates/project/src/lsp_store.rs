@@ -329,6 +329,7 @@ pub struct LocalLspStore {
         HashMap<Option<SharedString>, HashMap<PathBuf, Option<SharedString>>>,
     >,
     restricted_worktrees_tasks: HashMap<WorktreeId, (Subscription, watch::Receiver<bool>)>,
+    suppressed_servers: HashSet<LanguageServerName>,
 
     buffers_to_refresh_hash_set: HashSet<BufferId>,
     buffers_to_refresh_queue: VecDeque<BufferId>,
@@ -4226,6 +4227,7 @@ impl LspStore {
                 buffer_pull_diagnostics_result_ids: HashMap::default(),
                 workspace_pull_diagnostics_result_ids: HashMap::default(),
                 restricted_worktrees_tasks: HashMap::default(),
+                suppressed_servers: HashSet::default(),
                 watched_manifest_filenames: ManifestProvidersStore::global(cx)
                     .manifest_file_names(),
             }),
@@ -5212,6 +5214,11 @@ impl LspStore {
                         )
                         .collect::<Vec<_>>();
                     for node in nodes {
+                        if let Some(name) = node.name() {
+                            if local.suppressed_servers.contains(&name) {
+                                continue;
+                            }
+                        }
                         let server_id = node.server_id_or_init(|disposition| {
                             let path = &disposition.path;
                             let uri = Uri::from_file_path(worktree.read(cx).absolutize(&path.path));
@@ -10872,8 +10879,29 @@ impl LspStore {
     }
 
     pub fn restart_all_language_servers(&mut self, cx: &mut Context<Self>) {
+        if let Some(local) = self.as_local_mut() {
+            local.suppressed_servers.clear();
+        }
         let buffers = self.buffer_store.read(cx).buffers().collect();
         self.restart_language_servers_for_buffers(buffers, HashSet::default(), cx);
+    }
+
+    pub fn suppress_language_server(&mut self, server_name: LanguageServerName) {
+        if let Some(local) = self.as_local_mut() {
+            local.suppressed_servers.insert(server_name);
+        }
+    }
+
+    pub fn unsuppress_language_server(&mut self, server_name: &LanguageServerName) {
+        if let Some(local) = self.as_local_mut() {
+            local.suppressed_servers.remove(server_name);
+        }
+    }
+
+    pub fn is_server_suppressed(&self, server_name: &LanguageServerName) -> bool {
+        self.as_local()
+            .map(|local| local.suppressed_servers.contains(server_name))
+            .unwrap_or(false)
     }
 
     pub fn restart_language_servers_for_buffers(
@@ -10913,6 +10941,13 @@ impl LspStore {
             });
             cx.background_spawn(request).detach_and_log_err(cx);
         } else {
+            if let Some(local) = self.as_local_mut() {
+                for selector in &only_restart_servers {
+                    if let LanguageServerSelector::Name(name) = selector {
+                        local.suppressed_servers.remove(name);
+                    }
+                }
+            }
             let stop_task = if only_restart_servers.is_empty() {
                 self.stop_local_language_servers_for_buffers(&buffers, HashSet::default(), cx)
             } else {
