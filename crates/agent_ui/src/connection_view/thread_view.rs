@@ -8077,7 +8077,91 @@ pub(crate) fn open_link(
             MentionUri::GitDiff { .. } => {}
             MentionUri::MergeConflict { .. } => {}
         })
+    } else if let Some((abs_path, row)) = parse_local_file_link(url.as_ref()) {
+        workspace.update(cx, |workspace, cx| {
+            let project = workspace.project();
+            let item = if let Some(project_path) =
+                project.update(cx, |project, cx| project.find_project_path(&abs_path, cx))
+            {
+                workspace.open_path(project_path, None, true, window, cx)
+            } else {
+                workspace.open_abs_path(abs_path, workspace::OpenOptions::default(), window, cx)
+            };
+
+            let row = row.saturating_sub(1);
+            window
+                .spawn(cx, async move |cx| {
+                    let Some(editor) = item.await?.downcast::<Editor>() else {
+                        return Ok(());
+                    };
+                    let point = Point::new(row, 0);
+                    editor
+                        .update_in(cx, |editor, window, cx| {
+                            editor.change_selections(
+                                SelectionEffects::scroll(Autoscroll::center()),
+                                window,
+                                cx,
+                                |selections| selections.select_ranges([point..point]),
+                            );
+                        })
+                        .ok();
+                    anyhow::Ok(())
+                })
+                .detach_and_log_err(cx);
+        });
     } else {
         cx.open_url(&url);
+    }
+}
+
+fn parse_local_file_link(url: &str) -> Option<(std::path::PathBuf, u32)> {
+    let path_with_position = util::paths::PathWithPosition::parse_str(url.trim());
+    if !path_with_position.path.is_absolute() {
+        return None;
+    }
+
+    let line = path_with_position.row?;
+    if path_with_position.column.is_some() {
+        return None;
+    }
+
+    Some((path_with_position.path, line))
+}
+
+#[cfg(test)]
+mod open_link_parsing_tests {
+    use super::parse_local_file_link;
+    use std::path::PathBuf;
+    use util::path;
+
+    #[test]
+    fn parses_absolute_path_with_line() {
+        let absolute_path = path!("/Users/test/project/file.rs");
+        assert_eq!(
+            parse_local_file_link(&format!("{absolute_path}:193")),
+            Some((PathBuf::from(absolute_path), 193))
+        );
+    }
+
+    #[test]
+    fn does_not_parse_non_absolute_or_unsupported_paths() {
+        let absolute_path = path!("/Users/test/project/file.rs");
+        assert_eq!(
+            parse_local_file_link(&format!(
+                "{}:193",
+                path!("crates/git_ui/src/commit_view.rs")
+            )),
+            None
+        );
+        assert_eq!(parse_local_file_link("https://example.com"), None);
+        assert_eq!(parse_local_file_link(absolute_path), None);
+        assert_eq!(
+            parse_local_file_link(&format!("{absolute_path}#L193C5")),
+            None
+        );
+        assert_eq!(
+            parse_local_file_link(&format!("{absolute_path}:193:5")),
+            None
+        );
     }
 }
