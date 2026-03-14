@@ -698,16 +698,15 @@ fn render_markdown_table(parsed: &ParsedMarkdownTable, cx: &mut RenderContext) -
         .when_some(parsed.caption.as_ref(), |this, caption| {
             this.children(render_markdown_text(caption, cx))
         })
-        .border_1()
-        .border_color(cx.border_color)
-        .rounded_sm()
-        .overflow_hidden()
         .child(
             div()
+                .rounded_sm()
+                .overflow_hidden()
+                .border_1()
+                .border_color(cx.border_color)
                 .min_w_0()
-                .w_full()
                 .grid()
-                .grid_cols(max_column_count as u16)
+                .grid_cols_max_content(max_column_count as u16)
                 .children(cells),
         )
         .into_any()

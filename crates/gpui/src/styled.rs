@@ -673,6 +673,12 @@ pub trait Styled: Sized {
         self
     }
 
+    /// Sets the grid columns with max-content maximum sizing for content-based column widths.
+    fn grid_cols_max_content(mut self, cols: u16) -> Self {
+        self.style().grid_cols_max_content = Some(cols);
+        self
+    }
+
     /// Sets the grid rows of this element.
     fn grid_rows(mut self, rows: u16) -> Self {
         self.style().grid_rows = Some(rows);

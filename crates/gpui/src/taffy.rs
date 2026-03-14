@@ -8,7 +8,7 @@ use std::{fmt::Debug, ops::Range};
 use taffy::{
     TaffyTree, TraversePartialTree as _,
     geometry::{Point as TaffyPoint, Rect as TaffyRect, Size as TaffySize},
-    prelude::min_content,
+    prelude::{max_content, min_content},
     style::AvailableSpace as TaffyAvailableSpace,
     tree::NodeId,
 };
@@ -323,6 +323,14 @@ impl ToTaffy<taffy::style::Style> for Style {
                 .unwrap_or_default()
         }
 
+        fn to_grid_repeat_max_content<T: taffy::style::CheapCloneStr>(
+            unit: &Option<u16>,
+        ) -> Vec<taffy::GridTemplateComponent<T>> {
+            // grid-template-columns: repeat(<number>, minmax(0, max-content))
+            unit.map(|count| vec![repeat(count, vec![minmax(length(0.0), max_content())])])
+                .unwrap_or_default()
+        }
+
         taffy::style::Style {
             display: self.display.into(),
             overflow: self.overflow.into(),
@@ -347,7 +355,9 @@ impl ToTaffy<taffy::style::Style> for Style {
             flex_grow: self.flex_grow,
             flex_shrink: self.flex_shrink,
             grid_template_rows: to_grid_repeat(&self.grid_rows),
-            grid_template_columns: if self.grid_cols_min_content.is_some() {
+            grid_template_columns: if self.grid_cols_max_content.is_some() {
+                to_grid_repeat_max_content(&self.grid_cols_max_content)
+            } else if self.grid_cols_min_content.is_some() {
                 to_grid_repeat_min_content(&self.grid_cols_min_content)
             } else {
                 to_grid_repeat(&self.grid_cols)
