@@ -11,7 +11,7 @@ use crate::{
 use anyhow::Context as _;
 use collections::HashMap;
 use editor::{
-    Anchor, Editor, EditorEvent, EditorSettings, MAX_TAB_TITLE_LEN, MultiBuffer, PathKey,
+    Anchor, Editor, EditorEvent, EditorSettings, ExcerptId, MAX_TAB_TITLE_LEN, MultiBuffer, PathKey,
     SelectionEffects,
     actions::{Backtab, FoldAll, SelectAll, Tab, UnfoldAll},
     items::active_match_index,
@@ -27,6 +27,7 @@ use gpui::{
 use itertools::Itertools;
 use language::{Buffer, Language};
 use menu::Confirm;
+use multi_buffer;
 use project::{
     Project, ProjectPath, SearchResults,
     search::{SearchInputKind, SearchQuery},
@@ -239,6 +240,7 @@ pub struct ProjectSearch {
     search_history_cursor: SearchHistoryCursor,
     search_included_history_cursor: SearchHistoryCursor,
     search_excluded_history_cursor: SearchHistoryCursor,
+    _excerpts_subscription: Subscription,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -283,10 +285,12 @@ pub struct ProjectSearchBar {
 impl ProjectSearch {
     pub fn new(project: Entity<Project>, cx: &mut Context<Self>) -> Self {
         let capability = project.read(cx).capability();
+        let excerpts = cx.new(|_| MultiBuffer::new(capability));
+        let subscription = Self::subscribe_to_excerpts(&excerpts, cx);
 
         Self {
             project,
-            excerpts: cx.new(|_| MultiBuffer::new(capability)),
+            excerpts,
             pending_search: Default::default(),
             match_ranges: Default::default(),
             active_query: None,
@@ -297,27 +301,85 @@ impl ProjectSearch {
             search_history_cursor: Default::default(),
             search_included_history_cursor: Default::default(),
             search_excluded_history_cursor: Default::default(),
+            _excerpts_subscription: subscription,
         }
     }
 
     fn clone(&self, cx: &mut Context<Self>) -> Entity<Self> {
-        cx.new(|cx| Self {
-            project: self.project.clone(),
-            excerpts: self
+        cx.new(|cx| {
+            let excerpts = self
                 .excerpts
-                .update(cx, |excerpts, cx| cx.new(|cx| excerpts.clone(cx))),
-            pending_search: Default::default(),
-            match_ranges: self.match_ranges.clone(),
-            active_query: self.active_query.clone(),
-            last_search_query_text: self.last_search_query_text.clone(),
-            search_id: self.search_id,
-            no_results: self.no_results,
-            limit_reached: self.limit_reached,
-            search_history_cursor: self.search_history_cursor.clone(),
-            search_included_history_cursor: self.search_included_history_cursor.clone(),
-            search_excluded_history_cursor: self.search_excluded_history_cursor.clone(),
+                .update(cx, |excerpts, cx| cx.new(|cx| excerpts.clone(cx)));
+            let subscription = Self::subscribe_to_excerpts(&excerpts, cx);
+
+            Self {
+                project: self.project.clone(),
+                excerpts,
+                pending_search: Default::default(),
+                match_ranges: self.match_ranges.clone(),
+                active_query: self.active_query.clone(),
+                last_search_query_text: self.last_search_query_text.clone(),
+                search_id: self.search_id,
+                no_results: self.no_results,
+                limit_reached: self.limit_reached,
+                search_history_cursor: self.search_history_cursor.clone(),
+                search_included_history_cursor: self.search_included_history_cursor.clone(),
+                search_excluded_history_cursor: self.search_excluded_history_cursor.clone(),
+                _excerpts_subscription: subscription,
+            }
         })
     }
+    fn subscribe_to_excerpts(
+        excerpts: &Entity<MultiBuffer>,
+        cx: &mut Context<Self>,
+    ) -> Subscription {
+        cx.subscribe(excerpts, |this, _, event, cx| {
+            if matches!(event, multi_buffer::Event::FileHandleChanged) {
+                this.remove_deleted_buffers(cx);
+            }
+        })
+    }
+
+    fn remove_deleted_buffers(&mut self, cx: &mut Context<Self>) {
+        let (deleted_paths, removed_excerpt_ids) = {
+            let excerpts = self.excerpts.read(cx);
+            let deleted_paths: Vec<PathKey> = excerpts
+                .paths()
+                .filter(|path| {
+                    excerpts.buffer_for_path(path, cx).is_some_and(|buffer| {
+                        buffer
+                            .read(cx)
+                            .file()
+                            .is_some_and(|file| file.disk_state().is_deleted())
+                    })
+                })
+                .cloned()
+                .collect();
+
+            let removed_excerpt_ids: collections::HashSet<ExcerptId> = deleted_paths
+                .iter()
+                .flat_map(|path| excerpts.excerpts_for_path(path))
+                .collect();
+
+            (deleted_paths, removed_excerpt_ids)
+        };
+
+        if deleted_paths.is_empty() {
+            return;
+        }
+
+        self.excerpts.update(cx, |excerpts, cx| {
+            for path in deleted_paths {
+                excerpts.remove_excerpts_for_path(path, cx);
+            }
+        });
+
+        self.match_ranges
+            .retain(|range| !removed_excerpt_ids.contains(&range.start.excerpt_id));
+
+        cx.notify();
+    }
+
     fn cursor(&self, kind: SearchInputKind) -> &SearchHistoryCursor {
         match kind {
             SearchInputKind::Query => &self.search_history_cursor,
@@ -2509,7 +2571,7 @@ pub mod tests {
     use gpui::{Action, TestAppContext, VisualTestContext, WindowHandle};
     use language::{FakeLspAdapter, rust_lang};
     use pretty_assertions::assert_eq;
-    use project::FakeFs;
+    use project::{FakeFs, Fs};
     use serde_json::json;
     use settings::{
         InlayHintSettingsContent, SettingsStore, ThemeColorsContent, ThemeStyleContent,
@@ -4872,6 +4934,88 @@ pub mod tests {
                         .results_editor
                         .update(cx, |editor, cx| editor.display_text(cx)),
                     "\n\nfn main() { let a: i32 = 2; }\n"
+                );
+            })
+            .unwrap();
+    }
+
+    #[gpui::test]
+    async fn test_deleted_file_removed_from_search_results(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(
+            path!("/dir"),
+            json!({
+                "file_a.txt": "hello world",
+                "file_b.txt": "hello universe",
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
+        let window =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = window
+            .read_with(cx, |mw, _| mw.workspace().clone())
+            .unwrap();
+        let search = cx.new(|cx| ProjectSearch::new(project.clone(), cx));
+        let search_view = cx.add_window(|window, cx| {
+            ProjectSearchView::new(workspace.downgrade(), search.clone(), window, cx, None)
+        });
+
+        perform_search(search_view, "hello", cx);
+
+        search_view
+            .update(cx, |search_view, _window, cx| {
+                let match_count = search_view.entity.read(cx).match_ranges.len();
+                assert_eq!(match_count, 2, "Should have matches from both files");
+            })
+            .unwrap();
+
+        // Delete file_b.txt
+        fs.remove_file(path!("/dir/file_b.txt").as_ref(), fs::RemoveOptions::default())
+            .await
+            .unwrap();
+        cx.run_until_parked();
+
+        // Verify deleted file's results are removed proactively
+        search_view
+            .update(cx, |search_view, _window, cx| {
+                let results_text = search_view
+                    .results_editor
+                    .update(cx, |editor, cx| editor.display_text(cx));
+                assert!(
+                    !results_text.contains("universe"),
+                    "Deleted file's content should be removed from results, got: {results_text}"
+                );
+                assert!(
+                    results_text.contains("world"),
+                    "Remaining file's content should still be present, got: {results_text}"
+                );
+            })
+            .unwrap();
+
+        // Re-run the search and verify deleted file stays gone
+        perform_search(search_view, "hello", cx);
+
+        search_view
+            .update(cx, |search_view, _window, cx| {
+                let results_text = search_view
+                    .results_editor
+                    .update(cx, |editor, cx| editor.display_text(cx));
+                assert!(
+                    !results_text.contains("universe"),
+                    "Deleted file should not reappear after re-search, got: {results_text}"
+                );
+                assert!(
+                    results_text.contains("world"),
+                    "Remaining file should still be found, got: {results_text}"
+                );
+                assert_eq!(
+                    search_view.entity.read(cx).match_ranges.len(),
+                    1,
+                    "Should only have match from the remaining file"
                 );
             })
             .unwrap();

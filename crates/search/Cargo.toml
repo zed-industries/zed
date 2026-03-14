@@ -31,6 +31,7 @@ futures.workspace = true
 gpui.workspace = true
 language.workspace = true
 menu.workspace = true
+multi_buffer.workspace = true
 project.workspace = true
 serde.workspace = true
 serde_json.workspace = true
