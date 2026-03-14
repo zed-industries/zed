@@ -3,7 +3,8 @@ use crate::{
     IconDecorationKind, prelude::*,
 };
 
-use gpui::{AnyView, ClickEvent, Hsla, SharedString};
+use gpui::{Animation, AnimationExt, AnyView, ClickEvent, Hsla, SharedString, pulsating_between};
+use std::time::Duration;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum AgentThreadStatus {
@@ -23,6 +24,7 @@ pub struct ThreadItem {
     timestamp: SharedString,
     notified: bool,
     status: AgentThreadStatus,
+    generating_title: bool,
     selected: bool,
     focused: bool,
     hovered: bool,
@@ -48,6 +50,7 @@ impl ThreadItem {
             timestamp: "".into(),
             notified: false,
             status: AgentThreadStatus::default(),
+            generating_title: false,
             selected: false,
             focused: false,
             hovered: false,
@@ -86,6 +89,11 @@ impl ThreadItem {
 
     pub fn status(mut self, status: AgentThreadStatus) -> Self {
         self.status = status;
+        self
+    }
+
+    pub fn generating_title(mut self, generating: bool) -> Self {
+        self.generating_title = generating;
         self
     }
 
@@ -221,7 +229,18 @@ impl RenderOnce for ThreadItem {
 
         let title = self.title;
         let highlight_positions = self.highlight_positions;
-        let title_label = if highlight_positions.is_empty() {
+        let title_label = if self.generating_title {
+            Label::new("New Thread…")
+                .color(Color::Muted)
+                .with_animation(
+                    "generating-title",
+                    Animation::new(Duration::from_secs(2))
+                        .repeat()
+                        .with_easing(pulsating_between(0.4, 0.8)),
+                    |label, delta| label.alpha(delta),
+                )
+                .into_any_element()
+        } else if highlight_positions.is_empty() {
             Label::new(title).into_any_element()
         } else {
             HighlightedLabel::new(title, highlight_positions).into_any_element()
@@ -283,7 +302,7 @@ impl RenderOnce for ThreadItem {
                             .when_some(self.tooltip, |this, tooltip| this.tooltip(tooltip)),
                     )
                     .child(gradient_overlay)
-                    .when(self.hovered || self.selected, |this| {
+                    .when(self.hovered, |this| {
                         this.when_some(self.action_slot, |this, slot| {
                             let overlay = GradientFade::new(
                                 base_bg,
