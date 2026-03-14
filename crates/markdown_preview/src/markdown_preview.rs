@@ -6,6 +6,7 @@ mod markdown_minifier;
 pub mod markdown_parser;
 pub mod markdown_preview_view;
 pub mod markdown_renderer;
+pub mod markdown_to_html;
 
 pub use zed_actions::preview::markdown::{OpenPreview, OpenPreviewToTheSide};
 
@@ -27,7 +28,9 @@ actions!(
         /// Scrolls down by one markdown element in the markdown preview
         ScrollDownByItem,
         /// Opens a following markdown preview that syncs with the editor.
-        OpenFollowingPreview
+        OpenFollowingPreview,
+        /// Copy selection with rich HTML formatting.
+        CopyRichSelection
     ]
 );
 

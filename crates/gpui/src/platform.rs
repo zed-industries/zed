@@ -1648,6 +1648,39 @@ pub struct ClipboardItem {
     pub entries: Vec<ClipboardEntry>,
 }
 
+/// Rich text with multiple format support for clipboard operations
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RichText {
+    /// Plain text fallback (required)
+    pub plain_text: String,
+    /// HTML formatted content (optional)
+    pub html: Option<String>,
+    /// RTF formatted content (optional)
+    pub rtf: Option<String>,
+}
+
+impl RichText {
+    /// Create new rich text with plain content
+    pub fn new(plain_text: impl Into<String>) -> Self {
+        Self {
+            plain_text: plain_text.into(),
+            html: None,
+            rtf: None,
+        }
+    }
+
+    /// Add HTML format
+    pub fn with_html(mut self, html: impl Into<String>) -> Self {
+        self.html = Some(html.into());
+        self
+    }
+
+    /// Check if has any rich format
+    pub fn is_rich(&self) -> bool {
+        self.html.is_some() || self.rtf.is_some()
+    }
+}
+
 /// Either a ClipboardString or a ClipboardImage
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ClipboardEntry {
@@ -1657,6 +1690,8 @@ pub enum ClipboardEntry {
     Image(Image),
     /// A file entry
     ExternalPaths(crate::ExternalPaths),
+    /// Rich text with HTML/RTF support
+    RichText(RichText),
 }
 
 impl ClipboardItem {
@@ -1682,6 +1717,15 @@ impl ClipboardItem {
         Self {
             entries: vec![ClipboardEntry::String(
                 ClipboardString::new(text).with_json_metadata(metadata),
+            )],
+        }
+    }
+
+    /// Create a rich text clipboard item with HTML
+    pub fn new_rich_text(plain_text: impl Into<String>, html: impl Into<String>) -> Self {
+        Self {
+            entries: vec![ClipboardEntry::RichText(
+                RichText::new(plain_text).with_html(html),
             )],
         }
     }
