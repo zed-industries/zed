@@ -4345,7 +4345,7 @@ impl Render for Pane {
                                 workspace.show_toast(
                                     Toast::new(
                                         NotificationId::unique::<RevealInProjectPanel>(),
-                                        format!("\"{display_name}\" is not a project file"),
+                                        format!("\"{display_name}\" is not a part of a project"),
                                     )
                                     .autohide(),
                                     cx,
