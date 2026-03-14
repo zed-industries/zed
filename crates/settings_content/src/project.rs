@@ -349,7 +349,6 @@ pub struct SessionSettingsContent {
     ///
     /// Default: true
     pub restore_unsaved_buffers: Option<bool>,
-    pub restore_unsaved_buffers_max_operations: Option<usize>,
     /// Whether or not to skip worktree trust checks.
     /// When trusted, project settings are synchronized automatically,
     /// language and MCP servers are downloaded and started automatically.

@@ -1452,11 +1452,8 @@ impl SerializableItem for Editor {
         let is_dirty = buffer.read(cx).is_dirty();
         let mtime = buffer.read(cx).saved_mtime();
 
-        let max_ops = ProjectSettings::get_global(cx)
-            .session
-            .restore_unsaved_buffers_max_operations;
         let undo_history = if serialize_dirty_buffers {
-            buffer.read(cx).serialize_history(max_ops).ok()
+            buffer.read(cx).serialize_history().ok()
         } else {
             None
         };
@@ -2155,10 +2152,9 @@ mod tests {
 
     use super::*;
     use fs::MTime;
-    use gpui::{App, UpdateGlobal, VisualTestContext};
+    use gpui::{App, VisualTestContext};
     use language::TestFile;
     use project::FakeFs;
-    use settings::SettingsStore;
     use std::path::{Path, PathBuf};
     use std::time::Duration;
     use util::{path, rel_path::RelPath};
@@ -2484,7 +2480,7 @@ mod tests {
         });
 
         let (undo_history, contents) = buffer.update(cx, |buffer, _| {
-            (buffer.serialize_history(100).unwrap(), buffer.text())
+            (buffer.serialize_history().unwrap(), buffer.text())
         });
 
         // 2. Save to DB
@@ -2564,81 +2560,8 @@ mod tests {
         assert!(saved.undo_history.is_some());
         assert!(saved.undo_history.unwrap().len() > 0);
     }
-
-    #[gpui::test]
-    async fn test_undo_history_max_operations_limit(cx: &mut gpui::TestAppContext) {
-        init_test(cx, |_| {});
-        cx.update(|cx| {
-            SettingsStore::update_global(cx, |store, cx| {
-                store.update_user_settings(cx, |settings| {
-                    settings.session.get_or_insert_default().restore_unsaved_buffers_max_operations = Some(2);
-                });
-            });
-        });
-
-        let fs = FakeFs::new(cx.executor());
-        let project = Project::test(fs.clone(), [], cx).await;
-        let (multi_workspace, cx) =
-            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
-        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
-        let workspace_id = workspace.update(cx, |workspace, _| {
-            workspace.set_random_database_id();
-            workspace.database_id().unwrap()
-        });
-        let item_id = 888 as ItemId;
-
-        // Ensure workspace exists in DB
-        DB.write(move |conn| {
-            conn.exec_bound("INSERT INTO workspaces (workspace_id, window_state) VALUES (?1, ?2)")
-                .unwrap()((workspace_id, "test".to_string()))
-        }).await.unwrap();
-
-        let buffer = project
-            .update(cx, |project, cx| project.create_buffer(None, true, cx))
-            .await
-            .unwrap();
-
-        buffer.update(cx, |buffer, cx| {
-            buffer.set_group_interval(Duration::ZERO);
-            buffer.edit([(0..0, "1\n")], None, cx);
-            buffer.finalize_last_transaction();
-            buffer.edit([(2..2, "2\n")], None, cx);
-            buffer.finalize_last_transaction();
-            buffer.edit([(4..4, "3\n")], None, cx);
-            buffer.finalize_last_transaction();
-            buffer.edit([(6..6, "4\n")], None, cx); // Total 4 operations, limit is 2
-        });
-
-        let (editor, cx) = cx.add_window_view(|window, cx| {
-            Editor::for_buffer(buffer, Some(project.clone()), window, cx)
-        });
-
-        let task = workspace.update_in(cx, |workspace, window, cx| {
-            editor.update(cx, |editor, cx| {
-                editor.serialize(workspace, item_id, true, window, cx).unwrap()
-            })
-        });
-        task.await.unwrap();
-
-        // Verify the DB contains truncated undo history (only last 2 operations)
-        let saved = DB.get_serialized_editor(item_id, workspace_id).unwrap().unwrap();
-        assert!(saved.undo_history.is_some());
-        
-        let deserialized =
-            deserialize_editor(item_id, workspace_id, workspace.clone(), project, cx).await;
-
-        workspace.update_in(cx, |_, window, cx| {
-            deserialized.update(cx, |editor, cx| {
-                assert_eq!(editor.text(cx), "1\n2\n3\n4\n");
-
-                // Perform an undo. It should NOT change the text because the entire history was discarded
-                // due to exceeding the limit, and we only preserved the current state as base_text.
-                editor.undo(&Default::default(), window, cx);
-                assert_eq!(editor.text(cx), "1\n2\n3\n4\n");
-            });
-        });
-    }
 }
+
 
 
 

@@ -2642,8 +2642,8 @@ impl Buffer {
         Ok(())
     }
 
-    pub fn serialize_history(&self, max_operations: usize) -> anyhow::Result<Vec<u8>> {
-        self.text.serialize_history(max_operations)
+    pub fn serialize_history(&self) -> anyhow::Result<Vec<u8>> {
+        self.text.serialize_history()
     }
 
     pub fn set_text<T>(&mut self, text: T, cx: &mut Context<Self>) -> Option<clock::Lamport>

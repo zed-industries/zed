@@ -192,7 +192,6 @@ message Transaction {
   LamportTimestamp id = 1;
   repeated LamportTimestamp edit_ids = 2;
   repeated VectorClockEntry start = 3;
-  repeated VectorClockEntry end = 4;
 }
 
 message LamportTimestamp {

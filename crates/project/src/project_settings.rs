@@ -90,7 +90,6 @@ pub struct SessionSettings {
     ///
     /// Default: true
     pub restore_unsaved_buffers: bool,
-    pub restore_unsaved_buffers_max_operations: usize,
     /// Whether or not to skip worktree trust checks.
     /// When trusted, project settings are synchronized automatically,
     /// language and MCP servers are downloaded and started automatically.
@@ -729,7 +728,6 @@ impl Settings for ProjectSettings {
             load_direnv: project.load_direnv.clone().unwrap(),
             session: SessionSettings {
                 restore_unsaved_buffers: content.session.unwrap().restore_unsaved_buffers.unwrap(),
-                restore_unsaved_buffers_max_operations: content.session.unwrap().restore_unsaved_buffers_max_operations.unwrap_or(1000),
                 trust_all_worktrees: content.session.unwrap().trust_all_worktrees.unwrap(),
             },
         }

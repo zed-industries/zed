@@ -228,7 +228,7 @@ fn general_page() -> SettingsPage {
         ]
     }
 
-    fn workspace_restoration_section() -> [SettingsPageItem; 4] {
+    fn workspace_restoration_section() -> [SettingsPageItem; 3] {
         [
             SettingsPageItem::SectionHeader("Workspace Restoration"),
             SettingsPageItem::SettingItem(SettingItem {
@@ -247,29 +247,6 @@ fn general_page() -> SettingsPage {
                             .session
                             .get_or_insert_default()
                             .restore_unsaved_buffers = value;
-                    },
-                }),
-                metadata: None,
-                files: USER,
-            }),
-            SettingsPageItem::SettingItem(SettingItem {
-                title: "Restore Unsaved Buffers Max Operations",
-                description: "Maximum number of operations to restore for unsaved buffers.",
-                field: Box::new(SettingField {
-                    json_path: Some("session.restore_unsaved_buffers_max_operations"),
-                    pick: |settings_content| {
-                        settings_content
-                            .session
-                            .as_ref()
-                            .and_then(|session| {
-                                session.restore_unsaved_buffers_max_operations.as_ref()
-                            })
-                    },
-                    write: |settings_content, value| {
-                        settings_content
-                            .session
-                            .get_or_insert_default()
-                            .restore_unsaved_buffers_max_operations = value;
                     },
                 }),
                 metadata: None,
