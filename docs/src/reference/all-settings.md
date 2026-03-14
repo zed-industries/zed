@@ -5087,6 +5087,7 @@ See the [debugger page](../debugger.md) for more information about debugging sup
     "fallback_branch_name": "main",
     "sort_by_path": false,
     "collapse_untracked_diff": false,
+    "stage_fold_behavior": "collapse_and_expand",
     "scrollbar": {
       "show": null
     }
@@ -5103,6 +5104,7 @@ See the [debugger page](../debugger.md) for more information about debugging sup
 - `fallback_branch_name`: What branch name to use if `init.defaultBranch` is not set
 - `sort_by_path`: Whether to sort entries in the panel by path or by status (the default)
 - `collapse_untracked_diff`: Whether to collapse untracked files in the diff panel
+- `stage_fold_behavior`: Controls whether file diffs automatically collapse/expand when staging or unstaging. Can be `collapse_and_expand`, `collapse`, or `none`
 - `scrollbar`: When to show the scrollbar in the git panel
 
 ## Git Worktree Directory

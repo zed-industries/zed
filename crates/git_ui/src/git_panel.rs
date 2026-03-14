@@ -41,7 +41,7 @@ use gpui::{
     WeakEntity, actions, anchored, deferred, point, size, uniform_list,
 };
 use itertools::Itertools;
-use language::{Buffer, File};
+use language::{Buffer, BufferId, File};
 use language_model::{
     ConfiguredModel, LanguageModelRegistry, LanguageModelRequest, LanguageModelRequestMessage, Role,
 };
@@ -57,7 +57,7 @@ use project::{
 use prompt_store::{BuiltInPrompt, PromptId, PromptStore, RULES_FILE_NAMES};
 use proto::RpcError;
 use serde::{Deserialize, Serialize};
-use settings::{Settings, SettingsStore, StatusStyle};
+use settings::{Settings, SettingsStore, StageFoldBehavior, StatusStyle};
 use smallvec::SmallVec;
 use std::future::Future;
 use std::ops::Range;
@@ -4670,6 +4670,7 @@ impl GitPanel {
         &self,
         entity: &Entity<Self>,
         file: &Arc<dyn File>,
+        buffer_id: BufferId,
         _: &Window,
         cx: &App,
     ) -> Option<AnyElement> {
@@ -4699,6 +4700,10 @@ impl GitPanel {
             .on_click({
                 let entry = entry.clone();
                 let git_panel = entity.downgrade();
+                let workspace = self.workspace.clone();
+                let will_stage = is_staging_or_staged != Some(true);
+                let fold_behavior =
+                    GitPanelSettings::get_global(cx).stage_fold_behavior;
                 move |_, window, cx| {
                     git_panel
                         .update(cx, |this, cx| {
@@ -4706,6 +4711,32 @@ impl GitPanel {
                             cx.stop_propagation();
                         })
                         .ok();
+                    let should_fold = will_stage
+                        && matches!(
+                            fold_behavior,
+                            StageFoldBehavior::CollapseAndExpand
+                                | StageFoldBehavior::Collapse
+                        );
+                    let should_unfold = !will_stage
+                        && matches!(
+                            fold_behavior,
+                            StageFoldBehavior::CollapseAndExpand
+                        );
+                    if should_fold || should_unfold {
+                        if let Some(workspace) = workspace.upgrade() {
+                            if let Some(project_diff) =
+                                workspace.read(cx).item_of_type::<ProjectDiff>(cx)
+                            {
+                                project_diff.update(cx, |project_diff, cx| {
+                                    if should_fold {
+                                        project_diff.fold_buffer(buffer_id, cx);
+                                    } else {
+                                        project_diff.unfold_buffer(buffer_id, cx);
+                                    }
+                                });
+                            }
+                        }
+                    }
                 }
             });
         Some(
@@ -5692,7 +5723,7 @@ impl editor::Addon for GitPanelAddon {
 
         git_panel
             .read(cx)
-            .render_buffer_header_controls(&git_panel, file, window, cx)
+            .render_buffer_header_controls(&git_panel, file, excerpt_info.buffer_id, window, cx)
     }
 }
 

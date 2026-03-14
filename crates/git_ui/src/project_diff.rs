@@ -458,6 +458,22 @@ impl ProjectDiff {
         self.branch_diff.read(cx).diff_base()
     }
 
+    pub fn fold_buffer(&self, buffer_id: BufferId, cx: &mut Context<Self>) {
+        self.editor.update(cx, |editor, cx| {
+            editor
+                .rhs_editor()
+                .update(cx, |editor, cx| editor.fold_buffers([buffer_id], cx));
+        });
+    }
+
+    pub fn unfold_buffer(&self, buffer_id: BufferId, cx: &mut Context<Self>) {
+        self.editor.update(cx, |editor, cx| {
+            editor
+                .rhs_editor()
+                .update(cx, |editor, cx| editor.unfold_buffer(buffer_id, cx));
+        });
+    }
+
     pub fn move_to_entry(
         &mut self,
         entry: GitStatusEntry,
