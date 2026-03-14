@@ -15,8 +15,8 @@ on:
     - 'ipad/**'
 
 jobs:
-  ios-sim-build:
-    name: Build iOS simulator target
+  ios-build:
+    name: Build iOS device target
     # macOS runner required for Xcode toolchain
     runs-on: macos-latest
     steps:
@@ -36,21 +36,21 @@ jobs:
     - name: Cache Rust build artifacts
       uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6
       with:
-        key: ios-sim
+        key: ios-device
 
-    - name: Build zed-ios (simulator)
+    - name: Build zed-ios (device)
       run: |
         cargo build \
           -p zed-ios \
-          --target aarch64-apple-ios-sim \
+          --target aarch64-apple-ios \
           --no-default-features
 
-    - name: Build Xcode project (simulator)
+    - name: Build Xcode project (device)
       run: |
         xcodebuild \
           -project ios/ZedApp.xcodeproj \
           -scheme ZedApp \
-          -destination 'generic/platform=iOS Simulator' \
+          -destination 'generic/platform=iOS' \
           -configuration Debug \
           CODE_SIGNING_ALLOWED=NO \
           build
