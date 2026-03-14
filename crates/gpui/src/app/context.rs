@@ -653,6 +653,24 @@ impl<'a, T: 'static> Context<'a, T> {
         subscription
     }
 
+    // Register a listener to be called whenever focus changes anywhere in the window.
+    /// This fires on every focus change regardless of which element was focused or blurred.
+    /// Returns a subscription and persists until the subscription is dropped.
+    pub fn on_focus_changed(
+        &mut self,
+        window: &mut Window,
+        mut listener: impl FnMut(&mut T, &mut Window, &mut Context<T>) + 'static,
+    ) -> Subscription {
+        let view = self.weak_entity();
+        let (subscription, activate) =
+            window.new_focus_listener(Box::new(move |_event, window, cx| {
+                view.update(cx, |view, cx| listener(view, window, cx))
+                    .is_ok()
+            }));
+        self.defer(|_| activate());
+        subscription
+    }
+
     /// Schedule a future to be run asynchronously.
     /// The given callback is invoked with a [`WeakEntity<V>`] to avoid leaking the entity for a long-running process.
     /// It's also given an [`AsyncWindowContext`], which can be used to access the state of the entity across await points.

@@ -5580,7 +5580,7 @@ impl Render for GitPanel {
         v_flex()
             .id("git_panel")
             .key_context(self.dispatch_context(window, cx))
-            .track_focus(&self.focus_handle)
+            .track_focus(&self.focus_handle(cx))
             .when(has_write_access && !project.is_read_only(cx), |this| {
                 this.on_action(cx.listener(Self::toggle_staged_for_selected))
                     .on_action(cx.listener(Self::stage_range))
