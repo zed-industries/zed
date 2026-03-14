@@ -13,7 +13,7 @@ use gpui::{
 };
 use language::LanguageRegistry;
 use settings::Settings;
-use theme::ThemeSettings;
+use theme::{GlobalTheme, ThemeSettings};
 use ui::{WithScrollbar, prelude::*};
 use workspace::item::{Item, ItemHandle};
 use workspace::{Pane, Workspace};
@@ -215,7 +215,7 @@ impl MarkdownPreviewView {
                 contents: None,
                 list_state,
                 language_registry,
-                mermaid_state: Default::default(),
+                mermaid_state: MermaidState::new(cx),
                 parsing_markdown_task: None,
                 image_cache: RetainAllImageCache::new(cx),
                 mode,
@@ -234,6 +234,11 @@ impl MarkdownPreviewView {
                     log::error!("Failed to listen to workspace updates");
                 }
             }
+
+            cx.observe_global::<GlobalTheme>(|this, cx| {
+                this.mermaid_state.on_theme_changed(cx);
+            })
+            .detach();
 
             this
         })

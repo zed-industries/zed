@@ -8,7 +8,7 @@ use crate::{
     },
     markdown_preview_view::MarkdownPreviewView,
 };
-use collections::HashMap;
+use collections::{HashMap, HashSet};
 use gpui::{
     AbsoluteLength, Animation, AnimationExt, AnyElement, App, AppContext as _, Context, Div,
     Element, ElementId, Entity, HighlightStyle, Hsla, ImageSource, InteractiveText, IntoElement,
@@ -46,13 +46,98 @@ type CheckboxClickedCallback = Arc<Box<dyn Fn(&CheckboxClickedEvent, &mut Window
 
 type MermaidDiagramCache = HashMap<ParsedMarkdownMermaidDiagramContents, CachedMermaidDiagram>;
 
-#[derive(Default)]
+fn build_mermaid_theme(cx: &App) -> mermaid_rs_renderer::Theme {
+    let theme = cx.theme();
+    let colors = theme.colors();
+    let status = theme.status();
+
+    mermaid_rs_renderer::Theme {
+        background: colors.surface_background.to_string(),
+        primary_color: colors.element_active.to_string(),
+        primary_text_color: colors.text.to_string(),
+        primary_border_color: colors.border.to_string(),
+        line_color: colors.text_muted.to_string(),
+        secondary_color: colors.element_background.to_string(),
+        tertiary_color: colors.element_disabled.to_string(),
+        text_color: colors.text.to_string(),
+        edge_label_background: colors.surface_background.to_string(),
+        cluster_background: colors.elevated_surface_background.to_string(),
+        cluster_border: colors.border_variant.to_string(),
+
+        sequence_actor_fill: colors.element_background.to_string(),
+        sequence_actor_border: colors.border.to_string(),
+        sequence_actor_line: colors.text_muted.to_string(),
+        sequence_note_fill: status.warning_background.to_string(),
+        sequence_note_border: status.warning_border.to_string(),
+        sequence_activation_fill: colors.element_active.to_string(),
+        sequence_activation_border: colors.border.to_string(),
+
+        pie_colors: [
+            colors.terminal_ansi_blue.to_string(),
+            colors.terminal_ansi_cyan.to_string(),
+            colors.terminal_ansi_green.to_string(),
+            colors.terminal_ansi_magenta.to_string(),
+            colors.terminal_ansi_red.to_string(),
+            colors.terminal_ansi_yellow.to_string(),
+            colors.terminal_ansi_dim_blue.to_string(),
+            colors.terminal_ansi_dim_cyan.to_string(),
+            colors.terminal_ansi_dim_green.to_string(),
+            colors.terminal_ansi_dim_magenta.to_string(),
+            colors.terminal_ansi_dim_red.to_string(),
+            colors.terminal_ansi_dim_yellow.to_string(),
+        ],
+        pie_legend_text_color: colors.text.to_string(),
+        pie_outer_stroke_color: colors.border_variant.to_string(),
+        pie_section_text_color: colors.text.to_string(),
+        pie_stroke_color: colors.text_muted.to_string(),
+        pie_title_text_color: colors.text.to_string(),
+
+        git_commit_label_background: colors.element_background.to_string(),
+        git_commit_label_color: colors.text.to_string(),
+        git_tag_label_background: colors.element_active.to_string(),
+        git_tag_label_color: colors.text.to_string(),
+        git_tag_label_border: colors.border.to_string(),
+        git_colors: [
+            colors.terminal_ansi_blue.to_string(),
+            colors.terminal_ansi_cyan.to_string(),
+            colors.terminal_ansi_green.to_string(),
+            colors.terminal_ansi_magenta.to_string(),
+            colors.terminal_ansi_red.to_string(),
+            colors.terminal_ansi_yellow.to_string(),
+            colors.terminal_ansi_dim_blue.to_string(),
+            colors.terminal_ansi_dim_magenta.to_string(),
+        ],
+        git_inv_colors: [
+            colors.terminal_ansi_bright_blue.to_string(),
+            colors.terminal_ansi_bright_cyan.to_string(),
+            colors.terminal_ansi_bright_green.to_string(),
+            colors.terminal_ansi_bright_magenta.to_string(),
+            colors.terminal_ansi_bright_red.to_string(),
+            colors.terminal_ansi_bright_yellow.to_string(),
+            colors.terminal_ansi_bright_blue.to_string(),
+            colors.terminal_ansi_bright_magenta.to_string(),
+        ],
+        git_branch_label_colors: std::array::repeat(colors.terminal_ansi_background.to_string()),
+
+        ..mermaid_rs_renderer::Theme::modern()
+    }
+}
+
 pub(crate) struct MermaidState {
     cache: MermaidDiagramCache,
     order: Vec<ParsedMarkdownMermaidDiagramContents>,
+    mermaid_theme: mermaid_rs_renderer::Theme,
 }
 
 impl MermaidState {
+    pub(crate) fn new(cx: &App) -> Self {
+        Self {
+            cache: MermaidDiagramCache::default(),
+            order: Vec::new(),
+            mermaid_theme: build_mermaid_theme(cx),
+        }
+    }
+
     fn get_fallback_image(
         idx: usize,
         old_order: &[ParsedMarkdownMermaidDiagramContents],
@@ -86,9 +171,6 @@ impl MermaidState {
         parsed: &ParsedMarkdown,
         cx: &mut Context<MarkdownPreviewView>,
     ) {
-        use crate::markdown_elements::ParsedMarkdownElement;
-        use std::collections::HashSet;
-
         let mut new_order = Vec::new();
         for element in parsed.children.iter() {
             if let ParsedMarkdownElement::MermaidDiagram(mermaid_diagram) = element {
@@ -102,7 +184,12 @@ impl MermaidState {
                     Self::get_fallback_image(idx, &self.order, new_order.len(), &self.cache);
                 self.cache.insert(
                     new_content.clone(),
-                    CachedMermaidDiagram::new(new_content.clone(), fallback, cx),
+                    CachedMermaidDiagram::new(
+                        new_content.clone(),
+                        fallback,
+                        self.mermaid_theme.clone(),
+                        cx,
+                    ),
                 );
             }
         }
@@ -111,6 +198,24 @@ impl MermaidState {
         self.cache
             .retain(|content, _| new_order_set.contains(content));
         self.order = new_order;
+    }
+
+    pub(crate) fn on_theme_changed(&mut self, cx: &mut Context<MarkdownPreviewView>) {
+        self.mermaid_theme = build_mermaid_theme(cx);
+
+        for (content, cached) in self.cache.iter_mut() {
+            let fallback = cached
+                .render_image
+                .get()
+                .and_then(|result| result.as_ref().ok().cloned())
+                .or_else(|| cached.fallback_image.take());
+            *cached = CachedMermaidDiagram::new(
+                content.clone(),
+                fallback,
+                self.mermaid_theme.clone(),
+                cx,
+            );
+        }
     }
 }
 
@@ -124,6 +229,7 @@ impl CachedMermaidDiagram {
     pub(crate) fn new(
         contents: ParsedMarkdownMermaidDiagramContents,
         fallback_image: Option<Arc<RenderImage>>,
+        theme: mermaid_rs_renderer::Theme,
         cx: &mut Context<MarkdownPreviewView>,
     ) -> Self {
         let result = Arc::new(OnceLock::<anyhow::Result<Arc<RenderImage>>>::new());
@@ -133,7 +239,13 @@ impl CachedMermaidDiagram {
         let _task = cx.spawn(async move |this, cx| {
             let value = cx
                 .background_spawn(async move {
-                    let svg_string = mermaid_rs_renderer::render(&contents.contents)?;
+                    let svg_string = mermaid_rs_renderer::render_with_options(
+                        &contents.contents,
+                        mermaid_rs_renderer::RenderOptions {
+                            theme,
+                            ..Default::default()
+                        },
+                    )?;
                     let scale = contents.scale as f32 / 100.0;
                     svg_renderer
                         .render_single_frame(svg_string.as_bytes(), scale, true)
@@ -298,7 +410,7 @@ pub fn render_parsed_markdown(
     window: &mut Window,
     cx: &mut App,
 ) -> Div {
-    let cache = Default::default();
+    let cache = MermaidState::new(cx);
     let mut cx = RenderContext::new(workspace, &cache, window, cx);
 
     v_flex().gap_3().children(
