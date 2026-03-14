@@ -155,8 +155,9 @@ impl PlatformDispatcher for TestDispatcher {
     }
 
     fn spawn_realtime(&self, f: Box<dyn FnOnce() + Send>) {
+        let test_name = crate::current_test_name();
         std::thread::spawn(move || {
-            f();
+            crate::with_test_name(test_name, f);
         });
     }
 }

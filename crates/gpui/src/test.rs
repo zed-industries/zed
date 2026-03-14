@@ -29,6 +29,7 @@ use crate::{Entity, Subscription, TestAppContext, TestDispatcher};
 use futures::StreamExt as _;
 use proptest::prelude::{Just, Strategy, any};
 use std::{
+    cell::Cell,
     env,
     panic::{self, RefUnwindSafe, UnwindSafe},
     pin::Pin,
@@ -62,6 +63,38 @@ pub fn run_test_once(seed: u64, test_fn: Box<dyn UnwindSafe + FnOnce(TestDispatc
         Ok(()) => {}
         Err(e) => panic::resume_unwind(e),
     }
+}
+
+thread_local! {
+    static CURRENT_TEST_NAME: Cell<Option<&'static str>> = const { Cell::new(None) };
+}
+
+/// Returns the test name currently associated with this thread, if any.
+pub fn current_test_name() -> Option<&'static str> {
+    CURRENT_TEST_NAME.with(Cell::get)
+}
+
+/// Runs the closure with the given test name installed for the current thread.
+pub fn with_test_name<R>(name: Option<&'static str>, f: impl FnOnce() -> R) -> R {
+    CURRENT_TEST_NAME.with(|current_name| {
+        struct RestoreTestName<'a> {
+            current_name: &'a Cell<Option<&'static str>>,
+            previous_name: Option<&'static str>,
+        }
+
+        impl Drop for RestoreTestName<'_> {
+            fn drop(&mut self) {
+                self.current_name.set(self.previous_name);
+            }
+        }
+
+        let previous_name = current_name.replace(name);
+        let _restore = RestoreTestName {
+            current_name,
+            previous_name,
+        };
+        f()
+    })
 }
 
 /// Run the given test function with the configured parameters.

@@ -192,17 +192,19 @@ fn generate_test_function(
                     &[#seeds],
                     #max_retries,
                     &mut |dispatcher, _seed| {
-                        let exec = std::sync::Arc::new(dispatcher.clone());
-                        #cx_vars
-                        gpui::ForegroundExecutor::new(exec.clone()).block_test(#inner_fn_name(#inner_fn_args));
-                        drop(exec);
-                        #cx_teardowns
-                        // Ideally we would only drop cancelled tasks, that way we could detect leaks due to task <-> entity
-                        // cycles as cancelled tasks will be dropped properly once the runnable gets run again
-                        //
-                        // async-task does not give us the power to do this just yet though
-                        dispatcher.drain_tasks();
-                        drop(dispatcher);
+                        gpui::with_test_name(Some(stringify!(#outer_fn_name)), || {
+                            let exec = std::sync::Arc::new(dispatcher.clone());
+                            #cx_vars
+                            gpui::ForegroundExecutor::new(exec.clone()).block_test(#inner_fn_name(#inner_fn_args));
+                            drop(exec);
+                            #cx_teardowns
+                            // Ideally we would only drop cancelled tasks, that way we could detect leaks due to task <-> entity
+                            // cycles as cancelled tasks will be dropped properly once the runnable gets run again
+                            //
+                            // async-task does not give us the power to do this just yet though
+                            dispatcher.drain_tasks();
+                            drop(dispatcher);
+                        })
                     },
                     #on_failure_fn_name
                 );
@@ -285,15 +287,17 @@ fn generate_test_function(
                     &[#seeds],
                     #max_retries,
                     &mut |dispatcher, _seed| {
-                        #cx_vars
-                        #inner_fn_name(#inner_fn_args);
-                        #cx_teardowns
-                        // Ideally we would only drop cancelled tasks, that way we could detect leaks due to task <-> entity
-                        // cycles as cancelled tasks will be dropped properly once they runnable gets run again
-                        //
-                        // async-task does not give us the power to do this just yet though
-                        dispatcher.drain_tasks();
-                        drop(dispatcher);
+                        gpui::with_test_name(Some(stringify!(#outer_fn_name)), || {
+                            #cx_vars
+                            #inner_fn_name(#inner_fn_args);
+                            #cx_teardowns
+                            // Ideally we would only drop cancelled tasks, that way we could detect leaks due to task <-> entity
+                            // cycles as cancelled tasks will be dropped properly once they runnable gets run again
+                            //
+                            // async-task does not give us the power to do this just yet though
+                            dispatcher.drain_tasks();
+                            drop(dispatcher);
+                        })
                     },
                     #on_failure_fn_name,
                 );
