@@ -1,5 +1,6 @@
 use gpui::{App, Context, WeakEntity, Window};
 use notifications::status_toast::{StatusToast, ToastIcon};
+use std::path::Path;
 use std::sync::Arc;
 use ui::{Color, IconName, SharedString};
 use util::ResultExt;
@@ -11,7 +12,22 @@ pub(crate) fn normalize_repository_input(input: &str) -> Option<String> {
         return None;
     }
 
-    if trimmed.contains("://") || trimmed.starts_with("git@") {
+    if (trimmed.contains("://")
+        && !trimmed.starts_with("https://")
+        && !trimmed.starts_with("http://"))
+        || trimmed.starts_with("git@")
+    {
+        return Some(trimmed.to_string());
+    }
+
+    let path = Path::new(trimmed);
+    if path.exists()
+        || path.is_absolute()
+        || trimmed.starts_with("./")
+        || trimmed.starts_with("../")
+        || trimmed.starts_with('~')
+        || trimmed.contains('\\')
+    {
         return Some(trimmed.to_string());
     }
 

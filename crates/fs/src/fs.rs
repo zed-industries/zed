@@ -1216,7 +1216,9 @@ impl Fs for RealFs {
 
     async fn git_check_remote(&self, repo_url: &str) -> Result<()> {
         let output = new_command("git")
-            .args(["ls-remote", "--exit-code", repo_url, "HEAD"])
+            .env("GIT_TERMINAL_PROMPT", "0")
+            .env("GCM_INTERACTIVE", "Never")
+            .args(["ls-remote", repo_url])
             .output()
             .await?;
 
