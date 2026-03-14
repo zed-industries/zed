@@ -43,6 +43,10 @@ If you're coming from IntelliJ, the fastest way to feel at home is to use the Je
 
 This maps familiar shortcuts like `Shift Shift` for Search Everywhere, `Cmd+O` for Go to Class, and `Cmd+Shift+A` for Find Action.
 
+In editors, the JetBrains keymap also makes `Alt+Left` / `Alt+Right` and `Shift+Alt+Left` / `Shift+Alt+Right` move and select by subword, so identifiers like `camelCase` and `snake_case` behave like IntelliJ's CamelHumps navigation.
+
+If you want to copy that behavior into another base keymap, see the copy-paste `keymap.json` examples in [Key Bindings](../key-bindings.md#word-and-subword-navigation).
+
 ## Set Up Editor Preferences
 
 You can configure most settings in the Settings Editor ({#kb zed::OpenSettings}). For advanced settings, run `zed: open settings file` from the Command Palette to edit your settings file directly.
@@ -84,26 +88,28 @@ If you chose the JetBrains keymap during onboarding, most of your shortcuts shou
 
 ### Common Shared Keybindings (Zed with JetBrains keymap ↔ IntelliJ)
 
-| Action                        | Shortcut                |
-| ----------------------------- | ----------------------- |
-| Search Everywhere             | `Shift Shift`           |
-| Find Action / Command Palette | `Cmd + Shift + A`       |
-| Go to File                    | `Cmd + Shift + O`       |
-| Go to Symbol / Class          | `Cmd + O`               |
-| Recent Files                  | `Cmd + E`               |
-| Go to Definition              | `Cmd + B`               |
-| Find Usages                   | `Alt + F7`              |
-| Rename Symbol                 | `Shift + F6`            |
-| Reformat Code                 | `Cmd + Alt + L`         |
-| Toggle Project Panel          | `Cmd + 1`               |
-| Toggle Terminal               | `Alt + F12`             |
-| Duplicate Line                | `Cmd + D`               |
-| Delete Line                   | `Cmd + Backspace`       |
-| Move Line Up/Down             | `Shift + Alt + Up/Down` |
-| Expand/Shrink Selection       | `Alt + Up/Down`         |
-| Comment Line                  | `Cmd + /`               |
-| Go Back / Forward             | `Cmd + [` / `Cmd + ]`   |
-| Toggle Breakpoint             | `Ctrl + F8`             |
+| Action                        | Shortcut                   |
+| ----------------------------- | -------------------------- |
+| Search Everywhere             | `Shift Shift`              |
+| Find Action / Command Palette | `Cmd + Shift + A`          |
+| Go to File                    | `Cmd + Shift + O`          |
+| Go to Symbol / Class          | `Cmd + O`                  |
+| Recent Files                  | `Cmd + E`                  |
+| Go to Definition              | `Cmd + B`                  |
+| Find Usages                   | `Alt + F7`                 |
+| Rename Symbol                 | `Shift + F6`               |
+| Reformat Code                 | `Cmd + Alt + L`            |
+| Toggle Project Panel          | `Cmd + 1`                  |
+| Toggle Terminal               | `Alt + F12`                |
+| Duplicate Line                | `Cmd + D`                  |
+| Delete Line                   | `Cmd + Backspace`          |
+| Move Line Up/Down             | `Shift + Alt + Up/Down`    |
+| Expand/Shrink Selection       | `Alt + Up/Down`            |
+| Move by subword               | `Alt + Left/Right`         |
+| Select by subword             | `Shift + Alt + Left/Right` |
+| Comment Line                  | `Cmd + /`                  |
+| Go Back / Forward             | `Cmd + [` / `Cmd + ]`      |
+| Toggle Breakpoint             | `Ctrl + F8`                |
 
 ### Different Keybindings (IntelliJ → Zed)
 

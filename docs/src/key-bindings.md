@@ -26,6 +26,54 @@ This setting can also be changed via the command palette through the `zed: toggl
 You can also enable `vim_mode` or `helix_mode`, which add modal bindings.
 For more information, see the documentation for [Vim mode](./vim.md) and [Helix mode](./helix.md).
 
+## Word and subword navigation
+
+Zed exposes word and subword motions as separate actions.
+
+- Word motions stop at whitespace and punctuation boundaries.
+- Subword motions also stop inside identifiers such as `camelCase`, `PascalCase`, and `snake_case`.
+
+In the default macOS and Linux keymaps:
+
+- `alt-left` / `alt-right` move by word
+- `shift-alt-left` / `shift-alt-right` select by word
+- `ctrl-alt-left` / `ctrl-alt-right` move by subword
+- `ctrl-alt-shift-left` / `ctrl-alt-shift-right` select by subword
+
+If you use the JetBrains base keymap, Zed makes editor-local `alt-left` / `alt-right` and `shift-alt-left` / `shift-alt-right` use subword motions by default to match JetBrains-style CamelHump navigation. Outside the editor, the JetBrains keymap keeps its existing pane navigation bindings.
+
+If you want to customize this behavior further, open the keymap editor with {#kb zed::OpenKeymap} or edit your `keymap.json` directly.
+
+If you are using a base keymap other than JetBrains and want `alt-left` / `alt-right` to use CamelHump-style subword motions, add this to your `keymap.json`:
+
+```json [keymap]
+[
+  {
+    "context": "Editor",
+    "bindings": {
+      "alt-left": "editor::MoveToPreviousSubwordStart",
+      "alt-right": "editor::MoveToNextSubwordEnd",
+      "shift-alt-left": "editor::SelectToPreviousSubwordStart",
+      "shift-alt-right": "editor::SelectToNextSubwordEnd"
+    }
+  }
+]
+```
+
+If you use the JetBrains base keymap and want `alt-left` / `alt-right` to keep moving between tabs in the editor, add this override:
+
+```json [keymap]
+[
+  {
+    "context": "Editor",
+    "bindings": {
+      "alt-left": "pane::ActivatePreviousItem",
+      "alt-right": "pane::ActivateNextItem"
+    }
+  }
+]
+```
+
 ## Keymap Editor
 
 You can access the keymap editor through the {#kb zed::OpenKeymap} action or by running {#action zed::OpenKeymap} action from the command palette. You can easily add or change a keybind for an action with the `Change Keybinding` or `Add Keybinding` button on the command pallets left bottom corner.
