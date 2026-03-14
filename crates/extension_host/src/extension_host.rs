@@ -189,7 +189,7 @@ actions!(
     zed,
     [
         /// Reloads all installed extensions.
-        ReloadExtensions,
+        ReloadExtensions
     ]
 );
 
