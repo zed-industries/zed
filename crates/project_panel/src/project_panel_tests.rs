@@ -9077,20 +9077,36 @@ fn visible_entries_as_strings(
     result
 }
 
-fn set_project_panel_local_settings(
+async fn set_project_panel_local_settings(
     panel: &Entity<ProjectPanel>,
     json_text: &str,
     cx: &mut VisualTestContext,
 ) {
-    panel.update_in(cx, |panel, window, cx| {
-        let worktree_id = panel
+    let (fs, worktree_id, settings_path) = panel.update(cx, |panel, cx| {
+        let worktree = panel
             .project
             .read(cx)
             .visible_worktrees(cx)
             .next()
-            .expect("expected a worktree")
-            .read(cx)
-            .id();
+            .expect("expected a worktree");
+        let worktree = worktree.read(cx);
+        (
+            panel.fs.as_fake(),
+            worktree.id(),
+            worktree.abs_path().join(".zed/settings.json"),
+        )
+    });
+
+    if let Some(parent) = settings_path.parent() {
+        fs.create_dir(parent)
+            .await
+            .expect("settings directory should be writable");
+    }
+    fs.atomic_write(settings_path, json_text.to_string())
+        .await
+        .expect("settings file should be writable");
+
+    panel.update_in(cx, |panel, window, cx| {
         cx.update_global::<SettingsStore, _>(|settings, cx| {
             settings
                 .set_local_settings(
@@ -9850,7 +9866,7 @@ async fn test_toggle_excluded_hides_file_and_writes_project_settings(
 
     assert_eq!(
         visible_entries_as_strings(&panel, 0..10, cx),
-        &["v root  <== selected", "    > dir"],
+        &["v root  <== selected", "    > .zed", "    > dir"],
     );
 
     let settings: serde_json::Value = serde_json::from_str(
@@ -10024,13 +10040,14 @@ async fn test_toggle_excluded_hides_directory_subtree_when_show_excluded_is_fals
         }
         "#,
         cx,
-    );
+    )
+    .await;
     select_path(&panel, "root/build", cx);
     toggle_excluded(&panel, cx);
 
     assert_eq!(
         visible_entries_as_strings(&panel, 0..10, cx),
-        &["v root  <== selected", "    > src"],
+        &["v root  <== selected", "    > .zed", "    > src"],
     );
 
     let settings: serde_json::Value = serde_json::from_str(
@@ -10086,12 +10103,14 @@ async fn test_show_excluded_displays_excluded_entries(cx: &mut gpui::TestAppCont
         }
         "#,
         cx,
-    );
+    )
+    .await;
 
     assert_eq!(
         visible_entries_as_strings(&panel, 0..10, cx),
         &[
             "v root",
+            "    > .zed",
             "    > build  <== excluded",
             "      file.txt  <== excluded",
         ],
@@ -10140,7 +10159,8 @@ async fn test_explicit_reveal_shows_excluded_entry_when_show_excluded_is_false(
         }
         "#,
         cx,
-    );
+    )
+    .await;
 
     let excluded_file = find_project_entry(&panel, "root/build/generated/file.txt", cx)
         .expect("excluded file should exist in the worktree");
@@ -10155,6 +10175,7 @@ async fn test_explicit_reveal_shows_excluded_entry_when_show_excluded_is_false(
         visible_entries_as_strings(&panel, 0..10, cx),
         &[
             "v root",
+            "    > .zed",
             "    v build  <== excluded",
             "        v generated  <== excluded",
             "              file.txt  <== selected  <== marked  <== excluded",
@@ -10222,7 +10243,8 @@ async fn test_excluding_compact_child_preserves_visible_folded_ancestor(
         }
         "#,
         cx,
-    );
+    )
+    .await;
 
     assert_eq!(
         visible_entries_as_strings(&panel, 0..10, cx),
@@ -10270,8 +10292,10 @@ async fn test_toggle_show_excluded_updates_visibility_and_project_settings(
         }
         "#,
         cx,
-    );
+    )
+    .await;
 
+    toggle_expand_dir(&panel, "root/src", cx);
     select_path(&panel, "root/src/main.rs", cx);
     toggle_show_excluded(&panel, cx);
 
@@ -10279,6 +10303,7 @@ async fn test_toggle_show_excluded_updates_visibility_and_project_settings(
         visible_entries_as_strings(&panel, 0..10, cx),
         &[
             "v root",
+            "    > .zed",
             "    > build  <== excluded",
             "    v src",
             "          main.rs  <== selected",
@@ -10306,7 +10331,12 @@ async fn test_toggle_show_excluded_updates_visibility_and_project_settings(
 
     assert_eq!(
         visible_entries_as_strings(&panel, 0..10, cx),
-        &["v root  <== selected", "    > src"],
+        &[
+            "v root  <== selected",
+            "    > .zed",
+            "    v src",
+            "          main.rs",
+        ],
     );
 
     let settings: serde_json::Value = serde_json::from_str(
@@ -10371,7 +10401,8 @@ async fn test_toggle_excluded_cancels_nearest_exclusion_for_descendant(
         }
         "#,
         cx,
-    );
+    )
+    .await;
     toggle_expand_dir(&panel, "root/build", cx);
     toggle_expand_dir(&panel, "root/build/generated", cx);
     select_path(&panel, "root/build/generated/file.txt", cx);
@@ -10382,6 +10413,7 @@ async fn test_toggle_excluded_cancels_nearest_exclusion_for_descendant(
         visible_entries_as_strings(&panel, 0..10, cx),
         &[
             "v root",
+            "    > .zed",
             "    v build",
             "        v generated",
             "              file.txt  <== selected",
@@ -10395,7 +10427,14 @@ async fn test_toggle_excluded_cancels_nearest_exclusion_for_descendant(
             .unwrap(),
     )
     .unwrap();
-    assert_eq!(settings, json!({}));
+    assert_eq!(
+        settings,
+        json!({
+            "project_panel": {
+                "show_excluded": true
+            }
+        }),
+    );
 }
 
 #[gpui::test]

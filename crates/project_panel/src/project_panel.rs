@@ -1450,6 +1450,7 @@ impl ProjectPanel {
             selected_path
                 .ancestors()
                 .find(|ancestor| !exclusion_settings.is_path_excluded(ancestor))
+                .or(Some(RelPath::empty()))
         }?;
 
         worktree
@@ -3611,6 +3612,9 @@ impl ProjectPanel {
                 })?;
                 let next_selection =
                     this.visible_selection_for_path(worktree_id, selected_path.as_ref(), cx);
+                if let Some((worktree_id, entry_id)) = next_selection {
+                    this.expand_entry(worktree_id, entry_id, cx);
+                }
                 this.update_visible_entries(next_selection, false, false, window, cx);
                 Ok(())
             })??;
@@ -3678,6 +3682,9 @@ impl ProjectPanel {
                 let next_selection = selected_path.as_deref().and_then(|selected_path| {
                     this.visible_selection_for_path(worktree_id, selected_path, cx)
                 });
+                if let Some((worktree_id, entry_id)) = next_selection {
+                    this.expand_entry(worktree_id, entry_id, cx);
+                }
                 this.update_visible_entries(next_selection, false, false, window, cx);
                 Ok(())
             })??;
@@ -4143,6 +4150,12 @@ impl ProjectPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if let Some((worktree_id, entry_id)) = new_selected_entry {
+            self.selection = Some(SelectedEntry {
+                worktree_id,
+                entry_id,
+            });
+        }
         let now = Instant::now();
         let settings = ProjectPanelSettings::get_global(cx);
         let auto_collapse_dirs = settings.auto_fold_dirs;
