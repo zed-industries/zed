@@ -2886,15 +2886,46 @@ impl GitPanel {
     }
 
     pub(crate) fn git_clone(&mut self, repo: String, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(repo_url) = crate::clone::normalize_repository_input(&repo) else {
+            self.show_error_toast("clone", anyhow::anyhow!("Repository URL is empty"), cx);
+            return;
+        };
+
+        let project = self.project.clone();
         let workspace = self.workspace.clone();
 
-        crate::clone::clone_and_open(
-            repo.into(),
-            workspace,
-            window,
-            cx,
-            Arc::new(|_workspace: &mut workspace::Workspace, _window, _cx| {}),
-        );
+        cx.spawn_in(window, async move |this, cx| {
+            let check_remote = project
+                .update(cx, |project, cx| {
+                    let fs = project.fs().clone();
+                    let repo_url = repo_url.clone();
+                    cx.spawn(async move |_project, _cx| fs.git_check_remote(&repo_url).await)
+                });
+
+            if let Err(error) = check_remote.await {
+                this.update(cx, |this, cx| {
+                    this.show_error_toast(
+                        "clone",
+                        anyhow::anyhow!("Unable to access repository: {error}"),
+                        cx,
+                    );
+                })
+                .ok();
+                return;
+            }
+
+            this.update_in(cx, |_, window, cx| {
+                crate::clone::clone_and_open(
+                    repo_url.clone().into(),
+                    workspace,
+                    window,
+                    cx,
+                    Arc::new(|_workspace: &mut workspace::Workspace, _window, _cx| {}),
+                );
+            })
+            .ok();
+        })
+        .detach();
     }
 
     pub(crate) fn git_init(&mut self, window: &mut Window, cx: &mut Context<Self>) {

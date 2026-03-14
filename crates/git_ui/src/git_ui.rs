@@ -1,12 +1,19 @@
-use anyhow::anyhow;
+use anyhow::{Context as _, anyhow};
 use commit_modal::CommitModal;
 use editor::{Editor, actions::DiffClipboardWithSelectionData};
+use futures::AsyncReadExt;
+use http_client::{AsyncBody, HttpClient, HttpClientWithUrl, HttpRequestExt, Request};
+use picker::{Picker, PickerDelegate, PickerEditorPosition};
 
 use project::ProjectPath;
+use serde::Deserialize;
+use std::sync::{Arc, Mutex, OnceLock};
+use std::time::Duration;
 use ui::{
-    Headline, HeadlineSize, Icon, IconName, IconSize, IntoElement, ParentElement, Render, Styled,
-    StyledExt, div, h_flex, rems, v_flex,
+    Divider, Headline, HeadlineSize, Icon, IconName, IconSize, IntoElement, ParentElement,
+    Render, Styled, StyledExt, div, h_flex, rems, v_flex,
 };
+use ui_input::ErasedEditor;
 
 mod blame_ui;
 pub mod clone;
@@ -16,12 +23,14 @@ use git::{
     status::{FileStatus, StatusCode, UnmergedStatus, UnmergedStatusCode},
 };
 use gpui::{
-    App, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, SharedString, Window,
+    Action, App, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable,
+    SharedString, Subscription, Task, Window,
 };
 use menu::{Cancel, Confirm};
 use project::git_store::Repository;
 use project_diff::ProjectDiff;
-use ui::prelude::*;
+use ui::{ListItem, ListItemSpacing, prelude::*};
+use util::ResultExt;
 use workspace::{ModalView, Workspace, notifications::DetachAndPromptErr};
 use zed_actions;
 
@@ -46,6 +55,9 @@ pub mod repository_selector;
 pub mod stash_picker;
 pub mod text_diff_view;
 pub mod worktree_picker;
+
+const CLONE_SUGGESTIONS_DEBOUNCE: Duration = Duration::from_millis(200);
+const MAX_AUTH_SUGGESTIONS: usize = 30;
 
 pub fn init(cx: &mut App) {
     editor::set_blame_renderer(blame_ui::GitBlameRenderer, cx);
@@ -195,9 +207,10 @@ pub fn init(cx: &mut App) {
             let Some(panel) = workspace.panel::<git_panel::GitPanel>(cx) else {
                 return;
             };
+            let http_client = workspace.client().http_client();
 
             workspace.toggle_modal(window, cx, |window, cx| {
-                GitCloneModal::show(panel, window, cx)
+                GitCloneModal::show(panel, http_client, window, cx)
             });
         });
         workspace.register_action(|workspace, _: &git::OpenModifiedFiles, window, cx| {
@@ -812,25 +825,33 @@ impl Component for GitStatusIcon {
 }
 
 struct GitCloneModal {
-    panel: Entity<GitPanel>,
-    repo_input: Entity<Editor>,
+    picker: Entity<Picker<GitCloneDelegate>>,
+    _subscription: Subscription,
     focus_handle: FocusHandle,
 }
 
 impl GitCloneModal {
-    pub fn show(panel: Entity<GitPanel>, window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let repo_input = cx.new(|cx| {
-            let mut editor = Editor::single_line(window, cx);
-            editor.set_placeholder_text("Enter repository URL…", window, cx);
-            editor
+    pub fn show(
+        panel: Entity<GitPanel>,
+        http_client: Arc<HttpClientWithUrl>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let delegate = GitCloneDelegate::new(panel, http_client);
+        let picker = cx.new(|cx| {
+            Picker::uniform_list(delegate, window, cx)
+                .max_height(Some(rems(16.).into()))
+                .show_scrollbar(true)
+                .modal(false)
         });
-        let focus_handle = repo_input.focus_handle(cx);
+        let subscription = cx.subscribe(&picker, |_, _, _: &DismissEvent, cx| cx.emit(DismissEvent));
+        let focus_handle = picker.focus_handle(cx);
 
         window.focus(&focus_handle, cx);
 
         Self {
-            panel,
-            repo_input,
+            picker,
+            _subscription: subscription,
             focus_handle,
         }
     }
@@ -844,25 +865,33 @@ impl Focusable for GitCloneModal {
 
 impl Render for GitCloneModal {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        div()
+        v_flex()
+            .occlude()
             .elevation_3(cx)
             .w(rems(34.))
             .flex_1()
             .overflow_hidden()
+            .rounded_sm()
+            .border_1()
+            .border_color(cx.theme().colors().border)
             .child(
                 div()
                     .w_full()
-                    .p_2()
-                    .border_b_1()
-                    .border_color(cx.theme().colors().border_variant)
-                    .child(self.repo_input.clone()),
+                    .flex_grow()
+                    .overflow_hidden()
+                    .child(self.picker.clone()),
             )
             .child(
                 h_flex()
                     .w_full()
-                    .p_2()
-                    .gap_0p5()
-                    .rounded_b_sm()
+                    .flex_none()
+                    .px_2()
+                    .py_1p5()
+                    .gap_2()
+                    .justify_between()
+                    .items_center()
+                    .border_t_1()
+                    .border_color(cx.theme().colors().border)
                     .bg(cx.theme().colors().editor_background)
                     .child(
                         Label::new("Clone a repository from GitHub or other sources.")
@@ -873,7 +902,7 @@ impl Render for GitCloneModal {
                         Button::new("learn-more", "Learn More")
                             .label_size(LabelSize::Small)
                             .end_icon(Icon::new(IconName::ArrowUpRight).size(IconSize::XSmall))
-                            .on_click(|_, _, cx| {
+                            .on_click(|_, _: &mut Window, cx: &mut App| {
                                 cx.open_url("https://github.com/git-guides/git-clone");
                             }),
                     ),
@@ -881,14 +910,526 @@ impl Render for GitCloneModal {
             .on_action(cx.listener(|_, _: &menu::Cancel, _, cx| {
                 cx.emit(DismissEvent);
             }))
-            .on_action(cx.listener(|this, _: &menu::Confirm, window, cx| {
-                let repo = this.repo_input.read(cx).text(cx);
-                this.panel.update(cx, |panel, cx| {
-                    panel.git_clone(repo, window, cx);
-                });
-                cx.emit(DismissEvent);
-            }))
     }
+}
+
+#[derive(Clone)]
+struct CloneSuggestion {
+    title: SharedString,
+    detail: Option<SharedString>,
+    repo_url: SharedString,
+}
+
+struct AuthenticatedRepoCacheEntry {
+    token: String,
+    suggestions: Vec<CloneSuggestion>,
+}
+
+static AUTHENTICATED_REPO_CACHE: OnceLock<Mutex<Option<AuthenticatedRepoCacheEntry>>> =
+    OnceLock::new();
+
+#[derive(Deserialize)]
+struct GithubSearchResponse {
+    items: Vec<GithubSearchRepository>,
+}
+
+#[derive(Deserialize)]
+struct GithubSearchRepository {
+    full_name: String,
+    clone_url: String,
+    private: bool,
+    description: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct GithubUserRepository {
+    full_name: String,
+    clone_url: String,
+    private: bool,
+    description: Option<String>,
+}
+
+struct GitCloneDelegate {
+    panel: Entity<GitPanel>,
+    http_client: Arc<HttpClientWithUrl>,
+    suggestions: Vec<CloneSuggestion>,
+    selected_index: usize,
+    latest_request_id: usize,
+}
+
+impl GitCloneDelegate {
+    fn new(panel: Entity<GitPanel>, http_client: Arc<HttpClientWithUrl>) -> Self {
+        Self {
+            panel,
+            http_client,
+            suggestions: Vec::new(),
+            selected_index: 0,
+            latest_request_id: 0,
+        }
+    }
+}
+
+impl PickerDelegate for GitCloneDelegate {
+    type ListItem = ListItem;
+
+    fn render_editor(
+        &self,
+        editor: &Arc<dyn ErasedEditor>,
+        _window: &mut Window,
+        _cx: &mut Context<Picker<Self>>,
+    ) -> Div {
+        v_flex()
+            .when(
+                self.editor_position() == PickerEditorPosition::End,
+                |this| {
+                    this.child(Divider::horizontal())
+                        .child(Divider::horizontal())
+                },
+            )
+            .child(
+                h_flex()
+                    .overflow_hidden()
+                    .flex_none()
+                    .h_9()
+                    .px_2p5()
+                    .child(editor.render(_window, _cx)),
+            )
+            .when(
+                self.editor_position() == PickerEditorPosition::Start,
+                |this| {
+                    this.child(Divider::horizontal())
+                        .child(Divider::horizontal())
+                },
+            )
+    }
+
+    fn placeholder_text(&self, _window: &mut Window, _cx: &mut App) -> Arc<str> {
+        "Enter repository URL or owner/repo…".into()
+    }
+
+    fn match_count(&self) -> usize {
+        self.suggestions.len()
+    }
+
+    fn selected_index(&self) -> usize {
+        self.selected_index
+    }
+
+    fn set_selected_index(
+        &mut self,
+        index: usize,
+        _window: &mut Window,
+        _cx: &mut Context<Picker<Self>>,
+    ) {
+        self.selected_index = index.min(self.suggestions.len().saturating_sub(1));
+    }
+
+    fn editor_position(&self) -> PickerEditorPosition {
+        PickerEditorPosition::End
+    }
+
+    fn update_matches(
+        &mut self,
+        query: String,
+        window: &mut Window,
+        cx: &mut Context<Picker<Self>>,
+    ) -> Task<()> {
+        let request_id = self.latest_request_id.wrapping_add(1);
+        self.latest_request_id = request_id;
+
+        let query = query.trim().to_string();
+        let typed_suggestion = build_typed_clone_suggestion(&query);
+        let should_query_github = should_query_github(&query);
+        let http_client = self.http_client.clone();
+        let query_for_fetch = query.clone();
+
+        cx.spawn_in(window, async move |picker, cx| {
+            if should_query_github {
+                cx.background_executor().timer(CLONE_SUGGESTIONS_DEBOUNCE).await;
+
+                let is_latest = picker
+                    .read_with(cx, |picker, _| request_id == picker.delegate.latest_request_id)
+                    .unwrap_or(false);
+                if !is_latest {
+                    return;
+                }
+            }
+
+            let mut suggestions = Vec::new();
+
+            if let Some(typed_suggestion) = typed_suggestion {
+                suggestions.push(typed_suggestion);
+            }
+
+            if should_query_github {
+                let github_suggestions = cx
+                    .background_spawn(async move {
+                        fetch_github_repository_suggestions(http_client, query_for_fetch).await
+                    })
+                    .await;
+
+                match github_suggestions {
+                    Ok(mut github_suggestions) => suggestions.append(&mut github_suggestions),
+                    Err(error) => {
+                        log::debug!("failed to fetch clone suggestions from GitHub: {error}");
+                    }
+                }
+            }
+
+            let mut unique_suggestions = Vec::new();
+            for suggestion in suggestions {
+                if unique_suggestions
+                    .iter()
+                    .all(|existing: &CloneSuggestion| existing.repo_url != suggestion.repo_url)
+                {
+                    unique_suggestions.push(suggestion);
+                }
+            }
+
+            picker
+                .update(cx, |picker, _| {
+                    if request_id != picker.delegate.latest_request_id {
+                        return;
+                    }
+
+                    picker.delegate.suggestions = unique_suggestions;
+                    picker.delegate.selected_index = 0;
+                })
+                .log_err();
+        })
+    }
+
+    fn confirm(&mut self, _secondary: bool, window: &mut Window, cx: &mut Context<Picker<Self>>) {
+        let Some(suggestion) = self.suggestions.get(self.selected_index) else {
+            return;
+        };
+
+        let repo = suggestion.repo_url.to_string();
+        self.panel.update(cx, |panel, cx| {
+            panel.git_clone(repo, window, cx);
+        });
+        window.dispatch_action(menu::Cancel.boxed_clone(), cx);
+    }
+
+    fn dismissed(&mut self, _window: &mut Window, cx: &mut Context<Picker<Self>>) {
+        cx.emit(DismissEvent);
+    }
+
+    fn no_matches_text(&self, _window: &mut Window, _cx: &mut App) -> Option<SharedString> {
+        None
+    }
+
+    fn render_match(
+        &self,
+        index: usize,
+        selected: bool,
+        _window: &mut Window,
+        _cx: &mut Context<Picker<Self>>,
+    ) -> Option<Self::ListItem> {
+        let suggestion = self.suggestions.get(index)?;
+
+        Some(
+            ListItem::new(format!("clone-suggestion-{index}"))
+                .inset(true)
+                .spacing(ListItemSpacing::Sparse)
+                .toggle_state(selected)
+                .child(
+                    v_flex()
+                        .gap_0p5()
+                        .child(Label::new(suggestion.title.clone()))
+                        .when_some(suggestion.detail.clone(), |this, detail| {
+                            this.child(
+                                Label::new(detail)
+                                    .size(LabelSize::Small)
+                                    .color(Color::Muted),
+                            )
+                        }),
+                ),
+        )
+    }
+}
+
+fn should_query_github(query: &str) -> bool {
+    let query = query.trim();
+    !query.is_empty()
+        && query.len() >= 2
+        && !query.contains("://")
+        && !query.starts_with("git@")
+        && !query.starts_with("ssh://")
+}
+
+fn build_typed_clone_suggestion(query: &str) -> Option<CloneSuggestion> {
+    let query = query.trim();
+    if query.is_empty() {
+        return None;
+    }
+
+    let normalized: SharedString = crate::clone::normalize_repository_input(query)
+        .unwrap_or_else(|| query.to_string())
+        .into();
+
+    Some(CloneSuggestion {
+        title: "Clone entered repository".into(),
+        detail: Some(normalized.clone()),
+        repo_url: normalized,
+    })
+}
+
+async fn fetch_github_repository_suggestions(
+    http_client: Arc<HttpClientWithUrl>,
+    query: String,
+) -> anyhow::Result<Vec<CloneSuggestion>> {
+    let github_token = github_api_token();
+    let mut suggestions = Vec::new();
+
+    if let Some(token) = github_token.as_deref() {
+        let cache = AUTHENTICATED_REPO_CACHE.get_or_init(|| Mutex::new(None));
+
+        let cached_authenticated_repositories = {
+            let guard = cache
+                .lock()
+                .expect("AUTHENTICATED_REPO_CACHE mutex poisoned");
+
+            guard
+                .as_ref()
+                .filter(|entry| entry.token == token)
+                .map(|entry| entry.suggestions.clone())
+        };
+
+        let authenticated_repositories = if let Some(repositories) = cached_authenticated_repositories
+        {
+            repositories
+        } else {
+            match fetch_authenticated_github_repositories(http_client.clone(), token).await {
+                Ok(repositories) => {
+                    let mut guard = cache
+                        .lock()
+                        .expect("AUTHENTICATED_REPO_CACHE mutex poisoned");
+                    *guard = Some(AuthenticatedRepoCacheEntry {
+                        token: token.to_string(),
+                        suggestions: repositories.clone(),
+                    });
+                    repositories
+                }
+                Err(error) => {
+                    log::debug!(
+                        "failed to fetch authenticated GitHub repositories for clone suggestions: {error}"
+                    );
+                    Vec::new()
+                }
+            }
+        };
+
+        suggestions.extend(filter_authenticated_repo_suggestions(
+            &authenticated_repositories,
+            &query,
+        ));
+    }
+
+    let encoded_query = percent_encode_query(&query);
+    let search_url = format!(
+        "https://api.github.com/search/repositories?q={encoded_query}&sort=updated&per_page=8"
+    );
+
+    let mut request = Request::get(&search_url)
+        .header("accept", "application/vnd.github+json")
+        .follow_redirects(http_client::RedirectPolicy::FollowAll);
+    if let Some(token) = github_token {
+        request = request.header("authorization", format!("Bearer {token}"));
+    }
+
+    let mut response = http_client.send(request.body(AsyncBody::default())?).await?;
+    let mut body = Vec::new();
+    response
+        .body_mut()
+        .read_to_end(&mut body)
+        .await
+        .context("error reading GitHub clone suggestions")?;
+
+    if !response.status().is_success() {
+        anyhow::bail!(
+            "GitHub suggestions request failed with status {}",
+            response.status().as_u16()
+        );
+    }
+
+    let parsed: GithubSearchResponse = serde_json::from_slice(&body)
+        .context("failed to parse GitHub repository suggestions")?;
+
+    suggestions.extend(
+        parsed
+            .items
+            .into_iter()
+            .take(8)
+            .map(|repository| to_clone_suggestion(
+                repository.full_name,
+                repository.clone_url,
+                repository.private,
+                repository.description,
+            )),
+    );
+
+    Ok(suggestions)
+}
+
+async fn fetch_authenticated_github_repositories(
+    http_client: Arc<HttpClientWithUrl>,
+    github_token: &str,
+) -> anyhow::Result<Vec<CloneSuggestion>> {
+    const MAX_AUTH_REPOSITORY_PAGES: usize = 3;
+
+    let mut repository_pages = Vec::new();
+    let mut next_page_url = Some(
+        "https://api.github.com/user/repos?per_page=100&sort=updated&affiliation=owner,collaborator,organization_member"
+            .to_string(),
+    );
+
+    for _ in 0..MAX_AUTH_REPOSITORY_PAGES {
+        let Some(page_url) = next_page_url.take() else {
+            break;
+        };
+
+        let request = Request::get(&page_url)
+            .header("accept", "application/vnd.github+json")
+            .header("authorization", format!("Bearer {github_token}"))
+            .follow_redirects(http_client::RedirectPolicy::FollowAll);
+
+        let mut response = http_client.send(request.body(AsyncBody::default())?).await?;
+        let next_link = response
+            .headers()
+            .get("link")
+            .and_then(|value| value.to_str().ok())
+            .and_then(github_link_next_page_url);
+
+        let mut body = Vec::new();
+        response
+            .body_mut()
+            .read_to_end(&mut body)
+            .await
+            .context("error reading authenticated GitHub repositories")?;
+
+        if !response.status().is_success() {
+            anyhow::bail!(
+                "authenticated GitHub repositories request failed with status {}",
+                response.status().as_u16()
+            );
+        }
+
+        let mut repositories: Vec<GithubUserRepository> = serde_json::from_slice(&body)
+            .context("failed to parse authenticated GitHub repositories")?;
+        repository_pages.append(&mut repositories);
+
+        next_page_url = next_link;
+
+        if repository_pages.len() >= MAX_AUTH_SUGGESTIONS * 2 {
+            break;
+        }
+    }
+
+    Ok(repository_pages
+        .into_iter()
+        .take(MAX_AUTH_SUGGESTIONS)
+        .map(|repository| {
+            to_clone_suggestion(
+                repository.full_name,
+                repository.clone_url,
+                repository.private,
+                repository.description,
+            )
+        })
+        .collect())
+}
+
+fn filter_authenticated_repo_suggestions(
+    suggestions: &[CloneSuggestion],
+    query: &str,
+) -> Vec<CloneSuggestion> {
+    let query = query.trim().to_lowercase();
+    if query.is_empty() {
+        return suggestions.iter().take(MAX_AUTH_SUGGESTIONS).cloned().collect();
+    }
+
+    suggestions
+        .iter()
+        .filter(|suggestion| {
+            suggestion.title.to_lowercase().contains(&query)
+                || suggestion
+                    .detail
+                    .as_ref()
+                    .is_some_and(|detail| detail.to_lowercase().contains(&query))
+        })
+        .take(MAX_AUTH_SUGGESTIONS)
+        .cloned()
+        .collect()
+}
+
+fn github_link_next_page_url(link_header: &str) -> Option<String> {
+    for link_entry in link_header.split(',') {
+        let mut parts = link_entry.trim().split(';');
+        let Some(url_part) = parts.next().map(str::trim) else {
+            continue;
+        };
+
+        let is_next = parts.any(|part| part.trim() == r#"rel="next""#);
+        if !is_next {
+            continue;
+        }
+
+        let Some(url_part) = url_part.strip_prefix('<') else {
+            continue;
+        };
+        let Some(url_part) = url_part.strip_suffix('>') else {
+            continue;
+        };
+
+        return Some(url_part.to_string());
+    }
+
+    None
+}
+
+fn to_clone_suggestion(
+    full_name: String,
+    clone_url: String,
+    private: bool,
+    description: Option<String>,
+) -> CloneSuggestion {
+    let visibility = if private { "private" } else { "public" };
+
+    CloneSuggestion {
+        title: full_name.into(),
+        detail: Some(
+            description
+                .map(|description| format!("{visibility} - {description}"))
+                .unwrap_or_else(|| visibility.to_string())
+                .into(),
+        ),
+        repo_url: clone_url.into(),
+    }
+}
+
+fn percent_encode_query(input: &str) -> String {
+    let mut encoded = String::with_capacity(input.len());
+
+    for byte in input.bytes() {
+        let is_unreserved = byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'.' | b'_' | b'~');
+        if is_unreserved {
+            encoded.push(byte as char);
+        } else if byte == b' ' {
+            encoded.push('+');
+        } else {
+            encoded.push_str(&format!("%{byte:02X}"));
+        }
+    }
+
+    encoded
+}
+
+fn github_api_token() -> Option<String> {
+    std::env::var("GITHUB_TOKEN")
+        .ok()
+        .or_else(|| std::env::var("GH_COPILOT_TOKEN").ok())
+        .or_else(|| std::env::var("GH_TOKEN").ok())
 }
 
 impl EventEmitter<DismissEvent> for GitCloneModal {}

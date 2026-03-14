@@ -150,6 +150,7 @@ pub trait Fs: Send + Sync {
     ) -> Result<Arc<dyn GitRepository>>;
     async fn git_init(&self, abs_work_directory: &Path, fallback_branch_name: String)
     -> Result<()>;
+    async fn git_check_remote(&self, repo_url: &str) -> Result<()>;
     async fn git_clone(&self, repo_url: &str, abs_work_directory: &Path) -> Result<()>;
     fn is_fake(&self) -> bool;
     async fn is_case_sensitive(&self) -> bool;
@@ -1206,6 +1207,24 @@ impl Fs for RealFs {
         if !output.status.success() {
             anyhow::bail!(
                 "git clone failed: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
+
+        Ok(())
+    }
+
+    async fn git_check_remote(&self, repo_url: &str) -> Result<()> {
+        let output = new_command("git")
+            .env("GIT_TERMINAL_PROMPT", "0")
+            .env("GCM_INTERACTIVE", "Never")
+            .args(["ls-remote", repo_url])
+            .output()
+            .await?;
+
+        if !output.status.success() {
+            anyhow::bail!(
+                "git remote check failed: {}",
                 String::from_utf8_lossy(&output.stderr)
             );
         }
@@ -2894,6 +2913,10 @@ impl Fs for FakeFs {
 
     async fn git_clone(&self, _repo_url: &str, _abs_work_directory: &Path) -> Result<()> {
         anyhow::bail!("Git clone is not supported in fake Fs")
+    }
+
+    async fn git_check_remote(&self, _repo_url: &str) -> Result<()> {
+        Ok(())
     }
 
     fn is_fake(&self) -> bool {
