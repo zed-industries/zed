@@ -1848,43 +1848,35 @@ impl Sidebar {
                 this.child(self.render_sidebar_toggle_button(false, cx))
             })
             .child(self.render_filter_input())
-            .when(has_query, |this| {
-                this.when(!docked_right, |this| this.pr_1p5()).child(
-                    IconButton::new("clear_filter", IconName::Close)
-                        .shape(IconButtonShape::Square)
-                        .tooltip(Tooltip::text("Clear Search"))
-                        .on_click(cx.listener(|this, _, window, cx| {
-                            this.reset_filter_editor_text(window, cx);
-                            this.update_entries(cx);
-                        })),
-                )
-            })
+            .child(
+                h_flex()
+                    .gap_0p5()
+                    .when(!docked_right, |this| this.pr_1p5())
+                    .when(has_query, |this| {
+                        this.child(
+                            IconButton::new("clear_filter", IconName::Close)
+                                .shape(IconButtonShape::Square)
+                                .tooltip(Tooltip::text("Clear Search"))
+                                .on_click(cx.listener(|this, _, window, cx| {
+                                    this.reset_filter_editor_text(window, cx);
+                                    this.update_entries(cx);
+                                })),
+                        )
+                    })
+                    .child(
+                        IconButton::new("archive", IconName::Archive)
+                            .icon_size(IconSize::Small)
+                            .tooltip(Tooltip::text("Archive"))
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.show_archive(window, cx);
+                            })),
+                    ),
+            )
             .when(docked_right, |this| {
                 this.pl_2()
                     .pr_0p5()
                     .child(self.render_sidebar_toggle_button(true, cx))
             })
-    }
-
-    fn render_thread_list_footer(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        h_flex()
-            .p_1p5()
-            .border_t_1()
-            .border_color(cx.theme().colors().border_variant)
-            .child(
-                Button::new("view-archive", "Archive")
-                    .full_width()
-                    .label_size(LabelSize::Small)
-                    .style(ButtonStyle::Outlined)
-                    .start_icon(
-                        Icon::new(IconName::Archive)
-                            .size(IconSize::XSmall)
-                            .color(Color::Muted),
-                    )
-                    .on_click(cx.listener(|this, _, window, cx| {
-                        this.show_archive(window, cx);
-                    })),
-            )
     }
 
     fn render_sidebar_toggle_button(
