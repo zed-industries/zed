@@ -9,9 +9,10 @@ use project::ProjectPath;
 use serde::Deserialize;
 use std::sync::Arc;
 use ui::{
-    Headline, HeadlineSize, Icon, IconName, IconSize, IntoElement, ParentElement, Render, Styled,
-    StyledExt, div, h_flex, rems, v_flex,
+    Divider, Headline, HeadlineSize, Icon, IconName, IconSize, IntoElement, ParentElement,
+    Render, Styled, StyledExt, div, h_flex, rems, v_flex,
 };
+use ui_input::ErasedEditor;
 
 mod blame_ui;
 pub mod clone;
@@ -837,6 +838,7 @@ impl GitCloneModal {
             Picker::uniform_list(delegate, window, cx)
                 .max_height(Some(rems(16.).into()))
                 .show_scrollbar(true)
+                .modal(false)
         });
         let subscription = cx.subscribe(&picker, |_, _, _: &DismissEvent, cx| cx.emit(DismissEvent));
         let focus_handle = picker.focus_handle(cx);
@@ -859,13 +861,48 @@ impl Focusable for GitCloneModal {
 
 impl Render for GitCloneModal {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        div()
+        v_flex()
+            .occlude()
             .elevation_3(cx)
             .w(rems(34.))
             .flex_1()
             .overflow_hidden()
-            .bg(cx.theme().colors().editor_background)
-            .child(self.picker.clone())
+            .rounded_sm()
+            .border_1()
+            .border_color(cx.theme().colors().border)
+            .child(
+                div()
+                    .w_full()
+                    .flex_grow()
+                    .overflow_hidden()
+                    .child(self.picker.clone()),
+            )
+            .child(
+                h_flex()
+                    .w_full()
+                    .flex_none()
+                    .px_2()
+                    .py_1p5()
+                    .gap_2()
+                    .justify_between()
+                    .items_center()
+                    .border_t_1()
+                    .border_color(cx.theme().colors().border)
+                    .bg(cx.theme().colors().editor_background)
+                    .child(
+                        Label::new("Clone a repository from GitHub or other sources.")
+                            .color(Color::Muted)
+                            .size(LabelSize::Small),
+                    )
+                    .child(
+                        Button::new("learn-more", "Learn More")
+                            .label_size(LabelSize::Small)
+                            .end_icon(Icon::new(IconName::ArrowUpRight).size(IconSize::XSmall))
+                            .on_click(|_, _: &mut Window, cx: &mut App| {
+                                cx.open_url("https://github.com/git-guides/git-clone");
+                            }),
+                    ),
+            )
             .on_action(cx.listener(|_, _: &menu::Cancel, _, cx| {
                 cx.emit(DismissEvent);
             }))
@@ -906,7 +943,6 @@ struct GitCloneDelegate {
     suggestions: Vec<CloneSuggestion>,
     selected_index: usize,
     latest_request_id: usize,
-    last_query: String,
 }
 
 impl GitCloneDelegate {
@@ -917,13 +953,43 @@ impl GitCloneDelegate {
             suggestions: Vec::new(),
             selected_index: 0,
             latest_request_id: 0,
-            last_query: String::new(),
         }
     }
 }
 
 impl PickerDelegate for GitCloneDelegate {
     type ListItem = ListItem;
+
+    fn render_editor(
+        &self,
+        editor: &Arc<dyn ErasedEditor>,
+        _window: &mut Window,
+        _cx: &mut Context<Picker<Self>>,
+    ) -> Div {
+        v_flex()
+            .when(
+                self.editor_position() == PickerEditorPosition::End,
+                |this| {
+                    this.child(Divider::horizontal())
+                        .child(Divider::horizontal())
+                },
+            )
+            .child(
+                h_flex()
+                    .overflow_hidden()
+                    .flex_none()
+                    .h_9()
+                    .px_2p5()
+                    .child(editor.render(_window, _cx)),
+            )
+            .when(
+                self.editor_position() == PickerEditorPosition::Start,
+                |this| {
+                    this.child(Divider::horizontal())
+                        .child(Divider::horizontal())
+                },
+            )
+    }
 
     fn placeholder_text(&self, _window: &mut Window, _cx: &mut App) -> Arc<str> {
         "Enter repository URL or owner/repo…".into()
@@ -960,7 +1026,6 @@ impl PickerDelegate for GitCloneDelegate {
         self.latest_request_id = request_id;
 
         let query = query.trim().to_string();
-        self.last_query = query.clone();
         let typed_suggestion = build_typed_clone_suggestion(&query);
         let should_query_github = should_query_github(&query);
         let http_client = self.http_client.clone();
@@ -1029,45 +1094,6 @@ impl PickerDelegate for GitCloneDelegate {
 
     fn no_matches_text(&self, _window: &mut Window, _cx: &mut App) -> Option<SharedString> {
         None
-    }
-
-    fn render_footer(&self, _window: &mut Window, cx: &mut Context<Picker<Self>>) -> Option<AnyElement> {
-        Some(
-            v_flex()
-                .w_full()
-                .px_2()
-                .pb_2()
-                .pt_1()
-                .gap_1()
-                .border_t_1()
-                .border_color(cx.theme().colors().border_variant)
-                .when(
-                    self.suggestions.is_empty() && !self.last_query.is_empty(),
-                    |this| {
-                        this.child(
-                            Label::new("No matches")
-                                .color(Color::Muted)
-                                .size(LabelSize::Small),
-                        )
-                    },
-                )
-                .child(
-                    Label::new(
-                        "Clone from GitHub or other sources. Private repositories are included automatically when available.",
-                    )
-                    .color(Color::Muted)
-                    .size(LabelSize::Small),
-                )
-                .child(
-                    Button::new("learn-more", "Learn More")
-                        .label_size(LabelSize::Small)
-                        .end_icon(Icon::new(IconName::ArrowUpRight).size(IconSize::XSmall))
-                        .on_click(|_, _: &mut Window, cx: &mut App| {
-                            cx.open_url("https://github.com/git-guides/git-clone");
-                        }),
-                )
-                .into_any_element(),
-        )
     }
 
     fn render_match(
