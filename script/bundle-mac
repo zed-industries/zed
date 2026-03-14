@@ -171,10 +171,10 @@ function download_git() {
 
     case "$architecture" in
         aarch64-apple-darwin)
-            download_and_unpack "https://github.com/desktop/dugite-native/releases/download/${GIT_VERSION}/dugite-native-${GIT_VERSION}-${GIT_VERSION_SHA}-macOS-arm64.tar.gz" bin/git ./git
+            download_and_unpack "https://github.com/desktop/dugite-native/releases/download/${GIT_VERSION}/dugite-native-${GIT_VERSION}-${GIT_VERSION_SHA}-macOS-arm64.tar.gz" ./bin/git ./git
             ;;
         x86_64-apple-darwin)
-            download_and_unpack "https://github.com/desktop/dugite-native/releases/download/${GIT_VERSION}/dugite-native-${GIT_VERSION}-${GIT_VERSION_SHA}-macOS-x64.tar.gz" bin/git ./git
+            download_and_unpack "https://github.com/desktop/dugite-native/releases/download/${GIT_VERSION}/dugite-native-${GIT_VERSION}-${GIT_VERSION_SHA}-macOS-x64.tar.gz" ./bin/git ./git
             ;;
         *)
             echo "Unsupported architecture: $architecture"
