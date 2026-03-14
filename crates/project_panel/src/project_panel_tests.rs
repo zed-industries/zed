@@ -9589,6 +9589,205 @@ async fn test_preserve_temporary_unfolded_active_index_on_blur_from_context_menu
     );
 }
 
+#[gpui::test]
+async fn test_context_menu_deployment(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        "/root1",
+        json!({
+            "parent": {
+                "subdir": {
+                    "child": {},
+                }
+            }
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), ["/root1".as_ref()], cx).await;
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let workspace = window
+        .read_with(cx, |mw, _| mw.workspace().clone())
+        .unwrap();
+    let cx = &mut VisualTestContext::from_window(window.into(), cx);
+
+    let panel = workspace.update_in(cx, |workspace, window, cx| {
+        let panel = ProjectPanel::new(workspace, window, cx);
+        workspace.add_panel(panel.clone(), window, cx);
+        panel
+    });
+
+    cx.update(|_, cx| {
+        let settings = *ProjectPanelSettings::get_global(cx);
+        ProjectPanelSettings::override_global(
+            ProjectPanelSettings {
+                auto_fold_dirs: false,
+                ..settings
+            },
+            cx,
+        );
+    });
+
+    toggle_expand_dir(&panel, "root1", cx);
+    toggle_expand_dir(&panel, "root1/parent", cx);
+    toggle_expand_dir(&panel, "root1/parent/subdir", cx);
+    cx.run_until_parked();
+
+    let child_entry_id = find_project_entry(&panel, "root1/parent/subdir/child", cx)
+        .expect("child directory should exist for this test");
+
+    let click_position = gpui::point(gpui::px(2.), gpui::px(2.));
+    panel.update_in(cx, |panel, window, cx| {
+        panel.deploy_context_menu(click_position, child_entry_id, window, cx);
+    });
+    cx.run_until_parked();
+
+    panel.update_in(cx, |panel, _, cx| {
+        let (_, menu_position, _subscription, _force_snap) = panel
+            .context_menu
+            .as_ref()
+            .expect("context menu should be deployed");
+
+        let selection = panel
+            .selection
+            .expect("selection should be set when deploying context menu");
+        assert_eq!(
+            selection.entry_id, child_entry_id,
+            "context menu should select the clicked entry"
+        );
+
+        let (_, entry_ix, _) = panel.index_for_selection(selection).unwrap_or_default();
+
+        let ui_font_size = ThemeSettings::get_global(cx).ui_font_size(cx).to_f64();
+        let entry_height = ui_font_size + 10.0;
+        let offset_y = panel.scroll_handle.offset().y.to_f64();
+        let viewport = panel.scroll_handle.viewport();
+
+        let expected_entry_y =
+            (((entry_ix + 1) as f64) * entry_height + viewport.top().to_f64()) + offset_y;
+
+        assert_eq!(
+            menu_position.x.to_f64(),
+            click_position.x.to_f64(),
+            "context menu x-position should match the click x-position",
+        );
+        assert_eq!(
+            menu_position.y.to_f64(),
+            expected_entry_y,
+            "context menu y-position should align with the entry row",
+        );
+    });
+}
+#[gpui::test]
+async fn test_context_menu_snaps_above_entry_when_not_enough_space_below(
+    cx: &mut gpui::TestAppContext,
+) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        "/root1",
+        json!({
+            "parent": {
+                "subdir": {
+                    "child": {},
+                }
+            }
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), ["/root1".as_ref()], cx).await;
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let workspace = window
+        .read_with(cx, |mw, _| mw.workspace().clone())
+        .unwrap();
+    let cx = &mut VisualTestContext::from_window(window.into(), cx);
+
+    cx.simulate_resize(gpui::size(gpui::px(300.), gpui::px(40.)));
+
+    cx.update(|_, cx| {
+        let settings = *ProjectPanelSettings::get_global(cx);
+        ProjectPanelSettings::override_global(
+            ProjectPanelSettings {
+                auto_fold_dirs: false,
+                ..settings
+            },
+            cx,
+        );
+    });
+
+    let panel = workspace.update_in(cx, |workspace, window, cx| {
+        let panel = ProjectPanel::new(workspace, window, cx);
+        workspace.add_panel(panel.clone(), window, cx);
+        panel
+    });
+
+    toggle_expand_dir(&panel, "root1", cx);
+    toggle_expand_dir(&panel, "root1/parent", cx);
+    toggle_expand_dir(&panel, "root1/parent/subdir", cx);
+    cx.run_until_parked();
+
+    let child_entry_id = find_project_entry(&panel, "root1/parent/subdir/child", cx)
+        .expect("child directory should exist for this test");
+
+    let click_position = gpui::point(gpui::px(2.), gpui::px(2.));
+    panel.update_in(cx, |panel, window, cx| {
+        panel.deploy_context_menu(click_position, child_entry_id, window, cx);
+    });
+    cx.run_until_parked();
+
+    panel.update_in(cx, |_panel, _window, cx| {
+        let (menu_entity, menu_position, _subscription, force_snap) = _panel
+            .context_menu
+            .as_ref()
+            .expect("context menu should be deployed");
+
+        let selection = _panel
+            .selection
+            .expect("selection should be set when deploying context menu");
+        assert_eq!(selection.entry_id, child_entry_id);
+
+        let (_, entry_ix, _) = _panel.index_for_selection(selection).unwrap_or_default();
+
+        let ui_font_size = ThemeSettings::get_global(cx).ui_font_size(cx).to_f64();
+        let entry_height = ui_font_size + 10.0;
+        let mut offset_y = _panel.scroll_handle.offset().y.to_f64();
+        let viewport = _panel.scroll_handle.viewport();
+
+        if let Some(min_offset_y) = _panel.calculate_min_entry_offset_y(
+            entry_ix,
+            entry_height,
+            selection.entry_id,
+            selection.worktree_id,
+            cx,
+        ) {
+            if offset_y < min_offset_y {
+                offset_y = min_offset_y;
+            }
+        }
+
+        let unsnapped_entry_y =
+            (((entry_ix + 1) as f64) * entry_height + viewport.top().to_f64()) + offset_y;
+        let expected_snapped_y = unsnapped_entry_y - entry_height;
+
+        assert!(
+            matches!(*force_snap, Some(gpui::AnchoredForceSnap::Vertical)),
+            "context menu should request vertical snap when there is not enough space below",
+        );
+        assert!(
+            (menu_position.y.to_f64() - expected_snapped_y).abs() < 0.5,
+            "menu should move above the entry by exactly one entry height; got {}, expected {}",
+            menu_position.y.to_f64(),
+            expected_snapped_y,
+        );
+
+        assert!(!menu_entity.read(cx).get_items().is_empty());
+    });
+}
+
 async fn run_create_file_in_folded_path_case(
     case_name: &str,
     active_ancestor_path: &str,
