@@ -324,6 +324,19 @@ pub fn unregister_thread(acp_thread_id: &str) {
             log::info!("🗑️ [THREAD_SERVICE] unregister_thread: removed '{}'", acp_thread_id);
         }
     }
+
+    // Clear persistent subscription so that if this thread is reloaded later
+    // (e.g., follow-up to a non-visible thread), ensure_thread_subscription
+    // will create a fresh subscription on the new Entity<AcpThread>.
+    // Without this, the old subscription (attached to the dropped entity) is
+    // gone but the flag remains, so no new subscription is created and events
+    // like Stopped/message_completed are silently lost.
+    let subs = PERSISTENT_SUBSCRIPTIONS.lock();
+    if let Some(s) = subs.as_ref() {
+        if s.write().remove(acp_thread_id) {
+            eprintln!("🗑️ [THREAD_SERVICE] unregister_thread: cleared persistent subscription for '{}'", acp_thread_id);
+        }
+    }
 }
 
 /// Get an active thread as weak reference
