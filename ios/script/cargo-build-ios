@@ -4,6 +4,12 @@
 
 set -euo pipefail
 
+# Xcode runs scripts with a stripped PATH. Restore cargo and common tool paths.
+export PATH="$HOME/.cargo/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"
+if [ -f "$HOME/.cargo/env" ]; then
+    source "$HOME/.cargo/env"
+fi
+
 REPO_ROOT="$(cd "$PROJECT_DIR/.." && pwd)"
 
 # Select Rust target based on the Xcode platform being built.
