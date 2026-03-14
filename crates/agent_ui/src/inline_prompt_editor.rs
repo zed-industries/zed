@@ -796,9 +796,11 @@ impl<T: 'static> PromptEditor<T> {
                 vec![
                     Button::new("start", mode.start_label())
                         .label_size(LabelSize::Small)
-                        .icon(IconName::Return)
-                        .icon_size(IconSize::XSmall)
-                        .icon_color(Color::Muted)
+                        .end_icon(
+                            Icon::new(IconName::Return)
+                                .size(IconSize::XSmall)
+                                .color(Color::Muted),
+                        )
                         .on_click(
                             cx.listener(|_, _, _, cx| cx.emit(PromptEditorEvent::StartRequested)),
                         )

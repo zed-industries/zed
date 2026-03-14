@@ -60,7 +60,11 @@ pub trait AgentConnection {
     }
 
     /// Close an existing session. Allows the agent to free the session from memory.
-    fn close_session(&self, _session_id: &acp::SessionId, _cx: &mut App) -> Task<Result<()>> {
+    fn close_session(
+        self: Rc<Self>,
+        _session_id: &acp::SessionId,
+        _cx: &mut App,
+    ) -> Task<Result<()>> {
         Task::ready(Err(anyhow::Error::msg("Closing sessions is not supported")))
     }
 
@@ -242,6 +246,7 @@ pub struct AgentSessionInfo {
     pub cwd: Option<PathBuf>,
     pub title: Option<SharedString>,
     pub updated_at: Option<DateTime<Utc>>,
+    pub created_at: Option<DateTime<Utc>>,
     pub meta: Option<acp::Meta>,
 }
 
@@ -252,6 +257,7 @@ impl AgentSessionInfo {
             cwd: None,
             title: None,
             updated_at: None,
+            created_at: None,
             meta: None,
         }
     }

@@ -36,6 +36,9 @@ use wayland_client::{
         wl_shm_pool, wl_surface,
     },
 };
+use wayland_protocols::wp::pointer_gestures::zv1::client::{
+    zwp_pointer_gesture_pinch_v1, zwp_pointer_gestures_v1,
+};
 use wayland_protocols::wp::primary_selection::zv1::client::zwp_primary_selection_offer_v1::{
     self, ZwpPrimarySelectionOfferV1,
 };
@@ -124,6 +127,7 @@ pub struct Globals {
     pub layer_shell: Option<zwlr_layer_shell_v1::ZwlrLayerShellV1>,
     pub blur_manager: Option<org_kde_kwin_blur_manager::OrgKdeKwinBlurManager>,
     pub text_input_manager: Option<zwp_text_input_manager_v3::ZwpTextInputManagerV3>,
+    pub gesture_manager: Option<zwp_pointer_gestures_v1::ZwpPointerGesturesV1>,
     pub dialog: Option<xdg_wm_dialog_v1::XdgWmDialogV1>,
     pub executor: ForegroundExecutor,
 }
@@ -164,6 +168,7 @@ impl Globals {
             layer_shell: globals.bind(&qh, 1..=5, ()).ok(),
             blur_manager: globals.bind(&qh, 1..=1, ()).ok(),
             text_input_manager: globals.bind(&qh, 1..=1, ()).ok(),
+            gesture_manager: globals.bind(&qh, 1..=3, ()).ok(),
             dialog: globals.bind(&qh, dialog_v..=dialog_v, ()).ok(),
             executor,
             qh,
@@ -208,6 +213,8 @@ pub(crate) struct WaylandClientState {
     pub compositor_gpu: Option<CompositorGpuHint>,
     wl_seat: wl_seat::WlSeat, // TODO: Multi seat support
     wl_pointer: Option<wl_pointer::WlPointer>,
+    pinch_gesture: Option<zwp_pointer_gesture_pinch_v1::ZwpPointerGesturePinchV1>,
+    pinch_scale: f32,
     wl_keyboard: Option<wl_keyboard::WlKeyboard>,
     cursor_shape_device: Option<wp_cursor_shape_device_v1::WpCursorShapeDeviceV1>,
     data_device: Option<wl_data_device::WlDataDevice>,
@@ -221,6 +228,7 @@ pub(crate) struct WaylandClientState {
     // Output to scale mapping
     outputs: HashMap<ObjectId, Output>,
     in_progress_outputs: HashMap<ObjectId, InProgressOutput>,
+    wl_outputs: HashMap<ObjectId, wl_output::WlOutput>,
     keyboard_layout: LinuxKeyboardLayout,
     keymap_state: Option<xkb::State>,
     compose_state: Option<xkb::compose::State>,
@@ -463,6 +471,8 @@ impl WaylandClient {
         let mut seat: Option<wl_seat::WlSeat> = None;
         #[allow(clippy::mutable_key_type)]
         let mut in_progress_outputs = HashMap::default();
+        #[allow(clippy::mutable_key_type)]
+        let mut wl_outputs: HashMap<ObjectId, wl_output::WlOutput> = HashMap::default();
         globals.contents().with_list(|list| {
             for global in list {
                 match &global.interface[..] {
@@ -482,6 +492,7 @@ impl WaylandClient {
                             (),
                         );
                         in_progress_outputs.insert(output.id(), InProgressOutput::default());
+                        wl_outputs.insert(output.id(), output);
                     }
                     _ => {}
                 }
@@ -580,6 +591,8 @@ impl WaylandClient {
             wl_seat: seat,
             wl_pointer: None,
             wl_keyboard: None,
+            pinch_gesture: None,
+            pinch_scale: 1.0,
             cursor_shape_device: None,
             data_device,
             primary_selection,
@@ -589,6 +602,7 @@ impl WaylandClient {
             composing: false,
             outputs: HashMap::default(),
             in_progress_outputs,
+            wl_outputs,
             windows: HashMap::default(),
             common,
             keyboard_layout: LinuxKeyboardLayout::new(UNKNOWN_KEYBOARD_LAYOUT_NAME),
@@ -720,6 +734,15 @@ impl LinuxClient for WaylandClient {
 
         let parent = state.keyboard_focused_window.clone();
 
+        let target_output = params.display_id.and_then(|display_id| {
+            let target_protocol_id: u32 = display_id.into();
+            state
+                .wl_outputs
+                .iter()
+                .find(|(id, _)| id.protocol_id() == target_protocol_id)
+                .map(|(_, output)| output.clone())
+        });
+
         let appearance = state.common.appearance;
         let compositor_gpu = state.compositor_gpu.take();
         let (window, surface_id) = WaylandWindow::new(
@@ -731,6 +754,7 @@ impl LinuxClient for WaylandClient {
             params,
             appearance,
             parent,
+            target_output,
         )?;
         state.windows.insert(surface_id, window.0.clone());
 
@@ -1020,6 +1044,7 @@ impl Dispatch<wl_registry::WlRegistry, GlobalListContents> for WaylandClientStat
                     state
                         .in_progress_outputs
                         .insert(output.id(), InProgressOutput::default());
+                    state.wl_outputs.insert(output.id(), output);
                 }
                 _ => {}
             },
@@ -1308,6 +1333,12 @@ impl Dispatch<wl_seat::WlSeat, ()> for WaylandClientStatePtr {
                     .cursor_shape_manager
                     .as_ref()
                     .map(|cursor_shape_manager| cursor_shape_manager.get_pointer(&pointer, qh, ()));
+
+                state.pinch_gesture = state.globals.gesture_manager.as_ref().map(
+                    |gesture_manager: &zwp_pointer_gestures_v1::ZwpPointerGesturesV1| {
+                        gesture_manager.get_pinch_gesture(&pointer, qh, ())
+                    },
+                );
 
                 if let Some(wl_pointer) = &state.wl_pointer {
                     wl_pointer.release();
@@ -1976,6 +2007,91 @@ impl Dispatch<wl_pointer::WlPointer, ()> for WaylandClientStatePtr {
                         window.handle_input(input);
                     }
                 }
+            }
+            _ => {}
+        }
+    }
+}
+
+impl Dispatch<zwp_pointer_gestures_v1::ZwpPointerGesturesV1, ()> for WaylandClientStatePtr {
+    fn event(
+        _this: &mut Self,
+        _: &zwp_pointer_gestures_v1::ZwpPointerGesturesV1,
+        _: <zwp_pointer_gestures_v1::ZwpPointerGesturesV1 as Proxy>::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+        // The gesture manager doesn't generate events
+    }
+}
+
+impl Dispatch<zwp_pointer_gesture_pinch_v1::ZwpPointerGesturePinchV1, ()>
+    for WaylandClientStatePtr
+{
+    fn event(
+        this: &mut Self,
+        _: &zwp_pointer_gesture_pinch_v1::ZwpPointerGesturePinchV1,
+        event: <zwp_pointer_gesture_pinch_v1::ZwpPointerGesturePinchV1 as Proxy>::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+        use gpui::PinchEvent;
+
+        let client = this.get_client();
+        let mut state = client.borrow_mut();
+
+        let Some(window) = state.mouse_focused_window.clone() else {
+            return;
+        };
+
+        match event {
+            zwp_pointer_gesture_pinch_v1::Event::Begin {
+                serial: _,
+                time: _,
+                surface: _,
+                fingers: _,
+            } => {
+                state.pinch_scale = 1.0;
+                let input = PlatformInput::Pinch(PinchEvent {
+                    position: state.mouse_location.unwrap_or(point(px(0.0), px(0.0))),
+                    delta: 0.0,
+                    modifiers: state.modifiers,
+                    phase: TouchPhase::Started,
+                });
+                drop(state);
+                window.handle_input(input);
+            }
+            zwp_pointer_gesture_pinch_v1::Event::Update { time: _, scale, .. } => {
+                let new_absolute_scale = scale as f32;
+                let previous_scale = state.pinch_scale;
+                let zoom_delta = new_absolute_scale - previous_scale;
+                state.pinch_scale = new_absolute_scale;
+
+                let input = PlatformInput::Pinch(PinchEvent {
+                    position: state.mouse_location.unwrap_or(point(px(0.0), px(0.0))),
+                    delta: zoom_delta,
+                    modifiers: state.modifiers,
+                    phase: TouchPhase::Moved,
+                });
+                drop(state);
+                window.handle_input(input);
+            }
+            zwp_pointer_gesture_pinch_v1::Event::End {
+                serial: _,
+                time: _,
+                cancelled: _,
+            } => {
+                state.pinch_scale = 1.0;
+                let input = PlatformInput::Pinch(PinchEvent {
+                    position: state.mouse_location.unwrap_or(point(px(0.0), px(0.0))),
+                    delta: 0.0,
+                    modifiers: state.modifiers,
+                    phase: TouchPhase::Ended,
+                });
+                drop(state);
+                window.handle_input(input);
             }
             _ => {}
         }

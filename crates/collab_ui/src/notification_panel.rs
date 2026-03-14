@@ -544,9 +544,7 @@ impl Render for NotificationPanel {
                             .p_4()
                             .child(
                                 Button::new("connect_prompt_button", "Connect")
-                                    .icon_color(Color::Muted)
-                                    .icon(IconName::Github)
-                                    .icon_position(IconPosition::Start)
+                                    .start_icon(Icon::new(IconName::Github).color(Color::Muted))
                                     .style(ButtonStyle::Filled)
                                     .full_width()
                                     .on_click({
