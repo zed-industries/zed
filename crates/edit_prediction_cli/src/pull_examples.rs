@@ -34,10 +34,7 @@ pub struct MinCaptureVersion {
     pub patch: u32,
 }
 
-const DEFAULT_STATEMENT_TIMEOUT_SECONDS: u64 = 240;
-const SETTLED_STATEMENT_TIMEOUT_SECONDS: u64 = 240;
 pub(crate) const POLL_INTERVAL: Duration = Duration::from_secs(2);
-pub(crate) const MAX_POLL_ATTEMPTS: usize = 120;
 
 /// Parse an input token of the form `captured-after:{timestamp}`.
 pub fn parse_captured_after_input(input: &str) -> Option<&str> {
@@ -127,7 +124,7 @@ async fn run_sql_with_polling(
             .context("async query response missing statementHandle")?
             .clone();
 
-        for attempt in 1..=MAX_POLL_ATTEMPTS {
+        for attempt in 0.. {
             step_progress.set_substatus(format!("polling ({attempt})"));
 
             background_executor.timer(POLL_INTERVAL).await;
@@ -138,14 +135,6 @@ async fn run_sql_with_polling(
             if response.code.as_deref() != Some(SNOWFLAKE_ASYNC_IN_PROGRESS_CODE) {
                 break;
             }
-        }
-
-        if response.code.as_deref() == Some(SNOWFLAKE_ASYNC_IN_PROGRESS_CODE) {
-            anyhow::bail!(
-                "query still running after {} poll attempts ({} seconds)",
-                MAX_POLL_ATTEMPTS,
-                MAX_POLL_ATTEMPTS as u64 * POLL_INTERVAL.as_secs()
-            );
         }
     }
 
@@ -164,7 +153,6 @@ async fn fetch_examples_with_query(
     background_executor: BackgroundExecutor,
     statement: &str,
     bindings: JsonValue,
-    timeout_seconds: u64,
     required_columns: &[&str],
     parse_response: for<'a> fn(
         &'a SnowflakeStatementResponse,
@@ -181,7 +169,7 @@ async fn fetch_examples_with_query(
     };
     let request = json!({
         "statement": statement,
-        "timeout": timeout_seconds,
+        // "timeout": timeout_seconds,
         "database": "EVENTS",
         "schema": "PUBLIC",
         "warehouse": "DBT",
@@ -391,7 +379,7 @@ pub(crate) async fn run_sql(
 pub async fn fetch_rejected_examples_after(
     http_client: Arc<dyn HttpClient>,
     after_timestamps: &[String],
-    max_rows_per_timestamp: usize,
+    max_rows_per_timestamp: Option<usize>,
     offset: usize,
     background_executor: BackgroundExecutor,
     min_capture_version: Option<MinCaptureVersion>,
@@ -454,7 +442,7 @@ pub async fn fetch_rejected_examples_after(
             "5": { "type": "FIXED", "value": min_minor_str_ref },
             "6": { "type": "FIXED", "value": min_minor_str_ref },
             "7": { "type": "FIXED", "value": min_patch_str_ref },
-            "8": { "type": "FIXED", "value": max_rows_per_timestamp.to_string() },
+            "8": { "type": "FIXED", "value": format_limit(max_rows_per_timestamp) },
             "9": { "type": "FIXED", "value": offset.to_string() }
         });
 
@@ -464,7 +452,6 @@ pub async fn fetch_rejected_examples_after(
             background_executor.clone(),
             statement,
             bindings,
-            DEFAULT_STATEMENT_TIMEOUT_SECONDS,
             &[
                 "request_id",
                 "device_id",
@@ -486,10 +473,14 @@ pub async fn fetch_rejected_examples_after(
     Ok(all_examples)
 }
 
+fn format_limit(limit: Option<usize>) -> String {
+    return limit.map(|l| l.to_string()).unwrap_or("NULL".to_string());
+}
+
 pub async fn fetch_requested_examples_after(
     http_client: Arc<dyn HttpClient>,
     after_timestamps: &[String],
-    max_rows_per_timestamp: usize,
+    max_rows_per_timestamp: Option<usize>,
     offset: usize,
     background_executor: BackgroundExecutor,
     min_capture_version: Option<MinCaptureVersion>,
@@ -543,7 +534,7 @@ pub async fn fetch_requested_examples_after(
             "4": { "type": "FIXED", "value": min_minor_str_ref },
             "5": { "type": "FIXED", "value": min_minor_str_ref },
             "6": { "type": "FIXED", "value": min_patch_str_ref },
-            "7": { "type": "FIXED", "value": max_rows_per_timestamp.to_string() },
+            "7": { "type": "FIXED", "value": format_limit(max_rows_per_timestamp) },
             "8": { "type": "FIXED", "value": offset.to_string() }
         });
 
@@ -553,7 +544,6 @@ pub async fn fetch_requested_examples_after(
             background_executor.clone(),
             statement,
             bindings,
-            DEFAULT_STATEMENT_TIMEOUT_SECONDS,
             &["request_id", "device_id", "time", "input", "zed_version"],
             requested_examples_from_response,
         )
@@ -568,7 +558,7 @@ pub async fn fetch_requested_examples_after(
 pub async fn fetch_captured_examples_after(
     http_client: Arc<dyn HttpClient>,
     after_timestamps: &[String],
-    max_rows_per_timestamp: usize,
+    max_rows_per_timestamp: Option<usize>,
     offset: usize,
     background_executor: BackgroundExecutor,
     min_capture_version: Option<MinCaptureVersion>,
@@ -630,7 +620,7 @@ pub async fn fetch_captured_examples_after(
             "5": { "type": "FIXED", "value": min_minor_str_ref },
             "6": { "type": "FIXED", "value": min_minor_str_ref },
             "7": { "type": "FIXED", "value": min_patch_str_ref },
-            "8": { "type": "FIXED", "value": max_rows_per_timestamp.to_string() },
+            "8": { "type": "FIXED", "value": format_limit(max_rows_per_timestamp) },
             "9": { "type": "FIXED", "value": offset.to_string() }
         });
 
@@ -640,7 +630,6 @@ pub async fn fetch_captured_examples_after(
             background_executor.clone(),
             statement,
             bindings,
-            DEFAULT_STATEMENT_TIMEOUT_SECONDS,
             &[
                 "request_id",
                 "device_id",
@@ -663,7 +652,7 @@ pub async fn fetch_captured_examples_after(
 pub async fn fetch_settled_examples_after(
     http_client: Arc<dyn HttpClient>,
     after_timestamps: &[String],
-    max_rows_per_timestamp: usize,
+    max_rows_per_timestamp: Option<usize>,
     offset: usize,
     background_executor: BackgroundExecutor,
     min_capture_version: Option<MinCaptureVersion>,
@@ -722,7 +711,7 @@ pub async fn fetch_settled_examples_after(
             "1": { "type": "TEXT", "value": PREDICTIVE_EDIT_REQUESTED_EVENT },
             "2": { "type": "TEXT", "value": after_date },
             "3": { "type": "TEXT", "value": EDIT_PREDICTION_SETTLED_EVENT },
-            "4": { "type": "FIXED", "value": max_rows_per_timestamp.to_string() },
+            "4": { "type": "FIXED", "value": format_limit(max_rows_per_timestamp) },
             "5": { "type": "FIXED", "value": offset.to_string() }
         });
 
@@ -732,7 +721,6 @@ pub async fn fetch_settled_examples_after(
             background_executor.clone(),
             statement,
             bindings,
-            SETTLED_STATEMENT_TIMEOUT_SECONDS,
             &[
                 "request_id",
                 "device_id",
@@ -756,7 +744,7 @@ pub async fn fetch_settled_examples_after(
 pub async fn fetch_rated_examples_after(
     http_client: Arc<dyn HttpClient>,
     inputs: &[(String, Option<EditPredictionRating>)],
-    max_rows_per_timestamp: usize,
+    max_rows_per_timestamp: Option<usize>,
     offset: usize,
     background_executor: BackgroundExecutor,
     _min_capture_version: Option<MinCaptureVersion>,
@@ -823,7 +811,7 @@ pub async fn fetch_rated_examples_after(
             "4": { "type": "TEXT", "value": rating_value },
             "5": { "type": "TEXT", "value": rating_value },
             "6": { "type": "TEXT", "value": after_date },
-            "7": { "type": "FIXED", "value": max_rows_per_timestamp.to_string() },
+            "7": { "type": "FIXED", "value": format_limit(max_rows_per_timestamp) },
             "8": { "type": "FIXED", "value": offset.to_string() }
         });
 
@@ -833,7 +821,6 @@ pub async fn fetch_rated_examples_after(
             background_executor.clone(),
             statement,
             bindings,
-            DEFAULT_STATEMENT_TIMEOUT_SECONDS,
             &[
                 "request_id",
                 "inputs",
