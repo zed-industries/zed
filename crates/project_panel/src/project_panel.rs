@@ -7351,10 +7351,6 @@ fn update_project_panel_exclusions_in_text(
             excluded_entries.push(selected_path.to_string());
             excluded_entries.sort();
             excluded_entries.dedup();
-
-            if project_panel.show_excluded.is_none() {
-                project_panel.show_excluded = Some(true);
-            }
         }
 
         if excluded_entries.is_empty() {

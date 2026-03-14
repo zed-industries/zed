@@ -9819,7 +9819,9 @@ fn init_test_with_editor(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-async fn test_toggle_excluded_enables_show_excluded_by_default(cx: &mut gpui::TestAppContext) {
+async fn test_toggle_excluded_hides_file_and_writes_project_settings(
+    cx: &mut gpui::TestAppContext,
+) {
     init_test(cx);
 
     let fs = FakeFs::new(cx.executor());
@@ -9848,11 +9850,7 @@ async fn test_toggle_excluded_enables_show_excluded_by_default(cx: &mut gpui::Te
 
     assert_eq!(
         visible_entries_as_strings(&panel, 0..10, cx),
-        &[
-            "v root",
-            "    > dir",
-            "      file.txt  <== selected  <== excluded",
-        ],
+        &["v root  <== selected", "    > dir"],
     );
 
     let settings: serde_json::Value = serde_json::from_str(
@@ -9865,7 +9863,6 @@ async fn test_toggle_excluded_enables_show_excluded_by_default(cx: &mut gpui::Te
         settings,
         json!({
             "project_panel": {
-                "show_excluded": true,
                 "excluded_entries": ["file.txt"]
             }
         }),
