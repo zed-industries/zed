@@ -155,6 +155,7 @@ async fn cleanup_staging_path(staging_path: &Path, asset_kind: AssetKind) {
 }
 
 async fn finalize_download(staging_path: &Path, destination_path: &Path) -> Result<()> {
+    _ = async_fs::remove_dir_all(destination_path).await;
     async_fs::rename(staging_path, destination_path)
         .await
         .with_context(|| format!("renaming {staging_path:?} to {destination_path:?}"))?;
