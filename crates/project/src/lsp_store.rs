@@ -2233,6 +2233,14 @@ impl LocalLspStore {
                 .global_lsp_settings
                 .get_request_timeout()
         });
+        let formatting_options = buffer_handle.read_with(cx, |buffer, cx| {
+            lsp_command::lsp_formatting_options_for_server(
+                settings,
+                buffer,
+                &language_server.name(),
+                cx,
+            )
+        });
         let lsp_edits = {
             let mut lsp_ranges = Vec::new();
             this.update(cx, |_this, cx| {
@@ -2256,7 +2264,7 @@ impl LocalLspStore {
                         lsp::DocumentRangeFormattingParams {
                             text_document: text_document.clone(),
                             range,
-                            options: lsp_command::lsp_formatting_options(settings),
+                            options: formatting_options.clone(),
                             work_done_progress_params: Default::default(),
                         },
                         request_timeout,
@@ -2317,6 +2325,14 @@ impl LocalLspStore {
                 .global_lsp_settings
                 .get_request_timeout()
         });
+        let formatting_options = buffer.read_with(cx, |buffer, cx| {
+            lsp_command::lsp_formatting_options_for_server(
+                settings,
+                buffer,
+                &language_server.name(),
+                cx,
+            )
+        });
 
         let lsp_edits = if matches!(formatting_provider, Some(p) if *p != OneOf::Left(false)) {
             let _timer = zlog::time!(logger => "format-full");
@@ -2324,7 +2340,7 @@ impl LocalLspStore {
                 .request::<lsp::request::Formatting>(
                     lsp::DocumentFormattingParams {
                         text_document,
-                        options: lsp_command::lsp_formatting_options(settings),
+                        options: formatting_options.clone(),
                         work_done_progress_params: Default::default(),
                     },
                     request_timeout,
@@ -2340,7 +2356,7 @@ impl LocalLspStore {
                     lsp::DocumentRangeFormattingParams {
                         text_document: text_document.clone(),
                         range: lsp::Range::new(buffer_start, buffer_end),
-                        options: lsp_command::lsp_formatting_options(settings),
+                        options: formatting_options,
                         work_done_progress_params: Default::default(),
                     },
                     request_timeout,

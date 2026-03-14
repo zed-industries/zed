@@ -6,7 +6,7 @@ use crate::{
     InlayHintLabel, InlayHintLabelPart, InlayHintLabelPartTooltip, InlayHintTooltip, Location,
     LocationLink, LspAction, LspPullDiagnostics, MarkupContent, PrepareRenameResponse,
     ProjectTransaction, PulledDiagnostics, ResolveState,
-    lsp_store::{LocalLspStore, LspFoldingRange, LspStore},
+    lsp_store::{LocalLspStore, LspFoldingRange, LspStore, language_server_settings_for},
 };
 use anyhow::{Context as _, Result};
 use async_trait::async_trait;
@@ -33,6 +33,7 @@ use lsp::{
     OneOf, RenameOptions, ServerCapabilities,
 };
 use serde_json::Value;
+use settings::SettingsLocation;
 use signature_help::{lsp_to_proto_signature, proto_to_lsp_signature};
 use std::{
     cmp::Reverse, collections::hash_map, mem, ops::Range, path::Path, str::FromStr, sync::Arc,
@@ -62,6 +63,55 @@ pub fn lsp_formatting_options(settings: &LanguageSettings) -> lsp::FormattingOpt
         insert_final_newline: Some(settings.ensure_final_newline_on_save),
         ..lsp::FormattingOptions::default()
     }
+}
+
+pub fn lsp_formatting_options_for_server(
+    settings: &LanguageSettings,
+    buffer: &Buffer,
+    language_server_name: &language::LanguageServerName,
+    cx: &App,
+) -> lsp::FormattingOptions {
+    let mut options = lsp_formatting_options(settings);
+
+    if language_server_name.as_ref() as &str != "vscode-css-language-server" {
+        return options;
+    }
+
+    let Some(file) = buffer.file() else {
+        return options;
+    };
+
+    let Some(language) = buffer.language() else {
+        return options;
+    };
+
+    let language_id = language.lsp_id();
+    if !matches!(language_id.as_str(), "css" | "scss" | "less") {
+        return options;
+    }
+
+    let settings_location = SettingsLocation {
+        worktree_id: file.worktree_id(cx),
+        path: file.path().as_ref(),
+    };
+
+    let Some(format_settings) =
+        language_server_settings_for(settings_location, language_server_name, cx)
+            .and_then(|settings| settings.settings.as_ref())
+            .and_then(|settings| settings.get(language_id.as_str()))
+            .and_then(|settings| settings.get("format"))
+            .and_then(Value::as_object)
+    else {
+        return options;
+    };
+
+    for (key, value) in format_settings {
+        if let Ok(property) = serde_json::from_value::<lsp::FormattingProperty>(value.clone()) {
+            options.properties.insert(key.clone(), property);
+        }
+    }
+
+    options
 }
 
 pub fn file_path_to_lsp_url(path: &Path) -> Result<lsp::Uri> {
