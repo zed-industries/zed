@@ -8,7 +8,7 @@ use gpui::{
     AnyElement, App, AppContext as _, AsyncApp, Context, Entity, EventEmitter, FocusHandle,
     Focusable, IntoElement, Render, Task, Window,
 };
-use language::{self, Buffer, Point};
+use language::{self, Buffer, Language, Point};
 use project::Project;
 use std::{
     any::{Any, TypeId},
@@ -67,18 +67,24 @@ impl TextDiffView {
             log::warn!("There should always be at least one selection in Zed. This is a bug.");
             return None;
         };
+        let language = source_buffer.read(cx).language().cloned();
 
-        let source_buffer_snapshot = source_buffer.read(cx).snapshot();
         let clipboard_text = diff_data.clipboard_text.clone();
+        let clipboard_buffer = build_buffer_from_text(clipboard_text, language.clone(), cx);
+
+        let selection_text = source_buffer.read_with(cx, |buffer, _| {
+            buffer
+                .text_for_range(selection_range.clone())
+                .collect::<String>()
+        });
+        let selection_buffer = build_buffer_from_text(selection_text, language.clone(), cx);
+        let selection_buffer_snapshot = selection_buffer.read(cx).snapshot();
+        let diff_buffer = cx.new(|cx| BufferDiff::new(&selection_buffer_snapshot.text, cx));
 
         let workspace = workspace.weak_handle();
-        let diff_buffer = cx.new(|cx| BufferDiff::new(&source_buffer_snapshot.text, cx));
-        let clipboard_buffer =
-            build_clipboard_buffer(clipboard_text, &source_buffer, selection_range.clone(), cx);
-
         let task = window.spawn(cx, async move |cx| {
             let project = workspace.update(cx, |workspace, _| workspace.project().clone())?;
-
+            // the next one to change
             update_diff_buffer(&diff_buffer, &source_buffer, &clipboard_buffer, cx).await?;
 
             workspace.update_in(cx, |workspace, window, cx| {
@@ -201,22 +207,14 @@ impl TextDiffView {
     }
 }
 
-fn build_clipboard_buffer(
+fn build_buffer_from_text(
     text: String,
-    source_buffer: &Entity<Buffer>,
-    replacement_range: Range<Point>,
+    language: Option<Arc<Language>>,
     cx: &mut App,
 ) -> Entity<Buffer> {
-    let source_buffer_snapshot = source_buffer.read(cx).snapshot();
     cx.new(|cx| {
-        let mut buffer = language::Buffer::local(source_buffer_snapshot.text(), cx);
-        let language = source_buffer.read(cx).language().cloned();
+        let mut buffer = language::Buffer::local(text, cx);
         buffer.set_language(language, cx);
-
-        let range_start = source_buffer_snapshot.point_to_offset(replacement_range.start);
-        let range_end = source_buffer_snapshot.point_to_offset(replacement_range.end);
-        buffer.edit([(range_start..range_end, text)], None, cx);
-
         buffer
     })
 }
