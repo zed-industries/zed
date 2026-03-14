@@ -881,6 +881,7 @@ impl MessageEditor {
                 cx,
             )
         {
+            cx.stop_propagation();
             task.detach();
             return;
         }
