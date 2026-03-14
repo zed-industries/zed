@@ -4,7 +4,7 @@ use crate::{
     HighlightKey, Navigated, PointForPosition, SelectPhase,
     editor_settings::GoToDefinitionFallback, scroll::ScrollAmount,
 };
-use gpui::{App, AsyncWindowContext, Context, Entity, Modifiers, Task, Window, px};
+use gpui::{App, AsyncWindowContext, Context, Entity, Modifiers, Pixels, Task, Window, px};
 use language::{Bias, ToOffset};
 use linkify::{LinkFinder, LinkKind};
 use lsp::LanguageServerId;
@@ -113,13 +113,14 @@ impl Editor {
     pub(crate) fn update_hovered_link(
         &mut self,
         point_for_position: PointForPosition,
+        mouse_position: Option<gpui::Point<Pixels>>,
         snapshot: &EditorSnapshot,
         modifiers: Modifiers,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         let hovered_link_modifier = Editor::is_cmd_or_ctrl_pressed(&modifiers, cx);
-        if !hovered_link_modifier || self.has_pending_selection() {
+        if !hovered_link_modifier || self.has_pending_selection() || self.mouse_cursor_hidden {
             self.hide_hovered_link(cx);
             return;
         }
@@ -138,6 +139,7 @@ impl Editor {
                 self.update_inlay_link_and_hover_points(
                     snapshot,
                     point_for_position,
+                    mouse_position,
                     hovered_link_modifier,
                     modifiers.shift,
                     window,
@@ -782,7 +784,7 @@ fn surrounding_filename(
 mod tests {
     use super::*;
     use crate::{
-        DisplayPoint,
+        DisplayPoint, HideMouseCursorOrigin,
         display_map::ToDisplayPoint,
         editor_tests::init_test,
         inlays::inlay_hints::tests::{cached_hint_labels, visible_hint_labels},
@@ -1359,6 +1361,82 @@ mod tests {
         assert_eq!(
             cx.opened_url(),
             Some("https://zed.dev/channel/had-(oops)".into())
+        );
+    }
+
+    #[gpui::test]
+    async fn test_hover_preconditions(cx: &mut gpui::TestAppContext) {
+        init_test(cx, |_| {});
+        let mut cx = EditorLspTestContext::new_rust(
+            lsp::ServerCapabilities {
+                ..Default::default()
+            },
+            cx,
+        )
+        .await;
+
+        macro_rules! assert_no_highlight {
+            ($cx:expr) => {
+                // No highlight
+                $cx.update_editor(|editor, window, cx| {
+                    assert!(
+                        editor
+                            .snapshot(window, cx)
+                            .text_highlight_ranges(HighlightKey::HoveredLinkState)
+                            .unwrap_or_default()
+                            .1
+                            .is_empty()
+                    );
+                });
+            };
+        }
+
+        // No link
+        cx.set_state(indoc! {"
+            Let's test a [complex](https://zed.dev/channel/) caseˇ.
+        "});
+        assert_no_highlight!(cx);
+
+        // No modifier
+        let screen_coord = cx.pixel_position(indoc! {"
+            Let's test a [complex](https://zed.dev/channel/ˇ) case.
+            "});
+        cx.simulate_mouse_move(screen_coord, None, Modifiers::none());
+        assert_no_highlight!(cx);
+
+        // Modifier active
+        let screen_coord = cx.pixel_position(indoc! {"
+            Let's test a [complex](https://zed.dev/channeˇl/) case.
+            "});
+        cx.simulate_mouse_move(screen_coord, None, Modifiers::secondary_key());
+        cx.assert_editor_text_highlights(
+            HighlightKey::HoveredLinkState,
+            indoc! {"
+            Let's test a [complex](«https://zed.dev/channel/ˇ») case.
+        "},
+        );
+
+        // Cursor hidden with secondary key
+        let screen_coord = cx.pixel_position(indoc! {"
+            Let's test a [complex](https://zed.dev/ˇchannel/) case.
+            "});
+        cx.simulate_mouse_move(screen_coord, None, Modifiers::none());
+        cx.update_editor(|editor, _, cx| {
+            editor.hide_mouse_cursor(HideMouseCursorOrigin::TypingAction, cx);
+        });
+        cx.simulate_modifiers_change(Modifiers::secondary_key());
+        assert_no_highlight!(cx);
+
+        // Cursor active again
+        let screen_coord = cx.pixel_position(indoc! {"
+            Let's test a [complex](https://ˇzed.dev/channel/) case.
+            "});
+        cx.simulate_mouse_move(screen_coord, None, Modifiers::secondary_key());
+        cx.assert_editor_text_highlights(
+            HighlightKey::HoveredLinkState,
+            indoc! {"
+            Let's test a [complex](«https://zed.dev/channel/ˇ») case.
+        "},
         );
     }
 

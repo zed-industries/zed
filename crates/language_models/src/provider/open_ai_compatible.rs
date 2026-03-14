@@ -319,6 +319,10 @@ impl LanguageModel for OpenAiCompatibleLanguageModel {
         }
     }
 
+    fn supports_streaming_tools(&self) -> bool {
+        true
+    }
+
     fn supports_split_token_display(&self) -> bool {
         true
     }
@@ -541,9 +545,7 @@ impl Render for ConfigurationView {
                         .child(
                             Button::new("reset-api-key", "Reset API Key")
                                 .label_size(LabelSize::Small)
-                                .icon(IconName::Undo)
-                                .icon_size(IconSize::Small)
-                                .icon_position(IconPosition::Start)
+                                .start_icon(Icon::new(IconName::Undo).size(IconSize::Small))
                                 .layer(ElevationIndex::ModalSurface)
                                 .when(env_var_set, |this| {
                                     this.tooltip(Tooltip::text(format!("To reset your API key, unset the {env_var_name} environment variable.")))

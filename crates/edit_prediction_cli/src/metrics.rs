@@ -76,14 +76,21 @@ impl ClassificationMetrics {
 }
 
 enum ChrfWhitespace {
+    /// Preserve whitespace as-is
     #[allow(unused)]
     Unchanged,
+
+    /// Ignore all whitespace differences
+    #[allow(unused)]
     Ignore,
+
+    /// Collapse whitespace into single spaces
+    Collapse,
 }
 
 const CHR_F_CHAR_ORDER: usize = 6;
 const CHR_F_BETA: f64 = 2.0;
-const CHR_F_WHITESPACE: ChrfWhitespace = ChrfWhitespace::Ignore;
+const CHR_F_WHITESPACE: ChrfWhitespace = ChrfWhitespace::Collapse;
 
 /// Computes a delta-chrF score that compares two sets of edits.
 ///
@@ -196,7 +203,32 @@ fn filter_whitespace_chars(text: &str) -> Vec<char> {
     match CHR_F_WHITESPACE {
         ChrfWhitespace::Unchanged => text.chars().collect(),
         ChrfWhitespace::Ignore => text.chars().filter(|c| !c.is_whitespace()).collect(),
+        ChrfWhitespace::Collapse => collapse_whitespace(text.chars()),
     }
+}
+
+/// Collapse whitespace into single spaces.
+/// Newlines and spaces are collapsed separately.
+fn collapse_whitespace(chars: impl Iterator<Item = char>) -> Vec<char> {
+    let mut result = Vec::new();
+    let mut last_whitespace = None;
+    for c in chars {
+        if c.is_whitespace() && c != '\n' {
+            if last_whitespace != Some(' ') {
+                result.push(' ');
+                last_whitespace = Some(' ');
+            }
+        } else if c == '\n' {
+            if last_whitespace != Some('\n') {
+                result.push(c);
+                last_whitespace = Some('\n');
+            }
+        } else {
+            result.push(c);
+            last_whitespace = None;
+        }
+    }
+    result
 }
 
 /// Extract only the changed regions between two texts, with context for n-gram boundaries.
@@ -269,14 +301,14 @@ fn count_ngrams_from_chars(chars: &[char], n: usize) -> Counts {
 
 #[allow(dead_code)]
 fn chr_f_ngram_counts(text: &str) -> Vec<Counts> {
-    // Ignore whitespace. The original chrF implementation skips all
-    // whitespace. We should consider compressing multiple consecutive
-    // spaces into one -- this may reflect our task more closely.
     let text = match CHR_F_WHITESPACE {
         ChrfWhitespace::Unchanged => text.to_string(),
         ChrfWhitespace::Ignore => text
             .chars()
             .filter(|c| !c.is_whitespace())
+            .collect::<String>(),
+        ChrfWhitespace::Collapse => collapse_whitespace(text.chars())
+            .into_iter()
             .collect::<String>(),
     };
 
@@ -1174,5 +1206,15 @@ index abc123..def456 100644
         // (whitespace tokens between them may also count)
         assert!(counts.deleted_tokens >= 2);
         assert!(counts.inserted_tokens >= 2);
+    }
+
+    #[test]
+    fn test_whitespace_collapse() {
+        let text = "abc   \n\n\n   123";
+        let collapsed = collapse_whitespace(text.chars());
+        assert_eq!(
+            collapsed,
+            vec!['a', 'b', 'c', ' ', '\n', ' ', '1', '2', '3']
+        );
     }
 }

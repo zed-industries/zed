@@ -45,9 +45,10 @@ pub trait AgentConnection {
     /// Load an existing session by ID.
     fn load_session(
         self: Rc<Self>,
-        _session: AgentSessionInfo,
+        _session_id: acp::SessionId,
         _project: Entity<Project>,
         _cwd: &Path,
+        _title: Option<SharedString>,
         _cx: &mut App,
     ) -> Task<Result<Entity<AcpThread>>> {
         Task::ready(Err(anyhow::Error::msg("Loading sessions is not supported")))
@@ -59,7 +60,11 @@ pub trait AgentConnection {
     }
 
     /// Close an existing session. Allows the agent to free the session from memory.
-    fn close_session(&self, _session_id: &acp::SessionId, _cx: &mut App) -> Task<Result<()>> {
+    fn close_session(
+        self: Rc<Self>,
+        _session_id: &acp::SessionId,
+        _cx: &mut App,
+    ) -> Task<Result<()>> {
         Task::ready(Err(anyhow::Error::msg("Closing sessions is not supported")))
     }
 
@@ -71,9 +76,10 @@ pub trait AgentConnection {
     /// Resume an existing session by ID without replaying previous messages.
     fn resume_session(
         self: Rc<Self>,
-        _session: AgentSessionInfo,
+        _session_id: acp::SessionId,
         _project: Entity<Project>,
         _cwd: &Path,
+        _title: Option<SharedString>,
         _cx: &mut App,
     ) -> Task<Result<Entity<AcpThread>>> {
         Task::ready(Err(anyhow::Error::msg(
@@ -240,6 +246,7 @@ pub struct AgentSessionInfo {
     pub cwd: Option<PathBuf>,
     pub title: Option<SharedString>,
     pub updated_at: Option<DateTime<Utc>>,
+    pub created_at: Option<DateTime<Utc>>,
     pub meta: Option<acp::Meta>,
 }
 
@@ -250,6 +257,7 @@ impl AgentSessionInfo {
             cwd: None,
             title: None,
             updated_at: None,
+            created_at: None,
             meta: None,
         }
     }
@@ -496,6 +504,7 @@ mod test_support {
     //! - `create_test_png_base64` for generating test images
 
     use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
 
     use action_log::ActionLog;
     use collections::HashMap;
@@ -618,15 +627,18 @@ mod test_support {
         fn new_session(
             self: Rc<Self>,
             project: Entity<Project>,
-            _cwd: &Path,
+            cwd: &Path,
             cx: &mut gpui::App,
         ) -> Task<gpui::Result<Entity<AcpThread>>> {
-            let session_id = acp::SessionId::new(self.sessions.lock().len().to_string());
+            static NEXT_SESSION_ID: AtomicUsize = AtomicUsize::new(0);
+            let session_id =
+                acp::SessionId::new(NEXT_SESSION_ID.fetch_add(1, Ordering::SeqCst).to_string());
             let action_log = cx.new(|_| ActionLog::new(project.clone()));
             let thread = cx.new(|cx| {
                 AcpThread::new(
                     None,
                     "Test",
+                    Some(cwd.to_path_buf()),
                     self.clone(),
                     project,
                     action_log,
