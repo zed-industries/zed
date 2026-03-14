@@ -154,14 +154,9 @@ impl WslRemoteConnection {
     }
 
     async fn run_wsl_command(&self, program: &str, args: &[&str]) -> Result<()> {
-        run_wsl_command_impl(wsl_command_impl(
-            &self.connection_options,
-            program,
-            args,
-            false,
-        ))
-        .await
-        .map(|_| ())
+        run_wsl_command_with_output_impl(&self.connection_options, program, args)
+            .await
+            .map(|_| ())
     }
 
     async fn ensure_server_binary(
