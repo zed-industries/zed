@@ -83,6 +83,7 @@ struct ActiveThreadInfo {
     icon: IconName,
     icon_from_external_svg: Option<SharedString>,
     is_background: bool,
+    is_title_generating: bool,
     diff_stats: DiffStats,
 }
 
@@ -115,6 +116,7 @@ struct ThreadEntry {
     workspace: ThreadEntryWorkspace,
     is_live: bool,
     is_background: bool,
+    is_title_generating: bool,
     highlight_positions: Vec<usize>,
     worktree_name: Option<SharedString>,
     worktree_highlight_positions: Vec<usize>,
@@ -453,6 +455,8 @@ impl Sidebar {
                 let icon = thread_view_ref.agent_icon;
                 let icon_from_external_svg = thread_view_ref.agent_icon_from_external_svg.clone();
                 let title = thread.title();
+                let is_native = thread_view_ref.as_native_thread(cx).is_some();
+                let is_title_generating = is_native && thread.has_provisional_title();
                 let session_id = thread.session_id().clone();
                 let is_background = agent_panel_ref.is_background_thread(&session_id);
 
@@ -476,6 +480,7 @@ impl Sidebar {
                     icon,
                     icon_from_external_svg,
                     is_background,
+                    is_title_generating,
                     diff_stats,
                 }
             })
@@ -593,6 +598,7 @@ impl Sidebar {
                             workspace: ThreadEntryWorkspace::Open(workspace.clone()),
                             is_live: false,
                             is_background: false,
+                            is_title_generating: false,
                             highlight_positions: Vec::new(),
                             worktree_name: None,
                             worktree_highlight_positions: Vec::new(),
@@ -646,6 +652,7 @@ impl Sidebar {
                                 workspace: target_workspace.clone(),
                                 is_live: false,
                                 is_background: false,
+                                is_title_generating: false,
                                 highlight_positions: Vec::new(),
                                 worktree_name: Some(worktree_name.clone()),
                                 worktree_highlight_positions: Vec::new(),
@@ -676,6 +683,7 @@ impl Sidebar {
                         thread.icon_from_external_svg = info.icon_from_external_svg.clone();
                         thread.is_live = true;
                         thread.is_background = info.is_background;
+                        thread.is_title_generating = info.is_title_generating;
                         thread.diff_stats = info.diff_stats;
                     }
                 }
@@ -1030,6 +1038,7 @@ impl Sidebar {
             .end_hover_gradient_overlay(true)
             .end_hover_slot(
                 h_flex()
+                    .gap_1()
                     .when(workspace_count > 1, |this| {
                         this.child(
                             IconButton::new(
@@ -1660,6 +1669,7 @@ impl Sidebar {
             .when_some(timestamp, |this, ts| this.timestamp(ts))
             .highlight_positions(thread.highlight_positions.to_vec())
             .status(thread.status)
+            .generating_title(thread.is_title_generating)
             .notified(has_notification)
             .when(thread.diff_stats.lines_added > 0, |this| {
                 this.added(thread.diff_stats.lines_added as usize)
@@ -2633,6 +2643,7 @@ mod tests {
                     workspace: ThreadEntryWorkspace::Open(workspace.clone()),
                     is_live: false,
                     is_background: false,
+                    is_title_generating: false,
                     highlight_positions: Vec::new(),
                     worktree_name: None,
                     worktree_highlight_positions: Vec::new(),
@@ -2655,6 +2666,7 @@ mod tests {
                     workspace: ThreadEntryWorkspace::Open(workspace.clone()),
                     is_live: true,
                     is_background: false,
+                    is_title_generating: false,
                     highlight_positions: Vec::new(),
                     worktree_name: None,
                     worktree_highlight_positions: Vec::new(),
@@ -2677,6 +2689,7 @@ mod tests {
                     workspace: ThreadEntryWorkspace::Open(workspace.clone()),
                     is_live: true,
                     is_background: false,
+                    is_title_generating: false,
                     highlight_positions: Vec::new(),
                     worktree_name: None,
                     worktree_highlight_positions: Vec::new(),
@@ -2699,6 +2712,7 @@ mod tests {
                     workspace: ThreadEntryWorkspace::Open(workspace.clone()),
                     is_live: false,
                     is_background: false,
+                    is_title_generating: false,
                     highlight_positions: Vec::new(),
                     worktree_name: None,
                     worktree_highlight_positions: Vec::new(),
@@ -2721,6 +2735,7 @@ mod tests {
                     workspace: ThreadEntryWorkspace::Open(workspace.clone()),
                     is_live: true,
                     is_background: true,
+                    is_title_generating: false,
                     highlight_positions: Vec::new(),
                     worktree_name: None,
                     worktree_highlight_positions: Vec::new(),

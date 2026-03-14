@@ -1207,6 +1207,10 @@ impl AcpThread {
             .unwrap_or_else(|| self.title.clone())
     }
 
+    pub fn has_provisional_title(&self) -> bool {
+        self.provisional_title.is_some()
+    }
+
     pub fn entries(&self) -> &[AgentThreadEntry] {
         &self.entries
     }
