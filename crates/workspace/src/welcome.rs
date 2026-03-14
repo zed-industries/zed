@@ -2,6 +2,7 @@ use crate::{
     NewFile, Open, PathList, SerializedWorkspaceLocation, WORKSPACE_DB, Workspace, WorkspaceId,
     item::{Item, ItemEvent},
 };
+use chrono::{DateTime, Utc};
 use git::Clone as GitClone;
 use gpui::WeakEntity;
 use gpui::{
@@ -9,8 +10,10 @@ use gpui::{
     ParentElement, Render, Styled, Task, Window, actions,
 };
 use menu::{SelectNext, SelectPrevious};
+use project::DisableAiSettings;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use settings::Settings;
 use ui::{ButtonLike, Divider, DividerColor, KeyBinding, Vector, VectorName, prelude::*};
 use util::ResultExt;
 use zed_actions::{Extensions, OpenOnboarding, OpenSettings, agent, command_palette};
@@ -120,21 +123,43 @@ impl RenderOnce for SectionButton {
     }
 }
 
+enum SectionVisibility {
+    Always,
+    Conditional(fn(&App) -> bool),
+}
+
+impl SectionVisibility {
+    fn is_visible(&self, cx: &App) -> bool {
+        match self {
+            SectionVisibility::Always => true,
+            SectionVisibility::Conditional(f) => f(cx),
+        }
+    }
+}
+
 struct SectionEntry {
     icon: IconName,
     title: &'static str,
     action: &'static dyn Action,
+    visibility_guard: SectionVisibility,
 }
 
 impl SectionEntry {
-    fn render(&self, button_index: usize, focus: &FocusHandle, _cx: &App) -> impl IntoElement {
-        SectionButton::new(
-            self.title,
-            self.icon,
-            self.action,
-            button_index,
-            focus.clone(),
-        )
+    fn render(
+        &self,
+        button_index: usize,
+        focus: &FocusHandle,
+        cx: &App,
+    ) -> Option<impl IntoElement> {
+        self.visibility_guard.is_visible(cx).then(|| {
+            SectionButton::new(
+                self.title,
+                self.icon,
+                self.action,
+                button_index,
+                focus.clone(),
+            )
+        })
     }
 }
 
@@ -146,21 +171,25 @@ const CONTENT: (Section<4>, Section<3>) = (
                 icon: IconName::Plus,
                 title: "New File",
                 action: &NewFile,
+                visibility_guard: SectionVisibility::Always,
             },
             SectionEntry {
                 icon: IconName::FolderOpen,
                 title: "Open Project",
-                action: &Open,
+                action: &Open::DEFAULT,
+                visibility_guard: SectionVisibility::Always,
             },
             SectionEntry {
                 icon: IconName::CloudDownload,
                 title: "Clone Repository",
                 action: &GitClone,
+                visibility_guard: SectionVisibility::Always,
             },
             SectionEntry {
                 icon: IconName::ListCollapse,
                 title: "Open Command Palette",
                 action: &command_palette::Toggle,
+                visibility_guard: SectionVisibility::Always,
             },
         ],
     },
@@ -171,11 +200,15 @@ const CONTENT: (Section<4>, Section<3>) = (
                 icon: IconName::Settings,
                 title: "Open Settings",
                 action: &OpenSettings,
+                visibility_guard: SectionVisibility::Always,
             },
             SectionEntry {
                 icon: IconName::ZedAssistant,
                 title: "View AI Settings",
                 action: &agent::OpenSettings,
+                visibility_guard: SectionVisibility::Conditional(|cx| {
+                    !DisableAiSettings::get_global(cx).disable_ai
+                }),
             },
             SectionEntry {
                 icon: IconName::Blocks,
@@ -184,6 +217,7 @@ const CONTENT: (Section<4>, Section<3>) = (
                     category_filter: None,
                     id: None,
                 },
+                visibility_guard: SectionVisibility::Always,
             },
         ],
     },
@@ -203,7 +237,7 @@ impl<const COLS: usize> Section<COLS> {
                 self.entries
                     .iter()
                     .enumerate()
-                    .map(|(index, entry)| entry.render(index_offset + index, focus, cx)),
+                    .filter_map(|(index, entry)| entry.render(index_offset + index, focus, cx)),
             )
     }
 }
@@ -212,7 +246,14 @@ pub struct WelcomePage {
     workspace: WeakEntity<Workspace>,
     focus_handle: FocusHandle,
     fallback_to_recent_projects: bool,
-    recent_workspaces: Option<Vec<(WorkspaceId, SerializedWorkspaceLocation, PathList)>>,
+    recent_workspaces: Option<
+        Vec<(
+            WorkspaceId,
+            SerializedWorkspaceLocation,
+            PathList,
+            DateTime<Utc>,
+        )>,
+    >,
 }
 
 impl WelcomePage {
@@ -272,7 +313,9 @@ impl WelcomePage {
         cx: &mut Context<Self>,
     ) {
         if let Some(recent_workspaces) = &self.recent_workspaces {
-            if let Some((_workspace_id, location, paths)) = recent_workspaces.get(action.index) {
+            if let Some((_workspace_id, location, paths, _timestamp)) =
+                recent_workspaces.get(action.index)
+            {
                 let is_local = matches!(location, SerializedWorkspaceLocation::Local);
 
                 if is_local {
@@ -349,7 +392,7 @@ impl Render for WelcomePage {
             .flatten()
             .take(5)
             .enumerate()
-            .map(|(index, (_, loc, paths))| {
+            .map(|(index, (_, loc, paths, _))| {
                 self.render_recent_project(index, first_section_entries + index, loc, paths)
             })
             .collect::<Vec<_>>();
@@ -455,7 +498,7 @@ impl Item for WelcomePage {
         false
     }
 
-    fn to_item_events(event: &Self::Event, mut f: impl FnMut(crate::item::ItemEvent)) {
+    fn to_item_events(event: &Self::Event, f: &mut dyn FnMut(crate::item::ItemEvent)) {
         f(*event)
     }
 }

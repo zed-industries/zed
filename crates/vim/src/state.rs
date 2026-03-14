@@ -73,6 +73,10 @@ impl Mode {
             Self::Normal | Self::Insert | Self::Replace | Self::HelixNormal => false,
         }
     }
+
+    pub fn is_helix(&self) -> bool {
+        matches!(self, Self::HelixNormal | Self::HelixSelect)
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -515,7 +519,7 @@ impl MarksState {
         cx: &mut Context<Self>,
     ) {
         let on_change = cx.subscribe(buffer_handle, move |this, buffer, event, cx| match event {
-            BufferEvent::Edited => {
+            BufferEvent::Edited { .. } => {
                 if let Some(path) = this.path_for_buffer(&buffer, cx) {
                     this.serialize_buffer_marks(path, &buffer, cx);
                 }
@@ -612,9 +616,7 @@ impl MarksState {
                 return Some(Mark::Local(anchors.get(name)?.clone()));
             }
 
-            let singleton = multi_buffer.read(cx).as_singleton()?;
-            let excerpt_id = *multi_buffer.read(cx).excerpt_ids().first()?;
-            let buffer_id = singleton.read(cx).remote_id();
+            let (excerpt_id, buffer_id, _) = multi_buffer.read(cx).read(cx).as_singleton()?;
             if let Some(anchors) = self.buffer_marks.get(&buffer_id) {
                 let text_anchors = anchors.get(name)?;
                 let anchors = text_anchors

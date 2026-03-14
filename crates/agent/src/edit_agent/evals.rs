@@ -1423,7 +1423,7 @@ impl EditAgentTest {
             let client = Client::production(cx);
             let user_store = cx.new(|cx| UserStore::new(client.clone(), cx));
             settings::init(cx);
-            language_model::init(client.clone(), cx);
+            language_model::init(user_store.clone(), client.clone(), cx);
             language_models::init(user_store, client.clone(), cx);
         });
 
@@ -1468,6 +1468,8 @@ impl EditAgentTest {
                 action_log,
                 Templates::new(),
                 edit_format,
+                true,
+                true,
             ),
             project,
             judge_model,

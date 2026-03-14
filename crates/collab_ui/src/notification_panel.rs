@@ -76,6 +76,8 @@ pub struct NotificationPresenter {
 actions!(
     notification_panel,
     [
+        /// Toggles the notification panel.
+        Toggle,
         /// Toggles focus on the notification panel.
         ToggleFocus
     ]
@@ -85,6 +87,11 @@ pub fn init(cx: &mut App) {
     cx.observe_new(|workspace: &mut Workspace, _, _| {
         workspace.register_action(|workspace, _: &ToggleFocus, window, cx| {
             workspace.toggle_panel_focus::<NotificationPanel>(window, cx);
+        });
+        workspace.register_action(|workspace, _: &Toggle, window, cx| {
+            if !workspace.toggle_panel_focus::<NotificationPanel>(window, cx) {
+                workspace.close_panel::<NotificationPanel>(window, cx);
+            }
         });
     })
     .detach();
@@ -537,9 +544,7 @@ impl Render for NotificationPanel {
                             .p_4()
                             .child(
                                 Button::new("connect_prompt_button", "Connect")
-                                    .icon_color(Color::Muted)
-                                    .icon(IconName::Github)
-                                    .icon_position(IconPosition::Start)
+                                    .start_icon(Icon::new(IconName::Github).color(Color::Muted))
                                     .style(ButtonStyle::Filled)
                                     .full_width()
                                     .on_click({

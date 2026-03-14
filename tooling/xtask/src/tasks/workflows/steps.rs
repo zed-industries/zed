@@ -1,10 +1,16 @@
 use gh_workflow::*;
+use serde_json::Value;
 
 use crate::tasks::workflows::{runners::Platform, vars, vars::StepOutput};
 
+pub(crate) fn use_clang(job: Job) -> Job {
+    job.add_env(Env::new("CC", "clang"))
+        .add_env(Env::new("CXX", "clang++"))
+}
+
 const SCCACHE_R2_BUCKET: &str = "sccache-zed";
 
-const BASH_SHELL: &str = "bash -euxo pipefail {0}";
+pub(crate) const BASH_SHELL: &str = "bash -euxo pipefail {0}";
 // https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-syntax#jobsjob_idstepsshell
 pub const PWSH_SHELL: &str = "pwsh";
 
@@ -13,18 +19,11 @@ pub(crate) struct Nextest(Step<Run>);
 pub(crate) fn cargo_nextest(platform: Platform) -> Nextest {
     Nextest(named::run(
         platform,
-        "cargo nextest run --workspace --no-fail-fast",
+        "cargo nextest run --workspace --no-fail-fast --no-tests=warn",
     ))
 }
 
 impl Nextest {
-    pub(crate) fn with_target(mut self, target: &str) -> Step<Run> {
-        if let Some(nextest_command) = self.0.value.run.as_mut() {
-            nextest_command.push_str(&format!(r#" --target "{target}""#));
-        }
-        self.into()
-    }
-
     #[allow(dead_code)]
     pub(crate) fn with_filter_expr(mut self, filter_expr: &str) -> Self {
         if let Some(nextest_command) = self.0.value.run.as_mut() {
@@ -49,25 +48,93 @@ impl From<Nextest> for Step<Run> {
     }
 }
 
-pub fn checkout_repo() -> Step<Use> {
-    named::uses(
-        "actions",
-        "checkout",
-        "11bd71901bbe5b1630ceea73d27597364c9af683", // v4
-    )
-    // prevent checkout action from running `git clean -ffdx` which
-    // would delete the target directory
-    .add_with(("clean", false))
+#[derive(Default)]
+enum FetchDepth {
+    #[default]
+    Shallow,
+    Full,
+    Custom(serde_json::Value),
 }
 
-pub fn checkout_repo_with_token(token: &StepOutput) -> Step<Use> {
-    named::uses(
-        "actions",
-        "checkout",
-        "11bd71901bbe5b1630ceea73d27597364c9af683", // v4
-    )
-    .add_with(("clean", false))
-    .add_with(("token", token.to_string()))
+#[derive(Default)]
+pub(crate) struct CheckoutStep {
+    fetch_depth: FetchDepth,
+    name: Option<String>,
+    token: Option<String>,
+    path: Option<String>,
+    repository: Option<String>,
+    ref_: Option<String>,
+}
+
+impl CheckoutStep {
+    pub fn with_full_history(mut self) -> Self {
+        self.fetch_depth = FetchDepth::Full;
+        self
+    }
+
+    pub fn with_custom_name(mut self, name: &str) -> Self {
+        self.name = Some(name.to_string());
+        self
+    }
+
+    pub fn with_custom_fetch_depth(mut self, fetch_depth: impl Into<Value>) -> Self {
+        self.fetch_depth = FetchDepth::Custom(fetch_depth.into());
+        self
+    }
+
+    /// Sets `fetch-depth` to `2` on the main branch and `350` on all other branches.
+    pub fn with_deep_history_on_non_main(self) -> Self {
+        self.with_custom_fetch_depth("${{ github.ref == 'refs/heads/main' && 2 || 350 }}")
+    }
+
+    pub fn with_token(mut self, token: &StepOutput) -> Self {
+        self.token = Some(token.to_string());
+        self
+    }
+
+    pub fn with_path(mut self, path: &str) -> Self {
+        self.path = Some(path.to_string());
+        self
+    }
+
+    pub fn with_repository(mut self, repository: &str) -> Self {
+        self.repository = Some(repository.to_string());
+        self
+    }
+
+    pub fn with_ref(mut self, ref_: impl ToString) -> Self {
+        self.ref_ = Some(ref_.to_string());
+        self
+    }
+}
+
+impl From<CheckoutStep> for Step<Use> {
+    fn from(value: CheckoutStep) -> Self {
+        Step::new(value.name.unwrap_or("steps::checkout_repo".to_string()))
+            .uses(
+                "actions",
+                "checkout",
+                "11bd71901bbe5b1630ceea73d27597364c9af683", // v4
+            )
+            // prevent checkout action from running `git clean -ffdx` which
+            // would delete the target directory
+            .add_with(("clean", false))
+            .map(|step| match value.fetch_depth {
+                FetchDepth::Shallow => step,
+                FetchDepth::Full => step.add_with(("fetch-depth", 0)),
+                FetchDepth::Custom(depth) => step.add_with(("fetch-depth", depth)),
+            })
+            .when_some(value.path, |step, path| step.add_with(("path", path)))
+            .when_some(value.repository, |step, repository| {
+                step.add_with(("repository", repository))
+            })
+            .when_some(value.ref_, |step, ref_| step.add_with(("ref", ref_)))
+            .when_some(value.token, |step, token| step.add_with(("token", token)))
+    }
+}
+
+pub fn checkout_repo() -> CheckoutStep {
+    CheckoutStep::default()
 }
 
 pub fn setup_pnpm() -> Step<Use> {
@@ -270,6 +337,7 @@ pub(crate) fn dependant_job(deps: &[&NamedJob]) -> Job {
 impl FluentBuilder for Job {}
 impl FluentBuilder for Workflow {}
 impl FluentBuilder for Input {}
+impl<T> FluentBuilder for Step<T> {}
 
 /// A helper trait for building complex objects with imperative conditionals in a fluent style.
 /// Copied from GPUI to avoid adding GPUI as dependency
@@ -418,9 +486,8 @@ pub mod named {
 }
 
 pub fn git_checkout(ref_name: &dyn std::fmt::Display) -> Step<Run> {
-    named::bash(&format!(
-        "git fetch origin {ref_name} && git checkout {ref_name}"
-    ))
+    named::bash(r#"git fetch origin "$REF_NAME" && git checkout "$REF_NAME""#)
+        .add_env(("REF_NAME", ref_name.to_string()))
 }
 
 pub fn authenticate_as_zippy() -> (Step<Use>, StepOutput) {

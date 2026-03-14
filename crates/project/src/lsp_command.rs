@@ -533,7 +533,7 @@ impl LspCommand for PerformRename {
             .rename_provider
             .is_some_and(|capability| match capability {
                 OneOf::Left(enabled) => enabled,
-                OneOf::Right(_options) => true,
+                OneOf::Right(_) => true,
             })
     }
 
@@ -4857,9 +4857,14 @@ impl LspCommand for GetFoldingRanges {
         self,
         message: proto::GetFoldingRangesResponse,
         _: Entity<LspStore>,
-        _: Entity<Buffer>,
-        _: AsyncApp,
+        buffer: Entity<Buffer>,
+        mut cx: AsyncApp,
     ) -> Result<Self::Response> {
+        buffer
+            .update(&mut cx, |buffer, _| {
+                buffer.wait_for_version(deserialize_version(&message.version))
+            })
+            .await?;
         message
             .ranges
             .into_iter()

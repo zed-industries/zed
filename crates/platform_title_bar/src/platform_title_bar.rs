@@ -7,6 +7,8 @@ use gpui::{
     MouseButton, ParentElement, StatefulInteractiveElement, Styled, Window, WindowControlArea, div,
     px,
 };
+use project::DisableAiSettings;
+use settings::Settings;
 use smallvec::SmallVec;
 use std::mem;
 use ui::{
@@ -28,9 +30,8 @@ pub struct PlatformTitleBar {
     platform_style: PlatformStyle,
     children: SmallVec<[AnyElement; 2]>,
     should_move: bool,
+    background_color: Option<Hsla>,
     system_window_tabs: Entity<SystemWindowTabs>,
-    workspace_sidebar_open: bool,
-    sidebar_has_notifications: bool,
 }
 
 impl PlatformTitleBar {
@@ -43,13 +44,16 @@ impl PlatformTitleBar {
             platform_style,
             children: SmallVec::new(),
             should_move: false,
+            background_color: None,
             system_window_tabs,
-            workspace_sidebar_open: false,
-            sidebar_has_notifications: false,
         }
     }
 
     pub fn title_bar_color(&self, window: &mut Window, cx: &mut Context<Self>) -> Hsla {
+        if let Some(background_color) = self.background_color {
+            return background_color;
+        }
+
         if cfg!(any(target_os = "linux", target_os = "freebsd")) {
             if window.is_window_active() && !self.should_move {
                 cx.theme().colors().title_bar_background
@@ -68,34 +72,16 @@ impl PlatformTitleBar {
         self.children = children.into_iter().collect();
     }
 
+    pub fn set_background_color(&mut self, background_color: Option<Hsla>) {
+        self.background_color = background_color;
+    }
+
     pub fn init(cx: &mut App) {
         SystemWindowTabs::init(cx);
     }
 
-    pub fn is_workspace_sidebar_open(&self) -> bool {
-        self.workspace_sidebar_open
-    }
-
-    pub fn set_workspace_sidebar_open(&mut self, open: bool, cx: &mut Context<Self>) {
-        self.workspace_sidebar_open = open;
-        cx.notify();
-    }
-
-    pub fn sidebar_has_notifications(&self) -> bool {
-        self.sidebar_has_notifications
-    }
-
-    pub fn set_sidebar_has_notifications(
-        &mut self,
-        has_notifications: bool,
-        cx: &mut Context<Self>,
-    ) {
-        self.sidebar_has_notifications = has_notifications;
-        cx.notify();
-    }
-
     pub fn is_multi_workspace_enabled(cx: &App) -> bool {
-        cx.has_flag::<AgentV2FeatureFlag>()
+        cx.has_flag::<AgentV2FeatureFlag>() && !DisableAiSettings::get_global(cx).disable_ai
     }
 }
 
@@ -107,9 +93,6 @@ impl Render for PlatformTitleBar {
         let titlebar_color = self.title_bar_color(window, cx);
         let close_action = Box::new(workspace::CloseWindow);
         let children = mem::take(&mut self.children);
-
-        let is_multiworkspace_sidebar_open =
-            PlatformTitleBar::is_multi_workspace_enabled(cx) && self.is_workspace_sidebar_open();
 
         let title_bar = h_flex()
             .window_control_area(WindowControlArea::Drag)
@@ -159,9 +142,7 @@ impl Render for PlatformTitleBar {
             .map(|this| {
                 if window.is_fullscreen() {
                     this.pl_2()
-                } else if self.platform_style == PlatformStyle::Mac
-                    && !is_multiworkspace_sidebar_open
-                {
+                } else if self.platform_style == PlatformStyle::Mac {
                     this.pl(px(TRAFFIC_LIGHT_PADDING))
                 } else {
                     this.pl_2()
@@ -173,10 +154,9 @@ impl Render for PlatformTitleBar {
                     .when(!(tiling.top || tiling.right), |el| {
                         el.rounded_tr(theme::CLIENT_SIDE_DECORATION_ROUNDING)
                     })
-                    .when(
-                        !(tiling.top || tiling.left) && !is_multiworkspace_sidebar_open,
-                        |el| el.rounded_tl(theme::CLIENT_SIDE_DECORATION_ROUNDING),
-                    )
+                    .when(!(tiling.top || tiling.left), |el| {
+                        el.rounded_tl(theme::CLIENT_SIDE_DECORATION_ROUNDING)
+                    })
                     // this border is to avoid a transparent gap in the rounded corners
                     .mt(px(-1.))
                     .mb(px(-1.))

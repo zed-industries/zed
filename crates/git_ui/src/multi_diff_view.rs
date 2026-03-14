@@ -3,9 +3,9 @@ use buffer_diff::BufferDiff;
 use editor::{Editor, EditorEvent, MultiBuffer, multibuffer_context_lines};
 use gpui::{
     AnyElement, App, AppContext as _, AsyncApp, Context, Entity, EventEmitter, FocusHandle,
-    Focusable, IntoElement, Render, SharedString, Task, Window,
+    Focusable, Font, IntoElement, Render, SharedString, Task, Window,
 };
-use language::{Buffer, Capability, OffsetRangeExt};
+use language::{Buffer, Capability, HighlightedText, OffsetRangeExt};
 use multi_buffer::PathKey;
 use project::Project;
 use std::{
@@ -18,7 +18,7 @@ use util::paths::PathStyle;
 use util::rel_path::RelPath;
 use workspace::{
     Item, ItemHandle as _, ItemNavHistory, ToolbarItemLocation, Workspace,
-    item::{BreadcrumbText, ItemEvent, SaveOptions, TabContentParams},
+    item::{ItemEvent, SaveOptions, TabContentParams},
     searchable::SearchableItemHandle,
 };
 
@@ -281,7 +281,7 @@ impl Item for MultiDiffView {
         self.title()
     }
 
-    fn to_item_events(event: &EditorEvent, f: impl FnMut(ItemEvent)) {
+    fn to_item_events(event: &EditorEvent, f: &mut dyn FnMut(ItemEvent)) {
         Editor::to_item_events(event, f)
     }
 
@@ -338,7 +338,7 @@ impl Item for MultiDiffView {
         ToolbarItemLocation::PrimaryLeft
     }
 
-    fn breadcrumbs(&self, cx: &App) -> Option<Vec<BreadcrumbText>> {
+    fn breadcrumbs(&self, cx: &App) -> Option<(Vec<HighlightedText>, Option<Font>)> {
         self.editor.breadcrumbs(cx)
     }
 

@@ -1,7 +1,10 @@
+#![cfg_attr(target_family = "wasm", no_main)]
+
 use gpui::{
-    App, Application, Bounds, Context, KeyBinding, PromptButton, PromptLevel, Window, WindowBounds,
-    WindowKind, WindowOptions, actions, div, prelude::*, px, rgb, size,
+    App, Bounds, Context, KeyBinding, PromptButton, PromptLevel, Window, WindowBounds, WindowKind,
+    WindowOptions, actions, div, prelude::*, px, rgb, size,
 };
+use gpui_platform::application;
 
 struct SubWindow {
     custom_titlebar: bool,
@@ -305,8 +308,8 @@ impl Render for WindowDemo {
 
 actions!(window, [Quit]);
 
-fn main() {
-    Application::new().run(|cx: &mut App| {
+fn run_example() {
+    application().run(|cx: &mut App| {
         let bounds = Bounds::centered(None, size(px(800.0), px(600.0)), cx);
 
         cx.open_window(
@@ -331,4 +334,16 @@ fn main() {
         cx.on_action(|_: &Quit, cx| cx.quit());
         cx.bind_keys([KeyBinding::new("cmd-q", Quit, None)]);
     });
+}
+
+#[cfg(not(target_family = "wasm"))]
+fn main() {
+    run_example();
+}
+
+#[cfg(target_family = "wasm")]
+#[wasm_bindgen::prelude::wasm_bindgen(start)]
+pub fn start() {
+    gpui_platform::web_init();
+    run_example();
 }

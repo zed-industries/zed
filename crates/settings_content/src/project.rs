@@ -1,5 +1,9 @@
-use std::{path::PathBuf, sync::Arc};
+use std::{
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 
+use anyhow::Context;
 use collections::{BTreeMap, HashMap};
 use gpui::Rgba;
 use schemars::JsonSchema;
@@ -233,6 +237,26 @@ pub struct SemanticTokenRules {
     pub rules: Vec<SemanticTokenRule>,
 }
 
+impl SemanticTokenRules {
+    pub const FILE_NAME: &'static str = "semantic_token_rules.json";
+
+    pub fn load(file_path: &Path) -> anyhow::Result<Self> {
+        let rules_content = std::fs::read(file_path).with_context(|| {
+            anyhow::anyhow!(
+                "Could not read semantic token rules from {}",
+                file_path.display()
+            )
+        })?;
+
+        serde_json_lenient::from_slice::<SemanticTokenRules>(&rules_content).with_context(|| {
+            anyhow::anyhow!(
+                "Failed to parse semantic token rules from {}",
+                file_path.display()
+            )
+        })
+    }
+}
+
 impl crate::merge_from::MergeFrom for SemanticTokenRules {
     fn merge_from(&mut self, other: &Self) {
         self.rules.splice(0..0, other.rules.iter().cloned());
@@ -439,7 +463,7 @@ impl std::fmt::Debug for ContextServerCommand {
 }
 
 #[with_fallible_options]
-#[derive(Copy, Clone, Debug, PartialEq, Default, Serialize, Deserialize, JsonSchema, MergeFrom)]
+#[derive(Clone, Debug, PartialEq, Default, Serialize, Deserialize, JsonSchema, MergeFrom)]
 pub struct GitSettings {
     /// Whether or not to enable git integration.
     ///
@@ -473,6 +497,27 @@ pub struct GitSettings {
     ///
     /// Default: file_name_first
     pub path_style: Option<GitPathStyle>,
+    /// Directory where git worktrees are created, relative to the repository
+    /// working directory.
+    ///
+    /// When the resolved directory is outside the project root, the
+    /// project's directory name is automatically appended so that
+    /// sibling repos don't collide. For example, with the default
+    /// `"../worktrees"` and a project at `~/code/zed`, worktrees are
+    /// created under `~/code/worktrees/zed/`.
+    ///
+    /// When the resolved directory is inside the project root, no
+    /// extra component is added (it's already project-scoped).
+    ///
+    /// Examples:
+    /// - `"../worktrees"` — `~/code/worktrees/<project>/` (default)
+    /// - `".git/zed-worktrees"` — `<project>/.git/zed-worktrees/`
+    /// - `"my-worktrees"` — `<project>/my-worktrees/`
+    ///
+    /// Trailing slashes are ignored.
+    ///
+    /// Default: ../worktrees
+    pub worktree_directory: Option<String>,
 }
 
 #[with_fallible_options]

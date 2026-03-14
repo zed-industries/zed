@@ -33,10 +33,7 @@ use settings::Settings;
 use std::{
     borrow::Cow,
     path::{Path, PathBuf},
-    sync::{
-        Arc, LazyLock, OnceLock,
-        atomic::{AtomicBool, Ordering},
-    },
+    sync::{Arc, LazyLock, OnceLock},
     time::Duration,
 };
 use task::{DebugScenario, SpawnInTerminal, TaskTemplate, ZedDebugConfig};
@@ -156,6 +153,48 @@ impl extension::Extension for WasmExtension {
                     .await?
                     .map_err(|err| store.data().extension_error(err))?;
                 anyhow::Ok(options)
+            }
+            .boxed()
+        })
+        .await?
+    }
+
+    async fn language_server_initialization_options_schema(
+        &self,
+        language_server_id: LanguageServerName,
+        worktree: Arc<dyn WorktreeDelegate>,
+    ) -> Result<Option<String>> {
+        self.call(|extension, store| {
+            async move {
+                let resource = store.data_mut().table().push(worktree)?;
+                extension
+                    .call_language_server_initialization_options_schema(
+                        store,
+                        &language_server_id,
+                        resource,
+                    )
+                    .await
+            }
+            .boxed()
+        })
+        .await?
+    }
+
+    async fn language_server_workspace_configuration_schema(
+        &self,
+        language_server_id: LanguageServerName,
+        worktree: Arc<dyn WorktreeDelegate>,
+    ) -> Result<Option<String>> {
+        self.call(|extension, store| {
+            async move {
+                let resource = store.data_mut().table().push(worktree)?;
+                extension
+                    .call_language_server_workspace_configuration_schema(
+                        store,
+                        &language_server_id,
+                        resource,
+                    )
+                    .await
             }
             .boxed()
         })
@@ -498,11 +537,6 @@ pub struct WasmState {
     pub(crate) capability_granter: CapabilityGranter,
 }
 
-std::thread_local! {
-    /// Used by the crash handler to ignore panics in extension-related threads.
-    pub static IS_WASM_THREAD: AtomicBool = const { AtomicBool::new(false) };
-}
-
 type MainThreadCall = Box<dyn Send + for<'a> FnOnce(&'a mut AsyncApp) -> LocalBoxFuture<'a, ()>>;
 
 type ExtensionCall = Box<
@@ -656,12 +690,6 @@ impl WasmHost {
 
             let (tx, mut rx) = mpsc::unbounded::<ExtensionCall>();
             let extension_task = async move {
-                // note: Setting the thread local here will slowly "poison" all tokio threads
-                // causing us to not record their panics any longer.
-                //
-                // This is fine though, the main zed binary only uses tokio for livekit and wasm extensions.
-                // Livekit seldom (if ever) panics 🤞 so the likelihood of us missing a panic in sentry is very low.
-                IS_WASM_THREAD.with(|v| v.store(true, Ordering::Release));
                 while let Some(call) = rx.next().await {
                     (call)(&mut extension, &mut store).await;
                 }

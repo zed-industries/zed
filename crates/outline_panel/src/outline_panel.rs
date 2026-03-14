@@ -93,6 +93,8 @@ actions!(
         ToggleActiveEditorPin,
         /// Unfolds the selected directory.
         UnfoldDirectory,
+        /// Toggles the outline panel.
+        Toggle,
         /// Toggles focus on the outline panel.
         ToggleFocus,
     ]
@@ -670,6 +672,11 @@ pub fn init(cx: &mut App) {
         workspace.register_action(|workspace, _: &ToggleFocus, window, cx| {
             workspace.toggle_panel_focus::<OutlinePanel>(window, cx);
         });
+        workspace.register_action(|workspace, _: &Toggle, window, cx| {
+            if !workspace.toggle_panel_focus::<OutlinePanel>(window, cx) {
+                workspace.close_panel::<OutlinePanel>(window, cx);
+            }
+        });
     })
     .detach();
 }
@@ -1136,7 +1143,7 @@ impl OutlinePanel {
                             .excerpts_for_buffer(buffer.read(cx).remote_id(), cx)
                     })
                     .and_then(|excerpts| {
-                        let (excerpt_id, excerpt_range) = excerpts.first()?;
+                        let (excerpt_id, _, excerpt_range) = excerpts.first()?;
                         multi_buffer_snapshot
                             .anchor_in_excerpt(*excerpt_id, excerpt_range.context.start)
                     })

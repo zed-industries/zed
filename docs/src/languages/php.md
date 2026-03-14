@@ -1,3 +1,8 @@
+---
+title: PHP
+description: "Configure PHP language support in Zed, including language servers, formatting, and debugging."
+---
+
 # PHP
 
 PHP support is available through the [PHP extension](https://github.com/zed-extensions/php).
@@ -39,7 +44,7 @@ The PHP extension uses [LSP language servers](https://microsoft.github.io/langua
 
 [Intelephense](https://intelephense.com/) is a [proprietary](https://github.com/bmewburn/vscode-intelephense/blob/master/LICENSE.txt#L29) language server for PHP operating under a freemium model. Certain features require purchase of a [premium license](https://intelephense.com/buy).
 
-To use Intelephense, add the following to your `settings.json`:
+Configure language servers in Settings ({#kb zed::OpenSettings}) under Languages > PHP, or add to your settings file:
 
 ```json [settings]
 {
@@ -71,7 +76,7 @@ Alternatively, you can pass the licence key or a path to a file containing the l
 
 [PHP Tools](https://www.devsense.com/) is a proprietary language server that offers free and premium features. You need to [purchase a license](https://www.devsense.com/en/purchase) to activate the premium features.
 
-To use PHP Tools, add the following to your `settings.json`:
+Configure language servers in Settings ({#kb zed::OpenSettings}) under Languages > PHP, or add to your settings file:
 
 ```json [settings]
 {
@@ -107,7 +112,7 @@ Check out the documentation of [PHP Tools for Zed](https://docs.devsense.com/oth
 
 ### Phpactor
 
-To use Phpactor instead of Intelephense or any other tools, add the following to your `settings.json`:
+Configure language servers in Settings ({#kb zed::OpenSettings}) under Languages > PHP, or add to your settings file:
 
 ```json [settings]
 {

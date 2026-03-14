@@ -145,7 +145,21 @@ impl MockConnection {
         static NEXT_ID: AtomicU64 = AtomicU64::new(0);
         let id = NEXT_ID.fetch_add(1, Ordering::SeqCst);
         let opts = MockConnectionOptions { id };
+        let (server_client, connect_guard) =
+            Self::new_with_opts(opts.clone(), client_cx, server_cx);
+        (opts, server_client, connect_guard)
+    }
 
+    /// Creates a mock connection pair for existing `MockConnectionOptions`.
+    ///
+    /// This is useful when simulating reconnection: after a connection is torn
+    /// down, register a new mock server under the same options so the next
+    /// `ConnectionPool::connect` call finds it.
+    pub(crate) fn new_with_opts(
+        opts: MockConnectionOptions,
+        client_cx: &mut TestAppContext,
+        server_cx: &mut TestAppContext,
+    ) -> (AnyProtoClient, ConnectGuard) {
         let (outgoing_tx, _) = mpsc::unbounded::<Envelope>();
         let (_, incoming_rx) = mpsc::unbounded::<Envelope>();
         let server_client = server_cx
@@ -165,7 +179,7 @@ impl MockConnection {
                 .insert(opts.id, (rx, connection));
         });
 
-        (opts, server_client.into(), tx)
+        (server_client.into(), tx)
     }
 }
 

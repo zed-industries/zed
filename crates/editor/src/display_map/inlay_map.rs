@@ -17,7 +17,7 @@ use multi_buffer::{
 };
 use project::InlayId;
 use std::{
-    cmp,
+    cmp, iter,
     ops::{Add, AddAssign, Range, Sub, SubAssign},
     sync::Arc,
 };
@@ -296,9 +296,11 @@ impl<'a> Iterator for InlayChunks<'a> {
                 let mask = 1u128.unbounded_shl(split_index as u32).wrapping_sub(1);
                 let chars = chunk.chars & mask;
                 let tabs = chunk.tabs & mask;
+                let newlines = chunk.newlines & mask;
 
                 chunk.chars = chunk.chars.unbounded_shr(split_index as u32);
                 chunk.tabs = chunk.tabs.unbounded_shr(split_index as u32);
+                chunk.newlines = chunk.newlines.unbounded_shr(split_index as u32);
                 chunk.text = suffix;
 
                 InlayChunk {
@@ -306,6 +308,7 @@ impl<'a> Iterator for InlayChunks<'a> {
                         text: prefix,
                         chars,
                         tabs,
+                        newlines,
                         ..chunk.clone()
                     },
                     renderer: None,
@@ -422,6 +425,7 @@ impl<'a> Iterator for InlayChunks<'a> {
                     text: inlay_chunk,
                     chars,
                     tabs,
+                    newlines,
                 } = self
                     .inlay_chunk
                     .get_or_insert_with(|| inlay_chunks.next().unwrap());
@@ -446,9 +450,11 @@ impl<'a> Iterator for InlayChunks<'a> {
                 let mask = 1u128.unbounded_shl(split_index as u32).wrapping_sub(1);
                 let new_chars = *chars & mask;
                 let new_tabs = *tabs & mask;
+                let new_newlines = *newlines & mask;
 
                 *chars = chars.unbounded_shr(split_index as u32);
                 *tabs = tabs.unbounded_shr(split_index as u32);
+                *newlines = newlines.unbounded_shr(split_index as u32);
 
                 if inlay_chunk.is_empty() {
                     self.inlay_chunk = None;
@@ -461,6 +467,7 @@ impl<'a> Iterator for InlayChunks<'a> {
                         text: chunk,
                         chars: new_chars,
                         tabs: new_tabs,
+                        newlines: new_newlines,
                         highlight_style,
                         is_inlay: true,
                         ..Chunk::default()
@@ -539,8 +546,11 @@ impl InlayMap {
     pub fn new(buffer: MultiBufferSnapshot) -> (Self, InlaySnapshot) {
         let version = 0;
         let snapshot = InlaySnapshot {
-            buffer: buffer.clone(),
-            transforms: SumTree::from_iter(Some(Transform::Isomorphic(buffer.text_summary())), ()),
+            transforms: SumTree::from_iter(
+                iter::once(Transform::Isomorphic(buffer.text_summary())),
+                (),
+            ),
+            buffer,
             version,
         };
 
@@ -738,7 +748,7 @@ impl InlayMap {
     }
 
     #[ztracing::instrument(skip_all)]
-    pub fn current_inlays(&self) -> impl Iterator<Item = &Inlay> {
+    pub fn current_inlays(&self) -> impl Iterator<Item = &Inlay> + Default {
         self.inlays.iter()
     }
 
@@ -1321,9 +1331,10 @@ mod tests {
     use super::*;
     use crate::{
         MultiBuffer,
-        display_map::{HighlightKey, InlayHighlights, TextHighlights},
+        display_map::{HighlightKey, InlayHighlights},
         hover_links::InlayHighlight,
     };
+    use collections::HashMap;
     use gpui::{App, HighlightStyle};
     use multi_buffer::Anchor;
     use project::{InlayHint, InlayHintLabel, ResolveState};
@@ -1890,7 +1901,7 @@ mod tests {
                 );
             }
 
-            let mut text_highlights = TextHighlights::default();
+            let mut text_highlights = HashMap::default();
             let text_highlight_count = rng.random_range(0_usize..10);
             let mut text_highlight_ranges = (0..text_highlight_count)
                 .map(|_| buffer_snapshot.random_byte_range(MultiBufferOffset(0), &mut rng))
@@ -1910,6 +1921,7 @@ mod tests {
                         .collect(),
                 )),
             );
+            let text_highlights = Arc::new(text_highlights);
 
             let mut inlay_highlights = InlayHighlights::default();
             if !inlays.is_empty() {

@@ -1,11 +1,14 @@
 ---
-title: Remote Development - Zed
-description: Edit code on remote servers with Zed. Local UI performance with remote language servers, terminals, and tasks over SSH.
+title: Remote Development in Zed - SSH Workflows
+description: Use remote development in Zed to edit code over SSH with local UI performance, remote terminals, language servers, and tasks.
 ---
 
 # Remote Development
 
 Remote Development lets you edit code on a remote server while running Zed locally. The UI stays responsive because it runs on your machine, while language servers, tasks, and terminals run on the server.
+
+For day-to-day workflows, pair remote development with [Tasks](./tasks.md),
+[Terminal](./terminal.md), and [Debugger](./debugger.md).
 
 ## Overview
 
@@ -177,7 +180,7 @@ When opening a remote project there are three relevant settings locations:
 - The server Zed settings (in the same place) on the remote server.
 - The project settings (in `.zed/settings.json` or `.editorconfig` of your project)
 
-Both the local Zed and the server Zed read the project settings, but they are not aware of the other's main `settings.json`.
+Both the local Zed and the server Zed read the project settings, but they are not aware of the other's main settings file.
 
 Which settings file you should use depends on the kind of setting you want to make:
 
@@ -258,3 +261,13 @@ Note that we deliberately disallow some options (for example `-t` or `-T`) that 
 ## Feedback
 
 Please join the #remoting-feedback channel in the [Zed Discord](https://zed.dev/community-links).
+
+## See also
+
+- [Running & Testing](./running-testing.md): Run tasks, terminal commands, and
+  debugger sessions while you work remotely.
+- [Configuring Zed](./configuring-zed.md): Manage shared and project settings,
+  including `.zed/settings.json`.
+- [Agent Panel](./ai/agent-panel.md): Use AI workflows in remote projects.
+- [Remote Development on zed.dev](https://zed.dev/remote-development): Product
+  overview and release updates.

@@ -20,7 +20,7 @@ pub use crate::jupyter_settings::JupyterSettings;
 pub use crate::kernels::{Kernel, KernelSpecification, KernelStatus, PythonEnvKernelSpecification};
 pub use crate::repl_editor::*;
 pub use crate::repl_sessions_ui::{
-    ClearOutputs, Interrupt, ReplSessionsPage, Restart, Run, Sessions, Shutdown,
+    ClearCurrentOutput, ClearOutputs, Interrupt, ReplSessionsPage, Restart, Run, Sessions, Shutdown,
 };
 pub use crate::repl_settings::ReplSettings;
 pub use crate::repl_store::ReplStore;
@@ -46,11 +46,9 @@ fn zed_dispatcher(cx: &mut App) -> impl Dispatcher {
     impl Dispatcher for ZedDispatcher {
         #[track_caller]
         fn dispatch(&self, runnable: Runnable) {
-            use std::sync::{Arc, atomic::AtomicBool};
             let location = core::panic::Location::caller();
-            let closed = Arc::new(AtomicBool::new(false));
             let (wrapper, task) = async_task::Builder::new()
-                .metadata(RunnableMeta { location, closed })
+                .metadata(RunnableMeta { location })
                 .spawn(|_| async move { runnable.run() }, {
                     let dispatcher = self.dispatcher.clone();
                     move |r| dispatcher.dispatch(r, Priority::default())
@@ -61,11 +59,9 @@ fn zed_dispatcher(cx: &mut App) -> impl Dispatcher {
 
         #[track_caller]
         fn dispatch_after(&self, duration: Duration, runnable: Runnable) {
-            use std::sync::{Arc, atomic::AtomicBool};
             let location = core::panic::Location::caller();
-            let closed = Arc::new(AtomicBool::new(false));
             let (wrapper, task) = async_task::Builder::new()
-                .metadata(RunnableMeta { location, closed })
+                .metadata(RunnableMeta { location })
                 .spawn(|_| async move { runnable.run() }, {
                     let dispatcher = self.dispatcher.clone();
                     move |r| dispatcher.dispatch_after(duration, r)
