@@ -46,7 +46,7 @@ use std::{
 
 use super::ImageCacheProvider;
 
-const DRAG_THRESHOLD: f64 = 2.;
+const DEFAULT_DRAG_THRESHOLD: f64 = 2.;
 const TOOLTIP_SHOW_DELAY: Duration = Duration::from_millis(500);
 const HOVERABLE_TOOLTIP_HIDE_DELAY: Duration = Duration::from_millis(500);
 
@@ -575,9 +575,25 @@ impl Interactivity {
             }));
     }
 
+    /// Sets the pointer movement threshold required to start a drag initiated via [`Self::on_drag`].
+    ///
+    /// The default drag-start threshold is 2px.
+    pub fn drag_threshold(&mut self, threshold: impl Into<Pixels>) {
+        let threshold = threshold.into();
+        let threshold_value = f64::from(threshold);
+        self.drag_threshold = Some(if threshold_value.is_finite() && threshold_value >= 0.0 {
+            threshold
+        } else {
+            px(0.)
+        });
+    }
+
     /// On drag initiation, this callback will be used to create a new view to render the dragged value for a
     /// drag and drop operation. This API should also be used as the equivalent of 'on drag start' with
     /// the [`Self::on_drag_move`] API.
+    ///
+    /// Drag initiation occurs after the pointer has moved more than 2px from the mouse-down position.
+    /// Use [`Self::drag_threshold`] to override the threshold for a specific element.
     /// The imperative API equivalent to [`StatefulInteractiveElement::on_drag`].
     ///
     /// See [`Context::listener`](crate::Context::listener) to get access to a view's state from this callback.
@@ -1296,9 +1312,23 @@ pub trait StatefulInteractiveElement: InteractiveElement {
         self
     }
 
+    /// Sets the pointer movement threshold required to start a drag initiated via [`Self::on_drag`].
+    ///
+    /// The default drag-start threshold is 2px.
+    fn drag_threshold(mut self, threshold: impl Into<Pixels>) -> Self
+    where
+        Self: Sized,
+    {
+        self.interactivity().drag_threshold(threshold);
+        self
+    }
+
     /// On drag initiation, this callback will be used to create a new view to render the dragged value for a
     /// drag and drop operation. This API should also be used as the equivalent of 'on drag start' with
     /// the [`InteractiveElement::on_drag_move`] API.
+    ///
+    /// Drag initiation occurs after the pointer has moved more than 2px from the mouse-down position.
+    /// Use [`Self::drag_threshold`] to override the threshold for a specific element.
     /// The callback also has access to the offset of triggering click from the origin of parent element.
     /// The fluent API equivalent to [`Interactivity::on_drag`].
     ///
@@ -1735,6 +1765,7 @@ pub struct Interactivity {
     pub(crate) can_drop_predicate: Option<CanDropPredicate>,
     pub(crate) click_listeners: Vec<ClickListener>,
     pub(crate) aux_click_listeners: Vec<ClickListener>,
+    pub(crate) drag_threshold: Option<Pixels>,
     pub(crate) drag_listener: Option<(Arc<dyn Any>, DragListener)>,
     pub(crate) hover_listener: Option<Box<dyn Fn(&bool, &mut Window, &mut App)>>,
     pub(crate) tooltip_builder: Option<TooltipBuilder>,
@@ -2356,6 +2387,15 @@ impl Interactivity {
         }
 
         let drag_cursor_style = self.base_style.as_ref().mouse_cursor;
+        let drag_threshold = self
+            .drag_threshold
+            .map(f64::from)
+            .unwrap_or(DEFAULT_DRAG_THRESHOLD);
+        let drag_threshold = if drag_threshold.is_finite() && drag_threshold >= 0.0 {
+            drag_threshold
+        } else {
+            0.0
+        };
 
         let mut drag_listener = mem::take(&mut self.drag_listener);
         let drop_listeners = mem::take(&mut self.drop_listeners);
@@ -2437,7 +2477,7 @@ impl Interactivity {
                         let mut pending_mouse_down = pending_mouse_down.borrow_mut();
                         if let Some(mouse_down) = pending_mouse_down.clone()
                             && !cx.has_active_drag()
-                            && (event.position - mouse_down.position).magnitude() > DRAG_THRESHOLD
+                            && (event.position - mouse_down.position).magnitude() > drag_threshold
                             && let Some((drag_value, drag_listener)) = drag_listener.take()
                             && mouse_down.button == MouseButton::Left
                         {
@@ -3602,6 +3642,26 @@ impl ScrollHandle {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{self as gpui, AppContext as _, Context, EmptyView, Modifiers, TestAppContext};
+
+    struct DragSourceView {
+        drag_threshold: Option<Pixels>,
+    }
+
+    impl Render for DragSourceView {
+        fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+            let element = div().id("drag_source").debug_selector(|| "draggable".to_string());
+            let element = if let Some(drag_threshold) = self.drag_threshold {
+                element.drag_threshold(drag_threshold)
+            } else {
+                element
+            };
+
+            element
+                .on_drag((), |_, _, _, cx| cx.new(|_| EmptyView))
+                .size_full()
+        }
+    }
 
     #[test]
     fn scroll_handle_aligns_wide_children_to_left_edge() {
@@ -3639,5 +3699,59 @@ mod tests {
         handle.scroll_to_active_item();
 
         assert_eq!(handle.offset().y, px(-25.));
+    }
+
+    #[gpui::test]
+    fn default_drag_threshold_is_two_pixels(cx: &mut TestAppContext) {
+        let (_, cx) = cx.add_window_view(|_, _| DragSourceView { drag_threshold: None });
+
+        let bounds = cx
+            .debug_bounds("draggable")
+            .expect("missing bounds for draggable element");
+        let start = bounds.origin + point(px(10.), px(10.));
+
+        cx.simulate_mouse_down(start, MouseButton::Left, Modifiers::default());
+
+        cx.simulate_mouse_move(
+            start + point(px(2.), px(0.)),
+            Some(MouseButton::Left),
+            Modifiers::default(),
+        );
+        assert!(!cx.update(|_, app| app.has_active_drag()));
+
+        cx.simulate_mouse_move(
+            start + point(px(3.), px(0.)),
+            Some(MouseButton::Left),
+            Modifiers::default(),
+        );
+        assert!(cx.update(|_, app| app.has_active_drag()));
+    }
+
+    #[gpui::test]
+    fn drag_threshold_is_configurable(cx: &mut TestAppContext) {
+        let (_, cx) = cx.add_window_view(|_, _| DragSourceView {
+            drag_threshold: Some(px(6.)),
+        });
+
+        let bounds = cx
+            .debug_bounds("draggable")
+            .expect("missing bounds for draggable element");
+        let start = bounds.origin + point(px(10.), px(10.));
+
+        cx.simulate_mouse_down(start, MouseButton::Left, Modifiers::default());
+
+        cx.simulate_mouse_move(
+            start + point(px(6.), px(0.)),
+            Some(MouseButton::Left),
+            Modifiers::default(),
+        );
+        assert!(!cx.update(|_, app| app.has_active_drag()));
+
+        cx.simulate_mouse_move(
+            start + point(px(7.), px(0.)),
+            Some(MouseButton::Left),
+            Modifiers::default(),
+        );
+        assert!(cx.update(|_, app| app.has_active_drag()));
     }
 }
