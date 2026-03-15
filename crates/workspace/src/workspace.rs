@@ -252,6 +252,8 @@ actions!(
         ActivatePreviousWindow,
         /// Adds a folder to the current project.
         AddFolderToProject,
+        /// Clears all bookmarks in the project.
+        ClearBookmarks,
         /// Clears all notifications.
         ClearAllNotifications,
         /// Clears all navigation history, including forward/backward navigation, recently opened files, and recently closed tabs. **This action is irreversible**.
@@ -6166,6 +6168,10 @@ impl Workspace {
 
         match self.workspace_location(cx) {
             WorkspaceLocation::Location(location, paths) => {
+                let bookmarks = self.project.update(cx, |project, cx| {
+                    project.bookmark_store().read(cx).all_serialized_bookmarks(cx)
+                });
+
                 let breakpoints = self.project.update(cx, |project, cx| {
                     project
                         .breakpoint_store()
@@ -6192,6 +6198,7 @@ impl Workspace {
                     docks,
                     centered_layout: self.centered_layout,
                     session_id: self.session_id.clone(),
+                    bookmarks,
                     breakpoints,
                     window_id: Some(window.window_handle().window_id().as_u64()),
                     user_toolchains,
@@ -6396,6 +6403,15 @@ impl Workspace {
 
                 cx.notify();
             })?;
+
+            project
+                .update(cx, |project, cx| {
+                    project.bookmark_store().update(cx, |bookmark_store, cx| {
+                        bookmark_store.with_serialized_bookmarks(serialized_workspace.bookmarks, cx)
+                    })
+                })
+                .await
+                .log_err();
 
             let _ = project
                 .update(cx, |project, cx| {
@@ -6846,6 +6862,7 @@ impl Workspace {
                     }
                 }),
             )
+            .on_action(cx.listener(Workspace::clear_bookmarks))
             .on_action(cx.listener(Workspace::cancel))
     }
 
@@ -6965,6 +6982,15 @@ impl Workspace {
                 .detach_and_log_err(cx);
         }
         cx.notify();
+    }
+
+    pub fn clear_bookmarks(&mut self, _: &ClearBookmarks, _: &mut Window, cx: &mut Context<Self>) {
+        self.project()
+            .read(cx)
+            .bookmark_store()
+            .update(cx, |bookmark_store, cx| {
+                bookmark_store.clear_bookmarks(cx);
+            });
     }
 
     fn adjust_padding(padding: Option<f32>) -> f32 {

@@ -1,5 +1,6 @@
 #![allow(clippy::format_collect)]
 
+mod bookmark_store;
 mod color_extractor;
 mod context_server_store;
 mod debugger;

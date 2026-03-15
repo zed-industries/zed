@@ -159,6 +159,7 @@ use project::{
     CompletionResponse, CompletionSource, DisableAiSettings, DocumentHighlight, InlayHint, InlayId,
     InvalidationStrategy, Location, LocationLink, LspAction, PrepareRenameResponse, Project,
     ProjectItem, ProjectPath, ProjectTransaction,
+    bookmark_store::BookmarkStore,
     debugger::{
         breakpoint_store::{
             Breakpoint, BreakpointEditAction, BreakpointSessionState, BreakpointState,
@@ -348,6 +349,7 @@ pub fn init(cx: &mut App) {
             workspace.register_action(Editor::new_file_horizontal);
             workspace.register_action(Editor::cancel_language_server_work);
             workspace.register_action(Editor::toggle_focus);
+            workspace.register_action(Editor::view_bookmarks);
         },
     )
     .detach();
@@ -1160,6 +1162,7 @@ pub struct Editor {
     show_git_diff_gutter: Option<bool>,
     show_code_actions: Option<bool>,
     show_runnables: Option<bool>,
+    show_bookmarks: Option<bool>,
     show_breakpoints: Option<bool>,
     show_diff_review_button: bool,
     show_wrap_guides: Option<bool>,
@@ -1266,6 +1269,7 @@ pub struct Editor {
     last_position_map: Option<Rc<PositionMap>>,
     expect_bounds_change: Option<Bounds<Pixels>>,
     runnables: RunnableData,
+    bookmark_store: Option<Entity<BookmarkStore>>,
     breakpoint_store: Option<Entity<BreakpointStore>>,
     gutter_breakpoint_indicator: (Option<PhantomBreakpointIndicator>, Option<Task<()>>),
     pub(crate) gutter_diff_review_indicator: (Option<PhantomDiffReviewIndicator>, Option<Task<()>>),
@@ -1373,6 +1377,7 @@ pub struct EditorSnapshot {
     show_code_actions: Option<bool>,
     show_runnables: Option<bool>,
     show_breakpoints: Option<bool>,
+    show_bookmarks: Option<bool>,
     git_blame_gutter_max_author_length: Option<usize>,
     pub display_snapshot: DisplaySnapshot,
     pub placeholder_display_snapshot: Option<DisplaySnapshot>,
@@ -2317,6 +2322,11 @@ impl Editor {
                 None
             };
 
+        let bookmark_store = match (&mode, project.as_ref()) {
+            (EditorMode::Full { .. }, Some(project)) => Some(project.read(cx).bookmark_store()),
+            _ => None,
+        };
+
         let breakpoint_store = match (&mode, project.as_ref()) {
             (EditorMode::Full { .. }, Some(project)) => Some(project.read(cx).breakpoint_store()),
             _ => None,
@@ -2392,6 +2402,7 @@ impl Editor {
             show_git_diff_gutter: None,
             show_code_actions: None,
             show_runnables: None,
+            show_bookmarks: None,
             show_breakpoints: None,
             show_diff_review_button: false,
             show_wrap_guides: None,
@@ -2493,6 +2504,7 @@ impl Editor {
             blame: None,
             blame_subscription: None,
 
+            bookmark_store,
             breakpoint_store,
             gutter_breakpoint_indicator: (None, None),
             gutter_diff_review_indicator: (None, None),
@@ -3134,6 +3146,7 @@ impl Editor {
             semantic_tokens_enabled: self.semantic_token_state.enabled(),
             show_code_actions: self.show_code_actions,
             show_runnables: self.show_runnables,
+            show_bookmarks: self.show_bookmarks,
             show_breakpoints: self.show_breakpoints,
             git_blame_gutter_max_author_length,
             scroll_anchor: self.scroll_manager.shared_scroll_anchor(cx),
@@ -8771,6 +8784,65 @@ impl Editor {
         Some(self.edit_prediction_provider.as_ref()?.provider.clone())
     }
 
+    fn active_bookmarks(
+        &self,
+        range: Range<DisplayRow>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> HashSet<DisplayRow> {
+        let mut bookmark_display_points = HashSet::default();
+
+        let Some(bookmark_store) = self.bookmark_store.clone() else {
+            return bookmark_display_points;
+        };
+
+        let snapshot = self.snapshot(window, cx);
+
+        let multi_buffer_snapshot = snapshot.buffer_snapshot();
+        let Some(project) = self.project() else {
+            return bookmark_display_points;
+        };
+
+        let range = snapshot.display_point_to_point(DisplayPoint::new(range.start, 0), Bias::Left)
+            ..snapshot.display_point_to_point(DisplayPoint::new(range.end, 0), Bias::Right);
+
+        for (buffer_snapshot, range, excerpt_id) in
+            multi_buffer_snapshot.range_to_buffer_ranges(range.start..=range.end)
+        {
+            let Some(buffer) = project
+                .read(cx)
+                .buffer_for_id(buffer_snapshot.remote_id(), cx)
+            else {
+                continue;
+            };
+            let bookmarks = bookmark_store.read(cx).bookmarks_for_buffer(
+                buffer,
+                Some(
+                    buffer_snapshot.anchor_before(range.start)
+                        ..buffer_snapshot.anchor_after(range.end),
+                ),
+                buffer_snapshot,
+                cx,
+            );
+            for bookmark in bookmarks {
+                let multi_buffer_anchor = Anchor::in_buffer(excerpt_id, bookmark.anchor());
+                let position = multi_buffer_anchor
+                    .to_point(&multi_buffer_snapshot)
+                    .to_display_point(&snapshot);
+
+                bookmark_display_points.insert(position.row());
+            }
+        }
+
+        bookmark_display_points
+    }
+
+    fn render_bookmark(&self) -> Icon {
+        Icon::new(IconName::Bookmark)
+            .size(IconSize::XSmall)
+            .color(Color::Info)
+    }
+
     /// Get all display points of breakpoints that will be rendered within editor
     ///
     /// This function is used to handle overlaps between breakpoints and Code action/runner symbol.
@@ -11856,6 +11928,187 @@ impl Editor {
                 cx,
             );
         }
+    }
+
+    pub fn toggle_bookmark(
+        &mut self,
+        _: &crate::actions::ToggleBookmark,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(bookmark_store) = self.bookmark_store.clone() else {
+            return;
+        };
+        let Some(project) = self.project() else {
+            return;
+        };
+
+        let snapshot = self.snapshot(window, cx);
+        let multi_buffer_snapshot = snapshot.buffer_snapshot();
+
+        let mut selections = self.selections.all::<Point>(&snapshot.display_snapshot);
+        selections.sort_by_key(|s| s.head());
+        selections.dedup_by_key(|s| s.head().row);
+
+        for selection in &selections {
+            let head = selection.head();
+            let anchor = multi_buffer_snapshot.anchor_before(head);
+            if let Some((buffer_snapshot, _, _excerpt_id)) = multi_buffer_snapshot
+                .range_to_buffer_ranges(head..=head)
+                .into_iter()
+                .next()
+            {
+                if let Some(buffer) = project
+                    .read(cx)
+                    .buffer_for_id(buffer_snapshot.remote_id(), cx)
+                {
+                    let text_anchor = {
+                        let point = anchor.to_point(&multi_buffer_snapshot);
+                        multi_buffer_snapshot
+                            .anchor_before(Point::new(point.row, 0))
+                            .text_anchor
+                    };
+                    bookmark_store.update(cx, |store, cx| {
+                        store.toggle_bookmark(buffer, text_anchor, cx);
+                    });
+                }
+            }
+        }
+
+        cx.notify();
+    }
+
+    pub fn go_to_next_bookmark(
+        &mut self,
+        _: &crate::actions::GoToNextBookmark,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.go_to_bookmark_impl(Direction::Next, window, cx);
+    }
+
+    pub fn go_to_previous_bookmark(
+        &mut self,
+        _: &crate::actions::GoToPreviousBookmark,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.go_to_bookmark_impl(Direction::Prev, window, cx);
+    }
+
+    fn go_to_bookmark_impl(
+        &mut self,
+        direction: Direction,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(project) = &self.project else {
+            return;
+        };
+        let Some(bookmark_store) = &self.bookmark_store else {
+            return;
+        };
+
+        let selection = self
+            .selections
+            .newest::<MultiBufferOffset>(&self.display_snapshot(cx));
+        let bookmark_store = bookmark_store.read(cx);
+        let multi_buffer_snapshot = self.buffer.read(cx).snapshot(cx);
+
+        let bookmarks_in_range = |range: Range<MultiBufferOffset>| -> Vec<Anchor> {
+            multi_buffer_snapshot
+                .range_to_buffer_ranges(range)
+                .into_iter()
+                .flat_map(|(buffer_snapshot, buffer_range, excerpt_id)| {
+                    let Some(buffer) = project
+                        .read(cx)
+                        .buffer_for_id(buffer_snapshot.remote_id(), cx)
+                    else {
+                        return Vec::new();
+                    };
+                    bookmark_store
+                        .bookmarks_for_buffer(
+                            buffer,
+                            Some(
+                                buffer_snapshot.anchor_before(buffer_range.start)
+                                    ..buffer_snapshot.anchor_after(buffer_range.end),
+                            ),
+                            buffer_snapshot,
+                            cx,
+                        )
+                        .map(|bookmark| Anchor::in_buffer(excerpt_id, bookmark.anchor()))
+                        .collect::<Vec<_>>()
+                })
+                .collect()
+        };
+
+        let mut before = bookmarks_in_range(MultiBufferOffset(0)..selection.head());
+        let mut after = bookmarks_in_range(selection.head()..multi_buffer_snapshot.len());
+        before.sort_by_key(|a| a.to_offset(&multi_buffer_snapshot));
+        after.sort_by_key(|a| a.to_offset(&multi_buffer_snapshot));
+
+        let anchor = if direction == Direction::Next {
+            after
+                .into_iter()
+                .chain(before)
+                .find(|anchor| anchor.to_offset(&multi_buffer_snapshot) != selection.head())
+        } else {
+            [before, after]
+                .into_iter()
+                .flat_map(|bookmarks| bookmarks.into_iter().rev())
+                .find(|anchor| anchor.to_offset(&multi_buffer_snapshot) != selection.head())
+        };
+
+        if let Some(anchor) = anchor {
+            self.unfold_ranges(&[anchor..anchor], true, false, cx);
+            self.change_selections(
+                SelectionEffects::scroll(Autoscroll::center()),
+                window,
+                cx,
+                |s| {
+                    s.select_anchor_ranges([anchor..anchor]);
+                },
+            );
+        }
+    }
+
+    pub fn view_bookmarks(
+        workspace: &mut Workspace,
+        _: &ViewBookmarks,
+        window: &mut Window,
+        cx: &mut Context<Workspace>,
+    ) {
+        let bookmarks_store = workspace.project().read(cx).bookmark_store();
+
+        let bookmarks = bookmarks_store.read(cx).bookmarks();
+
+        let mut locations: std::collections::HashMap<Entity<Buffer>, Vec<Range<Point>>> =
+            std::collections::HashMap::default();
+
+        for (_, bookmark) in bookmarks.iter() {
+            let buffer = bookmark.buffer().clone();
+            let buffer_snapshot = buffer.read(cx).snapshot();
+            let mut ranges_for_buffer: Vec<Range<Point>> = Vec::new();
+            for anchor in bookmark.bookmarks() {
+                let row = Point::from_anchor(&anchor.anchor(), &buffer_snapshot).row;
+                ranges_for_buffer.push(Point::row_range(row..row));
+            }
+            locations
+                .entry(buffer.clone())
+                .or_default()
+                .extend(ranges_for_buffer);
+        }
+
+        Self::open_locations_in_multibuffer(
+            workspace,
+            locations,
+            "Bookmarks".into(),
+            false,
+            false,
+            MultibufferSelectionMode::First,
+            window,
+            cx,
+        );
     }
 
     pub fn toggle_breakpoint(
@@ -21156,6 +21409,11 @@ impl Editor {
         cx.notify();
     }
 
+    pub fn set_show_bookmarks(&mut self, show_bookmarks: bool, cx: &mut Context<Self>) {
+        self.show_bookmarks = Some(show_bookmarks);
+        cx.notify();
+    }
+
     pub fn set_show_diff_review_button(&mut self, show: bool, cx: &mut Context<Self>) {
         self.show_diff_review_button = show;
         cx.notify();
@@ -27406,6 +27664,7 @@ impl EditorSnapshot {
 
             let show_runnables = self.show_runnables.unwrap_or(gutter_settings.runnables);
             let show_breakpoints = self.show_breakpoints.unwrap_or(gutter_settings.breakpoints);
+            let show_bookmarks = self.show_bookmarks.unwrap_or(gutter_settings.bookmarks);
 
             let git_blame_entries_width =
                 self.git_blame_gutter_max_author_length
@@ -27429,7 +27688,7 @@ impl EditorSnapshot {
             let mut left_padding = git_blame_entries_width.unwrap_or(Pixels::ZERO);
             left_padding += if !is_singleton {
                 ch_width * 4.0
-            } else if show_runnables || show_breakpoints {
+            } else if show_runnables || show_bookmarks || show_breakpoints {
                 ch_width * 3.0
             } else if show_git_gutter && show_line_numbers {
                 ch_width * 2.0
