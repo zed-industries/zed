@@ -7538,20 +7538,27 @@ dependencies = [
  "block",
  "cbindgen",
  "collections",
+ "core-foundation 0.10.0",
+ "core-foundation-sys",
+ "core-graphics 0.24.0",
+ "core-text",
  "derive_more",
  "dispatch2",
  "etagere",
  "foreign-types 0.5.0",
  "futures 0.3.31",
  "gpui",
+ "itertools 0.14.0",
  "log",
  "metal",
  "objc",
  "parking_lot",
+ "pathfinder_geometry",
  "raw-window-handle",
  "smallvec",
  "util",
  "uuid",
+ "zed-font-kit",
 ]
 
 [[package]]
@@ -22117,6 +22124,7 @@ dependencies = [
 name = "zed-ios"
 version = "0.1.0"
 dependencies = [
+ "gpui",
  "gpui_ios",
  "log",
 ]

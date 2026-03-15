@@ -1,5 +1,4 @@
 use crate::{
-    display::main_screen_bounds_and_scale,
     display_link::DisplayLink,
     metal_renderer::{InstanceBufferPool, MetalRenderer},
 };
@@ -94,12 +93,8 @@ impl IosWindow {
         display: Rc<dyn PlatformDisplay>,
         instance_buffer_pool: Arc<Mutex<InstanceBufferPool>>,
     ) -> Result<Self> {
-        let bounds = display.bounds();
-        // Read scale_factor directly from UIScreen since PlatformDisplay doesn't expose it.
-        let (_, scale_factor) = main_screen_bounds_and_scale();
-
         let mut renderer = MetalRenderer::new(instance_buffer_pool);
-        let ui_view = Self::create_and_attach_view(bounds, scale_factor, &mut renderer)?;
+        let (bounds, scale_factor, ui_view) = Self::create_and_attach_view(&mut renderer)?;
 
         Ok(Self {
             inner: RefCell::new(IosWindowInner {
@@ -117,14 +112,10 @@ impl IosWindow {
 
     /// Creates a UIView filling the key UIWindow, adds the renderer's
     /// CAMetalLayer as a sublayer, and configures the drawable size.
+    /// Returns the logical bounds (points), native scale factor, and the UIView pointer.
     fn create_and_attach_view(
-        bounds: Bounds<Pixels>,
-        scale_factor: f32,
         renderer: &mut MetalRenderer,
-    ) -> Result<*mut Object> {
-        let device_width = (f32::from(bounds.size.width) * scale_factor).round() as i32;
-        let device_height = (f32::from(bounds.size.height) * scale_factor).round() as i32;
-
+    ) -> Result<(Bounds<Pixels>, f32, *mut Object)> {
         unsafe {
             let app: *mut Object = msg_send![class!(UIApplication), sharedApplication];
             let key_window: *mut Object = msg_send![app, keyWindow];
@@ -133,11 +124,41 @@ impl IosWindow {
                 "no key UIWindow — SceneDelegate must call makeKeyAndVisible before zed_ios_open_window"
             );
 
-            let window_bounds: CGRect = msg_send![key_window, bounds];
+            // UIWindow.bounds is CGRectZero immediately after makeKeyAndVisible() in iOS 16+
+            // because the layout system hasn't run yet. UIScreen.mainScreen.bounds is
+            // orientation-aware (returns correct portrait/landscape logical size) and is
+            // available as soon as a UIWindowScene is connected — i.e. before any layout pass.
+            // Multiply by `scale` (not `nativeScale`, which is always the hardware native scale
+            // and may be portrait-basis only on some iPads) to get device pixels.
+            let main_screen: *mut Object = msg_send![class!(UIScreen), mainScreen];
+            let screen_bounds: CGRect = msg_send![main_screen, bounds];
+            let scale: f32 = msg_send![main_screen, scale];
+            let scale = if scale > 0.0 { scale } else { 2.0 };
+
+            let logical_width = screen_bounds.size.width as f32;
+            let logical_height = screen_bounds.size.height as f32;
+            let device_width = (logical_width * scale).round() as i32;
+            let device_height = (logical_height * scale).round() as i32;
+
+            let bounds = Bounds {
+                origin: gpui::Point::default(),
+                size: gpui::Size {
+                    width: gpui::px(logical_width),
+                    height: gpui::px(logical_height),
+                },
+            };
+
+            let logical_frame = CGRect {
+                origin: CGPoint::default(),
+                size: CGSize {
+                    width: logical_width as f64,
+                    height: logical_height as f64,
+                },
+            };
 
             let view_class = register_metal_view_class();
             let view: *mut Object = msg_send![view_class, alloc];
-            let view: *mut Object = msg_send![view, initWithFrame: window_bounds];
+            let view: *mut Object = msg_send![view, initWithFrame: logical_frame];
 
             // Stretch to fill the window on rotation or Stage Manager resize.
             let fill_mask: usize = (1 << 1) | (1 << 4); // UIViewAutoresizingFlexibleWidth | Height
@@ -145,11 +166,7 @@ impl IosWindow {
 
             // Add the renderer's CAMetalLayer as a sublayer of the view's root layer.
             let layer_ptr = renderer.layer_ptr();
-            let layer_frame = CGRect {
-                origin: CGPoint::default(),
-                size: window_bounds.size,
-            };
-            let _: () = msg_send![layer_ptr, setFrame: layer_frame];
+            let _: () = msg_send![layer_ptr, setFrame: logical_frame];
             let view_layer: *mut Object = msg_send![view, layer];
             let _: () = msg_send![view_layer, addSublayer: layer_ptr];
 
@@ -160,7 +177,7 @@ impl IosWindow {
                 DevicePixels(device_height),
             ));
 
-            Ok(view)
+            Ok((bounds, scale, view))
         }
     }
 }

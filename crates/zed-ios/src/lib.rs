@@ -7,7 +7,72 @@
 //! See: docs/ios-port-plan.md for full architecture details.
 
 #[cfg(target_os = "ios")]
-use gpui_ios::start_rendering;
+mod ios {
+    use gpui::{
+        Application, ApplicationKeepAlive, App, AppContext as _, Context, Render,
+        Window, WindowOptions, div, IntoElement, SharedString, prelude::*,
+    };
+    use gpui_ios::IosPlatform;
+    use std::{cell::RefCell, rc::Rc};
+
+    thread_local! {
+        /// Keeps the GPUI application alive for the process lifetime.
+        /// On iOS, Application::run() returns immediately (UIKit owns the run loop),
+        /// so we must hold this handle or the App is immediately dropped.
+        static APP_KEEPALIVE: RefCell<Option<ApplicationKeepAlive>> = RefCell::new(None);
+    }
+
+    /// Minimal smoke-test view that renders a line of text.
+    struct TextSmokeView;
+
+    impl Render for TextSmokeView {
+        fn render(
+            &mut self,
+            _window: &mut Window,
+            _cx: &mut Context<Self>,
+        ) -> impl IntoElement {
+            div()
+                .size_full()
+                .bg(gpui::rgb(0xff0000))
+                .flex()
+                .items_center()
+                .justify_center()
+                .text_color(gpui::rgb(0xffffff))
+                .child(SharedString::from("Hello from Zed on iPad!"))
+        }
+    }
+
+    pub fn ios_main() {
+        let platform = Rc::new(IosPlatform::new());
+        let app = Application::with_platform(platform);
+
+        // Keep the app alive — Application::run() returns immediately on iOS
+        // because UIKit owns the run loop.
+        let keepalive = app.keep_alive();
+        APP_KEEPALIVE.with(|cell| *cell.borrow_mut() = Some(keepalive));
+
+        app.run(|_cx: &mut App| {
+            // Window is opened from zed_ios_open_window when the UIWindowScene activates.
+        });
+    }
+
+    pub fn ios_open_window() {
+        APP_KEEPALIVE.with(|cell| {
+            let borrowed = cell.borrow();
+            if let Some(keepalive) = borrowed.as_ref() {
+                keepalive.update(|cx| {
+                    if let Err(err) = cx.open_window(WindowOptions::default(), |_window, cx| {
+                        cx.new(|_| TextSmokeView)
+                    }) {
+                        log::error!("[zed-ios] open_window failed: {err:?}");
+                    }
+                });
+            } else {
+                log::error!("[zed-ios] APP_KEEPALIVE is None — zed_ios_main must be called first");
+            }
+        });
+    }
+}
 
 /// Main entry point called by AppDelegate.swift after UIApplicationMain.
 ///
@@ -15,8 +80,8 @@ use gpui_ios::start_rendering;
 /// Called from Swift via C FFI. Must be called exactly once on the main thread.
 #[unsafe(no_mangle)]
 pub extern "C" fn zed_ios_main() {
-    // TODO Phase 2: Initialize GPUI with IosPlatform, start the async executor,
-    // show the connection manager UI.
+    #[cfg(target_os = "ios")]
+    ios::ios_main();
 }
 
 /// Called by SceneDelegate.swift when a new UIWindowScene activates.
@@ -25,12 +90,8 @@ pub extern "C" fn zed_ios_main() {
 /// Called from Swift via C FFI. `scene_id` must be a valid null-terminated UTF-8 string.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn zed_ios_open_window(_scene_id: *const std::ffi::c_char) {
-    // Phase 1 smoke test: boot Metal and render a solid blue frame to verify
-    // the Metal renderer → CAMetalLayer → UIView → UIWindow pipeline works.
     #[cfg(target_os = "ios")]
-    if let Err(err) = start_rendering() {
-        log::error!("start_rendering failed: {err:?}");
-    }
+    ios::ios_open_window();
 }
 
 /// Called by SceneDelegate.swift when a UIWindowScene disconnects.

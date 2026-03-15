@@ -11,5 +11,6 @@ workspace = true
 crate-type = ["staticlib"]
 
 [target.'cfg(target_os = "ios")'.dependencies]
+gpui.workspace = true
 gpui_ios.workspace = true
 log.workspace = true

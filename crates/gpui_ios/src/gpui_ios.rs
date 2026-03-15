@@ -14,12 +14,15 @@ mod display_link;
 mod keyboard;
 pub(crate) mod metal_atlas;
 pub(crate) mod metal_renderer;
+mod open_type;
 mod platform;
+mod text_system;
 mod window;
 
 pub(crate) use dispatcher::*;
 pub(crate) use display::*;
 pub(crate) use keyboard::*;
+pub(crate) use text_system::IosTextSystem;
 pub(crate) use window::IosWindow;
 
 pub use platform::{IosPlatform, start_rendering};

@@ -1,5 +1,5 @@
 use crate::{
-    IosDispatcher, IosDisplay, IosKeyboardLayout, IosWindow, ios_keyboard_mapper,
+    IosDispatcher, IosDisplay, IosKeyboardLayout, IosTextSystem, IosWindow, ios_keyboard_mapper,
     display_link::DisplayLink,
     main_screen_bounds_and_scale,
     metal_renderer::{InstanceBufferPool, MetalRenderer},
@@ -8,7 +8,7 @@ use anyhow::Result;
 use futures::channel::oneshot;
 use gpui::{
     Action, AnyWindowHandle, BackgroundExecutor, ClipboardItem, CursorStyle, DevicePixels,
-    ForegroundExecutor, Keymap, Menu, MenuItem, NoopTextSystem, PathPromptOptions, Platform,
+    ForegroundExecutor, Keymap, Menu, MenuItem, PathPromptOptions, Platform,
     PlatformDisplay, PlatformKeyboardLayout, PlatformKeyboardMapper, PlatformTextSystem,
     PlatformWindow, Task, ThermalState, WindowAppearance, WindowParams,
 };
@@ -55,8 +55,7 @@ impl IosPlatform {
         let background_executor = BackgroundExecutor::new(dispatcher.clone());
         let foreground_executor = ForegroundExecutor::new(dispatcher);
 
-        // TODO Phase 1.3: replace NoopTextSystem with CoreText implementation.
-        let text_system: Arc<dyn PlatformTextSystem> = Arc::new(NoopTextSystem::new());
+        let text_system: Arc<dyn PlatformTextSystem> = Arc::new(IosTextSystem::new());
 
         let (bounds, _scale_factor) = main_screen_bounds_and_scale();
         let display: Rc<dyn PlatformDisplay> = Rc::new(IosDisplay::new(bounds));

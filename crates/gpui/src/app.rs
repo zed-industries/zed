@@ -135,6 +135,20 @@ impl Drop for AppRefMut<'_> {
     }
 }
 
+/// An opaque handle that keeps the GPUI application alive.
+///
+/// On platforms where `Application::run` returns immediately (e.g. iOS, where UIKit
+/// owns the run loop), store this handle in a thread-local to prevent the `App` from
+/// being dropped. Dropping the handle tears down the application.
+pub struct ApplicationKeepAlive(Rc<AppCell>);
+
+impl ApplicationKeepAlive {
+    /// Runs a closure with mutable access to the application context.
+    pub fn update<R>(&self, f: impl FnOnce(&mut App) -> R) -> R {
+        f(&mut self.0.borrow_mut())
+    }
+}
+
 /// A reference to a GPUI application, typically constructed in the `main` function of your app.
 /// You won't interact with this type much outside of initial configuration and startup.
 pub struct Application(Rc<AppCell>);
@@ -149,6 +163,15 @@ impl Application {
             Arc::new(()),
             Arc::new(NullHttpClient),
         ))
+    }
+
+    /// Returns a handle that keeps the application alive.
+    ///
+    /// Use this on platforms like iOS where [`Application::run`] returns immediately
+    /// but the app must persist for the process lifetime. Store the returned handle in
+    /// a thread-local; dropping it tears down the application.
+    pub fn keep_alive(&self) -> ApplicationKeepAlive {
+        ApplicationKeepAlive(self.0.clone())
     }
 
     /// Assigns the source of assets for the application.
