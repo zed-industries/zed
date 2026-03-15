@@ -39,6 +39,7 @@ mod runnables;
 mod rust_analyzer_ext;
 pub mod scroll;
 mod selections_collection;
+mod smooth_cursor;
 pub mod semantic_tokens;
 mod split;
 pub mod split_editor_view;
