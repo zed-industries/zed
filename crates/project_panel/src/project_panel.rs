@@ -21,7 +21,7 @@ use git_ui::file_diff_view::FileDiffView;
 use gpui::{
     Action, AnyElement, App, AsyncWindowContext, Bounds, ClipboardItem, Context, CursorStyle,
     DismissEvent, Div, DragMoveEvent, Entity, EventEmitter, ExternalPaths, FocusHandle, Focusable,
-    FontWeight, Hsla, InteractiveElement, KeyContext, ListHorizontalSizingBehavior,
+    FontWeight, Global, Hsla, InteractiveElement, KeyContext, ListHorizontalSizingBehavior,
     ListSizingBehavior, Modifiers, ModifiersChangedEvent, MouseButton, MouseDownEvent,
     ParentElement, PathPromptOptions, Pixels, Point, PromptLevel, Render, ScrollStrategy, Stateful,
     Styled, Subscription, Task, UniformListScrollHandle, WeakEntity, Window, actions, anchored,
@@ -32,8 +32,9 @@ use language::DiagnosticSeverity;
 use menu::{Confirm, SelectFirst, SelectLast, SelectNext, SelectPrevious};
 use notifications::status_toast::{StatusToast, ToastIcon};
 use project::{
-    Entry, EntryKind, Fs, GitEntry, GitEntryRef, GitTraversal, Project, ProjectEntryId,
-    ProjectPath, Worktree, WorktreeId,
+    CopyOptions, Entry, EntryKind, Fs, GitEntry, GitEntryRef, GitTraversal, Project,
+    ProjectEntryId, ProjectPath, RemoveOptions, RenameOptions, Worktree, WorktreeId,
+    copy_recursive,
     git_store::{GitStoreEvent, RepositoryEvent, git_traversal::ChildEntriesGitIter},
     project_settings::GoToDiagnosticSeverityFilter,
 };
@@ -141,7 +142,7 @@ pub struct ProjectPanel {
     selection: Option<SelectedEntry>,
     context_menu: Option<(Entity<ContextMenu>, Point<Pixels>, Subscription)>,
     filename_editor: Entity<Editor>,
-    clipboard: Option<ClipboardEntry>,
+    clipboard_store: Entity<ProjectPanelClipboardStore>,
     _dragged_entry_destination: Option<Arc<Path>>,
     workspace: WeakEntity<Workspace>,
     width: Option<Pixels>,
@@ -230,8 +231,41 @@ impl EditState {
 
 #[derive(Clone, Debug)]
 enum ClipboardEntry {
-    Copied(BTreeSet<SelectedEntry>),
-    Cut(BTreeSet<SelectedEntry>),
+    Copied(ClipboardData),
+    Cut(ClipboardData),
+}
+
+#[derive(Clone, Debug)]
+struct ClipboardData {
+    source_project: WeakEntity<Project>,
+    source_project_id: gpui::EntityId,
+    items: BTreeSet<SelectedEntry>,
+    source_paths: Vec<ClipboardSourcePath>,
+}
+
+#[derive(Clone, Debug)]
+struct ClipboardSourcePath {
+    abs_path: Arc<Path>,
+}
+
+struct GlobalProjectPanelClipboardStore(Entity<ProjectPanelClipboardStore>);
+
+impl Global for GlobalProjectPanelClipboardStore {}
+
+struct ProjectPanelClipboardStore {
+    clipboard: Option<ClipboardEntry>,
+}
+
+impl ProjectPanelClipboardStore {
+    fn global(cx: &mut App) -> Entity<Self> {
+        if let Some(global) = cx.try_global::<GlobalProjectPanelClipboardStore>() {
+            global.0.clone()
+        } else {
+            let clipboard_store = cx.new(|_| Self { clipboard: None });
+            cx.set_global(GlobalProjectPanelClipboardStore(clipboard_store.clone()));
+            clipboard_store
+        }
+    }
 }
 
 #[derive(Debug, Default, PartialEq, Eq, Clone, Copy)]
@@ -650,6 +684,7 @@ impl ProjectPanel {
     ) -> Entity<Self> {
         let project = workspace.project().clone();
         let git_store = project.read(cx).git_store().clone();
+        let clipboard_store = ProjectPanelClipboardStore::global(cx);
         let path_style = project.read(cx).path_style(cx);
         let project_panel = cx.new(|cx| {
             let focus_handle = cx.focus_handle();
@@ -868,7 +903,7 @@ impl ProjectPanel {
                 selection: None,
                 context_menu: None,
                 filename_editor,
-                clipboard: None,
+                clipboard_store: clipboard_store.clone(),
                 _dragged_entry_destination: None,
                 workspace: workspace.weak_handle(),
                 width: None,
@@ -1184,6 +1219,12 @@ impl ProjectPanel {
                     .repository_and_path_for_project_path(&project_path, cx)
                     .is_some()
             };
+            let is_paste_disabled = self
+                .clipboard_store
+                .read(cx)
+                .clipboard
+                .as_ref()
+                .is_none_or(|entry| entry.items().is_empty());
 
             let entity = cx.entity();
             let context_menu = ContextMenu::build(window, cx, |menu, _, _| {
@@ -1231,11 +1272,7 @@ impl ProjectPanel {
                             .action("Copy", Box::new(Copy))
                             .action("Duplicate", Box::new(Duplicate))
                             // TODO: Paste should always be visible, cbut disabled when clipboard is empty
-                            .action_disabled_when(
-                                self.clipboard.as_ref().is_none(),
-                                "Paste",
-                                Box::new(Paste),
-                            )
+                            .action_disabled_when(is_paste_disabled, "Paste", Box::new(Paste))
                             .when(is_remote, |menu| {
                                 menu.separator()
                                     .action("Download...", Box::new(DownloadFromRemote))
@@ -2997,39 +3034,76 @@ impl ProjectPanel {
 
     fn cut(&mut self, _: &Cut, _: &mut Window, cx: &mut Context<Self>) {
         let entries = self.disjoint_effective_entries(cx);
-        if !entries.is_empty() {
-            self.clipboard = Some(ClipboardEntry::Cut(entries));
+        if let Some(clipboard_data) = self.build_clipboard_data(entries, cx) {
+            self.clipboard_store.update(cx, |clipboard_store, _| {
+                clipboard_store.clipboard = Some(ClipboardEntry::Cut(clipboard_data));
+            });
             cx.notify();
         }
     }
 
     fn copy(&mut self, _: &Copy, _: &mut Window, cx: &mut Context<Self>) {
         let entries = self.disjoint_effective_entries(cx);
-        if !entries.is_empty() {
-            self.clipboard = Some(ClipboardEntry::Copied(entries));
+        if let Some(clipboard_data) = self.build_clipboard_data(entries, cx) {
+            self.clipboard_store.update(cx, |clipboard_store, _| {
+                clipboard_store.clipboard = Some(ClipboardEntry::Copied(clipboard_data));
+            });
             cx.notify();
         }
     }
 
+    fn build_clipboard_data(
+        &self,
+        items: BTreeSet<SelectedEntry>,
+        cx: &App,
+    ) -> Option<ClipboardData> {
+        if items.is_empty() {
+            return None;
+        }
+
+        let source_paths = {
+            let project = self.project.read(cx);
+            items
+                .iter()
+                .filter_map(|selected_entry| {
+                    let project_path = project.path_for_entry(selected_entry.entry_id, cx)?;
+                    let worktree = project.worktree_for_id(selected_entry.worktree_id, cx)?;
+                    Some(ClipboardSourcePath {
+                        abs_path: worktree.read(cx).absolutize(&project_path.path).into(),
+                    })
+                })
+                .collect::<Vec<_>>()
+        };
+
+        if source_paths.is_empty() {
+            return None;
+        }
+
+        Some(ClipboardData {
+            source_project: self.project.downgrade(),
+            source_project_id: self.project.entity_id(),
+            items,
+            source_paths,
+        })
+    }
+
     fn create_paste_path(
         &self,
-        source: &SelectedEntry,
+        source_entry_id: Option<ProjectEntryId>,
+        source_file_name: &str,
         (worktree, target_entry): (Entity<Worktree>, &Entry),
         cx: &App,
     ) -> Option<(Arc<RelPath>, Option<Range<usize>>)> {
         let mut new_path = target_entry.path.to_rel_path_buf();
         // If we're pasting into a file, or a directory into itself, go up one level.
-        if target_entry.is_file() || (target_entry.is_dir() && target_entry.id == source.entry_id) {
+        if target_entry.is_file()
+            || source_entry_id.is_some_and(|source_entry_id| {
+                target_entry.is_dir() && target_entry.id == source_entry_id
+            })
+        {
             new_path.pop();
         }
-        let clipboard_entry_file_name = self
-            .project
-            .read(cx)
-            .path_for_entry(source.entry_id, cx)?
-            .path
-            .file_name()?
-            .to_string();
-        new_path.push(RelPath::unix(&clipboard_entry_file_name).unwrap());
+        new_path.push(RelPath::unix(source_file_name).ok()?);
         let extension = new_path.extension().map(|s| s.to_string());
         let file_name_without_extension = new_path.file_stem()?.to_string();
         let file_name_len = file_name_without_extension.len();
@@ -3066,16 +3140,98 @@ impl ProjectPanel {
         Some((new_path.as_rel_path().into(), disambiguation_range))
     }
 
-    fn paste(&mut self, _: &Paste, window: &mut Window, cx: &mut Context<Self>) {
-        maybe!({
-            let (worktree, entry) = self.selected_entry_handle(cx)?;
-            let entry = entry.clone();
-            let worktree_id = worktree.read(cx).id();
-            let clipboard_entries = self
-                .clipboard
-                .as_ref()
-                .filter(|clipboard| !clipboard.items().is_empty())?;
+    async fn paste_cross_workspace_entry(
+        fs: Arc<dyn Fs>,
+        source_abs_path: Arc<Path>,
+        target_abs_path: Arc<Path>,
+        is_cut: bool,
+    ) -> Result<()> {
+        if is_cut {
+            match fs
+                .rename(
+                    source_abs_path.as_ref(),
+                    target_abs_path.as_ref(),
+                    RenameOptions::default(),
+                )
+                .await
+            {
+                Ok(()) => Ok(()),
+                Err(_rename_error) => {
+                    copy_recursive(
+                        fs.as_ref(),
+                        source_abs_path.as_ref(),
+                        target_abs_path.as_ref(),
+                        CopyOptions::default(),
+                    )
+                    .await
+                    .with_context(|| {
+                        format!(
+                            "failed to copy file from {source_abs_path:?} to {target_abs_path:?}"
+                        )
+                    })?;
+                    let source_metadata = fs
+                        .metadata(source_abs_path.as_ref())
+                        .await?
+                        .with_context(|| {
+                            format!("missing source path after copy: {source_abs_path:?}")
+                        })?;
+                    if source_metadata.is_dir {
+                        fs.remove_dir(
+                            source_abs_path.as_ref(),
+                            RemoveOptions {
+                                recursive: true,
+                                ignore_if_not_exists: false,
+                            },
+                        )
+                        .await?;
+                    } else {
+                        fs.remove_file(
+                            source_abs_path.as_ref(),
+                            RemoveOptions {
+                                recursive: false,
+                                ignore_if_not_exists: false,
+                            },
+                        )
+                        .await?;
+                    }
+                    Ok(())
+                }
+            }
+        } else {
+            copy_recursive(
+                fs.as_ref(),
+                source_abs_path.as_ref(),
+                target_abs_path.as_ref(),
+                CopyOptions::default(),
+            )
+            .await
+            .with_context(|| {
+                format!("failed to copy file from {source_abs_path:?} to {target_abs_path:?}")
+            })
+        }
+    }
 
+    fn paste(&mut self, _: &Paste, window: &mut Window, cx: &mut Context<Self>) {
+        let Some((target_worktree, target_entry)) = self.selected_sub_entry(cx) else {
+            return;
+        };
+        let target_entry = target_entry.clone();
+        let worktree_id = target_worktree.read(cx).id();
+        let Some(clipboard_entry) = self
+            .clipboard_store
+            .read(cx)
+            .clipboard
+            .as_ref()
+            .filter(|entry| !entry.items().is_empty())
+            .cloned()
+        else {
+            return;
+        };
+
+        let clip_is_cut = clipboard_entry.is_cut();
+        let is_same_project = clipboard_entry.source_project_id() == self.project.entity_id();
+
+        if is_same_project {
             enum PasteTask {
                 Rename(Task<Result<CreatedEntry>>),
                 Copy(Task<Result<Option<Entry>>>),
@@ -3083,12 +3239,27 @@ impl ProjectPanel {
 
             let mut paste_tasks = Vec::new();
             let mut disambiguation_range = None;
-            let clip_is_cut = clipboard_entries.is_cut();
-            for clipboard_entry in clipboard_entries.items() {
-                let (new_path, new_disambiguation_range) =
-                    self.create_paste_path(clipboard_entry, self.selected_sub_entry(cx)?, cx)?;
-                let clip_entry_id = clipboard_entry.entry_id;
-                let task = if clipboard_entries.is_cut() {
+            for clipboard_item in clipboard_entry.items() {
+                let Some(source_file_name) = self
+                    .project
+                    .read(cx)
+                    .path_for_entry(clipboard_item.entry_id, cx)
+                    .and_then(|project_path| {
+                        project_path.path.file_name().map(|name| name.to_string())
+                    })
+                else {
+                    continue;
+                };
+                let Some((new_path, new_disambiguation_range)) = self.create_paste_path(
+                    Some(clipboard_item.entry_id),
+                    &source_file_name,
+                    (target_worktree.clone(), &target_entry),
+                    cx,
+                ) else {
+                    continue;
+                };
+                let clip_entry_id = clipboard_item.entry_id;
+                let task = if clip_is_cut {
                     let task = self.project.update(cx, |project, cx| {
                         project.rename_entry(clip_entry_id, (worktree_id, new_path).into(), cx)
                     });
@@ -3103,9 +3274,12 @@ impl ProjectPanel {
                 disambiguation_range = new_disambiguation_range.or(disambiguation_range);
             }
 
+            if paste_tasks.is_empty() {
+                return;
+            }
+
             let item_count = paste_tasks.len();
             let workspace = self.workspace.clone();
-
             cx.spawn_in(window, async move |project_panel, mut cx| {
                 let mut last_succeed = None;
                 for task in paste_tasks {
@@ -3128,7 +3302,7 @@ impl ProjectPanel {
                         }
                     }
                 }
-                // update selection
+
                 if let Some(entry) = last_succeed {
                     project_panel
                         .update_in(cx, |project_panel, window, cx| {
@@ -3138,7 +3312,6 @@ impl ProjectPanel {
                             });
 
                             if item_count == 1 {
-                                // open entry if not dir, setting is enabled, and only focus if rename is not pending
                                 if !entry.is_dir() {
                                     let settings = ProjectPanelSettings::get_global(cx);
                                     if settings.auto_open.should_open_on_paste() {
@@ -3151,7 +3324,6 @@ impl ProjectPanel {
                                     }
                                 }
 
-                                // if only one entry was pasted and it was disambiguated, open the rename editor
                                 if disambiguation_range.is_some() {
                                     cx.defer_in(window, |this, window, cx| {
                                         this.rename_impl(disambiguation_range, window, cx);
@@ -3165,15 +3337,155 @@ impl ProjectPanel {
                 anyhow::Ok(())
             })
             .detach_and_log_err(cx);
-
-            if clip_is_cut {
-                // Convert the clipboard cut entry to a copy entry after the first paste.
-                self.clipboard = self.clipboard.take().map(ClipboardEntry::into_copy_entry);
+        } else {
+            #[derive(Clone)]
+            struct CrossWorkspacePasteOperation {
+                source_entry: ClipboardSourcePath,
+                target_rel_path: Arc<RelPath>,
+                target_abs_path: Arc<Path>,
             }
 
-            self.expand_entry(worktree_id, entry.id, cx);
-            Some(())
-        });
+            let mut operations = Vec::new();
+            let mut disambiguation_range = None;
+            for source_entry in clipboard_entry.source_paths() {
+                let Some(source_file_name) = source_entry
+                    .abs_path
+                    .file_name()
+                    .map(|file_name| file_name.to_string_lossy().to_string())
+                else {
+                    continue;
+                };
+                let Some((target_rel_path, new_disambiguation_range)) = self.create_paste_path(
+                    None,
+                    &source_file_name,
+                    (target_worktree.clone(), &target_entry),
+                    cx,
+                ) else {
+                    continue;
+                };
+                let target_abs_path = target_worktree.read(cx).absolutize(&target_rel_path);
+                if target_abs_path == source_entry.abs_path.as_ref() {
+                    continue;
+                }
+                operations.push(CrossWorkspacePasteOperation {
+                    source_entry: source_entry.clone(),
+                    target_rel_path,
+                    target_abs_path: target_abs_path.into(),
+                });
+                disambiguation_range = new_disambiguation_range.or(disambiguation_range);
+            }
+
+            if operations.is_empty() {
+                return;
+            }
+
+            let source_project = clipboard_entry.source_project();
+            let item_count = operations.len();
+            let workspace = self.workspace.clone();
+            let fs = self.fs.clone();
+
+            cx.spawn_in(window, async move |project_panel, mut cx| {
+                let source_project = source_project.upgrade();
+                let source_project_is_local = source_project
+                    .as_ref()
+                    .is_some_and(|project| project.read_with(cx, |project, _| project.is_local()));
+                let destination_project_is_local = project_panel
+                    .read_with(cx, |project_panel, cx| {
+                        project_panel.project.read(cx).is_local()
+                    })
+                    .unwrap_or(false);
+                if !source_project_is_local || !destination_project_is_local {
+                    anyhow::Result::<()>::Err(anyhow::anyhow!(
+                        "cross-workspace paste currently supports only local projects"
+                    ))
+                    .notify_workspace_async_err(workspace.clone(), &mut cx);
+                    return anyhow::Ok(());
+                }
+
+                let mut last_target_path = None;
+
+                for operation in operations {
+                    let source_abs_path = operation.source_entry.abs_path.clone();
+                    let target_abs_path = operation.target_abs_path.clone();
+                    let fs = fs.clone();
+                    let operation_result = cx
+                        .background_spawn(async move {
+                            Self::paste_cross_workspace_entry(
+                                fs.clone(),
+                                source_abs_path,
+                                target_abs_path,
+                                clip_is_cut,
+                            )
+                            .await
+                        })
+                        .await;
+                    if operation_result
+                        .notify_workspace_async_err(workspace.clone(), &mut cx)
+                        .is_none()
+                    {
+                        continue;
+                    }
+                    last_target_path = Some(operation.target_rel_path.clone());
+                }
+
+                if let Some(last_target_path) = last_target_path {
+                    project_panel
+                        .update_in(cx, |project_panel, window, cx| {
+                            project_panel.update_visible_entries(None, false, false, window, cx);
+                            let pasted_entry = project_panel
+                                .project
+                                .read(cx)
+                                .worktree_for_id(worktree_id, cx)
+                                .and_then(|worktree| {
+                                    worktree.read(cx).entry_for_path(&last_target_path).cloned()
+                                });
+                            let Some(entry) = pasted_entry else {
+                                return;
+                            };
+
+                            project_panel.selection = Some(SelectedEntry {
+                                worktree_id,
+                                entry_id: entry.id,
+                            });
+
+                            if item_count == 1 {
+                                if !entry.is_dir() {
+                                    let settings = ProjectPanelSettings::get_global(cx);
+                                    if settings.auto_open.should_open_on_paste() {
+                                        project_panel.open_entry(
+                                            entry.id,
+                                            disambiguation_range.is_none(),
+                                            false,
+                                            cx,
+                                        );
+                                    }
+                                }
+
+                                if disambiguation_range.is_some() {
+                                    cx.defer_in(window, |this, window, cx| {
+                                        this.rename_impl(disambiguation_range, window, cx);
+                                    });
+                                }
+                            }
+                        })
+                        .ok();
+                }
+
+                anyhow::Ok(())
+            })
+            .detach_and_log_err(cx);
+        }
+
+        if clip_is_cut {
+            self.clipboard_store.update(cx, |clipboard_store, _| {
+                clipboard_store.clipboard = clipboard_store
+                    .clipboard
+                    .take()
+                    .map(ClipboardEntry::into_copy_entry);
+            });
+        }
+
+        self.expand_entry(worktree_id, target_entry.id, cx);
     }
 
     fn download_from_remote(
@@ -4335,8 +4647,10 @@ impl ProjectPanel {
 
         if Self::is_copy_modifier_set(&window.modifiers()) {
             let _ = maybe!({
-                let project = self.project.read(cx);
-                let target_worktree = project.worktree_for_entry(target_entry_id, cx)?;
+                let target_worktree = self
+                    .project
+                    .read(cx)
+                    .worktree_for_entry(target_entry_id, cx)?;
                 let worktree_id = target_worktree.read(cx).id();
                 let target_entry = target_worktree
                     .read(cx)
@@ -4346,8 +4660,16 @@ impl ProjectPanel {
                 let mut copy_tasks = Vec::new();
                 let mut disambiguation_range = None;
                 for selection in &entries {
+                    let source_file_name = self
+                        .project
+                        .read(cx)
+                        .path_for_entry(selection.entry_id, cx)?
+                        .path
+                        .file_name()?
+                        .to_string();
                     let (new_path, new_disambiguation_range) = self.create_paste_path(
-                        selection,
+                        Some(selection.entry_id),
+                        &source_file_name,
                         (target_worktree.clone(), &target_entry),
                         cx,
                     )?;
@@ -6030,9 +6352,15 @@ impl ProjectPanel {
             entry_git_aware_label_color(git_status, entry.is_ignored, is_marked);
 
         let is_cut = self
+            .clipboard_store
+            .read(cx)
             .clipboard
             .as_ref()
-            .is_some_and(|e| e.is_cut() && e.items().contains(&selection));
+            .is_some_and(|entry| {
+                entry.source_project_id() == self.project.entity_id()
+                    && entry.is_cut()
+                    && entry.items().contains(&selection)
+            });
 
         EntryDetails {
             filename,
@@ -7105,12 +7433,30 @@ impl Focusable for ProjectPanel {
 
 impl ClipboardEntry {
     fn is_cut(&self) -> bool {
-        matches!(self, Self::Cut { .. })
+        matches!(self, Self::Cut(_))
     }
 
     fn items(&self) -> &BTreeSet<SelectedEntry> {
         match self {
-            ClipboardEntry::Copied(entries) | ClipboardEntry::Cut(entries) => entries,
+            ClipboardEntry::Copied(data) | ClipboardEntry::Cut(data) => &data.items,
+        }
+    }
+
+    fn source_paths(&self) -> &[ClipboardSourcePath] {
+        match self {
+            ClipboardEntry::Copied(data) | ClipboardEntry::Cut(data) => &data.source_paths,
+        }
+    }
+
+    fn source_project_id(&self) -> gpui::EntityId {
+        match self {
+            ClipboardEntry::Copied(data) | ClipboardEntry::Cut(data) => data.source_project_id,
+        }
+    }
+
+    fn source_project(&self) -> WeakEntity<Project> {
+        match self {
+            ClipboardEntry::Copied(data) | ClipboardEntry::Cut(data) => data.source_project.clone(),
         }
     }
 

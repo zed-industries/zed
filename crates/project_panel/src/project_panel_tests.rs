@@ -1,7 +1,7 @@
 use super::*;
 use collections::HashSet;
 use editor::MultiBufferOffset;
-use gpui::{Empty, Entity, TestAppContext, VisualTestContext};
+use gpui::{ClipboardItem, Empty, Entity, TestAppContext, VisualTestContext};
 use menu::Cancel;
 use pretty_assertions::assert_eq;
 use project::FakeFs;
@@ -1762,6 +1762,264 @@ async fn test_copy_paste_directory(cx: &mut gpui::TestAppContext) {
             "          two.txt",
         ]
     );
+}
+
+#[gpui::test]
+async fn test_copy_paste_between_windows_different_workspaces(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        "/root1",
+        json!({
+            "one.txt": "",
+        }),
+    )
+    .await;
+    fs.insert_tree(
+        "/root2",
+        json!({
+            "two.txt": "",
+        }),
+    )
+    .await;
+
+    let project1 = Project::test(fs.clone(), ["/root1".as_ref()], cx).await;
+    let project2 = Project::test(fs.clone(), ["/root2".as_ref()], cx).await;
+
+    let window1 =
+        cx.add_window(|window, cx| MultiWorkspace::test_new(project1.clone(), window, cx));
+    let workspace1 = window1
+        .read_with(cx, |mw, _| mw.workspace().clone())
+        .unwrap();
+    let window2 =
+        cx.add_window(|window, cx| MultiWorkspace::test_new(project2.clone(), window, cx));
+    let workspace2 = window2
+        .read_with(cx, |mw, _| mw.workspace().clone())
+        .unwrap();
+
+    let panel1 = {
+        let cx = &mut VisualTestContext::from_window(window1.into(), cx);
+        let panel = workspace1.update_in(cx, ProjectPanel::new);
+        cx.run_until_parked();
+        select_path(&panel, "root1/one.txt", cx);
+        panel.update_in(cx, |panel, window, cx| panel.copy(&Copy, window, cx));
+        panel
+    };
+
+    let panel2 = {
+        let cx = &mut VisualTestContext::from_window(window2.into(), cx);
+        let panel = workspace2.update_in(cx, ProjectPanel::new);
+        cx.run_until_parked();
+        select_path(&panel, "root2", cx);
+        panel.update_in(cx, |panel, window, cx| panel.paste(&Paste, window, cx));
+        cx.run_until_parked();
+        panel
+    };
+
+    {
+        let cx = &mut VisualTestContext::from_window(window2.into(), cx);
+        assert_eq!(
+            visible_entries_as_strings(&panel2, 0..10, cx),
+            &["v root2", "      one.txt  <== selected", "      two.txt",]
+        );
+    }
+
+    {
+        let cx = &mut VisualTestContext::from_window(window1.into(), cx);
+        assert_eq!(
+            visible_entries_as_strings(&panel1, 0..10, cx),
+            &["v root1", "      one.txt  <== selected",]
+        );
+    }
+
+    assert!(fs.is_file(Path::new("/root1/one.txt")).await);
+    assert!(fs.is_file(Path::new("/root2/one.txt")).await);
+}
+
+#[gpui::test]
+async fn test_cut_paste_between_windows_different_workspaces(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        "/root1",
+        json!({
+            "one.txt": "",
+        }),
+    )
+    .await;
+    fs.insert_tree(
+        "/root2",
+        json!({
+            "two.txt": "",
+        }),
+    )
+    .await;
+
+    let project1 = Project::test(fs.clone(), ["/root1".as_ref()], cx).await;
+    let project2 = Project::test(fs.clone(), ["/root2".as_ref()], cx).await;
+
+    let window1 =
+        cx.add_window(|window, cx| MultiWorkspace::test_new(project1.clone(), window, cx));
+    let workspace1 = window1
+        .read_with(cx, |mw, _| mw.workspace().clone())
+        .unwrap();
+    let window2 =
+        cx.add_window(|window, cx| MultiWorkspace::test_new(project2.clone(), window, cx));
+    let workspace2 = window2
+        .read_with(cx, |mw, _| mw.workspace().clone())
+        .unwrap();
+
+    let panel1 = {
+        let cx = &mut VisualTestContext::from_window(window1.into(), cx);
+        let panel = workspace1.update_in(cx, ProjectPanel::new);
+        cx.run_until_parked();
+        select_path(&panel, "root1/one.txt", cx);
+        panel.update_in(cx, |panel, window, cx| panel.cut(&Cut, window, cx));
+        panel
+    };
+
+    let panel2 = {
+        let cx = &mut VisualTestContext::from_window(window2.into(), cx);
+        let panel = workspace2.update_in(cx, ProjectPanel::new);
+        cx.run_until_parked();
+        select_path(&panel, "root2", cx);
+        panel.update_in(cx, |panel, window, cx| panel.paste(&Paste, window, cx));
+        cx.run_until_parked();
+        panel
+    };
+
+    {
+        let cx = &mut VisualTestContext::from_window(window2.into(), cx);
+        assert_eq!(
+            visible_entries_as_strings(&panel2, 0..10, cx),
+            &["v root2", "      one.txt  <== selected", "      two.txt",]
+        );
+    }
+
+    {
+        let cx = &mut VisualTestContext::from_window(window1.into(), cx);
+        panel1.update_in(cx, |panel, window, cx| {
+            panel.update_visible_entries(None, false, false, window, cx);
+        });
+        cx.run_until_parked();
+        assert_eq!(visible_entries_as_strings(&panel1, 0..10, cx), &["v root1"]);
+    }
+
+    assert!(!fs.is_file(Path::new("/root1/one.txt")).await);
+    assert!(fs.is_file(Path::new("/root2/one.txt")).await);
+}
+
+#[gpui::test]
+async fn test_file_copy_cut_does_not_touch_system_clipboard(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        "/root",
+        json!({
+            "one.txt": "",
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), ["/root".as_ref()], cx).await;
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let workspace = window
+        .read_with(cx, |mw, _| mw.workspace().clone())
+        .unwrap();
+    let cx = &mut VisualTestContext::from_window(window.into(), cx);
+    let panel = workspace.update_in(cx, ProjectPanel::new);
+    cx.run_until_parked();
+
+    cx.write_to_clipboard(ClipboardItem::new_string("system clipboard".to_string()));
+    select_path(&panel, "root/one.txt", cx);
+    panel.update_in(cx, |panel, window, cx| panel.copy(&Copy, window, cx));
+    panel.update_in(cx, |panel, window, cx| panel.cut(&Cut, window, cx));
+
+    assert_eq!(
+        cx.read_from_clipboard().and_then(|item| item.text()),
+        Some("system clipboard".to_string())
+    );
+}
+
+#[gpui::test]
+async fn test_project_panel_copy_paste_dispatch_actions(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        "/root1",
+        json!({
+            "one.txt": "",
+        }),
+    )
+    .await;
+    fs.insert_tree(
+        "/root2",
+        json!({
+            "two.txt": "",
+        }),
+    )
+    .await;
+
+    let project1 = Project::test(fs.clone(), ["/root1".as_ref()], cx).await;
+    let project2 = Project::test(fs.clone(), ["/root2".as_ref()], cx).await;
+
+    let window1 =
+        cx.add_window(|window, cx| MultiWorkspace::test_new(project1.clone(), window, cx));
+    let workspace1 = window1
+        .read_with(cx, |mw, _| mw.workspace().clone())
+        .unwrap();
+    let window2 =
+        cx.add_window(|window, cx| MultiWorkspace::test_new(project2.clone(), window, cx));
+    let workspace2 = window2
+        .read_with(cx, |mw, _| mw.workspace().clone())
+        .unwrap();
+
+    let panel1 = {
+        let cx = &mut VisualTestContext::from_window(window1.into(), cx);
+        let panel = workspace1.update_in(cx, ProjectPanel::new);
+        cx.run_until_parked();
+        select_path(&panel, "root1/one.txt", cx);
+        workspace1.update_in(cx, |workspace, window, cx| {
+            workspace.focus_panel::<ProjectPanel>(window, cx);
+            window.dispatch_action(Box::new(Copy), cx);
+        });
+        panel
+    };
+
+    let panel2 = {
+        let cx = &mut VisualTestContext::from_window(window2.into(), cx);
+        let panel = workspace2.update_in(cx, ProjectPanel::new);
+        cx.run_until_parked();
+        select_path(&panel, "root2", cx);
+        workspace2.update_in(cx, |workspace, window, cx| {
+            workspace.focus_panel::<ProjectPanel>(window, cx);
+            window.dispatch_action(Box::new(Paste), cx);
+        });
+        cx.run_until_parked();
+        panel
+    };
+
+    {
+        let cx = &mut VisualTestContext::from_window(window2.into(), cx);
+        assert_eq!(
+            visible_entries_as_strings(&panel2, 0..10, cx),
+            &["v root2", "      one.txt  <== selected", "      two.txt",]
+        );
+    }
+
+    {
+        let cx = &mut VisualTestContext::from_window(window1.into(), cx);
+        assert_eq!(
+            visible_entries_as_strings(&panel1, 0..10, cx),
+            &["v root1", "      one.txt  <== selected",]
+        );
+    }
+
+    assert!(fs.is_file(Path::new("/root2/one.txt")).await);
 }
 
 #[gpui::test]
