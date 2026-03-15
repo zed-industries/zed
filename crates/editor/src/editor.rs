@@ -15237,7 +15237,8 @@ impl Editor {
                 }
             }
 
-            nav_history.push(Some(data), cx);
+            let cursor_row = data.cursor_position.row;
+            nav_history.push(Some(data), Some(cursor_row), cx);
             cx.emit(EditorEvent::PushedToNavHistory {
                 anchor: cursor_anchor,
                 is_deactivate,
