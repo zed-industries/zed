@@ -69,6 +69,8 @@ impl ZedPromptRenderer {
     fn cancel(&mut self, _: &menu::Cancel, _window: &mut Window, cx: &mut Context<Self>) {
         if let Some(ix) = self.actions.iter().position(|a| a == "Cancel") {
             cx.emit(PromptResponse(ix));
+        } else {
+            cx.emit(PromptResponse(self.actions.len().saturating_sub(1)));
         }
     }
 
