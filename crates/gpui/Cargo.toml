@@ -238,3 +238,7 @@ path = "examples/grid_layout.rs"
 [[example]]
 name = "mouse_pressure"
 path = "examples/mouse_pressure.rs"
+
+[[example]]
+name = "view_example"
+path = "examples/view_example/view_example_main.rs"
