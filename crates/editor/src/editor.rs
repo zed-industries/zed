@@ -1170,6 +1170,7 @@ pub struct Editor {
     background_highlights: HashMap<HighlightKey, BackgroundHighlight>,
     gutter_highlights: HashMap<TypeId, GutterHighlight>,
     scrollbar_marker_state: ScrollbarMarkerState,
+    minimap_marker_state: ScrollbarMarkerState,
     active_indent_guides_state: ActiveIndentGuidesState,
     nav_history: Option<ItemNavHistory>,
     context_menu: RefCell<Option<CodeContextMenu>>,
@@ -2402,6 +2403,7 @@ impl Editor {
             background_highlights: HashMap::default(),
             gutter_highlights: HashMap::default(),
             scrollbar_marker_state: ScrollbarMarkerState::default(),
+            minimap_marker_state: ScrollbarMarkerState::default(),
             active_indent_guides_state: ActiveIndentGuidesState::default(),
             nav_history: None,
             context_menu: RefCell::new(None),
@@ -20083,6 +20085,7 @@ impl Editor {
         cx.notify();
 
         self.scrollbar_marker_state.dirty = true;
+        self.minimap_marker_state.dirty = true;
         self.update_data_on_scroll(window, cx);
         self.folds_did_change(cx);
     }
@@ -20225,6 +20228,7 @@ impl Editor {
 
         cx.notify();
         self.scrollbar_marker_state.dirty = true;
+        self.minimap_marker_state.dirty = true;
         self.active_indent_guides_state.dirty = true;
     }
 
@@ -23227,6 +23231,7 @@ impl Editor {
         self.background_highlights
             .insert(key, (Arc::new(color_fetcher), Arc::from(ranges)));
         self.scrollbar_marker_state.dirty = true;
+        self.minimap_marker_state.dirty = true;
         cx.notify();
     }
 
@@ -23238,6 +23243,7 @@ impl Editor {
         let text_highlights = self.background_highlights.remove(&key)?;
         if !text_highlights.1.is_empty() {
             self.scrollbar_marker_state.dirty = true;
+            self.minimap_marker_state.dirty = true;
             cx.notify();
         }
         Some(text_highlights)
@@ -23729,6 +23735,7 @@ impl Editor {
                 is_local,
             } => {
                 self.scrollbar_marker_state.dirty = true;
+                self.minimap_marker_state.dirty = true;
                 self.active_indent_guides_state.dirty = true;
                 self.refresh_active_diagnostics(cx);
                 self.refresh_code_actions(window, cx);
@@ -23896,6 +23903,7 @@ impl Editor {
         self.refresh_active_diagnostics(cx);
         self.refresh_inline_diagnostics(true, window, cx);
         self.scrollbar_marker_state.dirty = true;
+        self.minimap_marker_state.dirty = true;
         cx.notify();
     }
 

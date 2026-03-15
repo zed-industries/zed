@@ -593,6 +593,19 @@
     "current_line_highlight": null,
     // Maximum number of columns to display in the minimap.
     "max_width_columns": 80,
+    // Which diagnostic levels to show as markers in the minimap.
+    // This setting can take five values:
+    // 1. Show all diagnostics (hint, information, warning, error):
+    //    "all" (default)
+    // 2. Show information, warning, and error diagnostics:
+    //    "information"
+    // 3. Show warning and error diagnostics:
+    //    "warning"
+    // 4. Show only error diagnostics:
+    //    "error"
+    // 5. Do not show any diagnostics:
+    //    "none"
+    "diagnostics": "all",
   },
   // Enable middle-click paste on Linux.
   "middle_click_paste": true,

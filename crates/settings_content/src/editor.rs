@@ -390,6 +390,11 @@ pub struct MinimapContent {
     ///
     /// Default: 80
     pub max_width_columns: Option<num::NonZeroU32>,
+
+    /// Which diagnostic levels to show as markers in the minimap.
+    ///
+    /// Default: all
+    pub diagnostics: Option<ScrollbarDiagnostics>,
 }
 
 /// Forcefully enable or disable the scrollbar for each axis
