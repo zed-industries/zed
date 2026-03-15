@@ -28,8 +28,6 @@ actions!(
         NextWorkspaceInWindow,
         /// Switches to the previous workspace within the current window.
         PreviousWorkspaceInWindow,
-        /// Moves the active workspace to a new window.
-        MoveWorkspaceToNewWindow,
         /// Duplicates the active workspace into a new window.
         DuplicateWorkspaceToNewWindow,
         /// Pulls all workspaces from other windows into the current window.
@@ -499,20 +497,6 @@ impl MultiWorkspace {
         cx.notify();
     }
 
-    pub fn move_workspace(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if !multi_workspace_enabled(cx) || self.workspaces.len() <= 1 {
-            return;
-        }
-        let workspace = self.workspace();
-        let app_state = workspace.read(cx).app_state().clone();
-        let project = workspace.read(cx).project().clone();
-        let index = self.active_workspace_index;
-        self.remove_workspace(index, window, cx);
-        // TODO: This will lose the state of the workspace being moved
-        // like open items etc..
-        open_project(project, app_state, cx).detach_and_log_err(cx);
-    }
-
     pub fn duplicate_workspace(&mut self, cx: &mut Context<Self>) {
         let workspace = self.workspace();
         let app_state = workspace.read(cx).app_state().clone();
@@ -602,11 +586,6 @@ impl Render for MultiWorkspace {
                         this.activate_next_workspace(window, cx);
                     }),
                 )
-                .on_action(cx.listener(
-                    |this: &mut Self, _: &MoveWorkspaceToNewWindow, window, cx| {
-                        this.move_workspace(window, cx);
-                    },
-                ))
                 .on_action(cx.listener(
                     |this: &mut Self, _: &DuplicateWorkspaceToNewWindow, _, cx| {
                         this.duplicate_workspace(cx);
