@@ -91,7 +91,6 @@ jobs:
   # Produces a SARIF report uploaded to GitHub Code Scanning.
   semgrep:
     name: "SAST — Semgrep"
-    if: github.repository_owner == 'zed-industries'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
@@ -124,7 +123,6 @@ jobs:
   # analysis) so no compilation is required.
   codeql:
     name: "SAST — CodeQL"
-    if: github.repository_owner == 'zed-industries'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
