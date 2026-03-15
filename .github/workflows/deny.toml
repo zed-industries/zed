@@ -1,0 +1,30 @@
+# cargo-deny configuration — used by the security scanning CI pipeline.
+# See https://embarkstudios.github.io/cargo-deny/
+
+# In cargo-deny 0.19+, all vulnerability advisories emit errors by default,
+# which is stricter than filtering for only high-severity advisories.
+# To downgrade specific advisories, add them to [advisories.ignore].
+
+[advisories]
+yanked = "deny"
+
+[licenses]
+unlicensed = "deny"
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Unicode-3.0",
+    "Unicode-DFS-2016",
+    "Zlib",
+    "BSL-1.0",
+    "CC0-1.0",
+    "MPL-2.0",
+    "OpenSSL",
+]
+
+[bans]
+
+[sources]

@@ -1,0 +1,28 @@
+# Semgrep ignore patterns — reduces noise from files that are not useful
+# for static analysis (build artifacts, vendored assets, lock files).
+
+# Build artifacts and dependencies
+target/
+**/target/
+node_modules/
+**/node_modules/
+
+# Version control
+.git/
+
+# Lock files — scanned separately by SCA tools (cargo-audit, OSV-Scanner)
+*.lock
+*-lock.yaml
+*-lock.json
+
+# Binary / non-source assets
+assets/
+*.onnx
+*.exe
+*.icns
+*.gif
+*.txt
+
+# Test fixtures that may contain intentional vulnerable patterns
+**/test_fixtures/
+**/fixtures/
