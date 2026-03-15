@@ -256,6 +256,42 @@ pub enum ShowDiagnostics {
     Copy,
     Clone,
     Debug,
+    Default,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    MergeFrom,
+    PartialEq,
+    Eq,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum MarkdownPreviewLinkClickBehavior {
+    /// Do nothing when a local markdown link is clicked.
+    Ignore,
+    /// Open the linked markdown file in the editor.
+    #[default]
+    Open,
+    /// Open the linked markdown file as a new markdown preview tab.
+    Preview,
+    /// Navigate the current preview to show the linked file, with back/forward support.
+    Navigate,
+}
+
+#[with_fallible_options]
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom)]
+pub struct MarkdownPreviewSettingsContent {
+    /// Controls what happens when clicking a local markdown file link in the markdown preview.
+    ///
+    /// Default: open
+    pub link_click_behavior: Option<MarkdownPreviewLinkClickBehavior>,
+}
+
+#[derive(
+    Copy,
+    Clone,
+    Debug,
     PartialEq,
     Default,
     Serialize,

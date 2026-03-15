@@ -1,22 +1,25 @@
 use std::cmp::min;
 use std::sync::Arc;
 use std::time::Duration;
-use std::{ops::Range, path::PathBuf};
+use std::{any::Any, ops::Range, path::PathBuf};
 
 use anyhow::Result;
 use editor::scroll::Autoscroll;
 use editor::{Editor, EditorEvent, MultiBufferOffset, SelectionEffects};
+use fs::normalize_path;
 use gpui::{
     App, ClickEvent, Context, Entity, EventEmitter, FocusHandle, Focusable, InteractiveElement,
     IntoElement, IsZero, ListState, ParentElement, Render, RetainAllImageCache, Styled,
     Subscription, Task, WeakEntity, Window, list,
 };
 use language::LanguageRegistry;
-use settings::Settings;
+use settings::{MarkdownPreviewLinkClickBehavior, Settings};
 use theme::ThemeSettings;
 use ui::{WithScrollbar, prelude::*};
 use workspace::item::{Item, ItemHandle};
-use workspace::{Pane, Workspace};
+use workspace::{ItemNavHistory, OpenOptions, OpenVisible, Pane, Workspace};
+
+use crate::MarkdownPreviewSettings;
 
 use crate::markdown_elements::ParsedMarkdownElement;
 use crate::markdown_renderer::{CheckboxClickedEvent, MermaidState};
@@ -42,6 +45,13 @@ pub struct MarkdownPreviewView {
     mermaid_state: MermaidState,
     parsing_markdown_task: Option<Task<Result<()>>>,
     mode: MarkdownPreviewMode,
+    nav_history: Option<ItemNavHistory>,
+    navigated_path: Option<PathBuf>,
+}
+
+#[derive(Clone)]
+struct MarkdownPreviewNavigationData {
+    path: PathBuf,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -219,6 +229,8 @@ impl MarkdownPreviewView {
                 parsing_markdown_task: None,
                 image_cache: RetainAllImageCache::new(cx),
                 mode,
+                nav_history: None,
+                navigated_path: None,
             };
 
             this.set_editor(active_editor, window, cx);
@@ -270,6 +282,8 @@ impl MarkdownPreviewView {
         {
             return;
         }
+
+        self.navigated_path = None;
 
         let subscription = cx.subscribe_in(
             &editor,
@@ -510,6 +524,115 @@ impl MarkdownPreviewView {
         }
         cx.notify();
     }
+
+    fn current_displayed_path(&self, cx: &App) -> Option<PathBuf> {
+        if let Some(path) = &self.navigated_path {
+            return Some(path.clone());
+        }
+        if let Some(state) = &self.active_editor {
+            let editor = state.editor.read(cx);
+            if let Some(file) = editor.file_at(MultiBufferOffset(0), cx) {
+                if let Some(local) = file.as_local() {
+                    return Some(local.abs_path(cx).to_path_buf());
+                }
+            }
+        }
+        None
+    }
+
+    fn open_markdown_preview_for_path(
+        &self,
+        path: PathBuf,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(workspace) = self.workspace.upgrade() else {
+            return;
+        };
+        let workspace_weak = self.workspace.clone();
+        workspace.update(cx, |workspace, cx| {
+            let task = workspace.open_abs_path(
+                path,
+                OpenOptions {
+                    visible: Some(OpenVisible::None),
+                    ..Default::default()
+                },
+                window,
+                cx,
+            );
+            cx.spawn_in(window, async move |_, cx| {
+                let item = task.await?;
+                cx.update(|window, cx| {
+                    if let Some(editor) = item.act_as::<Editor>(cx) {
+                        if let Some(workspace) = workspace_weak.upgrade() {
+                            workspace.update(cx, |workspace, cx| {
+                                let view = MarkdownPreviewView::create_markdown_view(
+                                    workspace, editor, window, cx,
+                                );
+                                workspace.active_pane().update(cx, |pane, cx| {
+                                    pane.add_item(Box::new(view), true, true, None, window, cx);
+                                });
+                            });
+                        }
+                    }
+                })
+            })
+            .detach_and_log_err(cx);
+        });
+    }
+
+    fn navigate_to_markdown_file(
+        &mut self,
+        path: PathBuf,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        // Push current state to nav history before navigating
+        let current_path = self.current_displayed_path(cx);
+        if let Some(nav_history) = &mut self.nav_history {
+            if let Some(current_path) = current_path {
+                nav_history.push(
+                    Some(MarkdownPreviewNavigationData {
+                        path: current_path,
+                    }),
+                    cx,
+                );
+            }
+        }
+
+        self.navigated_path = Some(path.clone());
+        self.load_and_display_markdown_file(path, window, cx);
+        cx.notify();
+    }
+
+    fn load_and_display_markdown_file(
+        &mut self,
+        path: PathBuf,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let language_registry = self.language_registry.clone();
+        let file_location = path.parent().map(|p| p.to_path_buf());
+
+        self.parsing_markdown_task = Some(cx.spawn_in(window, async move |view, cx| {
+            let contents = cx
+                .background_spawn(async move {
+                    let text = std::fs::read_to_string(&path)?;
+                    Ok::<_, anyhow::Error>(
+                        parse_markdown(&text, file_location, Some(language_registry)).await,
+                    )
+                })
+                .await?;
+
+            view.update(cx, move |view, cx| {
+                view.mermaid_state.update(&contents, cx);
+                let markdown_blocks_count = contents.children.len();
+                view.contents = Some(contents);
+                view.list_state.reset(markdown_blocks_count);
+                cx.notify();
+            })
+        }));
+    }
 }
 
 impl Focusable for MarkdownPreviewView {
@@ -528,6 +651,13 @@ impl Item for MarkdownPreviewView {
     }
 
     fn tab_content_text(&self, _detail: usize, cx: &App) -> SharedString {
+        if let Some(path) = &self.navigated_path {
+            let file_name = path
+                .file_name()
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or_else(|| "Markdown Preview".to_string());
+            return format!("Preview {}", file_name).into();
+        }
         self.active_editor
             .as_ref()
             .map(|editor_state| {
@@ -536,6 +666,39 @@ impl Item for MarkdownPreviewView {
                 format!("Preview {}", title).into()
             })
             .unwrap_or_else(|| SharedString::from("Markdown Preview"))
+    }
+
+    fn deactivated(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
+        let path = self.current_displayed_path(cx);
+        if let Some(nav_history) = &mut self.nav_history {
+            if let Some(path) = path {
+                nav_history.push(Some(MarkdownPreviewNavigationData { path }), cx);
+            }
+        }
+    }
+
+    fn set_nav_history(
+        &mut self,
+        history: ItemNavHistory,
+        _window: &mut Window,
+        _cx: &mut Context<Self>,
+    ) {
+        self.nav_history = Some(history);
+    }
+
+    fn navigate(
+        &mut self,
+        data: Arc<dyn Any + Send>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        if let Some(nav_data) = data.downcast_ref::<MarkdownPreviewNavigationData>() {
+            self.navigated_path = Some(nav_data.path.clone());
+            self.load_and_display_markdown_file(nav_data.path.clone(), window, cx);
+            true
+        } else {
+            false
+        }
     }
 
     fn telemetry_event_text(&self) -> Option<&'static str> {
@@ -601,6 +764,46 @@ impl Render for MarkdownPreviewView {
                                         });
                                         this.parse_markdown_from_active_editor(false, window, cx);
                                         cx.notify();
+                                    }
+                                },
+                            ))
+                            .with_link_clicked_callback(cx.listener(
+                                |this, link: &crate::markdown_elements::Link, window, cx| {
+                                    let crate::markdown_elements::Link::Path { path, .. } = link
+                                    else {
+                                        return;
+                                    };
+                                    let path = normalize_path(path.as_path());
+                                    let behavior = MarkdownPreviewSettings::get_global(cx)
+                                        .link_click_behavior;
+
+                                    match behavior {
+                                        MarkdownPreviewLinkClickBehavior::Ignore => {}
+                                        MarkdownPreviewLinkClickBehavior::Open => {
+                                            if let Some(workspace) = this.workspace.upgrade() {
+                                                workspace.update(cx, |workspace, cx| {
+                                                    workspace
+                                                        .open_abs_path(
+                                                            path,
+                                                            OpenOptions {
+                                                                visible: Some(OpenVisible::None),
+                                                                ..Default::default()
+                                                            },
+                                                            window,
+                                                            cx,
+                                                        )
+                                                        .detach();
+                                                });
+                                            }
+                                        }
+                                        MarkdownPreviewLinkClickBehavior::Preview => {
+                                            this.open_markdown_preview_for_path(
+                                                path, window, cx,
+                                            );
+                                        }
+                                        MarkdownPreviewLinkClickBehavior::Navigate => {
+                                            this.navigate_to_markdown_file(path, window, cx);
+                                        }
                                     }
                                 },
                             ));

@@ -43,6 +43,7 @@ impl CheckboxClickedEvent {
 }
 
 type CheckboxClickedCallback = Arc<Box<dyn Fn(&CheckboxClickedEvent, &mut Window, &mut App)>>;
+type LinkClickedCallback = Arc<Box<dyn Fn(&Link, &mut Window, &mut App)>>;
 
 type MermaidDiagramCache = HashMap<ParsedMarkdownMermaidDiagramContents, CachedMermaidDiagram>;
 
@@ -189,6 +190,7 @@ pub struct RenderContext<'a> {
     syntax_theme: Arc<SyntaxTheme>,
     indent: usize,
     checkbox_clicked_callback: Option<CheckboxClickedCallback>,
+    link_clicked_callback: Option<LinkClickedCallback>,
     is_last_child: bool,
     mermaid_state: &'a MermaidState,
 }
@@ -228,9 +230,18 @@ impl<'a> RenderContext<'a> {
             code_block_background_color: theme.colors().surface_background,
             code_span_background_color: theme.colors().editor_document_highlight_read_background,
             checkbox_clicked_callback: None,
+            link_clicked_callback: None,
             is_last_child: false,
             mermaid_state,
         }
+    }
+
+    pub fn with_link_clicked_callback(
+        mut self,
+        callback: impl Fn(&Link, &mut Window, &mut App) + 'static,
+    ) -> Self {
+        self.link_clicked_callback = Some(Arc::new(Box::new(callback)));
+        self
     }
 
     pub fn with_checkbox_clicked_callback(
@@ -930,6 +941,7 @@ fn render_markdown_text(parsed_new: &MarkdownParagraph, cx: &mut RenderContext) 
                     }
                 }
                 let workspace = workspace_clone.clone();
+                let link_clicked_callback = cx.link_clicked_callback.clone();
                 let element = div()
                     .child(
                         InteractiveText::new(
@@ -953,7 +965,19 @@ fn render_markdown_text(parsed_new: &MarkdownParagraph, cx: &mut RenderContext) 
                             link_ranges,
                             move |clicked_range_ix, window, cx| match &links[clicked_range_ix] {
                                 Link::Web { url } => cx.open_url(url),
-                                Link::Path { path, .. } => {
+                                link @ Link::Path { path, .. } => {
+                                    let is_markdown = path
+                                        .extension()
+                                        .map(|ext| ext == "md" || ext == "markdown")
+                                        .unwrap_or(false);
+
+                                    if is_markdown {
+                                        if let Some(callback) = &link_clicked_callback {
+                                            callback(link, window, cx);
+                                            return;
+                                        }
+                                    }
+
                                     if let Some(workspace) = &workspace {
                                         _ = workspace.update(cx, |workspace, cx| {
                                             workspace
