@@ -11,7 +11,9 @@ use gpui::{
     WindowBackgroundAppearance, WindowBounds, WindowControlArea, WindowControls, WindowParams,
 };
 use objc::{
-    class, declare::ClassDecl, msg_send, runtime::{Class, Object}, sel, sel_impl,
+    class, declare::ClassDecl, msg_send,
+    runtime::{Class, Object, Sel},
+    sel, sel_impl,
 };
 use parking_lot::Mutex;
 use raw_window_handle::{
@@ -22,7 +24,7 @@ use std::{
     cell::RefCell,
     ffi::c_void,
     ptr::NonNull,
-    rc::Rc,
+    rc::{Rc, Weak},
     sync::Arc,
 };
 
@@ -49,7 +51,63 @@ struct CGRect {
     size: CGSize,
 }
 
-// ─── Callbacks ────────────────────────────────────────────────────────────────
+// ─── Window state ─────────────────────────────────────────────────────────────
+
+/// All mutable window state shared between `IosWindow` and the `layoutSubviews`
+/// ObjC callback. Wrapped in `Rc<RefCell<>>` so the view's ivar can hold a
+/// `Weak` reference without creating a retain cycle.
+struct IosWindowState {
+    bounds: Bounds<Pixels>,
+    scale_factor: f32,
+    input_handler: Option<PlatformInputHandler>,
+    /// Raw pointer to the `ZedMetalView` UIView. Not retained — the view is
+    /// owned by the UIWindow hierarchy and outlives this state while the scene
+    /// is connected.
+    ui_view: *mut Object,
+    renderer: MetalRenderer,
+    callbacks: IosWindowCallbacks,
+}
+
+impl IosWindowState {
+    /// Updates drawable size and logical bounds from the view's current layout.
+    /// Returns `Some((new_size, scale))` if the size changed — the caller must
+    /// fire the resize callback *outside* the `RefCell` borrow to avoid
+    /// re-entrancy panics (GPUI calls back into the window from the callback).
+    unsafe fn apply_layout(
+        &mut self,
+        view: *mut Object,
+    ) -> Option<(gpui::Size<Pixels>, f32)> {
+        let view_bounds: CGRect = msg_send![view, bounds];
+        let scale: f32 = msg_send![view, contentScaleFactor];
+        let scale = if scale > 0.0 { scale } else { 2.0 };
+
+        let logical_width = view_bounds.size.width as f32;
+        let logical_height = view_bounds.size.height as f32;
+        if logical_width <= 0.0 || logical_height <= 0.0 {
+            return None;
+        }
+
+        let device_width = (logical_width * scale).round() as i32;
+        let device_height = (logical_height * scale).round() as i32;
+
+        let layer_ptr = self.renderer.layer_ptr();
+        let _: () = msg_send![layer_ptr, setFrame: view_bounds];
+        self.renderer.update_drawable_size(gpui::size(
+            DevicePixels(device_width),
+            DevicePixels(device_height),
+        ));
+
+        let new_size = gpui::Size {
+            width: gpui::px(logical_width),
+            height: gpui::px(logical_height),
+        };
+        let old_size = self.bounds.size;
+        self.bounds.size = new_size;
+        self.scale_factor = scale;
+
+        if old_size != new_size { Some((new_size, scale)) } else { None }
+    }
+}
 
 #[derive(Default)]
 struct IosWindowCallbacks {
@@ -66,23 +124,17 @@ struct IosWindowCallbacks {
 
 // ─── IosWindow ────────────────────────────────────────────────────────────────
 
-struct IosWindowInner {
-    bounds: Bounds<Pixels>,
-    scale_factor: f32,
-    input_handler: Option<PlatformInputHandler>,
-    /// Retained pointer to the UIView we created.
-    ui_view: *mut Object,
-}
-
 /// iOS window backed by a UIView with a CAMetalLayer sublayer.
 ///
 /// On creation we find the key UIWindow (created by Swift SceneDelegate),
 /// attach a full-screen UIView to it, and add the renderer's CAMetalLayer
 /// as a sublayer. CADisplayLink drives the frame request callback.
+///
+/// Drawable size and logical bounds are set by `ZedMetalView.layoutSubviews`,
+/// which fires after UIKit lays out the view — reliably handling the initial
+/// layout, device rotation, and Stage Manager window resizes.
 pub struct IosWindow {
-    inner: RefCell<IosWindowInner>,
-    callbacks: RefCell<IosWindowCallbacks>,
-    renderer: RefCell<MetalRenderer>,
+    state: Rc<RefCell<IosWindowState>>,
     display_link: RefCell<Option<DisplayLink>>,
     display: Rc<dyn PlatformDisplay>,
 }
@@ -93,29 +145,45 @@ impl IosWindow {
         display: Rc<dyn PlatformDisplay>,
         instance_buffer_pool: Arc<Mutex<InstanceBufferPool>>,
     ) -> Result<Self> {
-        let mut renderer = MetalRenderer::new(instance_buffer_pool);
-        let (bounds, scale_factor, ui_view) = Self::create_and_attach_view(&mut renderer)?;
+        let renderer = MetalRenderer::new(instance_buffer_pool);
+        let ui_view = Self::create_and_attach_view(&renderer)?;
+
+        let state = Rc::new(RefCell::new(IosWindowState {
+            bounds: Bounds::default(),
+            scale_factor: 2.0,
+            input_handler: None,
+            ui_view,
+            renderer,
+            callbacks: IosWindowCallbacks::default(),
+        }));
+
+        // Store a Weak in the view's ivar. The view calls back into us via
+        // `layoutSubviews`; the Weak ensures we don't access freed state if
+        // the window is ever torn down before the view.
+        //
+        // We rely on the natural UIKit run-loop order for the initial layout:
+        // `addSubview` queues a layout pass that commits in the same CATransaction
+        // flush, which happens before the next vsync. Since CADisplayLink only fires
+        // on vsync, `layoutSubviews` → `handle_layout` will always set a valid
+        // drawable size before the first `nextDrawable` call.
+        let weak: Weak<RefCell<IosWindowState>> = Rc::downgrade(&state);
+        let weak_ptr = Box::into_raw(Box::new(weak)) as *mut c_void;
+        unsafe {
+            (*ui_view).set_ivar("_window_state", weak_ptr);
+        }
 
         Ok(Self {
-            inner: RefCell::new(IosWindowInner {
-                bounds,
-                scale_factor,
-                input_handler: None,
-                ui_view,
-            }),
-            callbacks: RefCell::new(IosWindowCallbacks::default()),
-            renderer: RefCell::new(renderer),
+            state,
             display_link: RefCell::new(None),
             display,
         })
     }
 
-    /// Creates a UIView filling the key UIWindow, adds the renderer's
-    /// CAMetalLayer as a sublayer, and configures the drawable size.
-    /// Returns the logical bounds (points), native scale factor, and the UIView pointer.
-    fn create_and_attach_view(
-        renderer: &mut MetalRenderer,
-    ) -> Result<(Bounds<Pixels>, f32, *mut Object)> {
+    /// Attaches a `ZedMetalView` (with the renderer's CAMetalLayer as a sublayer)
+    /// to the key UIWindow. Returns the new view so the caller can set the
+    /// `_window_state` ivar. Drawable size will be set by `layoutSubviews` before
+    /// the first vsync.
+    fn create_and_attach_view(renderer: &MetalRenderer) -> Result<*mut Object> {
         unsafe {
             let app: *mut Object = msg_send![class!(UIApplication), sharedApplication];
             let key_window: *mut Object = msg_send![app, keyWindow];
@@ -124,60 +192,47 @@ impl IosWindow {
                 "no key UIWindow — SceneDelegate must call makeKeyAndVisible before zed_ios_open_window"
             );
 
-            // UIWindow.bounds is CGRectZero immediately after makeKeyAndVisible() in iOS 16+
-            // because the layout system hasn't run yet. UIScreen.mainScreen.bounds is
-            // orientation-aware (returns correct portrait/landscape logical size) and is
-            // available as soon as a UIWindowScene is connected — i.e. before any layout pass.
-            // Multiply by `scale` (not `nativeScale`, which is always the hardware native scale
-            // and may be portrait-basis only on some iPads) to get device pixels.
-            let main_screen: *mut Object = msg_send![class!(UIScreen), mainScreen];
-            let screen_bounds: CGRect = msg_send![main_screen, bounds];
-            let scale: f32 = msg_send![main_screen, scale];
-            let scale = if scale > 0.0 { scale } else { 2.0 };
+            // Attach to rootViewController.view, not to UIWindow directly.
+            // UIKit only reliably propagates Stage Manager resize events (via
+            // layoutSubviews) through the rootViewController's view hierarchy.
+            // Bare UIWindow subviews do not receive autoresizing updates on
+            // Stage Manager window resize.
+            let root_vc: *mut Object = msg_send![key_window, rootViewController];
+            anyhow::ensure!(
+                !root_vc.is_null(),
+                "UIWindow has no rootViewController — SceneDelegate must set one before zed_ios_open_window"
+            );
+            let container: *mut Object = msg_send![root_vc, view];
 
-            let logical_width = screen_bounds.size.width as f32;
-            let logical_height = screen_bounds.size.height as f32;
-            let device_width = (logical_width * scale).round() as i32;
-            let device_height = (logical_height * scale).round() as i32;
-
-            let bounds = Bounds {
-                origin: gpui::Point::default(),
-                size: gpui::Size {
-                    width: gpui::px(logical_width),
-                    height: gpui::px(logical_height),
-                },
-            };
-
-            let logical_frame = CGRect {
-                origin: CGPoint::default(),
-                size: CGSize {
-                    width: logical_width as f64,
-                    height: logical_height as f64,
-                },
+            // Use the container's current bounds for the initial frame so that
+            // the autoresizing mask has a non-zero base to work from.
+            // `layoutSubviews` will immediately correct this to view.bounds ×
+            // contentScaleFactor, and will continue to handle rotation and
+            // Stage Manager resizes.
+            let container_bounds: CGRect = msg_send![container, bounds];
+            let initial_frame = if container_bounds.size.width > 0.0 && container_bounds.size.height > 0.0 {
+                container_bounds
+            } else {
+                let main_screen: *mut Object = msg_send![class!(UIScreen), mainScreen];
+                msg_send![main_screen, bounds]
             };
 
             let view_class = register_metal_view_class();
             let view: *mut Object = msg_send![view_class, alloc];
-            let view: *mut Object = msg_send![view, initWithFrame: logical_frame];
+            let view: *mut Object = msg_send![view, initWithFrame: initial_frame];
 
-            // Stretch to fill the window on rotation or Stage Manager resize.
-            let fill_mask: usize = (1 << 1) | (1 << 4); // UIViewAutoresizingFlexibleWidth | Height
+            // Stretch to fill the container on rotation or Stage Manager resize.
+            let fill_mask: usize = (1 << 1) | (1 << 4); // FlexibleWidth | FlexibleHeight
             let _: () = msg_send![view, setAutoresizingMask: fill_mask];
 
-            // Add the renderer's CAMetalLayer as a sublayer of the view's root layer.
+            // Add the Metal layer as a sublayer (zero-sized; layoutSubviews will resize it).
             let layer_ptr = renderer.layer_ptr();
-            let _: () = msg_send![layer_ptr, setFrame: logical_frame];
             let view_layer: *mut Object = msg_send![view, layer];
             let _: () = msg_send![view_layer, addSublayer: layer_ptr];
 
-            let _: () = msg_send![key_window, addSubview: view];
+            let _: () = msg_send![container, addSubview: view];
 
-            renderer.update_drawable_size(gpui::size(
-                DevicePixels(device_width),
-                DevicePixels(device_height),
-            ));
-
-            Ok((bounds, scale, view))
+            Ok(view)
         }
     }
 }
@@ -186,9 +241,8 @@ impl IosWindow {
 
 impl HasWindowHandle for IosWindow {
     fn window_handle(&self) -> Result<WindowHandle<'_>, HandleError> {
-        let inner = self.inner.borrow();
-        let ptr =
-            NonNull::new(inner.ui_view as *mut c_void).ok_or(HandleError::Unavailable)?;
+        let ptr = NonNull::new(self.state.borrow().ui_view as *mut c_void)
+            .ok_or(HandleError::Unavailable)?;
         let handle = UiKitWindowHandle::new(ptr);
         Ok(unsafe { WindowHandle::borrow_raw(handle.into()) })
     }
@@ -205,7 +259,7 @@ impl HasDisplayHandle for IosWindow {
 
 impl PlatformWindow for IosWindow {
     fn bounds(&self) -> Bounds<Pixels> {
-        self.inner.borrow().bounds
+        self.state.borrow().bounds
     }
 
     fn is_maximized(&self) -> bool {
@@ -213,24 +267,24 @@ impl PlatformWindow for IosWindow {
     }
 
     fn window_bounds(&self) -> WindowBounds {
-        WindowBounds::Fullscreen(self.inner.borrow().bounds)
+        WindowBounds::Fullscreen(self.state.borrow().bounds)
     }
 
     fn content_size(&self) -> Size<Pixels> {
-        self.inner.borrow().bounds.size
+        self.state.borrow().bounds.size
     }
 
     fn resize(&mut self, size: Size<Pixels>) {
-        self.inner.borrow_mut().bounds.size = size;
+        self.state.borrow_mut().bounds.size = size;
     }
 
     fn scale_factor(&self) -> f32 {
-        self.inner.borrow().scale_factor
+        self.state.borrow().scale_factor
     }
 
     fn appearance(&self) -> WindowAppearance {
         unsafe {
-            let view = self.inner.borrow().ui_view;
+            let view = self.state.borrow().ui_view;
             if view.is_null() {
                 return WindowAppearance::Light;
             }
@@ -263,11 +317,11 @@ impl PlatformWindow for IosWindow {
     }
 
     fn set_input_handler(&mut self, input_handler: PlatformInputHandler) {
-        self.inner.borrow_mut().input_handler = Some(input_handler);
+        self.state.borrow_mut().input_handler = Some(input_handler);
     }
 
     fn take_input_handler(&mut self) -> Option<PlatformInputHandler> {
-        self.inner.borrow_mut().input_handler.take()
+        self.state.borrow_mut().input_handler.take()
     }
 
     fn prompt(
@@ -325,50 +379,50 @@ impl PlatformWindow for IosWindow {
     }
 
     fn on_input(&self, callback: Box<dyn FnMut(PlatformInput) -> DispatchEventResult>) {
-        self.callbacks.borrow_mut().input = Some(callback);
+        self.state.borrow_mut().callbacks.input = Some(callback);
     }
 
     fn on_active_status_change(&self, callback: Box<dyn FnMut(bool)>) {
-        self.callbacks.borrow_mut().active_status_change = Some(callback);
+        self.state.borrow_mut().callbacks.active_status_change = Some(callback);
     }
 
     fn on_hover_status_change(&self, callback: Box<dyn FnMut(bool)>) {
-        self.callbacks.borrow_mut().hover_status_change = Some(callback);
+        self.state.borrow_mut().callbacks.hover_status_change = Some(callback);
     }
 
     fn on_resize(&self, callback: Box<dyn FnMut(Size<Pixels>, f32)>) {
-        self.callbacks.borrow_mut().resize = Some(callback);
+        self.state.borrow_mut().callbacks.resize = Some(callback);
     }
 
     fn on_moved(&self, callback: Box<dyn FnMut()>) {
-        self.callbacks.borrow_mut().moved = Some(callback);
+        self.state.borrow_mut().callbacks.moved = Some(callback);
     }
 
     fn on_should_close(&self, callback: Box<dyn FnMut() -> bool>) {
-        self.callbacks.borrow_mut().should_close = Some(callback);
+        self.state.borrow_mut().callbacks.should_close = Some(callback);
     }
 
     fn on_hit_test_window_control(
         &self,
         callback: Box<dyn FnMut() -> Option<WindowControlArea>>,
     ) {
-        self.callbacks.borrow_mut().hit_test_window_control = Some(callback);
+        self.state.borrow_mut().callbacks.hit_test_window_control = Some(callback);
     }
 
     fn on_close(&self, callback: Box<dyn FnOnce()>) {
-        self.callbacks.borrow_mut().close = Some(callback);
+        self.state.borrow_mut().callbacks.close = Some(callback);
     }
 
     fn on_appearance_changed(&self, callback: Box<dyn FnMut()>) {
-        self.callbacks.borrow_mut().appearance_changed = Some(callback);
+        self.state.borrow_mut().callbacks.appearance_changed = Some(callback);
     }
 
     fn draw(&self, scene: &Scene) {
-        self.renderer.borrow_mut().draw(scene);
+        self.state.borrow_mut().renderer.draw(scene);
     }
 
     fn sprite_atlas(&self) -> Arc<dyn PlatformAtlas> {
-        self.renderer.borrow().sprite_atlas().clone()
+        self.state.borrow().renderer.sprite_atlas().clone()
     }
 
     fn is_subpixel_rendering_supported(&self) -> bool {
@@ -411,15 +465,85 @@ extern "C" fn display_link_fired(_data: *mut c_void) {
     });
 }
 
-// ─── UIView subclass ──────────────────────────────────────────────────────────
+// ─── ZedMetalView ObjC class ──────────────────────────────────────────────────
 
 fn register_metal_view_class() -> &'static Class {
     use std::sync::OnceLock;
     static CLASS: OnceLock<&'static Class> = OnceLock::new();
     CLASS.get_or_init(|| {
         let superclass = class!(UIView);
-        let decl =
+        let mut decl =
             ClassDecl::new("ZedMetalView", superclass).expect("ZedMetalView already registered");
+
+        // Stores a raw pointer to `Box<Weak<RefCell<IosWindowState>>>`.
+        // Set after IosWindow construction; freed in `dealloc`.
+        decl.add_ivar::<*mut c_void>("_window_state");
+
+        unsafe {
+            decl.add_method(
+                sel!(layoutSubviews),
+                layout_subviews as extern "C" fn(&Object, Sel),
+            );
+            decl.add_method(
+                sel!(dealloc),
+                view_dealloc as extern "C" fn(&Object, Sel),
+            );
+        }
+
         decl.register()
     })
+}
+
+/// Called by UIKit after it measures the view — on initial layout, rotation,
+/// and Stage Manager resizes. Updates Metal drawable size and fires the GPUI
+/// resize callback if the logical size changed.
+///
+/// The resize callback is fired *outside* the `RefCell` borrow because GPUI
+/// calls back into `scale_factor()` (and other window methods) from within the
+/// callback, which would cause a `RefCell already mutably borrowed` panic.
+extern "C" fn layout_subviews(this: &Object, _sel: Sel) {
+    unsafe {
+        let superclass = class!(UIView);
+        let _: () = msg_send![super(this, superclass), layoutSubviews];
+
+        let raw: *mut c_void = *this.get_ivar("_window_state");
+        if raw.is_null() {
+            return;
+        }
+        let weak = &*(raw as *const Weak<RefCell<IosWindowState>>);
+        let Some(state_rc) = weak.upgrade() else {
+            return;
+        };
+
+        let view = this as *const Object as *mut Object;
+        let resize_event = state_rc.borrow_mut().apply_layout(view);
+
+        if let Some((new_size, scale)) = resize_event {
+            // Take the callback out to call it without holding the borrow.
+            let mut callback = state_rc.borrow_mut().callbacks.resize.take();
+            if let Some(ref mut f) = callback {
+                f(new_size, scale);
+            }
+            // Restore callback (a new one may have been set during the call, prefer it).
+            let mut state = state_rc.borrow_mut();
+            if state.callbacks.resize.is_none() {
+                state.callbacks.resize = callback;
+            }
+        }
+    }
+}
+
+/// Frees the `Box<Weak<…>>` stored in `_window_state` before the view is
+/// released, then calls `[super dealloc]`.
+extern "C" fn view_dealloc(this: &Object, _sel: Sel) {
+    unsafe {
+        let raw: *mut c_void = *this.get_ivar("_window_state");
+        if !raw.is_null() {
+            drop(Box::from_raw(raw as *mut Weak<RefCell<IosWindowState>>));
+            let this_mut = this as *const Object as *mut Object;
+            (*this_mut).set_ivar("_window_state", std::ptr::null_mut::<c_void>());
+        }
+        let superclass = class!(UIView);
+        let _: () = msg_send![super(this, superclass), dealloc];
+    }
 }

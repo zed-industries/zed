@@ -11,8 +11,11 @@ class SceneDelegate: UIResponder, UIWindowSceneDelegate {
     ) {
         guard let windowScene = scene as? UIWindowScene else { return }
         let window = UIWindow(windowScene: windowScene)
-        // GPUI will take over the window in Phase 1. For now keep it black.
-        window.backgroundColor = .black
+        // A root view controller is required for Stage Manager to correctly
+        // resize the view hierarchy when the floating window is resized.
+        // Without one, UIKit does not reliably propagate bounds changes to
+        // bare UIWindow subviews, so layoutSubviews never fires on resize.
+        window.rootViewController = UIViewController()
         window.makeKeyAndVisible()
         self.window = window
 

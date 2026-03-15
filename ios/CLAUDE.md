@@ -5,18 +5,31 @@ The Swift layer is intentionally thin — it bootstraps UIKit, creates scenes, a
 calls into Rust via C FFI. All substantive logic lives in `crates/zed-ios/` and
 `crates/gpui/src/platform/ios/`.
 
+## Bundle ID
+
+`dev.zed.ipad.app`
+
+Use this when installing/launching via `xcrun simctl`:
+```bash
+xcrun simctl install <udid> path/to/Zed.app
+xcrun simctl launch <udid> dev.zed.ipad.app
+```
+
 ## Build
 
 ```bash
 # Simulator (Apple Silicon Mac)
-cargo build -p zed-ios --target aarch64-apple-ios-sim --release --no-default-features --features ios
+cargo build -p zed-ios --target aarch64-apple-ios-sim --release --no-default-features
 xcodebuild -project ios/Zed.xcodeproj -scheme Zed \
-  -destination 'platform=iOS Simulator,name=iPad Pro 13-inch (M4)' build
+  -destination 'platform=iOS Simulator,name=iPad Pro 13-inch (M5)' clean build
 
 # Device
-cargo build -p zed-ios --target aarch64-apple-ios --release --no-default-features --features ios
+cargo build -p zed-ios --target aarch64-apple-ios --release --no-default-features
 # Then build+run from Xcode with a connected device and valid signing
 ```
+
+Note: do not pass `--features ios` — there is no such feature flag; iOS-specific code
+is gated by `cfg(target_os = "ios")` automatically when targeting `aarch64-apple-ios*`.
 
 ## File structure
 
