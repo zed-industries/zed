@@ -317,7 +317,7 @@ impl BufferDiagnosticsEditor {
         let buffer_snapshot_max = buffer_snapshot.max_point();
         let max_severity = Self::max_diagnostics_severity(self.include_warnings)
             .into_lsp()
-            .unwrap_or(lsp::DiagnosticSeverity::WARNING);
+            .unwrap_or(lsp::DiagnosticSeverity::INFORMATION);
 
         cx.spawn_in(window, async move |buffer_diagnostics_editor, mut cx| {
             // Fetch the diagnostics for the whole of the buffer
@@ -648,7 +648,7 @@ impl BufferDiagnosticsEditor {
 
     fn max_diagnostics_severity(include_warnings: bool) -> DiagnosticSeverity {
         match include_warnings {
-            true => DiagnosticSeverity::Warning,
+            true => DiagnosticSeverity::Info,
             false => DiagnosticSeverity::Error,
         }
     }

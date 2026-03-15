@@ -226,7 +226,7 @@ impl ProjectDiagnosticsEditor {
             editor.disable_inline_diagnostics();
             editor.set_max_diagnostics_severity(
                 if include_warnings {
-                    DiagnosticSeverity::Warning
+                    DiagnosticSeverity::Info
                 } else {
                     DiagnosticSeverity::Error
                 },
@@ -262,7 +262,7 @@ impl ProjectDiagnosticsEditor {
             this.editor.update(cx, |editor, cx| {
                 editor.set_max_diagnostics_severity(
                     if include_warnings {
-                        DiagnosticSeverity::Warning
+                        DiagnosticSeverity::Info
                     } else {
                         DiagnosticSeverity::Error
                     },
@@ -493,7 +493,7 @@ impl ProjectDiagnosticsEditor {
         let buffer_id = buffer_snapshot.remote_id();
 
         let max_severity = if self.include_warnings {
-            lsp::DiagnosticSeverity::WARNING
+            lsp::DiagnosticSeverity::INFORMATION
         } else {
             lsp::DiagnosticSeverity::ERROR
         };

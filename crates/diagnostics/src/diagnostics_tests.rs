@@ -2029,6 +2029,214 @@ async fn test_buffer_diagnostics_multiple_servers(cx: &mut TestAppContext) {
     })
 }
 
+#[gpui::test]
+async fn test_buffer_diagnostics_includes_info_with_warnings(cx: &mut TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/test"),
+        json!({
+            "main.rs": "
+                fn main() {
+                    let x = 1;
+                    let y = 2;
+                }
+            "
+            .unindent(),
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), [path!("/test").as_ref()], cx).await;
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let cx = &mut VisualTestContext::from_window(window.into(), cx);
+    let project_path = project::ProjectPath {
+        worktree_id: project.read_with(cx, |project, cx| {
+            project.worktrees(cx).next().unwrap().read(cx).id()
+        }),
+        path: rel_path("main.rs").into(),
+    };
+    let buffer = project
+        .update(cx, |project, cx| {
+            project.open_buffer(project_path.clone(), cx)
+        })
+        .await
+        .ok();
+
+    let language_server_id = LanguageServerId(0);
+    let uri = lsp::Uri::from_file_path(path!("/test/main.rs")).unwrap();
+    let lsp_store = project.read_with(cx, |project, _| project.lsp_store());
+
+    lsp_store.update(cx, |lsp_store, cx| {
+        lsp_store
+            .update_diagnostics(
+                language_server_id,
+                lsp::PublishDiagnosticsParams {
+                    uri: uri.clone(),
+                    diagnostics: vec![
+                        lsp::Diagnostic {
+                            range: lsp::Range::new(
+                                lsp::Position::new(1, 8),
+                                lsp::Position::new(1, 9),
+                            ),
+                            severity: Some(lsp::DiagnosticSeverity::INFORMATION),
+                            message: "unused variable: `x`".to_string(),
+                            ..Default::default()
+                        },
+                        lsp::Diagnostic {
+                            range: lsp::Range::new(
+                                lsp::Position::new(2, 8),
+                                lsp::Position::new(2, 9),
+                            ),
+                            severity: Some(lsp::DiagnosticSeverity::ERROR),
+                            message: "undefined function".to_string(),
+                            ..Default::default()
+                        },
+                    ],
+                    version: None,
+                },
+                None,
+                DiagnosticSourceKind::Pushed,
+                &[],
+                cx,
+            )
+            .unwrap();
+    });
+
+    let buffer_diagnostics = window.build_entity(cx, |window, cx| {
+        BufferDiagnosticsEditor::new(
+            project_path.clone(),
+            project.clone(),
+            buffer,
+            true,
+            window,
+            cx,
+        )
+    });
+
+    let editor = buffer_diagnostics.update(cx, |buffer_diagnostics, _cx| {
+        buffer_diagnostics.editor().clone()
+    });
+
+    cx.executor()
+        .advance_clock(DIAGNOSTICS_UPDATE_DEBOUNCE + Duration::from_millis(10));
+
+    let content = editor_content_with_blocks(&editor, cx);
+    assert!(
+        content.contains("unused variable: `x`"),
+        "info diagnostic should be shown when include_warnings is true, got:\n{content}"
+    );
+    assert!(
+        content.contains("undefined function"),
+        "error diagnostic should always be shown, got:\n{content}"
+    );
+}
+
+#[gpui::test]
+async fn test_buffer_diagnostics_excludes_info_without_warnings(cx: &mut TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/test"),
+        json!({
+            "main.rs": "
+                fn main() {
+                    let x = 1;
+                    let y = 2;
+                }
+            "
+            .unindent(),
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), [path!("/test").as_ref()], cx).await;
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let cx = &mut VisualTestContext::from_window(window.into(), cx);
+    let project_path = project::ProjectPath {
+        worktree_id: project.read_with(cx, |project, cx| {
+            project.worktrees(cx).next().unwrap().read(cx).id()
+        }),
+        path: rel_path("main.rs").into(),
+    };
+    let buffer = project
+        .update(cx, |project, cx| {
+            project.open_buffer(project_path.clone(), cx)
+        })
+        .await
+        .ok();
+
+    let language_server_id = LanguageServerId(0);
+    let uri = lsp::Uri::from_file_path(path!("/test/main.rs")).unwrap();
+    let lsp_store = project.read_with(cx, |project, _| project.lsp_store());
+
+    lsp_store.update(cx, |lsp_store, cx| {
+        lsp_store
+            .update_diagnostics(
+                language_server_id,
+                lsp::PublishDiagnosticsParams {
+                    uri: uri.clone(),
+                    diagnostics: vec![
+                        lsp::Diagnostic {
+                            range: lsp::Range::new(
+                                lsp::Position::new(1, 8),
+                                lsp::Position::new(1, 9),
+                            ),
+                            severity: Some(lsp::DiagnosticSeverity::INFORMATION),
+                            message: "unused variable: `x`".to_string(),
+                            ..Default::default()
+                        },
+                        lsp::Diagnostic {
+                            range: lsp::Range::new(
+                                lsp::Position::new(2, 8),
+                                lsp::Position::new(2, 9),
+                            ),
+                            severity: Some(lsp::DiagnosticSeverity::ERROR),
+                            message: "undefined function".to_string(),
+                            ..Default::default()
+                        },
+                    ],
+                    version: None,
+                },
+                None,
+                DiagnosticSourceKind::Pushed,
+                &[],
+                cx,
+            )
+            .unwrap();
+    });
+
+    let buffer_diagnostics = window.build_entity(cx, |window, cx| {
+        BufferDiagnosticsEditor::new(
+            project_path.clone(),
+            project.clone(),
+            buffer,
+            false,
+            window,
+            cx,
+        )
+    });
+
+    let editor = buffer_diagnostics.update(cx, |buffer_diagnostics, _cx| {
+        buffer_diagnostics.editor().clone()
+    });
+
+    cx.executor()
+        .advance_clock(DIAGNOSTICS_UPDATE_DEBOUNCE + Duration::from_millis(10));
+
+    let content = editor_content_with_blocks(&editor, cx);
+    assert!(
+        !content.contains("unused variable: `x`"),
+        "info diagnostic should be hidden when include_warnings is false, got:\n{content}"
+    );
+    assert!(
+        content.contains("undefined function"),
+        "error diagnostic should always be shown, got:\n{content}"
+    );
+}
+
 fn init_test(cx: &mut TestAppContext) {
     cx.update(|cx| {
         zlog::init_test();
