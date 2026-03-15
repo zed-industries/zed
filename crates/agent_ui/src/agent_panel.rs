@@ -5302,6 +5302,7 @@ mod tests {
     use project::Project;
     use serde_json::json;
     use workspace::MultiWorkspace;
+    use workspace::dock::PanelHandle;
 
     #[gpui::test]
     async fn test_active_thread_serialize_and_load_round_trip(cx: &mut TestAppContext) {
@@ -5938,6 +5939,117 @@ mod tests {
             assert!(
                 !panel.background_threads.contains_key(&session_id_b),
                 "Thread B (idle) should not have been retained in background_views"
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_zoomed_agent_panel_stays_open_when_markdown_has_focus(cx: &mut TestAppContext) {
+        init_test(cx);
+        cx.update(|cx| {
+            cx.update_flags(true, vec!["agent-v2".to_string()]);
+            agent::ThreadStore::init_global(cx);
+            language_model::LanguageModelRegistry::test(cx);
+        });
+
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs.clone(), [], cx).await;
+
+        let multi_workspace =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+
+        let workspace = multi_workspace
+            .read_with(cx, |multi_workspace, _cx| {
+                multi_workspace.workspace().clone()
+            })
+            .unwrap();
+
+        let cx = &mut VisualTestContext::from_window(multi_workspace.into(), cx);
+
+        let panel = workspace.update_in(cx, |workspace, window, cx| {
+            let text_thread_store = cx.new(|cx| TextThreadStore::fake(project.clone(), cx));
+            let panel =
+                cx.new(|cx| AgentPanel::new(workspace, text_thread_store, None, window, cx));
+            workspace.add_panel(panel.clone(), window, cx);
+            panel
+        });
+
+        let connection = StubAgentConnection::new();
+        connection.set_next_prompt_updates(vec![acp::SessionUpdate::AgentMessageChunk(
+            acp::ContentChunk::new("Response".into()),
+        )]);
+        open_thread_with_connection(&panel, connection, cx);
+        send_message(&panel, cx);
+
+        let markdown = panel.read_with(cx, |panel, cx| {
+            let thread = panel.active_agent_thread(cx).expect("thread should exist");
+            thread
+                .read(cx)
+                .entries()
+                .iter()
+                .find_map(|entry| match entry {
+                    acp_thread::AgentThreadEntry::AssistantMessage(message) => {
+                        message.chunks.iter().find_map(|chunk| match chunk {
+                            acp_thread::AssistantMessageChunk::Message { block }
+                            | acp_thread::AssistantMessageChunk::Thought { block } => {
+                                block.markdown().cloned()
+                            }
+                        })
+                    }
+                    _ => None,
+                })
+                .expect("assistant response markdown should exist")
+        });
+
+        let pane = workspace.read_with(cx, |workspace, _cx| workspace.active_pane().clone());
+
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.toggle_panel_focus::<AgentPanel>(window, cx);
+        });
+
+        panel.update_in(cx, |panel, window, cx| {
+            panel.set_zoomed(true, window, cx);
+        });
+
+        cx.update(|window, cx| {
+            markdown.read(cx).focus_handle(cx).focus(window, cx);
+        });
+
+        workspace.update_in(cx, |workspace, window, cx| {
+            let dock = match agent_panel_dock_position(cx) {
+                DockPosition::Left => workspace.left_dock(),
+                DockPosition::Bottom => workspace.bottom_dock(),
+                DockPosition::Right => workspace.right_dock(),
+            };
+
+            assert!(
+                dock.read(cx).is_open(),
+                "Agent dock should be open before pane focus"
+            );
+            assert!(
+                panel.is_zoomed(window, cx),
+                "Agent panel should start zoomed"
+            );
+        });
+
+        pane.update_in(cx, |_, _, cx| {
+            cx.emit(workspace::pane::Event::Focus);
+        });
+
+        workspace.update_in(cx, |workspace, window, cx| {
+            let dock = match agent_panel_dock_position(cx) {
+                DockPosition::Left => workspace.left_dock(),
+                DockPosition::Bottom => workspace.bottom_dock(),
+                DockPosition::Right => workspace.right_dock(),
+            };
+
+            assert!(
+                dock.read(cx).is_open(),
+                "Agent dock should stay open when pane focus fires while reply markdown is focused"
+            );
+            assert!(
+                panel.is_zoomed(window, cx),
+                "Agent panel should stay zoomed when pane focus fires while reply markdown is focused"
             );
         });
     }
