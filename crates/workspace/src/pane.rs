@@ -3600,6 +3600,11 @@ impl Pane {
                 this.drag_split_direction = None;
                 this.handle_external_paths_drop(paths, window, cx)
             }))
+            .on_click(cx.listener(move |this, event: &ClickEvent, window, cx| {
+                if event.click_count() == 2 {
+                    window.dispatch_action(this.double_click_dispatch_action.boxed_clone(), cx);
+                }
+            }))
     }
 
     pub fn render_menu_overlay(menu: &Entity<ContextMenu>) -> Div {
