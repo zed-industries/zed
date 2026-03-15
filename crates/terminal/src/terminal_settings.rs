@@ -45,6 +45,7 @@ pub struct TerminalSettings {
     pub detect_venv: VenvSettings,
     pub max_scroll_history_lines: Option<usize>,
     pub scroll_multiplier: f32,
+    pub scroll_on_output: bool,
     pub toolbar: Toolbar,
     pub scrollbar: ScrollbarSettings,
     pub minimum_contrast: f32,
@@ -111,6 +112,7 @@ impl settings::Settings for TerminalSettings {
             default_height: px(user_content.default_height.unwrap()),
             detect_venv: project_content.detect_venv.unwrap(),
             scroll_multiplier: user_content.scroll_multiplier.unwrap(),
+            scroll_on_output: user_content.scroll_on_output.unwrap(),
             max_scroll_history_lines: user_content.max_scroll_history_lines,
             toolbar: Toolbar {
                 breadcrumbs: user_content.toolbar.unwrap().breadcrumbs.unwrap(),

@@ -155,6 +155,16 @@ pub struct TerminalSettingsContent {
     pub toolbar: Option<TerminalToolbarContent>,
     /// Scrollbar-related settings
     pub scrollbar: Option<ScrollbarSettingsContent>,
+    /// Whether the terminal should automatically scroll to the bottom when new
+    /// output is produced.
+    ///
+    /// When set to `false`, the terminal holds its current scroll position while
+    /// new output writes below, allowing you to scroll down when ready. This is
+    /// particularly useful when working with AI coding tools that produce long
+    /// structured output.
+    ///
+    /// Default: true
+    pub scroll_on_output: Option<bool>,
     /// The minimum APCA perceptual contrast between foreground and background colors.
     ///
     /// APCA (Accessible Perceptual Contrast Algorithm) is more accurate than WCAG 2.x,
