@@ -4658,6 +4658,94 @@ mod tests {
         );
     }
 
+    // Test that Stopped is emitted for every completed turn, even when a second send()
+    // displaces an active turn. This is the invariant Helix depends on: every
+    // AcpThread::send() call must eventually produce AcpThreadEvent::Stopped so that
+    // Helix can pop the FIFO queue (message_completed) and route the next response correctly.
+    #[gpui::test]
+    async fn test_second_send_during_active_turn_emits_stopped_for_both_turns(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+
+        // Block the first handler until explicitly signalled.
+        let (first_unblock_tx, first_unblock_rx) = futures::channel::oneshot::channel::<()>();
+        let first_unblock_rx = RefCell::new(Some(first_unblock_rx));
+
+        let connection = Rc::new(FakeAgentConnection::new().on_user_message({
+            move |params, _thread, _cx| {
+                let first_unblock_rx = first_unblock_rx.borrow_mut().take();
+                let is_first = params
+                    .prompt
+                    .iter()
+                    .any(|c| matches!(c, acp::ContentBlock::Text(t) if t.text.contains("first")));
+                async move {
+                    if is_first {
+                        if let Some(rx) = first_unblock_rx {
+                            rx.await.ok();
+                        }
+                    }
+                    Ok(acp::PromptResponse::new(acp::StopReason::EndTurn))
+                }
+                .boxed_local()
+            }
+        }));
+
+        let thread = cx
+            .update(|cx| connection.new_session(project, Path::new(path!("/test")), cx))
+            .await
+            .unwrap();
+
+        // Count Stopped events. Helix pops the FIFO queue on each Stopped, so every
+        // turn must emit exactly one — whether it completed normally or was displaced.
+        // Rc<RefCell> is sufficient because GPUI runs everything on a single foreground thread.
+        let stopped_count = Rc::new(RefCell::new(0usize));
+        thread.update(cx, |_, cx| {
+            cx.subscribe(
+                &thread,
+                {
+                    let stopped_count = stopped_count.clone();
+                    move |_, _, event: &AcpThreadEvent, _| {
+                        if matches!(event, AcpThreadEvent::Stopped) {
+                            *stopped_count.borrow_mut() += 1;
+                        }
+                    }
+                },
+            )
+            .detach();
+        });
+
+        // Turn 1 starts and blocks inside the fake connection handler.
+        let first_turn = thread.update(cx, |thread, cx| thread.send_raw("first", cx));
+
+        // Turn 2 is sent while turn 1 is still blocked. run_turn() calls cancel() which
+        // takes ownership of turn 1's running_turn and returns a Task that resolves when
+        // turn 1 finishes. Turn 2's spawned task awaits that Task before starting, so
+        // the two turns are strictly serialised: turn 1 completes, then turn 2 begins.
+        let second_turn = thread.update(cx, |thread, cx| thread.send_raw("second", cx));
+
+        assert_eq!(
+            thread.read_with(cx, |t, _| t.turn_id),
+            2,
+            "turn_id should advance to 2 after second send"
+        );
+
+        // Unblock turn 1. Turn 2 will start only after turn 1's send_task finishes.
+        first_unblock_tx.send(()).ok();
+
+        first_turn.await.unwrap();
+        second_turn.await.unwrap();
+
+        assert_eq!(
+            *stopped_count.borrow(),
+            2,
+            "Stopped must be emitted once per turn: once for the displaced turn 1 and once for turn 2"
+        );
+    }
+
     #[gpui::test]
     async fn test_send_returns_cancelled_response_and_marks_tools_as_cancelled(
         cx: &mut TestAppContext,

@@ -3,7 +3,7 @@
 // with an in-memory store, so the same message processing code runs in both
 // tests and production.
 //
-// The server implements 7 phases:
+// The server implements 8 phases:
 //
 //	Phase 1: Basic thread creation (new chat_message, no thread ID)
 //	Phase 2: Follow-up on existing thread (same thread ID)
@@ -12,6 +12,7 @@
 //	Phase 5: Simulate user input (Zed -> Helix sync direction)
 //	Phase 6: Query UI state (verify Zed reports active thread)
 //	Phase 7: Open thread + follow-up (open_thread command then chat_message)
+//	Phase 8: Mid-stream interrupt (send follow-up while previous response is streaming)
 //
 // Exit codes: 0 = all tests passed, 1 = test failure
 package main
@@ -59,6 +60,11 @@ type testDriver struct {
 	// Track timing for MCP tools wait validation
 	phase1ChatSentAt    time.Time // when we sent the chat_message for phase 1
 	phase1ThreadCreated time.Time // when we received thread_created for phase 1
+
+	// Phase 8: mid-stream interrupt state
+	phase8ThreadID      string // thread ID created in phase 8
+	phase8InterruptSent bool   // whether we have already sent the interrupt
+	phase8Completions   int    // number of message_completed events received for phase 8 thread
 }
 
 func newTestDriver(srv *server.HelixAPIServer, store *memorystore.MemoryStore) *testDriver {
@@ -95,6 +101,27 @@ func (d *testDriver) syncEventCallback(sessionID string, syncMsg *types.SyncMess
 			}
 			d.threadIDs = append(d.threadIDs, acpThreadID)
 			log.Printf("[test-server] Thread #%d: %s (event=%s)", len(d.threadIDs), truncate(acpThreadID, 16), syncMsg.EventType)
+			// Capture the thread created for phase 8 so we can send the interrupt to it.
+			if d.phase == 8 && d.phase8ThreadID == "" {
+				d.phase8ThreadID = acpThreadID
+				log.Printf("[test-server] Phase 8: Captured thread ID: %s", truncate(acpThreadID, 16))
+			}
+		}
+
+	case "message_added":
+		// Phase 8: send an interrupt as soon as the first assistant token arrives for
+		// the phase 8 thread. This guarantees ACP has started generating (running_turn
+		// is set), so the interrupt will properly cancel the active turn via run_turn().
+		if d.phase == 8 && !d.phase8InterruptSent {
+			role, _ := syncMsg.Data["role"].(string)
+			threadID, _ := syncMsg.Data["acp_thread_id"].(string)
+			if role == "assistant" && threadID == d.phase8ThreadID {
+				d.phase8InterruptSent = true
+				d.mu.Unlock()
+				log.Printf("[test-server] Phase 8: First assistant token arrived, sending interrupt to %s", truncate(threadID, 16))
+				d.sendChatMessage("Actually just say 'hello'.", "req-phase8-interrupt", "zed-agent", threadID)
+				return
+			}
 		}
 
 	case "message_completed":
@@ -102,6 +129,23 @@ func (d *testDriver) syncEventCallback(sessionID string, syncMsg *types.SyncMess
 		requestID, _ := syncMsg.Data["request_id"].(string)
 		d.completions[acpThreadID] = append(d.completions[acpThreadID], requestID)
 		currentPhase := d.phase
+
+		// Phase 8 needs two completions before the test can end: one for the cancelled
+		// initial turn and one for the interrupt response.
+		if currentPhase == 8 && acpThreadID == d.phase8ThreadID {
+			d.phase8Completions++
+			completions := d.phase8Completions
+			d.mu.Unlock()
+			log.Printf("[test-server] Phase 8: Completion %d/2 for thread=%s req=%s",
+				completions, truncate(acpThreadID, 12), requestID)
+			if completions >= 2 {
+				log.Println("[test-server] Phase 8: Both turns completed (cancelled + interrupt)")
+				time.Sleep(500 * time.Millisecond)
+				close(d.done)
+			}
+			return
+		}
+
 		d.mu.Unlock()
 
 		log.Printf("[test-server] Completed: thread=%s req=%s (phase %d)",
@@ -229,8 +273,7 @@ func (d *testDriver) advanceAfterCompletion(completedPhase int) {
 		d.mu.Lock()
 		d.phase = 8
 		d.mu.Unlock()
-		time.Sleep(500 * time.Millisecond)
-		close(d.done)
+		d.runPhase8()
 	}
 }
 
@@ -335,6 +378,20 @@ func (d *testDriver) runPhase7() {
 
 	log.Printf("[test-server] Sending follow-up to Thread B after open_thread")
 	d.sendChatMessage("What is 8 + 8? Reply with just the number.", "req-phase7", "zed-agent", tid)
+}
+
+func (d *testDriver) runPhase8() {
+	log.Println("\n==================================================")
+	log.Println("  PHASE 8: Mid-stream interrupt")
+	log.Println("==================================================")
+	// Send a question that will generate a streaming response long enough for us
+	// to send an interrupt before it completes. The syncEventCallback will fire the
+	// interrupt the moment the first assistant token arrives.
+	d.sendChatMessage(
+		"Write me a detailed explanation of recursion with three worked examples.",
+		"req-phase8-initial",
+		"zed-agent",
+	)
 }
 
 // --- Validation ---
@@ -461,11 +518,60 @@ func (d *testDriver) validate() bool {
 		errors = append(errors, "Phase 7: No message_completed for req-phase7")
 	}
 
+	// Phase 8: mid-stream interrupt
+	// We expect two message_completed events for the phase 8 thread:
+	//   1. The cancelled initial turn (ACP cancel -> Stopped -> message_completed)
+	//   2. The interrupt response (normal completion)
+	if d.phase8ThreadID == "" {
+		errors = append(errors, "Phase 8: No thread ID captured (phase 8 may not have run)")
+	} else {
+		completionsForPhase8 := len(d.completions[d.phase8ThreadID])
+		if completionsForPhase8 < 2 {
+			errors = append(errors, fmt.Sprintf(
+				"Phase 8: Expected 2 message_completed events (cancelled turn + interrupt), got %d",
+				completionsForPhase8))
+		} else {
+			log.Printf("[test-server] Phase 8: Received %d completions for phase 8 thread (correct)", completionsForPhase8)
+		}
+	}
+	if !d.hasCompletion("req-phase8-interrupt") {
+		errors = append(errors, "Phase 8: No message_completed for req-phase8-interrupt")
+	}
+
+	// Verify ordering: no assistant tokens for the interrupt arrived before the first
+	// message_completed for the phase 8 thread. This is the core invariant: the FIFO
+	// queue on the Helix side requires message_completed(I_A) before any I_B tokens.
+	if d.phase8ThreadID != "" && d.hasCompletion("req-phase8-interrupt") {
+		seenFirstCompletion := false
+		orderingViolation := false
+		for _, e := range d.events {
+			threadID, _ := e.Data["acp_thread_id"].(string)
+			if threadID != d.phase8ThreadID {
+				continue
+			}
+			if e.EventType == "message_completed" && !seenFirstCompletion {
+				seenFirstCompletion = true
+			}
+			if e.EventType == "message_added" && !seenFirstCompletion {
+				role, _ := e.Data["role"].(string)
+				reqID, _ := e.Data["request_id"].(string)
+				if role == "assistant" && reqID == "req-phase8-interrupt" {
+					orderingViolation = true
+				}
+			}
+		}
+		if orderingViolation {
+			errors = append(errors, "Phase 8: Interrupt assistant tokens arrived before the first message_completed (FIFO ordering violated)")
+		} else {
+			log.Println("[test-server] Phase 8: Ordering correct — interrupt tokens arrived after first message_completed")
+		}
+	}
+
 	// Too many threads (follow-ups should not create new threads)
-	// Phases 1, 3 each create one thread = 2 threads total.
-	// Phases 2, 4, 5, 7 use existing threads.
-	if len(threadCreatedEvents) > 2 {
-		errors = append(errors, fmt.Sprintf("Too many thread_created events (%d, expected 2)", len(threadCreatedEvents)))
+	// Phases 1, 3, 8 each create one thread = 3 threads total.
+	// Phases 2, 4, 5, 7 use existing threads. Phase 8 interrupt uses the phase 8 thread.
+	if len(threadCreatedEvents) > 3 {
+		errors = append(errors, fmt.Sprintf("Too many thread_created events (%d, expected 3)", len(threadCreatedEvents)))
 	}
 
 	// --- STORE STATE VALIDATION (production handlers actually worked) ---
@@ -479,8 +585,8 @@ func (d *testDriver) validate() bool {
 	log.Printf("[test-server] Sessions in store: %d", len(sessions))
 	log.Printf("[test-server] Interactions in store: %d", len(interactions))
 
-	if len(sessions) < 2 {
-		errors = append(errors, fmt.Sprintf("Expected at least 2 sessions (Thread A + Thread B), got %d", len(sessions)))
+	if len(sessions) < 3 {
+		errors = append(errors, fmt.Sprintf("Expected at least 3 sessions (Thread A + Thread B + Phase 8), got %d", len(sessions)))
 	}
 
 	// Check that sessions have ZedThreadID metadata
@@ -492,8 +598,8 @@ func (d *testDriver) validate() bool {
 				truncate(s.ID, 12), truncate(s.Metadata.ZedThreadID, 12), s.Owner, s.Name)
 		}
 	}
-	if sessionsWithThread < 2 {
-		errors = append(errors, fmt.Sprintf("Expected at least 2 sessions with ZedThreadID, got %d", sessionsWithThread))
+	if sessionsWithThread < 3 {
+		errors = append(errors, fmt.Sprintf("Expected at least 3 sessions with ZedThreadID, got %d", sessionsWithThread))
 	}
 
 	// Check completed interactions have non-empty ResponseMessage
