@@ -1,14 +1,14 @@
 # Security scanning pipeline: SCA (dependency) + SAST (static analysis).
 #
 # Four concurrent jobs provide layered coverage:
-#   cargo-audit  — Rust-specific advisory database (RustSec)
+#   cargo-audit  — Rust-specific advisory database (RustSec) + cargo-deny license/advisory checks
 #   osv-scanner  — Broad SCA via Google's OSV database (Cargo, Docker, Python, Node)
 #   semgrep      — Fast, rules-based SAST (p/ci, p/rust, p/security-audit)
 #   codeql       — Deep semantic SAST (GitHub-native, Rust language support)
 #
 # Findings from OSV-Scanner, Semgrep, and CodeQL are uploaded as SARIF files
 # and appear in the repository's Security > Code scanning alerts UI.
-# cargo-audit results surface as CI annotations directly in pull requests.
+# cargo-audit and cargo-deny results surface as CI annotations directly in pull requests.
 
 name: Security Scanning
 on:
@@ -29,24 +29,32 @@ defaults:
     shell: bash -euo pipefail {0}
 
 jobs:
-  # ── SCA: Rust crate vulnerability audit (RustSec) ─────────────────────
-  # Uses the RustSec advisory database to flag known-vulnerable crate
-  # versions pinned in Cargo.lock. Results appear as PR annotations.
+  # ── SCA: Rust crate vulnerability audit (RustSec + cargo-deny) ────────
+  # cargo-audit checks Cargo.lock against the RustSec advisory database.
+  # cargo-deny provides additional advisory and license policy checks,
+  # configured to block on high-severity and above.
   cargo-audit:
     name: "SCA — cargo-audit"
+    if: github.repository_owner == 'zed-industries'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
 
       - name: Install cargo-binstall
-        run: curl -L --proto '=https' --tlsv1.2 -sSf https://raw.githubusercontent.com/cargo-bins/cargo-binstall/main/install-from-binstall-release.sh | bash
+        run: |
+          curl -L --proto '=https' --tlsv1.2 -sSf \
+            https://raw.githubusercontent.com/cargo-bins/cargo-binstall/v1.12.3/install-from-binstall-release.sh \
+            | bash
 
-      - name: Install cargo-audit
-        run: cargo binstall cargo-audit --no-confirm --locked
+      - name: Install cargo-audit and cargo-deny
+        run: cargo binstall cargo-audit cargo-deny --no-confirm --locked
 
       - name: Run cargo-audit
         run: cargo audit
+
+      - name: Run cargo-deny (advisories)
+        run: cargo deny check advisories
 
   # ── SCA: Broad dependency scanning (OSV) ──────────────────────────────
   # Google's OSV-Scanner checks Cargo.lock, Dockerfiles, pyproject.toml,
@@ -54,13 +62,14 @@ jobs:
   # SARIF report uploaded to GitHub Code Scanning.
   osv-scanner:
     name: "SCA — OSV-Scanner"
+    if: github.repository_owner == 'zed-industries'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
 
       - name: Run OSV-Scanner
-        uses: google/osv-scanner-action/osv-scanner-action@v2.3.3
+        uses: google/osv-scanner-action/osv-scanner-action@9a8bc41b9d6a0fcd5e2bed44b39aa7cca8ea44a3 # v2.3.3
         with:
           scan-args: |-
             --recursive
@@ -70,7 +79,7 @@ jobs:
         continue-on-error: true
 
       - name: Upload SARIF
-        uses: github/codeql-action/upload-sarif@v3
+        uses: github/codeql-action/upload-sarif@820e316d04456ee9c0aa26dfa4c22ad1ce68f8ee # v3
         if: always()
         with:
           sarif_file: osv-results.sarif
@@ -82,13 +91,14 @@ jobs:
   # Produces a SARIF report uploaded to GitHub Code Scanning.
   semgrep:
     name: "SAST — Semgrep"
+    if: github.repository_owner == 'zed-industries'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
 
       - name: Install Semgrep
-        run: python3 -m pip install semgrep
+        run: python3 -m pip install semgrep==1.155.0
 
       - name: Run Semgrep
         run: |
@@ -102,7 +112,7 @@ jobs:
         continue-on-error: true
 
       - name: Upload SARIF
-        uses: github/codeql-action/upload-sarif@v3
+        uses: github/codeql-action/upload-sarif@820e316d04456ee9c0aa26dfa4c22ad1ce68f8ee # v3
         if: always()
         with:
           sarif_file: semgrep-results.sarif
@@ -114,18 +124,19 @@ jobs:
   # analysis) so no compilation is required.
   codeql:
     name: "SAST — CodeQL"
+    if: github.repository_owner == 'zed-industries'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
 
       - name: Initialize CodeQL
-        uses: github/codeql-action/init@v3
+        uses: github/codeql-action/init@820e316d04456ee9c0aa26dfa4c22ad1ce68f8ee # v3
         with:
           languages: rust
           build-mode: none
 
       - name: Perform CodeQL Analysis
-        uses: github/codeql-action/analyze@v3
+        uses: github/codeql-action/analyze@820e316d04456ee9c0aa26dfa4c22ad1ce68f8ee # v3
         with:
           category: codeql-rust
