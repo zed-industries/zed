@@ -1194,6 +1194,7 @@ impl AgentPanel {
                     this.connection_store.update(cx, |store, _| {
                         store.disconnect_external_agents();
                     });
+                    this.serialize(cx);
                     cx.emit(PanelEvent::Close);
                 }
                 cx.notify();
@@ -6062,6 +6063,97 @@ mod tests {
             "AgentConnectionEntry should have been dropped after disabling AI, \
              confirming the Rc<dyn AgentConnection> refcount reached zero"
         );
+    }
+
+    #[gpui::test]
+    async fn test_disable_ai_clears_serialized_last_active_thread(cx: &mut TestAppContext) {
+        init_test(cx);
+        cx.update(|cx| {
+            cx.update_flags(true, vec!["agent-v2".to_string()]);
+            agent::ThreadStore::init_global(cx);
+            language_model::LanguageModelRegistry::test(cx);
+        });
+
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs.clone(), [], cx).await;
+
+        let multi_workspace =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+
+        let workspace = multi_workspace
+            .read_with(cx, |mw, _cx| mw.workspace().clone())
+            .unwrap();
+
+        workspace.update(cx, |workspace, _cx| {
+            workspace.set_random_database_id();
+        });
+
+        let mut cx = VisualTestContext::from_window(multi_workspace.into(), cx);
+
+        let panel = workspace.update_in(&mut cx, |workspace, window, cx| {
+            let text_thread_store = cx.new(|cx| TextThreadStore::fake(project.clone(), cx));
+            cx.new(|cx| AgentPanel::new(workspace, text_thread_store, None, window, cx))
+        });
+
+        // Open an external thread and send a message so there is an active AcpThread.
+        panel.update_in(&mut cx, |panel, window, cx| {
+            panel.open_external_thread_with_server(
+                Rc::new(StubAgentServer::default_response()),
+                window,
+                cx,
+            );
+        });
+        cx.run_until_parked();
+
+        send_message(&panel, &mut cx);
+
+        // Flush the active session ID to the database.
+        panel.update(&mut cx, |panel, cx| panel.serialize(cx));
+        cx.run_until_parked();
+
+        // Sanity-check: the DB round-trip works before disable_ai is involved.
+        let prompt_builder = Arc::new(prompt_store::PromptBuilder::new(None).unwrap());
+        let async_cx = cx.update(|window, cx| window.to_async(cx));
+        let loaded_panel =
+            AgentPanel::load(workspace.downgrade(), prompt_builder.clone(), async_cx)
+                .await
+                .expect("panel load should succeed");
+        cx.run_until_parked();
+
+        loaded_panel.read_with(&cx, |panel, _cx| {
+            assert!(
+                panel.active_connection_view().is_some(),
+                "sanity check: active thread should be restored from DB before disable_ai"
+            );
+        });
+        drop(loaded_panel);
+
+        // Register DisableAiSettings and set disable_ai = true.
+        cx.update(|_, cx| {
+            DisableAiSettings::register(cx);
+        });
+        cx.update(|_, cx| {
+            DisableAiSettings::override_global(DisableAiSettings { disable_ai: true }, cx);
+        });
+        // With the fix, serialize(cx) fires inside the observer and the background task
+        // saves last_active_thread = None to the database.
+        cx.run_until_parked();
+
+        // Load a fresh panel and assert it has no active connection view.
+        let async_cx = cx.update(|window, cx| window.to_async(cx));
+        let loaded_after_disable =
+            AgentPanel::load(workspace.downgrade(), prompt_builder.clone(), async_cx)
+                .await
+                .expect("panel load after disable should succeed");
+        cx.run_until_parked();
+
+        loaded_after_disable.read_with(&cx, |panel, _cx| {
+            assert!(
+                panel.active_connection_view().is_none(),
+                "after disable_ai, the serialized last_active_thread should be None \
+                 so no connection view is restored on next load"
+            );
+        });
     }
 
     #[gpui::test]
