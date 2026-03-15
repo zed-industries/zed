@@ -6,8 +6,8 @@
 //!
 //! See: docs/ios-port-plan.md for full architecture details.
 
-// Phase 0: Minimal entry point that proves the build pipeline works.
-// Phase 1+: Initialize GPUI with IosPlatform, create windows, etc.
+#[cfg(target_os = "ios")]
+use gpui_ios::start_rendering;
 
 /// Main entry point called by AppDelegate.swift after UIApplicationMain.
 ///
@@ -15,9 +15,8 @@
 /// Called from Swift via C FFI. Must be called exactly once on the main thread.
 #[unsafe(no_mangle)]
 pub extern "C" fn zed_ios_main() {
-    // TODO Phase 0: Just prove this gets called without crashing.
-    // TODO Phase 1: Initialize GPUI with IosPlatform, start the async executor.
-    // TODO Phase 2: Show the connection manager UI.
+    // TODO Phase 2: Initialize GPUI with IosPlatform, start the async executor,
+    // show the connection manager UI.
 }
 
 /// Called by SceneDelegate.swift when a new UIWindowScene activates.
@@ -26,8 +25,12 @@ pub extern "C" fn zed_ios_main() {
 /// Called from Swift via C FFI. `scene_id` must be a valid null-terminated UTF-8 string.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn zed_ios_open_window(_scene_id: *const std::ffi::c_char) {
-    // TODO Phase 1: Create a new GPUI window backed by the UIWindowScene.
-    // TODO Phase 4: State restoration — reconnect to the right host/directory.
+    // Phase 1 smoke test: boot Metal and render a solid blue frame to verify
+    // the Metal renderer → CAMetalLayer → UIView → UIWindow pipeline works.
+    #[cfg(target_os = "ios")]
+    if let Err(err) = start_rendering() {
+        log::error!("start_rendering failed: {err:?}");
+    }
 }
 
 /// Called by SceneDelegate.swift when a UIWindowScene disconnects.

@@ -323,6 +323,38 @@ impl MetalRenderer {
         }
     }
 
+    /// Clears the drawable to the configured clear color without rendering any scene.
+    /// Used from `start_rendering()` to smoke-test the Metal pipeline before the
+    /// full GPUI app context is available.
+    pub(crate) fn draw_clear(&mut self) {
+        let layer = match &self.layer {
+            Some(l) => l.clone(),
+            None => return,
+        };
+        let drawable = match layer.next_drawable() {
+            Some(d) => d,
+            None => return,
+        };
+        let command_buffer = self.command_queue.new_command_buffer();
+        let viewport_size = layer.drawable_size();
+        let viewport_size: Size<DevicePixels> = size(
+            (viewport_size.width.ceil() as i32).into(),
+            (viewport_size.height.ceil() as i32).into(),
+        );
+        let command_encoder = new_command_encoder_for_texture(
+            command_buffer,
+            drawable.texture(),
+            viewport_size,
+            |color_attachment| {
+                color_attachment.set_load_action(metal::MTLLoadAction::Clear);
+                color_attachment.set_clear_color(metal::MTLClearColor::new(0., 0., 1., 1.));
+            },
+        );
+        command_encoder.end_encoding();
+        command_buffer.present_drawable(drawable);
+        command_buffer.commit();
+    }
+
     pub fn draw(&mut self, scene: &Scene) {
         let layer = match &self.layer {
             Some(l) => l.clone(),
@@ -425,8 +457,9 @@ impl MetalRenderer {
             viewport_size,
             |color_attachment| {
                 color_attachment.set_load_action(metal::MTLLoadAction::Clear);
-                // Opaque clear — alpha = 1.0.
-                color_attachment.set_clear_color(metal::MTLClearColor::new(0., 0., 0., 1.));
+                // Blue clear color so we can visually confirm the Metal renderer is live.
+                // TODO: change to black (0., 0., 0., 1.) once rendering is verified.
+                color_attachment.set_clear_color(metal::MTLClearColor::new(0., 0., 1., 1.));
             },
         );
 

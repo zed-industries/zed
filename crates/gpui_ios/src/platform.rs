@@ -1,19 +1,22 @@
 use crate::{
     IosDispatcher, IosDisplay, IosKeyboardLayout, IosWindow, ios_keyboard_mapper,
+    display_link::DisplayLink,
     main_screen_bounds_and_scale,
-    metal_renderer::InstanceBufferPool,
+    metal_renderer::{InstanceBufferPool, MetalRenderer},
 };
 use anyhow::Result;
 use futures::channel::oneshot;
 use gpui::{
-    Action, AnyWindowHandle, BackgroundExecutor, ClipboardItem, CursorStyle, ForegroundExecutor,
-    Keymap, Menu, MenuItem, NoopTextSystem, PathPromptOptions, Platform, PlatformDisplay,
-    PlatformKeyboardLayout, PlatformKeyboardMapper, PlatformTextSystem, PlatformWindow, Task,
-    ThermalState, WindowAppearance, WindowParams,
+    Action, AnyWindowHandle, BackgroundExecutor, ClipboardItem, CursorStyle, DevicePixels,
+    ForegroundExecutor, Keymap, Menu, MenuItem, NoopTextSystem, PathPromptOptions, Platform,
+    PlatformDisplay, PlatformKeyboardLayout, PlatformKeyboardMapper, PlatformTextSystem,
+    PlatformWindow, Task, ThermalState, WindowAppearance, WindowParams,
 };
+use objc::{class, msg_send, runtime::Object, sel, sel_impl};
 use parking_lot::Mutex;
 use std::{
     cell::RefCell,
+    ffi::c_void,
     path::{Path, PathBuf},
     rc::Rc,
     sync::Arc,
@@ -281,4 +284,100 @@ impl Platform for IosPlatform {
     fn on_keyboard_layout_change(&self, callback: Box<dyn FnMut()>) {
         self.callbacks.lock().keyboard_layout_change = Some(callback);
     }
+}
+
+// ─── Smoke-test rendering ─────────────────────────────────────────────────────
+
+struct SmokeTestState {
+    renderer: MetalRenderer,
+    _display_link: DisplayLink,
+}
+
+thread_local! {
+    static SMOKE_TEST: RefCell<Option<SmokeTestState>> = RefCell::new(None);
+}
+
+/// Boot the Metal renderer and start the CADisplayLink frame loop, rendering a
+/// solid blue frame on every vsync.
+///
+/// This exercises the full Metal→UIKit pipeline (Metal renderer → CAMetalLayer
+/// sublayer → UIView → UIWindow) without requiring a full GPUI `App` context.
+/// Call this from `zed_ios_open_window` during Phase 1 development.
+///
+/// # Safety
+/// Must be called on the main thread after UIKit has created the key UIWindow.
+pub fn start_rendering() -> Result<()> {
+    let pool = Arc::new(Mutex::new(InstanceBufferPool::default()));
+    let mut renderer = MetalRenderer::new(pool);
+
+    // ── Attach the Metal layer to the key UIWindow ──────────────────────────
+    let (bounds, scale_factor) = main_screen_bounds_and_scale();
+    let device_width = (f32::from(bounds.size.width) * scale_factor).round() as i32;
+    let device_height = (f32::from(bounds.size.height) * scale_factor).round() as i32;
+
+    #[repr(C)]
+    #[derive(Clone, Copy, Default)]
+    struct CGPoint { x: f64, y: f64 }
+    #[repr(C)]
+    #[derive(Clone, Copy, Default)]
+    struct CGSize { width: f64, height: f64 }
+    #[repr(C)]
+    #[derive(Clone, Copy, Default)]
+    struct CGRect { origin: CGPoint, size: CGSize }
+
+    unsafe {
+        let app: *mut Object = msg_send![class!(UIApplication), sharedApplication];
+        let key_window: *mut Object = msg_send![app, keyWindow];
+        anyhow::ensure!(!key_window.is_null(), "no key UIWindow");
+
+        let window_bounds: CGRect = msg_send![key_window, bounds];
+
+        let superclass = class!(UIView);
+        use objc::declare::ClassDecl;
+        use std::sync::OnceLock;
+        static VIEW_CLASS: OnceLock<&'static objc::runtime::Class> = OnceLock::new();
+        let view_class = VIEW_CLASS.get_or_init(|| {
+            ClassDecl::new("ZedSmokeView", superclass)
+                .expect("ZedSmokeView already registered")
+                .register()
+        });
+
+        let view: *mut Object = msg_send![*view_class, alloc];
+        let view: *mut Object = msg_send![view, initWithFrame: window_bounds];
+        let fill_mask: usize = (1 << 1) | (1 << 4);
+        let _: () = msg_send![view, setAutoresizingMask: fill_mask];
+
+        let layer_ptr = renderer.layer_ptr();
+        let layer_frame = CGRect { origin: CGPoint::default(), size: window_bounds.size };
+        let _: () = msg_send![layer_ptr, setFrame: layer_frame];
+        let view_layer: *mut Object = msg_send![view, layer];
+        let _: () = msg_send![view_layer, addSublayer: layer_ptr];
+        let _: () = msg_send![key_window, addSubview: view];
+
+        renderer.update_drawable_size(gpui::size(
+            DevicePixels(device_width),
+            DevicePixels(device_height),
+        ));
+    }
+
+    // ── Start the CADisplayLink frame loop ───────────────────────────────────
+    extern "C" fn on_frame(_data: *mut c_void) {
+        SMOKE_TEST.with(|state| {
+            if let Some(state) = state.borrow_mut().as_mut() {
+                state.renderer.draw_clear();
+            }
+        });
+    }
+
+    let display_link = DisplayLink::new(std::ptr::null_mut(), on_frame);
+    display_link.start();
+
+    SMOKE_TEST.with(|state| {
+        *state.borrow_mut() = Some(SmokeTestState {
+            renderer,
+            _display_link: display_link,
+        });
+    });
+
+    Ok(())
 }

@@ -22,4 +22,4 @@ pub(crate) use display::*;
 pub(crate) use keyboard::*;
 pub(crate) use window::IosWindow;
 
-pub use platform::IosPlatform;
+pub use platform::{IosPlatform, start_rendering};
