@@ -608,6 +608,10 @@ impl GitExcludeOverride {
         content.push_str(self.added_excludes.as_ref().unwrap());
         content.push_str(Self::END_BLOCK_MARKER);
 
+        if let Some(parent) = self.git_exclude_path.parent() {
+            smol::fs::create_dir_all(parent).await?;
+        }
+
         smol::fs::write(&self.git_exclude_path, content).await?;
         Ok(())
     }
@@ -1030,10 +1034,19 @@ impl RealGitRepository {
     }
 
     fn git_binary(&self) -> Result<GitBinary> {
+        let repository = self.repository.lock();
+        let git_dir = repository.path().to_path_buf();
+        let working_directory = repository
+            .workdir()
+            .context("Can't run git commands without a working directory")?
+            .to_path_buf();
+
+        drop(repository);
+
         Ok(GitBinary::new(
             self.any_git_binary_path.clone(),
-            self.working_directory()
-                .with_context(|| "Can't run git commands without a working directory")?,
+            working_directory,
+            Some(git_dir),
             self.executor.clone(),
             self.is_trusted(),
         ))
@@ -1088,6 +1101,7 @@ pub async fn get_git_committer(cx: &AsyncApp) -> GitCommitter {
     let git = GitBinary::new(
         git_binary_path.unwrap_or(PathBuf::from("git")),
         paths::home_dir().clone(),
+        None,
         cx.background_executor().clone(),
         true,
     );
@@ -2255,6 +2269,7 @@ impl GitRepository for RealGitRepository {
             let git = GitBinary::new(
                 git_binary_path,
                 working_directory,
+                None,
                 executor.clone(),
                 is_trusted,
             );
@@ -2297,6 +2312,7 @@ impl GitRepository for RealGitRepository {
             let git = GitBinary::new(
                 git_binary_path,
                 working_directory,
+                None,
                 executor.clone(),
                 is_trusted,
             );
@@ -2338,6 +2354,7 @@ impl GitRepository for RealGitRepository {
             let git = GitBinary::new(
                 git_binary_path,
                 working_directory,
+                None,
                 executor.clone(),
                 is_trusted,
             );
@@ -2990,6 +3007,7 @@ async fn exclude_files(git: &GitBinary) -> Result<GitExcludeOverride> {
 pub(crate) struct GitBinary {
     git_binary_path: PathBuf,
     working_directory: PathBuf,
+    git_dir: Option<PathBuf>,
     executor: BackgroundExecutor,
     index_file_path: Option<PathBuf>,
     envs: HashMap<String, String>,
@@ -3000,17 +3018,25 @@ impl GitBinary {
     pub(crate) fn new(
         git_binary_path: PathBuf,
         working_directory: PathBuf,
+        git_dir: Option<PathBuf>,
         executor: BackgroundExecutor,
         is_trusted: bool,
     ) -> Self {
         Self {
             git_binary_path,
             working_directory,
+            git_dir,
             executor,
             index_file_path: None,
             envs: HashMap::default(),
             is_trusted,
         }
+    }
+
+    fn git_dir(&self) -> PathBuf {
+        self.git_dir
+            .clone()
+            .unwrap_or_else(|| self.working_directory.join(".git"))
     }
 
     async fn list_untracked_files(&self) -> Result<Vec<PathBuf>> {
@@ -3051,12 +3077,9 @@ impl GitBinary {
 
         // Copy the default index file so that Git doesn't have to rebuild the
         // whole index from scratch. This might fail if this is an empty repository.
-        smol::fs::copy(
-            self.working_directory.join(".git").join("index"),
-            &index_file_path,
-        )
-        .await
-        .ok();
+        smol::fs::copy(self.git_dir().join("index"), &index_file_path)
+            .await
+            .ok();
 
         self.index_file_path = Some(index_file_path.clone());
         let result = f(self).await;
@@ -3070,19 +3093,13 @@ impl GitBinary {
     }
 
     pub async fn with_exclude_overrides(&self) -> Result<GitExcludeOverride> {
-        let path = self
-            .working_directory
-            .join(".git")
-            .join("info")
-            .join("exclude");
+        let path = self.git_dir().join("info").join("exclude");
 
         GitExcludeOverride::new(path).await
     }
 
     fn path_for_index_id(&self, id: Uuid) -> PathBuf {
-        self.working_directory
-            .join(".git")
-            .join(format!("index-{}.tmp", id))
+        self.git_dir().join(format!("index-{}.tmp", id))
     }
 
     pub async fn run<S>(&self, args: &[S]) -> Result<String>
@@ -3405,6 +3422,7 @@ mod tests {
         let git = GitBinary::new(
             PathBuf::from("git"),
             dir.path().to_path_buf(),
+            None,
             cx.executor(),
             false,
         );
@@ -3418,6 +3436,7 @@ mod tests {
         let git = GitBinary::new(
             PathBuf::from("git"),
             dir.path().to_path_buf(),
+            None,
             cx.executor(),
             false,
         );
@@ -3437,6 +3456,7 @@ mod tests {
         let git = GitBinary::new(
             PathBuf::from("git"),
             dir.path().to_path_buf(),
+            None,
             cx.executor(),
             false,
         );
@@ -3462,6 +3482,7 @@ mod tests {
         let git = GitBinary::new(
             PathBuf::from("git"),
             dir.path().to_path_buf(),
+            None,
             cx.executor(),
             true,
         );
@@ -3480,6 +3501,7 @@ mod tests {
         let git = GitBinary::new(
             PathBuf::from("git"),
             dir.path().to_path_buf(),
+            None,
             cx.executor(),
             true,
         );
@@ -3582,6 +3604,89 @@ mod tests {
         //         .ok(),
         //     None
         // );
+    }
+
+    #[gpui::test]
+    async fn test_checkpoint_in_linked_worktree(cx: &mut TestAppContext) {
+        disable_git_global_config();
+
+        cx.executor().allow_parking();
+
+        let main_dir = tempfile::tempdir().unwrap();
+        git2::Repository::init(main_dir.path()).unwrap();
+
+        let file_path = main_dir.path().join("file");
+        smol::fs::write(&file_path, "initial").await.unwrap();
+
+        let main_repo = RealGitRepository::new(
+            &main_dir.path().join(".git"),
+            None,
+            Some("git".into()),
+            cx.executor(),
+        )
+        .unwrap();
+
+        main_repo
+            .stage_paths(vec![repo_path("file")], Arc::new(HashMap::default()))
+            .await
+            .unwrap();
+
+        main_repo
+            .commit(
+                "Initial commit".into(),
+                None,
+                CommitOptions::default(),
+                AskPassDelegate::new(&mut cx.to_async(), |_, _, _| {}),
+                Arc::new(checkpoint_author_envs()),
+            )
+            .await
+            .unwrap();
+
+        // Create a linked worktree using the repository API.
+        let worktree_parent = tempfile::tempdir().unwrap();
+        main_repo
+            .create_worktree(
+                "feature-branch".to_string(),
+                worktree_parent.path().to_path_buf(),
+                Some("HEAD".to_string()),
+            )
+            .await
+            .unwrap();
+
+        let worktree_path = worktree_parent.path().join("feature-branch");
+
+        // The linked worktree's .git is a file, not a directory.
+        let worktree_dot_git = worktree_path.join(".git");
+        assert!(
+            worktree_dot_git.is_file(),
+            ".git in linked worktree should be a file"
+        );
+
+        let worktree_repo =
+            RealGitRepository::new(&worktree_dot_git, None, Some("git".into()), cx.executor())
+                .unwrap();
+
+        // Modify a file in the worktree and create a checkpoint.
+        let worktree_file = worktree_path.join("file");
+        smol::fs::write(&worktree_file, "modified in worktree")
+            .await
+            .unwrap();
+
+        let checkpoint = worktree_repo.checkpoint().await.unwrap();
+
+        // Make further changes after the checkpoint.
+        smol::fs::write(&worktree_file, "after checkpoint")
+            .await
+            .unwrap();
+
+        // Restore the checkpoint — this exercises with_temp_index and
+        // with_exclude_overrides which previously used hardcoded .git/ paths.
+        worktree_repo.restore_checkpoint(checkpoint).await.unwrap();
+
+        assert_eq!(
+            smol::fs::read_to_string(&worktree_file).await.unwrap(),
+            "modified in worktree"
+        );
     }
 
     #[gpui::test]
@@ -4386,7 +4491,8 @@ mod tests {
                 .spawn(async move {
                     let git_binary_path = git_binary_path.clone();
                     let working_directory = working_directory?;
-                    let git = GitBinary::new(git_binary_path, working_directory, executor, true);
+                    let git =
+                        GitBinary::new(git_binary_path, working_directory, None, executor, true);
                     git.run(&["gc", "--prune"]).await?;
                     Ok(())
                 })
