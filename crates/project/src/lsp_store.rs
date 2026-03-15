@@ -1714,7 +1714,14 @@ impl LocalLspStore {
                     })?;
                     let diff = prettier_store::format_with_prettier(&prettier, &buffer.handle, cx)
                         .await
-                        .transpose()?;
+                        .transpose();
+                    let diff = match diff {
+                        Ok(diff) => diff,
+                        Err(err) => {
+                            zlog::error!(logger => "Prettier formatting failed, skipping: {err:#}");
+                            continue;
+                        }
+                    };
                     let Some(diff) = diff else {
                         zlog::trace!(logger => "No changes");
                         continue;
@@ -1743,7 +1750,14 @@ impl LocalLspStore {
                     .await
                     .with_context(|| {
                         format!("Failed to format buffer via external command: {}", command)
-                    })?;
+                    });
+                    let diff = match diff {
+                        Ok(diff) => diff,
+                        Err(err) => {
+                            zlog::error!(logger => "External command formatting failed, skipping: {err:#}");
+                            continue;
+                        }
+                    };
                     let Some(diff) = diff else {
                         zlog::trace!(logger => "No changes");
                         continue;
@@ -1801,7 +1815,7 @@ impl LocalLspStore {
 
                     let edits = if let Some(ranges) = buffer.ranges.as_ref() {
                         zlog::trace!(logger => "formatting ranges");
-                        Self::format_ranges_via_lsp(
+                        match Self::format_ranges_via_lsp(
                             &lsp_store,
                             &buffer.handle,
                             ranges,
@@ -1811,10 +1825,17 @@ impl LocalLspStore {
                             cx,
                         )
                         .await
-                        .context("Failed to format ranges via language server")?
+                        .context("Failed to format ranges via language server")
+                        {
+                            Ok(edits) => edits,
+                            Err(err) => {
+                                zlog::error!(logger => "Language server range formatting failed, skipping: {err:#}");
+                                continue;
+                            }
+                        }
                     } else {
                         zlog::trace!(logger => "formatting full");
-                        Self::format_via_lsp(
+                        match Self::format_via_lsp(
                             &lsp_store,
                             &buffer.handle,
                             buffer_path_abs,
@@ -1823,7 +1844,14 @@ impl LocalLspStore {
                             cx,
                         )
                         .await
-                        .context("failed to format via language server")?
+                        .context("failed to format via language server")
+                        {
+                            Ok(edits) => edits,
+                            Err(err) => {
+                                zlog::error!(logger => "Language server formatting failed, skipping: {err:#}");
+                                continue;
+                            }
+                        }
                     };
 
                     if edits.is_empty() {
