@@ -1,5 +1,5 @@
 use std::{
-    ops::ControlFlow,
+    ops::{ControlFlow, Range},
     path::{Path, PathBuf},
     sync::Arc,
     time::Duration,
@@ -736,7 +736,7 @@ pub fn prettier_plugins_for_language(
 pub(super) async fn format_with_prettier(
     prettier_store: &WeakEntity<PrettierStore>,
     buffer: &Entity<Buffer>,
-    range_utf16: Option<std::ops::Range<usize>>,
+    range_utf16: Option<Range<usize>>,
     cx: &mut AsyncApp,
 ) -> Option<Result<language::Diff>> {
     let prettier_instance = prettier_store
