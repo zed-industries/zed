@@ -5,17 +5,23 @@
 target/
 **/target/
 node_modules/
+**/node_modules/
 
 # Version control
 .git/
 
 # Lock files — scanned separately by SCA tools (cargo-audit, OSV-Scanner)
-Cargo.lock
-pnpm-lock.yaml
+*.lock
+*-lock.yaml
+*-lock.json
 
 # Binary / non-source assets
-assets/icons/
-assets/fonts/
+assets/
+*.onnx
+*.exe
+*.icns
+*.gif
+*.txt
 
 # Test fixtures that may contain intentional vulnerable patterns
 **/test_fixtures/

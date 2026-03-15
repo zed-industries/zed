@@ -47,25 +47,25 @@ jobs:
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
 
       - name: Install cargo-audit
-        uses: taiki-e/install-action@2f0c8c3dd47cebb6a2e219d2f4782555026a7566 # v2
+        uses: taiki-e/install-action@0f9ab74041f6bc759ac72d292c10ee257bcdda7a # v2.23.0
         with:
-          tool: cargo-audit
+          tool: cargo-audit@0.22.1
 
       - name: Install cargo-deny
-        uses: taiki-e/install-action@2f0c8c3dd47cebb6a2e219d2f4782555026a7566 # v2
+        uses: taiki-e/install-action@0f9ab74041f6bc759ac72d292c10ee257bcdda7a # v2.23.0
         with:
-          tool: cargo-deny
+          tool: cargo-deny@0.19.0
 
       - name: Run cargo-audit
         run: cargo audit
 
       - name: Run cargo-deny (advisories)
         if: always()
-        run: cargo deny check advisories
+        run: cargo deny --config .github/workflows/deny.toml check advisories
 
       - name: Run cargo-deny (licenses)
         if: always()
-        run: cargo deny check licenses
+        run: cargo deny --config .github/workflows/deny.toml check licenses
 
   # ── SCA: Broad dependency scanning (OSV) ──────────────────────────────
   # Google's OSV-Scanner checks Cargo.lock, Dockerfiles, pyproject.toml,
@@ -80,7 +80,7 @@ jobs:
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
 
       - name: Run OSV-Scanner
-        uses: google/osv-scanner-action/osv-scanner-action@9a8bc41b9d6a0fcd5e2bed44b39aa7cca8ea44a3 # v2.3.3
+        uses: google/osv-scanner-action@c5996e0193a3df57d695c1b8a1dec2a4c62e8730 # v2.3.3
         with:
           scan-args: |-
             --recursive
@@ -134,15 +134,17 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
 
-      - name: Install Semgrep
-        run: python3 -m pip install semgrep==1.155.0
+      - name: Link .semgrepignore
+        run: ln -sf .github/workflows/.semgrepignore .semgrepignore
 
       - name: Run Semgrep
         run: |
+          docker run --rm -v "${PWD}:/src" -w /src semgrep/semgrep@sha256:3dab091ee3247fce7e4ed3df9f92b3bd72692c083295f53cec3f135b86404db1 \
           semgrep scan \
             --config p/ci \
             --config p/rust \
             --config p/security-audit \
+            --max-target-bytes 10000000 \
             --sarif \
             --output semgrep-results.sarif \
             .

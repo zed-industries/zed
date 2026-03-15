@@ -6,10 +6,10 @@
 # To downgrade specific advisories, add them to [advisories.ignore].
 
 [advisories]
-yanked = "warn"
+yanked = "deny"
 
 [licenses]
-unlicensed = "warn"
+unlicensed = "deny"
 allow = [
     "MIT",
     "Apache-2.0",
