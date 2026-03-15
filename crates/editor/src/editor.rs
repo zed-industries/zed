@@ -27468,7 +27468,7 @@ impl EditorSnapshot {
     pub fn render_crease_toggle(
         &self,
         buffer_row: MultiBufferRow,
-        row_contains_cursor: bool,
+        _row_contains_cursor: bool,
         editor: Entity<Editor>,
         window: &mut Window,
         cx: &mut App,
@@ -27508,9 +27508,9 @@ impl EditorSnapshot {
             }
         }
 
-        is_foldable |= !self.use_lsp_folding_ranges && self.starts_indent(buffer_row);
+        is_foldable |= self.crease_for_buffer_row(buffer_row).is_some();
 
-        if folded || (is_foldable && (row_contains_cursor || self.gutter_hovered)) {
+        if folded || is_foldable {
             Some(
                 Disclosure::new(("gutter_crease", buffer_row.0), !folded)
                     .toggle_state(folded)

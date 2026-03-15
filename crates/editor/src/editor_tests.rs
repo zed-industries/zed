@@ -1150,6 +1150,93 @@ fn test_fold_action(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+fn test_fold_action_custom_region_markers_with_slash_comments(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let editor = cx.add_window(|window, cx| {
+        let buffer = MultiBuffer::build_simple(
+            &"
+                fn main() {
+                    // region setup
+                    let a = 1;
+                    let b = 2;
+                    // endregion setup
+                    println!(\"{a} {b}\");
+                }
+            "
+            .unindent(),
+            cx,
+        );
+        build_editor(buffer, window, cx)
+    });
+
+    _ = editor.update(cx, |editor, window, cx| {
+        editor.fold_at(MultiBufferRow(1), window, cx);
+        assert_eq!(
+            editor.display_text(cx),
+            "
+                fn main() {
+                    // region setup⋯
+                    println!(\"{a} {b}\");
+                }
+            "
+            .unindent(),
+        );
+    });
+}
+
+#[gpui::test]
+fn test_fold_action_custom_region_markers_with_hash_comments_and_nesting(
+    cx: &mut TestAppContext,
+) {
+    init_test(cx, |_| {});
+
+    let editor = cx.add_window(|window, cx| {
+        let buffer = MultiBuffer::build_simple(
+            &"
+                # region outer
+                echo one
+                # region inner
+                echo two
+                # endregion inner
+                echo three
+                # endregion outer
+                echo four
+            "
+            .unindent(),
+            cx,
+        );
+        build_editor(buffer, window, cx)
+    });
+
+    _ = editor.update(cx, |editor, window, cx| {
+        editor.fold_at(MultiBufferRow(2), window, cx);
+        assert_eq!(
+            editor.display_text(cx),
+            "
+                # region outer
+                echo one
+                # region inner⋯
+                echo three
+                # endregion outer
+                echo four
+            "
+            .unindent(),
+        );
+
+        editor.fold_at(MultiBufferRow(0), window, cx);
+        assert_eq!(
+            editor.display_text(cx),
+            "
+                # region outer⋯
+                echo four
+            "
+            .unindent(),
+        );
+    });
+}
+
+#[gpui::test]
 fn test_fold_action_whitespace_sensitive_language(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
@@ -24019,6 +24106,31 @@ fn test_crease_insertion_and_rendering(cx: &mut TestAppContext) {
         .update(cx, |editor, window, cx| editor.snapshot(window, cx))
         .unwrap();
     assert!(!snapshot.is_line_folded(MultiBufferRow(1)));
+}
+
+#[gpui::test]
+fn test_custom_region_markers_render_gutter_toggle_without_hover(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let editor = cx.add_window(|window, cx| {
+        let buffer = MultiBuffer::build_simple(
+            "fn main() {\n    // region setup\n    let x = 1;\n    // endregion setup\n}\n",
+            cx,
+        );
+        build_editor(buffer, window, cx)
+    });
+
+    editor
+        .update(cx, |editor, window, cx| {
+            let snapshot = editor.snapshot(window, cx);
+            assert!(
+                snapshot
+                    .render_crease_toggle(MultiBufferRow(1), false, cx.entity(), window, cx)
+                    .is_some(),
+                "custom region markers should show a gutter fold toggle without hover"
+            );
+        })
+        .unwrap();
 }
 
 #[gpui::test]

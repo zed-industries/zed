@@ -139,6 +139,12 @@ pub enum FoldStatus {
     Foldable,
 }
 
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+enum CustomFoldMarker {
+    Start,
+    End,
+}
+
 /// Keys for tagging text highlights.
 ///
 /// Note the order is important as it determines the priority of the highlights, lower means higher priority
@@ -2269,6 +2275,68 @@ impl DisplaySnapshot {
             .unwrap_or(false)
     }
 
+    fn buffer_row_text(&self, buffer_row: MultiBufferRow) -> String {
+        let start = Point::new(buffer_row.0, 0);
+        let end = Point::new(buffer_row.0, self.buffer_snapshot().line_len(buffer_row));
+        self.buffer_snapshot().text_for_range(start..end).collect()
+    }
+
+    fn parse_custom_fold_marker(line: &str) -> Option<CustomFoldMarker> {
+        let trimmed = line.trim_start();
+        let rest = trimmed
+            .strip_prefix("//")
+            .or_else(|| trimmed.strip_prefix('#'))?
+            .trim_start();
+
+        let keyword = rest.split_whitespace().next().unwrap_or(rest);
+
+        match keyword {
+            "region" => Some(CustomFoldMarker::Start),
+            "endregion" => Some(CustomFoldMarker::End),
+            _ => None,
+        }
+    }
+
+    fn custom_fold_crease_for_buffer_row(&self, buffer_row: MultiBufferRow) -> Option<Crease<Point>> {
+        if self.is_line_folded(buffer_row) {
+            return None;
+        }
+
+        let marker = Self::parse_custom_fold_marker(&self.buffer_row_text(buffer_row))?;
+        if marker != CustomFoldMarker::Start {
+            return None;
+        }
+
+        let start = Point::new(buffer_row.0, self.buffer_snapshot().line_len(buffer_row));
+        let max_row = self.buffer_snapshot().max_row().0;
+        let mut depth = 1;
+
+        for row in buffer_row.0 + 1..=max_row {
+            match Self::parse_custom_fold_marker(&self.buffer_row_text(MultiBufferRow(row))) {
+                Some(CustomFoldMarker::Start) => depth += 1,
+                Some(CustomFoldMarker::End) => {
+                    depth -= 1;
+                    if depth == 0 {
+                        let end = Point::new(row, self.buffer_snapshot().line_len(MultiBufferRow(row)));
+                        if end > start {
+                            return Some(Crease::Inline {
+                                range: start..end,
+                                placeholder: self.fold_placeholder.clone(),
+                                render_toggle: None,
+                                render_trailer: None,
+                                metadata: None,
+                            });
+                        }
+                        return None;
+                    }
+                }
+                None => {}
+            }
+        }
+
+        None
+    }
+
     #[instrument(skip_all)]
     pub fn crease_for_buffer_row(&self, buffer_row: MultiBufferRow) -> Option<Crease<Point>> {
         let start =
@@ -2307,6 +2375,8 @@ impl DisplaySnapshot {
                     render_toggle: render_toggle.clone(),
                 }),
             }
+        } else if let Some(crease) = self.custom_fold_crease_for_buffer_row(buffer_row) {
+            Some(crease)
         } else if !self.use_lsp_folding_ranges
             && self.starts_indent(MultiBufferRow(start.row))
             && !self.is_line_folded(MultiBufferRow(start.row))
