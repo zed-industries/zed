@@ -9,7 +9,7 @@ use node_runtime::NodeRuntime;
 use paths::default_prettier_dir;
 use serde::{Deserialize, Serialize};
 use std::{
-    ops::ControlFlow,
+    ops::{ControlFlow, Range},
     path::{Path, PathBuf},
     sync::Arc,
     time::Duration,
@@ -348,6 +348,7 @@ impl Prettier {
         buffer: &Entity<Buffer>,
         buffer_path: Option<PathBuf>,
         ignore_dir: Option<PathBuf>,
+        range_utf16: Option<Range<usize>>,
         request_timeout: Duration,
         cx: &mut AsyncApp,
     ) -> anyhow::Result<Diff> {
@@ -478,6 +479,8 @@ impl Prettier {
                                 plugins,
                                 prettier_options,
                                 ignore_path,
+                                range_start: range_utf16.as_ref().map(|r| r.start),
+                                range_end: range_utf16.as_ref().map(|r| r.end),
                             },
                         })
                 })
@@ -655,6 +658,10 @@ struct FormatOptions {
     path: Option<PathBuf>,
     prettier_options: Option<HashMap<String, serde_json::Value>>,
     ignore_path: Option<PathBuf>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    range_start: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    range_end: Option<usize>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
