@@ -341,6 +341,10 @@ impl MentionSet {
             return Task::ready(Err(anyhow!("project not found")));
         };
 
+        if abs_path.is_dir() {
+            return Task::ready(Ok(Mention::Link));
+        }
+
         let Some(project_path) = project
             .read(cx)
             .project_path_for_absolute_path(&abs_path, cx)
