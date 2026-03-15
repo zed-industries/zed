@@ -431,82 +431,43 @@ impl RealFs {
 
     #[cfg(target_os = "windows")]
     fn canonicalize(path: &Path) -> Result<PathBuf> {
-        let mut strip_prefix = None;
+        use std::ffi::OsString;
+        use std::os::windows::ffi::OsStringExt;
+        use windows::Win32::Storage::FileSystem::GetVolumePathNameW;
+        use windows::core::HSTRING;
 
-        let mut new_path = PathBuf::new();
-        for component in path.components() {
-            match component {
-                std::path::Component::Prefix(_) => {
-                    let component = component.as_os_str();
-                    let canonicalized = if component
-                        .to_str()
-                        .map(|e| e.ends_with("\\"))
-                        .unwrap_or(false)
-                    {
-                        std::fs::canonicalize(component)
-                    } else {
-                        let mut component = component.to_os_string();
-                        component.push("\\");
-                        std::fs::canonicalize(component)
-                    }?;
+        // std::fs::canonicalize resolves mapped network paths to UNC paths, which can
+        // confuse some software. To mitigate this, we canonicalize the input, then rebase
+        // the result onto the input's original volume root if both paths are on the same
+        // volume. This keeps the same drive letter or mount point the caller used.
 
-                    let mut strip = PathBuf::new();
-                    for component in canonicalized.components() {
-                        match component {
-                            Component::Prefix(prefix_component) => {
-                                match prefix_component.kind() {
-                                    std::path::Prefix::Verbatim(os_str) => {
-                                        strip.push(os_str);
-                                    }
-                                    std::path::Prefix::VerbatimUNC(host, share) => {
-                                        strip.push("\\\\");
-                                        strip.push(host);
-                                        strip.push(share);
-                                    }
-                                    std::path::Prefix::VerbatimDisk(disk) => {
-                                        strip.push(format!("{}:", disk as char));
-                                    }
-                                    _ => strip.push(component),
-                                };
-                            }
-                            _ => strip.push(component),
-                        }
-                    }
-                    strip_prefix = Some(strip);
-                    new_path.push(component);
-                }
-                std::path::Component::RootDir => {
-                    new_path.push(component);
-                }
-                std::path::Component::CurDir => {
-                    if strip_prefix.is_none() {
-                        // unrooted path
-                        new_path.push(component);
-                    }
-                }
-                std::path::Component::ParentDir => {
-                    if strip_prefix.is_some() {
-                        // rooted path
-                        new_path.pop();
-                    } else {
-                        new_path.push(component);
-                    }
-                }
-                std::path::Component::Normal(_) => {
-                    if let Ok(link) = std::fs::read_link(new_path.join(component)) {
-                        let link = match &strip_prefix {
-                            Some(e) => link.strip_prefix(e).unwrap_or(&link),
-                            None => &link,
-                        };
-                        new_path.extend(link);
-                    } else {
-                        new_path.push(component);
-                    }
-                }
-            }
+        let abs_path = if path.is_relative() {
+            std::env::current_dir()?.join(path)
+        } else {
+            path.to_path_buf()
+        };
+
+        let path_hstring = HSTRING::from(abs_path.as_os_str());
+        let mut vol_buf = vec![0u16; abs_path.as_os_str().len() + 2];
+        unsafe { GetVolumePathNameW(&path_hstring, &mut vol_buf)? };
+        let volume_root = {
+            let len = vol_buf
+                .iter()
+                .position(|&c| c == 0)
+                .unwrap_or(vol_buf.len());
+            PathBuf::from(OsString::from_wide(&vol_buf[..len]))
+        };
+
+        let resolved_path = dunce::canonicalize(&abs_path)?;
+        let resolved_root = dunce::canonicalize(&volume_root)?;
+
+        if let Ok(relative) = resolved_path.strip_prefix(&resolved_root) {
+            let mut result = volume_root;
+            result.push(relative);
+            Ok(result)
+        } else {
+            Ok(resolved_path)
         }
-
-        Ok(new_path)
     }
 }
 

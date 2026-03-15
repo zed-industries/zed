@@ -548,6 +548,7 @@ derive_more = { version = "2.1.1", features = [
 dirs = "4.0"
 documented = "0.9.1"
 dotenvy = "0.15.0"
+dunce = "1.0"
 ec4rs = "1.1"
 emojis = "0.6.1"
 env_logger = "0.11"
