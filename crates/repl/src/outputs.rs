@@ -34,7 +34,7 @@
 //! interpreting and displaying various types of Jupyter output.
 
 use editor::{Editor, MultiBuffer};
-use gpui::{AnyElement, ClipboardItem, Entity, EventEmitter, Render, WeakEntity};
+use gpui::{AnyElement, ClipboardItem, Entity, EventEmitter, Render, Subscription, WeakEntity};
 use language::Buffer;
 use menu;
 use runtimelib::{ExecutionState, JupyterMessage, JupyterMessageContent, MimeBundle, MimeType};
@@ -59,6 +59,11 @@ use plain::TerminalOutput;
 
 pub(crate) mod user_error;
 use user_error::ErrorView;
+
+mod widget;
+pub(crate) use widget::WidgetCommMessage;
+pub(crate) use widget::WidgetStore;
+
 use workspace::Workspace;
 
 use crate::repl_settings::ReplSettings;
@@ -136,6 +141,11 @@ pub enum Output {
         content: Entity<JsonView>,
         display_id: Option<String>,
     },
+    Widget {
+        store: Entity<WidgetStore>,
+        model_id: String,
+        display_id: Option<String>,
+    },
     ClearOutputWaitMarker,
 }
 
@@ -173,7 +183,8 @@ impl Output {
             Output::Image { .. }
             | Output::Markdown { .. }
             | Output::Table { .. }
-            | Output::Json { .. } => None,
+            | Output::Json { .. }
+            | Output::Widget { .. } => None,
             Output::Message(_) => None,
             Output::ClearOutputWaitMarker => None,
         }
@@ -262,6 +273,9 @@ impl Output {
             Self::Message(message) => Some(div().child(message.clone()).into_any_element()),
             Self::Table { content, .. } => Some(content.clone().into_any_element()),
             Self::Json { content, .. } => Some(content.clone().into_any_element()),
+            Self::Widget {
+                store, model_id, ..
+            } => Some(WidgetStore::render_widget(store, model_id, window, cx)),
             Self::ErrorOutput(error_view) => error_view.render(window, cx),
             Self::ClearOutputWaitMarker => None,
         }
@@ -370,6 +384,7 @@ impl Output {
                         .into_any_element(),
                 ),
                 Self::Message(_) => None,
+                Self::Widget { .. } => None,
                 Self::Table { content, .. } => {
                     Self::render_output_controls(content.clone(), workspace, window, cx)
                 }
@@ -387,6 +402,7 @@ impl Output {
             Output::Table { display_id, .. } => display_id.clone(),
             Output::Markdown { display_id, .. } => display_id.clone(),
             Output::Json { display_id, .. } => display_id.clone(),
+            Output::Widget { display_id, .. } => display_id.clone(),
             Output::ClearOutputWaitMarker => None,
         }
     }
@@ -484,6 +500,8 @@ pub struct ExecutionView {
     pub outputs: Vec<Output>,
     pub status: ExecutionStatus,
     pending_input: Option<PendingInput>,
+    widget_store: Entity<WidgetStore>,
+    _subscriptions: Vec<Subscription>,
 }
 
 impl EventEmitter<ExecutionViewFinishedEmpty> for ExecutionView {}
@@ -494,13 +512,20 @@ impl ExecutionView {
     pub fn new(
         status: ExecutionStatus,
         workspace: WeakEntity<Workspace>,
-        _cx: &mut Context<Self>,
+        widget_store: Entity<WidgetStore>,
+        cx: &mut Context<Self>,
     ) -> Self {
+        let observation = cx.observe(&widget_store, |_this, _store, cx| {
+            cx.notify();
+        });
+
         Self {
             workspace,
             outputs: Default::default(),
             status,
             pending_input: None,
+            widget_store,
+            _subscriptions: vec![observation],
         }
     }
 
@@ -561,18 +586,38 @@ impl ExecutionView {
         cx: &mut Context<Self>,
     ) {
         let output: Output = match message {
-            JupyterMessageContent::ExecuteResult(result) => Output::new(
-                &result.data,
-                result.transient.as_ref().and_then(|t| t.display_id.clone()),
-                window,
-                cx,
-            ),
-            JupyterMessageContent::DisplayData(result) => Output::new(
-                &result.data,
-                result.transient.as_ref().and_then(|t| t.display_id.clone()),
-                window,
-                cx,
-            ),
+            JupyterMessageContent::ExecuteResult(result) => {
+                if let Some(model_id) = widget::extract_widget_model_id(&result.data) {
+                    Output::Widget {
+                        store: self.widget_store.clone(),
+                        model_id,
+                        display_id: result.transient.as_ref().and_then(|t| t.display_id.clone()),
+                    }
+                } else {
+                    Output::new(
+                        &result.data,
+                        result.transient.as_ref().and_then(|t| t.display_id.clone()),
+                        window,
+                        cx,
+                    )
+                }
+            }
+            JupyterMessageContent::DisplayData(result) => {
+                if let Some(model_id) = widget::extract_widget_model_id(&result.data) {
+                    Output::Widget {
+                        store: self.widget_store.clone(),
+                        model_id,
+                        display_id: result.transient.as_ref().and_then(|t| t.display_id.clone()),
+                    }
+                } else {
+                    Output::new(
+                        &result.data,
+                        result.transient.as_ref().and_then(|t| t.display_id.clone()),
+                        window,
+                        cx,
+                    )
+                }
+            }
             JupyterMessageContent::StreamContent(result) => {
                 // Previous stream data will combine together, handling colors, carriage returns, etc
                 if let Some(new_terminal) = self.apply_terminal_text(&result.text, window, cx) {
@@ -752,6 +797,11 @@ impl ExecutionView {
 
 impl Render for ExecutionView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.widget_store.update(cx, |store, cx| {
+            store.create_missing_text_editors(window, cx);
+            store.create_missing_markdown_views(cx);
+        });
+
         let status = match &self.status {
             ExecutionStatus::ConnectingToKernel => Label::new("Connecting to kernel...")
                 .color(Color::Muted)
@@ -914,7 +964,10 @@ mod tests {
         weak_workspace: WeakEntity<workspace::Workspace>,
     ) -> Entity<ExecutionView> {
         cx.update(|_window, cx| {
-            cx.new(|cx| ExecutionView::new(ExecutionStatus::Queued, weak_workspace, cx))
+            let widget_store = cx.new(|_| widget::WidgetStore::new());
+            cx.new(|cx| {
+                ExecutionView::new(ExecutionStatus::Queued, weak_workspace, widget_store, cx)
+            })
         })
     }
 
