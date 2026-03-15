@@ -134,6 +134,7 @@ members = [
     "crates/notifications",
     "crates/ollama",
     "crates/onboarding",
+    "crates/opencode",
     "crates/open_ai",
     "crates/open_path_prompt",
     "crates/open_router",
@@ -380,6 +381,7 @@ node_runtime = { path = "crates/node_runtime" }
 notifications = { path = "crates/notifications" }
 ollama = { path = "crates/ollama" }
 onboarding = { path = "crates/onboarding" }
+opencode = { path = "crates/opencode" }
 open_ai = { path = "crates/open_ai" }
 open_path_prompt = { path = "crates/open_path_prompt" }
 open_router = { path = "crates/open_router", features = ["schemars"] }

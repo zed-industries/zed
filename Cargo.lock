@@ -9473,6 +9473,7 @@ dependencies = [
  "ollama",
  "open_ai",
  "open_router",
+ "opencode",
  "partial-json-fixer",
  "pretty_assertions",
  "release_channel",
@@ -11607,6 +11608,20 @@ dependencies = [
  "settings",
  "strum 0.27.2",
  "thiserror 2.0.17",
+]
+
+[[package]]
+name = "opencode"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "futures 0.3.31",
+ "google_ai",
+ "http_client",
+ "schemars",
+ "serde",
+ "serde_json",
+ "strum 0.27.2",
 ]
 
 [[package]]
