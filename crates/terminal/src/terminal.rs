@@ -1610,11 +1610,27 @@ impl Terminal {
     }
 
     pub fn sync(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let scroll_on_output = TerminalSettings::get_global(cx).scroll_on_output;
+        let was_at_bottom = self.last_content.scrolled_to_bottom;
+        let previous_display_offset = self.last_content.display_offset;
+
         let term = self.term.clone();
         let mut terminal = term.lock_unfair();
         //Note that the ordering of events matters for event processing
         while let Some(e) = self.events.pop_front() {
             self.process_terminal_event(&e, &mut terminal, window, cx)
+        }
+
+        // When scroll_on_output is disabled and the user was scrolled up (not at
+        // the bottom), restore the previous scroll position. Alacritty resets the
+        // display offset to 0 whenever new output arrives; this counteracts that
+        // so the viewport stays put.
+        if !scroll_on_output && !was_at_bottom {
+            let current_offset = terminal.grid().display_offset();
+            if current_offset != previous_display_offset {
+                let delta = previous_display_offset as i32 - current_offset as i32;
+                terminal.scroll_display(AlacScroll::Delta(delta));
+            }
         }
 
         self.last_content = Self::make_content(&terminal, &self.last_content);

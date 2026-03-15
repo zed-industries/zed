@@ -876,6 +876,7 @@ impl VsCodeSettings {
             project: self.project_terminal_settings_content(),
             scrollbar: None,
             scroll_multiplier: None,
+            scroll_on_output: None,
             toolbar: None,
         })
     }
