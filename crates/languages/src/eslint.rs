@@ -34,8 +34,8 @@ pub struct EsLintLspAdapter {
 }
 
 impl EsLintLspAdapter {
-    const CURRENT_VERSION: &'static str = "2.4.4";
-    const CURRENT_VERSION_TAG_NAME: &'static str = "release/2.4.4";
+    const CURRENT_VERSION: &'static str = "3.0.10";
+    const CURRENT_VERSION_TAG_NAME: &'static str = "release/3.0.10";
 
     #[cfg(not(windows))]
     const GITHUB_ASSET_KIND: AssetKind = AssetKind::TarGz;
@@ -148,6 +148,7 @@ impl LspInstaller for EsLintLspAdapter {
     ) -> Option<LanguageServerBinary> {
         let server_path =
             Self::build_destination_path(&container_dir).join(EsLintLspAdapter::SERVER_PATH);
+        fs::metadata(&server_path).await.ok()?;
         Some(LanguageServerBinary {
             path: self.node.binary_path().await.ok()?,
             env: None,
@@ -173,6 +174,7 @@ impl LspAdapter for EsLintLspAdapter {
         cx: &mut AsyncApp,
     ) -> Result<Value> {
         let worktree_root = delegate.worktree_root_path();
+        let eslint_major_version = eslint_major_version(delegate).await;
         let use_flat_config = Self::FLAT_CONFIG_FILE_NAMES
             .iter()
             .any(|file| worktree_root.join(file).is_file());
@@ -205,11 +207,11 @@ impl LspAdapter for EsLintLspAdapter {
                 "showDocumentation": {
                     "enable": true
                 }
-            },
-            "experimental": {
-                "useFlatConfig": use_flat_config,
             }
         });
+        if use_flat_config && eslint_major_version.is_some_and(|version| version <= 9) {
+            set_use_flat_config(&mut default_workspace_configuration);
+        }
 
         let file_path = requested_uri
             .as_ref()
@@ -260,7 +262,6 @@ impl LspAdapter for EsLintLspAdapter {
                 *wd = serde_json::to_value(working_directory)?;
             }
         }
-
         Ok(json!({
             "": default_workspace_configuration
         }))
@@ -269,6 +270,26 @@ impl LspAdapter for EsLintLspAdapter {
     fn name(&self) -> LanguageServerName {
         Self::SERVER_NAME
     }
+}
+
+fn set_use_flat_config(configuration: &mut Value) {
+    if let Some(configuration) = configuration.as_object_mut() {
+        let experimental = configuration
+            .entry("experimental")
+            .or_insert_with(|| json!({}));
+        if let Some(experimental) = experimental.as_object_mut() {
+            experimental.insert("useFlatConfig".into(), json!(true));
+        }
+    }
+}
+
+async fn eslint_major_version(delegate: &Arc<dyn LspAdapterDelegate>) -> Option<u64> {
+    let (_, version) = delegate
+        .npm_package_installed_version("eslint")
+        .await
+        .ok()
+        .flatten()?;
+    Some(version.major)
 }
 
 /// On Windows, converts Unix-style separators (/) to Windows-style (\).
@@ -480,6 +501,25 @@ enum ResultWorkingDirectory {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_set_use_flat_config() {
+        let mut configuration = json!({
+            "validate": "on",
+        });
+
+        set_use_flat_config(&mut configuration);
+
+        assert_eq!(
+            configuration,
+            json!({
+                "experimental": {
+                    "useFlatConfig": true,
+                },
+                "validate": "on",
+            })
+        );
+    }
 
     mod glob_patterns {
         use super::*;
