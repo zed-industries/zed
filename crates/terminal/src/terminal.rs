@@ -445,10 +445,7 @@ impl TerminalBuilder {
         let version = release_channel::AppVersion::global(cx);
         let background_executor = cx.background_executor().clone();
         let fut = async move {
-            // Remove SHLVL so the spawned shell initializes it to 1, matching
-            // the behavior of standalone terminal emulators like iTerm2/Kitty/Alacritty.
-            env.remove("SHLVL");
-
+            env.insert("SHLVL".to_string(), "0".to_string());
             // If the parent environment doesn't have a locale set
             // (As is the case when launched from a .app on MacOS),
             // and the Project doesn't have a locale set, then
