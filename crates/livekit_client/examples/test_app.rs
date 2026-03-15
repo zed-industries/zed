@@ -41,6 +41,7 @@ fn main() {
                 name: "Quit".into(),
                 action: Box::new(Quit),
                 os_action: None,
+                checkable: false,
                 checked: false,
             }],
         }]);

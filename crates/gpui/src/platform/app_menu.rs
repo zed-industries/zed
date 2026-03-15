@@ -70,6 +70,9 @@ pub enum MenuItem {
         /// See [`OsAction`] for more information
         os_action: Option<OsAction>,
 
+        /// Whether this action is checkable
+        checkable: bool,
+
         /// Whether this action is checked
         checked: bool,
     },
@@ -100,6 +103,7 @@ impl MenuItem {
             name: name.into(),
             action: Box::new(action),
             os_action: None,
+            checkable: false,
             checked: false,
         }
     }
@@ -114,6 +118,7 @@ impl MenuItem {
             name: name.into(),
             action: Box::new(action),
             os_action: Some(os_action),
+            checkable: false,
             checked: false,
         }
     }
@@ -127,11 +132,13 @@ impl MenuItem {
                 name,
                 action,
                 os_action,
+                checkable,
                 checked,
             } => OwnedMenuItem::Action {
                 name: name.into(),
                 action,
                 os_action,
+                checkable,
                 checked,
             },
             MenuItem::SystemMenu(os_menu) => OwnedMenuItem::SystemMenu(os_menu.owned()),
@@ -152,6 +159,7 @@ impl MenuItem {
                 name,
                 action,
                 os_action,
+                checkable: true,
                 checked,
             },
             _ => self,
@@ -204,6 +212,9 @@ pub enum OwnedMenuItem {
         /// See [`OsAction`] for more information
         os_action: Option<OsAction>,
 
+        /// Whether this action is checkable
+        checkable: bool,
+
         /// Whether this action is checked
         checked: bool,
     },
@@ -218,11 +229,13 @@ impl Clone for OwnedMenuItem {
                 name,
                 action,
                 os_action,
+                checkable,
                 checked,
             } => OwnedMenuItem::Action {
                 name: name.clone(),
                 action: action.boxed_clone(),
                 os_action: *os_action,
+                checkable: *checkable,
                 checked: *checked,
             },
             OwnedMenuItem::SystemMenu(os_menu) => OwnedMenuItem::SystemMenu(os_menu.clone()),

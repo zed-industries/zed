@@ -297,6 +297,7 @@ impl MacPlatform {
                     action,
                     os_action,
                     checked,
+                    ..
                 } => {
                     // Note that this is intentionally using earlier bindings, whereas typically
                     // later ones take display precedence. See the discussion on

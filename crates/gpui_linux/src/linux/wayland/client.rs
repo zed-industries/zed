@@ -67,6 +67,9 @@ use wayland_protocols::{
     xdg::dialog::v1::client::xdg_dialog_v1::XdgDialogV1,
 };
 use wayland_protocols_plasma::blur::client::{org_kde_kwin_blur, org_kde_kwin_blur_manager};
+
+#[cfg(feature = "global-menu")]
+use super::appmenu::client::{org_kde_kwin_appmenu, org_kde_kwin_appmenu_manager};
 use wayland_protocols_wlr::layer_shell::v1::client::{zwlr_layer_shell_v1, zwlr_layer_surface_v1};
 use xkbcommon::xkb::ffi::XKB_KEYMAP_FORMAT_TEXT_V1;
 use xkbcommon::xkb::{self, KEYMAP_COMPILE_NO_FLAGS, Keycode};
@@ -126,6 +129,8 @@ pub struct Globals {
     pub decoration_manager: Option<zxdg_decoration_manager_v1::ZxdgDecorationManagerV1>,
     pub layer_shell: Option<zwlr_layer_shell_v1::ZwlrLayerShellV1>,
     pub blur_manager: Option<org_kde_kwin_blur_manager::OrgKdeKwinBlurManager>,
+    #[cfg(feature = "global-menu")]
+    pub appmenu_manager: Option<org_kde_kwin_appmenu_manager::OrgKdeKwinAppmenuManager>,
     pub text_input_manager: Option<zwp_text_input_manager_v3::ZwpTextInputManagerV3>,
     pub gesture_manager: Option<zwp_pointer_gestures_v1::ZwpPointerGesturesV1>,
     pub dialog: Option<xdg_wm_dialog_v1::XdgWmDialogV1>,
@@ -167,6 +172,8 @@ impl Globals {
             decoration_manager: globals.bind(&qh, 1..=1, ()).ok(),
             layer_shell: globals.bind(&qh, 1..=5, ()).ok(),
             blur_manager: globals.bind(&qh, 1..=1, ()).ok(),
+            #[cfg(feature = "global-menu")]
+            appmenu_manager: globals.bind(&qh, 1..=2, ()).ok(),
             text_input_manager: globals.bind(&qh, 1..=1, ()).ok(),
             gesture_manager: globals.bind(&qh, 1..=3, ()).ok(),
             dialog: globals.bind(&qh, dialog_v..=dialog_v, ()).ok(),
@@ -256,6 +263,12 @@ pub(crate) struct WaylandClientState {
     cursor: Cursor,
     pending_activation: Option<PendingActivation>,
     event_loop: Option<EventLoop<'static, WaylandClientStatePtr>>,
+    #[cfg(feature = "global-menu")]
+    dbus_service_name: Option<String>,
+    #[cfg(feature = "global-menu")]
+    dbus_menu_thread: Option<std::thread::JoinHandle<()>>,
+    #[cfg(feature = "global-menu")]
+    appmenu_objects: HashMap<ObjectId, org_kde_kwin_appmenu::OrgKdeKwinAppmenu>,
     pub common: LinuxCommon,
 }
 
@@ -393,6 +406,14 @@ impl WaylandClientStatePtr {
     pub fn drop_window(&self, surface_id: &ObjectId) {
         let client = self.get_client();
         let mut state = client.borrow_mut();
+
+        #[cfg(feature = "global-menu")]
+        {
+            if let Some(appmenu) = state.appmenu_objects.remove(surface_id) {
+                appmenu.release();
+            }
+        }
+
         let closed_window = state.windows.remove(surface_id).unwrap();
         if let Some(window) = state.mouse_focused_window.take()
             && !window.ptr_eq(&closed_window)
@@ -412,7 +433,33 @@ pub struct WaylandClient(Rc<RefCell<WaylandClientState>>);
 
 impl Drop for WaylandClient {
     fn drop(&mut self) {
+        #[cfg(feature = "global-menu")]
+        {
+            let (dbus_menu_server, dbus_menu_thread) = match self.0.try_borrow_mut() {
+                Ok(mut state) => (
+                    state.common.dbus_menu_server.clone(),
+                    state.dbus_menu_thread.take(),
+                ),
+                Err(_) => (None, None),
+            };
+
+            if let Some(dbus_menu_server) = dbus_menu_server {
+                dbus_menu_server.shutdown();
+            }
+            if let Some(thread) = dbus_menu_thread {
+                if let Err(error) = thread.join() {
+                    log::error!("Failed to join DBusMenu thread: {error:?}");
+                }
+            }
+        }
+
         let mut state = self.0.borrow_mut();
+
+        #[cfg(feature = "global-menu")]
+        for (_, appmenu) in state.appmenu_objects.drain() {
+            appmenu.release();
+        }
+
         state.windows.clear();
 
         if let Some(wl_pointer) = &state.wl_pointer {
@@ -427,6 +474,13 @@ impl Drop for WaylandClient {
         if let Some(text_input) = &state.text_input {
             text_input.destroy();
         }
+    }
+}
+
+#[cfg(feature = "global-menu")]
+impl crate::linux::dbusmenu::GlobalMenuState for WaylandClientState {
+    fn linux_common(&mut self) -> &mut crate::linux::LinuxCommon {
+        &mut self.common
     }
 }
 
@@ -652,11 +706,73 @@ impl WaylandClient {
             cursor,
             pending_activation: None,
             event_loop: Some(event_loop),
+            #[cfg(feature = "global-menu")]
+            dbus_service_name: None,
+            #[cfg(feature = "global-menu")]
+            dbus_menu_thread: None,
+            #[cfg(feature = "global-menu")]
+            appmenu_objects: HashMap::default(),
         }));
 
         WaylandSource::new(conn, event_queue)
             .insert(handle)
             .unwrap();
+
+        // Start the DBusMenu server if the compositor supports global menus.
+        #[cfg(feature = "global-menu")]
+        {
+            let has_appmenu = state.borrow().globals.appmenu_manager.is_some();
+            let enabled = match crate::linux::dbusmenu::global_menu_env_override() {
+                Some(true) => true,
+                Some(false) => false,
+                None => has_appmenu,
+            };
+
+            if enabled {
+                let dbus_menu_server = crate::linux::dbusmenu::DBusMenuServer::new();
+                let service_name = format!("com.zed.dbusmenu.pid{}", std::process::id());
+
+                crate::linux::dbusmenu::setup_global_menu_sources(
+                    &dbus_menu_server,
+                    &state.borrow().loop_handle,
+                    Rc::downgrade(&state),
+                    move |state| {
+                        let (service_name, dbus_menu_server, appmenus) = {
+                            let Some(service_name) = state.dbus_service_name.as_ref().cloned() else {
+                                return;
+                            };
+                            let Some(dbus_menu_server) = state.common.dbus_menu_server.clone() else {
+                                return;
+                            };
+                            let appmenus = state
+                                .appmenu_objects
+                                .values()
+                                .map(|appmenu| appmenu.clone())
+                                .collect::<Vec<_>>();
+                            (service_name, dbus_menu_server, appmenus)
+                        };
+
+                        for appmenu in appmenus {
+                            appmenu.set_address(service_name.clone(), crate::linux::dbusmenu::DBUSMENU_OBJECT_PATH.to_string());
+                        }
+                    },
+                );
+
+                state.borrow_mut().common.dbus_menu_server = Some(dbus_menu_server.clone());
+                state.borrow_mut().dbus_service_name = Some(service_name.clone());
+
+                let object_path = crate::linux::dbusmenu::DBUSMENU_OBJECT_PATH.to_string();
+                let dbus_menu_thread = dbus_menu_server.spawn_dbus_menu_thread(
+                    service_name.clone(),
+                    object_path,
+                    None,
+                );
+
+                if let Some(thread) = dbus_menu_thread {
+                    state.borrow_mut().dbus_menu_thread = Some(thread);
+                }
+            }
+        }
 
         Self(state)
     }
@@ -756,7 +872,24 @@ impl LinuxClient for WaylandClient {
             parent,
             target_output,
         )?;
-        state.windows.insert(surface_id, window.0.clone());
+        state.windows.insert(surface_id.clone(), window.0.clone());
+
+        #[cfg(feature = "global-menu")]
+        if let (Some(appmenu_manager), Some(service_name)) = (
+            state.globals.appmenu_manager.as_ref(),
+            state.dbus_service_name.as_ref(),
+        ) {
+            let dbus_menu_server = state.common.dbus_menu_server.clone();
+            let surface = window.0.surface();
+            let appmenu = appmenu_manager.create(&surface, &state.globals.qh, ());
+            if let Some(_dbus_menu_server) =
+                dbus_menu_server.as_ref().filter(|server| server.is_connected())
+            {
+                let object_path = crate::linux::dbusmenu::DBUSMENU_OBJECT_PATH.to_string();
+                appmenu.set_address(service_name.clone(), object_path);
+            }
+            state.appmenu_objects.insert(surface_id.clone(), appmenu);
+        }
 
         Ok(Box::new(window))
     }
@@ -898,16 +1031,18 @@ impl LinuxClient for WaylandClient {
     }
 
     fn read_from_primary(&self) -> Option<gpui::ClipboardItem> {
-        self.0.borrow_mut().clipboard.read_primary()
+        let mut state = self.0.try_borrow_mut().ok()?;
+        state.clipboard.read_primary()
     }
 
     fn read_from_clipboard(&self) -> Option<gpui::ClipboardItem> {
-        self.0.borrow_mut().clipboard.read()
+        let mut state = self.0.try_borrow_mut().ok()?;
+        state.clipboard.read()
     }
 
     fn active_window(&self) -> Option<AnyWindowHandle> {
-        self.0
-            .borrow_mut()
+        let state = self.0.try_borrow().ok()?;
+        state
             .keyboard_focused_window
             .as_ref()
             .map(|window| window.handle())
@@ -1070,6 +1205,12 @@ delegate_noop!(WaylandClientStatePtr: ignore wp_fractional_scale_manager_v1::WpF
 delegate_noop!(WaylandClientStatePtr: ignore zxdg_decoration_manager_v1::ZxdgDecorationManagerV1);
 delegate_noop!(WaylandClientStatePtr: ignore zwlr_layer_shell_v1::ZwlrLayerShellV1);
 delegate_noop!(WaylandClientStatePtr: ignore org_kde_kwin_blur_manager::OrgKdeKwinBlurManager);
+#[cfg(feature = "global-menu")]
+delegate_noop!(
+    WaylandClientStatePtr: ignore org_kde_kwin_appmenu_manager::OrgKdeKwinAppmenuManager
+);
+#[cfg(feature = "global-menu")]
+delegate_noop!(WaylandClientStatePtr: ignore org_kde_kwin_appmenu::OrgKdeKwinAppmenu);
 delegate_noop!(WaylandClientStatePtr: ignore zwp_text_input_manager_v3::ZwpTextInputManagerV3);
 delegate_noop!(WaylandClientStatePtr: ignore org_kde_kwin_blur::OrgKdeKwinBlur);
 delegate_noop!(WaylandClientStatePtr: ignore wp_viewporter::WpViewporter);

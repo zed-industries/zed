@@ -82,6 +82,8 @@ x11rb::atom_manager! {
         _GTK_FRAME_EXTENTS,
         _GTK_EDGE_CONSTRAINTS,
         _NET_CLIENT_LIST_STACKING,
+        _KDE_NET_WM_APPMENU_SERVICE_NAME,
+        _KDE_NET_WM_APPMENU_OBJECT_PATH,
     }
 }
 
