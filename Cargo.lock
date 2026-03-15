@@ -2575,6 +2575,7 @@ version = "0.28.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "eadd868a2ce9ca38de7eeafdcec9c7065ef89b42b32f0839278d55f35c54d1ff"
 dependencies = [
+ "clap",
  "heck 0.4.1",
  "indexmap",
  "log",
@@ -7534,14 +7535,22 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-task",
+ "block",
+ "cbindgen",
  "collections",
+ "derive_more",
  "dispatch2",
+ "etagere",
+ "foreign-types 0.5.0",
  "futures 0.3.31",
  "gpui",
  "log",
+ "metal",
+ "objc",
  "parking_lot",
  "raw-window-handle",
  "smallvec",
+ "util",
  "uuid",
 ]
 

@@ -1,6 +1,7 @@
 use crate::{
     IosDispatcher, IosDisplay, IosKeyboardLayout, IosWindow, ios_keyboard_mapper,
-    main_screen_bounds,
+    main_screen_bounds_and_scale,
+    metal_renderer::InstanceBufferPool,
 };
 use anyhow::Result;
 use futures::channel::oneshot;
@@ -17,6 +18,7 @@ use std::{
     rc::Rc,
     sync::Arc,
 };
+use crate::metal_renderer::Context as RendererContext;
 
 #[derive(Default)]
 struct IosPlatformCallbacks {
@@ -41,6 +43,7 @@ pub struct IosPlatform {
     display: Rc<dyn PlatformDisplay>,
     active_window: RefCell<Option<AnyWindowHandle>>,
     callbacks: Mutex<IosPlatformCallbacks>,
+    renderer_context: RendererContext,
 }
 
 impl IosPlatform {
@@ -52,8 +55,10 @@ impl IosPlatform {
         // TODO Phase 1.3: replace NoopTextSystem with CoreText implementation.
         let text_system: Arc<dyn PlatformTextSystem> = Arc::new(NoopTextSystem::new());
 
-        let bounds = main_screen_bounds();
+        let (bounds, _scale_factor) = main_screen_bounds_and_scale();
         let display: Rc<dyn PlatformDisplay> = Rc::new(IosDisplay::new(bounds));
+
+        let renderer_context = Arc::new(Mutex::new(InstanceBufferPool::default()));
 
         Self {
             background_executor,
@@ -62,6 +67,7 @@ impl IosPlatform {
             display,
             active_window: RefCell::new(None),
             callbacks: Mutex::new(IosPlatformCallbacks::default()),
+            renderer_context,
         }
     }
 }
@@ -118,7 +124,8 @@ impl Platform for IosPlatform {
         handle: AnyWindowHandle,
         params: WindowParams,
     ) -> Result<Box<dyn PlatformWindow>> {
-        let window = IosWindow::new(params, self.display.clone());
+        let window =
+            IosWindow::new(params, self.display.clone(), self.renderer_context.clone())?;
         *self.active_window.borrow_mut() = Some(handle);
         Ok(Box::new(window))
     }

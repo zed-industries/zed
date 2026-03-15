@@ -14,6 +14,11 @@ path = "src/gpui_ios.rs"
 [features]
 default = ["gpui/default"]
 test-support = ["gpui/test-support"]
+runtime_shaders = []
+
+[build-dependencies]
+cbindgen = "0.28"
+gpui = { path = "../gpui", default-features = false }
 
 [dependencies]
 gpui.workspace = true
@@ -21,11 +26,19 @@ gpui.workspace = true
 [target.'cfg(target_os = "ios")'.dependencies]
 anyhow.workspace = true
 async-task = "4.7"
+block = "0.1"
+cbindgen = "0.28"
 collections.workspace = true
+derive_more.workspace = true
 dispatch2 = "0.3.1"
+etagere = "0.2"
+foreign-types = "0.5"
 futures.workspace = true
 log.workspace = true
+metal = { version = "0.33", default-features = false }
+objc.workspace = true
 parking_lot.workspace = true
 raw-window-handle = "0.6"
 smallvec.workspace = true
+util.workspace = true
 uuid.workspace = true

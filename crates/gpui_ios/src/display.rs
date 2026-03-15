@@ -1,16 +1,14 @@
 use anyhow::Result;
 use gpui::{Bounds, DisplayId, Pixels, PlatformDisplay, Point, Size, px};
+use objc::{class, msg_send, runtime::Object, sel, sel_impl};
 use uuid::Uuid;
 
-/// Represents the iPad's screen. On iPadOS there is always exactly one display
-/// per UIScene (Stage Manager allows multiple scenes but each maps to its own
-/// UIWindowScene with its own coordinate space).
+/// Represents the iPad's screen. On iPadOS there is exactly one display per
+/// UIScene; Stage Manager allows multiple scenes but each maps to its own
+/// UIWindowScene with its own coordinate space.
 #[derive(Debug)]
 pub(crate) struct IosDisplay {
     uuid: Uuid,
-    /// Logical-pixel bounds of the display. Retrieved from UIScreen at
-    /// platform construction time; updated on scene geometry change
-    /// notifications in Phase 1.3.
     bounds: Bounds<Pixels>,
 }
 
@@ -37,19 +35,62 @@ impl PlatformDisplay for IosDisplay {
     }
 }
 
-/// Returns the main screen's logical bounds using UIScreen.main.bounds.
-/// Called once at platform init; Stage Manager scene geometry changes will
-/// be handled separately in Phase 1.3.
-pub(crate) fn main_screen_bounds() -> Bounds<Pixels> {
-    // UIScreen.main.bounds is accessed through the C shim defined in
-    // crates/zed-ios/src/ios_shims.h and exposed via FFI in Phase 1.3.
-    // For now, return a reasonable iPad Pro 13" logical resolution.
-    // This placeholder is replaced when the real UIKit bridge is wired up.
-    Bounds {
-        origin: Point::default(),
-        size: Size {
-            width: px(1366.0),
-            height: px(1024.0),
-        },
+/// Returns the main screen's logical bounds and native scale via `UIScreen.mainScreen`.
+///
+/// On a 13" iPad Pro the logical size is 1024×1366 pt at 2× scale. Falls back
+/// to those values when called before UIScreen is available (e.g., in unit tests).
+pub(crate) fn main_screen_bounds_and_scale() -> (Bounds<Pixels>, f32) {
+    unsafe {
+        let screen: *mut Object = msg_send![class!(UIScreen), mainScreen];
+        if screen.is_null() {
+            let fallback = Bounds {
+                origin: Point::default(),
+                size: Size {
+                    width: px(1024.0),
+                    height: px(1366.0),
+                },
+            };
+            return (fallback, 2.0);
+        }
+
+        let cg_rect: CGRect = msg_send![screen, bounds];
+        let scale: f32 = msg_send![screen, nativeScale];
+
+        let bounds = Bounds {
+            origin: Point {
+                x: px(cg_rect.origin.x as f32),
+                y: px(cg_rect.origin.y as f32),
+            },
+            size: Size {
+                width: px(cg_rect.size.width as f32),
+                height: px(cg_rect.size.height as f32),
+            },
+        };
+
+        (bounds, scale)
     }
+}
+
+/// CGPoint — matches the UIKit/CoreGraphics ABI on 64-bit Apple platforms.
+#[repr(C)]
+#[derive(Clone, Copy, Default)]
+struct CGPoint {
+    x: f64,
+    y: f64,
+}
+
+/// CGSize — matches the UIKit/CoreGraphics ABI on 64-bit Apple platforms.
+#[repr(C)]
+#[derive(Clone, Copy, Default)]
+struct CGSize {
+    width: f64,
+    height: f64,
+}
+
+/// CGRect — matches the UIKit/CoreGraphics ABI on 64-bit Apple platforms.
+#[repr(C)]
+#[derive(Clone, Copy, Default)]
+struct CGRect {
+    origin: CGPoint,
+    size: CGSize,
 }
