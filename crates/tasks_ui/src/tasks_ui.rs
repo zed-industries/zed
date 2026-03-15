@@ -534,6 +534,7 @@ mod tests {
                     (VariableName::WorktreeRoot, path!("/dir").into()),
                     (VariableName::Row, "1".into()),
                     (VariableName::Column, "1".into()),
+                    (VariableName::Language, "Rust".into()),
                 ]),
                 project_env: HashMap::default(),
             }
@@ -568,6 +569,7 @@ mod tests {
                     (VariableName::Column, "15".into()),
                     (VariableName::SelectedText, "is_i".into()),
                     (VariableName::Symbol, "this_is_a_rust_file".into()),
+                    (VariableName::Language, "Rust".into()),
                 ]),
                 project_env: HashMap::default(),
             }
@@ -596,6 +598,7 @@ mod tests {
                     (VariableName::Row, "1".into()),
                     (VariableName::Column, "1".into()),
                     (VariableName::Symbol, "this_is_a_test".into()),
+                    (VariableName::Language, "TypeScript".into()),
                 ]),
                 project_env: HashMap::default(),
             }
