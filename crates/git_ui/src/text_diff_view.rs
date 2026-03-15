@@ -88,7 +88,14 @@ impl TextDiffView {
         let source_buffer_snapshot = source_buffer.read(cx).snapshot();
         let mut clipboard_text = diff_data.clipboard_text.clone();
 
-        if !clipboard_text.ends_with("\n") {
+        let range_end_offset = source_buffer_snapshot.point_to_offset(expanded_selection_range.end);
+        let source_text_ends_with_newline = range_end_offset > 0
+            && source_buffer_snapshot
+                .reversed_chars_at(range_end_offset)
+                .next()
+                == Some('\n');
+
+        if source_text_ends_with_newline && !clipboard_text.ends_with("\n") {
             clipboard_text.push_str("\n");
         }
 
@@ -638,6 +645,28 @@ mod tests {
             ),
             "Clipboard ↔ text.txt @ L1:1-3",
             &format!("Clipboard ↔ {} @ L1:1-3", path!("test/text.txt")),
+            cx,
+        )
+        .await;
+    }
+
+    #[gpui::test]
+    async fn test_diffing_clipboard_with_selection_at_file_end_without_trailing_newline(
+        cx: &mut TestAppContext,
+    ) {
+        base_test(
+            path!("/test"),
+            path!("/test/text.txt"),
+            "line 1\nline 2\n√√√√√",
+            "«line 1\nline 2\n√√√√√ˇ»",
+            &unindent(
+                "
+                  ˇline 1
+                  line 2
+                  √√√√√",
+            ),
+            "Clipboard ↔ text.txt @ L1:1-L3:16",
+            &format!("Clipboard ↔ {} @ L1:1-L3:16", path!("test/text.txt")),
             cx,
         )
         .await;
