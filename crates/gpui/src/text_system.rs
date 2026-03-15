@@ -153,8 +153,18 @@ impl TextSystem {
         if let Ok(font_id) = self.font_id(font) {
             return font_id;
         }
+        // When falling back to the system font stack, preserve the requested
+        // weight and style so that e.g. bold text still renders bold even when
+        // the primary font family cannot be loaded.
         for fallback in &self.fallback_font_stack {
-            if let Ok(font_id) = self.font_id(fallback) {
+            let weighted_fallback = Font {
+                family: fallback.family.clone(),
+                features: font.features.clone(),
+                weight: font.weight,
+                style: font.style,
+                fallbacks: None,
+            };
+            if let Ok(font_id) = self.font_id(&weighted_fallback) {
                 return font_id;
             }
         }
@@ -167,6 +177,69 @@ impl TextSystem {
                 .map(|fallback| &fallback.family)
                 .join(", ")
         );
+    }
+
+    /// Resolves the best font for a given character, trying user-specified fallbacks
+    /// and then system fallbacks while preserving the requested weight and style.
+    /// Returns `None` if the primary font already supports the character.
+    fn resolve_fallback_for_char(
+        &self,
+        font: &Font,
+        ch: char,
+        primary_font_id: FontId,
+    ) -> Option<FontId> {
+        // Check if the primary font already has this glyph
+        if self
+            .platform_text_system
+            .glyph_for_char(primary_font_id, ch)
+            .is_some()
+        {
+            return None;
+        }
+
+        // Try user-specified fallback fonts with the same weight and style
+        if let Some(fallbacks) = &font.fallbacks {
+            for fallback_name in fallbacks.fallback_list() {
+                let fallback_font = Font {
+                    family: SharedString::from(fallback_name.clone()),
+                    features: font.features.clone(),
+                    weight: font.weight,
+                    style: font.style,
+                    fallbacks: None,
+                };
+                if let Ok(fallback_id) = self.font_id(&fallback_font) {
+                    if self
+                        .platform_text_system
+                        .glyph_for_char(fallback_id, ch)
+                        .is_some()
+                    {
+                        return Some(fallback_id);
+                    }
+                }
+            }
+        }
+
+        // Try system fallback fonts with the same weight and style
+        for fallback in &self.fallback_font_stack {
+            let weighted_fallback = Font {
+                family: fallback.family.clone(),
+                features: font.features.clone(),
+                weight: font.weight,
+                style: font.style,
+                fallbacks: None,
+            };
+            if let Ok(fallback_id) = self.font_id(&weighted_fallback) {
+                if self
+                    .platform_text_system
+                    .glyph_for_char(fallback_id, ch)
+                    .is_some()
+                {
+                    return Some(fallback_id);
+                }
+            }
+        }
+
+        None
     }
 
     /// Get the bounding box for the given font and font size.
@@ -558,17 +631,37 @@ impl WindowTextSystem {
                     true
                 };
 
-                let font_id = self.resolve_font(&run.font);
-                if let Some(font_run) = font_runs.last_mut()
-                    && font_id == font_run.font_id
-                    && !decoration_changed
-                {
-                    font_run.len += run_len_within_line;
-                } else {
-                    font_runs.push(FontRun {
-                        len: run_len_within_line,
-                        font_id,
-                    });
+                let primary_font_id = self.resolve_font(&run.font);
+                let local_start = run_start - line_start;
+                let run_text = &line_text[local_start..local_start + run_len_within_line];
+                let mut first_char_in_segment = true;
+
+                for ch in run_text.chars() {
+                    let ch_len = ch.len_utf8();
+                    let font_id = if ch.is_ascii() {
+                        primary_font_id
+                    } else if let Some(fallback_id) =
+                        self.resolve_fallback_for_char(&run.font, ch, primary_font_id)
+                    {
+                        fallback_id
+                    } else {
+                        primary_font_id
+                    };
+
+                    let force_new_run = first_char_in_segment && decoration_changed;
+                    first_char_in_segment = false;
+
+                    if let Some(font_run) = font_runs.last_mut()
+                        && font_id == font_run.font_id
+                        && !force_new_run
+                    {
+                        font_run.len += ch_len;
+                    } else {
+                        font_runs.push(FontRun {
+                            len: ch_len,
+                            font_id,
+                        });
+                    }
                 }
 
                 // Preserve the remainder of the run for the next line
@@ -658,6 +751,7 @@ impl WindowTextSystem {
         let mut font_runs = self.font_runs_pool.lock().pop().unwrap_or_default();
         font_runs.clear();
 
+        let mut text_offset = 0;
         for run in runs.iter() {
             let decoration_changed = if let Some(last_run) = last_run
                 && last_run.color == run.color
@@ -672,18 +766,39 @@ impl WindowTextSystem {
                 true
             };
 
-            let font_id = self.resolve_font(&run.font);
-            if let Some(font_run) = font_runs.last_mut()
-                && font_id == font_run.font_id
-                && !decoration_changed
-            {
-                font_run.len += run.len;
-            } else {
-                font_runs.push(FontRun {
-                    len: run.len,
-                    font_id,
-                });
+            let primary_font_id = self.resolve_font(&run.font);
+            let run_text = &text[text_offset..text_offset + run.len];
+            let mut first_char_in_run = true;
+
+            for ch in run_text.chars() {
+                let ch_len = ch.len_utf8();
+                let font_id = if ch.is_ascii() {
+                    primary_font_id
+                } else if let Some(fallback_id) =
+                    self.resolve_fallback_for_char(&run.font, ch, primary_font_id)
+                {
+                    fallback_id
+                } else {
+                    primary_font_id
+                };
+
+                let force_new_run = first_char_in_run && decoration_changed;
+                first_char_in_run = false;
+
+                if let Some(font_run) = font_runs.last_mut()
+                    && font_id == font_run.font_id
+                    && !force_new_run
+                {
+                    font_run.len += ch_len;
+                } else {
+                    font_runs.push(FontRun {
+                        len: ch_len,
+                        font_id,
+                    });
+                }
             }
+
+            text_offset += run.len;
         }
 
         let layout = self.line_layout_cache.layout_line(
