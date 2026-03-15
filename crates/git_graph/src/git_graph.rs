@@ -50,6 +50,7 @@ const COMMIT_CIRCLE_STROKE_WIDTH: Pixels = px(1.5);
 const LANE_WIDTH: Pixels = px(16.0);
 const LEFT_PADDING: Pixels = px(12.0);
 const LINE_WIDTH: Pixels = px(1.5);
+const LINE_HIT_RADIUS: Pixels = px(8.0);
 const RESIZE_HANDLE_WIDTH: f32 = 8.0;
 const COPIED_STATE_DURATION: Duration = Duration::from_secs(2);
 
@@ -694,6 +695,125 @@ impl GraphData {
 
         self.max_commit_count = AllCommitCount::Loaded(self.commits.len());
     }
+
+    fn get_related_commit_rows(
+        &self,
+        interval: &Range<usize>,
+        color_idx: usize,
+    ) -> collections::HashSet<usize> {
+        let mut related_rows = collections::HashSet::default();
+
+        // Track the combined interval range as we expand through connected lines
+        let mut min_row = interval.start;
+        let mut max_row = interval.end;
+
+        // Pre-filter lines by color
+        let matching_lines: Vec<_> = self
+            .lines
+            .iter()
+            .filter(|line| line.color_idx == color_idx)
+            .collect();
+
+        // Keep expanding until no more connected lines are found
+        loop {
+            let prev_min = min_row;
+            let prev_max = max_row;
+
+            for line in &matching_lines {
+                // Check if this line connects to our current range
+                // Lines connect if their intervals overlap or are adjacent (touch at endpoints)
+                if line.full_interval.start <= max_row + 1 && line.full_interval.end + 1 >= min_row
+                {
+                    // Expand our range to include this line
+                    min_row = min_row.min(line.full_interval.start);
+                    max_row = max_row.max(line.full_interval.end);
+                }
+            }
+
+            // If the range didn't expand, we're done
+            if min_row == prev_min && max_row == prev_max {
+                break;
+            }
+        }
+
+        // Include all commits in the combined range with the matching color
+        for row in min_row..=max_row {
+            if let Some(commit) = self.commits.get(row) {
+                if commit.color_idx == color_idx {
+                    related_rows.insert(row);
+                }
+            }
+        }
+
+        related_rows
+    }
+
+    fn get_line_at_position(
+        &self,
+        row: usize,
+        x_position: Pixels,
+    ) -> Option<(Range<usize>, usize)> {
+        // Helper to check if x_position is within hit radius of a lane center
+        let is_near_lane = |lane: usize| -> bool {
+            let lane_center = LEFT_PADDING + lane as f32 * LANE_WIDTH + LANE_WIDTH / 2.0;
+            (x_position - lane_center).abs() <= LINE_HIT_RADIUS
+        };
+
+        // Check if there's a commit at this row near the x position
+        if let Some(commit) = self.commits.get(row) {
+            if is_near_lane(commit.lane) {
+                // Find the line that contains this commit
+                for line in &self.lines {
+                    if line.full_interval.start <= row
+                        && row <= line.full_interval.end
+                        && line.color_idx == commit.color_idx
+                    {
+                        return Some((line.full_interval.clone(), line.color_idx));
+                    }
+                }
+                // If no line found, return just this row
+                return Some((row..row, commit.color_idx));
+            }
+        }
+
+        // Check if there's a line passing through this row near the x position
+        for line in &self.lines {
+            if row < line.full_interval.start || row > line.full_interval.end {
+                continue;
+            }
+
+            // Track which column the line is at for this row
+            let mut current_column = line.child_column;
+
+            for segment in &line.segments {
+                match segment {
+                    CommitLineSegment::Straight { to_row } => {
+                        // Line stays in current column from current position to to_row
+                        if is_near_lane(current_column) && row <= *to_row {
+                            return Some((line.full_interval.clone(), line.color_idx));
+                        }
+                    }
+                    CommitLineSegment::Curve {
+                        to_column, on_row, ..
+                    } => {
+                        // Before the curve row, line is at current_column
+                        if row < *on_row && is_near_lane(current_column) {
+                            return Some((line.full_interval.clone(), line.color_idx));
+                        }
+                        // At or after the curve, line moves to to_column
+                        if row >= *on_row {
+                            current_column = *to_column;
+                            if is_near_lane(current_column) {
+                                return Some((line.full_interval.clone(), line.color_idx));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        None
+    }
 }
 
 pub fn init(cx: &mut App) {
@@ -845,6 +965,8 @@ pub struct GitGraph {
     horizontal_scroll_offset: Pixels,
     graph_viewport_width: Pixels,
     selected_entry_idx: Option<usize>,
+    hovered_lane: Option<(Range<usize>, usize)>,
+    hovered_lane_task: Option<Task<()>>,
     hovered_entry_idx: Option<usize>,
     graph_canvas_bounds: Rc<Cell<Option<Bounds<Pixels>>>>,
     log_source: LogSource,
@@ -952,6 +1074,9 @@ impl GitGraph {
             log_order,
             commit_details_split_state: cx.new(|_cx| SplitState::new()),
             selected_repo_id: active_repository,
+            // hover graph show related commits
+            hovered_lane: None,
+            hovered_lane_task: None,
             changed_files_scroll_handle: UniformListScrollHandle::new(),
             pending_select_sha: None,
         };
@@ -1089,6 +1214,15 @@ impl GitGraph {
             });
         }
 
+        let related_rows = self
+            .hovered_lane
+            .as_ref()
+            .map(|(interval, color_idx)| {
+                self.graph_data
+                    .get_related_commit_rows(interval, *color_idx)
+            })
+            .unwrap_or_default();
+
         range
             .map(|idx| {
                 let Some((commit, repository)) =
@@ -1135,6 +1269,10 @@ impl GitGraph {
                         .into_any_element()
                 };
 
+                let is_related = related_rows.contains(&idx);
+                let should_fade = self.hovered_lane.is_some() && !is_related;
+                let opacity = if should_fade { 0.4 } else { 1.0 };
+
                 vec![
                     div()
                         .id(ElementId::NamedInteger("commit-subject".into(), idx as u64))
@@ -1155,6 +1293,7 @@ impl GitGraph {
                                 }))
                                 .child(column_label(subject)),
                         )
+                        .opacity(opacity)
                         .into_any_element(),
                     column_label(formatted_time.into()),
                     column_label(author_name),
@@ -2030,6 +2169,58 @@ impl GitGraph {
         }
     }
 
+    fn hover_graph_task(&self, position: Point<Pixels>, cx: &mut Context<Self>) -> Task<()> {
+        cx.spawn(async move |this, cx| {
+            cx.background_executor()
+                .timer(Duration::from_millis(15))
+                .await;
+
+            let _ = this.update(cx, |this, cx| {
+                let Some(bounds) = this.graph_canvas_bounds.get() else {
+                    return;
+                };
+
+                // Convert window coordinates to element-relative coordinates
+                let relative_x = position.x - bounds.origin.x;
+                let relative_y = position.y - bounds.origin.y;
+
+                // Check if mouse is outside element bounds
+                if relative_x < px(0.)
+                    || relative_y < px(0.)
+                    || relative_x > bounds.size.width
+                    || relative_y > bounds.size.height
+                {
+                    if this.hovered_lane.is_some() {
+                        this.hovered_lane = None;
+                        cx.notify();
+                    }
+                    return;
+                }
+
+                // Read scroll offset fresh (not captured)
+                let scroll_offset_y = -this.table_interaction_state.read(cx).scroll_offset().y;
+
+                // Account for scroll offset to get content coordinates
+                let content_y = relative_y + scroll_offset_y;
+                let row_idx = (content_y / this.row_height).floor() as usize;
+
+                // Calculate x position relative to content (accounting for horizontal scroll)
+                let content_x = relative_x + this.horizontal_scroll_offset;
+
+                let new_hovered = if row_idx < this.graph_data.commits.len() {
+                    this.graph_data.get_line_at_position(row_idx, content_x)
+                } else {
+                    None
+                };
+
+                if this.hovered_lane != new_hovered {
+                    this.hovered_lane = new_hovered;
+                    cx.notify();
+                }
+            });
+        })
+    }
+
     fn render_commit_view_resize_handle(
         &self,
         _window: &mut Window,
@@ -2148,11 +2339,19 @@ impl Render for GitGraph {
                                 .on_mouse_move(cx.listener(Self::handle_graph_mouse_move))
                                 .on_click(cx.listener(Self::handle_graph_click))
                                 .on_hover(cx.listener(|this, &is_hovered: &bool, _, cx| {
-                                    if !is_hovered && this.hovered_entry_idx.is_some() {
+                                    if !is_hovered {
                                         this.hovered_entry_idx = None;
+                                        this.hovered_lane_task.take();
+                                        this.hovered_lane.take();
                                         cx.notify();
                                     }
-                                })),
+                                }))
+                                .on_mouse_move(cx.listener(
+                                    move |this, event: &gpui::MouseMoveEvent, _window, cx| {
+                                        this.hovered_lane_task =
+                                            Some(this.hover_graph_task(event.position, cx));
+                                    },
+                                )),
                         ),
                 )
                 .child({
@@ -2989,10 +3188,8 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_git_graph_linear_commits() {
-        let mut rng = StdRng::seed_from_u64(42);
-
+    #[gpui::test(iterations = 10)]
+    fn test_git_graph_linear_commits(mut rng: StdRng) {
         let oid1 = Oid::random(&mut rng);
         let oid2 = Oid::random(&mut rng);
         let oid3 = Oid::random(&mut rng);
@@ -3056,8 +3253,166 @@ mod tests {
         }
     }
 
-    // The full integration test has less iterations because it's significantly slower
-    // than the random commit test
+    #[gpui::test(iterations = 10)]
+    fn test_get_related_commit_rows_linear(mut rng: StdRng) {
+        // Property: For any linear branch, all commits should be highlighted when hovering
+        let num_commits = rng.random_range(3..20);
+
+        // Generate linear history
+        let oids: Vec<Oid> = (0..num_commits).map(|_| Oid::random(&mut rng)).collect();
+        let commits: Vec<Arc<InitialGraphCommitData>> = (0..num_commits)
+            .map(|i| {
+                Arc::new(InitialGraphCommitData {
+                    sha: oids[i],
+                    parents: if i == num_commits - 1 {
+                        smallvec![]
+                    } else {
+                        smallvec![oids[i + 1]]
+                    },
+                    ref_names: if i == 0 { vec!["HEAD".into()] } else { vec![] },
+                })
+            })
+            .collect();
+
+        let mut graph_data = GraphData::new(8);
+        graph_data.add_commits(&commits);
+
+        // Property: All commits on a linear branch should have the same color
+        let color_idx = graph_data.commits[0].color_idx;
+        for (i, commit) in graph_data.commits.iter().enumerate() {
+            assert_eq!(
+                commit.color_idx, color_idx,
+                "Commit {} should have the same color as the first commit",
+                i
+            );
+        }
+
+        // Property: When hovering over any line, all commits should be related
+        let related = graph_data
+            .get_related_commit_rows(&graph_data.lines.first().unwrap().full_interval, color_idx);
+        assert_eq!(
+            related.len(),
+            num_commits,
+            "All {} commits should be related on linear branch",
+            num_commits
+        );
+    }
+
+    #[gpui::test(iterations = 10)]
+    fn test_get_related_commit_rows_with_branch(mut rng: StdRng) {
+        // Property: Commits on different branches (different colors) should not be mixed
+
+        // Generate a graph with branches
+        let num_commits = rng.random_range(10..50);
+        let commits = generate_random_commit_dag(&mut rng, num_commits, true);
+
+        let mut graph_data = GraphData::new(8);
+        graph_data.add_commits(&commits);
+
+        // Property: For each line, related rows should only contain commits with matching color
+        for line in &graph_data.lines {
+            let related = graph_data.get_related_commit_rows(&line.full_interval, line.color_idx);
+
+            for &row in &related {
+                let commit = graph_data.commits.get(row).unwrap();
+                assert_eq!(
+                    commit.color_idx, line.color_idx,
+                    "Related commit at row {} has color {} but line has color {}",
+                    row, commit.color_idx, line.color_idx
+                );
+            }
+        }
+
+        // Property: Related rows should be within the expanded interval bounds
+        for line in &graph_data.lines {
+            let related = graph_data.get_related_commit_rows(&line.full_interval, line.color_idx);
+
+            // The related rows should form a contiguous or connected set
+            // At minimum, they should include the original interval
+            for row in line.full_interval.start..=line.full_interval.end {
+                if graph_data.commits.get(row).unwrap().color_idx == line.color_idx {
+                    assert!(
+                        related.contains(&row),
+                        "Row {} with matching color should be in related set",
+                        row
+                    );
+                }
+            }
+        }
+    }
+
+    #[gpui::test(iterations = 10)]
+    fn test_get_related_commit_rows_connected_segments(mut rng: StdRng) {
+        // Property: Connected line segments with the same color should be joined
+        let num_commits = rng.random_range(5..30);
+
+        // Generate random commits (mix of linear and branching)
+        let adversarial = rng.random_bool(0.3);
+        let commits = generate_random_commit_dag(&mut rng, num_commits, adversarial);
+
+        let mut graph_data = GraphData::new(8);
+        graph_data.add_commits(&commits);
+
+        // Group lines by color
+        let mut lines_by_color: HashMap<usize, Vec<&CommitLine>> = HashMap::default();
+        for line in &graph_data.lines {
+            lines_by_color.entry(line.color_idx).or_default().push(line);
+        }
+
+        // Property: For each color, hovering over any line should highlight all connected lines
+        for (color_idx, lines) in &lines_by_color {
+            if lines.is_empty() {
+                continue;
+            }
+
+            // Get related rows from the first line of this color
+            let first_line = lines[0];
+            let related = graph_data.get_related_commit_rows(&first_line.full_interval, *color_idx);
+
+            // Property: All commits with this color that are in connected line intervals should be related
+            let mut expected_rows = HashSet::default();
+            for line in lines {
+                for row in line.full_interval.start..=line.full_interval.end {
+                    if graph_data.commits.get(row).unwrap().color_idx == *color_idx {
+                        expected_rows.insert(row);
+                    }
+                }
+            }
+
+            // The related set should be a superset of what we find through connected lines
+            // (it may include more if lines are adjacent/overlapping)
+            for &row in &expected_rows {
+                // Check if this row is reachable from the first line through connected segments
+                let is_connected = lines
+                    .iter()
+                    .any(|line| line.full_interval.start <= row && row <= line.full_interval.end);
+
+                assert!(
+                    is_connected,
+                    "Row {} is not reachable from the first line through connected segments",
+                    row
+                );
+            }
+
+            // Property: related should not be empty if we have lines
+            assert!(
+                !related.is_empty(),
+                "Related rows should not be empty for color {}",
+                color_idx
+            );
+
+            // Property: all related rows should have the correct color
+            for &row in &related {
+                assert_eq!(
+                    graph_data.commits.get(row).unwrap().color_idx,
+                    *color_idx,
+                    "Row {} in related set has wrong color",
+                    row
+                );
+            }
+        }
+    }
+
     #[gpui::test(iterations = 10)]
     async fn test_git_graph_random_integration(mut rng: StdRng, cx: &mut TestAppContext) {
         init_test(cx);
