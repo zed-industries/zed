@@ -3958,6 +3958,74 @@ impl BufferSnapshot {
         })
     }
 
+    /// Returns all [`LanguageScope`]s at the given location, from deepest to shallowest.
+    /// This is useful for collecting bracket pairs from all injection layers.
+    pub fn language_scopes_at<D: ToOffset>(&self, position: D) -> Vec<LanguageScope> {
+        let offset = position.to_offset(self);
+        let text: &TextBufferSnapshot = self;
+
+        let mut scopes_with_depth: Vec<(LanguageScope, usize, usize)> = Vec::new();
+
+        for layer in self
+            .syntax
+            .layers_for_range(offset..offset, &self.text, false)
+        {
+            if let Some(ranges) = layer.included_sub_ranges
+                && !offset_in_sub_ranges(ranges, offset, text)
+            {
+                continue;
+            }
+
+            let mut cursor = layer.node().walk();
+
+            let mut range = None;
+            loop {
+                let child_range = cursor.node().byte_range();
+                if !child_range.contains(&offset) {
+                    break;
+                }
+
+                range = Some(child_range);
+                if cursor.goto_first_child_for_byte(offset).is_none() {
+                    break;
+                }
+            }
+
+            if let Some(range) = range {
+                scopes_with_depth.push((
+                    LanguageScope {
+                        language: layer.language.clone(),
+                        override_id: layer.override_id(offset, &self.text),
+                    },
+                    layer.depth,
+                    range.len(),
+                ));
+            }
+        }
+
+        // Sort by depth descending (deepest first), then by range length ascending (smallest first)
+        scopes_with_depth.sort_by(|a, b| {
+            b.1.cmp(&a.1).then_with(|| a.2.cmp(&b.2))
+        });
+
+        let mut scopes: Vec<LanguageScope> = scopes_with_depth
+            .into_iter()
+            .map(|(scope, _, _)| scope)
+            .collect();
+
+        // If no layers matched, fall back to the base language
+        if scopes.is_empty() {
+            if let Some(language) = self.language.clone() {
+                scopes.push(LanguageScope {
+                    language,
+                    override_id: None,
+                });
+            }
+        }
+
+        scopes
+    }
+
     /// Returns a tuple of the range and character kind of the word
     /// surrounding the given position.
     pub fn surrounding_word<T: ToOffset>(
