@@ -2504,9 +2504,6 @@ fn matching(
     display_point: DisplayPoint,
     match_quotes: bool,
 ) -> DisplayPoint {
-    if !map.is_singleton() {
-        return display_point;
-    }
     // https://github.com/vim/vim/blob/1d87e11a1ef201b26ed87585fba70182ad0c468a/runtime/doc/motion.txt#L1200
     let display_point = map.clip_at_line_end(display_point);
     let point = display_point.to_point(map);
@@ -2520,6 +2517,10 @@ fn matching(
     }
 
     let is_quote_char = |ch: char| matches!(ch, '\'' | '"' | '`');
+
+    let buffer_offset = snapshot
+        .excerpt_containing(offset..offset)
+        .map(|mut excerpt| excerpt.map_offset_to_buffer(offset));
 
     let make_range_filter = |require_on_bracket: bool| {
         move |buffer: &language::BufferSnapshot,
@@ -2537,8 +2538,10 @@ fn matching(
             if require_on_bracket {
                 // Attempt to find the smallest enclosing bracket range that also contains
                 // the offset, which only happens if the cursor is currently in a bracket.
-                opening_range.contains(&BufferOffset(offset.0))
-                    || closing_range.contains(&BufferOffset(offset.0))
+                buffer_offset.is_some_and(|offset| {
+                    opening_range.contains(&offset)
+                        || closing_range.contains(&offset)
+                })
             } else {
                 true
             }
@@ -3279,7 +3282,7 @@ mod test {
         state::Mode,
         test::{NeovimBackedTestContext, VimTestContext},
     };
-    use editor::Inlay;
+    use editor::{Editor, EditorMode, Inlay, MultiBuffer};
     use gpui::KeyBinding;
     use indoc::indoc;
     use language::Point;
@@ -3845,6 +3848,36 @@ mod test {
         cx.shared_state()
             .await
             .assert_eq(indoc! {r"<Button onClick=ˇ{() => {}}></Button>"});
+    }
+
+    #[gpui::test]
+    async fn test_matching_multibuffer(cx: &mut gpui::TestAppContext) {
+        VimTestContext::init(cx);
+        cx.update(|cx| {
+            VimTestContext::init_keybindings(true, cx);
+        });
+        let (editor, cx) = cx.add_window_view(|window, cx| {
+            let multi_buffer = MultiBuffer::build_multi(
+                [
+                    ("fn a() {\n    b()\n}\n", vec![Point::row_range(0..3)]),
+                    ("fn c() {\n    d()\n}\n", vec![Point::row_range(0..3)]),
+                ],
+                cx,
+            );
+            Editor::new(EditorMode::full(), multi_buffer, None, window, cx)
+        });
+        let mut cx = editor::test::editor_test_context::EditorTestContext::for_editor_in(
+            editor.clone(),
+            cx,
+        )
+        .await;
+
+        cx.set_selections_state("fn a() ˇ{\n    b()\n}\n\nfn c() {\n    d()\n}\n");
+        cx.simulate_keystroke("%");
+        cx.assert_editor_state("fn a() {\n    b()\nˇ}\n\nfn c() {\n    d()\n}\n");
+
+        cx.simulate_keystroke("%");
+        cx.assert_editor_state("fn a() ˇ{\n    b()\n}\n\nfn c() {\n    d()\n}\n");
     }
 
     #[gpui::test]
