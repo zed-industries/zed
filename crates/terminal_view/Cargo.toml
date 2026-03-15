@@ -19,6 +19,7 @@ doctest = false
 anyhow.workspace = true
 async-recursion.workspace = true
 assistant_slash_command.workspace = true
+audio.workspace = true
 breadcrumbs.workspace = true
 collections.workspace = true
 db.workspace = true

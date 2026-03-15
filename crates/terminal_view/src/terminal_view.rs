@@ -6,6 +6,7 @@ pub mod terminal_scrollbar;
 mod terminal_slash_command;
 
 use assistant_slash_command::SlashCommandRegistry;
+use audio::{Audio, Sound};
 use editor::{Editor, EditorSettings, actions::SelectAll, blink_manager::BlinkManager};
 use gpui::{
     Action, AnyElement, App, ClipboardEntry, DismissEvent, Entity, EventEmitter, ExternalPaths,
@@ -1010,6 +1011,9 @@ fn subscribe_for_terminal_events(
 
                 Event::Bell => {
                     terminal_view.has_bell = true;
+                    if TerminalSettings::get_global(cx).audible_bell {
+                        Audio::play_sound(Sound::Bell, cx);
+                    }
                     cx.emit(Event::Wakeup);
                 }
 

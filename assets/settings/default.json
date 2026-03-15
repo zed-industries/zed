@@ -1719,6 +1719,8 @@
     "keep_selection_on_copy": true,
     // Whether to show the terminal button in the status bar
     "button": true,
+    // Whether to play a sound when the terminal bell (BEL character) is received.
+    "audible_bell": true,
     // Any key-value pairs added to this list will be added to the terminal's
     // environment. Use `:` to separate multiple values.
     "env": {

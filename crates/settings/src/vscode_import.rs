@@ -871,6 +871,7 @@ impl VsCodeSettings {
                 .read_f32("terminal.integrated.lineHeight")
                 .map(|lh| TerminalLineHeight::Custom(lh)),
             max_scroll_history_lines: self.read_usize("terminal.integrated.scrollback"),
+            audible_bell: self.read_bool("terminal.integrated.enableBell"),
             minimum_contrast: None,
             option_as_meta: self.read_bool("terminal.integrated.macOptionIsMeta"),
             project: self.project_terminal_settings_content(),
