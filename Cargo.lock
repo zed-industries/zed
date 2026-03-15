@@ -349,6 +349,7 @@ dependencies = [
  "command_palette_hooks",
  "component",
  "context_server",
+ "context_server_tools",
  "db",
  "editor",
  "eval_utils",
@@ -3583,10 +3584,28 @@ dependencies = [
  "settings",
  "slotmap",
  "smol",
+ "strum 0.27.2",
  "tempfile",
  "terminal",
  "url",
  "util",
+]
+
+[[package]]
+name = "context_server_tools"
+version = "0.1.0"
+dependencies = [
+ "collections",
+ "context_server",
+ "editor",
+ "gpui",
+ "itertools 0.14.0",
+ "language",
+ "lsp",
+ "project",
+ "strum 0.27.2",
+ "ui",
+ "workspace",
 ]
 
 [[package]]
@@ -21827,6 +21846,8 @@ dependencies = [
  "command_palette",
  "component",
  "component_preview",
+ "context_server",
+ "context_server_tools",
  "copilot",
  "copilot_chat",
  "copilot_ui",

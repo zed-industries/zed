@@ -1,7 +1,7 @@
 use anyhow::{Context as _, Result, anyhow};
 use collections::HashMap;
 use futures::{FutureExt, StreamExt, channel::oneshot, future, select};
-use gpui::{AppContext as _, AsyncApp, BackgroundExecutor, Task};
+use gpui::{AppContext, AsyncApp, BackgroundExecutor, Task};
 use parking_lot::Mutex;
 use postage::barrier;
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
@@ -18,7 +18,7 @@ use std::{
     },
     time::{Duration, Instant},
 };
-use util::{ResultExt, TryFutureExt};
+use util::ResultExt;
 
 use crate::{
     transport::{StdioTransport, Transport},
@@ -38,6 +38,18 @@ pub const INTERNAL_ERROR: i32 = -32603;
 type ResponseHandler = Box<dyn Send + FnOnce(Result<String, Error>)>;
 type NotificationHandler = Box<dyn Send + FnMut(Value, AsyncApp)>;
 type RequestHandler = Box<dyn Send + FnMut(RequestId, &RawValue, AsyncApp)>;
+pub type IoHandler = Box<dyn Send + FnMut(IoKind, &str)>;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum IoKind {
+    /// Inbound messages. For local (stdio) servers, this corresponds to the stdout stream. For HTTP servers, this is the SSE message payload.
+    Recv,
+    /// Outbound messages. For local (stdio) servers, this corresponds to the stdin stream. For HTTP servers, this is the HTTP POST payload.
+    Send,
+    /// Standard error stream. Only applicable to local (stdio) servers.
+    StdErr,
+    ProtocolLog(crate::types::LoggingLevel),
+}
 
 #[derive(Debug, Clone, Eq, PartialEq, Hash, Serialize, Deserialize)]
 #[serde(untagged)]
@@ -53,6 +65,7 @@ pub(crate) struct Client {
     name: Arc<str>,
     subscription_set: Arc<Mutex<NotificationSubscriptionSet>>,
     response_handlers: Arc<Mutex<Option<HashMap<RequestId, ResponseHandler>>>>,
+    io_handlers: Arc<Mutex<HashMap<i32, IoHandler>>>,
     #[allow(clippy::type_complexity)]
     #[allow(dead_code)]
     io_tasks: Mutex<Option<(Task<Option<()>>, Task<Option<()>>)>>,
@@ -196,48 +209,60 @@ impl Client {
         let response_handlers =
             Arc::new(Mutex::new(Some(HashMap::<_, ResponseHandler>::default())));
         let request_handlers = Arc::new(Mutex::new(HashMap::<_, RequestHandler>::default()));
+        let io_handlers = Arc::new(Mutex::new(HashMap::<i32, IoHandler>::default()));
 
         let receive_input_task = cx.spawn({
             let subscription_set = subscription_set.clone();
             let response_handlers = response_handlers.clone();
             let request_handlers = request_handlers.clone();
             let transport = transport.clone();
+            let io_handlers = io_handlers.clone();
             async move |cx| {
                 Self::handle_input(
                     transport,
                     subscription_set,
                     request_handlers,
                     response_handlers,
+                    io_handlers,
                     cx,
                 )
-                .log_err()
                 .await
+                .log_err()
             }
         });
-        let receive_err_task = cx.spawn({
+        let receive_err_task = cx.background_spawn({
             let transport = transport.clone();
-            async move |_| Self::handle_err(transport).log_err().await
+            let io_handlers = io_handlers.clone();
+            async move { Self::handle_err(transport, io_handlers).await.log_err() }
         });
-        let input_task = cx.spawn(async move |_| {
-            let (input, err) = futures::join!(receive_input_task, receive_err_task);
+        let input_task = cx.background_spawn(async move {
+            let (input, err): (Option<()>, Option<()>) =
+                futures::join!(receive_input_task, receive_err_task);
             input.or(err)
         });
 
         let output_task = cx.background_spawn({
             let transport = transport.clone();
-            Self::handle_output(
-                transport,
-                outbound_rx,
-                output_done_tx,
-                response_handlers.clone(),
-            )
-            .log_err()
+            let response_handlers = response_handlers.clone();
+            let io_handlers = io_handlers.clone();
+            async move {
+                Self::handle_output(
+                    transport,
+                    outbound_rx,
+                    output_done_tx,
+                    response_handlers,
+                    io_handlers,
+                )
+                .await
+                .log_err()
+            }
         });
 
         Ok(Self {
             server_id,
             subscription_set,
             response_handlers,
+            io_handlers,
             name: server_name,
             next_id: Default::default(),
             outbound_tx,
@@ -260,12 +285,18 @@ impl Client {
         subscription_set: Arc<Mutex<NotificationSubscriptionSet>>,
         request_handlers: Arc<Mutex<HashMap<&'static str, RequestHandler>>>,
         response_handlers: Arc<Mutex<Option<HashMap<RequestId, ResponseHandler>>>>,
+        io_handlers: Arc<Mutex<HashMap<i32, IoHandler>>>,
         cx: &mut AsyncApp,
     ) -> anyhow::Result<()> {
         let mut receiver = transport.receive();
 
         while let Some(message) = receiver.next().await {
             log::trace!("recv: {}", &message);
+
+            for handler in io_handlers.lock().values_mut() {
+                handler(IoKind::Recv, &message);
+            }
+
             if let Ok(request) = serde_json::from_str::<AnyRequest>(&message) {
                 let mut request_handlers = request_handlers.lock();
                 if let Some(handler) = request_handlers.get_mut(request.method) {
@@ -276,17 +307,22 @@ impl Client {
                     );
                 }
             } else if let Ok(response) = serde_json::from_str::<AnyResponse>(&message) {
-                if let Some(handlers) = response_handlers.lock().as_mut()
-                    && let Some(handler) = handlers.remove(&response.id)
+                if let Some(handler) = response_handlers
+                    .lock()
+                    .as_mut()
+                    .and_then(|handlers| handlers.remove(&response.id))
                 {
                     handler(Ok(message.to_string()));
                 }
             } else if let Ok(notification) = serde_json::from_str::<AnyNotification>(&message) {
+                if notification.method == "notifications/message" {
+                    Self::handle_mcp_log(&notification, &io_handlers);
+                }
                 subscription_set.lock().notify(
                     &notification.method,
                     notification.params.unwrap_or(Value::Null),
                     cx,
-                )
+                );
             } else {
                 log::error!("Unhandled JSON from context_server: {}", message);
             }
@@ -299,9 +335,15 @@ impl Client {
 
     /// Handles the stderr output from the context server.
     /// Continuously reads and logs any error messages from the server.
-    async fn handle_err(transport: Arc<dyn Transport>) -> anyhow::Result<()> {
+    async fn handle_err(
+        transport: Arc<dyn Transport>,
+        io_handlers: Arc<Mutex<HashMap<i32, IoHandler>>>,
+    ) -> anyhow::Result<()> {
         while let Some(err) = transport.receive_err().next().await {
             log::debug!("context server stderr: {}", err.trim());
+            for handler in io_handlers.lock().values_mut() {
+                handler(IoKind::StdErr, &err);
+            }
         }
 
         Ok(())
@@ -315,6 +357,7 @@ impl Client {
         outbound_rx: channel::Receiver<String>,
         output_done_tx: barrier::Sender,
         response_handlers: Arc<Mutex<Option<HashMap<RequestId, ResponseHandler>>>>,
+        io_handlers: Arc<Mutex<HashMap<i32, IoHandler>>>,
     ) -> anyhow::Result<()> {
         let _clear_response_handlers = util::defer({
             let response_handlers = response_handlers.clone();
@@ -324,6 +367,11 @@ impl Client {
         });
         while let Ok(message) = outbound_rx.recv().await {
             log::trace!("outgoing message: {}", message);
+
+            for handler in io_handlers.lock().values_mut() {
+                handler(IoKind::Send, &message);
+            }
+
             transport.send(message).await?;
         }
         drop(output_done_tx);
@@ -463,6 +511,62 @@ impl Client {
         NotificationSubscription {
             id: notification_subscriptions.add_handler(method, f),
             set: self.subscription_set.clone(),
+        }
+    }
+
+    /// Parses and handles an incoming `notifications/message` log notification according to the MCP specs.
+    /// See: https://modelcontextprotocol.io/specification/2025-11-25/server/utilities/logging
+    fn handle_mcp_log(
+        notification: &AnyNotification,
+        io_handlers: &Arc<Mutex<HashMap<i32, IoHandler>>>,
+    ) {
+        if let Ok(params) = serde_json::from_value::<crate::types::MessageParams>(
+            notification
+                .params
+                .clone()
+                .unwrap_or(serde_json::Value::Null),
+        ) {
+            let data_str = if let serde_json::Value::String(s) = &params.data {
+                s.clone()
+            } else {
+                params.data.to_string()
+            };
+
+            let level_str = params.level.as_ref();
+
+            let msg = if let Some(logger) = &params.logger {
+                format!("[{level_str}] [{logger}] {data_str}")
+            } else {
+                format!("[{level_str}] {data_str}")
+            };
+            for handler in io_handlers.lock().values_mut() {
+                handler(IoKind::ProtocolLog(params.level), &msg);
+            }
+        }
+    }
+
+    pub fn on_io<F>(&self, f: F) -> IoSubscription
+    where
+        F: 'static + Send + FnMut(IoKind, &str),
+    {
+        let id = self.next_id.fetch_add(1, SeqCst);
+        self.io_handlers.lock().insert(id, Box::new(f));
+        IoSubscription {
+            id,
+            io_handlers: Arc::downgrade(&self.io_handlers),
+        }
+    }
+}
+
+pub struct IoSubscription {
+    id: i32,
+    io_handlers: std::sync::Weak<Mutex<HashMap<i32, IoHandler>>>,
+}
+
+impl Drop for IoSubscription {
+    fn drop(&mut self) {
+        if let Some(handlers) = self.io_handlers.upgrade() {
+            handlers.lock().remove(&self.id);
         }
     }
 }

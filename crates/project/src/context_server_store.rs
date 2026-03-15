@@ -7,9 +7,17 @@ use std::time::Duration;
 
 use anyhow::{Context as _, Result};
 use collections::{HashMap, HashSet};
-use context_server::{ContextServer, ContextServerCommand, ContextServerId};
-use futures::{FutureExt as _, future::Either, future::join_all};
-use gpui::{App, AsyncApp, Context, Entity, EventEmitter, Subscription, Task, WeakEntity, actions};
+use context_server::{
+    ContextServer, ContextServerCommand, ContextServerId, log_store::GlobalContextServerLogStore,
+};
+use futures::{
+    FutureExt as _,
+    future::{Either, join_all},
+};
+use gpui::{
+    App, AsyncApp, BorrowAppContext, Context, Entity, EventEmitter, Subscription, Task, WeakEntity,
+    actions,
+};
 use itertools::Itertools;
 use registry::ContextServerDescriptorRegistry;
 use remote::RemoteClient;
@@ -594,13 +602,20 @@ impl ContextServerStore {
         ) {
             self.stop_server(&id, cx).log_err();
         }
+
+        cx.update_global(|log_store: &mut GlobalContextServerLogStore, cx| {
+            log_store.0.update(cx, |log_store, cx| {
+                log_store.add_context_server(server.clone(), id.to_string(), cx);
+            });
+        });
+
         let task = cx.spawn({
             let id = server.id();
             let server = server.clone();
             let configuration = configuration.clone();
 
             async move |this, cx| {
-                match server.clone().start(cx).await {
+                match server.clone().start(&cx).await {
                     Ok(_) => {
                         debug_assert!(server.client().is_some());
 
@@ -617,7 +632,18 @@ impl ContextServerStore {
                         .log_err()
                     }
                     Err(err) => {
-                        log::error!("{} context server failed to start: {}", id, err);
+                        let error_message = format!("context server failed to start: {}", err);
+                        log::error!("{} {}", id, error_message);
+                        cx.update_global(|log_store: &mut GlobalContextServerLogStore, cx| {
+                            log_store.0.update(cx, |log_store, cx| {
+                                log_store.add_log(
+                                    id.clone(),
+                                    context_server::types::LoggingLevel::Error,
+                                    error_message,
+                                    cx,
+                                );
+                            });
+                        });
                         this.update(cx, |this, cx| {
                             this.update_server_state(
                                 id.clone(),
@@ -652,6 +678,13 @@ impl ContextServerStore {
             .remove(id)
             .context("Context server not found")?;
         drop(state);
+
+        cx.update_global(|log_store: &mut GlobalContextServerLogStore, cx| {
+            log_store.0.update(cx, |log_store, cx| {
+                log_store.remove_context_server(id.clone(), cx);
+            });
+        });
+
         cx.emit(ServerStatusChangedEvent {
             server_id: id.clone(),
             status: ContextServerStatus::Stopped,

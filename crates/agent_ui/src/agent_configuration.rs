@@ -754,6 +754,18 @@ impl AgentConfiguration {
                                 .ok();
                             }
                         }))
+                        .entry("Server Logs", None, {
+                            let workspace = workspace.clone();
+                            let context_server_id = context_server_id.clone();
+                            move |window, cx| {
+                                context_server_tools::open_server_logs(
+                                    workspace.clone(),
+                                    context_server_id.clone(),
+                                    window,
+                                    cx,
+                                );
+                            }
+                        })
                         .separator()
                         .entry("Uninstall", None, {
                             let fs = fs.clone();
