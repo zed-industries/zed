@@ -208,7 +208,7 @@ impl<'a> RenderContext<'a> {
         let mut buffer_text_style = window.text_style();
         buffer_text_style.font_family = buffer_font_family.clone();
         buffer_text_style.font_features = buffer_font_features;
-        buffer_text_style.font_size = AbsoluteLength::from(settings.buffer_font_size(cx));
+        buffer_text_style.font_size = AbsoluteLength::from(settings.markdown_preview_font_size(cx));
 
         RenderContext {
             workspace,

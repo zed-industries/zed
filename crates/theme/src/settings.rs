@@ -17,6 +17,7 @@ use std::sync::Arc;
 const MIN_FONT_SIZE: Pixels = px(6.0);
 const MAX_FONT_SIZE: Pixels = px(100.0);
 const MIN_LINE_HEIGHT: f32 = 1.0;
+const DEFAULT_MARKDOWN_PREVIEW_FONT_SIZE_MULTIPLIER: f32 = 1.0;
 
 #[derive(
     Debug,
@@ -114,6 +115,8 @@ pub struct ThemeSettings {
     agent_ui_font_size: Option<Pixels>,
     /// The agent buffer font size. Determines the size of user messages in the agent panel.
     agent_buffer_font_size: Option<Pixels>,
+    /// Scales markdown preview typography relative to the buffer font size.
+    markdown_preview_font_size_multiplier: f32,
     /// The line height for buffers, and the terminal.
     ///
     /// Changing this may affect the spacing of some UI elements.
@@ -498,6 +501,11 @@ impl ThemeSettings {
             .unwrap_or_else(|| self.buffer_font_size(cx))
     }
 
+    /// Returns the markdown preview font size.
+    pub fn markdown_preview_font_size(&self, cx: &App) -> Pixels {
+        self.buffer_font_size(cx) * self.markdown_preview_font_size_multiplier
+    }
+
     /// Returns the buffer font size, read from the settings.
     ///
     /// The real buffer font size is stored in-memory, to support temporary font size changes.
@@ -730,6 +738,9 @@ impl settings::Settings for ThemeSettings {
             buffer_line_height: content.buffer_line_height.unwrap().into(),
             agent_ui_font_size: content.agent_ui_font_size.map(|s| s.into_gpui()),
             agent_buffer_font_size: content.agent_buffer_font_size.map(|s| s.into_gpui()),
+            markdown_preview_font_size_multiplier: content
+                .markdown_preview_font_size_multiplier
+                .unwrap_or(DEFAULT_MARKDOWN_PREVIEW_FONT_SIZE_MULTIPLIER),
             theme: theme_selection,
             experimental_theme_overrides: content.experimental_theme_overrides.clone(),
             theme_overrides: content.theme_overrides.clone(),
