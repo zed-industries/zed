@@ -420,6 +420,14 @@ pub struct EditPredictionSettings {
     /// This setting has no effect if globally disabled.
     pub enabled_in_text_threads: bool,
     pub examples_dir: Option<Arc<Path>>,
+    /// Whether training data collection is enabled in user settings.
+    ///
+    /// Unlike most resolved settings fields, this is kept as `Option<bool>` rather than
+    /// being unwrapped to a plain `bool`. The distinction between `None` (absent from the
+    /// user's settings file) and `Some(false)` (explicitly disabled) is needed by
+    /// `is_data_collection_enabled`: when the field is `None` it falls back to the legacy
+    /// KV store entry so that existing users' choices are preserved without a migration.
+    pub allow_data_collection: Option<bool>,
 }
 
 impl EditPredictionSettings {
@@ -787,6 +795,7 @@ impl settings::Settings for AllLanguageSettings {
                 open_ai_compatible_api: openai_compatible_settings,
                 enabled_in_text_threads,
                 examples_dir: edit_predictions.examples_dir,
+                allow_data_collection: edit_predictions.allow_data_collection,
             },
             defaults: default_language_settings,
             languages,

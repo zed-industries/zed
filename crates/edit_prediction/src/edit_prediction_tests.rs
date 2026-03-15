@@ -3226,6 +3226,219 @@ async fn test_edit_prediction_settled(cx: &mut TestAppContext) {
     }
 }
 
+#[gpui::test]
+async fn test_data_collection_disabled_by_default(cx: &mut TestAppContext) {
+    let (ep_store, _channels) = init_test_with_fake_client(cx);
+    KEY_VALUE_STORE
+        .delete_kvp(ZED_PREDICT_DATA_COLLECTION_CHOICE.into())
+        .await
+        .ok();
+
+    cx.update(|cx| {
+        assert!(!ep_store.read(cx).is_data_collection_enabled(cx));
+    });
+}
+
+#[gpui::test]
+async fn test_data_collection_enabled_via_legacy_kv_store(cx: &mut TestAppContext) {
+    let (ep_store, _channels) = init_test_with_fake_client(cx);
+    KEY_VALUE_STORE
+        .delete_kvp(ZED_PREDICT_DATA_COLLECTION_CHOICE.into())
+        .await
+        .ok();
+    KEY_VALUE_STORE
+        .write_kvp(ZED_PREDICT_DATA_COLLECTION_CHOICE.into(), "true".into())
+        .await
+        .unwrap();
+
+    cx.update(|cx| {
+        assert!(ep_store.read(cx).is_data_collection_enabled(cx));
+    });
+
+    KEY_VALUE_STORE
+        .delete_kvp(ZED_PREDICT_DATA_COLLECTION_CHOICE.into())
+        .await
+        .unwrap();
+}
+
+#[gpui::test]
+async fn test_data_collection_setting_overrides_kv_store(cx: &mut TestAppContext) {
+    let (ep_store, _channels) = init_test_with_fake_client(cx);
+    KEY_VALUE_STORE
+        .write_kvp(ZED_PREDICT_DATA_COLLECTION_CHOICE.into(), "true".into())
+        .await
+        .unwrap();
+
+    // An explicit false in settings.json wins over the KV store.
+    cx.update_global::<SettingsStore, _>(|settings, cx| {
+        settings.update_user_settings(cx, |content| {
+            content
+                .project
+                .all_languages
+                .edit_predictions
+                .get_or_insert_default()
+                .allow_data_collection = Some(false);
+        });
+    });
+
+    cx.update(|cx| {
+        assert!(!ep_store.read(cx).is_data_collection_enabled(cx));
+    });
+
+    KEY_VALUE_STORE
+        .delete_kvp(ZED_PREDICT_DATA_COLLECTION_CHOICE.into())
+        .await
+        .unwrap();
+}
+
+#[gpui::test]
+async fn test_data_collection_enabled_via_setting(cx: &mut TestAppContext) {
+    let (ep_store, _channels) = init_test_with_fake_client(cx);
+    KEY_VALUE_STORE
+        .delete_kvp(ZED_PREDICT_DATA_COLLECTION_CHOICE.into())
+        .await
+        .ok();
+
+    cx.update_global::<SettingsStore, _>(|settings, cx| {
+        settings.update_user_settings(cx, |content| {
+            content
+                .project
+                .all_languages
+                .edit_predictions
+                .get_or_insert_default()
+                .allow_data_collection = Some(true);
+        });
+    });
+
+    cx.update(|cx| {
+        assert!(ep_store.read(cx).is_data_collection_enabled(cx));
+    });
+}
+
+#[gpui::test]
+async fn test_data_collection_always_enabled_for_staff(cx: &mut TestAppContext) {
+    let (ep_store, _channels) = init_test_with_fake_client(cx);
+    KEY_VALUE_STORE
+        .delete_kvp(ZED_PREDICT_DATA_COLLECTION_CHOICE.into())
+        .await
+        .ok();
+
+    cx.update(|cx| {
+        cx.set_staff(true);
+        assert!(ep_store.read(cx).is_data_collection_enabled(cx));
+    });
+}
+
+// When a user had data collection enabled via the legacy KV store (with no explicit
+// setting in settings.json), toggle_data_collection must read the *resolved* state
+// (true) and write Some(false). The old code read the raw settings content
+// (None → false) and would have incorrectly written Some(true) instead.
+#[gpui::test]
+async fn test_toggle_data_collection_from_kv_enabled_state(cx: &mut TestAppContext) {
+    let (ep_store, _channels) = init_test_with_fake_client(cx);
+    KEY_VALUE_STORE
+        .delete_kvp(ZED_PREDICT_DATA_COLLECTION_CHOICE.into())
+        .await
+        .ok();
+    KEY_VALUE_STORE
+        .write_kvp(ZED_PREDICT_DATA_COLLECTION_CHOICE.into(), "true".into())
+        .await
+        .unwrap();
+
+    cx.update(|cx| {
+        assert!(
+            ep_store.read(cx).is_data_collection_enabled(cx),
+            "data collection should be enabled via KV store before toggle"
+        );
+    });
+
+    // Simulate what toggle_data_collection does: capture the resolved current
+    // state, then write its inverse. With the fix, is_currently_enabled = true,
+    // so allow_data_collection becomes Some(false).
+    let is_currently_enabled = cx.update(|cx| ep_store.read(cx).is_data_collection_enabled(cx));
+    cx.update_global::<SettingsStore, _>(|settings, cx| {
+        settings.update_user_settings(cx, |content| {
+            content
+                .project
+                .all_languages
+                .edit_predictions
+                .get_or_insert_default()
+                .allow_data_collection = Some(!is_currently_enabled);
+        });
+    });
+
+    cx.update(|cx| {
+        assert!(
+            !ep_store.read(cx).is_data_collection_enabled(cx),
+            "data collection should be disabled after toggling off from KV-enabled state"
+        );
+    });
+
+    KEY_VALUE_STORE
+        .delete_kvp(ZED_PREDICT_DATA_COLLECTION_CHOICE.into())
+        .await
+        .unwrap();
+}
+
+#[gpui::test]
+async fn test_upsell_shown_by_default(cx: &mut TestAppContext) {
+    init_test(cx);
+    KEY_VALUE_STORE
+        .delete_kvp(ZED_PREDICT_DATA_COLLECTION_CHOICE.into())
+        .await
+        .ok();
+    KEY_VALUE_STORE
+        .delete_kvp("dismissed-edit-predict-upsell".into())
+        .await
+        .ok();
+
+    assert!(should_show_upsell_modal());
+}
+
+#[gpui::test]
+async fn test_upsell_dismissed_when_data_collection_choice_in_kv_store(cx: &mut TestAppContext) {
+    init_test(cx);
+
+    // Any value for the data collection key means the old upsell was already
+    // shown, regardless of whether data collection was accepted or declined.
+    for value in &["true", "false"] {
+        KEY_VALUE_STORE
+            .write_kvp(ZED_PREDICT_DATA_COLLECTION_CHOICE.into(), value.to_string())
+            .await
+            .unwrap();
+
+        assert!(
+            !should_show_upsell_modal(),
+            "upsell should be suppressed when data collection choice is '{value}'"
+        );
+    }
+
+    KEY_VALUE_STORE
+        .delete_kvp(ZED_PREDICT_DATA_COLLECTION_CHOICE.into())
+        .await
+        .unwrap();
+}
+
+#[gpui::test]
+async fn test_upsell_dismissed_when_dismissed_key_set(cx: &mut TestAppContext) {
+    init_test(cx);
+    KEY_VALUE_STORE
+        .delete_kvp(ZED_PREDICT_DATA_COLLECTION_CHOICE.into())
+        .await
+        .ok();
+    KEY_VALUE_STORE
+        .write_kvp("dismissed-edit-predict-upsell".into(), "1".into())
+        .await
+        .unwrap();
+
+    assert!(!should_show_upsell_modal());
+
+    KEY_VALUE_STORE
+        .delete_kvp("dismissed-edit-predict-upsell".into())
+        .await
+        .unwrap();
+}
+
 #[ctor::ctor]
 fn init_logger() {
     zlog::init_test();
