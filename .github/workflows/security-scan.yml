@@ -1,0 +1,238 @@
+# Security scanning pipeline: SCA (dependency) + SAST (static analysis).
+#
+# Four concurrent jobs provide layered coverage:
+#   cargo-audit  — Rust-specific advisory database (RustSec) + cargo-deny license/advisory checks
+#   osv-scanner  — Broad SCA via Google's OSV database (Cargo, Docker, Python, Node)
+#   semgrep      — Fast, rules-based SAST (p/ci, p/rust, p/security-audit)
+#   codeql       — Deep semantic SAST (GitHub-native, Rust language support)
+#
+# On scheduled runs and manual dispatches, findings from OSV-Scanner,
+# Semgrep, and CodeQL are uploaded as SARIF files and appear in the
+# repository's Security > Code scanning alerts UI.
+# On pull requests, scan summaries appear in the job step summary and
+# counts are set as step outputs. SAST jobs fail on error-level
+# findings.
+# cargo-audit and cargo-deny results surface as CI annotations directly in pull requests.
+
+name: Security Scanning
+on:
+  pull_request:
+    branches:
+      - "**"
+  schedule:
+    # Weekly Monday 6:00 AM UTC — catches newly disclosed CVEs in existing code
+    - cron: "0 6 * * 1"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  actions: read
+  security-events: write
+
+defaults:
+  run:
+    shell: bash -euo pipefail {0}
+
+jobs:
+  # ── SCA: Rust crate vulnerability audit (RustSec + cargo-deny) ────────
+  # cargo-audit checks Cargo.lock against the RustSec advisory database
+  # and will fail at any severity. cargo-deny provides additional
+  # advisory and license policy checks.
+  cargo-audit:
+    name: "SCA — cargo-audit"
+    if: github.repository_owner == 'zed-industries'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
+
+      - name: Install cargo-audit
+        uses: taiki-e/install-action@2f0c8c3dd47cebb6a2e219d2f4782555026a7566 # v2
+        with:
+          tool: cargo-audit
+
+      - name: Install cargo-deny
+        uses: taiki-e/install-action@2f0c8c3dd47cebb6a2e219d2f4782555026a7566 # v2
+        with:
+          tool: cargo-deny
+
+      - name: Run cargo-audit
+        run: cargo audit
+
+      - name: Run cargo-deny (advisories)
+        if: always()
+        run: cargo deny check advisories
+
+      - name: Run cargo-deny (licenses)
+        if: always()
+        run: cargo deny check licenses
+
+  # ── SCA: Broad dependency scanning (OSV) ──────────────────────────────
+  # Google's OSV-Scanner checks Cargo.lock, Dockerfiles, pyproject.toml,
+  # and package.json against the OSV vulnerability database. Produces a
+  # SARIF report uploaded to GitHub Code Scanning.
+  osv-scanner:
+    name: "SCA — OSV-Scanner"
+    if: github.repository_owner == 'zed-industries'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
+
+      - name: Run OSV-Scanner
+        uses: google/osv-scanner-action/osv-scanner-action@9a8bc41b9d6a0fcd5e2bed44b39aa7cca8ea44a3 # v2.3.3
+        with:
+          scan-args: |-
+            --recursive
+            --format=sarif
+            --output=osv-results.sarif
+            ./
+        continue-on-error: true
+
+      - name: Verify SARIF output
+        id: osv-verify
+        if: always() && github.event_name != 'pull_request'
+        run: |
+          if [[ ! -f osv-results.sarif ]]; then
+            echo "::error::OSV-Scanner did not produce a SARIF file — the scan may have failed to run"
+            exit 1
+          fi
+
+      - name: Upload SARIF
+        uses: github/codeql-action/upload-sarif@820e3160e279568db735cee8ed8f8e77a6da7818 # v3
+        if: always() && steps.osv-verify.outcome == 'success'
+        with:
+          sarif_file: osv-results.sarif
+          category: osv-scanner
+
+      - name: Output scan results
+        if: always() && github.event_name == 'pull_request'
+        id: osv-results
+        run: |
+          if [[ -f osv-results.sarif ]]; then
+            count=$(jq '[.runs[] | (.results // [])[]] | length' osv-results.sarif)
+            echo "vulnerability_count=${count}" >> "$GITHUB_OUTPUT"
+            {
+              echo "### OSV-Scanner Results"
+              echo "${count} vulnerability(ies) found"
+              echo ""
+              jq -r '[.runs[] | (.results // [])[]] | .[:20][] | "- \(.ruleId): \(.message.text)"' osv-results.sarif
+            } >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "::error::OSV-Scanner did not produce a SARIF file — the scan may have failed to run"
+            exit 1
+          fi
+
+  # ── SAST: Semgrep rules-based scanning ────────────────────────────────
+  # Runs the open-source Semgrep engine with curated rulesets targeting
+  # general CI issues, Rust-specific patterns, and security audit checks.
+  # Produces a SARIF report uploaded to GitHub Code Scanning.
+  semgrep:
+    name: "SAST — Semgrep"
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
+
+      - name: Install Semgrep
+        run: python3 -m pip install semgrep==1.155.0
+
+      - name: Run Semgrep
+        run: |
+          semgrep scan \
+            --config p/ci \
+            --config p/rust \
+            --config p/security-audit \
+            --sarif \
+            --output semgrep-results.sarif \
+            .
+        continue-on-error: true
+
+      - name: Verify SARIF output
+        id: semgrep-verify
+        if: always() && github.event_name != 'pull_request'
+        run: |
+          if [[ ! -f semgrep-results.sarif ]]; then
+            echo "::error::Semgrep did not produce a SARIF file — the scan may have failed to run"
+            exit 1
+          fi
+
+      - name: Upload SARIF
+        uses: github/codeql-action/upload-sarif@820e3160e279568db735cee8ed8f8e77a6da7818 # v3
+        if: always() && steps.semgrep-verify.outcome == 'success'
+        with:
+          sarif_file: semgrep-results.sarif
+          category: semgrep
+
+      - name: Output scan results
+        if: always() && github.event_name == 'pull_request'
+        id: semgrep-results
+        run: |
+          if [[ -f semgrep-results.sarif ]]; then
+            count=$(jq '[.runs[] | (.results // [])[]] | length' semgrep-results.sarif)
+            echo "finding_count=${count}" >> "$GITHUB_OUTPUT"
+            high_count=$(jq '[.runs[] | (.results // [])[] | select(.level == "error")] | length' semgrep-results.sarif)
+            echo "high_severity_count=${high_count}" >> "$GITHUB_OUTPUT"
+            {
+              echo "### Semgrep Results"
+              echo "${count} finding(s), ${high_count} error-level"
+              echo ""
+              jq -r '[.runs[] | (.results // [])[]] | .[:20][] | "- [\(.level)] \(.ruleId): \(.message.text)"' semgrep-results.sarif
+            } >> "$GITHUB_STEP_SUMMARY"
+            if [[ "${high_count}" -gt 0 ]]; then
+              echo "::error::Semgrep found ${high_count} error-level finding(s)"
+              exit 1
+            fi
+          else
+            echo "::error::Semgrep did not produce a SARIF file — the scan may have failed to run"
+            exit 1
+          fi
+
+  # ── SAST: CodeQL deep semantic analysis ───────────────────────────────
+  # GitHub's native CodeQL engine performs deep data-flow and taint
+  # analysis on Rust source code. Uses build-mode: none (source-level
+  # analysis) so no compilation is required.
+  codeql:
+    name: "SAST — CodeQL"
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@820e3160e279568db735cee8ed8f8e77a6da7818 # v3
+        with:
+          languages: rust
+          build-mode: none
+
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@820e3160e279568db735cee8ed8f8e77a6da7818 # v3
+        with:
+          category: codeql-rust
+          output: codeql-results
+          upload: ${{ github.event_name == 'pull_request' && 'never' || 'always' }}
+
+      - name: Output scan results
+        if: github.event_name == 'pull_request'
+        id: codeql-results
+        run: |
+          sarif_file=$(find codeql-results -name '*.sarif' -type f | head -1)
+          if [[ -n "${sarif_file}" ]]; then
+            count=$(jq '[.runs[] | (.results // [])[]] | length' "${sarif_file}")
+            echo "finding_count=${count}" >> "$GITHUB_OUTPUT"
+            high_count=$(jq '[.runs[] | (.results // [])[] | select(.level == "error")] | length' "${sarif_file}")
+            echo "high_severity_count=${high_count}" >> "$GITHUB_OUTPUT"
+            {
+              echo "### CodeQL Results"
+              echo "${count} finding(s), ${high_count} error-level"
+              echo ""
+              jq -r '[.runs[] | (.results // [])[]] | .[:20][] | "- [\(.level)] \(.ruleId): \(.message.text)"' "${sarif_file}"
+            } >> "$GITHUB_STEP_SUMMARY"
+            if [[ "${high_count}" -gt 0 ]]; then
+              echo "::error::CodeQL found ${high_count} error-level finding(s)"
+              exit 1
+            fi
+          else
+            echo "finding_count=0" >> "$GITHUB_OUTPUT"
+            echo "high_severity_count=0" >> "$GITHUB_OUTPUT"
+          fi
