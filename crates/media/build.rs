@@ -7,10 +7,10 @@ fn main() {
         Command::new("xcrun")
             .args(["--sdk", "macosx", "--show-sdk-path"])
             .output()
-            .unwrap()
+            .expect("xcrun command should execute successfully to get macOS SDK path")
             .stdout,
     )
-    .unwrap();
+    .expect("xcrun output should be valid UTF-8 for SDK path");
     let sdk_path = sdk_path.trim_end();
 
     println!("cargo:rerun-if-changed=src/bindings.h");
@@ -34,7 +34,7 @@ fn main() {
         .generate()
         .expect("unable to generate bindings");
 
-    let out_path = PathBuf::from(env::var("OUT_DIR").unwrap());
+    let out_path = PathBuf::from(env::var("OUT_DIR").expect("OUT_DIR environment variable should be set by cargo"));
     bindings
         .write_to_file(out_path.join("bindings.rs"))
         .expect("couldn't write dispatch bindings");

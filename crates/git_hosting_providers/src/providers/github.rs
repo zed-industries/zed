@@ -20,7 +20,7 @@ use crate::get_host_from_git_remote_url;
 
 fn pull_request_number_regex() -> &'static Regex {
     static PULL_REQUEST_NUMBER_REGEX: LazyLock<Regex> =
-        LazyLock::new(|| Regex::new(r"\(#(\d+)\)$").unwrap());
+        LazyLock::new(|| Regex::new(r"\(#(\d+)\)$").expect("github pull request number regex should be valid"));
     &PULL_REQUEST_NUMBER_REGEX
 }
 

@@ -21,9 +21,9 @@ const CHROMIUM_REVIEW_URL: &str = "https://chromium-review.googlesource.com";
 fn pull_request_regex() -> &'static Regex {
     static PULL_REQUEST_NUMBER_REGEX: LazyLock<Regex> = LazyLock::new(|| {
         Regex::new(&format!(
-            r#"Reviewed-on: ({CHROMIUM_REVIEW_URL}/c/(.*)/\+/(\d+))"#
+            r#"Reviewed-on: ({CHROMIUM_REVIEW_URL}/c/(.*)/\\+/(\\d+))"#
         ))
-        .unwrap()
+        .expect("chromium pull request number regex should be valid")
     });
     &PULL_REQUEST_NUMBER_REGEX
 }

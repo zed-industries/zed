@@ -440,7 +440,7 @@ impl ActionLog {
                                 break;
                             }
 
-                            old_unreviewed_edits.next().unwrap();
+                            old_unreviewed_edits.next().expect("peek() returned Some but next() failed - iterator inconsistency detected");
                         }
                     }
 
