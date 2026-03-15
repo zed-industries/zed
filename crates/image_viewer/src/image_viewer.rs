@@ -8,10 +8,10 @@ use editor::{EditorSettings, items::entry_git_aware_label_color};
 use file_icons::FileIcons;
 use gpui::{
     AnyElement, App, Bounds, Context, DispatchPhase, Element, ElementId, Entity, EventEmitter,
-    FocusHandle, Focusable, GlobalElementId, InspectorElementId, InteractiveElement, IntoElement,
-    LayoutId, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement, PinchEvent,
-    Pixels, Point, Render, ScrollDelta, ScrollWheelEvent, Style, Styled, Task, WeakEntity, Window,
-    actions, checkerboard, div, img, point, px, size,
+    FocusHandle, Focusable, Font, GlobalElementId, InspectorElementId, InteractiveElement,
+    IntoElement, LayoutId, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
+    ParentElement, PinchEvent, Pixels, Point, Render, ScrollDelta, ScrollWheelEvent, Style, Styled,
+    Task, WeakEntity, Window, actions, checkerboard, div, img, point, px, size,
 };
 use language::File as _;
 use persistence::IMAGE_VIEWER;
@@ -24,7 +24,7 @@ use workspace::{
     ItemId, ItemSettings, Pane, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView, Workspace,
     WorkspaceId, delete_unloaded_items,
     invalid_item_view::InvalidItemView,
-    item::{BreadcrumbText, Item, ItemHandle, ProjectItem, SerializableItem, TabContentParams},
+    item::{HighlightedText, Item, ItemHandle, ProjectItem, SerializableItem, TabContentParams},
 };
 
 pub use crate::image_info::*;
@@ -527,15 +527,17 @@ impl Item for ImageView {
         }
     }
 
-    fn breadcrumbs(&self, cx: &App) -> Option<Vec<BreadcrumbText>> {
+    fn breadcrumbs(&self, cx: &App) -> Option<(Vec<HighlightedText>, Option<Font>)> {
         let text = breadcrumbs_text_for_image(self.project.read(cx), self.image_item.read(cx), cx);
-        let settings = ThemeSettings::get_global(cx);
+        let font = ThemeSettings::get_global(cx).buffer_font.clone();
 
-        Some(vec![BreadcrumbText {
-            text,
-            highlights: None,
-            font: Some(settings.buffer_font.clone()),
-        }])
+        Some((
+            vec![HighlightedText {
+                text: text.into(),
+                highlights: vec![],
+            }],
+            Some(font),
+        ))
     }
 
     fn can_split(&self) -> bool {

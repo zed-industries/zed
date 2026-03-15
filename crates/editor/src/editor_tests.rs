@@ -1869,6 +1869,56 @@ fn test_beginning_end_of_line(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+fn test_beginning_of_line_single_line_editor(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let editor = cx.add_window(|window, cx| Editor::single_line(window, cx));
+
+    _ = editor.update(cx, |editor, window, cx| {
+        editor.set_text("  indented text", window, cx);
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+            s.select_display_ranges([
+                DisplayPoint::new(DisplayRow(0), 10)..DisplayPoint::new(DisplayRow(0), 10)
+            ]);
+        });
+
+        editor.move_to_beginning_of_line(
+            &MoveToBeginningOfLine {
+                stop_at_soft_wraps: true,
+                stop_at_indent: true,
+            },
+            window,
+            cx,
+        );
+        assert_eq!(
+            display_ranges(editor, cx),
+            &[DisplayPoint::new(DisplayRow(0), 0)..DisplayPoint::new(DisplayRow(0), 0)]
+        );
+    });
+
+    _ = editor.update(cx, |editor, window, cx| {
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+            s.select_display_ranges([
+                DisplayPoint::new(DisplayRow(0), 10)..DisplayPoint::new(DisplayRow(0), 10)
+            ]);
+        });
+
+        editor.select_to_beginning_of_line(
+            &SelectToBeginningOfLine {
+                stop_at_soft_wraps: true,
+                stop_at_indent: true,
+            },
+            window,
+            cx,
+        );
+        assert_eq!(
+            display_ranges(editor, cx),
+            &[DisplayPoint::new(DisplayRow(0), 10)..DisplayPoint::new(DisplayRow(0), 0)]
+        );
+    });
+}
+
+#[gpui::test]
 fn test_beginning_end_of_line_ignore_soft_wrap(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
     let move_to_beg = MoveToBeginningOfLine {
@@ -6216,6 +6266,77 @@ async fn test_manipulate_text(cx: &mut TestAppContext) {
     });
     cx.assert_editor_state(indoc! {"
         «HeLlO, wOrLD!ˇ»
+    "});
+
+    // Test that case conversions backed by `to_case` preserve leading/trailing whitespace.
+    cx.set_state(indoc! {"
+        «    hello worldˇ»
+    "});
+    cx.update_editor(|e, window, cx| e.convert_to_title_case(&ConvertToTitleCase, window, cx));
+    cx.assert_editor_state(indoc! {"
+        «    Hello Worldˇ»
+    "});
+
+    cx.set_state(indoc! {"
+        «    hello worldˇ»
+    "});
+    cx.update_editor(|e, window, cx| {
+        e.convert_to_upper_camel_case(&ConvertToUpperCamelCase, window, cx)
+    });
+    cx.assert_editor_state(indoc! {"
+        «    HelloWorldˇ»
+    "});
+
+    cx.set_state(indoc! {"
+        «    hello worldˇ»
+    "});
+    cx.update_editor(|e, window, cx| {
+        e.convert_to_lower_camel_case(&ConvertToLowerCamelCase, window, cx)
+    });
+    cx.assert_editor_state(indoc! {"
+        «    helloWorldˇ»
+    "});
+
+    cx.set_state(indoc! {"
+        «    hello worldˇ»
+    "});
+    cx.update_editor(|e, window, cx| e.convert_to_snake_case(&ConvertToSnakeCase, window, cx));
+    cx.assert_editor_state(indoc! {"
+        «    hello_worldˇ»
+    "});
+
+    cx.set_state(indoc! {"
+        «    hello worldˇ»
+    "});
+    cx.update_editor(|e, window, cx| e.convert_to_kebab_case(&ConvertToKebabCase, window, cx));
+    cx.assert_editor_state(indoc! {"
+        «    hello-worldˇ»
+    "});
+
+    cx.set_state(indoc! {"
+        «    hello worldˇ»
+    "});
+    cx.update_editor(|e, window, cx| {
+        e.convert_to_sentence_case(&ConvertToSentenceCase, window, cx)
+    });
+    cx.assert_editor_state(indoc! {"
+        «    Hello worldˇ»
+    "});
+
+    cx.set_state(indoc! {"
+        «    hello world\t\tˇ»
+    "});
+    cx.update_editor(|e, window, cx| e.convert_to_title_case(&ConvertToTitleCase, window, cx));
+    cx.assert_editor_state(indoc! {"
+        «    Hello World\t\tˇ»
+    "});
+
+    cx.set_state(indoc! {"
+        «    hello world\t\tˇ»
+    "});
+    cx.update_editor(|e, window, cx| e.convert_to_snake_case(&ConvertToSnakeCase, window, cx));
+    cx.assert_editor_state(indoc! {"
+        «    hello_world\t\tˇ»
     "});
 
     // Test selections with `line_mode() = true`.

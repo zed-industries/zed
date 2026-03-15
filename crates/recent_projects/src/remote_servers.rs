@@ -390,7 +390,7 @@ impl ProjectPicker {
     ) -> Entity<Self> {
         let (tx, rx) = oneshot::channel();
         let lister = project::DirectoryLister::Project(project.clone());
-        let delegate = open_path_prompt::OpenPathDelegate::new(tx, lister, false, cx);
+        let delegate = open_path_prompt::OpenPathDelegate::new(tx, lister, false, cx).show_hidden();
 
         let picker = cx.new(|cx| {
             let picker = Picker::uniform_list(delegate, window, cx)
@@ -2117,8 +2117,10 @@ impl RemoteServerProjects {
                                     .child(
                                         Button::new("learn-more", "Learn More")
                                             .label_size(LabelSize::Small)
-                                            .icon(IconName::ArrowUpRight)
-                                            .icon_size(IconSize::XSmall)
+                                            .end_icon(
+                                                Icon::new(IconName::ArrowUpRight)
+                                                    .size(IconSize::XSmall),
+                                            )
                                             .on_click(|_, _, cx| {
                                                 cx.open_url(
                                                     "https://zed.dev/docs/remote-development",

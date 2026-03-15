@@ -765,9 +765,7 @@ impl RatePredictionsModal {
                                 .gap_1()
                                 .child(
                                     Button::new("bad", "Bad Prediction")
-                                        .icon(IconName::ThumbsDown)
-                                        .icon_size(IconSize::Small)
-                                        .icon_position(IconPosition::Start)
+                                        .start_icon(Icon::new(IconName::ThumbsDown).size(IconSize::Small))
                                         .disabled(rated || feedback_empty)
                                         .when(feedback_empty, |this| {
                                             this.tooltip(Tooltip::text(
@@ -791,9 +789,7 @@ impl RatePredictionsModal {
                                 )
                                 .child(
                                     Button::new("good", "Good Prediction")
-                                        .icon(IconName::ThumbsUp)
-                                        .icon_size(IconSize::Small)
-                                        .icon_position(IconPosition::Start)
+                                        .start_icon(Icon::new(IconName::ThumbsUp).size(IconSize::Small))
                                         .disabled(rated)
                                         .key_binding(KeyBinding::for_action_in(
                                             &ThumbsUpActivePrediction,

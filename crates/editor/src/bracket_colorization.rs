@@ -1455,6 +1455,60 @@ mod foo «1{
         );
     }
 
+    #[gpui::test]
+    // reproduction of #47846
+    async fn test_bracket_colorization_with_folds(cx: &mut gpui::TestAppContext) {
+        init_test(cx, |language_settings| {
+            language_settings.defaults.colorize_brackets = Some(true);
+        });
+        let mut cx = EditorLspTestContext::new(
+            Arc::into_inner(rust_lang()).unwrap(),
+            lsp::ServerCapabilities::default(),
+            cx,
+        )
+        .await;
+
+        // Generate a large function body. When folded, this collapses
+        // to a single display line, making small_function visible on screen.
+        let mut big_body = String::new();
+        for i in 0..700 {
+            big_body.push_str(&format!("    let var_{i:04} = ({i});\n"));
+        }
+        let source = format!(
+            "ˇfn big_function() {{\n{big_body}}}\n\nfn small_function() {{\n    let x = (1, (2, 3));\n}}\n"
+        );
+
+        cx.set_state(&source);
+        cx.executor().advance_clock(Duration::from_millis(100));
+        cx.executor().run_until_parked();
+
+        cx.update_editor(|editor, window, cx| {
+            editor.fold_ranges(
+                vec![Point::new(0, 0)..Point::new(701, 1)],
+                false,
+                window,
+                cx,
+            );
+        });
+        cx.executor().advance_clock(Duration::from_millis(100));
+        cx.executor().run_until_parked();
+
+        assert_eq!(
+            indoc! {r#"
+⋯1»
+
+fn small_function«1()1» «1{
+    let x = «2(1, «3(2, 3)3»)2»;
+}1»
+
+1 hsla(207.80, 16.20%, 69.19%, 1.00)
+2 hsla(29.00, 54.00%, 65.88%, 1.00)
+3 hsla(286.00, 51.00%, 75.25%, 1.00)
+"#,},
+            bracket_colors_markup(&mut cx),
+        );
+    }
+
     fn separate_with_comment_lines(head: &str, tail: &str, comment_lines: usize) -> String {
         let mut result = head.to_string();
         result.push_str("\n");

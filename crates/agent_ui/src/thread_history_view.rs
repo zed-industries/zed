@@ -117,6 +117,10 @@ impl ThreadHistoryView {
         this
     }
 
+    pub fn history(&self) -> &Entity<ThreadHistory> {
+        &self.history
+    }
+
     fn update_visible_items(&mut self, preserve_selected_item: bool, cx: &mut Context<Self>) {
         let entries = self.history.read(cx).sessions().to_vec();
         let new_list_items = if self.search_query.is_empty() {
@@ -747,13 +751,17 @@ impl RenderOnce for HistoryEntryElement {
                     {
                         if let Some(panel) = workspace.read(cx).panel::<AgentPanel>(cx) {
                             panel.update(cx, |panel, cx| {
-                                panel.load_agent_thread(
-                                    entry.session_id.clone(),
-                                    entry.cwd.clone(),
-                                    entry.title.clone(),
-                                    window,
-                                    cx,
-                                );
+                                if let Some(agent) = panel.selected_agent() {
+                                    panel.load_agent_thread(
+                                        agent,
+                                        entry.session_id.clone(),
+                                        entry.cwd.clone(),
+                                        entry.title.clone(),
+                                        true,
+                                        window,
+                                        cx,
+                                    );
+                                }
                             });
                         }
                     }

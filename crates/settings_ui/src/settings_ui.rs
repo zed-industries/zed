@@ -530,7 +530,7 @@ fn init_renderers(cx: &mut App) {
         .add_basic_renderer::<settings::VimInsertModeCursorShape>(render_dropdown)
         .add_basic_renderer::<settings::SteppingGranularity>(render_dropdown)
         .add_basic_renderer::<settings::NotifyWhenAgentWaiting>(render_dropdown)
-        .add_basic_renderer::<settings::NotifyWhenAgentWaiting>(render_dropdown)
+        .add_basic_renderer::<settings::NewThreadLocation>(render_dropdown)
         .add_basic_renderer::<settings::ImageFileSizeUnit>(render_dropdown)
         .add_basic_renderer::<settings::StatusStyle>(render_dropdown)
         .add_basic_renderer::<settings::EncodingDisplayOptions>(render_dropdown)
@@ -925,9 +925,7 @@ impl SettingsPageItem {
                         Button::new("error-warning", warning)
                             .style(ButtonStyle::Outlined)
                             .size(ButtonSize::Medium)
-                            .icon(Some(IconName::Debug))
-                            .icon_position(IconPosition::Start)
-                            .icon_color(Color::Error)
+                            .start_icon(Icon::new(IconName::Debug).color(Color::Error))
                             .tab_index(0_isize)
                             .tooltip(Tooltip::text(setting_item.field.type_name()))
                             .into_any_element(),
@@ -992,11 +990,12 @@ impl SettingsPageItem {
                                 ("sub-page".into(), sub_page_link.title.clone()),
                                 "Configure",
                             )
-                            .icon(IconName::ChevronRight)
                             .tab_index(0_isize)
-                            .icon_position(IconPosition::End)
-                            .icon_color(Color::Muted)
-                            .icon_size(IconSize::Small)
+                            .end_icon(
+                                Icon::new(IconName::ChevronRight)
+                                    .size(IconSize::Small)
+                                    .color(Color::Muted),
+                            )
                             .style(ButtonStyle::OutlinedGhost)
                             .size(ButtonSize::Medium)
                             .on_click({
@@ -1125,11 +1124,12 @@ impl SettingsPageItem {
                                 ("action-link".into(), action_link.title.clone()),
                                 action_link.button_text.clone(),
                             )
-                            .icon(IconName::ArrowUpRight)
                             .tab_index(0_isize)
-                            .icon_position(IconPosition::End)
-                            .icon_color(Color::Muted)
-                            .icon_size(IconSize::Small)
+                            .end_icon(
+                                Icon::new(IconName::ArrowUpRight)
+                                    .size(IconSize::Small)
+                                    .color(Color::Muted),
+                            )
                             .style(ButtonStyle::OutlinedGhost)
                             .size(ButtonSize::Medium)
                             .on_click({
@@ -4174,10 +4174,11 @@ fn render_picker_trigger_button(id: SharedString, label: SharedString) -> Button
         .tab_index(0_isize)
         .style(ButtonStyle::Outlined)
         .size(ButtonSize::Medium)
-        .icon(IconName::ChevronUpDown)
-        .icon_color(Color::Muted)
-        .icon_size(IconSize::Small)
-        .icon_position(IconPosition::End)
+        .end_icon(
+            Icon::new(IconName::ChevronUpDown)
+                .size(IconSize::Small)
+                .color(Color::Muted),
+        )
 }
 
 fn render_font_picker(
