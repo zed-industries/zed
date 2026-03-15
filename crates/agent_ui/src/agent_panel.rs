@@ -1191,6 +1191,9 @@ impl AgentPanel {
                     this.active_view = ActiveView::Uninitialized;
                     this.previous_view = None;
                     this.background_threads.clear();
+                    this.connection_store.update(cx, |store, _| {
+                        store.disconnect_external_agents();
+                    });
                     cx.emit(PanelEvent::Close);
                 }
                 cx.notify();
@@ -5983,13 +5986,17 @@ mod tests {
         cx.run_until_parked();
 
         // Open thread B — thread A (still generating) moves to background_threads.
+        // Both threads share the same AgentConnectionStore entry (same server name "Test"),
+        // so sessions for thread B are registered in connection_a's sessions map.
         let connection_b = StubAgentConnection::new();
         open_thread_with_connection(&panel, connection_b.clone(), &mut cx);
         send_message(&panel, &mut cx);
 
         let session_id_b = active_session_id(&panel, &cx);
         cx.update(|_, cx| {
-            connection_b.send_update(
+            // session_id_b was created via the shared Rc<dyn AgentConnection> (a clone of
+            // connection_a), so it lives in connection_a's sessions map, not connection_b's.
+            connection_a.send_update(
                 session_id_b,
                 acp::SessionUpdate::AgentMessageChunk(acp::ContentChunk::new("chunk".into())),
                 cx,
@@ -5997,8 +6004,9 @@ mod tests {
         });
         cx.run_until_parked();
 
-        // Capture weak refs to both ConnectionView entities before disabling AI.
-        let (weak_view_a, weak_view_b) = panel.read_with(&cx, |panel, _cx| {
+        // Capture weak refs to both ConnectionView entities and to the shared
+        // AgentConnectionEntry in the store before disabling AI.
+        let (weak_view_a, weak_view_b, weak_entry) = panel.read_with(&cx, |panel, cx| {
             let weak_b = panel.active_connection_view().unwrap().downgrade();
             let weak_a = panel
                 .background_threads
@@ -6006,7 +6014,15 @@ mod tests {
                 .unwrap()
                 .downgrade();
             assert_eq!(panel.background_threads.len(), 1);
-            (weak_a, weak_b)
+            let weak_entry = panel
+                .connection_store()
+                .read(cx)
+                .entry(&Agent::Custom {
+                    name: "Test".into(),
+                })
+                .unwrap()
+                .downgrade();
+            (weak_a, weak_b, weak_entry)
         });
 
         // Disable AI.
@@ -6027,9 +6043,7 @@ mod tests {
             );
         });
 
-        // Both ConnectionView entities should have been dropped (no strong refs remain),
-        // which cascades to dropping AcpThread and releasing the Rc<dyn AgentConnection>,
-        // triggering AcpConnection::drop() and killing the child processes.
+        // Both ConnectionView entities should have been dropped (no strong refs remain).
         assert!(
             weak_view_a.upgrade().is_none(),
             "Background ConnectionView (thread A) should have been dropped"
@@ -6037,6 +6051,16 @@ mod tests {
         assert!(
             weak_view_b.upgrade().is_none(),
             "Active ConnectionView (thread B) should have been dropped"
+        );
+
+        // The AgentConnectionEntry held by the store should also be gone. With the tasks
+        // in request_connection holding only WeakEntity refs, removing the entry from
+        // the map is the last strong ref — confirming that the Rc<dyn AgentConnection>
+        // (and any associated external process) was freed.
+        assert!(
+            weak_entry.upgrade().is_none(),
+            "AgentConnectionEntry should have been dropped after disabling AI, \
+             confirming the Rc<dyn AgentConnection> refcount reached zero"
         );
     }
 
