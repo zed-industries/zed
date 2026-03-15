@@ -44,7 +44,7 @@ async fn test_fake_worktree_lifecycle(cx: &mut TestAppContext) {
             expected_dir.join("feature-branch"),
             "failed for worktree_directory setting: {worktree_dir_setting:?}"
         );
-        assert_eq!(worktrees[1].ref_name.as_ref(), "refs/heads/feature-branch");
+        assert_eq!(worktrees[1].ref_name.as_ref().map(|r| r.as_ref()), Some("refs/heads/feature-branch"));
         assert_eq!(worktrees[1].sha.as_ref(), "abc123");
 
         // Directory should exist in FakeFs after create

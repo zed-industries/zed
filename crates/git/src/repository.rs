@@ -303,18 +303,21 @@ impl Branch {
 #[derive(Clone, Debug, Hash, PartialEq, Eq)]
 pub struct Worktree {
     pub path: PathBuf,
-    pub ref_name: SharedString,
+    pub ref_name: Option<SharedString>,
     // todo(git_worktree) This type should be a Oid
     pub sha: SharedString,
 }
 
 impl Worktree {
     pub fn branch(&self) -> &str {
-        self.ref_name
-            .as_ref()
-            .strip_prefix("refs/heads/")
-            .or_else(|| self.ref_name.as_ref().strip_prefix("refs/remotes/"))
-            .unwrap_or(self.ref_name.as_ref())
+        match &self.ref_name {
+            Some(ref_name) => ref_name
+                .as_ref()
+                .strip_prefix("refs/heads/")
+                .or_else(|| ref_name.as_ref().strip_prefix("refs/remotes/"))
+                .unwrap_or(ref_name.as_ref()),
+            None => &self.sha[..7.min(self.sha.len())],
+        }
     }
 }
 
@@ -326,6 +329,7 @@ pub fn parse_worktrees_from_str<T: AsRef<str>>(raw_worktrees: T) -> Vec<Worktree
         let mut path = None;
         let mut sha = None;
         let mut ref_name = None;
+        let mut is_bare = false;
 
         for line in entry.lines() {
             let line = line.trim();
@@ -338,16 +342,18 @@ pub fn parse_worktrees_from_str<T: AsRef<str>>(raw_worktrees: T) -> Vec<Worktree
                 sha = Some(rest.to_string());
             } else if let Some(rest) = line.strip_prefix("branch ") {
                 ref_name = Some(rest.to_string());
+            } else if line == "bare" {
+                is_bare = true;
             }
-            // Ignore other lines: detached, bare, locked, prunable, etc.
         }
 
-        // todo(git_worktree) We should add a test for detach head state
-        // a detach head will have ref_name as none so we would skip it
-        if let (Some(path), Some(sha), Some(ref_name)) = (path, sha, ref_name) {
+        if let (Some(path), Some(sha)) = (path, sha) {
+            if is_bare {
+                continue;
+            }
             worktrees.push(Worktree {
                 path: PathBuf::from(path),
-                ref_name: ref_name.into(),
+                ref_name: ref_name.map(Into::into),
                 sha: sha.into(),
             })
         }
@@ -3853,7 +3859,10 @@ mod tests {
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].path, PathBuf::from("/home/user/project"));
         assert_eq!(result[0].sha.as_ref(), "abc123def");
-        assert_eq!(result[0].ref_name.as_ref(), "refs/heads/main");
+        assert_eq!(
+            result[0].ref_name.as_ref().map(|r| r.as_ref()),
+            Some("refs/heads/main")
+        );
 
         // Multiple worktrees
         let input = "worktree /home/user/project\nHEAD abc123\nbranch refs/heads/main\n\n\
@@ -3861,16 +3870,25 @@ mod tests {
         let result = parse_worktrees_from_str(input);
         assert_eq!(result.len(), 2);
         assert_eq!(result[0].path, PathBuf::from("/home/user/project"));
-        assert_eq!(result[0].ref_name.as_ref(), "refs/heads/main");
+        assert_eq!(
+            result[0].ref_name.as_ref().map(|r| r.as_ref()),
+            Some("refs/heads/main")
+        );
         assert_eq!(result[1].path, PathBuf::from("/home/user/project-wt"));
-        assert_eq!(result[1].ref_name.as_ref(), "refs/heads/feature");
+        assert_eq!(
+            result[1].ref_name.as_ref().map(|r| r.as_ref()),
+            Some("refs/heads/feature")
+        );
 
-        // Detached HEAD entry (should be skipped since ref_name won't parse)
+        // Detached HEAD entry should be included with ref_name: None
         let input = "worktree /home/user/project\nHEAD abc123\nbranch refs/heads/main\n\n\
-                      worktree /home/user/detached\nHEAD def456\ndetached\n\n";
+                      worktree /home/user/detached\nHEAD def4567890\ndetached\n\n";
         let result = parse_worktrees_from_str(input);
-        assert_eq!(result.len(), 1);
+        assert_eq!(result.len(), 2);
         assert_eq!(result[0].path, PathBuf::from("/home/user/project"));
+        assert_eq!(result[1].path, PathBuf::from("/home/user/detached"));
+        assert_eq!(result[1].ref_name, None);
+        assert_eq!(result[1].branch(), "def4567");
 
         // Bare repo entry (should be skipped)
         let input = "worktree /home/user/bare.git\nHEAD abc123\nbare\n\n\
@@ -3886,11 +3904,20 @@ mod tests {
         let result = parse_worktrees_from_str(input);
         assert_eq!(result.len(), 3);
         assert_eq!(result[0].path, PathBuf::from("/home/user/project"));
-        assert_eq!(result[0].ref_name.as_ref(), "refs/heads/main");
+        assert_eq!(
+            result[0].ref_name.as_ref().map(|r| r.as_ref()),
+            Some("refs/heads/main")
+        );
         assert_eq!(result[1].path, PathBuf::from("/home/user/locked-wt"));
-        assert_eq!(result[1].ref_name.as_ref(), "refs/heads/locked-branch");
+        assert_eq!(
+            result[1].ref_name.as_ref().map(|r| r.as_ref()),
+            Some("refs/heads/locked-branch")
+        );
         assert_eq!(result[2].path, PathBuf::from("/home/user/prunable-wt"));
-        assert_eq!(result[2].ref_name.as_ref(), "refs/heads/prunable-branch");
+        assert_eq!(
+            result[2].ref_name.as_ref().map(|r| r.as_ref()),
+            Some("refs/heads/prunable-branch")
+        );
 
         // Leading/trailing whitespace on lines should be tolerated
         let input =
@@ -3899,7 +3926,10 @@ mod tests {
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].path, PathBuf::from("/home/user/project"));
         assert_eq!(result[0].sha.as_ref(), "abc123");
-        assert_eq!(result[0].ref_name.as_ref(), "refs/heads/main");
+        assert_eq!(
+            result[0].ref_name.as_ref().map(|r| r.as_ref()),
+            Some("refs/heads/main")
+        );
 
         // Windows-style line endings should be handled
         let input = "worktree /home/user/project\r\nHEAD abc123\r\nbranch refs/heads/main\r\n\r\n";
@@ -3907,7 +3937,10 @@ mod tests {
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].path, PathBuf::from("/home/user/project"));
         assert_eq!(result[0].sha.as_ref(), "abc123");
-        assert_eq!(result[0].ref_name.as_ref(), "refs/heads/main");
+        assert_eq!(
+            result[0].ref_name.as_ref().map(|r| r.as_ref()),
+            Some("refs/heads/main")
+        );
     }
 
     const TEST_WORKTREE_DIRECTORIES: &[&str] =
