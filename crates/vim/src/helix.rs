@@ -876,12 +876,12 @@ impl Vim {
             self.update_editor(cx, |_vim, editor, cx| {
                 let snapshot = editor.snapshot(window, cx);
                 editor.change_selections(SelectionEffects::default(), window, cx, |s| {
-                    s.select_anchor_ranges(
-                        prior_selections
-                            .iter()
-                            .cloned()
-                            .chain(s.all_anchors(&snapshot).iter().map(|s| s.range())),
-                    );
+                    let current = s.all_anchors(&snapshot);
+                    let all_ranges = prior_selections
+                        .iter()
+                        .cloned()
+                        .chain(current.iter().map(|s| s.range()));
+                    s.select_ranges(all_ranges);
                 })
             });
         }
