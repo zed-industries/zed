@@ -43,6 +43,11 @@ mod ios {
     }
 
     pub fn ios_main() {
+        // Initialize logging to stderr — captured by Xcode console and `log stream`.
+        let _ = env_logger::builder()
+            .filter_level(log::LevelFilter::Info)
+            .try_init();
+
         let platform = Rc::new(IosPlatform::new());
         let app = Application::with_platform(platform);
 

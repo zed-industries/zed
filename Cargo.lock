@@ -22124,6 +22124,7 @@ dependencies = [
 name = "zed-ios"
 version = "0.1.0"
 dependencies = [
+ "env_logger 0.11.8",
  "gpui",
  "gpui_ios",
  "log",
