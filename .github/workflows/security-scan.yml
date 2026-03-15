@@ -9,8 +9,9 @@
 # On scheduled runs and manual dispatches, findings from OSV-Scanner,
 # Semgrep, and CodeQL are uploaded as SARIF files and appear in the
 # repository's Security > Code scanning alerts UI.
-# On pull requests, scan results are uploaded to $GITHUB_OUTPUT for easy
-# reference, and SAST jobs fail on high or greater severity findings.
+# On pull requests, scan summaries appear in the job step summary and
+# counts are set as step outputs. SAST jobs fail on high or greater
+# severity findings.
 # cargo-audit and cargo-deny results surface as CI annotations directly in pull requests.
 
 name: Security Scanning
@@ -83,7 +84,7 @@ jobs:
         continue-on-error: true
 
       - name: Upload SARIF
-        uses: github/codeql-action/upload-sarif@820e316d04456ee9c0aa26dfa4c22ad1ce68f8ee # v3
+        uses: github/codeql-action/upload-sarif@820e3160e279568db735cee8ed8f8e77a6da7818 # v3
         if: always() && github.event_name != 'pull_request'
         with:
           sarif_file: osv-results.sarif
@@ -94,13 +95,14 @@ jobs:
         id: osv-results
         run: |
           if [[ -f osv-results.sarif ]]; then
-            count=$(jq '[.runs[].results[]] | length' osv-results.sarif)
+            count=$(jq '[.runs[] | (.results // [])[]] | length' osv-results.sarif)
             echo "vulnerability_count=${count}" >> "$GITHUB_OUTPUT"
             {
-              echo "vulnerabilities<<EOF"
-              jq -r '.runs[].results[] | "- \(.ruleId): \(.message.text)"' osv-results.sarif
-              echo "EOF"
-            } >> "$GITHUB_OUTPUT"
+              echo "### OSV-Scanner Results"
+              echo "${count} vulnerability(ies) found"
+              echo ""
+              jq -r '[.runs[] | (.results // [])[]] | .[:20][] | "- \(.ruleId): \(.message.text)"' osv-results.sarif
+            } >> "$GITHUB_STEP_SUMMARY"
           else
             echo "vulnerability_count=0" >> "$GITHUB_OUTPUT"
           fi
@@ -131,7 +133,7 @@ jobs:
         continue-on-error: true
 
       - name: Upload SARIF
-        uses: github/codeql-action/upload-sarif@820e316d04456ee9c0aa26dfa4c22ad1ce68f8ee # v3
+        uses: github/codeql-action/upload-sarif@820e3160e279568db735cee8ed8f8e77a6da7818 # v3
         if: always() && github.event_name != 'pull_request'
         with:
           sarif_file: semgrep-results.sarif
@@ -142,15 +144,16 @@ jobs:
         id: semgrep-results
         run: |
           if [[ -f semgrep-results.sarif ]]; then
-            count=$(jq '[.runs[].results[]] | length' semgrep-results.sarif)
+            count=$(jq '[.runs[] | (.results // [])[]] | length' semgrep-results.sarif)
             echo "finding_count=${count}" >> "$GITHUB_OUTPUT"
-            high_count=$(jq '[.runs[].results[] | select(.level == "error")] | length' semgrep-results.sarif)
+            high_count=$(jq '[.runs[] | (.results // [])[] | select(.level == "error")] | length' semgrep-results.sarif)
             echo "high_severity_count=${high_count}" >> "$GITHUB_OUTPUT"
             {
-              echo "findings<<EOF"
-              jq -r '.runs[].results[] | "- [\(.level)] \(.ruleId): \(.message.text)"' semgrep-results.sarif
-              echo "EOF"
-            } >> "$GITHUB_OUTPUT"
+              echo "### Semgrep Results"
+              echo "${count} finding(s), ${high_count} high/critical"
+              echo ""
+              jq -r '[.runs[] | (.results // [])[]] | .[:20][] | "- [\(.level)] \(.ruleId): \(.message.text)"' semgrep-results.sarif
+            } >> "$GITHUB_STEP_SUMMARY"
             if [[ "${high_count}" -gt 0 ]]; then
               echo "::error::Semgrep found ${high_count} high or critical severity finding(s)"
               exit 1
@@ -172,13 +175,13 @@ jobs:
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
 
       - name: Initialize CodeQL
-        uses: github/codeql-action/init@820e316d04456ee9c0aa26dfa4c22ad1ce68f8ee # v3
+        uses: github/codeql-action/init@820e3160e279568db735cee8ed8f8e77a6da7818 # v3
         with:
           languages: rust
           build-mode: none
 
       - name: Perform CodeQL Analysis
-        uses: github/codeql-action/analyze@820e316d04456ee9c0aa26dfa4c22ad1ce68f8ee # v3
+        uses: github/codeql-action/analyze@820e3160e279568db735cee8ed8f8e77a6da7818 # v3
         with:
           category: codeql-rust
           output: codeql-results
@@ -190,15 +193,16 @@ jobs:
         run: |
           sarif_file=$(find codeql-results -name '*.sarif' -type f | head -1)
           if [[ -n "${sarif_file}" ]]; then
-            count=$(jq '[.runs[].results[]] | length' "${sarif_file}")
+            count=$(jq '[.runs[] | (.results // [])[]] | length' "${sarif_file}")
             echo "finding_count=${count}" >> "$GITHUB_OUTPUT"
-            high_count=$(jq '[.runs[].results[] | select(.level == "error")] | length' "${sarif_file}")
+            high_count=$(jq '[.runs[] | (.results // [])[] | select(.level == "error")] | length' "${sarif_file}")
             echo "high_severity_count=${high_count}" >> "$GITHUB_OUTPUT"
             {
-              echo "findings<<EOF"
-              jq -r '.runs[].results[] | "- [\(.level)] \(.ruleId): \(.message.text)"' "${sarif_file}"
-              echo "EOF"
-            } >> "$GITHUB_OUTPUT"
+              echo "### CodeQL Results"
+              echo "${count} finding(s), ${high_count} high/critical"
+              echo ""
+              jq -r '[.runs[] | (.results // [])[]] | .[:20][] | "- [\(.level)] \(.ruleId): \(.message.text)"' "${sarif_file}"
+            } >> "$GITHUB_STEP_SUMMARY"
             if [[ "${high_count}" -gt 0 ]]; then
               echo "::error::CodeQL found ${high_count} high or critical severity finding(s)"
               exit 1
