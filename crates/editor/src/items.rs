@@ -1972,6 +1972,8 @@ pub fn entry_git_aware_label_color(git_status: GitSummary, ignored: bool, select
     let tracked = git_status.index + git_status.worktree;
     if git_status.conflict > 0 {
         Color::Conflict
+    } else if tracked.deleted > 0 {
+        Color::Deleted
     } else if tracked.modified > 0 {
         Color::Modified
     } else if tracked.added > 0 || git_status.untracked > 0 {
