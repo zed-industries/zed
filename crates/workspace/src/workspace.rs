@@ -3043,7 +3043,7 @@ impl Workspace {
                                 .to_serializable_item_handle(cx)
                                 .and_then(|handle| handle.serialize(workspace, true, window, cx))
                             {
-                                serialize_tasks.push(task);
+                                serialize_tasks.push((pane, item, task));
                             } else {
                                 remaining_dirty_items.push((pane, item));
                             }
@@ -3051,7 +3051,12 @@ impl Workspace {
                         (serialize_tasks, remaining_dirty_items)
                     })?;
 
-                futures::future::try_join_all(serialize_tasks).await?;
+                let mut remaining_dirty_items = remaining_dirty_items;
+                for (pane, item, task) in serialize_tasks {
+                    if task.await.log_err().is_none() {
+                        remaining_dirty_items.push((pane, item));
+                    }
+                }
 
                 if !remaining_dirty_items.is_empty() {
                     workspace.update(cx, |_, cx| cx.emit(Event::Activate))?;
