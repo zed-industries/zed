@@ -62,6 +62,8 @@ actions!(
         AddMarkdownBlock,
         /// Adds a new code cell.
         AddCodeBlock,
+        /// Delete current cell.
+        DeleteCurrentCell,
         /// Restarts the kernel.
         RestartKernel,
         /// Interrupts the current execution.
@@ -784,6 +786,25 @@ impl NotebookEditor {
         cx.notify();
     }
 
+    fn delete_current_cell(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
+        if self.cell_order.is_empty() {
+            return;
+        }
+
+        let cell_id = self.cell_order.remove(self.selected_cell_index);
+        self.cell_map.remove(&cell_id);
+
+        if !self.cell_order.is_empty() {
+            self.selected_cell_index =
+                self.selected_cell_index.min(self.cell_order.len() - 1);
+        } else {
+            self.selected_cell_index = 0;
+        }
+
+        self.cell_list.reset(self.cell_order.len());
+        cx.notify();
+    }
+
     fn cell_count(&self) -> usize {
         self.cell_map.len()
     }
@@ -1006,6 +1027,21 @@ impl NotebookEditor {
                                 })
                                 .on_click(|_, window, cx| {
                                     window.dispatch_action(Box::new(AddCodeBlock), cx);
+                                }),
+                            )
+                            .child(
+                                Self::render_notebook_control(
+                                    "delete-current-cell",
+                                    IconName::Trash,
+                                    window,
+                                    cx,
+                                )
+                                .disabled(self.cell_order.is_empty())
+                                .tooltip(move |window, cx| {
+                                    Tooltip::for_action("Delete current cell", &DeleteCurrentCell, cx)
+                                })
+                                .on_click(|_, window, cx| {
+                                    window.dispatch_action(Box::new(DeleteCurrentCell), cx);
                                 }),
                             ),
                     ),
@@ -1241,6 +1277,9 @@ impl Render for NotebookEditor {
             }))
             .on_action(
                 cx.listener(|this, _: &AddCodeBlock, window, cx| this.add_code_block(window, cx)),
+            )
+            .on_action(
+                cx.listener(|this, _: &DeleteCurrentCell, window, cx| this.delete_current_cell(window, cx)),
             )
             .on_action(cx.listener(|this, _: &MoveUp, window, cx| {
                 this.select_previous(&menu::SelectPrevious, window, cx);
