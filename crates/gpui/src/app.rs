@@ -2501,7 +2501,7 @@ impl<G: Global> DerefMut for GlobalLease<G> {
 }
 
 /// Contains state associated with an active drag operation, started by dragging an element
-/// within the window or by dragging into the app from the underlying platform.
+/// from a window or by dragging into the app from the underlying platform.
 pub struct AnyDrag {
     /// The view used to render this drag
     pub view: AnyView,
@@ -2515,6 +2515,9 @@ pub struct AnyDrag {
 
     /// The cursor style to use while dragging
     pub cursor_style: Option<CursorStyle>,
+
+    /// Whether the current drag operation is outside of the initiating window.
+    pub is_external: bool,
 }
 
 /// Contains state associated with a tooltip. You'll only need this struct if you're implementing
