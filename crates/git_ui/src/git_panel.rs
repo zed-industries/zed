@@ -5824,6 +5824,10 @@ impl Panel for GitPanel {
         Box::new(ToggleFocus)
     }
 
+    fn starts_open(&self, _: &Window, cx: &App) -> bool {
+        GitPanelSettings::get_global(cx).starts_open
+    }
+
     fn activation_priority(&self) -> u32 {
         2
     }
