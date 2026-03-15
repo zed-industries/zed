@@ -1,6 +1,6 @@
 use crate::{
     CloseWindow, NewFile, NewTerminal, OpenInTerminal, OpenOptions, OpenTerminal, OpenVisible,
-    SplitDirection, ToggleFileFinder, ToggleProjectSymbols, ToggleZoom, Workspace,
+    SplitDirection, Toast, ToggleFileFinder, ToggleProjectSymbols, ToggleZoom, Workspace,
     WorkspaceItemBuilder, ZoomIn, ZoomOut,
     invalid_item_view::InvalidItemView,
     item::{
@@ -9,7 +9,7 @@ use crate::{
         TabContentParams, TabTooltipContent, WeakItemHandle,
     },
     move_item,
-    notifications::NotifyResultExt,
+    notifications::{NotificationId, NotifyResultExt},
     toolbar::Toolbar,
     workspace_settings::{AutosaveSetting, TabBarSettings, WorkspaceSettings},
 };
@@ -4325,16 +4325,33 @@ impl Render for Pane {
             ))
             .on_action(
                 cx.listener(|pane: &mut Self, action: &RevealInProjectPanel, _, cx| {
+                    let active_item = pane.active_item();
                     let entry_id = action
                         .entry_id
                         .map(ProjectEntryId::from_proto)
-                        .or_else(|| pane.active_item()?.project_entry_ids(cx).first().copied());
+                        .or_else(|| active_item.as_ref()?.project_entry_ids(cx).first().copied());
                     if let Some(entry_id) = entry_id {
                         pane.project
                             .update(cx, |_, cx| {
                                 cx.emit(project::Event::RevealInProjectPanel(entry_id))
                             })
                             .ok();
+                    } else if let Some(item) = active_item {
+                        let display_name = item
+                            .tab_tooltip_text(cx)
+                            .unwrap_or_else(|| item.tab_content_text(0, cx));
+                        if let Some(workspace) = pane.workspace.upgrade() {
+                            workspace.update(cx, |workspace, cx| {
+                                workspace.show_toast(
+                                    Toast::new(
+                                        NotificationId::unique::<RevealInProjectPanel>(),
+                                        format!("\"{display_name}\" is not a part of a project"),
+                                    )
+                                    .autohide(),
+                                    cx,
+                                );
+                            });
+                        }
                     }
                 }),
             )
