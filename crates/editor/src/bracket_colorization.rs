@@ -10,7 +10,7 @@ use gpui::{AppContext as _, Context, HighlightStyle};
 use itertools::Itertools;
 use language::{BufferRow, BufferSnapshot, language_settings};
 use multi_buffer::{Anchor, ExcerptId};
-use ui::{ActiveTheme, utils::ensure_minimum_contrast};
+use ui::ActiveTheme;
 
 impl Editor {
     pub(crate) fn colorize_brackets(&mut self, invalidate: bool, cx: &mut Context<Editor>) {
@@ -103,7 +103,6 @@ impl Editor {
             (bracket_matches_by_accent, fetched_tree_sitter_chunks)
         });
 
-        let editor_background = cx.theme().colors().editor_background;
         let accents = cx.theme().accents().clone();
 
         self.colorize_brackets_task = cx.spawn(async move |editor, cx| {
@@ -127,10 +126,8 @@ impl Editor {
                         .extend(updated_chunks);
                     for (accent_number, bracket_highlights) in bracket_matches_by_accent {
                         let bracket_color = accents.color_for_index(accent_number as u32);
-                        let adjusted_color =
-                            ensure_minimum_contrast(bracket_color, editor_background, 55.0);
                         let style = HighlightStyle {
-                            color: Some(adjusted_color),
+                            color: Some(bracket_color),
                             ..HighlightStyle::default()
                         };
 
@@ -309,11 +306,11 @@ where
     2
 }1»
 
-1 hsla(207.80, 16.20%, 69.19%, 1.00)
-2 hsla(29.00, 54.00%, 65.88%, 1.00)
-3 hsla(286.00, 51.00%, 75.25%, 1.00)
-4 hsla(187.00, 47.00%, 59.22%, 1.00)
-5 hsla(355.00, 65.00%, 75.94%, 1.00)
+1 hsla(207.80, 81.00%, 66.00%, 1.00)
+2 hsla(29.00, 54.00%, 61.00%, 1.00)
+3 hsla(286.00, 51.00%, 64.00%, 1.00)
+4 hsla(187.00, 47.00%, 55.00%, 1.00)
+5 hsla(355.00, 65.00%, 65.00%, 1.00)
 6 hsla(95.00, 38.00%, 62.00%, 1.00)
 7 hsla(39.00, 67.00%, 69.00%, 1.00)
 "#,
@@ -345,7 +342,7 @@ where
 
         assert_eq!(
             "fn main«1()1» «1{}1»
-1 hsla(207.80, 16.20%, 69.19%, 1.00)
+1 hsla(207.80, 81.00%, 66.00%, 1.00)
 ",
             editor
                 .update(cx, |editor, window, cx| {
@@ -374,7 +371,7 @@ where
 
         assert_eq!(
             r#"«1[LLM-powered features]1»«1(./ai/overview.md)1», «1[bring and configure your own API keys]1»«1(./ai/llm-providers.md#use-your-own-keys)1»
-1 hsla(207.80, 16.20%, 69.19%, 1.00)
+1 hsla(207.80, 81.00%, 66.00%, 1.00)
 "#,
             &bracket_colors_markup(&mut cx),
             "All markdown brackets should be colored based on their depth"
@@ -386,8 +383,8 @@ where
 
         assert_eq!(
             r#"«1{«2{}2»}1»
-1 hsla(207.80, 16.20%, 69.19%, 1.00)
-2 hsla(29.00, 54.00%, 65.88%, 1.00)
+1 hsla(207.80, 81.00%, 66.00%, 1.00)
+2 hsla(29.00, 54.00%, 61.00%, 1.00)
 "#,
             &bracket_colors_markup(&mut cx),
             "All markdown brackets should be colored based on their depth, again"
@@ -407,7 +404,7 @@ where
         .await;
 
         let rows = 100;
-        let footer = "1 hsla(207.80, 16.20%, 69.19%, 1.00)\n";
+        let footer = "1 hsla(207.80, 81.00%, 66.00%, 1.00)\n";
 
         let simple_brackets = (0..rows).map(|_| "ˇ[]\n").collect::<String>();
         let simple_brackets_highlights = (0..rows).map(|_| "«1[]1»\n").collect::<String>();
@@ -481,8 +478,8 @@ where
     let v: Vec<String> = vec!«2[]2»;
 }1»
 
-1 hsla(207.80, 16.20%, 69.19%, 1.00)
-2 hsla(29.00, 54.00%, 65.88%, 1.00)
+1 hsla(207.80, 81.00%, 66.00%, 1.00)
+2 hsla(29.00, 54.00%, 61.00%, 1.00)
 "#,
             &bracket_colors_markup(&mut cx),
             "Markdown does not colorize <> brackets"
@@ -499,8 +496,8 @@ where
     let v: Vec«2<String>2» = vec!«2[]2»;
 }1»
 
-1 hsla(207.80, 16.20%, 69.19%, 1.00)
-2 hsla(29.00, 54.00%, 65.88%, 1.00)
+1 hsla(207.80, 81.00%, 66.00%, 1.00)
+2 hsla(29.00, 54.00%, 61.00%, 1.00)
 "#,
             &bracket_colors_markup(&mut cx),
             "After switching to Rust, <> brackets are now colorized"
@@ -544,9 +541,9 @@ fn process_data«1()1» «1{
     let map: Result<
 }1»
 
-1 hsla(207.80, 16.20%, 69.19%, 1.00)
-2 hsla(29.00, 54.00%, 65.88%, 1.00)
-3 hsla(286.00, 51.00%, 75.25%, 1.00)
+1 hsla(207.80, 81.00%, 66.00%, 1.00)
+2 hsla(29.00, 54.00%, 61.00%, 1.00)
+3 hsla(286.00, 51.00%, 64.00%, 1.00)
 "#},
             &bracket_colors_markup(&mut cx),
             "Brackets without pairs should be ignored and not colored"
@@ -567,9 +564,9 @@ fn process_data«1()1» «1{
     let map: Result<Option<Foo<'_, «2()2»
 }1»
 
-1 hsla(207.80, 16.20%, 69.19%, 1.00)
-2 hsla(29.00, 54.00%, 65.88%, 1.00)
-3 hsla(286.00, 51.00%, 75.25%, 1.00)
+1 hsla(207.80, 81.00%, 66.00%, 1.00)
+2 hsla(29.00, 54.00%, 61.00%, 1.00)
+3 hsla(286.00, 51.00%, 64.00%, 1.00)
 "#},
             &bracket_colors_markup(&mut cx),
         );
@@ -589,9 +586,9 @@ fn process_data«1()1» «1{
     let map: Result<Option<Foo«2<'_, «3()3»>2»
 }1»
 
-1 hsla(207.80, 16.20%, 69.19%, 1.00)
-2 hsla(29.00, 54.00%, 65.88%, 1.00)
-3 hsla(286.00, 51.00%, 75.25%, 1.00)
+1 hsla(207.80, 81.00%, 66.00%, 1.00)
+2 hsla(29.00, 54.00%, 61.00%, 1.00)
+3 hsla(286.00, 51.00%, 64.00%, 1.00)
 "#},
             &bracket_colors_markup(&mut cx),
             "When brackets start to get closed, inner brackets are re-colored based on their depth"
@@ -612,10 +609,10 @@ fn process_data«1()1» «1{
     let map: Result<Option«2<Foo«3<'_, «4()4»>3»>2»
 }1»
 
-1 hsla(207.80, 16.20%, 69.19%, 1.00)
-2 hsla(29.00, 54.00%, 65.88%, 1.00)
-3 hsla(286.00, 51.00%, 75.25%, 1.00)
-4 hsla(187.00, 47.00%, 59.22%, 1.00)
+1 hsla(207.80, 81.00%, 66.00%, 1.00)
+2 hsla(29.00, 54.00%, 61.00%, 1.00)
+3 hsla(286.00, 51.00%, 64.00%, 1.00)
+4 hsla(187.00, 47.00%, 55.00%, 1.00)
 "#},
             &bracket_colors_markup(&mut cx),
         );
@@ -635,11 +632,11 @@ fn process_data«1()1» «1{
     let map: Result«2<Option«3<Foo«4<'_, «5()5»>4»>3», «3()3»>2» = unimplemented!«2()2»;
 }1»
 
-1 hsla(207.80, 16.20%, 69.19%, 1.00)
-2 hsla(29.00, 54.00%, 65.88%, 1.00)
-3 hsla(286.00, 51.00%, 75.25%, 1.00)
-4 hsla(187.00, 47.00%, 59.22%, 1.00)
-5 hsla(355.00, 65.00%, 75.94%, 1.00)
+1 hsla(207.80, 81.00%, 66.00%, 1.00)
+2 hsla(29.00, 54.00%, 61.00%, 1.00)
+3 hsla(286.00, 51.00%, 64.00%, 1.00)
+4 hsla(187.00, 47.00%, 55.00%, 1.00)
+5 hsla(355.00, 65.00%, 65.00%, 1.00)
 "#},
             &bracket_colors_markup(&mut cx),
         );
@@ -691,11 +688,11 @@ mod foo «1{
     }
 }1»
 
-1 hsla(207.80, 16.20%, 69.19%, 1.00)
-2 hsla(29.00, 54.00%, 65.88%, 1.00)
-3 hsla(286.00, 51.00%, 75.25%, 1.00)
-4 hsla(187.00, 47.00%, 59.22%, 1.00)
-5 hsla(355.00, 65.00%, 75.94%, 1.00)
+1 hsla(207.80, 81.00%, 66.00%, 1.00)
+2 hsla(29.00, 54.00%, 61.00%, 1.00)
+3 hsla(286.00, 51.00%, 64.00%, 1.00)
+4 hsla(187.00, 47.00%, 55.00%, 1.00)
+5 hsla(355.00, 65.00%, 65.00%, 1.00)
 "#},
                 comment_lines,
             ),
@@ -723,11 +720,11 @@ mod foo «1{
     }2»
 }1»
 
-1 hsla(207.80, 16.20%, 69.19%, 1.00)
-2 hsla(29.00, 54.00%, 65.88%, 1.00)
-3 hsla(286.00, 51.00%, 75.25%, 1.00)
-4 hsla(187.00, 47.00%, 59.22%, 1.00)
-5 hsla(355.00, 65.00%, 75.94%, 1.00)
+1 hsla(207.80, 81.00%, 66.00%, 1.00)
+2 hsla(29.00, 54.00%, 61.00%, 1.00)
+3 hsla(286.00, 51.00%, 64.00%, 1.00)
+4 hsla(187.00, 47.00%, 55.00%, 1.00)
+5 hsla(355.00, 65.00%, 65.00%, 1.00)
 "#},
                 comment_lines,
             ),
@@ -754,11 +751,11 @@ mod foo «1{
     }
     «3{«4{}4»}3»}2»}1»
 
-1 hsla(207.80, 16.20%, 69.19%, 1.00)
-2 hsla(29.00, 54.00%, 65.88%, 1.00)
-3 hsla(286.00, 51.00%, 75.25%, 1.00)
-4 hsla(187.00, 47.00%, 59.22%, 1.00)
-5 hsla(355.00, 65.00%, 75.94%, 1.00)
+1 hsla(207.80, 81.00%, 66.00%, 1.00)
+2 hsla(29.00, 54.00%, 61.00%, 1.00)
+3 hsla(286.00, 51.00%, 64.00%, 1.00)
+4 hsla(187.00, 47.00%, 55.00%, 1.00)
+5 hsla(355.00, 65.00%, 65.00%, 1.00)
 "#},
                 comment_lines,
             ),
@@ -785,11 +782,11 @@ mod foo «1{
     }
     «3{«4{}4»}3»}2»}1»
 
-1 hsla(207.80, 16.20%, 69.19%, 1.00)
-2 hsla(29.00, 54.00%, 65.88%, 1.00)
-3 hsla(286.00, 51.00%, 75.25%, 1.00)
-4 hsla(187.00, 47.00%, 59.22%, 1.00)
-5 hsla(355.00, 65.00%, 75.94%, 1.00)
+1 hsla(207.80, 81.00%, 66.00%, 1.00)
+2 hsla(29.00, 54.00%, 61.00%, 1.00)
+3 hsla(286.00, 51.00%, 64.00%, 1.00)
+4 hsla(187.00, 47.00%, 55.00%, 1.00)
+5 hsla(355.00, 65.00%, 65.00%, 1.00)
 "#},
                 comment_lines,
             ),
@@ -846,11 +843,11 @@ mod foo «1{
     }
     {{}}}}1»
 
-1 hsla(207.80, 16.20%, 69.19%, 1.00)
-2 hsla(29.00, 54.00%, 65.88%, 1.00)
-3 hsla(286.00, 51.00%, 75.25%, 1.00)
-4 hsla(187.00, 47.00%, 59.22%, 1.00)
-5 hsla(355.00, 65.00%, 75.94%, 1.00)
+1 hsla(207.80, 81.00%, 66.00%, 1.00)
+2 hsla(29.00, 54.00%, 61.00%, 1.00)
+3 hsla(286.00, 51.00%, 64.00%, 1.00)
+4 hsla(187.00, 47.00%, 55.00%, 1.00)
+5 hsla(355.00, 65.00%, 65.00%, 1.00)
 "#,
                 comment_lines,
             ),
@@ -1357,11 +1354,11 @@ mod foo «1{
     }2»
 }1»
 
-1 hsla(207.80, 16.20%, 69.19%, 1.00)
-2 hsla(29.00, 54.00%, 65.88%, 1.00)
-3 hsla(286.00, 51.00%, 75.25%, 1.00)
-4 hsla(187.00, 47.00%, 59.22%, 1.00)
-5 hsla(355.00, 65.00%, 75.94%, 1.00)
+1 hsla(207.80, 81.00%, 66.00%, 1.00)
+2 hsla(29.00, 54.00%, 61.00%, 1.00)
+3 hsla(286.00, 51.00%, 64.00%, 1.00)
+4 hsla(187.00, 47.00%, 55.00%, 1.00)
+5 hsla(355.00, 65.00%, 65.00%, 1.00)
 "#,},
             &editor_bracket_colors_markup(&editor_snapshot),
             "Multi buffers should have their brackets colored even if no excerpts contain the bracket counterpart (after fn `process_data_2()`) \
@@ -1397,11 +1394,11 @@ mod foo «1{
     }2»
 }1»
 
-1 hsla(207.80, 16.20%, 69.19%, 1.00)
-2 hsla(29.00, 54.00%, 65.88%, 1.00)
-3 hsla(286.00, 51.00%, 75.25%, 1.00)
-4 hsla(187.00, 47.00%, 59.22%, 1.00)
-5 hsla(355.00, 65.00%, 75.94%, 1.00)
+1 hsla(207.80, 81.00%, 66.00%, 1.00)
+2 hsla(29.00, 54.00%, 61.00%, 1.00)
+3 hsla(286.00, 51.00%, 64.00%, 1.00)
+4 hsla(187.00, 47.00%, 55.00%, 1.00)
+5 hsla(355.00, 65.00%, 65.00%, 1.00)
 "#,},
             &editor_bracket_colors_markup(&editor_snapshot),
         );
@@ -1447,8 +1444,8 @@ mod foo «1{
     }2»
 }1»
 
-1 hsla(0.00, 100.00%, 78.12%, 1.00)
-2 hsla(240.00, 100.00%, 82.81%, 1.00)
+1 hsla(0.00, 100.00%, 50.00%, 1.00)
+2 hsla(240.00, 100.00%, 50.00%, 1.00)
 "#,},
             &editor_bracket_colors_markup(&editor_snapshot),
             "After updating theme accents, the editor should update the bracket coloring"
@@ -1501,9 +1498,9 @@ fn small_function«1()1» «1{
     let x = «2(1, «3(2, 3)3»)2»;
 }1»
 
-1 hsla(207.80, 16.20%, 69.19%, 1.00)
-2 hsla(29.00, 54.00%, 65.88%, 1.00)
-3 hsla(286.00, 51.00%, 75.25%, 1.00)
+1 hsla(207.80, 81.00%, 66.00%, 1.00)
+2 hsla(29.00, 54.00%, 61.00%, 1.00)
+3 hsla(286.00, 51.00%, 64.00%, 1.00)
 "#,},
             bracket_colors_markup(&mut cx),
         );
