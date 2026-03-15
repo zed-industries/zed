@@ -1323,7 +1323,11 @@ impl WorkspaceDb {
     /// that used this workspace previously
     pub(crate) async fn save_workspace(&self, workspace: SerializedWorkspace) {
         let paths = workspace.paths.serialize();
-        log::debug!("Saving workspace at location: {:?}", workspace.location);
+        log::debug!(
+            "Saving workspace at location: {:?}, session_id={:?}",
+            workspace.location,
+            workspace.session_id,
+        );
         self.write(move |conn| {
             conn.with_savepoint("update_worktrees", || {
                 let remote_connection_id = match workspace.location.clone() {
@@ -1336,8 +1340,13 @@ impl WorkspaceDb {
                     }
                 };
 
-                // Clear out panes and pane_groups
+                // Clear out panes and pane_groups.
+                // We must delete center_panes explicitly before deleting panes because
+                // SQLite recycles pane_ids (no AUTOINCREMENT), causing a UNIQUE constraint
+                // failure on center_panes when the same id is reused after deletion.
+                // FK cascade from panes -> center_panes is not reliably triggered.
                 conn.exec_bound(sql!(
+                    DELETE FROM center_panes WHERE pane_id IN (SELECT pane_id FROM panes WHERE workspace_id = ?1);
                     DELETE FROM pane_groups WHERE workspace_id = ?1;
                     DELETE FROM panes WHERE workspace_id = ?1;))?(workspace.id)
                     .context("Clearing old panes")?;
@@ -1845,6 +1854,12 @@ impl WorkspaceDb {
             } else {
                 false
             };
+
+            // Workspaces with no paths are untitled-buffer workspaces kept for session
+            // restoration. They are not shown in the recent list but must not be deleted here.
+            if paths.paths().is_empty() {
+                continue;
+            }
 
             // Delete the workspace if any of the paths are WSL paths.
             // If a local workspace points to WSL, this check will cause us to wait for the
@@ -4471,6 +4486,179 @@ mod tests {
             after.window_bounds.is_some(),
             "flush_serialization should ensure window bounds are persisted to the DB \
              before the process exits."
+        );
+    }
+
+    /// Regression test for https://github.com/zed-industries/zed/issues/48468 (Bug 2).
+    ///
+    /// When `serialize_workspace_internal` takes the `DetachFromSession` path (empty workspace,
+    /// no open items), the old code unconditionally called `set_session_id(None)`. This could
+    /// race against a later `save_workspace(session_id = Some(...))` and leave the DB with
+    /// `session_id = NULL`. The fix: only clear session_id when `self.session_id` is already
+    /// `None` (i.e. `remove_from_session` was explicitly called).
+    #[gpui::test]
+    async fn test_detach_from_session_does_not_clear_session_id(cx: &mut gpui::TestAppContext) {
+        use crate::multi_workspace::MultiWorkspace;
+        use feature_flags::FeatureFlagAppExt;
+        use project::Project;
+
+        crate::tests::init_test(cx);
+
+        cx.update(|cx| {
+            cx.set_staff(true);
+            cx.update_flags(true, vec!["agent-v2".to_string()]);
+        });
+
+        let fs = fs::FakeFs::new(cx.executor());
+        // Empty project (no paths) → workspace_location returns DetachFromSession
+        let project = Project::test(fs.clone(), [], cx).await;
+
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+
+        // Read the session_id the Workspace was constructed with.
+        let session_id = multi_workspace.read_with(cx, |mw, cx| {
+            mw.workspace().read(cx).session_id()
+        });
+        let session_id = session_id.expect("workspace should have a session_id from Session::test");
+
+        let workspace_id = DB.next_id().await.unwrap();
+        multi_workspace.update_in(cx, |mw, _, cx| {
+            mw.workspace().update(cx, |ws, _cx| {
+                ws.set_database_id(workspace_id);
+            });
+        });
+
+        // Persist the workspace row with session_id so there is something to potentially clear.
+        DB.set_session_binding(workspace_id, Some(session_id.clone()), None)
+            .await
+            .unwrap();
+
+        // flush_serialization triggers serialize_workspace_internal. Because the project has no
+        // paths and no items are open, it takes the DetachFromSession branch.
+        let task = multi_workspace.update_in(cx, |mw, window, cx| {
+            mw.workspace()
+                .update(cx, |ws, cx| ws.flush_serialization(window, cx))
+        });
+        task.await;
+
+        // The session_id must still be set. The workspace must still be discoverable for
+        // session restoration on next launch.
+        let locations = DB
+            .last_session_workspace_locations(&session_id, None, fs.as_ref())
+            .await
+            .unwrap();
+        assert!(
+            locations
+                .iter()
+                .any(|sw| sw.workspace_id == workspace_id),
+            "session_id must not be cleared by DetachFromSession when not explicitly detached; \
+             workspace must remain findable for session restoration"
+        );
+    }
+
+    /// Regression test for https://github.com/zed-industries/zed/issues/48468 (Bug 3).
+    ///
+    /// `close_window` (red button) never called `flush_serialization`, so session data was
+    /// not persisted before the window was removed. The fix: await `flush_serialization` for
+    /// all workspaces before `remove_window`.
+    #[gpui::test]
+    async fn test_close_window_flushes_serialization_before_removal(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        use crate::multi_workspace::MultiWorkspace;
+        use crate::CloseWindow;
+        use feature_flags::FeatureFlagAppExt;
+        use project::Project;
+
+        crate::tests::init_test(cx);
+
+        cx.update(|cx| {
+            cx.set_staff(true);
+            cx.update_flags(true, vec!["agent-v2".to_string()]);
+        });
+
+        let fs = fs::FakeFs::new(cx.executor());
+        let dir = tempfile::TempDir::with_prefix("close_window_flush_test").unwrap();
+        fs.insert_tree(dir.path(), json!({})).await;
+
+        let project = Project::test(fs.clone(), [dir.path()], cx).await;
+
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+
+        let workspace_id = DB.next_id().await.unwrap();
+        multi_workspace.update_in(cx, |mw, _, cx| {
+            mw.workspace().update(cx, |ws, _cx| {
+                ws.set_database_id(workspace_id);
+            });
+        });
+
+        // Call close_window without first advancing the 200ms serialization throttle timer.
+        // Before the fix, the pending serialization would be lost when the window was removed.
+        multi_workspace.update_in(cx, |mw, window, cx| {
+            mw.close_window(&CloseWindow, window, cx);
+        });
+
+        cx.run_until_parked();
+
+        // The workspace row must have been written to DB (flush_serialization ran before
+        // remove_window). Window bounds being Some is the signal that save_workspace fired.
+        let serialized = DB.workspace_for_id(workspace_id);
+        assert!(
+            serialized.is_some(),
+            "close_window must flush serialization to DB before removing the window"
+        );
+        assert!(
+            serialized.unwrap().window_bounds.is_some(),
+            "window bounds should be persisted by flush_serialization during close_window"
+        );
+    }
+
+    /// Regression test for https://github.com/zed-industries/zed/issues/48468
+    ///
+    /// `recent_workspaces_on_disk` (called by `history_manager::init` on startup) was
+    /// deleting workspaces with empty paths because `all_paths_exist_with_a_directory([])`
+    /// returns `false`. Untitled-buffer workspaces legitimately have no paths and must be
+    /// preserved for session restoration.
+    #[gpui::test]
+    async fn test_recent_workspaces_on_disk_does_not_delete_empty_paths_workspace(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let fs = fs::FakeFs::new(cx.executor());
+        let db =
+            WorkspaceDb::open_test_db("test_recent_workspaces_on_disk_does_not_delete_empty_paths")
+                .await;
+
+        // Save a workspace with no paths (simulates an untitled-buffer workspace).
+        let workspace_id = db.next_id().await.unwrap();
+        db.save_workspace(SerializedWorkspace {
+            id: workspace_id,
+            paths: PathList::new::<PathBuf>(&[]),
+            location: SerializedWorkspaceLocation::Local,
+            center_group: Default::default(),
+            window_bounds: Default::default(),
+            display: Default::default(),
+            docks: Default::default(),
+            centered_layout: false,
+            session_id: Some("test-session".to_owned()),
+            breakpoints: Default::default(),
+            window_id: None,
+            user_toolchains: Default::default(),
+        })
+        .await;
+
+        // recent_workspaces_on_disk should not include or delete empty-paths workspaces.
+        let recent = db.recent_workspaces_on_disk(fs.as_ref()).await.unwrap();
+        assert!(
+            recent.is_empty(),
+            "Empty-paths workspaces should not appear in the recent list"
+        );
+
+        // The workspace row must still exist so session restoration can find it.
+        assert!(
+            db.workspace_for_id(workspace_id).is_some(),
+            "Empty-paths workspace must not be deleted by recent_workspaces_on_disk"
         );
     }
 }

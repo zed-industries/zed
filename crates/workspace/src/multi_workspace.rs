@@ -111,6 +111,23 @@ impl MultiWorkspace {
                 }
             }
 
+            // Flush workspace serialization before removing the window so that
+            // session_id, items, and editor content are persisted. This is
+            // necessary because when on_last_window_closed = "quit_app" triggers
+            // cx.quit() after the window is gone, workspace_windows is empty in
+            // the quit handler and flush_serialization() is never called there.
+            let flush_tasks = this.update_in(cx, |this, window, cx| {
+                this.workspaces()
+                    .iter()
+                    .map(|workspace| {
+                        workspace.update(cx, |workspace, cx| {
+                            workspace.flush_serialization(window, cx)
+                        })
+                    })
+                    .collect::<Vec<_>>()
+            })?;
+            futures::future::join_all(flush_tasks).await;
+
             cx.update(|window, _cx| {
                 window.remove_window();
             })?;
