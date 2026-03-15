@@ -9,7 +9,7 @@
 yanked = "warn"
 
 [licenses]
-unlicensed = "allow"
+unlicensed = "warn"
 allow = [
     "MIT",
     "Apache-2.0",
