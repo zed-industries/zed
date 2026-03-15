@@ -4810,13 +4810,13 @@ impl Workspace {
                     item: item.boxed_clone(),
                     save_intent: *save_intent,
                 });
-                serialize_workspace = false;
+                serialize_workspace = true;
             }
             pane::Event::ChangeItemTitle => {
                 if *pane == self.active_pane {
                     self.active_item_path_changed(false, window, cx);
                 }
-                serialize_workspace = false;
+                serialize_workspace = true;
             }
             pane::Event::RemovedItem { item } => {
                 cx.emit(Event::ActiveItemChanged);
