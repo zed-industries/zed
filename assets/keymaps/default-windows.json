@@ -1257,6 +1257,8 @@
     "context": "MarkdownPreview",
     "use_key_equivalents": true,
     "bindings": {
+      "ctrl-a": "editor::SelectAll",
+      "ctrl-c": "markdown::Copy",
       "pageup": "markdown::ScrollPageUp",
       "pagedown": "markdown::ScrollPageDown",
       "up": "markdown::ScrollUp",

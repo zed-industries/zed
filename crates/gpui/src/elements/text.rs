@@ -653,6 +653,7 @@ pub struct InteractiveText {
     text: StyledText,
     click_listener:
         Option<Box<dyn Fn(&[Range<usize>], InteractiveTextClickEvent, &mut Window, &mut App)>>,
+    mouse_down_listener: Option<Box<dyn Fn(usize, MouseDownEvent, &mut Window, &mut App)>>,
     hover_listener: Option<Box<dyn Fn(Option<usize>, MouseMoveEvent, &mut Window, &mut App)>>,
     tooltip_builder: Option<Rc<dyn Fn(usize, &mut Window, &mut App) -> Option<AnyView>>>,
     tooltip_id: Option<TooltipId>,
@@ -680,6 +681,7 @@ impl InteractiveText {
             element_id: id.into(),
             text,
             click_listener: None,
+            mouse_down_listener: None,
             hover_listener: None,
             tooltip_builder: None,
             tooltip_id: None,
@@ -703,6 +705,15 @@ impl InteractiveText {
             }
         }));
         self.clickable_ranges = ranges;
+        self
+    }
+
+    /// on_mouse_down is called when the user presses the mouse over a character in the text.
+    pub fn on_mouse_down(
+        mut self,
+        listener: impl Fn(usize, MouseDownEvent, &mut Window, &mut App) + 'static,
+    ) -> Self {
+        self.mouse_down_listener = Some(Box::new(listener));
         self
     }
 
@@ -848,6 +859,20 @@ impl Element for InteractiveText {
                             }
                         });
                     }
+                }
+
+                if let Some(mouse_down_listener) = self.mouse_down_listener.take() {
+                    let hitbox = hitbox.clone();
+                    let text_layout = text_layout.clone();
+                    window.on_mouse_event(move |event: &MouseDownEvent, phase, window, cx| {
+                        if phase == DispatchPhase::Bubble
+                            && hitbox.is_hovered(window)
+                            && let Ok(mouse_down_index) =
+                                text_layout.index_for_position(event.position)
+                        {
+                            mouse_down_listener(mouse_down_index, event.clone(), window, cx);
+                        }
+                    });
                 }
 
                 window.on_mouse_event({
