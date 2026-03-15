@@ -7,6 +7,7 @@ use project::{TaskSourceKind, WorktreeId};
 use remote::ConnectionState;
 use task::{
     DebugScenario, ResolvedTask, SharedTaskContext, SpawnInTerminal, TaskContext, TaskTemplate,
+    TaskVariables, VariableName, WorktreeTaskDefinition,
 };
 use ui::Window;
 
@@ -132,5 +133,139 @@ impl Workspace {
         } else {
             Task::ready(None)
         }
+    }
+
+    pub fn run_git_worktree_tasks(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        dbg!("In run git worktree tasks");
+        let project = self.project().clone();
+
+        let worktree_tasks: Vec<(WorktreeId, TaskContext, Vec<WorktreeTaskDefinition>)> = {
+            let project = project.read(cx);
+            let task_store = project.task_store();
+            let Some(inventory) = task_store.read(cx).task_inventory().cloned() else {
+                dbg!("No task inventory");
+                return;
+            };
+
+            let mut worktree_tasks = Vec::new();
+            for worktree in project.worktrees(cx) {
+                let worktree = worktree.read(cx);
+                let worktree_id = worktree.id();
+                let worktree_abs_path = worktree.abs_path();
+
+                let definitions: Vec<WorktreeTaskDefinition> = inventory
+                    .read(cx)
+                    .list_git_worktree_scripts(worktree_id)
+                    .into_iter()
+                    .flat_map(|(_, scripts)| scripts.setup)
+                    .collect();
+
+                if definitions.is_empty() {
+                    dbg!("Task inventory has no definitions");
+                    continue;
+                }
+
+                let mut task_variables = TaskVariables::default();
+                task_variables.insert(
+                    VariableName::WorktreeRoot,
+                    worktree_abs_path.to_string_lossy().into_owned(),
+                );
+                let task_context = TaskContext {
+                    cwd: Some(worktree_abs_path.to_path_buf()),
+                    task_variables,
+                    project_env: Default::default(),
+                };
+
+                worktree_tasks.push((worktree_id, task_context, definitions));
+            }
+            worktree_tasks
+        };
+
+        if worktree_tasks.is_empty() {
+            dbg!("worktree tasks is empty");
+            return;
+        }
+
+        let inventory = project
+            .read(cx)
+            .task_store()
+            .read(cx)
+            .task_inventory()
+            .cloned();
+
+        let task = cx.spawn_in(window, async move |workspace, cx| {
+            let mut tasks = Vec::new();
+            for (worktree_id, task_context, definitions) in worktree_tasks {
+                let id_base = format!("worktree_setup_{worktree_id}");
+                dbg!("getting running", definitions.len());
+
+                tasks.push(cx.spawn({
+                    let workspace = workspace.clone();
+                    let inventory = inventory.clone();
+                    async move |cx| {
+                        for definition in definitions {
+                            let task_template = match definition {
+                                WorktreeTaskDefinition::Template { task_template } => task_template,
+                                WorktreeTaskDefinition::ByName(label) => {
+                                    let Some(ref inventory) = inventory else {
+                                        continue;
+                                    };
+                                    let lookup = inventory.read_with(cx, |inventory, cx| {
+                                        inventory.task_template_by_label(
+                                            None,
+                                            Some(worktree_id),
+                                            &label,
+                                            cx,
+                                        )
+                                    });
+                                    match lookup.await {
+                                        Some(template) => template,
+                                        None => {
+                                            log::warn!(
+                                                "Could not find task template named '{label}' \
+                                                 for git worktree setup"
+                                            );
+                                            continue;
+                                        }
+                                    }
+                                }
+                            };
+
+                            let Some(resolved) =
+                                task_template.resolve_task(&id_base, &task_context)
+                            else {
+                                continue;
+                            };
+
+                            let status = workspace.update_in(cx, |workspace, window, cx| {
+                                workspace.spawn_in_terminal(resolved.resolved, window, cx)
+                            })?;
+
+                            if let Some(result) = status.await {
+                                match result {
+                                    Ok(exit_status) if !exit_status.success() => {
+                                        log::error!(
+                                            "Git worktree setup task failed with status: {:?}",
+                                            exit_status.code()
+                                        );
+                                        break;
+                                    }
+                                    Err(error) => {
+                                        log::error!("Git worktree setup task error: {error:#}");
+                                        break;
+                                    }
+                                    _ => {}
+                                }
+                            }
+                        }
+                        anyhow::Ok(())
+                    }
+                }));
+            }
+
+            futures::future::join_all(tasks).await;
+            anyhow::Ok(())
+        });
+        task.detach_and_log_err(cx);
     }
 }

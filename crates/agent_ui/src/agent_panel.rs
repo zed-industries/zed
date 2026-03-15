@@ -3004,7 +3004,7 @@ impl AgentPanel {
             anyhow::Ok(())
         });
 
-        self._worktree_creation_task = Some(cx.foreground_executor().spawn(async move {
+        self._worktree_creation_task = Some(cx.background_spawn(async move {
             task.await.log_err();
         }));
     }
@@ -3119,8 +3119,12 @@ impl AgentPanel {
             });
         })?;
 
-        new_window_handle.update(cx, |multi_workspace, _window, cx| {
+        new_window_handle.update(cx, |multi_workspace, window, cx| {
             multi_workspace.activate(new_workspace.clone(), cx);
+
+            new_workspace.update(cx, |workspace, cx| {
+                workspace.run_git_worktree_tasks(window, cx);
+            })
         })?;
 
         this.update_in(cx, |this, _window, cx| {

@@ -10,7 +10,7 @@ use lsp::{DEFAULT_LSP_REQUEST_TIMEOUT_SECS, LanguageServerName};
 use paths::{
     EDITORCONFIG_NAME, local_debug_file_relative_path, local_settings_file_relative_path,
     local_tasks_file_relative_path, local_vscode_launch_file_relative_path,
-    local_vscode_tasks_file_relative_path, task_file_name,
+    local_vscode_tasks_file_relative_path, local_worktrees_file_relative_path, task_file_name,
 };
 use rpc::{
     AnyProtoClient, TypedEnvelope,
@@ -744,6 +744,7 @@ pub enum SettingsObserverEvent {
     LocalSettingsUpdated(Result<PathBuf, InvalidSettingsError>),
     LocalTasksUpdated(Result<PathBuf, InvalidSettingsError>),
     LocalDebugScenariosUpdated(Result<PathBuf, InvalidSettingsError>),
+    LocalWorktreeScriptsUpdated(Result<PathBuf, InvalidSettingsError>),
 }
 
 impl EventEmitter<SettingsObserverEvent> for SettingsObserver {}
@@ -1140,6 +1141,18 @@ impl SettingsObserver {
                     .unwrap()
                     .into();
                 (settings_dir, LocalSettingsKind::Debug)
+            } else if path.ends_with(local_worktrees_file_relative_path()) {
+                let settings_dir = path
+                    .ancestors()
+                    .nth(
+                        local_worktrees_file_relative_path()
+                            .components()
+                            .count()
+                            .saturating_sub(1),
+                    )
+                    .unwrap()
+                    .into();
+                (settings_dir, LocalSettingsKind::Worktrees)
             } else if path.ends_with(local_vscode_launch_file_relative_path()) {
                 let settings_dir = path
                     .ancestors()
@@ -1369,6 +1382,37 @@ impl SettingsObserver {
                         }
                     }
                 }
+                (LocalSettingsPath::InWorktree(directory), LocalSettingsKind::Worktrees) => {
+                    let result = task_store.update(cx, |task_store, cx| {
+                        task_store.update_user_worktree_scripts(
+                            TaskSettingsLocation::Worktree(SettingsLocation {
+                                worktree_id,
+                                path: directory.as_ref(),
+                            }),
+                            file_content.as_deref(),
+                            cx,
+                        )
+                    });
+
+                    match result {
+                        Err(InvalidSettingsError::Worktrees { path, message }) => {
+                            log::error!(
+                                "Failed to set local worktree scripts in {path:?}: {message:?}"
+                            );
+                            cx.emit(SettingsObserverEvent::LocalWorktreeScriptsUpdated(Err(
+                                InvalidSettingsError::Worktrees { path, message },
+                            )));
+                        }
+                        Err(error) => {
+                            log::error!("Failed to set local worktree scripts: {error}");
+                        }
+                        Ok(()) => {
+                            cx.emit(SettingsObserverEvent::LocalWorktreeScriptsUpdated(Ok(
+                                directory.as_std_path().join(paths::worktrees_file_name()),
+                            )));
+                        }
+                    }
+                }
                 (directory, LocalSettingsKind::Editorconfig) => {
                     apply_local_settings(worktree_id, directory.clone(), kind, &file_content, cx);
                 }
@@ -1551,6 +1595,7 @@ pub fn local_settings_kind_from_proto(kind: proto::LocalSettingsKind) -> LocalSe
         proto::LocalSettingsKind::Tasks => LocalSettingsKind::Tasks,
         proto::LocalSettingsKind::Editorconfig => LocalSettingsKind::Editorconfig,
         proto::LocalSettingsKind::Debug => LocalSettingsKind::Debug,
+        proto::LocalSettingsKind::Worktrees => LocalSettingsKind::Worktrees,
     }
 }
 
@@ -1560,6 +1605,7 @@ pub fn local_settings_kind_to_proto(kind: LocalSettingsKind) -> proto::LocalSett
         LocalSettingsKind::Tasks => proto::LocalSettingsKind::Tasks,
         LocalSettingsKind::Editorconfig => proto::LocalSettingsKind::Editorconfig,
         LocalSettingsKind::Debug => proto::LocalSettingsKind::Debug,
+        LocalSettingsKind::Worktrees => proto::LocalSettingsKind::Worktrees,
     }
 }
 

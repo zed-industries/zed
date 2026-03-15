@@ -7,6 +7,7 @@ pub mod static_source;
 mod task_template;
 mod vscode_debug_format;
 mod vscode_format;
+mod worktree_format;
 
 use anyhow::Context as _;
 use collections::{HashMap, HashSet, hash_map};
@@ -30,6 +31,7 @@ pub use util::shell::{Shell, ShellKind};
 pub use util::shell_builder::ShellBuilder;
 pub use vscode_debug_format::VsCodeDebugTaskFile;
 pub use vscode_format::VsCodeTaskFile;
+pub use worktree_format::{WorktreeTaskDefinition, WorktreeTasks};
 pub use zed_actions::RevealTarget;
 
 /// Task identifier, unique within the application.

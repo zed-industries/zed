@@ -3575,6 +3575,21 @@ impl Project {
                 }),
                 Err(_) => {}
             },
+            SettingsObserverEvent::LocalWorktreeScriptsUpdated(result) => match result {
+                Err(InvalidSettingsError::Worktrees { message, path }) => {
+                    let message =
+                        format!("Failed to set local worktree scripts in {path:?}:\n{message}");
+                    cx.emit(Event::Toast {
+                        notification_id: format!("local-worktree-scripts-{path:?}").into(),
+                        link: None,
+                        message,
+                    });
+                }
+                Ok(path) => cx.emit(Event::HideToast {
+                    notification_id: format!("local-worktree-scripts-{path:?}").into(),
+                }),
+                Err(_) => {}
+            },
         }
     }
 

@@ -210,6 +210,7 @@ pub enum LocalSettingsKind {
     Tasks,
     Editorconfig,
     Debug,
+    Worktrees,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -931,6 +932,16 @@ impl SettingsStore {
                         .to_path_buf(),
                 });
             }
+            (LocalSettingsPath::InWorktree(directory_path), LocalSettingsKind::Worktrees, _) => {
+                return Err(InvalidSettingsError::Worktrees {
+                    message: "Attempted to submit worktree scripts into the settings store"
+                        .to_string(),
+                    path: directory_path
+                        .join(RelPath::unix("worktrees.json").unwrap())
+                        .as_std_path()
+                        .to_path_buf(),
+                });
+            }
             (LocalSettingsPath::InWorktree(directory_path), LocalSettingsKind::Settings, None) => {
                 zed_settings_changed = self
                     .local_settings
@@ -1398,6 +1409,10 @@ pub enum InvalidSettingsError {
         path: PathBuf,
         message: String,
     },
+    Worktrees {
+        path: PathBuf,
+        message: String,
+    },
 }
 
 impl std::fmt::Display for InvalidSettingsError {
@@ -1409,7 +1424,8 @@ impl std::fmt::Display for InvalidSettingsError {
             | InvalidSettingsError::DefaultSettings { message }
             | InvalidSettingsError::Tasks { message, .. }
             | InvalidSettingsError::Editorconfig { message, .. }
-            | InvalidSettingsError::Debug { message, .. } => {
+            | InvalidSettingsError::Debug { message, .. }
+            | InvalidSettingsError::Worktrees { message, .. } => {
                 write!(f, "{message}")
             }
         }
