@@ -58,6 +58,11 @@ cd ios && xcode-build-server config -project Zed.xcodeproj -scheme Zed
 This generates `ios/buildServer.json` (gitignored) which tells sourcekit-lsp to
 use the iOS SDK instead of the macOS SDK.
 
+**Re-run after any `clean build`**: `xcodebuild clean` wipes the build index
+that sourcekit-lsp reads. If UIKit errors reappear in Swift files, run
+`xcode-build-server config` again from `ios/`, then restart the language server
+in your editor.
+
 ## Building
 
 The Xcode project drives the full build. The `cargo build` step is wired in as
@@ -66,12 +71,16 @@ a shell script build phase that runs before Swift compilation.
 ```bash
 # Build and run on the iPad Pro simulator
 xcodebuild -project ios/Zed.xcodeproj -scheme Zed \
-  -destination 'platform=iOS Simulator,name=iPad Pro 13-inch (M4)' \
-  -configuration Debug CODE_SIGNING_ALLOWED=NO
+  -destination 'platform=iOS Simulator,name=iPad Pro 13-inch (M5)' \
+  build
 
 # For a physical device, open Zed.xcodeproj in Xcode and run from there
 # (requires an Apple Developer account for code signing)
 ```
+
+The Rust static library is built as part of the Xcode build phase — you do not
+need to run `cargo build` separately unless you want to check for compile errors
+without going through Xcode.
 
 See `CLAUDE.md` in this directory for agent-facing build details and Swift
 conventions.

@@ -31,6 +31,18 @@ cargo build -p zed-ios --target aarch64-apple-ios --release --no-default-feature
 Note: do not pass `--features ios` — there is no such feature flag; iOS-specific code
 is gated by `cfg(target_os = "ios")` automatically when targeting `aarch64-apple-ios*`.
 
+## Swift LSP (sourcekit-lsp / xcode-build-server)
+
+UIKit errors in Swift files mean sourcekit-lsp is using the macOS SDK.
+Fix: re-run `xcode-build-server config` from `ios/`, then restart the language server.
+
+```bash
+cd ios && xcode-build-server config -project Zed.xcodeproj -scheme Zed
+```
+
+**Always re-run this after `xcodebuild clean`** — clean wipes the build index
+that the BSP reads. Prefer `build` over `clean build` unless a clean is needed.
+
 ## File structure
 
 ```
