@@ -9,11 +9,13 @@
 #[cfg(target_os = "ios")]
 mod ios {
     use gpui::{
-        Application, ApplicationKeepAlive, App, AppContext as _, Context, Render,
-        Window, WindowOptions, div, IntoElement, SharedString, prelude::*,
+        AnyElement, App, AppContext as _, Application, ApplicationKeepAlive, Bounds, Context,
+        Element, ElementId, ElementInputHandler, EntityInputHandler, FocusHandle, GlobalElementId,
+        InspectorElementId, IntoElement, LayoutId, Pixels, Point, Render, SharedString,
+        UTF16Selection, Window, WindowOptions, div, prelude::*,
     };
     use gpui_ios::IosPlatform;
-    use std::{cell::RefCell, rc::Rc};
+    use std::{cell::RefCell, ops::Range, rc::Rc};
 
     thread_local! {
         /// Keeps the GPUI application alive for the process lifetime.
@@ -22,25 +24,198 @@ mod ios {
         static APP_KEEPALIVE: RefCell<Option<ApplicationKeepAlive>> = RefCell::new(None);
     }
 
-    /// Minimal smoke-test view that renders a line of text.
-    struct TextSmokeView;
+    // ── Text input smoke-test view ────────────────────────────────────────────
+
+    /// A minimal text-input view for exercising the UITextInput pipeline.
+    /// Type on the software keyboard — characters appear on screen.
+    struct TextSmokeView {
+        text: String,
+        /// Cursor position as a byte offset into `text`.
+        cursor: usize,
+        focus_handle: FocusHandle,
+    }
+
+    impl TextSmokeView {
+        fn new(cx: &mut Context<Self>) -> Self {
+            Self {
+                text: String::new(),
+                cursor: 0,
+                focus_handle: cx.focus_handle(),
+            }
+        }
+    }
 
     impl Render for TextSmokeView {
-        fn render(
+        fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+            // Grab focus on every render so the view owns the first responder.
+            window.focus(&self.focus_handle, cx);
+            TextSmokeElement {
+                view: cx.entity().clone(),
+                focus_handle: self.focus_handle.clone(),
+            }
+        }
+    }
+
+    impl EntityInputHandler for TextSmokeView {
+        fn text_for_range(
             &mut self,
+            range: Range<usize>,
+            adjusted_range: &mut Option<Range<usize>>,
             _window: &mut Window,
             _cx: &mut Context<Self>,
-        ) -> impl IntoElement {
-            div()
+        ) -> Option<String> {
+            let start = range.start.min(self.text.len());
+            let end = range.end.min(self.text.len());
+            *adjusted_range = Some(start..end);
+            Some(self.text[start..end].to_owned())
+        }
+
+        fn selected_text_range(
+            &mut self,
+            _ignore_disabled_input: bool,
+            _window: &mut Window,
+            _cx: &mut Context<Self>,
+        ) -> Option<UTF16Selection> {
+            Some(UTF16Selection { range: self.cursor..self.cursor, reversed: false })
+        }
+
+        fn marked_text_range(
+            &self,
+            _window: &mut Window,
+            _cx: &mut Context<Self>,
+        ) -> Option<Range<usize>> {
+            None
+        }
+
+        fn unmark_text(&mut self, _window: &mut Window, _cx: &mut Context<Self>) {}
+
+        fn replace_text_in_range(
+            &mut self,
+            range: Option<Range<usize>>,
+            text: &str,
+            _window: &mut Window,
+            cx: &mut Context<Self>,
+        ) {
+            let start = range.as_ref().map(|r| r.start).unwrap_or(self.cursor).min(self.text.len());
+            let end = range.as_ref().map(|r| r.end).unwrap_or(self.cursor).min(self.text.len());
+            self.text.replace_range(start..end, text);
+            self.cursor = start + text.len();
+            cx.notify();
+        }
+
+        fn replace_and_mark_text_in_range(
+            &mut self,
+            range: Option<Range<usize>>,
+            new_text: &str,
+            new_selected_range: Option<Range<usize>>,
+            _window: &mut Window,
+            cx: &mut Context<Self>,
+        ) {
+            let start = range.as_ref().map(|r| r.start).unwrap_or(self.cursor).min(self.text.len());
+            let end = range.as_ref().map(|r| r.end).unwrap_or(self.cursor).min(self.text.len());
+            self.text.replace_range(start..end, new_text);
+            let new_end = start + new_text.len();
+            self.cursor = new_selected_range
+                .map(|r| (start + r.end).min(new_end))
+                .unwrap_or(new_end);
+            cx.notify();
+        }
+
+        fn bounds_for_range(
+            &mut self,
+            _range_utf16: Range<usize>,
+            element_bounds: Bounds<Pixels>,
+            _window: &mut Window,
+            _cx: &mut Context<Self>,
+        ) -> Option<Bounds<Pixels>> {
+            Some(element_bounds)
+        }
+
+        fn character_index_for_point(
+            &mut self,
+            _point: Point<Pixels>,
+            _window: &mut Window,
+            _cx: &mut Context<Self>,
+        ) -> Option<usize> {
+            None
+        }
+    }
+
+    // ── Element that paints the text and installs the input handler ───────────
+
+    struct TextSmokeElement {
+        view: gpui::Entity<TextSmokeView>,
+        focus_handle: FocusHandle,
+    }
+
+    impl IntoElement for TextSmokeElement {
+        type Element = Self;
+        fn into_element(self) -> Self { self }
+    }
+
+    impl Element for TextSmokeElement {
+        type RequestLayoutState = AnyElement;
+        type PrepaintState = ();
+
+        fn id(&self) -> Option<ElementId> { None }
+
+        fn source_location(&self) -> Option<&'static std::panic::Location<'static>> { None }
+
+        fn request_layout(
+            &mut self,
+            _id: Option<&GlobalElementId>,
+            _inspector_id: Option<&InspectorElementId>,
+            window: &mut Window,
+            cx: &mut App,
+        ) -> (LayoutId, Self::RequestLayoutState) {
+            let text = self.view.read(cx).text.clone();
+            let display = SharedString::from(format!("{text}▌"));
+            let mut inner = div()
                 .size_full()
-                .bg(gpui::rgb(0xff0000))
+                .bg(gpui::rgb(0x1e1e2e))
                 .flex()
                 .items_center()
                 .justify_center()
-                .text_color(gpui::rgb(0xffffff))
-                .child(SharedString::from("Hello from Zed on iPad!"))
+                .text_color(gpui::rgb(0xcdd6f4))
+                .text_xl()
+                .child(display)
+                .into_any_element();
+            let layout_id = inner.request_layout(window, cx);
+            (layout_id, inner)
+        }
+
+        fn prepaint(
+            &mut self,
+            _id: Option<&GlobalElementId>,
+            _inspector_id: Option<&InspectorElementId>,
+            _bounds: Bounds<Pixels>,
+            inner: &mut Self::RequestLayoutState,
+            window: &mut Window,
+            cx: &mut App,
+        ) -> Self::PrepaintState {
+            inner.prepaint(window, cx);
+        }
+
+        fn paint(
+            &mut self,
+            _id: Option<&GlobalElementId>,
+            _inspector_id: Option<&InspectorElementId>,
+            bounds: Bounds<Pixels>,
+            inner: &mut Self::RequestLayoutState,
+            _prepaint: &mut Self::PrepaintState,
+            window: &mut Window,
+            cx: &mut App,
+        ) {
+            window.handle_input(
+                &self.focus_handle,
+                ElementInputHandler::new(bounds, self.view.clone()),
+                cx,
+            );
+            inner.paint(window, cx);
         }
     }
+
+    // ── App lifecycle ─────────────────────────────────────────────────────────
 
     pub fn ios_main() {
         // Initialize logging to stderr — captured by Xcode console and `log stream`.
@@ -67,7 +242,7 @@ mod ios {
             if let Some(keepalive) = borrowed.as_ref() {
                 keepalive.update(|cx| {
                     if let Err(err) = cx.open_window(WindowOptions::default(), |_window, cx| {
-                        cx.new(|_| TextSmokeView)
+                        cx.new(TextSmokeView::new)
                     }) {
                         log::error!("[zed-ios] open_window failed: {err:?}");
                     }
