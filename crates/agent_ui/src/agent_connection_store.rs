@@ -88,25 +88,33 @@ impl AgentConnectionStore {
 
             self.entries.insert(key.clone(), entry.clone());
 
+            // Both tasks below capture only a WeakEntity, so the entry's strong-ref count
+            // stays at exactly one (the slot in `self.entries`). Removing the entry from the
+            // map is therefore sufficient to drop the entity and free the
+            // `Rc<dyn AgentConnection>` it holds.
             cx.spawn({
                 let key = key.clone();
-                let entry = entry.clone();
+                let weak_entry = entry.downgrade();
                 async move |this, cx| match connect_task.await {
                     Ok(connected_state) => {
-                        entry.update(cx, |entry, cx| {
-                            if let AgentConnectionEntry::Connecting { .. } = entry {
-                                *entry = AgentConnectionEntry::Connected(connected_state);
-                                cx.notify();
-                            }
-                        });
+                        weak_entry
+                            .update(cx, |entry, cx| {
+                                if let AgentConnectionEntry::Connecting { .. } = entry {
+                                    *entry = AgentConnectionEntry::Connected(connected_state);
+                                    cx.notify();
+                                }
+                            })
+                            .ok();
                     }
                     Err(error) => {
-                        entry.update(cx, |entry, cx| {
-                            if let AgentConnectionEntry::Connecting { .. } = entry {
-                                *entry = AgentConnectionEntry::Error { error };
-                                cx.notify();
-                            }
-                        });
+                        weak_entry
+                            .update(cx, |entry, cx| {
+                                if let AgentConnectionEntry::Connecting { .. } = entry {
+                                    *entry = AgentConnectionEntry::Error { error };
+                                    cx.notify();
+                                }
+                            })
+                            .ok();
                         this.update(cx, |this, _cx| this.entries.remove(&key)).ok();
                     }
                 }
@@ -114,15 +122,17 @@ impl AgentConnectionStore {
             .detach();
 
             cx.spawn({
-                let entry = entry.clone();
+                let weak_entry = entry.downgrade();
                 async move |this, cx| {
                     while let Ok(version) = new_version_rx.recv().await {
                         if let Some(version) = version {
-                            entry.update(cx, |_entry, cx| {
-                                cx.emit(AgentConnectionEntryEvent::NewVersionAvailable(
-                                    version.clone().into(),
-                                ));
-                            });
+                            weak_entry
+                                .update(cx, |_entry, cx| {
+                                    cx.emit(AgentConnectionEntryEvent::NewVersionAvailable(
+                                        version.clone().into(),
+                                    ));
+                                })
+                                .ok();
                             this.update(cx, |this, _cx| this.entries.remove(&key)).ok();
                         }
                     }
@@ -134,6 +144,17 @@ impl AgentConnectionStore {
         })
     }
 
+    /// Removes all external (non-native) agent entries from the store.
+    ///
+    /// Because the tasks spawned in `request_connection` hold only `WeakEntity` refs,
+    /// removing an entry from `self.entries` drops the last strong ref to the entity.
+    /// That in turn drops the `Rc<dyn AgentConnection>` the entry holds, freeing any
+    /// associated external process.
+    pub fn disconnect_external_agents(&mut self) {
+        self.entries
+            .retain(|key, _| matches!(key, Agent::NativeAgent));
+    }
+
     fn handle_agent_servers_updated(
         &mut self,
         store: Entity<AgentServerStore>,
@@ -141,6 +162,9 @@ impl AgentConnectionStore {
         cx: &mut Context<Self>,
     ) {
         let store = store.read(cx);
+        // This retain is sound because the tasks spawned in `request_connection` hold only
+        // WeakEntity refs. Removing an entry from the map drops the sole strong ref to the
+        // entity, which frees the `Rc<dyn AgentConnection>` it contains.
         self.entries.retain(|key, _| match key {
             Agent::NativeAgent => true,
             Agent::Custom { name } => store
