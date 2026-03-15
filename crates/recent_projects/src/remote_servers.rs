@@ -68,6 +68,8 @@ pub struct RemoteServerProjects {
     create_new_window: bool,
     dev_container_picker: Option<Entity<Picker<DevContainerPickerDelegate>>>,
     _subscription: Subscription,
+    _search_subscription: gpui::Subscription,
+    search_editor: Entity<Editor>,
 }
 
 struct CreateRemoteServer {
@@ -200,6 +202,14 @@ impl DevContainerPickerDelegate {
     }
 }
 
+fn matches_fuzzy_query(text: &str, query: &str) -> bool {
+    let text_lower = text.to_lowercase();
+    query
+        .split(|c: char| c == '_' || c.is_whitespace())
+        .filter(|part| !part.is_empty())
+        .all(|part| text_lower.contains(&part.to_lowercase()))
+}
+
 impl PickerDelegate for DevContainerPickerDelegate {
     type ListItem = AnyElement;
 
@@ -230,16 +240,12 @@ impl PickerDelegate for DevContainerPickerDelegate {
         _window: &mut Window,
         _cx: &mut Context<Picker<Self>>,
     ) -> Task<()> {
-        let query_lower = query.to_lowercase();
         self.matching_candidates = self
             .candidates
             .iter()
             .filter(|c| {
-                c.name.to_lowercase().contains(&query_lower)
-                    || c.config_path
-                        .to_string_lossy()
-                        .to_lowercase()
-                        .contains(&query_lower)
+                matches_fuzzy_query(&c.name, &query)
+                    || matches_fuzzy_query(&c.config_path.to_string_lossy(), &query)
             })
             .cloned()
             .collect();
@@ -646,6 +652,24 @@ impl RemoteEntry {
             ),
         }
     }
+
+    fn search_text(&self) -> String {
+        match self {
+            Self::Project { connection, .. } => match connection {
+                Connection::Ssh(opts) => {
+                    let mut text = opts.host.clone();
+                    if let Some(nickname) = &opts.nickname {
+                        text.push(' ');
+                        text.push_str(nickname);
+                    }
+                    text
+                }
+                Connection::Wsl(opts) => opts.distro_name.to_string(),
+                Connection::DevContainer(opts) => opts.name.to_string(),
+            },
+            Self::SshConfig { host, .. } => host.to_string(),
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -905,6 +929,24 @@ impl RemoteServerProjects {
                 }
             });
 
+        let search_editor = cx.new(|cx| {
+            let mut editor = Editor::single_line(window, cx);
+            editor.set_placeholder_text("Filter remote servers...", window, cx);
+            editor
+        });
+
+        search_editor.focus_handle(cx).focus(window, cx);
+
+        let _search_subscription = cx.subscribe_in(
+            &search_editor,
+            window,
+            |_this, _editor, event: &editor::EditorEvent, _window, cx| {
+                if matches!(event, editor::EditorEvent::BufferEdited) {
+                    cx.notify();
+                }
+            },
+        );
+
         Self {
             mode,
             focus_handle,
@@ -915,6 +957,8 @@ impl RemoteServerProjects {
             create_new_window,
             dev_container_picker: None,
             _subscription,
+            _search_subscription,
+            search_editor,
         }
     }
 
@@ -2595,6 +2639,20 @@ impl RemoteServerProjects {
             }
         }
 
+        let query = self.search_editor.read(cx).text(cx);
+        let query_lower = query.to_lowercase();
+
+        let filtered_servers: Vec<RemoteEntry> = if query_lower.is_empty() {
+            state.servers.clone()
+        } else {
+            state
+                .servers
+                .iter()
+                .filter(|entry| matches_fuzzy_query(&entry.search_text(), &query))
+                .cloned()
+                .collect()
+        };
+
         let connect_button = div()
             .id("ssh-connect-new-server-container")
             .track_focus(&state.add_new_server.focus_handle)
@@ -2724,12 +2782,16 @@ impl RemoteServerProjects {
                                 .border_t_1()
                                 .border_color(cx.theme().colors().border_variant)
                                 .child(
-                                    Label::new("No remote servers registered yet.")
-                                        .color(Color::Muted),
+                                    Label::new(if query_lower.is_empty() {
+                                        "No remote servers registered yet."
+                                    } else {
+                                        "No matching remote servers."
+                                    })
+                                    .color(Color::Muted),
                                 )
                                 .into_any_element(),
                         )
-                        .children(state.servers.iter().enumerate().map(|(ix, connection)| {
+                        .children(filtered_servers.iter().enumerate().map(|(ix, connection)| {
                             self.render_remote_connection(ix, connection.clone(), window, cx)
                                 .into_any_element()
                         })),
@@ -2768,7 +2830,7 @@ impl RemoteServerProjects {
         }
         let mut modal_section = modal_section.render(window, cx).into_any_element();
 
-        let is_project_selected = state.servers.iter().any(|server| match server {
+        let is_project_selected = filtered_servers.iter().any(|server| match server {
             RemoteEntry::Project { projects, .. } => projects
                 .iter()
                 .any(|(entry, _)| entry.focus_handle.contains_focused(window, cx)),
@@ -2779,11 +2841,19 @@ impl RemoteServerProjects {
             .header(ModalHeader::new().headline("Remote Projects"))
             .section(
                 Section::new().padded(false).child(
+                    div()
+                        .p_2()
+                        .border_b_1()
+                        .border_color(cx.theme().colors().border_variant)
+                        .child(self.search_editor.clone()),
+                ),
+            )
+            .section(
+                Section::new().padded(false).child(
                     v_flex()
                         .min_h(rems(20.))
                         .size_full()
                         .relative()
-                        .child(ListSeparator)
                         .child(
                             canvas(
                                 |bounds, window, cx| {
