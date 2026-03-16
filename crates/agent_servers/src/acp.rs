@@ -9,18 +9,19 @@ use anyhow::anyhow;
 use collections::HashMap;
 use futures::AsyncBufReadExt as _;
 use futures::io::BufReader;
-use project::Project;
-use project::agent_server_store::{AgentServerCommand, GEMINI_NAME};
+use project::agent_server_store::{AgentServerCommand, GEMINI_ID};
+use project::{AgentId, Project};
 use serde::Deserialize;
 use settings::Settings as _;
 use task::ShellBuilder;
 use util::ResultExt as _;
+use util::path_list::PathList;
 use util::process::Child;
 
 use std::path::PathBuf;
 use std::process::Stdio;
+use std::rc::Rc;
 use std::{any::Any, cell::RefCell};
-use std::{path::Path, rc::Rc};
 use thiserror::Error;
 
 use anyhow::{Context as _, Result};
@@ -35,7 +36,7 @@ use terminal::terminal_settings::{AlternateScroll, CursorShape, TerminalSettings
 pub struct UnsupportedVersion;
 
 pub struct AcpConnection {
-    server_name: SharedString,
+    id: AgentId,
     display_name: SharedString,
     telemetry_id: SharedString,
     connection: Rc<acp::ClientSideConnection>,
@@ -124,7 +125,7 @@ impl AgentSessionList for AcpSessionList {
                     .into_iter()
                     .map(|s| AgentSessionInfo {
                         session_id: s.session_id,
-                        cwd: Some(s.cwd),
+                        work_dirs: Some(PathList::new(&[s.cwd])),
                         title: s.title.map(Into::into),
                         updated_at: s.updated_at.and_then(|date_str| {
                             chrono::DateTime::parse_from_rfc3339(&date_str)
@@ -158,7 +159,7 @@ impl AgentSessionList for AcpSessionList {
 }
 
 pub async fn connect(
-    server_name: SharedString,
+    agent_id: AgentId,
     display_name: SharedString,
     command: AgentServerCommand,
     default_mode: Option<acp::SessionModeId>,
@@ -167,7 +168,7 @@ pub async fn connect(
     cx: &mut AsyncApp,
 ) -> Result<Rc<dyn AgentConnection>> {
     let conn = AcpConnection::stdio(
-        server_name,
+        agent_id,
         display_name,
         command.clone(),
         default_mode,
@@ -183,7 +184,7 @@ const MINIMUM_SUPPORTED_VERSION: acp::ProtocolVersion = acp::ProtocolVersion::V1
 
 impl AcpConnection {
     pub async fn stdio(
-        server_name: SharedString,
+        agent_id: AgentId,
         display_name: SharedString,
         command: AgentServerCommand,
         default_mode: Option<acp::SessionModeId>,
@@ -270,7 +271,7 @@ impl AcpConnection {
 
         cx.update(|cx| {
             AcpConnectionRegistry::default_global(cx).update(cx, |registry, cx| {
-                registry.set_active_connection(server_name.clone(), &connection, cx)
+                registry.set_active_connection(agent_id.clone(), &connection, cx)
             });
         });
 
@@ -305,7 +306,7 @@ impl AcpConnection {
             // Use the one the agent provides if we have one
             .map(|info| info.name.into())
             // Otherwise, just use the name
-            .unwrap_or_else(|| server_name.clone());
+            .unwrap_or_else(|| agent_id.0.to_string().into());
 
         let session_list = if response
             .agent_capabilities
@@ -321,7 +322,7 @@ impl AcpConnection {
         };
 
         // TODO: Remove this override once Google team releases their official auth methods
-        let auth_methods = if server_name == GEMINI_NAME {
+        let auth_methods = if agent_id.0.as_ref() == GEMINI_ID {
             let mut args = command.args.clone();
             args.retain(|a| a != "--experimental-acp");
             let value = serde_json::json!({
@@ -340,9 +341,9 @@ impl AcpConnection {
             response.auth_methods
         };
         Ok(Self {
+            id: agent_id,
             auth_methods,
             connection,
-            server_name,
             display_name,
             telemetry_id,
             sessions,
@@ -368,7 +369,7 @@ impl AcpConnection {
         config_options: &Rc<RefCell<Vec<acp::SessionConfigOption>>>,
         cx: &mut AsyncApp,
     ) {
-        let name = self.server_name.clone();
+        let id = self.id.clone();
         let defaults_to_apply: Vec<_> = {
             let config_opts_ref = config_options.borrow();
             config_opts_ref
@@ -410,7 +411,7 @@ impl AcpConnection {
                             "`{}` is not a valid value for config option `{}` in {}",
                             default_value,
                             config_option.id.0,
-                            name
+                            id
                         );
                         None
                     }
@@ -466,6 +467,10 @@ impl Drop for AcpConnection {
 }
 
 impl AgentConnection for AcpConnection {
+    fn agent_id(&self) -> AgentId {
+        self.id.clone()
+    }
+
     fn telemetry_id(&self) -> SharedString {
         self.telemetry_id.clone()
     }
@@ -473,11 +478,14 @@ impl AgentConnection for AcpConnection {
     fn new_session(
         self: Rc<Self>,
         project: Entity<Project>,
-        cwd: &Path,
+        work_dirs: PathList,
         cx: &mut App,
     ) -> Task<Result<Entity<AcpThread>>> {
-        let name = self.server_name.clone();
-        let cwd = cwd.to_path_buf();
+        // TODO: remove this once ACP supports multiple working directories
+        let Some(cwd) = work_dirs.ordered_paths().next().cloned() else {
+            return Task::ready(Err(anyhow!("Working directory cannot be empty")));
+        };
+        let name = self.id.0.clone();
         let mcp_servers = mcp_servers_for_project(&project, cx);
 
         cx.spawn(async move |cx| {
@@ -575,7 +583,7 @@ impl AgentConnection for AcpConnection {
                 AcpThread::new(
                     None,
                     self.display_name.clone(),
-                    Some(cwd),
+                    Some(work_dirs),
                     self.clone(),
                     project,
                     action_log,
@@ -616,7 +624,7 @@ impl AgentConnection for AcpConnection {
         self: Rc<Self>,
         session_id: acp::SessionId,
         project: Entity<Project>,
-        cwd: &Path,
+        work_dirs: PathList,
         title: Option<SharedString>,
         cx: &mut App,
     ) -> Task<Result<Entity<AcpThread>>> {
@@ -625,8 +633,11 @@ impl AgentConnection for AcpConnection {
                 "Loading sessions is not supported by this agent.".into()
             ))));
         }
+        // TODO: remove this once ACP supports multiple working directories
+        let Some(cwd) = work_dirs.ordered_paths().next().cloned() else {
+            return Task::ready(Err(anyhow!("Working directory cannot be empty")));
+        };
 
-        let cwd = cwd.to_path_buf();
         let mcp_servers = mcp_servers_for_project(&project, cx);
         let action_log = cx.new(|_| ActionLog::new(project.clone()));
         let title = title.unwrap_or_else(|| self.display_name.clone());
@@ -634,7 +645,7 @@ impl AgentConnection for AcpConnection {
             AcpThread::new(
                 None,
                 title,
-                Some(cwd.clone()),
+                Some(work_dirs.clone()),
                 self.clone(),
                 project,
                 action_log,
@@ -691,7 +702,7 @@ impl AgentConnection for AcpConnection {
         self: Rc<Self>,
         session_id: acp::SessionId,
         project: Entity<Project>,
-        cwd: &Path,
+        work_dirs: PathList,
         title: Option<SharedString>,
         cx: &mut App,
     ) -> Task<Result<Entity<AcpThread>>> {
@@ -705,8 +716,11 @@ impl AgentConnection for AcpConnection {
                 "Resuming sessions is not supported by this agent.".into()
             ))));
         }
+        // TODO: remove this once ACP supports multiple working directories
+        let Some(cwd) = work_dirs.ordered_paths().next().cloned() else {
+            return Task::ready(Err(anyhow!("Working directory cannot be empty")));
+        };
 
-        let cwd = cwd.to_path_buf();
         let mcp_servers = mcp_servers_for_project(&project, cx);
         let action_log = cx.new(|_| ActionLog::new(project.clone()));
         let title = title.unwrap_or_else(|| self.display_name.clone());
@@ -714,7 +728,7 @@ impl AgentConnection for AcpConnection {
             AcpThread::new(
                 None,
                 title,
-                Some(cwd.clone()),
+                Some(work_dirs),
                 self.clone(),
                 project,
                 action_log,

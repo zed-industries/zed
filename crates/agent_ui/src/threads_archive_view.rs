@@ -16,7 +16,7 @@ use gpui::{
 };
 use itertools::Itertools as _;
 use menu::{Confirm, SelectFirst, SelectLast, SelectNext, SelectPrevious};
-use project::{AgentServerStore, ExternalAgentServerName};
+use project::{AgentId, AgentServerStore};
 use theme::ActiveTheme;
 use ui::{
     ButtonLike, CommonAnimationExt, ContextMenu, ContextMenuEntry, HighlightedLabel, ListItem,
@@ -530,9 +530,9 @@ impl ThreadsArchiveView {
             (IconName::ChevronDown, Color::Muted)
         };
 
-        let selected_agent_icon = if let Agent::Custom { name } = &self.selected_agent {
+        let selected_agent_icon = if let Agent::Custom { id } = &self.selected_agent {
             let store = agent_server_store.read(cx);
-            let icon = store.agent_icon(&ExternalAgentServerName(name.clone()));
+            let icon = store.agent_icon(&id);
 
             if let Some(icon) = icon {
                 Icon::from_external_svg(icon)
@@ -584,24 +584,24 @@ impl ThreadsArchiveView {
                         let registry_store_ref = registry_store.as_ref().map(|s| s.read(cx));
 
                         struct AgentMenuItem {
-                            id: ExternalAgentServerName,
+                            id: AgentId,
                             display_name: SharedString,
                         }
 
                         let agent_items = agent_server_store
                             .external_agents()
-                            .map(|name| {
+                            .map(|agent_id| {
                                 let display_name = agent_server_store
-                                    .agent_display_name(name)
+                                    .agent_display_name(agent_id)
                                     .or_else(|| {
                                         registry_store_ref
                                             .as_ref()
-                                            .and_then(|store| store.agent(name.0.as_ref()))
+                                            .and_then(|store| store.agent(agent_id))
                                             .map(|a| a.name().clone())
                                     })
-                                    .unwrap_or_else(|| name.0.clone());
+                                    .unwrap_or_else(|| agent_id.0.clone());
                                 AgentMenuItem {
-                                    id: name.clone(),
+                                    id: agent_id.clone(),
                                     display_name,
                                 }
                             })
@@ -614,7 +614,7 @@ impl ThreadsArchiveView {
                             let icon_path = agent_server_store.agent_icon(&item.id).or_else(|| {
                                 registry_store_ref
                                     .as_ref()
-                                    .and_then(|store| store.agent(item.id.0.as_str()))
+                                    .and_then(|store| store.agent(&item.id))
                                     .and_then(|a| a.icon_path().cloned())
                             });
 
@@ -627,7 +627,7 @@ impl ThreadsArchiveView {
                             entry = entry.icon_color(Color::Muted).handler({
                                 let this = this.clone();
                                 let agent = Agent::Custom {
-                                    name: item.id.0.clone(),
+                                    id: item.id.clone(),
                                 };
                                 move |window, cx| {
                                     this.update(cx, |this, cx| {
