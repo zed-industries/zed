@@ -897,8 +897,8 @@
     "status_style": "icon",
     // Whether to show file icons in the git panel.
     //
-    // Default: true
-    "file_icons": true,
+    // Default: false
+    "file_icons": false,
     // Whether to show folder icons or chevrons for directories in the git panel.
     //
     // Default: true

@@ -596,7 +596,7 @@ pub struct GitPanelSettingsContent {
 
     /// Whether to show file icons in the git panel.
     ///
-    /// Default: true
+    /// Default: false
     pub file_icons: Option<bool>,
 
     /// Whether to show folder icons or chevrons for directories in the git panel.
