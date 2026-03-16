@@ -3125,8 +3125,12 @@ impl AgentPanel {
                     .detach_and_log_err(cx);
                 }
 
+                workspace.focus_panel::<AgentPanel>(window, cx);
+
                 // If no active buffer was open, zoom the agent panel
                 // (equivalent to cmd-esc fullscreen behavior).
+                // This must happen after focus_panel, which activates
+                // and opens the panel in the dock.
                 if should_zoom_agent_panel {
                     if let Some(panel) = workspace.panel::<AgentPanel>(cx) {
                         panel.update(cx, |_panel, cx| {
@@ -3134,8 +3138,6 @@ impl AgentPanel {
                         });
                     }
                 }
-
-                workspace.focus_panel::<AgentPanel>(window, cx);
                 if let Some(panel) = workspace.panel::<AgentPanel>(cx) {
                     panel.update(cx, |panel, cx| {
                         panel.external_thread(
