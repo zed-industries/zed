@@ -601,9 +601,11 @@ impl Vim {
         }
 
         let mut was_enabled = Vim::enabled(cx);
+        let mut was_helix = HelixModeSetting::get_global(cx).0;
         let mut was_toggle = VimSettings::get_global(cx).toggle_relative_line_numbers;
         cx.observe_global_in::<SettingsStore>(window, move |editor, window, cx| {
             let enabled = Vim::enabled(cx);
+            let helix = HelixModeSetting::get_global(cx).0;
             let toggle = VimSettings::get_global(cx).toggle_relative_line_numbers;
             if enabled && was_enabled && (toggle != was_toggle) {
                 if toggle {
@@ -616,6 +618,16 @@ impl Vim {
                 }
             }
             was_toggle = VimSettings::get_global(cx).toggle_relative_line_numbers;
+
+            let mode_type_changed = was_enabled && enabled && was_helix != helix;
+            was_helix = helix;
+
+            if mode_type_changed {
+                Self::deactivate(editor, cx);
+                Self::activate(editor, window, cx);
+                was_enabled = enabled;
+                return;
+            }
             if was_enabled == enabled {
                 return;
             }
