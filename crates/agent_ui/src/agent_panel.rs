@@ -3096,7 +3096,7 @@ impl AgentPanel {
 
                     for non_git in &non_git_paths {
                         if original_path.starts_with(non_git) {
-                            return Some(original_path.clone());
+                            return Some(original_path);
                         }
                     }
                     None
