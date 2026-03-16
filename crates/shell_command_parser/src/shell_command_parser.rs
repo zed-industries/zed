@@ -446,10 +446,11 @@ fn combine_validations(
     validations: impl IntoIterator<Item = TerminalProgramValidation>,
 ) -> TerminalProgramValidation {
     let mut saw_unsafe = false;
+    let mut saw_unknown = false;
 
     for validation in validations {
         match validation {
-            TerminalProgramValidation::Unknown => return TerminalProgramValidation::Unknown,
+            TerminalProgramValidation::Unknown => saw_unknown = true,
             TerminalProgramValidation::Unsafe => saw_unsafe = true,
             TerminalProgramValidation::Safe => {}
         }
@@ -457,6 +458,8 @@ fn combine_validations(
 
     if saw_unsafe {
         TerminalProgramValidation::Unsafe
+    } else if saw_unknown {
+        TerminalProgramValidation::Unknown
     } else {
         TerminalProgramValidation::Safe
     }
