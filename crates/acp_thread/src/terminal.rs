@@ -15,6 +15,7 @@ use std::{
     time::Instant,
 };
 use task::Shell;
+use terminal::TerminalIdentity;
 use util::get_default_system_shell_preferring_bash;
 
 pub struct Terminal {
@@ -248,6 +249,7 @@ pub async fn create_terminal_entity(
                     env,
                     ..Default::default()
                 },
+                TerminalIdentity::Anonymous,
                 cx,
             )
         })

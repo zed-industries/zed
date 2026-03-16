@@ -14,7 +14,7 @@ use std::{
 };
 use task::{Shell, ShellBuilder, ShellKind, SpawnInTerminal};
 use terminal::{
-    TaskState, TaskStatus, Terminal, TerminalBuilder, insert_zed_terminal_env,
+    TaskState, TaskStatus, Terminal, TerminalBuilder, TerminalIdentity, insert_zed_terminal_env,
     terminal_settings::TerminalSettings,
 };
 use util::{command::new_std_command, get_default_system_shell, maybe, rel_path::RelPath};
@@ -61,6 +61,7 @@ impl Project {
     pub fn create_terminal_task(
         &mut self,
         spawn_task: SpawnInTerminal,
+        identity: TerminalIdentity,
         cx: &mut Context<Self>,
     ) -> Task<Result<Entity<Terminal>>> {
         let is_via_remote = self.remote_client.is_some();
@@ -132,6 +133,7 @@ impl Project {
         cx.spawn(async move |project, cx| {
             let mut env = env_task.await.unwrap_or_default();
             env.extend(settings.env);
+            identity.add_into_env(&mut env);
 
             let activation_script = maybe!(async {
                 for toolchain in toolchains {
@@ -256,6 +258,7 @@ impl Project {
                         cx,
                         activation_script,
                         path_style,
+                        identity,
                     ))
                 })??
                 .await?;
@@ -288,9 +291,10 @@ impl Project {
     pub fn create_terminal_shell(
         &mut self,
         cwd: Option<PathBuf>,
+        identity: TerminalIdentity,
         cx: &mut Context<Self>,
     ) -> Task<Result<Entity<Terminal>>> {
-        self.create_terminal_shell_internal(cwd, false, cx)
+        self.create_terminal_shell_internal(cwd, identity, false, cx)
     }
 
     /// Creates a local terminal even if the project is remote.
@@ -298,6 +302,7 @@ impl Project {
     /// In local projects: opens in the project directory (same as regular terminals).
     pub fn create_local_terminal(
         &mut self,
+        identity: TerminalIdentity,
         cx: &mut Context<Self>,
     ) -> Task<Result<Entity<Terminal>>> {
         let working_directory = if self.remote_client.is_some() {
@@ -307,7 +312,7 @@ impl Project {
             // Local project: use project directory like normal terminals
             self.active_project_directory(cx).map(|p| p.to_path_buf())
         };
-        self.create_terminal_shell_internal(working_directory, true, cx)
+        self.create_terminal_shell_internal(working_directory, identity, true, cx)
     }
 
     /// Internal method for creating terminal shells.
@@ -316,6 +321,7 @@ impl Project {
     fn create_terminal_shell_internal(
         &mut self,
         cwd: Option<PathBuf>,
+        identity: TerminalIdentity,
         force_local: bool,
         cx: &mut Context<Self>,
     ) -> Task<Result<Entity<Terminal>>> {
@@ -375,6 +381,7 @@ impl Project {
             let shell_kind = ShellKind::new(&shell, path_style.is_windows());
             let mut env = env_task.await.unwrap_or_default();
             env.extend(settings.env);
+            identity.add_into_env(&mut env);
 
             let activation_script = maybe!(async {
                 for toolchain in toolchains {
@@ -421,6 +428,7 @@ impl Project {
                         cx,
                         activation_script,
                         path_style,
+                        identity,
                     ))
                 })??
                 .await?;
@@ -459,7 +467,7 @@ impl Project {
         // We cannot clone the task's terminal, as it will effectively re-spawn the task, which might not be desirable.
         // For now, create a new shell instead.
         if terminal.read(cx).task().is_some() {
-            return self.create_terminal_shell(cwd, cx);
+            return self.create_terminal_shell(cwd, TerminalIdentity::persistable(), cx);
         }
         let local_path = if self.is_via_remote_server() {
             None
@@ -470,6 +478,7 @@ impl Project {
         let builder = terminal.read(cx).clone_builder(cx, local_path);
         cx.spawn(async |project, cx| {
             let terminal = builder.await?;
+
             project.update(cx, |project, cx| {
                 let terminal_handle = cx.new(|cx| terminal.subscribe(cx));
 

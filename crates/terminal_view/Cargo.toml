@@ -44,6 +44,7 @@ terminal.workspace = true
 theme.workspace = true
 ui.workspace = true
 util.workspace = true
+uuid.workspace = true
 workspace.workspace = true
 zed_actions.workspace = true
 

@@ -2,6 +2,7 @@ mod connection;
 mod diff;
 mod mention;
 mod terminal;
+use ::terminal::TerminalIdentity;
 use action_log::{ActionLog, ActionLogTelemetry};
 use agent_client_protocol::{self as acp};
 use anyhow::{Context as _, Result, anyhow};
@@ -2618,6 +2619,7 @@ impl AcpThread {
                                 env,
                                 ..Default::default()
                             },
+                            TerminalIdentity::Anonymous,
                             cx,
                         )
                     })
@@ -2871,6 +2873,7 @@ mod tests {
         sync::atomic::{AtomicBool, AtomicUsize, Ordering::SeqCst},
         time::Duration,
     };
+    use terminal::TerminalIdentity;
     use util::path;
 
     fn init_test(cx: &mut TestAppContext) {
@@ -3077,6 +3080,7 @@ mod tests {
                     cx,
                     vec![],
                     PathStyle::local(),
+                    TerminalIdentity::Anonymous,
                 )
             })
             .await

@@ -50,6 +50,7 @@ use task::{
     BuildTaskDefinition, DebugScenario, SharedTaskContext, Shell, ShellBuilder, SpawnInTerminal,
     TaskContext, ZedDebugConfig, substitute_variables_in_str,
 };
+use terminal::TerminalIdentity;
 use terminal_view::TerminalView;
 use ui::{
     FluentBuilder, IntoElement, Render, StatefulInteractiveElement, Tab, Tooltip, VisibleOnHover,
@@ -1149,6 +1150,7 @@ impl RunningState {
                     .update(cx, |project, cx| {
                         project.create_terminal_task(
                             task_with_shell.clone(),
+                            TerminalIdentity::Anonymous,
                             cx,
                         )
                     }).await?;
@@ -1318,8 +1320,9 @@ impl RunningState {
         let workspace = self.workspace.clone();
         let weak_project = project.downgrade();
 
-        let terminal_task =
-            project.update(cx, |project, cx| project.create_terminal_task(kind, cx));
+        let terminal_task = project.update(cx, |project, cx| {
+            project.create_terminal_task(kind, TerminalIdentity::Anonymous, cx)
+        });
         let terminal_task = cx.spawn_in(window, async move |_, cx| {
             let terminal = terminal_task.await?;
 
