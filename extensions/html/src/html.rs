@@ -104,7 +104,10 @@ impl zed::Extension for HtmlExtension {
         _server_id: &LanguageServerId,
         _worktree: &zed_extension_api::Worktree,
     ) -> Result<Option<zed_extension_api::serde_json::Value>> {
-        let initialization_options = json!({"provideFormatter": true });
+        let initialization_options = json!({
+            "provideFormatter": true,
+            "embeddedLanguages": { "css": true, "javascript": true }
+        });
         Ok(Some(initialization_options))
     }
 }
