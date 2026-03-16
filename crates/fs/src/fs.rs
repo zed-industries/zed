@@ -37,7 +37,7 @@ use is_executable::IsExecutable;
 use rope::Rope;
 use serde::{Deserialize, Serialize};
 use smol::io::AsyncWriteExt;
-#[cfg(any(target_os = "windows", feature = "test-support"))]
+#[cfg(feature = "test-support")]
 use std::path::Component;
 use std::{
     io::{self, Write},
