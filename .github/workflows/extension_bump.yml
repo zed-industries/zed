@@ -230,7 +230,7 @@ jobs:
 
         echo "extension_id=${EXTENSION_ID}" >> "$GITHUB_OUTPUT"
     - name: extension_bump::release_action
-      uses: huacnlee/zed-extension-action@v2
+      uses: zed-extensions/update-action@543925fc45da8866b0d017218a656c8a3296ed3f
       with:
         extension-name: ${{ steps.get-extension-id.outputs.extension_id }}
         push-to: zed-industries/extensions
