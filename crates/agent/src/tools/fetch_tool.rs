@@ -5,10 +5,13 @@ use std::{borrow::Cow, cell::RefCell};
 use agent_client_protocol as acp;
 use agent_settings::AgentSettings;
 use anyhow::{Context as _, Result, bail};
-use futures::{AsyncReadExt as _, FutureExt as _};
+use futures::{AsyncReadExt as _, FutureExt as _, StreamExt as _};
 use gpui::{App, AppContext as _, Task};
 use html_to_markdown::{TagHandler, convert_html_to_markdown, markdown};
 use http_client::{AsyncBody, HttpClientWithUrl};
+use language_model::{
+    LanguageModelRegistry, LanguageModelRequest, LanguageModelRequestMessage, Role,
+};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::Settings;
@@ -44,6 +47,8 @@ impl FetchTool {
     }
 
     async fn build_message(http_client: Arc<HttpClientWithUrl>, url: &str) -> Result<String> {
+        const MAX_BODY_SIZE: usize = 512 * 1024;
+
         let url = if !url.starts_with("https://") && !url.starts_with("http://") {
             Cow::Owned(format!("https://{url}"))
         } else {
@@ -52,9 +57,10 @@ impl FetchTool {
 
         let mut response = http_client.get(&url, AsyncBody::default(), true).await?;
 
-        let mut body = Vec::new();
+        let mut body = Vec::with_capacity(MAX_BODY_SIZE);
         response
             .body_mut()
+            .take(MAX_BODY_SIZE as u64)
             .read_to_end(&mut body)
             .await
             .context("error reading response body")?;
@@ -197,7 +203,126 @@ impl AgentTool for FetchTool {
             if text.trim().is_empty() {
                 return Err("no textual content found".to_string());
             }
-            Ok(text)
+
+            const MAX_CONTENT_LENGTH: usize = 30_000;
+
+            if text.len() <= MAX_CONTENT_LENGTH {
+                return Ok(text);
+            }
+
+            let total_length = text.len();
+
+            let model = cx.update(|cx| {
+                LanguageModelRegistry::global(cx).update(cx, |registry, _cx| {
+                    registry.default_model().map(|configured| configured.model)
+                })
+            });
+
+            if let Some(model) = model {
+                let request = LanguageModelRequest {
+                    messages: vec![LanguageModelRequestMessage {
+                        role: Role::User,
+                        content: vec![format!(
+                            "Summarize the following web page content. Preserve key facts, \
+                             data, and structure. Be concise but thorough.\n\n{text}"
+                        )
+                        .into()],
+                        cache: false,
+                        reasoning_details: None,
+                    }],
+                    ..Default::default()
+                };
+
+                match model.stream_completion_text(request, cx).await {
+                    Ok(text_stream) => {
+                        let mut summary = String::new();
+                        let mut stream = text_stream.stream;
+                        while let Some(chunk) = stream.next().await {
+                            match chunk {
+                                Ok(text) => summary.push_str(&text),
+                                Err(error) => {
+                                    log::warn!(
+                                        "error during fetch summarization stream: {error}"
+                                    );
+                                    break;
+                                }
+                            }
+                        }
+                        if !summary.trim().is_empty() {
+                            return Ok(format!(
+                                "[Summarized from {total_length} characters using a language model]\n\n\
+                                 {summary}"
+                            ));
+                        }
+                    }
+                    Err(error) => {
+                        log::warn!("failed to start fetch summarization: {error}");
+                    }
+                }
+            }
+
+            let truncated = truncate_at_boundary(&text, MAX_CONTENT_LENGTH);
+            Ok(format!(
+                "{truncated}\n\n[Content truncated: showing {shown} of {total_length} characters]",
+                shown = truncated.len(),
+            ))
         })
+    }
+}
+
+fn truncate_at_boundary(text: &str, max_length: usize) -> &str {
+    if text.len() <= max_length {
+        return text;
+    }
+
+    let safe_end = text.floor_char_boundary(max_length);
+    let search_region = &text[..safe_end];
+    if let Some(position) = search_region.rfind("\n\n") {
+        return &text[..position];
+    }
+    if let Some(position) = search_region.rfind('\n') {
+        return &text[..position];
+    }
+
+    search_region
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_truncate_under_limit_returns_unchanged() {
+        let text = "short text";
+        assert_eq!(truncate_at_boundary(text, 100), "short text");
+    }
+
+    #[test]
+    fn test_truncate_at_paragraph_boundary() {
+        let text = "first paragraph\n\nsecond paragraph\n\nthird paragraph";
+        let result = truncate_at_boundary(text, 40);
+        assert_eq!(result, "first paragraph\n\nsecond paragraph");
+    }
+
+    #[test]
+    fn test_truncate_at_line_boundary() {
+        let text = "line one\nline two\nline three";
+        let result = truncate_at_boundary(text, 20);
+        assert_eq!(result, "line one\nline two");
+    }
+
+    #[test]
+    fn test_truncate_with_no_newlines() {
+        let text = "a".repeat(100);
+        let result = truncate_at_boundary(&text, 50);
+        assert_eq!(result.len(), 50);
+    }
+
+    #[test]
+    fn test_truncate_with_multibyte_utf8_near_boundary() {
+        let text = "hello é world";
+        let result = truncate_at_boundary(text, 7);
+        assert!(!result.is_empty());
+        assert!(result.len() <= 7);
     }
 }
