@@ -5165,7 +5165,7 @@ fn panels_page() -> SettingsPage {
             }),
             SettingsPageItem::SettingItem(SettingItem {
                 title: "File Icons",
-                description: "Show file icons in the git panel.",
+                description: "Show file icons next to the Git status icon.",
                 field: Box::new(SettingField {
                     json_path: Some("git_panel.file_icons"),
                     pick: |settings_content| {
