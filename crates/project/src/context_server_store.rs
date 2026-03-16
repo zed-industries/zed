@@ -642,151 +642,28 @@ impl ContextServerStore {
         ) {
             self.stop_server(&id, cx).log_err();
         }
-        let task =
-            cx.spawn({
-                let id = server.id();
-                let server = server.clone();
-                let configuration = configuration.clone();
+        let task = cx.spawn({
+            let id = server.id();
+            let server = server.clone();
+            let configuration = configuration.clone();
 
-                async move |this, cx| {
-                    match server.clone().start(cx).await {
-                        Ok(_) => {
-                            debug_assert!(server.client().is_some());
-
-                            this.update(cx, |this, cx| {
-                                this.update_server_state(
-                                    id.clone(),
-                                    ContextServerState::Running {
-                                        server,
-                                        configuration,
-                                    },
-                                    cx,
-                                )
-                            })
-                            .log_err()
+            async move |this, cx| {
+                let new_state = match server.clone().start(cx).await {
+                    Ok(_) => {
+                        debug_assert!(server.client().is_some());
+                        ContextServerState::Running {
+                            server,
+                            configuration,
                         }
-                        Err(err) => {
-                            // Check if the error is an OAuth 401 — if so, run
-                            // discovery and transition to AuthRequired instead of
-                            // the generic Error state. Skip this when the user
-                            // configured a static Authorization header, since
-                            // that means they're managing auth themselves.
-                            if let Some(TransportError::AuthRequired { www_authenticate }) =
-                                err.downcast_ref::<TransportError>()
-                            {
-                                if configuration.has_static_auth_header() {
-                                    log::warn!(
-                                        "{} received 401 with a static Authorization header configured",
-                                        id,
-                                    );
-                                    this.update(cx, |this, cx| {
-                                        this.update_server_state(
-                                            id.clone(),
-                                            ContextServerState::Error {
-                                                configuration,
-                                                server,
-                                                error: "Server returned 401 Unauthorized. Check your configured Authorization header.".into(),
-                                            },
-                                            cx,
-                                        )
-                                    })
-                                    .log_err();
-                                    return;
-                                }
-
-                                let server_url = match &configuration.as_ref() {
-                                    ContextServerConfiguration::Http { url, .. } => url.clone(),
-                                    _ => {
-                                        log::error!("{} got OAuth 401 on a non-HTTP transport", id);
-                                        this.update(cx, |this, cx| {
-                                            this.update_server_state(
-                                                id.clone(),
-                                                ContextServerState::Error {
-                                                    configuration,
-                                                    server,
-                                                    error: err.to_string().into(),
-                                                },
-                                                cx,
-                                            )
-                                        })
-                                        .log_err();
-                                        return;
-                                    }
-                                };
-
-                                let http_client = cx.update(|cx| cx.http_client());
-
-                                match context_server::oauth::discover(
-                                    &http_client,
-                                    &server_url,
-                                    www_authenticate,
-                                )
-                                .await
-                                {
-                                    Ok(discovery) => {
-                                        log::info!(
-                                            "{} requires OAuth authorization (auth server: {})",
-                                            id,
-                                            discovery.auth_server_metadata.issuer,
-                                        );
-                                        this.update(cx, |this, cx| {
-                                            this.update_server_state(
-                                                id.clone(),
-                                                ContextServerState::AuthRequired {
-                                                    server,
-                                                    configuration,
-                                                    discovery: Arc::new(discovery),
-                                                },
-                                                cx,
-                                            )
-                                        })
-                                        .log_err();
-                                        return;
-                                    }
-                                    Err(discovery_err) => {
-                                        log::error!(
-                                            "{} OAuth discovery failed: {}",
-                                            id,
-                                            discovery_err,
-                                        );
-                                        this.update(cx, |this, cx| {
-                                            this.update_server_state(
-                                                id.clone(),
-                                                ContextServerState::Error {
-                                                    configuration,
-                                                    server,
-                                                    error: format!(
-                                                        "OAuth discovery failed: {}",
-                                                        discovery_err
-                                                    )
-                                                    .into(),
-                                                },
-                                                cx,
-                                            )
-                                        })
-                                        .log_err();
-                                        return;
-                                    }
-                                }
-                            }
-
-                            log::error!("{} context server failed to start: {}", id, err);
-                            this.update(cx, |this, cx| {
-                                this.update_server_state(
-                                    id.clone(),
-                                    ContextServerState::Error {
-                                        configuration,
-                                        server,
-                                        error: err.to_string().into(),
-                                    },
-                                    cx,
-                                )
-                            })
-                            .log_err()
-                        }
-                    };
-                }
-            });
+                    }
+                    Err(err) => resolve_start_failure(&id, err, server, configuration, cx).await,
+                };
+                this.update(cx, |this, cx| {
+                    this.update_server_state(id.clone(), new_state, cx)
+                })
+                .log_err();
+            }
+        });
 
         self.update_server_state(
             id.clone(),
@@ -1519,5 +1396,74 @@ impl ContextServerStore {
         }
 
         Ok(())
+    }
+}
+
+/// Determines the appropriate server state after a start attempt fails.
+///
+/// When the error is an HTTP 401 with no static auth header configured,
+/// attempts OAuth discovery so the UI can offer an authentication flow.
+async fn resolve_start_failure(
+    id: &ContextServerId,
+    err: anyhow::Error,
+    server: Arc<ContextServer>,
+    configuration: Arc<ContextServerConfiguration>,
+    cx: &AsyncApp,
+) -> ContextServerState {
+    let Some(TransportError::AuthRequired { www_authenticate }) =
+        err.downcast_ref::<TransportError>()
+    else {
+        log::error!("{id} context server failed to start: {err}");
+        return ContextServerState::Error {
+            configuration,
+            server,
+            error: err.to_string().into(),
+        };
+    };
+
+    if configuration.has_static_auth_header() {
+        log::warn!("{id} received 401 with a static Authorization header configured",);
+        return ContextServerState::Error {
+            configuration,
+            server,
+            error: "Server returned 401 Unauthorized. Check your configured Authorization header."
+                .into(),
+        };
+    }
+
+    let server_url = match configuration.as_ref() {
+        ContextServerConfiguration::Http { url, .. } => url.clone(),
+        _ => {
+            log::error!("{id} got OAuth 401 on a non-HTTP transport");
+            return ContextServerState::Error {
+                configuration,
+                server,
+                error: err.to_string().into(),
+            };
+        }
+    };
+
+    let http_client = cx.update(|cx| cx.http_client());
+
+    match context_server::oauth::discover(&http_client, &server_url, www_authenticate).await {
+        Ok(discovery) => {
+            log::info!(
+                "{id} requires OAuth authorization (auth server: {})",
+                discovery.auth_server_metadata.issuer,
+            );
+            return ContextServerState::AuthRequired {
+                server,
+                configuration,
+                discovery: Arc::new(discovery),
+            };
+        }
+        Err(discovery_err) => {
+            log::error!("{id} OAuth discovery failed: {discovery_err}");
+            return ContextServerState::Error {
+                configuration,
+                server,
+                error: format!("OAuth discovery failed: {discovery_err}").into(),
+            };
+        }
     }
 }

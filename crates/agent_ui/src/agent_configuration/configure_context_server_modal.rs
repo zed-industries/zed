@@ -345,6 +345,11 @@ enum State {
     Error(SharedString),
 }
 
+enum WaitOutcome {
+    Running,
+    AuthRequired,
+}
+
 pub struct ConfigureContextServerModal {
     context_server_store: Entity<ContextServerStore>,
     workspace: WeakEntity<Workspace>,
@@ -515,9 +520,13 @@ impl ConfigureContextServerModal {
             async move |this, cx| {
                 let result = wait_for_context_server_task.await;
                 this.update(cx, |this, cx| match result {
-                    Ok(_) => {
+                    Ok(WaitOutcome::Running) => {
                         this.state = State::Idle;
                         this.show_configured_context_server_toast(id, cx);
+                        cx.emit(DismissEvent);
+                    }
+                    Ok(WaitOutcome::AuthRequired) => {
+                        this.state = State::Idle;
                         cx.emit(DismissEvent);
                     }
                     Err(err) => {
@@ -878,7 +887,7 @@ fn wait_for_context_server(
     context_server_store: &Entity<ContextServerStore>,
     context_server_id: ContextServerId,
     cx: &mut App,
-) -> Task<Result<(), Arc<str>>> {
+) -> Task<Result<WaitOutcome, Arc<str>>> {
     use std::time::Duration;
 
     const WAIT_TIMEOUT: Duration = Duration::from_secs(120);
@@ -895,7 +904,7 @@ fn wait_for_context_server(
                 if server_id == &context_server_id
                     && let Some(tx) = tx.lock().take()
                 {
-                    let _ = tx.send(Ok(()));
+                    let _ = tx.send(Ok(WaitOutcome::Running));
                 }
             }
             ContextServerStatus::Stopped => {
@@ -916,7 +925,7 @@ fn wait_for_context_server(
                 if server_id == &context_server_id
                     && let Some(tx) = tx.lock().take()
                 {
-                    let _ = tx.send(Ok(()));
+                    let _ = tx.send(Ok(WaitOutcome::AuthRequired));
                 }
             }
             ContextServerStatus::Starting | ContextServerStatus::Authenticating => {}
