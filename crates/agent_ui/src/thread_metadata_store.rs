@@ -132,13 +132,17 @@ impl ThreadMetadataStore {
         cx.observe_new::<acp_thread::AcpThread>(move |thread, _window, cx| {
             let thread_entity = cx.entity();
 
-            let weak_store_2 = weak_store.clone();
-            cx.on_release(move |thread, cx| {
-                weak_store_2
-                    .update(cx, |store, _cx| {
-                        store.session_subscriptions.remove(thread.session_id());
-                    })
-                    .ok();
+            weak_store.update(cx, |store, cx| store.save_acp_thread(thread, cx));
+
+            cx.on_release({
+                let weak_store = weak_store.clone();
+                move |thread, cx| {
+                    weak_store
+                        .update(cx, |store, _cx| {
+                            store.session_subscriptions.remove(thread.session_id());
+                        })
+                        .ok();
+                }
             })
             .detach();
 
@@ -165,10 +169,16 @@ impl ThreadMetadataStore {
         cx: &mut Context<Self>,
     ) {
         match event {
-            acp_thread::AcpThreadEvent::NewEntry | acp_thread::AcpThreadEvent::TitleUpdated => {}
-            _ => return,
+            acp_thread::AcpThreadEvent::NewEntry
+            | acp_thread::AcpThreadEvent::EntryUpdated(_)
+            | acp_thread::AcpThreadEvent::TitleUpdated => {
+                self.save_acp_thread(&thread, cx);
+            }
+            _ => {}
         }
+    }
 
+    fn save_acp_thread(&mut self, thread: &Entity<acp_thread::AcpThread>, cx: &mut Context<Self>) {
         let thread_ref = thread.read(cx);
         let session_id = thread_ref.session_id().clone();
         let title = thread_ref.title();
@@ -196,8 +206,8 @@ impl ThreadMetadataStore {
                 session_id,
                 agent_id,
                 title,
+                created_at: Some(updated_at.clone()), // handled by db `ON CONFLICT`
                 updated_at,
-                created_at: None, //FIXME
                 folder_paths,
             },
             cx,
