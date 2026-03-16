@@ -132,7 +132,12 @@ impl ThreadMetadataStore {
         cx.observe_new::<acp_thread::AcpThread>(move |thread, _window, cx| {
             let thread_entity = cx.entity();
 
-            weak_store.update(cx, |store, cx| store.save_acp_thread(thread, cx));
+            weak_store
+                .update(cx, |store, cx| {
+                    let metadata = Self::metadata_for_acp_thread(thread, cx);
+                    store.save(metadata, cx).detach_and_log_err(cx);
+                })
+                .ok();
 
             cx.on_release({
                 let weak_store = weak_store.clone();
@@ -172,19 +177,19 @@ impl ThreadMetadataStore {
             acp_thread::AcpThreadEvent::NewEntry
             | acp_thread::AcpThreadEvent::EntryUpdated(_)
             | acp_thread::AcpThreadEvent::TitleUpdated => {
-                self.save_acp_thread(&thread, cx);
+                let metadata = Self::metadata_for_acp_thread(thread.read(cx), cx);
+                self.save(metadata, cx).detach_and_log_err(cx);
             }
             _ => {}
         }
     }
 
-    fn save_acp_thread(&mut self, thread: &Entity<acp_thread::AcpThread>, cx: &mut Context<Self>) {
-        let thread_ref = thread.read(cx);
-        let session_id = thread_ref.session_id().clone();
-        let title = thread_ref.title();
+    fn metadata_for_acp_thread(thread: &acp_thread::AcpThread, cx: &App) -> ThreadMetadata {
+        let session_id = thread.session_id().clone();
+        let title = thread.title();
         let updated_at = Utc::now();
 
-        let agent_id = thread_ref.connection().agent_id();
+        let agent_id = thread.connection().agent_id();
 
         let agent_id = if agent_id.as_ref() == ZED_AGENT_ID.as_ref() {
             None
@@ -193,7 +198,7 @@ impl ThreadMetadataStore {
         };
 
         let folder_paths = {
-            let project = thread_ref.project().read(cx);
+            let project = thread.project().read(cx);
             let paths: Vec<Arc<Path>> = project
                 .visible_worktrees(cx)
                 .map(|worktree| worktree.read(cx).abs_path())
@@ -201,18 +206,14 @@ impl ThreadMetadataStore {
             PathList::new(&paths)
         };
 
-        self.save(
-            ThreadMetadata {
-                session_id,
-                agent_id,
-                title,
-                created_at: Some(updated_at.clone()), // handled by db `ON CONFLICT`
-                updated_at,
-                folder_paths,
-            },
-            cx,
-        )
-        .detach_and_log_err(cx);
+        ThreadMetadata {
+            session_id,
+            agent_id,
+            title,
+            created_at: Some(updated_at.clone()), // handled by db `ON CONFLICT`
+            updated_at,
+            folder_paths,
+        }
     }
 }
 
