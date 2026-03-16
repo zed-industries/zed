@@ -990,10 +990,9 @@ impl Render for PanelButtons {
                                     })
                                 });
 
-                            div()
-                                .relative()
-                                .child(button)
-                                .when_some(icon_label.clone(), |this, label| {
+                            div().relative().child(button).when_some(
+                                icon_label.clone().filter(|_| !is_active_button),
+                                |this, label| {
                                     this.child(
                                         div()
                                             .absolute()
@@ -1014,7 +1013,8 @@ impl Render for PanelButtons {
                                                     .color(Color::Default),
                                             ),
                                     )
-                                })
+                                },
+                            )
                         }),
                 )
             })

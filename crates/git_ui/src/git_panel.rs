@@ -5742,7 +5742,7 @@ impl Panel for GitPanel {
         if !GitPanelSettings::get_global(cx).show_count_badge {
             return None;
         }
-        let total = self.new_count + self.changes_count;
+        let total = self.changes_count;
         (total > 0).then(|| {
             if total > 99 {
                 "99+".to_string()
