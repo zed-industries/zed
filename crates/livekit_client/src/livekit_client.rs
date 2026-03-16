@@ -7,13 +7,16 @@ use gpui_tokio::Tokio;
 use log::info;
 use playback::capture_local_video_track;
 use settings::Settings;
+use std::future::Future;
 
 mod playback;
 
 use crate::{
-    LocalTrack, Participant, RemoteTrack, RoomEvent, TrackPublication,
+    ConnectionQuality, LocalTrack, Participant, RemoteTrack, RoomEvent, TrackPublication,
     livekit_client::playback::Speaker,
 };
+pub use livekit::SessionStats;
+pub use livekit::webrtc::stats::RtcStats;
 pub use playback::AudioStream;
 pub(crate) use playback::{RemoteVideoFrame, play_remote_video_track};
 
@@ -158,9 +161,33 @@ impl Room {
             Err(anyhow!("Client version too old to play audio in call"))
         }
     }
+
+    pub async fn get_stats(&self) -> Result<livekit::SessionStats> {
+        self.room.get_stats().await.map_err(anyhow::Error::from)
+    }
+
+    /// Returns a `Send + 'static` future that fetches room stats.
+    ///
+    /// This clones the inner `livekit::Room` (an `Arc` bump) so that the
+    /// returned future does not capture the `Rc<Room>` wrapper, making it
+    /// safe to run on a background executor.
+    pub fn stats_future(
+        &self,
+    ) -> impl Future<Output = Result<livekit::SessionStats>> + Send + 'static {
+        let inner = self.room.clone();
+        async move { inner.get_stats().await.map_err(anyhow::Error::from) }
+    }
 }
 
 impl LocalParticipant {
+    pub fn connection_quality(&self) -> ConnectionQuality {
+        connection_quality_from_livekit(self.0.connection_quality())
+    }
+
+    pub fn audio_level(&self) -> f32 {
+        self.0.audio_level()
+    }
+
     pub async fn publish_screenshare_track(
         &self,
         source: &dyn ScreenCaptureSource,
@@ -234,6 +261,14 @@ impl LocalTrackPublication {
 }
 
 impl RemoteParticipant {
+    pub fn connection_quality(&self) -> ConnectionQuality {
+        connection_quality_from_livekit(self.0.connection_quality())
+    }
+
+    pub fn audio_level(&self) -> f32 {
+        self.0.audio_level()
+    }
+
     pub fn identity(&self) -> ParticipantIdentity {
         ParticipantIdentity(self.0.identity().0)
     }
@@ -296,6 +331,31 @@ impl Participant {
                 ParticipantIdentity(remote_participant.0.identity().0)
             }
         }
+    }
+
+    pub fn connection_quality(&self) -> ConnectionQuality {
+        match self {
+            Participant::Local(local_participant) => local_participant.connection_quality(),
+            Participant::Remote(remote_participant) => remote_participant.connection_quality(),
+        }
+    }
+
+    pub fn audio_level(&self) -> f32 {
+        match self {
+            Participant::Local(local_participant) => local_participant.audio_level(),
+            Participant::Remote(remote_participant) => remote_participant.audio_level(),
+        }
+    }
+}
+
+fn connection_quality_from_livekit(
+    quality: livekit::prelude::ConnectionQuality,
+) -> ConnectionQuality {
+    match quality {
+        livekit::prelude::ConnectionQuality::Excellent => ConnectionQuality::Excellent,
+        livekit::prelude::ConnectionQuality::Good => ConnectionQuality::Good,
+        livekit::prelude::ConnectionQuality::Poor => ConnectionQuality::Poor,
+        livekit::prelude::ConnectionQuality::Lost => ConnectionQuality::Lost,
     }
 }
 
@@ -474,6 +534,13 @@ fn room_event_from_livekit(event: livekit::RoomEvent) -> Option<RoomEvent> {
         },
         livekit::RoomEvent::Reconnecting => RoomEvent::Reconnecting,
         livekit::RoomEvent::Reconnected => RoomEvent::Reconnected,
+        livekit::RoomEvent::ConnectionQualityChanged {
+            quality,
+            participant,
+        } => RoomEvent::ConnectionQualityChanged {
+            participant: participant_from_livekit(participant),
+            quality: connection_quality_from_livekit(quality),
+        },
         _ => {
             log::trace!("dropping livekit event: {:?}", event);
             return None;

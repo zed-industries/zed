@@ -540,6 +540,23 @@ impl Room {
         }
     }
 
+    pub fn get_stats(
+        &self,
+    ) -> impl Future<Output = Option<livekit::SessionStats>> + Send + 'static {
+        let future = self.live_kit.as_ref().map(|lk| lk.room.stats_future());
+        async move {
+            let future = future?;
+            future.await.ok()
+        }
+    }
+
+    pub fn connection_quality(&self) -> livekit::ConnectionQuality {
+        self.live_kit
+            .as_ref()
+            .map(|lk| lk.room.local_participant().connection_quality())
+            .unwrap_or(livekit::ConnectionQuality::Lost)
+    }
+
     pub fn status(&self) -> RoomStatus {
         self.status
     }

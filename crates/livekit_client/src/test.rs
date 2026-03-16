@@ -8,6 +8,7 @@ use gpui::{App, AsyncApp, BackgroundExecutor};
 use livekit_api::{proto, token};
 use parking_lot::Mutex;
 use postage::{mpsc, sink::Sink};
+use std::future::Future;
 use std::sync::{
     Arc, Weak,
     atomic::{AtomicBool, Ordering::SeqCst},
@@ -39,6 +40,15 @@ pub enum ConnectionState {
     Connected,
     Disconnected,
 }
+
+#[derive(Clone, Debug, Default)]
+pub struct SessionStats {
+    pub publisher_stats: Vec<RtcStats>,
+    pub subscriber_stats: Vec<RtcStats>,
+}
+
+#[derive(Clone, Debug)]
+pub enum RtcStats {}
 
 static SERVERS: Mutex<BTreeMap<String, Arc<TestServer>>> = Mutex::new(BTreeMap::new());
 
@@ -741,6 +751,14 @@ impl Room {
         cx: &mut AsyncApp,
     ) -> Result<(LocalTrackPublication, AudioStream)> {
         self.local_participant().publish_microphone_track(cx).await
+    }
+
+    pub async fn get_stats(&self) -> Result<SessionStats> {
+        Ok(SessionStats::default())
+    }
+
+    pub fn stats_future(&self) -> impl Future<Output = Result<SessionStats>> + Send + 'static {
+        futures::future::ready(Ok(SessionStats::default()))
     }
 }
 

@@ -67,6 +67,14 @@ pub enum Participant {
     Remote(RemoteParticipant),
 }
 
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+pub enum ConnectionQuality {
+    Excellent,
+    Good,
+    Poor,
+    Lost,
+}
+
 #[derive(Debug, Clone)]
 pub enum TrackPublication {
     Local(LocalTrackPublication),
@@ -178,6 +186,10 @@ pub enum RoomEvent {
     },
     ActiveSpeakersChanged {
         speakers: Vec<Participant>,
+    },
+    ConnectionQualityChanged {
+        participant: Participant,
+        quality: ConnectionQuality,
     },
     ConnectionStateChanged(ConnectionState),
     Connected {
