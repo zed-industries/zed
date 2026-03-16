@@ -103,10 +103,11 @@ use {
     feature_flags::FeatureFlagAppExt as _,
     git_ui::project_diff::ProjectDiff,
     gpui::{
-        Action as _, App, AppContext as _, Bounds, KeyBinding, Modifiers, SharedString,
-        VisualTestAppContext, WindowBounds, WindowHandle, WindowOptions, point, px, size,
+        Action as _, App, AppContext as _, Bounds, KeyBinding, Modifiers, VisualTestAppContext,
+        WindowBounds, WindowHandle, WindowOptions, point, px, size,
     },
     image::RgbaImage,
+    project::AgentId,
     project_panel::ProjectPanel,
     settings::{NotifyWhenAgentWaiting, Settings as _},
     settings_ui::SettingsWindow,
@@ -1958,7 +1959,7 @@ impl AgentServer for StubAgentServer {
         ui::IconName::ZedAssistant
     }
 
-    fn name(&self) -> SharedString {
+    fn agent_id(&self) -> AgentId {
         "Visual Test Agent".into()
     }
 

@@ -592,15 +592,12 @@ impl Sidebar {
                         seen_session_ids.insert(row.session_id.clone());
                         let (agent, icon, icon_from_external_svg) = match &row.agent_id {
                             None => (Agent::NativeAgent, IconName::ZedAgent, None),
-                            Some(name) => {
-                                use project::agent_server_store::AgentId;
-                                let custom_icon = agent_server_store.as_ref().and_then(|store| {
-                                    store.read(cx).agent_icon(&AgentId(name.clone().into()))
-                                });
+                            Some(id) => {
+                                let custom_icon = agent_server_store
+                                    .as_ref()
+                                    .and_then(|store| store.read(cx).agent_icon(&id));
                                 (
-                                    Agent::Custom {
-                                        id: name.clone().into(),
-                                    },
+                                    Agent::Custom { id: id.clone() },
                                     IconName::Terminal,
                                     custom_icon,
                                 )
