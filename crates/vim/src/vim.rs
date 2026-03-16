@@ -617,15 +617,13 @@ impl Vim {
                     editor.set_relative_line_number(None, cx)
                 }
             }
-            was_toggle = VimSettings::get_global(cx).toggle_relative_line_numbers;
-
-            let mode_type_changed = was_enabled && enabled && was_helix != helix;
+            let helix_changed = was_helix != helix;
+            was_toggle = toggle;
             was_helix = helix;
 
-            if mode_type_changed {
+            if was_enabled && enabled && helix_changed {
                 Self::deactivate(editor, cx);
                 Self::activate(editor, window, cx);
-                was_enabled = enabled;
                 return;
             }
             if was_enabled == enabled {
