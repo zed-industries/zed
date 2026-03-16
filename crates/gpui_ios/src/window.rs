@@ -711,6 +711,10 @@ fn register_metal_view_class() -> &'static Class {
                 sel!(pressesEnded:withEvent:),
                 presses_ended as extern "C" fn(&Object, Sel, *mut Object, *mut Object),
             );
+            decl.add_method(
+                sel!(pressesCancelled:withEvent:),
+                presses_cancelled as extern "C" fn(&Object, Sel, *mut Object, *mut Object),
+            );
             // Touch (single-finger → left mouse button)
             decl.add_method(
                 sel!(touchesBegan:withEvent:),
@@ -727,6 +731,39 @@ fn register_metal_view_class() -> &'static Class {
             decl.add_method(
                 sel!(touchesCancelled:withEvent:),
                 touches_ended as extern "C" fn(&Object, Sel, *mut Object, *mut Object),
+            );
+
+            // ── UITextInputTraits — disable autocorrect/autocap for code editing ─
+            // UITextInput subsumes UITextInputTraits; UIKit reads these properties
+            // during keyboard session setup. We implement only the getters; setters
+            // are no-ops (UIKit doesn't call them in practice for programmatic views).
+            decl.add_method(
+                sel!(autocorrectionType),
+                traits_autocorrection_type as extern "C" fn(&Object, Sel) -> isize,
+            );
+            decl.add_method(
+                sel!(autocapitalizationType),
+                traits_autocapitalization_type as extern "C" fn(&Object, Sel) -> isize,
+            );
+            decl.add_method(
+                sel!(spellCheckingType),
+                traits_spell_checking_type as extern "C" fn(&Object, Sel) -> isize,
+            );
+            decl.add_method(
+                sel!(smartQuotesType),
+                traits_smart_quotes_type as extern "C" fn(&Object, Sel) -> isize,
+            );
+            decl.add_method(
+                sel!(smartDashesType),
+                traits_smart_dashes_type as extern "C" fn(&Object, Sel) -> isize,
+            );
+
+            // ── Responder actions (long-press context menu) ───────────────────
+            // Return false for all edit actions until clipboard is wired up.
+            // This prevents the system from showing a context menu with broken actions.
+            decl.add_method(
+                sel!(canPerformAction:withSender:),
+                can_perform_action as extern "C" fn(&Object, Sel, Sel, *mut Object) -> bool,
             );
 
             // ── UIKeyInput (required subset of UITextInput) ───────────────────
@@ -1071,6 +1108,51 @@ extern "C" fn presses_ended(this: &Object, _sel: Sel, presses: *mut Object, even
     unsafe {
         let _: () = msg_send![super(this, class!(UIView)), pressesEnded: presses withEvent: event];
     }
+}
+
+extern "C" fn presses_cancelled(
+    this: &Object,
+    _sel: Sel,
+    presses: *mut Object,
+    event: *mut Object,
+) {
+    // Treat cancellation as key-up so GPUI doesn't see keys stuck in the down state.
+    handle_presses(this, presses, false);
+    unsafe {
+        let _: () =
+            msg_send![super(this, class!(UIView)), pressesCancelled: presses withEvent: event];
+    }
+}
+
+// ── UITextInputTraits ─────────────────────────────────────────────────────────
+// UITextAutocorrectionTypeNo = 2, UITextAutocapitalizationTypeNone = 0,
+// UITextSpellCheckingTypeNo = 2, UITextSmartQuotesTypeNo = 2, UITextSmartDashesTypeNo = 2.
+
+extern "C" fn traits_autocorrection_type(_this: &Object, _sel: Sel) -> isize {
+    2 // UITextAutocorrectionTypeNo
+}
+
+extern "C" fn traits_autocapitalization_type(_this: &Object, _sel: Sel) -> isize {
+    0 // UITextAutocapitalizationTypeNone
+}
+
+extern "C" fn traits_spell_checking_type(_this: &Object, _sel: Sel) -> isize {
+    2 // UITextSpellCheckingTypeNo
+}
+
+extern "C" fn traits_smart_quotes_type(_this: &Object, _sel: Sel) -> isize {
+    2 // UITextSmartQuotesTypeNo
+}
+
+extern "C" fn traits_smart_dashes_type(_this: &Object, _sel: Sel) -> isize {
+    2 // UITextSmartDashesTypeNo
+}
+
+// ── Responder actions ─────────────────────────────────────────────────────────
+
+extern "C" fn can_perform_action(_this: &Object, _sel: Sel, _action: Sel, _sender: *mut Object) -> bool {
+    // Suppress the long-press context menu entirely until clipboard is integrated.
+    false
 }
 
 // ─── Touch input (single-finger → left mouse button) ─────────────────────────
