@@ -36,8 +36,7 @@ impl Vim {
                 let Some(register) = Vim::update_globals(cx, |globals, cx| {
                     globals.read_register(selected_register, Some(editor), cx)
                 })
-                .filter(|reg| !reg.text.is_empty())
-                else {
+                .filter(|reg| !reg.text.is_empty()) else {
                     return;
                 };
                 let text = register.text;
@@ -62,23 +61,23 @@ impl Vim {
                 let mut replacement_texts: Vec<String> = Vec::new();
 
                 for ix in 0..current_selections.len() {
-                    let to_insert =
-                        if let Some(clip_sel) = clipboard_selections.as_ref().and_then(|s| s.get(ix))
-                        {
-                            let end_offset = start_offset + clip_sel.len;
-                            let text = text[start_offset..end_offset].to_string();
-                            start_offset = if clip_sel.is_entire_line {
-                                end_offset
-                            } else {
-                                end_offset + 1
-                            };
-                            text
-                        } else if let Some(last_text) = replacement_texts.last() {
-                            // We have more current selections than clipboard selections: repeat the last one.
-                            last_text.to_owned()
+                    let to_insert = if let Some(clip_sel) =
+                        clipboard_selections.as_ref().and_then(|s| s.get(ix))
+                    {
+                        let end_offset = start_offset + clip_sel.len;
+                        let text = text[start_offset..end_offset].to_string();
+                        start_offset = if clip_sel.is_entire_line {
+                            end_offset
                         } else {
-                            text.to_string()
+                            end_offset + 1
                         };
+                        text
+                    } else if let Some(last_text) = replacement_texts.last() {
+                        // We have more current selections than clipboard selections: repeat the last one.
+                        last_text.to_owned()
+                    } else {
+                        text.to_string()
+                    };
                     replacement_texts.push(to_insert);
                 }
 
