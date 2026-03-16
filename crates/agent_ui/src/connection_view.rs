@@ -2428,14 +2428,21 @@ impl ConnectionView {
     ) {
         let options = AgentNotification::window_options(screen, cx);
 
-        let project_name = self.workspace.upgrade().and_then(|workspace| {
-            workspace
-                .read(cx)
-                .project()
-                .read(cx)
-                .visible_worktrees(cx)
-                .next()
-                .map(|worktree| worktree.read(cx).root_name_str().to_string())
+        let project_name = self.workspace.upgrade().map(|workspace| {
+            let workspace = workspace.read(cx);
+            if let Some(custom_name) = workspace.custom_name() {
+                custom_name.to_string()
+            } else {
+                let project = workspace.project().read(cx);
+                let mut title = String::new();
+                for (i, worktree) in project.visible_worktrees(cx).enumerate() {
+                    if i > 0 {
+                        title.push_str(", ");
+                    }
+                    title.push_str(worktree.read(cx).root_name_str());
+                }
+                title
+            }
         });
 
         if let Some(screen_window) = cx
