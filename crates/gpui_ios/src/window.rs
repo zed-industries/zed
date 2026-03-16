@@ -8,9 +8,9 @@ use gpui::{
     Bounds, Capslock, DevicePixels, DispatchEventResult, GpuSpecs, KeyDownEvent, KeyUpEvent,
     Keystroke, Modifiers, ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent,
     MouseUpEvent, PlatformAtlas, PlatformDisplay, PlatformInput, PlatformInputHandler,
-    PlatformWindow, Pixels, Point, PromptButton, PromptLevel, RequestFrameOptions, Scene, Size,
-    WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowControlArea, WindowControls,
-    WindowParams,
+    PlatformWindow, Pixels, Point, PromptButton, PromptLevel, RequestFrameOptions, Scene,
+    ScrollDelta, ScrollWheelEvent, Size, TouchPhase, WindowAppearance,
+    WindowBackgroundAppearance, WindowBounds, WindowControlArea, WindowControls, WindowParams,
 };
 use objc::{
     class, declare::ClassDecl, msg_send,
@@ -258,6 +258,18 @@ impl IosWindow {
             let _: () = msg_send![view_layer, addSublayer: layer_ptr];
 
             let _: () = msg_send![container, addSubview: view];
+
+            // Attach a two-finger pan gesture recognizer for scrolling.
+            // Raw touchesBegan: is filtered to single-finger only so there is no overlap.
+            let pan: *mut Object = msg_send![class!(UIPanGestureRecognizer), alloc];
+            let pan: *mut Object =
+                msg_send![pan, initWithTarget: view action: sel!(handlePanGesture:)];
+            let _: () = msg_send![pan, setMinimumNumberOfTouches: 2usize];
+            let _: () = msg_send![pan, setMaximumNumberOfTouches: 2usize];
+            let _: () = msg_send![view, addGestureRecognizer: pan];
+            // The view retains the recognizer; release the alloc/init reference.
+            let _: () = msg_send![pan, release];
+
             // Become first responder so UIKit routes pressesBegan:/touchesBegan: to us.
             let _: bool = msg_send![view, becomeFirstResponder];
 
@@ -731,6 +743,11 @@ fn register_metal_view_class() -> &'static Class {
             decl.add_method(
                 sel!(touchesCancelled:withEvent:),
                 touches_ended as extern "C" fn(&Object, Sel, *mut Object, *mut Object),
+            );
+            // Two-finger pan gesture → ScrollWheel
+            decl.add_method(
+                sel!(handlePanGesture:),
+                handle_pan_gesture as extern "C" fn(&Object, Sel, *mut Object),
             );
 
             // ── UITextInputTraits — disable autocorrect/autocap for code editing ─
@@ -1771,7 +1788,8 @@ fn handle_touches(this: &Object, touches: *mut Object, kind: TouchKind) {
     let (position, click_count) = unsafe {
         let array: *mut Object = msg_send![touches, allObjects];
         let count: usize = msg_send![array, count];
-        if count == 0 {
+        // Multi-finger touches are handled by the UIPanGestureRecognizer.
+        if count != 1 {
             return;
         }
         let touch: *mut Object = msg_send![array, objectAtIndex: 0usize];
@@ -1831,4 +1849,53 @@ fn handle_touches(this: &Object, touches: *mut Object, kind: TouchKind) {
         }),
     };
     dispatch_input_event(&state_rc, event);
+}
+
+// ─── Two-finger pan gesture → scroll ─────────────────────────────────────────
+
+// UIGestureRecognizerState integer values.
+const GESTURE_STATE_BEGAN: isize = 1;
+const GESTURE_STATE_CHANGED: isize = 2;
+const GESTURE_STATE_ENDED: isize = 3;
+const GESTURE_STATE_CANCELLED: isize = 4;
+
+extern "C" fn handle_pan_gesture(this: &Object, _sel: Sel, recognizer: *mut Object) {
+    let Some(state_rc) = state_from_view(this) else { return };
+
+    unsafe {
+        let gesture_state: isize = msg_send![recognizer, state];
+
+        let touch_phase = match gesture_state {
+            GESTURE_STATE_BEGAN => TouchPhase::Started,
+            GESTURE_STATE_CHANGED => TouchPhase::Moved,
+            GESTURE_STATE_ENDED | GESTURE_STATE_CANCELLED => TouchPhase::Ended,
+            _ => return,
+        };
+
+        let view = this as *const Object as *mut Object;
+
+        // Accumulate incremental deltas by resetting the recognizer's translation
+        // to zero after each callback so each firing gives us a delta, not total offset.
+        let translation: CGPoint = msg_send![recognizer, translationInView: view];
+        let zero = CGPoint { x: 0.0, y: 0.0 };
+        let _: () = msg_send![recognizer, setTranslation: zero inView: view];
+
+        let location: CGPoint = msg_send![recognizer, locationInView: view];
+        let position = Point {
+            x: gpui::px(location.x as f32),
+            y: gpui::px(location.y as f32),
+        };
+
+        let modifiers = state_rc.borrow().current_modifiers;
+        let event = PlatformInput::ScrollWheel(ScrollWheelEvent {
+            position,
+            delta: ScrollDelta::Pixels(Point {
+                x: gpui::px(translation.x as f32),
+                y: gpui::px(translation.y as f32),
+            }),
+            modifiers,
+            touch_phase,
+        });
+        dispatch_input_event(&state_rc, event);
+    }
 }
