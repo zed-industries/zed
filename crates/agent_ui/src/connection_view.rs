@@ -75,7 +75,7 @@ use crate::agent_diff::AgentDiff;
 use crate::entry_view_state::{EntryViewEvent, ViewEvent};
 use crate::message_editor::{MessageEditor, MessageEditorEvent};
 use crate::profile_selector::{ProfileProvider, ProfileSelector};
-use crate::sidebar::THREAD_METADATA_DB;
+use crate::sidebar::ThreadMetadataStore;
 use crate::ui::{AgentNotification, AgentNotificationEvent};
 use crate::{
     Agent, AgentDiffPane, AgentInitialContent, AgentPanel, AllowAlways, AllowOnce,
@@ -2610,10 +2610,9 @@ impl ConnectionView {
         task.detach_and_log_err(cx);
 
         let id = session_id.clone();
-        cx.background_spawn(async move {
-            THREAD_METADATA_DB.delete(id).await.log_err();
-        })
-        .detach();
+        ThreadMetadataStore::global(cx)
+            .update(cx, |store, cx| store.delete(id.clone(), cx))
+            .detach_and_log_err(cx);
     }
 }
 

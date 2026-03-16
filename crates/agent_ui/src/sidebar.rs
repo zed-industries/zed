@@ -49,12 +49,25 @@ struct GlobalThreadMetadataStore(Entity<ThreadMetadataStore>);
 impl Global for GlobalThreadMetadataStore {}
 
 pub struct ThreadMetadataStore {
+    db: ThreadMetadataDb,
     session_subscriptions: HashMap<SessionId, Subscription>,
 }
 
 impl ThreadMetadataStore {
+    #[cfg(not(any(test, feature = "test-support")))]
     pub fn init_global(cx: &mut App) {
-        let thread_store = cx.new(|cx| Self::new(cx));
+        let db = THREAD_METADATA_DB.clone();
+        let thread_store = cx.new(|cx| Self::new(db, cx));
+        cx.set_global(GlobalThreadMetadataStore(thread_store));
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn init_global(cx: &mut App) {
+        let thread = std::thread::current();
+        let test_name = thread.name().unwrap_or("unknown_test");
+        let db_name = format!("THREAD_METADATA_DB_{}", test_name);
+        let db = smol::block_on(db::open_test_db::<ThreadMetadataDb>(&db_name));
+        let thread_store = cx.new(|cx| Self::new(ThreadMetadataDb(db), cx));
         cx.set_global(GlobalThreadMetadataStore(thread_store));
     }
 
@@ -62,14 +75,31 @@ impl ThreadMetadataStore {
         cx.global::<GlobalThreadMetadataStore>().0.clone()
     }
 
+    pub fn list(&self, cx: &App) -> Task<Result<Vec<ThreadMetadata>>> {
+        let db = self.db.clone();
+        cx.background_spawn(async move {
+            let s = db.list()?;
+            Ok(s)
+        })
+    }
+
     pub fn save(&mut self, metadata: ThreadMetadata, cx: &mut Context<Self>) -> Task<Result<()>> {
+        let db = self.db.clone();
         cx.spawn(async move |this, cx| {
-            THREAD_METADATA_DB.save(&metadata).await?;
+            db.save(metadata).await?;
             this.update(cx, |_this, cx| cx.notify())
         })
     }
 
-    fn new(cx: &mut Context<Self>) -> Self {
+    pub fn delete(&mut self, session_id: SessionId, cx: &mut Context<Self>) -> Task<Result<()>> {
+        let db = self.db.clone();
+        cx.spawn(async move |this, cx| {
+            db.delete(session_id).await?;
+            this.update(cx, |_this, cx| cx.notify())
+        })
+    }
+
+    fn new(db: ThreadMetadataDb, cx: &mut Context<Self>) -> Self {
         let weak_store = cx.weak_entity();
 
         cx.observe_new::<acp_thread::AcpThread>(move |thread, _window, cx| {
@@ -96,6 +126,7 @@ impl ThreadMetadataStore {
         .detach();
 
         Self {
+            db,
             session_subscriptions: HashMap::new(),
         }
     }
@@ -163,6 +194,7 @@ pub struct ThreadMetadata {
     pub folder_paths: PathList,
 }
 
+#[derive(Clone)]
 pub struct ThreadMetadataDb(ThreadSafeConnection);
 
 impl Domain for ThreadMetadataDb {
@@ -185,7 +217,7 @@ db::static_connection!(THREAD_METADATA_DB, ThreadMetadataDb, []);
 
 impl ThreadMetadataDb {
     /// Upsert metadata for a thread (native or ACP).
-    pub async fn save(&self, row: &ThreadMetadata) -> anyhow::Result<()> {
+    pub async fn save(&self, row: ThreadMetadata) -> anyhow::Result<()> {
         let id = row.session_id.0.clone();
         let agent_id = row.agent_id.as_ref().map(|id| id.0.to_string());
         let title = row.title.to_string();
@@ -517,6 +549,7 @@ pub struct Sidebar {
     view: SidebarView,
     archive_view: Option<Entity<ThreadsArchiveView>>,
     _subscriptions: Vec<gpui::Subscription>,
+    _update_entries_task: Option<gpui::Task<()>>,
 }
 
 impl Sidebar {
@@ -540,14 +573,14 @@ impl Sidebar {
             window,
             |this, _multi_workspace, event: &MultiWorkspaceEvent, window, cx| match event {
                 MultiWorkspaceEvent::ActiveWorkspaceChanged => {
-                    this.update_entries(cx);
+                    this.update_entries(false, cx);
                 }
                 MultiWorkspaceEvent::WorkspaceAdded(workspace) => {
                     this.subscribe_to_workspace(workspace, window, cx);
-                    this.update_entries(cx);
+                    this.update_entries(false, cx);
                 }
                 MultiWorkspaceEvent::WorkspaceRemoved(_) => {
-                    this.update_entries(cx);
+                    this.update_entries(false, cx);
                 }
             },
         )
@@ -559,32 +592,18 @@ impl Sidebar {
                 if !query.is_empty() {
                     this.selection.take();
                 }
-                this.update_entries(cx);
-                if !query.is_empty() {
-                    this.selection = this
-                        .contents
-                        .entries
-                        .iter()
-                        .position(|entry| matches!(entry, ListEntry::Thread(_)))
-                        .or_else(|| {
-                            if this.contents.entries.is_empty() {
-                                None
-                            } else {
-                                Some(0)
-                            }
-                        });
-                }
+                this.update_entries(!query.is_empty(), cx);
             }
         })
         .detach();
 
         cx.observe(&ThreadMetadataStore::global(cx), |this, _store, cx| {
-            this.update_entries(cx);
+            this.update_entries(false, cx);
         })
         .detach();
 
         cx.observe_flag::<AgentV2FeatureFlag, _>(window, |_is_enabled, this, _window, cx| {
-            this.update_entries(cx);
+            this.update_entries(false, cx);
         })
         .detach();
 
@@ -593,7 +612,7 @@ impl Sidebar {
             for workspace in &workspaces {
                 this.subscribe_to_workspace(workspace, window, cx);
             }
-            this.update_entries(cx);
+            this.update_entries(false, cx);
         });
 
         let persistence_key = multi_workspace.read(cx).database_id().map(|id| id.0);
@@ -602,6 +621,7 @@ impl Sidebar {
             .unwrap_or(false);
 
         Self {
+            _update_entries_task: None,
             multi_workspace: multi_workspace.downgrade(),
             persistence_key,
             is_open,
@@ -635,7 +655,7 @@ impl Sidebar {
                 ProjectEvent::WorktreeAdded(_)
                 | ProjectEvent::WorktreeRemoved(_)
                 | ProjectEvent::WorktreeOrderChanged => {
-                    this.update_entries(cx);
+                    this.update_entries(false, cx);
                 }
                 _ => {}
             },
@@ -656,7 +676,7 @@ impl Sidebar {
                     )
                 ) {
                     this.prune_stale_worktree_workspaces(window, cx);
-                    this.update_entries(cx);
+                    this.update_entries(false, cx);
                 }
             },
         )
@@ -693,7 +713,7 @@ impl Sidebar {
                 AgentPanelEvent::ActiveViewChanged
                 | AgentPanelEvent::ThreadFocused
                 | AgentPanelEvent::BackgroundThreadChanged => {
-                    this.update_entries(cx);
+                    this.update_entries(false, cx);
                 }
             },
         )
@@ -748,7 +768,7 @@ impl Sidebar {
             .collect()
     }
 
-    fn rebuild_contents(&mut self, cx: &App) {
+    fn rebuild_contents(&mut self, thread_entries: Vec<ThreadMetadata>, cx: &App) {
         let Some(multi_workspace) = self.multi_workspace.upgrade() else {
             return;
         };
@@ -762,11 +782,8 @@ impl Sidebar {
             .and_then(|panel| panel.read(cx).active_connection_view().cloned())
             .and_then(|cv| cv.read(cx).parent_id(cx));
 
-        // Read ALL sidebar thread metadata once and index by folder_paths.
-        let all_sidebar_threads = THREAD_METADATA_DB.list().unwrap_or_default();
-
         let mut threads_by_paths: HashMap<PathList, Vec<ThreadMetadata>> = HashMap::new();
-        for row in all_sidebar_threads {
+        for row in thread_entries {
             threads_by_paths
                 .entry(row.folder_paths.clone())
                 .or_default()
@@ -1191,7 +1208,7 @@ impl Sidebar {
         };
     }
 
-    fn update_entries(&mut self, cx: &mut Context<Self>) {
+    fn update_entries(&mut self, select_first_thread: bool, cx: &mut Context<Self>) {
         let Some(multi_workspace) = self.multi_workspace.upgrade() else {
             return;
         };
@@ -1203,18 +1220,44 @@ impl Sidebar {
 
         let scroll_position = self.list_state.logical_scroll_top();
 
-        self.rebuild_contents(cx);
+        let list_thread_entries_task = ThreadMetadataStore::global(cx).read(cx).list(cx);
 
-        self.list_state.reset(self.contents.entries.len());
-        self.list_state.scroll_to(scroll_position);
+        self._update_entries_task.take();
+        self._update_entries_task = Some(cx.spawn(async move |this, cx| {
+            let Some(thread_entries) = list_thread_entries_task.await.log_err() else {
+                return;
+            };
+            this.update(cx, |this, cx| {
+                this.rebuild_contents(thread_entries, cx);
 
-        if had_notifications != self.has_notifications(cx) {
-            multi_workspace.update(cx, |_, cx| {
+                if select_first_thread {
+                    this.selection = this
+                        .contents
+                        .entries
+                        .iter()
+                        .position(|entry| matches!(entry, ListEntry::Thread(_)))
+                        .or_else(|| {
+                            if this.contents.entries.is_empty() {
+                                None
+                            } else {
+                                Some(0)
+                            }
+                        });
+                }
+
+                this.list_state.reset(this.contents.entries.len());
+                this.list_state.scroll_to(scroll_position);
+
+                if had_notifications != this.has_notifications(cx) {
+                    multi_workspace.update(cx, |_, cx| {
+                        cx.notify();
+                    });
+                }
+
                 cx.notify();
-            });
-        }
-
-        cx.notify();
+            })
+            .ok();
+        }));
     }
 
     fn render_list_entry(
@@ -1397,7 +1440,7 @@ impl Sidebar {
                                 move |this, _, _window, cx| {
                                     this.selection = None;
                                     this.expanded_groups.remove(&path_list_for_collapse);
-                                    this.update_entries(cx);
+                                    this.update_entries(false, cx);
                                 }
                             })),
                         )
@@ -1603,14 +1646,14 @@ impl Sidebar {
         } else {
             self.collapsed_groups.insert(path_list.clone());
         }
-        self.update_entries(cx);
+        self.update_entries(false, cx);
     }
 
     fn focus_in(&mut self, _window: &mut Window, _cx: &mut Context<Self>) {}
 
     fn cancel(&mut self, _: &Cancel, window: &mut Window, cx: &mut Context<Self>) {
         if self.reset_filter_editor_text(window, cx) {
-            self.update_entries(cx);
+            self.update_entries(false, cx);
         } else {
             self.focus_handle.focus(window, cx);
         }
@@ -1729,7 +1772,7 @@ impl Sidebar {
                     let current = self.expanded_groups.get(&path_list).copied().unwrap_or(0);
                     self.expanded_groups.insert(path_list, current + 1);
                 }
-                self.update_entries(cx);
+                self.update_entries(false, cx);
             }
             ListEntry::NewThread { workspace, .. } => {
                 let workspace = workspace.clone();
@@ -1772,7 +1815,7 @@ impl Sidebar {
             });
         }
 
-        self.update_entries(cx);
+        self.update_entries(false, cx);
     }
 
     fn open_workspace_and_activate_thread(
@@ -1858,7 +1901,7 @@ impl Sidebar {
                 if self.collapsed_groups.contains(path_list) {
                     let path_list = path_list.clone();
                     self.collapsed_groups.remove(&path_list);
-                    self.update_entries(cx);
+                    self.update_entries(false, cx);
                 } else if ix + 1 < self.contents.entries.len() {
                     self.selection = Some(ix + 1);
                     self.list_state.scroll_to_reveal_item(ix + 1);
@@ -1882,7 +1925,7 @@ impl Sidebar {
                 if !self.collapsed_groups.contains(path_list) {
                     let path_list = path_list.clone();
                     self.collapsed_groups.insert(path_list);
-                    self.update_entries(cx);
+                    self.update_entries(false, cx);
                 }
             }
             Some(
@@ -1895,7 +1938,7 @@ impl Sidebar {
                         let path_list = path_list.clone();
                         self.selection = Some(i);
                         self.collapsed_groups.insert(path_list);
-                        self.update_entries(cx);
+                        self.update_entries(false, cx);
                         break;
                     }
                 }
@@ -2047,7 +2090,7 @@ impl Sidebar {
                     let current = this.expanded_groups.get(&path_list).copied().unwrap_or(0);
                     this.expanded_groups.insert(path_list.clone(), current + 1);
                 }
-                this.update_entries(cx);
+                this.update_entries(false, cx);
             }))
             .into_any_element()
     }
@@ -2134,7 +2177,7 @@ impl Sidebar {
                         .tooltip(Tooltip::text("Clear Search"))
                         .on_click(cx.listener(|this, _, window, cx| {
                             this.reset_filter_editor_text(window, cx);
-                            this.update_entries(cx);
+                            this.update_entries(false, cx);
                         })),
                 )
             })
@@ -2412,12 +2455,6 @@ mod tests {
             language_model::LanguageModelRegistry::test(cx);
             prompt_store::init(cx);
         });
-
-        // Clear the shared SidebarDb to prevent cross-test interference.
-        cx.executor().allow_parking();
-        cx.foreground_executor()
-            .block_on(THREAD_METADATA_DB.delete_all())
-            .ok();
     }
 
     async fn init_test_project(
@@ -2800,7 +2837,7 @@ mod tests {
         sidebar.update_in(cx, |s, _window, cx| {
             let current = s.expanded_groups.get(&path_list).copied().unwrap_or(0);
             s.expanded_groups.insert(path_list.clone(), current + 1);
-            s.update_entries(cx);
+            s.update_entries(false, cx);
         });
         cx.run_until_parked();
 
@@ -2813,7 +2850,7 @@ mod tests {
         sidebar.update_in(cx, |s, _window, cx| {
             let current = s.expanded_groups.get(&path_list).copied().unwrap_or(0);
             s.expanded_groups.insert(path_list.clone(), current + 1);
-            s.update_entries(cx);
+            s.update_entries(false, cx);
         });
         cx.run_until_parked();
 
@@ -2826,7 +2863,7 @@ mod tests {
         // Click collapse - should go back to showing 5 threads
         sidebar.update_in(cx, |s, _window, cx| {
             s.expanded_groups.remove(&path_list);
-            s.update_entries(cx);
+            s.update_entries(false, cx);
         });
         cx.run_until_parked();
 
