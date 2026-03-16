@@ -15,12 +15,13 @@ use serde::Deserialize;
 use settings::Settings as _;
 use task::ShellBuilder;
 use util::ResultExt as _;
+use util::path_list::PathList;
 use util::process::Child;
 
 use std::path::PathBuf;
 use std::process::Stdio;
+use std::rc::Rc;
 use std::{any::Any, cell::RefCell};
-use std::{path::Path, rc::Rc};
 use thiserror::Error;
 
 use anyhow::{Context as _, Result};
@@ -124,7 +125,7 @@ impl AgentSessionList for AcpSessionList {
                     .into_iter()
                     .map(|s| AgentSessionInfo {
                         session_id: s.session_id,
-                        cwd: Some(s.cwd),
+                        work_dirs: Some(PathList::new(&[s.cwd])),
                         title: s.title.map(Into::into),
                         updated_at: s.updated_at.and_then(|date_str| {
                             chrono::DateTime::parse_from_rfc3339(&date_str)
@@ -381,11 +382,14 @@ impl AgentConnection for AcpConnection {
     fn new_session(
         self: Rc<Self>,
         project: Entity<Project>,
-        cwd: &Path,
+        work_dirs: PathList,
         cx: &mut App,
     ) -> Task<Result<Entity<AcpThread>>> {
+        // TODO: remove this once ACP supports multiple working directories
+        let Some(cwd) = work_dirs.ordered_paths().next().cloned() else {
+            return Task::ready(Err(anyhow!("Working directory cannot be empty")));
+        };
         let name = self.id.0.clone();
-        let cwd = cwd.to_path_buf();
         let mcp_servers = mcp_servers_for_project(&project, cx);
 
         cx.spawn(async move |cx| {
@@ -565,7 +569,7 @@ impl AgentConnection for AcpConnection {
                 AcpThread::new(
                     None,
                     self.display_name.clone(),
-                    Some(cwd),
+                    Some(work_dirs),
                     self.clone(),
                     project,
                     action_log,
@@ -606,7 +610,7 @@ impl AgentConnection for AcpConnection {
         self: Rc<Self>,
         session_id: acp::SessionId,
         project: Entity<Project>,
-        cwd: &Path,
+        work_dirs: PathList,
         title: Option<SharedString>,
         cx: &mut App,
     ) -> Task<Result<Entity<AcpThread>>> {
@@ -615,8 +619,11 @@ impl AgentConnection for AcpConnection {
                 "Loading sessions is not supported by this agent.".into()
             ))));
         }
+        // TODO: remove this once ACP supports multiple working directories
+        let Some(cwd) = work_dirs.ordered_paths().next().cloned() else {
+            return Task::ready(Err(anyhow!("Working directory cannot be empty")));
+        };
 
-        let cwd = cwd.to_path_buf();
         let mcp_servers = mcp_servers_for_project(&project, cx);
         let action_log = cx.new(|_| ActionLog::new(project.clone()));
         let title = title.unwrap_or_else(|| self.display_name.clone());
@@ -624,7 +631,7 @@ impl AgentConnection for AcpConnection {
             AcpThread::new(
                 None,
                 title,
-                Some(cwd.clone()),
+                Some(work_dirs.clone()),
                 self.clone(),
                 project,
                 action_log,
@@ -676,7 +683,7 @@ impl AgentConnection for AcpConnection {
         self: Rc<Self>,
         session_id: acp::SessionId,
         project: Entity<Project>,
-        cwd: &Path,
+        work_dirs: PathList,
         title: Option<SharedString>,
         cx: &mut App,
     ) -> Task<Result<Entity<AcpThread>>> {
@@ -690,8 +697,11 @@ impl AgentConnection for AcpConnection {
                 "Resuming sessions is not supported by this agent.".into()
             ))));
         }
+        // TODO: remove this once ACP supports multiple working directories
+        let Some(cwd) = work_dirs.paths().iter().next().cloned() else {
+            return Task::ready(Err(anyhow!("Working directory cannot be empty")));
+        };
 
-        let cwd = cwd.to_path_buf();
         let mcp_servers = mcp_servers_for_project(&project, cx);
         let action_log = cx.new(|_| ActionLog::new(project.clone()));
         let title = title.unwrap_or_else(|| self.display_name.clone());
@@ -699,7 +709,7 @@ impl AgentConnection for AcpConnection {
             AcpThread::new(
                 None,
                 title,
-                Some(cwd.clone()),
+                Some(work_dirs),
                 self.clone(),
                 project,
                 action_log,

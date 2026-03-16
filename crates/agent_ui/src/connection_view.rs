@@ -41,7 +41,7 @@ use prompt_store::{PromptId, PromptStore};
 use rope::Point;
 use settings::{NotifyWhenAgentWaiting, Settings as _, SettingsStore};
 use std::cell::RefCell;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::Arc;
 use std::time::Instant;
 use std::{collections::BTreeMap, rc::Rc, time::Duration};
@@ -56,6 +56,7 @@ use ui::{
 };
 use util::{ResultExt, size::format_file_size, time::duration_alt_display};
 use util::{debug_panic, defer};
+use workspace::PathList;
 use workspace::{
     CollaboratorId, MultiWorkspace, NewTerminal, Toast, Workspace, notifications::NotificationId,
 };
@@ -480,7 +481,7 @@ impl ConnectionView {
         connection_store: Entity<AgentConnectionStore>,
         connection_key: Agent,
         resume_session_id: Option<acp::SessionId>,
-        cwd: Option<PathBuf>,
+        work_dirs: Option<PathList>,
         title: Option<SharedString>,
         initial_content: Option<AgentInitialContent>,
         workspace: WeakEntity<Workspace>,
@@ -529,7 +530,7 @@ impl ConnectionView {
                 connection_store,
                 connection_key,
                 resume_session_id,
-                cwd,
+                work_dirs,
                 title,
                 project,
                 initial_content,
@@ -561,7 +562,7 @@ impl ConnectionView {
                 let thread = thread_view.read(cx).thread.read(cx);
                 (
                     Some(thread.session_id().clone()),
-                    thread.cwd().cloned(),
+                    thread.work_dirs().cloned(),
                     Some(thread.title()),
                 )
             })
@@ -600,7 +601,7 @@ impl ConnectionView {
         connection_store: Entity<AgentConnectionStore>,
         connection_key: Agent,
         resume_session_id: Option<acp::SessionId>,
-        cwd: Option<PathBuf>,
+        work_dirs: Option<PathList>,
         title: Option<SharedString>,
         project: Entity<Project>,
         initial_content: Option<AgentInitialContent>,
@@ -636,24 +637,29 @@ impl ConnectionView {
                 }
             })
             .collect();
-        let session_cwd = cwd
-            .filter(|cwd| {
-                // Validate with the normalized path (rejects `..` traversals),
-                // but return the original cwd to preserve its path separators.
-                // On Windows, `normalize_lexically` rebuilds the path with
-                // backslashes via `PathBuf::push`, which would corrupt
-                // forward-slash Linux paths used by WSL agents.
-                util::paths::normalize_lexically(cwd)
-                    .ok()
-                    .is_some_and(|normalized| {
-                        worktree_roots
-                            .iter()
-                            .any(|root| normalized.starts_with(root.as_ref()))
-                    })
-            })
-            .map(|path| path.into())
-            .or_else(|| worktree_roots.first().cloned())
-            .unwrap_or_else(|| paths::home_dir().as_path().into());
+        let session_work_dirs = work_dirs
+            // FIXME: Check with Ben if we need this
+            // .filter(|cwd| {
+            //     // Validate with the normalized path (rejects `..` traversals),
+            //     // but return the original cwd to preserve its path separators.
+            //     // On Windows, `normalize_lexically` rebuilds the path with
+            //     // backslashes via `PathBuf::push`, which would corrupt
+            //     // forward-slash Linux paths used by WSL agents.
+            //     util::paths::normalize_lexically(cwd)
+            //         .ok()
+            //         .is_some_and(|normalized| {
+            //             worktree_roots
+            //                 .iter()
+            //                 .any(|root| normalized.starts_with(root.as_ref()))
+            //         })
+            // })
+            .unwrap_or_else(|| {
+                if worktree_roots.is_empty() {
+                    PathList::new(&[paths::home_dir().as_path()])
+                } else {
+                    PathList::new(&worktree_roots)
+                }
+            });
 
         let connection_entry = connection_store.update(cx, |store, cx| {
             store.request_connection(connection_key, agent.clone(), cx)
@@ -699,7 +705,7 @@ impl ConnectionView {
                         connection.clone().load_session(
                             session_id,
                             project.clone(),
-                            &session_cwd,
+                            session_work_dirs,
                             title,
                             cx,
                         )
@@ -708,7 +714,7 @@ impl ConnectionView {
                         connection.clone().resume_session(
                             session_id,
                             project.clone(),
-                            &session_cwd,
+                            session_work_dirs,
                             title,
                             cx,
                         )
@@ -723,7 +729,7 @@ impl ConnectionView {
                 cx.update(|_, cx| {
                     connection
                         .clone()
-                        .new_session(project.clone(), session_cwd.as_ref(), cx)
+                        .new_session(project.clone(), session_work_dirs, cx)
                 })
                 .log_err()
             };
@@ -1671,24 +1677,21 @@ impl ConnectionView {
         {
             return;
         }
-        let root_dir = self
-            .project
+        let Some(parent_thread) = connected.threads.get(&parent_id) else {
+            return;
+        };
+        let work_dirs = parent_thread
             .read(cx)
-            .worktrees(cx)
-            .filter_map(|worktree| {
-                if worktree.read(cx).is_single_file() {
-                    Some(worktree.read(cx).abs_path().parent()?.into())
-                } else {
-                    Some(worktree.read(cx).abs_path())
-                }
-            })
-            .next();
-        let cwd = root_dir.unwrap_or_else(|| paths::home_dir().as_path().into());
+            .thread
+            .read(cx)
+            .work_dirs()
+            .cloned()
+            .unwrap_or_else(|| PathList::new(&[paths::home_dir().as_path()]));
 
         let subagent_thread_task = connected.connection.clone().load_session(
             subagent_id.clone(),
             self.project.clone(),
-            &cwd,
+            work_dirs,
             None,
             cx,
         );
@@ -3074,7 +3077,7 @@ pub(crate) mod tests {
         let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
 
         let connection = CwdCapturingConnection::new();
-        let captured_cwd = connection.captured_cwd.clone();
+        let captured_cwd = connection.captured_work_dirs.clone();
 
         let thread_store = cx.update(|_window, cx| cx.new(|cx| ThreadStore::new(cx)));
         let connection_store =
@@ -3087,7 +3090,7 @@ pub(crate) mod tests {
                     connection_store,
                     Agent::Custom { id: "Test".into() },
                     Some(SessionId::new("session-1")),
-                    Some(PathBuf::from("/project/subdir")),
+                    Some(PathList::new(&[PathBuf::from("/project/subdir")])),
                     None,
                     None,
                     workspace.downgrade(),
@@ -3103,8 +3106,8 @@ pub(crate) mod tests {
         cx.run_until_parked();
 
         assert_eq!(
-            captured_cwd.lock().as_deref(),
-            Some(Path::new("/project/subdir")),
+            captured_cwd.lock().as_ref().unwrap(),
+            &PathList::new(&[Path::new("/project/subdir")]),
             "Should use session cwd when it's inside the project"
         );
     }
@@ -3127,7 +3130,7 @@ pub(crate) mod tests {
         let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
 
         let connection = CwdCapturingConnection::new();
-        let captured_cwd = connection.captured_cwd.clone();
+        let captured_cwd = connection.captured_work_dirs.clone();
 
         let thread_store = cx.update(|_window, cx| cx.new(|cx| ThreadStore::new(cx)));
         let connection_store =
@@ -3140,7 +3143,7 @@ pub(crate) mod tests {
                     connection_store,
                     Agent::Custom { id: "Test".into() },
                     Some(SessionId::new("session-1")),
-                    Some(PathBuf::from("/some/other/path")),
+                    Some(PathList::new(&[PathBuf::from("/some/other/path")])),
                     None,
                     None,
                     workspace.downgrade(),
@@ -3156,8 +3159,8 @@ pub(crate) mod tests {
         cx.run_until_parked();
 
         assert_eq!(
-            captured_cwd.lock().as_deref(),
-            Some(Path::new("/project")),
+            captured_cwd.lock().as_ref().unwrap(),
+            &PathList::new(&[Path::new("/project")]),
             "Should use fallback project cwd when session cwd is outside the project"
         );
     }
@@ -3180,7 +3183,7 @@ pub(crate) mod tests {
         let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
 
         let connection = CwdCapturingConnection::new();
-        let captured_cwd = connection.captured_cwd.clone();
+        let captured_cwd = connection.captured_work_dirs.clone();
 
         let thread_store = cx.update(|_window, cx| cx.new(|cx| ThreadStore::new(cx)));
         let connection_store =
@@ -3193,7 +3196,7 @@ pub(crate) mod tests {
                     connection_store,
                     Agent::Custom { id: "Test".into() },
                     Some(SessionId::new("session-1")),
-                    Some(PathBuf::from("/project/../outside")),
+                    Some(PathList::new(&[PathBuf::from("/project/../outside")])),
                     None,
                     None,
                     workspace.downgrade(),
@@ -3209,8 +3212,8 @@ pub(crate) mod tests {
         cx.run_until_parked();
 
         assert_eq!(
-            captured_cwd.lock().as_deref(),
-            Some(Path::new("/project")),
+            captured_cwd.lock().as_ref().unwrap(),
+            &PathList::new(&[Path::new("/project")]),
             "Should reject unnormalized cwd that resolves outside the project and use fallback cwd"
         );
     }
@@ -3954,7 +3957,7 @@ pub(crate) mod tests {
         fn new_session(
             self: Rc<Self>,
             project: Entity<Project>,
-            _cwd: &Path,
+            _work_dirs: PathList,
             cx: &mut App,
         ) -> Task<anyhow::Result<Entity<AcpThread>>> {
             let thread = build_test_thread(
@@ -4018,7 +4021,7 @@ pub(crate) mod tests {
         fn new_session(
             self: Rc<Self>,
             project: Entity<Project>,
-            _cwd: &Path,
+            _work_dirs: PathList,
             cx: &mut gpui::App,
         ) -> Task<gpui::Result<Entity<AcpThread>>> {
             let thread = build_test_thread(
@@ -4039,7 +4042,7 @@ pub(crate) mod tests {
             self: Rc<Self>,
             session_id: acp::SessionId,
             project: Entity<Project>,
-            _cwd: &Path,
+            _work_dirs: PathList,
             _title: Option<SharedString>,
             cx: &mut App,
         ) -> Task<gpui::Result<Entity<AcpThread>>> {
@@ -4111,7 +4114,7 @@ pub(crate) mod tests {
         fn new_session(
             self: Rc<Self>,
             project: Entity<Project>,
-            cwd: &Path,
+            work_dirs: PathList,
             cx: &mut gpui::App,
         ) -> Task<gpui::Result<Entity<AcpThread>>> {
             if !*self.authenticated.lock() {
@@ -4126,7 +4129,7 @@ pub(crate) mod tests {
                 AcpThread::new(
                     None,
                     "AuthGatedAgent",
-                    Some(cwd.to_path_buf()),
+                    Some(work_dirs),
                     self,
                     project,
                     action_log,
@@ -4192,7 +4195,7 @@ pub(crate) mod tests {
         fn new_session(
             self: Rc<Self>,
             project: Entity<Project>,
-            cwd: &Path,
+            work_dirs: PathList,
             cx: &mut gpui::App,
         ) -> Task<gpui::Result<Entity<AcpThread>>> {
             Task::ready(Ok(cx.new(|cx| {
@@ -4200,7 +4203,7 @@ pub(crate) mod tests {
                 AcpThread::new(
                     None,
                     "SaboteurAgentConnection",
-                    Some(cwd.to_path_buf()),
+                    Some(work_dirs),
                     self,
                     project,
                     action_log,
@@ -4262,7 +4265,7 @@ pub(crate) mod tests {
         fn new_session(
             self: Rc<Self>,
             project: Entity<Project>,
-            cwd: &Path,
+            work_dirs: PathList,
             cx: &mut gpui::App,
         ) -> Task<gpui::Result<Entity<AcpThread>>> {
             Task::ready(Ok(cx.new(|cx| {
@@ -4270,7 +4273,7 @@ pub(crate) mod tests {
                 AcpThread::new(
                     None,
                     "RefusalAgentConnection",
-                    Some(cwd.to_path_buf()),
+                    Some(work_dirs),
                     self,
                     project,
                     action_log,
@@ -4318,13 +4321,13 @@ pub(crate) mod tests {
 
     #[derive(Clone)]
     struct CwdCapturingConnection {
-        captured_cwd: Arc<Mutex<Option<PathBuf>>>,
+        captured_work_dirs: Arc<Mutex<Option<PathList>>>,
     }
 
     impl CwdCapturingConnection {
         fn new() -> Self {
             Self {
-                captured_cwd: Arc::new(Mutex::new(None)),
+                captured_work_dirs: Arc::new(Mutex::new(None)),
             }
         }
     }
@@ -4341,16 +4344,16 @@ pub(crate) mod tests {
         fn new_session(
             self: Rc<Self>,
             project: Entity<Project>,
-            cwd: &Path,
+            work_dirs: PathList,
             cx: &mut gpui::App,
         ) -> Task<gpui::Result<Entity<AcpThread>>> {
-            *self.captured_cwd.lock() = Some(cwd.to_path_buf());
+            *self.captured_work_dirs.lock() = Some(work_dirs.clone());
             let action_log = cx.new(|_| ActionLog::new(project.clone()));
             let thread = cx.new(|cx| {
                 AcpThread::new(
                     None,
                     "CwdCapturingConnection",
-                    Some(cwd.to_path_buf()),
+                    Some(work_dirs),
                     self.clone(),
                     project,
                     action_log,
@@ -4375,17 +4378,17 @@ pub(crate) mod tests {
             self: Rc<Self>,
             session_id: acp::SessionId,
             project: Entity<Project>,
-            cwd: &Path,
+            work_dirs: PathList,
             _title: Option<SharedString>,
             cx: &mut App,
         ) -> Task<gpui::Result<Entity<AcpThread>>> {
-            *self.captured_cwd.lock() = Some(cwd.to_path_buf());
+            *self.captured_work_dirs.lock() = Some(work_dirs.clone());
             let action_log = cx.new(|_| ActionLog::new(project.clone()));
             let thread = cx.new(|cx| {
                 AcpThread::new(
                     None,
                     "CwdCapturingConnection",
-                    Some(cwd.to_path_buf()),
+                    Some(work_dirs),
                     self.clone(),
                     project,
                     action_log,

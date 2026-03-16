@@ -31,6 +31,7 @@ use task::{Shell, ShellBuilder};
 pub use terminal::*;
 use text::Bias;
 use ui::App;
+use util::path_list::PathList;
 use util::{ResultExt, get_default_system_shell_preferring_bash, paths::PathStyle};
 use uuid::Uuid;
 
@@ -953,7 +954,7 @@ struct RunningTurn {
 
 pub struct AcpThread {
     session_id: acp::SessionId,
-    cwd: Option<PathBuf>,
+    work_dirs: Option<PathList>,
     parent_session_id: Option<acp::SessionId>,
     title: SharedString,
     provisional_title: Option<SharedString>,
@@ -1095,7 +1096,7 @@ impl AcpThread {
     pub fn new(
         parent_session_id: Option<acp::SessionId>,
         title: impl Into<SharedString>,
-        cwd: Option<PathBuf>,
+        work_dirs: Option<PathList>,
         connection: Rc<dyn AgentConnection>,
         project: Entity<Project>,
         action_log: Entity<ActionLog>,
@@ -1116,7 +1117,7 @@ impl AcpThread {
 
         Self {
             parent_session_id,
-            cwd,
+            work_dirs,
             action_log,
             shared_buffers: Default::default(),
             entries: Default::default(),
@@ -1190,8 +1191,8 @@ impl AcpThread {
         &self.session_id
     }
 
-    pub fn cwd(&self) -> Option<&PathBuf> {
-        self.cwd.as_ref()
+    pub fn work_dirs(&self) -> Option<&PathList> {
+        self.work_dirs.as_ref()
     }
 
     pub fn status(&self) -> ThreadStatus {
@@ -2695,7 +2696,7 @@ mod tests {
         sync::atomic::{AtomicBool, AtomicUsize, Ordering::SeqCst},
         time::Duration,
     };
-    use util::path;
+    use util::{path, path_list::PathList};
 
     fn init_test(cx: &mut TestAppContext) {
         env_logger::try_init().ok();
@@ -2713,7 +2714,13 @@ mod tests {
         let project = Project::test(fs, [], cx).await;
         let connection = Rc::new(FakeAgentConnection::new());
         let thread = cx
-            .update(|cx| connection.new_session(project, std::path::Path::new(path!("/test")), cx))
+            .update(|cx| {
+                connection.new_session(
+                    project,
+                    PathList::new(&[std::path::Path::new(path!("/test"))]),
+                    cx,
+                )
+            })
             .await
             .unwrap();
 
@@ -2777,7 +2784,13 @@ mod tests {
         let project = Project::test(fs, [], cx).await;
         let connection = Rc::new(FakeAgentConnection::new());
         let thread = cx
-            .update(|cx| connection.new_session(project, std::path::Path::new(path!("/test")), cx))
+            .update(|cx| {
+                connection.new_session(
+                    project,
+                    PathList::new(&[std::path::Path::new(path!("/test"))]),
+                    cx,
+                )
+            })
             .await
             .unwrap();
 
@@ -2865,7 +2878,13 @@ mod tests {
         let project = Project::test(fs, [], cx).await;
         let connection = Rc::new(FakeAgentConnection::new());
         let thread = cx
-            .update(|cx| connection.new_session(project.clone(), Path::new(path!("/test")), cx))
+            .update(|cx| {
+                connection.new_session(
+                    project.clone(),
+                    PathList::new(&[Path::new(path!("/test"))]),
+                    cx,
+                )
+            })
             .await
             .unwrap();
 
@@ -2976,7 +2995,9 @@ mod tests {
         let project = Project::test(fs, [], cx).await;
         let connection = Rc::new(FakeAgentConnection::new());
         let thread = cx
-            .update(|cx| connection.new_session(project, Path::new(path!("/test")), cx))
+            .update(|cx| {
+                connection.new_session(project, PathList::new(&[Path::new(path!("/test"))]), cx)
+            })
             .await
             .unwrap();
 
@@ -3070,7 +3091,9 @@ mod tests {
         ));
 
         let thread = cx
-            .update(|cx| connection.new_session(project, Path::new(path!("/test")), cx))
+            .update(|cx| {
+                connection.new_session(project, PathList::new(&[Path::new(path!("/test"))]), cx)
+            })
             .await
             .unwrap();
 
@@ -3151,7 +3174,9 @@ mod tests {
             .unwrap();
 
         let thread = cx
-            .update(|cx| connection.new_session(project, Path::new(path!("/tmp")), cx))
+            .update(|cx| {
+                connection.new_session(project, PathList::new(&[Path::new(path!("/tmp"))]), cx)
+            })
             .await
             .unwrap();
 
@@ -3192,7 +3217,9 @@ mod tests {
         let connection = Rc::new(FakeAgentConnection::new());
 
         let thread = cx
-            .update(|cx| connection.new_session(project, Path::new(path!("/tmp")), cx))
+            .update(|cx| {
+                connection.new_session(project, PathList::new(&[Path::new(path!("/tmp"))]), cx)
+            })
             .await
             .unwrap();
 
@@ -3267,7 +3294,9 @@ mod tests {
         let connection = Rc::new(FakeAgentConnection::new());
 
         let thread = cx
-            .update(|cx| connection.new_session(project, Path::new(path!("/tmp")), cx))
+            .update(|cx| {
+                connection.new_session(project, PathList::new(&[Path::new(path!("/tmp"))]), cx)
+            })
             .await
             .unwrap();
 
@@ -3341,7 +3370,9 @@ mod tests {
         let connection = Rc::new(FakeAgentConnection::new());
 
         let thread = cx
-            .update(|cx| connection.new_session(project, Path::new(path!("/tmp")), cx))
+            .update(|cx| {
+                connection.new_session(project, PathList::new(&[Path::new(path!("/tmp"))]), cx)
+            })
             .await
             .unwrap();
 
@@ -3389,7 +3420,9 @@ mod tests {
         }));
 
         let thread = cx
-            .update(|cx| connection.new_session(project, Path::new(path!("/test")), cx))
+            .update(|cx| {
+                connection.new_session(project, PathList::new(&[Path::new(path!("/test"))]), cx)
+            })
             .await
             .unwrap();
 
@@ -3480,7 +3513,9 @@ mod tests {
         }));
 
         let thread = cx
-            .update(|cx| connection.new_session(project, Path::new(path!("/test")), cx))
+            .update(|cx| {
+                connection.new_session(project, PathList::new(&[Path::new(path!("/test"))]), cx)
+            })
             .await
             .unwrap();
 
@@ -3539,7 +3574,9 @@ mod tests {
             }
         }));
         let thread = cx
-            .update(|cx| connection.new_session(project, Path::new(path!("/test")), cx))
+            .update(|cx| {
+                connection.new_session(project, PathList::new(&[Path::new(path!("/test"))]), cx)
+            })
             .await
             .unwrap();
 
@@ -3712,7 +3749,9 @@ mod tests {
         }));
 
         let thread = cx
-            .update(|cx| connection.new_session(project, Path::new(path!("/test")), cx))
+            .update(|cx| {
+                connection.new_session(project, PathList::new(&[Path::new(path!("/test"))]), cx)
+            })
             .await
             .unwrap();
 
@@ -3788,7 +3827,9 @@ mod tests {
         }));
 
         let thread = cx
-            .update(|cx| connection.new_session(project, Path::new(path!("/test")), cx))
+            .update(|cx| {
+                connection.new_session(project, PathList::new(&[Path::new(path!("/test"))]), cx)
+            })
             .await
             .unwrap();
 
@@ -3861,7 +3902,9 @@ mod tests {
             }
         }));
         let thread = cx
-            .update(|cx| connection.new_session(project, Path::new(path!("/test")), cx))
+            .update(|cx| {
+                connection.new_session(project, PathList::new(&[Path::new(path!("/test"))]), cx)
+            })
             .await
             .unwrap();
 
@@ -3997,7 +4040,7 @@ mod tests {
         fn new_session(
             self: Rc<Self>,
             project: Entity<Project>,
-            cwd: &Path,
+            work_dirs: PathList,
             cx: &mut App,
         ) -> Task<gpui::Result<Entity<AcpThread>>> {
             let session_id = acp::SessionId::new(
@@ -4012,7 +4055,7 @@ mod tests {
                 AcpThread::new(
                     None,
                     "Test",
-                    Some(cwd.to_path_buf()),
+                    Some(work_dirs),
                     self.clone(),
                     project,
                     action_log,
@@ -4111,7 +4154,9 @@ mod tests {
         let project = Project::test(fs, [], cx).await;
         let connection = Rc::new(FakeAgentConnection::new());
         let thread = cx
-            .update(|cx| connection.new_session(project, Path::new(path!("/test")), cx))
+            .update(|cx| {
+                connection.new_session(project, PathList::new(&[Path::new(path!("/test"))]), cx)
+            })
             .await
             .unwrap();
 
@@ -4177,7 +4222,9 @@ mod tests {
         let project = Project::test(fs, [], cx).await;
         let connection = Rc::new(FakeAgentConnection::new());
         let thread = cx
-            .update(|cx| connection.new_session(project, Path::new(path!("/test")), cx))
+            .update(|cx| {
+                connection.new_session(project, PathList::new(&[Path::new(path!("/test"))]), cx)
+            })
             .await
             .unwrap();
 
@@ -4490,7 +4537,9 @@ mod tests {
         ));
 
         let thread = cx
-            .update(|cx| connection.new_session(project, Path::new(path!("/test")), cx))
+            .update(|cx| {
+                connection.new_session(project, PathList::new(&[Path::new(path!("/test"))]), cx)
+            })
             .await
             .unwrap();
 
@@ -4564,7 +4613,9 @@ mod tests {
         }));
 
         let thread = cx
-            .update(|cx| connection.new_session(project, Path::new(path!("/test")), cx))
+            .update(|cx| {
+                connection.new_session(project, PathList::new(&[Path::new(path!("/test"))]), cx)
+            })
             .await
             .unwrap();
 
@@ -4647,7 +4698,9 @@ mod tests {
         ));
 
         let thread = cx
-            .update(|cx| connection.new_session(project, Path::new(path!("/test")), cx))
+            .update(|cx| {
+                connection.new_session(project, PathList::new(&[Path::new(path!("/test"))]), cx)
+            })
             .await
             .unwrap();
 
@@ -4695,7 +4748,9 @@ mod tests {
         let set_title_calls = connection.set_title_calls.clone();
 
         let thread = cx
-            .update(|cx| connection.new_session(project, Path::new(path!("/test")), cx))
+            .update(|cx| {
+                connection.new_session(project, PathList::new(&[Path::new(path!("/test"))]), cx)
+            })
             .await
             .unwrap();
 

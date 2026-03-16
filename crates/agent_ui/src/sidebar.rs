@@ -352,7 +352,7 @@ impl From<&ActiveThreadInfo> for acp_thread::AgentSessionInfo {
     fn from(info: &ActiveThreadInfo) -> Self {
         Self {
             session_id: info.session_id.clone(),
-            cwd: None,
+            work_dirs: None,
             title: Some(info.title.clone()),
             updated_at: Some(Utc::now()),
             created_at: Some(Utc::now()),
@@ -873,7 +873,7 @@ impl Sidebar {
                             agent,
                             session_info: acp_thread::AgentSessionInfo {
                                 session_id: row.session_id.clone(),
-                                cwd: None,
+                                work_dirs: None,
                                 title: Some(row.title.clone()),
                                 updated_at: Some(row.updated_at),
                                 created_at: row.created_at,
@@ -953,7 +953,7 @@ impl Sidebar {
                                     agent,
                                     session_info: acp_thread::AgentSessionInfo {
                                         session_id: row.session_id.clone(),
-                                        cwd: None,
+                                        work_dirs: None,
                                         title: Some(row.title.clone()),
                                         updated_at: Some(row.updated_at),
                                         created_at: row.created_at,
@@ -1750,7 +1750,7 @@ impl Sidebar {
                 panel.load_agent_thread(
                     agent,
                     session_info.session_id,
-                    session_info.cwd,
+                    session_info.work_dirs,
                     session_info.title,
                     true,
                     window,
@@ -1810,23 +1810,11 @@ impl Sidebar {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let saved_path_list = THREAD_METADATA_DB
-            .get(&session_info.session_id)
-            .ok()
-            .flatten()
-            .map(|row| row.folder_paths);
-        let path_list = saved_path_list.or_else(|| {
-            // we don't have saved metadata, so create path list based on the cwd
-            session_info
-                .cwd
-                .as_ref()
-                .map(|cwd| PathList::new(&[cwd.to_path_buf()]))
-        });
-
-        if let Some(path_list) = path_list {
+        if let Some(path_list) = &session_info.work_dirs {
             if let Some(workspace) = self.find_open_workspace_for_path_list(&path_list, cx) {
                 self.activate_thread(agent, session_info, &workspace, window, cx);
             } else {
+                let path_list = path_list.clone();
                 self.open_workspace_and_activate_thread(agent, session_info, path_list, window, cx);
             }
             return;
@@ -2398,7 +2386,7 @@ mod tests {
     use feature_flags::FeatureFlagAppExt as _;
     use fs::FakeFs;
     use gpui::TestAppContext;
-    use std::sync::Arc;
+    use std::{path::PathBuf, sync::Arc};
     use util::path_list::PathList;
 
     fn init_test(cx: &mut TestAppContext) {
@@ -2911,7 +2899,7 @@ mod tests {
                     agent: Agent::NativeAgent,
                     session_info: acp_thread::AgentSessionInfo {
                         session_id: acp::SessionId::new(Arc::from("t-1")),
-                        cwd: None,
+                        work_dirs: None,
                         title: Some("Completed thread".into()),
                         updated_at: Some(Utc::now()),
                         created_at: Some(Utc::now()),
@@ -2933,7 +2921,7 @@ mod tests {
                     agent: Agent::NativeAgent,
                     session_info: acp_thread::AgentSessionInfo {
                         session_id: acp::SessionId::new(Arc::from("t-2")),
-                        cwd: None,
+                        work_dirs: None,
                         title: Some("Running thread".into()),
                         updated_at: Some(Utc::now()),
                         created_at: Some(Utc::now()),
@@ -2955,7 +2943,7 @@ mod tests {
                     agent: Agent::NativeAgent,
                     session_info: acp_thread::AgentSessionInfo {
                         session_id: acp::SessionId::new(Arc::from("t-3")),
-                        cwd: None,
+                        work_dirs: None,
                         title: Some("Error thread".into()),
                         updated_at: Some(Utc::now()),
                         created_at: Some(Utc::now()),
@@ -2977,7 +2965,7 @@ mod tests {
                     agent: Agent::NativeAgent,
                     session_info: acp_thread::AgentSessionInfo {
                         session_id: acp::SessionId::new(Arc::from("t-4")),
-                        cwd: None,
+                        work_dirs: None,
                         title: Some("Waiting thread".into()),
                         updated_at: Some(Utc::now()),
                         created_at: Some(Utc::now()),
@@ -2999,7 +2987,7 @@ mod tests {
                     agent: Agent::NativeAgent,
                     session_info: acp_thread::AgentSessionInfo {
                         session_id: acp::SessionId::new(Arc::from("t-5")),
-                        cwd: None,
+                        work_dirs: None,
                         title: Some("Notified thread".into()),
                         updated_at: Some(Utc::now()),
                         created_at: Some(Utc::now()),
@@ -4350,7 +4338,7 @@ mod tests {
                 Agent::NativeAgent,
                 acp_thread::AgentSessionInfo {
                     session_id: session_id_a.clone(),
-                    cwd: None,
+                    work_dirs: None,
                     title: Some("Test".into()),
                     updated_at: None,
                     created_at: None,
@@ -4418,7 +4406,7 @@ mod tests {
                 Agent::NativeAgent,
                 acp_thread::AgentSessionInfo {
                     session_id: session_id_b.clone(),
-                    cwd: None,
+                    work_dirs: None,
                     title: Some("Thread B".into()),
                     updated_at: None,
                     created_at: None,
@@ -5050,7 +5038,7 @@ mod tests {
                 Agent::NativeAgent,
                 acp_thread::AgentSessionInfo {
                     session_id: session_id.clone(),
-                    cwd: Some("/project-b".into()),
+                    work_dirs: Some(PathList::new(&[PathBuf::from("/project-b")])),
                     title: Some("Archived Thread".into()),
                     updated_at: None,
                     created_at: None,
@@ -5111,7 +5099,7 @@ mod tests {
                 Agent::NativeAgent,
                 acp_thread::AgentSessionInfo {
                     session_id: acp::SessionId::new(Arc::from("unknown-session")),
-                    cwd: Some(std::path::PathBuf::from("/project-b")),
+                    work_dirs: Some(PathList::new(&[std::path::PathBuf::from("/project-b")])),
                     title: Some("CWD Thread".into()),
                     updated_at: None,
                     created_at: None,
@@ -5172,7 +5160,7 @@ mod tests {
                 Agent::NativeAgent,
                 acp_thread::AgentSessionInfo {
                     session_id: acp::SessionId::new(Arc::from("no-context-session")),
-                    cwd: None,
+                    work_dirs: None,
                     title: Some("Contextless Thread".into()),
                     updated_at: None,
                     created_at: None,
@@ -5229,7 +5217,7 @@ mod tests {
                 Agent::NativeAgent,
                 acp_thread::AgentSessionInfo {
                     session_id: session_id.clone(),
-                    cwd: None,
+                    work_dirs: None,
                     title: Some("New WS Thread".into()),
                     updated_at: None,
                     created_at: None,

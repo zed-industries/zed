@@ -49,7 +49,7 @@ use prompt_store::{
 use serde::{Deserialize, Serialize};
 use settings::{LanguageModelSelection, update_settings_file};
 use std::any::Any;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::{Arc, LazyLock};
 use util::ResultExt;
@@ -1395,10 +1395,10 @@ impl acp_thread::AgentConnection for NativeAgentConnection {
     fn new_session(
         self: Rc<Self>,
         project: Entity<Project>,
-        cwd: &Path,
+        work_dirs: PathList,
         cx: &mut App,
     ) -> Task<Result<Entity<acp_thread::AcpThread>>> {
-        log::debug!("Creating new thread for project at: {cwd:?}");
+        log::debug!("Creating new thread for project at: {work_dirs:?}");
         Task::ready(Ok(self
             .0
             .update(cx, |agent, cx| agent.new_session(project, cx))))
@@ -1412,7 +1412,7 @@ impl acp_thread::AgentConnection for NativeAgentConnection {
         self: Rc<Self>,
         session_id: acp::SessionId,
         project: Entity<Project>,
-        _cwd: &Path,
+        _work_dirs: PathList,
         _title: Option<SharedString>,
         cx: &mut App,
     ) -> Task<Result<Entity<acp_thread::AcpThread>>> {
@@ -2085,6 +2085,8 @@ impl TerminalHandle for AcpTerminalHandle {
 
 #[cfg(test)]
 mod internal_tests {
+    use std::path::Path;
+
     use super::*;
     use acp_thread::{AgentConnection, AgentModelGroupName, AgentModelInfo, MentionUri};
     use fs::FakeFs;
@@ -2117,7 +2119,13 @@ mod internal_tests {
         // Creating a session registers the project and triggers context building.
         let connection = NativeAgentConnection(agent.clone());
         let _acp_thread = cx
-            .update(|cx| Rc::new(connection).new_session(project.clone(), Path::new("/"), cx))
+            .update(|cx| {
+                Rc::new(connection).new_session(
+                    project.clone(),
+                    PathList::new(&[Path::new("/")]),
+                    cx,
+                )
+            })
             .await
             .unwrap();
         cx.run_until_parked();
@@ -2186,7 +2194,11 @@ mod internal_tests {
         // Create a thread/session
         let acp_thread = cx
             .update(|cx| {
-                Rc::new(connection.clone()).new_session(project.clone(), Path::new("/a"), cx)
+                Rc::new(connection.clone()).new_session(
+                    project.clone(),
+                    PathList::new(&[Path::new("/a")]),
+                    cx,
+                )
             })
             .await
             .unwrap();
@@ -2257,7 +2269,11 @@ mod internal_tests {
         // Create a thread/session
         let acp_thread = cx
             .update(|cx| {
-                Rc::new(connection.clone()).new_session(project.clone(), Path::new("/a"), cx)
+                Rc::new(connection.clone()).new_session(
+                    project.clone(),
+                    PathList::new(&[Path::new("/a")]),
+                    cx,
+                )
             })
             .await
             .unwrap();
@@ -2349,7 +2365,11 @@ mod internal_tests {
 
         let acp_thread = cx
             .update(|cx| {
-                Rc::new(connection.clone()).new_session(project.clone(), Path::new("/a"), cx)
+                Rc::new(connection.clone()).new_session(
+                    project.clone(),
+                    PathList::new(&[Path::new("/a")]),
+                    cx,
+                )
             })
             .await
             .unwrap();
@@ -2456,9 +2476,11 @@ mod internal_tests {
         // Create a thread and select the thinking model.
         let acp_thread = cx
             .update(|cx| {
-                connection
-                    .clone()
-                    .new_session(project.clone(), Path::new("/a"), cx)
+                connection.clone().new_session(
+                    project.clone(),
+                    PathList::new(&[Path::new("/a")]),
+                    cx,
+                )
             })
             .await
             .unwrap();
@@ -2558,9 +2580,11 @@ mod internal_tests {
         // Create a thread and select the model.
         let acp_thread = cx
             .update(|cx| {
-                connection
-                    .clone()
-                    .new_session(project.clone(), Path::new("/a"), cx)
+                connection.clone().new_session(
+                    project.clone(),
+                    PathList::new(&[Path::new("/a")]),
+                    cx,
+                )
             })
             .await
             .unwrap();
@@ -2651,7 +2675,7 @@ mod internal_tests {
             .update(|cx| {
                 connection
                     .clone()
-                    .new_session(project.clone(), Path::new(""), cx)
+                    .new_session(project.clone(), PathList::new(&[Path::new("")]), cx)
             })
             .await
             .unwrap();

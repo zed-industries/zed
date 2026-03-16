@@ -87,8 +87,8 @@ use ui::{
 use util::{ResultExt as _, debug_panic};
 use workspace::{
     CollaboratorId, DraggedSelection, DraggedSidebar, DraggedTab, FocusWorkspaceSidebar,
-    MultiWorkspace, OpenResult, SIDEBAR_RESIZE_HANDLE_SIZE, ToggleWorkspaceSidebar, ToggleZoom,
-    ToolbarItemView, Workspace, WorkspaceId,
+    MultiWorkspace, OpenResult, PathList, SIDEBAR_RESIZE_HANDLE_SIZE, SerializedPathList,
+    ToggleWorkspaceSidebar, ToggleZoom, ToolbarItemView, Workspace, WorkspaceId,
     dock::{DockPosition, Panel, PanelEvent},
     multi_workspace_enabled,
 };
@@ -181,7 +181,7 @@ fn read_legacy_serialized_panel() -> Option<SerializedAgentPanel> {
         .and_then(|json| serde_json::from_str::<SerializedAgentPanel>(&json).log_err())
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug)]
 struct SerializedAgentPanel {
     width: Option<Pixels>,
     selected_agent: Option<AgentType>,
@@ -191,12 +191,12 @@ struct SerializedAgentPanel {
     start_thread_in: Option<StartThreadIn>,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug)]
 struct SerializedActiveThread {
     session_id: String,
     agent_type: AgentType,
     title: Option<String>,
-    cwd: Option<std::path::PathBuf>,
+    work_dirs: Option<SerializedPathList>,
 }
 
 pub fn init(cx: &mut App) {
@@ -917,6 +917,7 @@ impl AgentPanel {
         let last_active_thread = self.active_agent_thread(cx).map(|thread| {
             let thread = thread.read(cx);
             let title = thread.title();
+            let work_dirs = thread.work_dirs().cloned();
             SerializedActiveThread {
                 session_id: thread.session_id().0.to_string(),
                 agent_type: self.selected_agent_type.clone(),
@@ -925,7 +926,7 @@ impl AgentPanel {
                 } else {
                     None
                 },
-                cwd: None,
+                work_dirs: work_dirs.map(|dirs| dirs.serialize()),
             }
         });
 
@@ -983,7 +984,7 @@ impl AgentPanel {
 
             let last_active_thread = if let Some(thread_info) = serialized_panel
                 .as_ref()
-                .and_then(|p| p.last_active_thread.clone())
+                .and_then(|p| p.last_active_thread.as_ref())
             {
                 if thread_info.agent_type.is_native() {
                     let session_id = acp::SessionId::new(thread_info.session_id.clone());
@@ -1052,9 +1053,9 @@ impl AgentPanel {
                         if let Some(agent) = panel.selected_agent() {
                             panel.load_agent_thread(
                                 agent,
-                                thread_info.session_id.into(),
-                                thread_info.cwd,
-                                thread_info.title.map(SharedString::from),
+                                thread_info.session_id.clone().into(),
+                                thread_info.work_dirs.as_ref().map(|dirs| PathList::deserialize(dirs)),
+                                thread_info.title.as_ref().map(|t| t.clone().into()),
                                 false,
                                 window,
                                 cx,
@@ -1296,7 +1297,7 @@ impl AgentPanel {
     pub fn open_thread(
         &mut self,
         session_id: acp::SessionId,
-        cwd: Option<PathBuf>,
+        work_dirs: Option<PathList>,
         title: Option<SharedString>,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -1304,7 +1305,7 @@ impl AgentPanel {
         self.external_thread(
             Some(crate::Agent::NativeAgent),
             Some(session_id),
-            cwd,
+            work_dirs,
             title,
             None,
             true,
@@ -1439,7 +1440,7 @@ impl AgentPanel {
         &mut self,
         agent_choice: Option<crate::Agent>,
         resume_session_id: Option<acp::SessionId>,
-        cwd: Option<PathBuf>,
+        work_dirs: Option<PathList>,
         title: Option<SharedString>,
         initial_content: Option<AgentInitialContent>,
         focus: bool,
@@ -1480,7 +1481,7 @@ impl AgentPanel {
             self.create_agent_thread(
                 server,
                 resume_session_id,
-                cwd,
+                work_dirs,
                 title,
                 initial_content,
                 workspace,
@@ -1513,7 +1514,7 @@ impl AgentPanel {
                     agent_panel.create_agent_thread(
                         server,
                         resume_session_id,
-                        cwd,
+                        work_dirs,
                         title,
                         initial_content,
                         workspace,
@@ -1639,7 +1640,7 @@ impl AgentPanel {
                     this.load_agent_thread(
                         agent.clone(),
                         thread.session_id.clone(),
-                        thread.cwd.clone(),
+                        thread.work_dirs.clone(),
                         thread.title.clone(),
                         true,
                         window,
@@ -2290,7 +2291,7 @@ impl AgentPanel {
                                         this.load_agent_thread(
                                             agent,
                                             entry.session_id.clone(),
-                                            entry.cwd.clone(),
+                                            entry.work_dirs.clone(),
                                             entry.title.clone(),
                                             true,
                                             window,
@@ -2515,7 +2516,7 @@ impl AgentPanel {
         &mut self,
         agent: Agent,
         session_id: acp::SessionId,
-        cwd: Option<PathBuf>,
+        work_dirs: Option<PathList>,
         title: Option<SharedString>,
         focus: bool,
         window: &mut Window,
@@ -2554,7 +2555,7 @@ impl AgentPanel {
         self.external_thread(
             Some(agent),
             Some(session_id),
-            cwd,
+            work_dirs,
             title,
             None,
             focus,
@@ -2567,7 +2568,7 @@ impl AgentPanel {
         &mut self,
         server: Rc<dyn AgentServer>,
         resume_session_id: Option<acp::SessionId>,
-        cwd: Option<PathBuf>,
+        work_dirs: Option<PathList>,
         title: Option<SharedString>,
         initial_content: Option<AgentInitialContent>,
         workspace: WeakEntity<Workspace>,
@@ -2596,7 +2597,7 @@ impl AgentPanel {
                 connection_store,
                 ext_agent,
                 resume_session_id,
-                cwd,
+                work_dirs,
                 title,
                 initial_content,
                 workspace.clone(),
