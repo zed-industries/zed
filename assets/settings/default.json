@@ -2053,9 +2053,6 @@
     "HEEx": {
       "language_servers": ["elixir-ls", "!expert", "!next-ls", "!lexical", "..."],
     },
-    "HEEX": {
-      "language_servers": ["elixir-ls", "!expert", "!next-ls", "!lexical", "..."],
-    },
     "HTML": {
       "prettier": {
         "allowed": true,

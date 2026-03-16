@@ -202,7 +202,6 @@ impl LspAdapter for TailwindLspAdapter {
                 "phoenix-heex".to_string(),
             ),
             (LanguageName::new_static("HEEx"), "phoenix-heex".to_string()),
-            (LanguageName::new_static("HEEX"), "phoenix-heex".to_string()),
             (LanguageName::new_static("ERB"), "erb".to_string()),
             (LanguageName::new_static("HTML+ERB"), "erb".to_string()),
             (LanguageName::new_static("PHP"), "php".to_string()),
