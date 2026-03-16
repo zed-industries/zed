@@ -17,7 +17,7 @@ pub struct TerminalCommandPrefix {
 pub enum TerminalCommandValidation {
     Safe,
     Unsafe,
-    Unknown,
+    Unsupported,
 }
 
 pub fn extract_commands(command: &str) -> Option<Vec<String>> {
@@ -99,13 +99,13 @@ pub fn validate_terminal_command(command: &str) -> TerminalCommandValidation {
 
     let program = match parser.parse_program() {
         Ok(program) => program,
-        Err(_) => return TerminalCommandValidation::Unknown,
+        Err(_) => return TerminalCommandValidation::Unsupported,
     };
 
     match program_validation(&program) {
         TerminalProgramValidation::Safe => TerminalCommandValidation::Safe,
         TerminalProgramValidation::Unsafe => TerminalCommandValidation::Unsafe,
-        TerminalProgramValidation::Unknown => TerminalCommandValidation::Unknown,
+        TerminalProgramValidation::Unsupported => TerminalCommandValidation::Unsupported,
     }
 }
 
@@ -113,7 +113,7 @@ pub fn validate_terminal_command(command: &str) -> TerminalCommandValidation {
 enum TerminalProgramValidation {
     Safe,
     Unsafe,
-    Unknown,
+    Unsupported,
 }
 
 fn first_simple_command(program: &ast::Program) -> Option<&ast::SimpleCommand> {
@@ -309,7 +309,7 @@ fn word_validation(word: &ast::Word) -> TerminalProgramValidation {
     let options = ParserOptions::default();
     let pieces = match brush_parser::word::parse(&word.value, &options) {
         Ok(pieces) => pieces,
-        Err(_) => return TerminalProgramValidation::Unknown,
+        Err(_) => return TerminalProgramValidation::Unsupported,
     };
 
     combine_validations(
@@ -344,7 +344,7 @@ fn word_piece_validation(piece: &WordPiece) -> TerminalProgramValidation {
 
             match parser.parse_program() {
                 Ok(_) => TerminalProgramValidation::Unsafe,
-                Err(_) => TerminalProgramValidation::Unknown,
+                Err(_) => TerminalProgramValidation::Unsupported,
             }
         }
     }
@@ -446,11 +446,11 @@ fn combine_validations(
     validations: impl IntoIterator<Item = TerminalProgramValidation>,
 ) -> TerminalProgramValidation {
     let mut saw_unsafe = false;
-    let mut saw_unknown = false;
+    let mut saw_unsupported = false;
 
     for validation in validations {
         match validation {
-            TerminalProgramValidation::Unknown => saw_unknown = true,
+            TerminalProgramValidation::Unsupported => saw_unsupported = true,
             TerminalProgramValidation::Unsafe => saw_unsafe = true,
             TerminalProgramValidation::Safe => {}
         }
@@ -458,8 +458,8 @@ fn combine_validations(
 
     if saw_unsafe {
         TerminalProgramValidation::Unsafe
-    } else if saw_unknown {
-        TerminalProgramValidation::Unknown
+    } else if saw_unsupported {
+        TerminalProgramValidation::Unsupported
     } else {
         TerminalProgramValidation::Safe
     }
@@ -1692,10 +1692,10 @@ mod tests {
     }
 
     #[test]
-    fn test_validate_terminal_command_returns_unknown_for_parse_failure() {
+    fn test_validate_terminal_command_returns_unsupported_for_parse_failure() {
         assert_eq!(
             validate_terminal_command("echo $(ls &&)"),
-            TerminalCommandValidation::Unknown
+            TerminalCommandValidation::Unsupported
         );
     }
 

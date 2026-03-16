@@ -278,7 +278,7 @@ impl ToolPermissionDecision {
             && inputs.iter().any(|input| {
                 matches!(
                     validate_terminal_command(input),
-                    TerminalCommandValidation::Unsafe | TerminalCommandValidation::Unknown
+                    TerminalCommandValidation::Unsafe | TerminalCommandValidation::Unsupported
                 )
             })
         {
