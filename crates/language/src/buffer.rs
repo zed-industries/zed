@@ -5909,7 +5909,7 @@ pub(crate) fn contiguous_ranges(
     })
 }
 
-#[derive(Default, Debug)]
+#[derive(Default, Debug, Clone)]
 pub struct CharClassifier {
     scope: Option<LanguageScope>,
     scope_context: Option<CharScopeContext>,

@@ -421,7 +421,11 @@ impl Vim {
                 self.helix_find_range_backward(times, window, cx, &mut is_boundary)
             }
             Motion::NextSubwordStart { ignore_punctuation } => {
-                let mut is_boundary = Self::is_subword_boundary_right(ignore_punctuation);
+                let mut is_boundary = |left, right, classifier: &CharClassifier| {
+                    let classifier = classifier.clone().ignore_punctuation(ignore_punctuation);
+                    let at_newline = (left == '\n') ^ (right == '\n');
+                    motion::is_next_subword_start(left, right, &classifier) || at_newline
+                };
                 self.helix_find_range_forward(times, window, cx, &mut is_boundary)
             }
             Motion::NextSubwordEnd { ignore_punctuation } => {
@@ -908,7 +912,7 @@ impl Vim {
 
 #[cfg(test)]
 mod test {
-    use gpui::{UpdateGlobal, VisualTestContext};
+    use gpui::{KeyBinding, UpdateGlobal, VisualTestContext};
     use indoc::indoc;
     use project::FakeFs;
     use search::{ProjectSearchView, project_search};
@@ -982,8 +986,70 @@ mod test {
     }
 
     #[gpui::test]
+    async fn test_next_subword_start(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+        cx.enable_helix();
+
+        // Setup custom keybindings for subword motions so we can use the bindings
+        // in `simulate_keystroke`.
+        cx.update(|_window, cx| {
+            cx.bind_keys([KeyBinding::new(
+                "w",
+                crate::motion::NextSubwordStart {
+                    ignore_punctuation: false,
+                },
+                None,
+            )]);
+        });
+
+        cx.set_state("ˇfoo.bar", Mode::HelixNormal);
+        cx.simulate_keystroke("w");
+        cx.assert_state("«foo.ˇ»bar", Mode::HelixNormal);
+
+        cx.set_state("ˇfoo(bar)", Mode::HelixNormal);
+        cx.simulate_keystroke("w");
+        cx.assert_state("«fooˇ»(bar)", Mode::HelixNormal);
+        cx.simulate_keystroke("w");
+        cx.assert_state("foo«(ˇ»bar)", Mode::HelixNormal);
+        cx.simulate_keystroke("w");
+        cx.assert_state("foo(«barˇ»)", Mode::HelixNormal);
+
+        cx.set_state("ˇfoo_bar_baz", Mode::HelixNormal);
+        cx.simulate_keystroke("w");
+        cx.assert_state("«foo_ˇ»bar_baz", Mode::HelixNormal);
+        cx.simulate_keystroke("w");
+        cx.assert_state("foo_«bar_ˇ»baz", Mode::HelixNormal);
+
+        cx.set_state("ˇfooBarBaz", Mode::HelixNormal);
+        cx.simulate_keystroke("w");
+        cx.assert_state("«fooˇ»BarBaz", Mode::HelixNormal);
+        cx.simulate_keystroke("w");
+        cx.assert_state("foo«Barˇ»Baz", Mode::HelixNormal);
+
+        cx.set_state("ˇfoo;bar", Mode::HelixNormal);
+        cx.simulate_keystroke("w");
+        cx.assert_state("«foo;ˇ»bar", Mode::HelixNormal);
+
+        cx.set_state("ˇ<?php\n\n$someVariable = 2;", Mode::HelixNormal);
+        cx.simulate_keystroke("w");
+        cx.assert_state("«<?ˇ»php\n\n$someVariable = 2;", Mode::HelixNormal);
+        cx.simulate_keystroke("w");
+        cx.assert_state("<?«phpˇ»\n\n$someVariable = 2;", Mode::HelixNormal);
+        cx.simulate_keystroke("w");
+        cx.assert_state("<?php\n\n«$ˇ»someVariable = 2;", Mode::HelixNormal);
+        cx.simulate_keystroke("w");
+        cx.assert_state("<?php\n\n$«someˇ»Variable = 2;", Mode::HelixNormal);
+        cx.simulate_keystroke("w");
+        cx.assert_state("<?php\n\n$some«Variable ˇ»= 2;", Mode::HelixNormal);
+        cx.simulate_keystroke("w");
+        cx.assert_state("<?php\n\n$someVariable «= ˇ»2;", Mode::HelixNormal);
+        cx.simulate_keystroke("w");
+        cx.assert_state("<?php\n\n$someVariable = «2;ˇ»", Mode::HelixNormal);
+    }
+
+    #[gpui::test]
     async fn test_subword_motions(cx: &mut gpui::TestAppContext) {
-        use crate::motion::{NextSubwordEnd, NextSubwordStart, PreviousSubwordStart};
+        use crate::motion::{NextSubwordEnd, PreviousSubwordStart};
 
         let mut cx = VimTestContext::new(cx, true).await;
         cx.enable_helix();
@@ -1018,28 +1084,6 @@ mod test {
             ignore_punctuation: false,
         });
         cx.assert_state("«getˇ»_user_name", Mode::HelixNormal);
-
-        cx.dispatch_action(NextSubwordStart {
-            ignore_punctuation: false,
-        });
-        cx.assert_state("get«_ˇ»user_name", Mode::HelixNormal);
-
-        cx.dispatch_action(NextSubwordStart {
-            ignore_punctuation: false,
-        });
-        cx.assert_state("get_«user_ˇ»name", Mode::HelixNormal);
-
-        // Test with = as subword boundary
-        cx.set_state("ˇfoo=bar", Mode::HelixNormal);
-        cx.dispatch_action(NextSubwordEnd {
-            ignore_punctuation: false,
-        });
-        cx.assert_state("«fooˇ»=bar", Mode::HelixNormal);
-
-        cx.dispatch_action(NextSubwordStart {
-            ignore_punctuation: false,
-        });
-        cx.assert_state("foo«=ˇ»bar", Mode::HelixNormal);
     }
 
     #[gpui::test]

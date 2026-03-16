@@ -6,7 +6,7 @@ use editor::{
     },
 };
 use gpui::{Action, Context, Window, actions, px};
-use language::{CharKind, Point, Selection, SelectionGoal};
+use language::{CharClassifier, CharKind, Point, Selection, SelectionGoal};
 use multi_buffer::MultiBufferRow;
 use schemars::JsonSchema;
 use serde::Deserialize;
@@ -1903,6 +1903,18 @@ pub(crate) fn is_subword_end(left: char, right: char, separators: &str) -> bool 
     (!is_separator(left) && is_separator(right)) || (left.is_lowercase() && right.is_uppercase())
 }
 
+pub(crate) fn is_next_subword_start(left: char, right: char, classifier: &CharClassifier) -> bool {
+    let left_kind = classifier.kind(left);
+    let right_kind = classifier.kind(right);
+    let is_stopping_punct = |c: char| "$=\"'{}[]()<>".contains(c);
+    let found_subword_start = is_subword_start(left, right, ".$_-");
+    let is_word_start =
+        (left_kind != right_kind) && (!right.is_ascii_punctuation() || is_stopping_punct(right));
+
+    (!right.is_whitespace() && (is_word_start || found_subword_start))
+        || right == '\n' && left == '\n' // Prevents skipping repeated empty lines
+}
+
 fn next_subword_start(
     map: &DisplaySnapshot,
     mut point: DisplayPoint,
@@ -1917,16 +1929,9 @@ fn next_subword_start(
         let mut crossed_newline = false;
         let new_point =
             movement::find_boundary(map, point, FindRange::MultiLine, &mut |left, right| {
-                let left_kind = classifier.kind(left);
-                let right_kind = classifier.kind(right);
                 let at_newline = right == '\n';
-                let is_stopping_punct = |c: char| "$=\"'{}[]()<>".contains(c);
-                let found_subword_start = is_subword_start(left, right, ".$_-");
-                let is_word_start = (left_kind != right_kind)
-                    && (!right.is_ascii_punctuation() || is_stopping_punct(right));
-                let found = (!right.is_whitespace() && (is_word_start || found_subword_start))
-                    || at_newline && crossed_newline
-                    || at_newline && left == '\n'; // Prevents skipping repeated empty lines
+                let found = is_next_subword_start(left, right, &classifier)
+                    || at_newline && crossed_newline;
 
                 crossed_newline |= at_newline;
                 found
