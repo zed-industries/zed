@@ -324,7 +324,7 @@ impl AcpConnection {
         // TODO: Remove this override once Google team releases their official auth methods
         let auth_methods = if agent_id.0.as_ref() == GEMINI_ID {
             let mut args = command.args.clone();
-            args.retain(|a| a != "--experimental-acp");
+            args.retain(|a| a != "--experimental-acp" && a != "--acp");
             let value = serde_json::json!({
                 "label": "gemini /auth",
                 "command": command.path.to_string_lossy().into_owned(),

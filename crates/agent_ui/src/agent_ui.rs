@@ -218,7 +218,7 @@ pub struct NewNativeAgentThreadFromSummary {
 }
 
 // TODO unify this with AgentType
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum Agent {
     NativeAgent,
@@ -226,65 +226,6 @@ pub enum Agent {
         #[serde(rename = "name")]
         id: AgentId,
     },
-}
-
-// Custom impl handles legacy variant names from before the built-in agents were moved to
-// the registry: "claude_code" -> Custom { name: "claude-acp" }, "codex" -> Custom { name:
-// "codex-acp" }, "gemini" -> Custom { name: "gemini" }.
-// Can be removed at some point in the future and go back to #[derive(Deserialize)].
-impl<'de> serde::Deserialize<'de> for Agent {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        use project::agent_server_store::{CLAUDE_AGENT_ID, CODEX_ID, GEMINI_ID};
-
-        let value = serde_json::Value::deserialize(deserializer)?;
-
-        if let Some(s) = value.as_str() {
-            return match s {
-                "native_agent" => Ok(Self::NativeAgent),
-                "claude_code" | "claude_agent" => Ok(Self::Custom {
-                    id: CLAUDE_AGENT_ID.into(),
-                }),
-                "codex" => Ok(Self::Custom {
-                    id: CODEX_ID.into(),
-                }),
-                "gemini" => Ok(Self::Custom {
-                    id: GEMINI_ID.into(),
-                }),
-                other => Err(serde::de::Error::unknown_variant(
-                    other,
-                    &[
-                        "native_agent",
-                        "custom",
-                        "claude_agent",
-                        "claude_code",
-                        "codex",
-                        "gemini",
-                    ],
-                )),
-            };
-        }
-
-        if let Some(obj) = value.as_object() {
-            if let Some(inner) = obj.get("custom") {
-                #[derive(serde::Deserialize)]
-                struct CustomFields {
-                    name: SharedString,
-                }
-                let fields: CustomFields =
-                    serde_json::from_value(inner.clone()).map_err(serde::de::Error::custom)?;
-                return Ok(Self::Custom {
-                    id: AgentId::new(fields.name),
-                });
-            }
-        }
-
-        Err(serde::de::Error::custom(
-            "expected a string variant or {\"custom\": {\"name\": ...}}",
-        ))
-    }
 }
 
 impl Agent {
@@ -759,31 +700,7 @@ mod tests {
     }
 
     #[test]
-    fn test_deserialize_legacy_external_agent_variants() {
-        use project::agent_server_store::{CLAUDE_AGENT_ID, CODEX_ID, GEMINI_ID};
-
-        assert_eq!(
-            serde_json::from_str::<Agent>(r#""claude_code""#).unwrap(),
-            Agent::Custom {
-                id: CLAUDE_AGENT_ID.into(),
-            },
-        );
-        assert_eq!(
-            serde_json::from_str::<Agent>(r#""codex""#).unwrap(),
-            Agent::Custom {
-                id: CODEX_ID.into(),
-            },
-        );
-        assert_eq!(
-            serde_json::from_str::<Agent>(r#""gemini""#).unwrap(),
-            Agent::Custom {
-                id: GEMINI_ID.into(),
-            },
-        );
-    }
-
-    #[test]
-    fn test_deserialize_current_external_agent_variants() {
+    fn test_deserialize_external_agent_variants() {
         assert_eq!(
             serde_json::from_str::<Agent>(r#""native_agent""#).unwrap(),
             Agent::NativeAgent,
