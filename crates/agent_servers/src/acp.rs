@@ -378,12 +378,16 @@ impl AcpConnection {
 
                     let is_valid = match &config_option.kind {
                         acp::SessionConfigKind::Select(select) => match &select.options {
-                            acp::SessionConfigSelectOptions::Ungrouped(options) => {
-                                options.iter().any(|opt| &*opt.value.0 == default_value.as_str())
-                            }
-                            acp::SessionConfigSelectOptions::Grouped(groups) => groups
+                            acp::SessionConfigSelectOptions::Ungrouped(options) => options
                                 .iter()
-                                .any(|g| g.options.iter().any(|opt| &*opt.value.0 == default_value.as_str())),
+                                .any(|opt| &*opt.value.0 == default_value.as_str()),
+                            acp::SessionConfigSelectOptions::Grouped(groups) => {
+                                groups.iter().any(|g| {
+                                    g.options
+                                        .iter()
+                                        .any(|opt| &*opt.value.0 == default_value.as_str())
+                                })
+                            }
                             _ => false,
                         },
                         _ => false,
@@ -396,7 +400,11 @@ impl AcpConnection {
                             }
                             _ => None,
                         };
-                        Some((config_option.id.clone(), default_value.clone(), initial_value))
+                        Some((
+                            config_option.id.clone(),
+                            default_value.clone(),
+                            initial_value,
+                        ))
                     } else {
                         log::warn!(
                             "`{}` is not a valid value for config option `{}` in {}",
@@ -419,13 +427,11 @@ impl AcpConnection {
                 let conn = self.connection.clone();
                 async move |_| {
                     let result = conn
-                        .set_session_config_option(
-                            acp::SetSessionConfigOptionRequest::new(
-                                session_id,
-                                config_id_clone.clone(),
-                                default_value_id,
-                            ),
-                        )
+                        .set_session_config_option(acp::SetSessionConfigOptionRequest::new(
+                            session_id,
+                            config_id_clone.clone(),
+                            default_value_id,
+                        ))
                         .await
                         .log_err();
 
