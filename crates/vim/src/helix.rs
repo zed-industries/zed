@@ -362,75 +362,54 @@ impl Vim {
             (left_kind != right_kind && left_kind != CharKind::Whitespace) || at_newline
         }
     }
-    fn is_subword_boundary_right(
+
+    /// When `reversed` is true (used with `helix_find_range_backward`), the
+    /// `left` and `right` characters are yielded in reverse text order, so the
+    /// camelCase transition check must be flipped accordingly.
+    fn subword_boundary_start(
         ignore_punctuation: bool,
+        reversed: bool,
     ) -> impl FnMut(char, char, &CharClassifier) -> bool {
         move |left, right, classifier| {
             let left_kind = classifier.kind_with(left, ignore_punctuation);
             let right_kind = classifier.kind_with(right, ignore_punctuation);
             let at_newline = (left == '\n') ^ (right == '\n');
-
-            let is_word_start = left_kind != right_kind && right_kind != CharKind::Whitespace;
             let is_separator = |c: char| "_$=".contains(c);
-            let is_subword_start = (is_separator(left) && !is_separator(right))
-                || (left.is_lowercase() && right.is_uppercase());
 
-            is_word_start || (is_subword_start && !right.is_whitespace()) || at_newline
+            let is_word = left_kind != right_kind && right_kind != CharKind::Whitespace;
+            let is_subword = (is_separator(left) && !is_separator(right))
+                || if reversed {
+                    right.is_lowercase() && left.is_uppercase()
+                } else {
+                    left.is_lowercase() && right.is_uppercase()
+                };
+
+            is_word || (is_subword && !right.is_whitespace()) || at_newline
         }
     }
 
-    fn is_subword_boundary_left(
+    /// When `reversed` is true (used with `helix_find_range_backward`), the
+    /// `left` and `right` characters are yielded in reverse text order, so the
+    /// camelCase transition check must be flipped accordingly.
+    fn subword_boundary_end(
         ignore_punctuation: bool,
+        reversed: bool,
     ) -> impl FnMut(char, char, &CharClassifier) -> bool {
         move |left, right, classifier| {
             let left_kind = classifier.kind_with(left, ignore_punctuation);
             let right_kind = classifier.kind_with(right, ignore_punctuation);
             let at_newline = (left == '\n') ^ (right == '\n');
-
-            let is_word_end = left_kind != right_kind && left_kind != CharKind::Whitespace;
             let is_separator = |c: char| "_$=".contains(c);
-            let is_subword_end = (!is_separator(left) && is_separator(right))
-                || (left.is_lowercase() && right.is_uppercase());
 
-            is_word_end || (is_subword_end && !left.is_whitespace()) || at_newline
-        }
-    }
+            let is_word = left_kind != right_kind && left_kind != CharKind::Whitespace;
+            let is_subword = (!is_separator(left) && is_separator(right))
+                || if reversed {
+                    right.is_lowercase() && left.is_uppercase()
+                } else {
+                    left.is_lowercase() && right.is_uppercase()
+                };
 
-    // TODO!: This one is similar to `is_subword_boundary_left`, with the
-    // exception that, when using `helix_find_range_backward`, the `left` and
-    // `right` character is swapped.
-    fn is_previous_subword_start(
-        ignore_punctuation: bool,
-    ) -> impl FnMut(char, char, &CharClassifier) -> bool {
-        move |left, right, classifier| {
-            let left_kind = classifier.kind_with(left, ignore_punctuation);
-            let right_kind = classifier.kind_with(right, ignore_punctuation);
-            let at_newline = (left == '\n') ^ (right == '\n');
-
-            let is_word_end = left_kind != right_kind && left_kind != CharKind::Whitespace;
-            let is_separator = |c: char| "_$=".contains(c);
-            let is_subword_end = (!is_separator(left) && is_separator(right))
-                || (right.is_lowercase() && left.is_uppercase());
-
-            is_word_end || (is_subword_end && !left.is_whitespace()) || at_newline
-        }
-    }
-
-    fn is_previous_subword_end(
-        ignore_punctuation: bool,
-    ) -> impl FnMut(char, char, &CharClassifier) -> bool {
-        move |left, right, classifier| {
-            dbg!(&left, &right);
-            let left_kind = classifier.kind_with(left, ignore_punctuation);
-            let right_kind = classifier.kind_with(right, ignore_punctuation);
-            let at_newline = (left == '\n') ^ (right == '\n');
-
-            let is_word_end = dbg!(left_kind != right_kind && right_kind != CharKind::Whitespace);
-            let is_separator = |c: char| "_$=".contains(c);
-            let is_subword_end = (is_separator(left) && !is_separator(right))
-                || (right.is_lowercase() && left.is_uppercase());
-
-            is_word_end || (is_subword_end && !right.is_whitespace()) || at_newline
+            is_word || (is_subword && !left.is_whitespace()) || at_newline
         }
     }
 
@@ -466,19 +445,19 @@ impl Vim {
             // * `move_prev_sub_word_start`
             // * `move_prev_sub_word_end`
             Motion::NextSubwordStart { ignore_punctuation } => {
-                let mut is_boundary = Self::is_subword_boundary_right(ignore_punctuation);
+                let mut is_boundary = Self::subword_boundary_start(ignore_punctuation, false);
                 self.helix_find_range_forward(times, window, cx, &mut is_boundary)
             }
             Motion::NextSubwordEnd { ignore_punctuation } => {
-                let mut is_boundary = Self::is_subword_boundary_left(ignore_punctuation);
+                let mut is_boundary = Self::subword_boundary_end(ignore_punctuation, false);
                 self.helix_find_range_forward(times, window, cx, &mut is_boundary)
             }
             Motion::PreviousSubwordStart { ignore_punctuation } => {
-                let mut is_boundary = Self::is_previous_subword_start(ignore_punctuation);
+                let mut is_boundary = Self::subword_boundary_end(ignore_punctuation, true);
                 self.helix_find_range_backward(times, window, cx, &mut is_boundary)
             }
             Motion::PreviousSubwordEnd { ignore_punctuation } => {
-                let mut is_boundary = Self::is_previous_subword_end(ignore_punctuation);
+                let mut is_boundary = Self::subword_boundary_start(ignore_punctuation, true);
                 self.helix_find_range_backward(times, window, cx, &mut is_boundary)
             }
             Motion::EndOfLine { .. } => {
