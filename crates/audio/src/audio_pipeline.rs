@@ -7,10 +7,7 @@ use cpal::{
 use gpui::{App, AsyncApp, BackgroundExecutor, BorrowAppContext, Global};
 
 pub(super) use cpal::Sample;
-pub(super) use libwebrtc::native::apm;
-pub(super) use parking_lot::Mutex;
 pub(super) use rodio::source::LimitSettings;
-pub(super) use std::sync::Arc;
 
 use rodio::{
     Decoder, DeviceSinkBuilder, MixerDeviceSink, Source,
@@ -21,13 +18,16 @@ use settings::Settings;
 use std::{io::Cursor, path::PathBuf, sync::atomic::Ordering, time::Duration};
 use util::ResultExt;
 
-mod audio_settings;
+mod echo_canceller;
+use echo_canceller::EchoCanceller;
 mod replays;
 mod rodio_ext;
-pub use audio_settings::AudioSettings;
+pub use crate::audio_settings::AudioSettings;
 pub use rodio_ext::RodioExt;
 
-use audio_settings::LIVE_SETTINGS;
+use crate::audio_settings::LIVE_SETTINGS;
+
+use crate::Sound;
 
 use super::{CHANNEL_COUNT, SAMPLE_RATE};
 pub const BUFFER_SIZE: usize = // echo canceller and livekit want 10ms of audio
@@ -54,52 +54,12 @@ pub fn ensure_devices_initialized(cx: &mut App) {
     .detach();
 }
 
-#[derive(Debug, Copy, Clone, Eq, Hash, PartialEq)]
-pub enum Sound {
-    Joined,
-    GuestJoined,
-    Leave,
-    Mute,
-    Unmute,
-    StartScreenshare,
-    StopScreenshare,
-    AgentDone,
-}
-
-impl Sound {
-    fn file(&self) -> &'static str {
-        match self {
-            Self::Joined => "joined_call",
-            Self::GuestJoined => "guest_joined_call",
-            Self::Leave => "leave_call",
-            Self::Mute => "mute",
-            Self::Unmute => "unmute",
-            Self::StartScreenshare => "start_screenshare",
-            Self::StopScreenshare => "stop_screenshare",
-            Self::AgentDone => "agent_done",
-        }
-    }
-}
-
+#[derive(Default)]
 pub struct Audio {
     output: Option<(MixerDeviceSink, Mixer)>,
-    #[cfg(not(any(all(target_os = "windows", target_env = "gnu"), target_os = "freebsd")))]
-    pub echo_canceller: Arc<Mutex<apm::AudioProcessingModule>>,
+    pub echo_canceller: EchoCanceller,
     source_cache: HashMap<Sound, Buffered<Decoder<Cursor<Vec<u8>>>>>,
     replays: replays::Replays,
-}
-
-impl Default for Audio {
-    fn default() -> Self {
-        Self {
-            output: Default::default(),
-            echo_canceller: Arc::new(Mutex::new(apm::AudioProcessingModule::new(
-                true, false, false, false,
-            ))),
-            source_cache: Default::default(),
-            replays: Default::default(),
-        }
-    }
 }
 
 impl Global for Audio {}
@@ -113,7 +73,7 @@ impl Audio {
 
         if self.output.is_none() {
             let (output_handle, output_mixer) =
-                open_output_stream(output_audio_device, Arc::clone(&self.echo_canceller))?;
+                open_output_stream(output_audio_device, self.echo_canceller.clone())?;
             self.output = Some((output_handle, output_mixer));
         }
 
@@ -131,7 +91,7 @@ impl Audio {
         self.replays.replays_to_tar(executor)
     }
 
-    pub fn open_microphone(voip_parts: VoipParts) -> anyhow::Result<impl Source> {
+    pub fn open_microphone(mut voip_parts: VoipParts) -> anyhow::Result<impl Source> {
         let stream = open_input_stream(voip_parts.input_audio_device)?;
         let stream = stream
             .possibly_disconnected_channels_to_mono()
@@ -140,13 +100,7 @@ impl Audio {
                 let mut int_buffer: [i16; _] = buffer.map(|s| s.to_sample());
                 if voip_parts
                     .echo_canceller
-                    .lock()
-                    .process_stream(
-                        &mut int_buffer,
-                        SAMPLE_RATE.get() as i32,
-                        CHANNEL_COUNT.get() as i32,
-                    )
-                    .context("livekit audio processor error")
+                    .process_stream(&mut int_buffer)
                     .log_err()
                     .is_some()
                 {
@@ -165,6 +119,7 @@ impl Audio {
             .periodic_access(Duration::from_millis(100), move |agc_source| {
                 agc_source
                     .set_enabled(LIVE_SETTINGS.auto_microphone_volume.load(Ordering::Relaxed));
+                let _ = LIVE_SETTINGS.denoise; // TODO(audio: re-introduce de-noising
             });
 
         let (replay, stream) = stream.replayable(crate::REPLAY_DURATION)?;
@@ -249,26 +204,21 @@ impl Audio {
 }
 
 pub struct VoipParts {
-    echo_canceller: Arc<Mutex<apm::AudioProcessingModule>>,
+    echo_canceller: EchoCanceller,
     replays: replays::Replays,
-    legacy_audio_compatible: bool,
     input_audio_device: Option<DeviceId>,
 }
 
 impl VoipParts {
     pub fn new(cx: &AsyncApp) -> anyhow::Result<Self> {
         let (apm, replays) = cx.read_default_global::<Audio, _>(|audio, _| {
-            (Arc::clone(&audio.echo_canceller), audio.replays.clone())
+            (audio.echo_canceller.clone(), audio.replays.clone())
         });
-        let legacy_audio_compatible =
-            AudioSettings::try_read_global(cx, |settings| settings.legacy_audio_compatible)
-                .unwrap_or(true);
         let input_audio_device =
             AudioSettings::try_read_global(cx, |settings| settings.input_audio_device.clone())
                 .flatten();
 
         Ok(Self {
-            legacy_audio_compatible,
             echo_canceller: apm,
             replays,
             input_audio_device,
@@ -338,7 +288,7 @@ pub fn open_test_output(device_id: Option<DeviceId>) -> anyhow::Result<MixerDevi
 
 pub fn open_output_stream(
     device_id: Option<DeviceId>,
-    echo_canceller: Arc<Mutex<apm::AudioProcessingModule>>,
+    mut echo_canceller: EchoCanceller,
 ) -> anyhow::Result<(MixerDeviceSink, Mixer)> {
     let device = resolve_device(device_id.as_ref(), false)?;
     let mut output_handle = DeviceSinkBuilder::from_device(device)?
@@ -347,21 +297,13 @@ pub fn open_output_stream(
     output_handle.log_on_drop(false);
     log::info!("Output stream: {:?}", output_handle);
 
-    // The webrtc apm is not yet compiling for windows & freebsd
     let (output_mixer, source) = rodio::mixer::mixer(CHANNEL_COUNT, SAMPLE_RATE);
     // otherwise the mixer ends as it's empty
     output_mixer.add(rodio::source::Zero::new(CHANNEL_COUNT, SAMPLE_RATE));
     let echo_cancelling_source = source // apply echo cancellation just before output
         .inspect_buffer::<BUFFER_SIZE, _>(move |buffer| {
             let mut buf: [i16; _] = buffer.map(|s| s.to_sample());
-            echo_canceller
-                .lock()
-                .process_reverse_stream(
-                    &mut buf,
-                    SAMPLE_RATE.get() as i32,
-                    CHANNEL_COUNT.get().into(),
-                )
-                .expect("Audio input and output threads should not panic");
+            echo_canceller.process_reverse_stream(&mut buf)
         });
     output_handle.mixer().add(echo_cancelling_source);
 

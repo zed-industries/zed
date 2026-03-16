@@ -171,8 +171,8 @@ impl AudioStack {
             NativeAudioSource::new(
                 // n.b. this struct's options are always ignored, noise cancellation is provided by apm.
                 AudioSourceOptions::default(),
-                SAMPLE_RATE.get(), // TODO(audio): this was lagacy params,
-                                   // removed for now for simplicty
+                SAMPLE_RATE.get(), // TODO(audio): this was legacy params,
+                // removed for now for simplicity
                 CHANNEL_COUNT.get().into(),
                 10,
             )
@@ -450,7 +450,6 @@ fn send_to_livekit(frame_tx: UnboundedSender<AudioFrame<'static>>, mut microphon
     use cpal::Sample;
     let sample_rate = microphone.sample_rate().get();
     let num_channels = microphone.channels().get() as u32;
-    dbg!(sample_rate, num_channels);
     let buffer_size = sample_rate / 100 * num_channels;
 
     loop {
