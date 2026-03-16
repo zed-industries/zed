@@ -670,36 +670,29 @@ async fn test_realfs_watch_stress_reports_missed_paths(
     }
 
     let mut changed_paths = BTreeSet::new();
-    let mut saw_rescan = false;
+    let mut rescan_count: u32 = 0;
     let timeout = executor.timer(Duration::from_secs(10)).fuse();
 
     futures::pin_mut!(timeout);
 
-    loop {
-        futures::select! {
-            _ = timeout => {
-                break;
-            }
-            batch = events.next().fuse() => {
-                match batch {
-                    Some(batch) => {
-                        for event in batch {
-                            if event.kind == Some(PathEventKind::Rescan) {
-                                saw_rescan = true;
-                            }
-                            if expected_paths.contains(&event.path) {
-                                changed_paths.insert(event.path);
-                            }
-                        }
-                        if changed_paths.len() == expected_paths.len() {
-                            break;
-                        }
-                    }
-                    None => {
-                        break;
-                    }
+    let mut ticks = 0;
+    while ticks < 1000 {
+        if let Some(batch) = events.next().fuse().now_or_never().flatten() {
+            for event in batch {
+                if event.kind == Some(PathEventKind::Rescan) {
+                    rescan_count += 1;
+                }
+                if expected_paths.contains(&event.path) {
+                    changed_paths.insert(event.path);
                 }
             }
+            if changed_paths.len() == expected_paths.len() {
+                break;
+            }
+            ticks = 0;
+        } else {
+            ticks += 1;
+            executor.timer(Duration::from_millis(10)).await;
         }
     }
 
@@ -710,11 +703,11 @@ async fn test_realfs_watch_stress_reports_missed_paths(
         expected_paths.len(),
         changed_paths.len(),
         missed_paths.len(),
-        saw_rescan
+        rescan_count
     );
 
     assert!(
-        missed_paths.is_empty() || saw_rescan,
+        missed_paths.is_empty() || rescan_count > 0,
         "missed {} paths without rescan being reported",
         missed_paths.len()
     );
