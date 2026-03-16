@@ -2614,10 +2614,11 @@ impl ConnectionView {
             .update(cx, |history, cx| history.delete_session(&session_id, cx));
         task.detach_and_log_err(cx);
 
-        let id = session_id.clone();
-        ThreadMetadataStore::global(cx)
-            .update(cx, |store, cx| store.delete(id.clone(), cx))
-            .detach_and_log_err(cx);
+        if let Some(store) = ThreadMetadataStore::try_global(cx) {
+            store
+                .update(cx, |store, cx| store.delete(session_id.clone(), cx))
+                .detach_and_log_err(cx);
+        }
     }
 }
 

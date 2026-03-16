@@ -12,6 +12,7 @@ use db::{
     },
     sqlez_macros::sql,
 };
+use feature_flags::{AgentV2FeatureFlag, FeatureFlagAppExt};
 use gpui::{AppContext as _, Entity, Global, Subscription, Task};
 use project::AgentId;
 use ui::{App, Context, SharedString};
@@ -19,7 +20,17 @@ use workspace::PathList;
 
 pub fn init(cx: &mut App) {
     ThreadMetadataStore::init_global(cx);
-    migrate_thread_metadata(cx);
+
+    //TODO: Remove this after N weeks of shipping the sidebar
+    if cx.has_flag::<AgentV2FeatureFlag>() {
+        migrate_thread_metadata(cx);
+    }
+    cx.observe_flag::<AgentV2FeatureFlag, _>(|has_flag, cx| {
+        if has_flag {
+            migrate_thread_metadata(cx);
+        }
+    })
+    .detach();
 }
 
 /// Migrate existing thread metadata from native agent thread store to the new metadata storage.
@@ -92,6 +103,11 @@ impl ThreadMetadataStore {
         let db = smol::block_on(db::open_test_db::<ThreadMetadataDb>(&db_name));
         let thread_store = cx.new(|cx| Self::new(ThreadMetadataDb(db), cx));
         cx.set_global(GlobalThreadMetadataStore(thread_store));
+    }
+
+    pub fn try_global(cx: &App) -> Option<Entity<Self>> {
+        cx.try_global::<GlobalThreadMetadataStore>()
+            .map(|store| store.0.clone())
     }
 
     pub fn global(cx: &App) -> Entity<Self> {
