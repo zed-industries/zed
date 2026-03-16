@@ -35,7 +35,7 @@ pub const METHOD_NOT_FOUND: i32 = -32601;
 pub const INVALID_PARAMS: i32 = -32602;
 pub const INTERNAL_ERROR: i32 = -32603;
 
-type ResponseHandler = Box<dyn Send + FnOnce(Result<String, Error>)>;
+type ResponseHandler = Box<dyn Send + FnOnce(String)>;
 type NotificationHandler = Box<dyn Send + FnMut(Value, AsyncApp)>;
 type RequestHandler = Box<dyn Send + FnMut(RequestId, &RawValue, AsyncApp)>;
 
@@ -284,7 +284,7 @@ impl Client {
                 if let Some(handlers) = response_handlers.lock().as_mut()
                     && let Some(handler) = handlers.remove(&response.id)
                 {
-                    handler(Ok(message.to_string()));
+                    handler(message.to_string());
                 }
             } else if let Ok(notification) = serde_json::from_str::<AnyNotification>(&message) {
                 subscription_set.lock().notify(
@@ -419,7 +419,7 @@ impl Client {
                 let elapsed = started.elapsed();
                 log::trace!("took {elapsed:?} to receive response to {method:?} id {id}");
                 match response {
-                    Ok(Ok(response)) => {
+                    Ok(response) => {
                         let parsed: AnyResponse = serde_json::from_str(&response)?;
                         if let Some(error) = parsed.error {
                             Err(anyhow!(error.message))
@@ -429,7 +429,6 @@ impl Client {
                             anyhow::bail!("Invalid response: no result or error");
                         }
                     }
-                    Ok(Err(_)) => anyhow::bail!("cancelled"),
                     Err(_canceled) => {
                         if let Some(err) = self.last_transport_error.lock().take() {
                             return Err(err);
