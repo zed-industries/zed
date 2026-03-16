@@ -369,7 +369,7 @@ impl AcpConnection {
         config_options: &Rc<RefCell<Vec<acp::SessionConfigOption>>>,
         cx: &mut AsyncApp,
     ) {
-        let name = self.server_name.clone();
+        let id = self.id.clone();
         let defaults_to_apply: Vec<_> = {
             let config_opts_ref = config_options.borrow();
             config_opts_ref
@@ -411,7 +411,7 @@ impl AcpConnection {
                             "`{}` is not a valid value for config option `{}` in {}",
                             default_value,
                             config_option.id.0,
-                            name
+                            id
                         );
                         None
                     }
