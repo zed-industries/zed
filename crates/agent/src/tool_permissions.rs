@@ -431,6 +431,9 @@ fn check_commands(
 }
 
 fn is_unconditional_allow_all(rules: &ToolRules, global_default: ToolPermissionMode) -> bool {
+    // `always_allow` is intentionally not checked here: when the effective default
+    // is already Allow and there are no deny/confirm restrictions, allow patterns
+    // are redundant — the user has opted into allowing everything.
     rules.always_deny.is_empty()
         && rules.always_confirm.is_empty()
         && matches!(
