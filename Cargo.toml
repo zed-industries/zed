@@ -548,6 +548,7 @@ derive_more = { version = "2.1.1", features = [
 dirs = "4.0"
 documented = "0.9.1"
 dotenvy = "0.15.0"
+dunce = "1.0"
 ec4rs = "1.1"
 emojis = "0.6.1"
 env_logger = "0.11"
@@ -844,8 +845,8 @@ notify = { git = "https://github.com/zed-industries/notify.git", rev = "ce58c24c
 notify-types = { git = "https://github.com/zed-industries/notify.git", rev = "ce58c24cad542c28e04ced02e20325a4ec28a31d" }
 windows-capture = { git = "https://github.com/zed-industries/windows-capture.git", rev = "f0d6c1b6691db75461b732f6d5ff56eed002eeb9" }
 calloop = { git = "https://github.com/zed-industries/calloop" }
-livekit = { git = "https://github.com/zed-industries/livekit-rust-sdks", rev = "37835f840d0070d45ac8b31cce6a6ae7aca3f459" }
-libwebrtc = { git = "https://github.com/zed-industries/livekit-rust-sdks", rev = "37835f840d0070d45ac8b31cce6a6ae7aca3f459" }
+livekit = { git = "https://github.com/zed-industries/livekit-rust-sdks", rev = "cf4375b244ebb51702968df7fc36e192d0f45ad5" }
+libwebrtc = { git = "https://github.com/zed-industries/livekit-rust-sdks", rev = "cf4375b244ebb51702968df7fc36e192d0f45ad5" }
 
 [profile.dev]
 split-debuginfo = "unpacked"

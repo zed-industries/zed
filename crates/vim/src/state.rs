@@ -232,7 +232,15 @@ pub struct VimGlobals {
     pub recorded_actions: Vec<ReplayableAction>,
     pub recorded_selection: RecordedSelection,
 
+    /// The register being written to by the active `q{register}` macro
+    /// recording.
     pub recording_register: Option<char>,
+    /// The register that was selected at the start of the current
+    /// dot-recording, for example, `"ap`.
+    pub recording_register_for_dot: Option<char>,
+    /// The register from the last completed dot-recording. Used when replaying
+    /// with `.`.
+    pub recorded_register_for_dot: Option<char>,
     pub last_recorded_register: Option<char>,
     pub last_replayed_register: Option<char>,
     pub replayer: Option<Replayer>,
@@ -919,6 +927,7 @@ impl VimGlobals {
                 self.dot_recording = false;
                 self.recorded_actions = std::mem::take(&mut self.recording_actions);
                 self.recorded_count = self.recording_count.take();
+                self.recorded_register_for_dot = self.recording_register_for_dot.take();
                 self.stop_recording_after_next_action = false;
             }
         }
@@ -946,6 +955,7 @@ impl VimGlobals {
                 self.dot_recording = false;
                 self.recorded_actions = std::mem::take(&mut self.recording_actions);
                 self.recorded_count = self.recording_count.take();
+                self.recorded_register_for_dot = self.recording_register_for_dot.take();
                 self.stop_recording_after_next_action = false;
             }
         }

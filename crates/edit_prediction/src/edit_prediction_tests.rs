@@ -2270,6 +2270,7 @@ fn empty_response() -> PredictEditsV3Response {
 
 fn prompt_from_request(request: &PredictEditsV3Request) -> String {
     zeta_prompt::format_zeta_prompt(&request.input, zeta_prompt::ZetaFormat::default())
+        .expect("default zeta prompt formatting should succeed in edit prediction tests")
 }
 
 fn assert_no_predict_request_ready(

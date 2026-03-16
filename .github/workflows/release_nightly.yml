@@ -122,8 +122,6 @@ jobs:
         token: ${{ secrets.SENTRY_AUTH_TOKEN }}
     - name: steps::setup_linux
       run: ./script/linux
-    - name: steps::install_mold
-      run: ./script/install-mold
     - name: steps::download_wasi_sdk
       run: ./script/download-wasi-sdk
     - name: ./script/bundle-linux
@@ -170,8 +168,6 @@ jobs:
         token: ${{ secrets.SENTRY_AUTH_TOKEN }}
     - name: steps::setup_linux
       run: ./script/linux
-    - name: steps::install_mold
-      run: ./script/install-mold
     - name: steps::download_wasi_sdk
       run: ./script/download-wasi-sdk
     - name: ./script/bundle-linux
