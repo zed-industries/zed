@@ -976,7 +976,9 @@ impl BufferSearchBar {
             if deploy.focus {
                 let mut handle = self.query_editor.focus_handle(cx);
                 let mut select_query = true;
-                if deploy.replace_enabled {
+
+                let has_seed_text = self.query_suggestion(window, cx).is_some();
+                if deploy.replace_enabled && has_seed_text {
                     handle = self.replacement_editor.focus_handle(cx);
                     select_query = false;
                 };
@@ -3191,7 +3193,15 @@ mod tests {
     #[gpui::test]
     async fn test_deploy_replace_focuses_replacement_editor(cx: &mut TestAppContext) {
         init_globals(cx);
-        let (_, search_bar, cx) = init_test(cx);
+        let (editor, search_bar, cx) = init_test(cx);
+
+        editor.update_in(cx, |editor, window, cx| {
+            editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+                s.select_display_ranges([
+                    DisplayPoint::new(DisplayRow(0), 8)..DisplayPoint::new(DisplayRow(0), 16)
+                ])
+            });
+        });
 
         search_bar.update_in(cx, |search_bar, window, cx| {
             search_bar.deploy(
@@ -3205,13 +3215,18 @@ mod tests {
             );
         });
         cx.run_until_parked();
+
         search_bar.update_in(cx, |search_bar, window, cx| {
             assert!(
                 search_bar
                     .replacement_editor
                     .focus_handle(cx)
                     .is_focused(window),
-                "replacement editor should be focused when deploying with replace_enabled",
+                "replacement editor should be focused when deploying replace with a selection",
+            );
+            assert!(
+                !search_bar.query_editor.focus_handle(cx).is_focused(window),
+                "search editor should not be focused when replacement editor is focused",
             );
         });
     }
