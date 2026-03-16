@@ -581,7 +581,10 @@ fn extract_commands_from_simple_command(
                         NormalizedAssignment::Skipped => {}
                     }
                 }
-                _ => {}
+                ast::CommandPrefixOrSuffixItem::Word(word) => {
+                    words.push(normalize_word(word)?);
+                }
+                ast::CommandPrefixOrSuffixItem::ProcessSubstitution(_, _) => return None,
             }
         }
     }
@@ -601,7 +604,15 @@ fn extract_commands_from_simple_command(
                         None => return None,
                     }
                 }
-                _ => {}
+                ast::CommandPrefixOrSuffixItem::AssignmentWord(assignment, word) => {
+                    match normalize_assignment_for_command_prefix(assignment, word)? {
+                        NormalizedAssignment::Included(normalized_assignment) => {
+                            words.push(normalized_assignment);
+                        }
+                        NormalizedAssignment::Skipped => {}
+                    }
+                }
+                ast::CommandPrefixOrSuffixItem::ProcessSubstitution(_, _) => {}
             }
         }
     }
