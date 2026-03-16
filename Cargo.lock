@@ -10247,6 +10247,7 @@ dependencies = [
  "pretty_assertions",
  "pulldown-cmark 0.13.0",
  "settings",
+ "stacksafe",
  "theme",
  "ui",
  "urlencoding",
