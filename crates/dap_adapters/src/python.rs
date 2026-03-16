@@ -46,6 +46,7 @@ impl PythonDebugAdapter {
         port: u16,
         launch_mode: DebugpyLaunchMode<'a>,
         user_installed_path: Option<&'a Path>,
+        use_module_mode: bool,
         user_args: Option<Vec<String>>,
     ) -> Result<Vec<String>> {
         let mut args = if let Some(user_installed_path) = user_installed_path {
@@ -54,6 +55,9 @@ impl PythonDebugAdapter {
                 user_installed_path.display()
             );
             vec![user_installed_path.to_string_lossy().into_owned()]
+        } else if use_module_mode {
+            log::debug!("Using system-installed debugpy via -m debugpy.adapter");
+            vec!["-m".into(), "debugpy.adapter".into()]
         } else {
             let adapter_path = paths::debug_adapters_dir().join(Self::DEBUG_ADAPTER_NAME.as_ref());
             let path = adapter_path
@@ -344,6 +348,7 @@ impl PythonDebugAdapter {
         user_args: Option<Vec<String>>,
         user_env: Option<HashMap<String, String>>,
         python_from_toolchain: Option<String>,
+        use_module_mode: bool,
     ) -> Result<DebugAdapterBinary> {
         let mut tcp_connection = config.tcp_connection.clone().unwrap_or_default();
 
@@ -404,6 +409,7 @@ impl PythonDebugAdapter {
             port,
             is_attach_with_connect,
             user_installed_path.as_deref(),
+            use_module_mode,
             user_args,
         )
         .await?;
@@ -834,6 +840,7 @@ impl DebugAdapter for PythonDebugAdapter {
                     user_args,
                     user_env,
                     None,
+                    false,
                 )
                 .await;
         }
@@ -891,9 +898,35 @@ impl DebugAdapter for PythonDebugAdapter {
             }
         }
 
-        self.fetch_debugpy_whl(toolchain.clone(), delegate)
-            .await
-            .map_err(|e| anyhow::anyhow!("{e}"))?;
+        let use_module_mode = match self.fetch_debugpy_whl(toolchain.clone(), delegate).await {
+            Ok(_) => false,
+            Err(error) => {
+                let python_command = if let Some(toolchain) = toolchain.as_ref() {
+                    Some(toolchain.path.to_string())
+                } else {
+                    Self::system_python_name(delegate).await
+                };
+
+                if let Some(python) = &python_command {
+                    let has_debugpy = new_command(OsStr::new(python))
+                        .args(["-c", "import debugpy"])
+                        .output()
+                        .await
+                        .is_ok_and(|output| output.status.success());
+                    if has_debugpy {
+                        log::info!(
+                            "Using system-installed debugpy as fallback (fetch failed: {error})"
+                        );
+                        true
+                    } else {
+                        return Err(anyhow::anyhow!("{error}"));
+                    }
+                } else {
+                    return Err(anyhow::anyhow!("{error}"));
+                }
+            }
+        };
+
         if let Some(toolchain) = &toolchain {
             return self
                 .get_installed_binary(
@@ -903,12 +936,21 @@ impl DebugAdapter for PythonDebugAdapter {
                     user_args,
                     user_env,
                     Some(toolchain.path.to_string()),
+                    use_module_mode,
                 )
                 .await;
         }
 
-        self.get_installed_binary(delegate, config, None, user_args, user_env, None)
-            .await
+        self.get_installed_binary(
+            delegate,
+            config,
+            None,
+            user_args,
+            user_env,
+            None,
+            use_module_mode,
+        )
+        .await
     }
 
     fn label_for_child_session(&self, args: &StartDebuggingRequestArguments) -> Option<String> {
@@ -963,6 +1005,7 @@ mod tests {
                 None,
                 None,
                 Some("python3".to_string()),
+                false,
             )
             .await;
 
@@ -1004,6 +1047,7 @@ mod tests {
                 None,
                 None,
                 Some("python3".to_string()),
+                false,
             )
             .await;
 
@@ -1026,6 +1070,7 @@ mod tests {
             port,
             DebugpyLaunchMode::AttachWithConnect { host: None },
             None,
+            false,
             None,
         )
         .await
@@ -1043,6 +1088,7 @@ mod tests {
                 host: Some("192.168.1.100"),
             },
             None,
+            false,
             None,
         )
         .await
@@ -1058,6 +1104,7 @@ mod tests {
             port,
             DebugpyLaunchMode::Normal,
             None,
+            false,
             None,
         )
         .await
@@ -1081,6 +1128,7 @@ mod tests {
             port,
             DebugpyLaunchMode::Normal,
             Some(&user_path),
+            false,
             None,
         )
         .await
@@ -1091,6 +1139,7 @@ mod tests {
             port,
             DebugpyLaunchMode::Normal,
             None,
+            false,
             None,
         )
         .await
@@ -1111,6 +1160,7 @@ mod tests {
             port,
             DebugpyLaunchMode::Normal,
             Some(&user_path),
+            false,
             Some(vec!["foo".into()]),
         )
         .await
@@ -1120,6 +1170,7 @@ mod tests {
             port,
             DebugpyLaunchMode::Normal,
             None,
+            false,
             Some(vec!["foo".into()]),
         )
         .await
