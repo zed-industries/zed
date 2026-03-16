@@ -15,7 +15,7 @@ use gpui::{
     Render, SharedString, WeakEntity, Window, actions, list, prelude::*, px,
 };
 use menu::{Cancel, Confirm, SelectFirst, SelectLast, SelectNext, SelectPrevious};
-use project::Event as ProjectEvent;
+use project::{AgentId, Event as ProjectEvent};
 use settings::Settings;
 use std::collections::{HashMap, HashSet};
 use std::mem;
@@ -668,7 +668,6 @@ impl Sidebar {
                                 let (agent, icon, icon_from_external_svg) = match &row.agent_id {
                                     None => (Agent::NativeAgent, IconName::ZedAgent, None),
                                     Some(name) => {
-                                        use project::agent_server_store::AgentId;
                                         let custom_icon =
                                             agent_server_store.as_ref().and_then(|store| {
                                                 store
