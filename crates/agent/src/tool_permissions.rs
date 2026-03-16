@@ -11,9 +11,10 @@ use util::shell::ShellKind;
 
 const HARDCODED_SECURITY_DENIAL_MESSAGE: &str = "Blocked by built-in security rule. This operation is considered too \
      harmful to be allowed, and cannot be overridden by settings.";
-const INVALID_TERMINAL_COMMAND_MESSAGE: &str = "The terminal command could not be approved because it uses shell \
-     syntax that is not allowed in permission-protected terminal commands, such as variable expansion, command \
-     substitution, arithmetic expansion, or process substitution.";
+const INVALID_TERMINAL_COMMAND_MESSAGE: &str = "The terminal command could not be approved because terminal does not \
+     allow shell substitutions or interpolations in permission-protected commands. Forbidden examples include $VAR, \
+     ${VAR}, $(...), backticks, $((...)), <(...), and >(...). Resolve those values before calling terminal, or ask \
+     the user for the literal value to use.";
 
 /// Security rules that are always enforced and cannot be overridden by any setting.
 /// These protect against catastrophic operations like wiping filesystems.

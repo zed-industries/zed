@@ -48,7 +48,7 @@ use std::{
     rc::Rc,
     sync::{
         Arc,
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicUsize, Ordering},
     },
     time::Duration,
 };
@@ -181,6 +181,7 @@ impl SubagentHandle for FakeSubagentHandle {
 pub(crate) struct FakeThreadEnvironment {
     terminal_handle: Option<Rc<FakeTerminalHandle>>,
     subagent_handle: Option<Rc<FakeSubagentHandle>>,
+    terminal_creations: Arc<AtomicUsize>,
 }
 
 impl FakeThreadEnvironment {
@@ -189,6 +190,10 @@ impl FakeThreadEnvironment {
             terminal_handle: Some(terminal_handle.into()),
             ..self
         }
+    }
+
+    pub(crate) fn terminal_creation_count(&self) -> usize {
+        self.terminal_creations.load(Ordering::SeqCst)
     }
 }
 
@@ -200,6 +205,7 @@ impl crate::ThreadEnvironment for FakeThreadEnvironment {
         _output_byte_limit: Option<u64>,
         _cx: &mut AsyncApp,
     ) -> Task<Result<Rc<dyn crate::TerminalHandle>>> {
+        self.terminal_creations.fetch_add(1, Ordering::SeqCst);
         let handle = self
             .terminal_handle
             .clone()
