@@ -2420,27 +2420,6 @@ mod tests {
             .ok();
     }
 
-    fn make_test_thread(title: &str, updated_at: DateTime<Utc>) -> agent::DbThread {
-        agent::DbThread {
-            title: title.to_string().into(),
-            messages: Vec::new(),
-            updated_at,
-            detailed_summary: None,
-            initial_project_snapshot: None,
-            cumulative_token_usage: Default::default(),
-            request_token_usage: Default::default(),
-            model: None,
-            profile: None,
-            imported: false,
-            subagent_context: None,
-            speed: None,
-            thinking_enabled: false,
-            thinking_effort: None,
-            draft_prompt: None,
-            ui_scroll_position: None,
-        }
-    }
-
     async fn init_test_project(
         worktree_path: &str,
         cx: &mut TestAppContext,
@@ -2517,6 +2496,23 @@ mod tests {
             cx,
         )
         .await;
+    }
+
+    async fn save_named_thread_metadata(
+        session_id: &str,
+        title: &str,
+        path_list: &PathList,
+        cx: &mut gpui::VisualTestContext,
+    ) {
+        save_thread_metadata(
+            acp::SessionId::new(Arc::from(session_id)),
+            SharedString::from(title.to_string()),
+            chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 1, 1, 0, 0, 0).unwrap(),
+            path_list.clone(),
+            cx,
+        )
+        .await;
+        cx.run_until_parked();
     }
 
     async fn save_thread_metadata(
@@ -2652,33 +2648,24 @@ mod tests {
         let sidebar = setup_sidebar(&multi_workspace, cx);
 
         let path_list = PathList::new(&[std::path::PathBuf::from("/my-project")]);
-        let thread_store = cx.update(|_window, cx| ThreadStore::global(cx));
 
-        let save_task = thread_store.update(cx, |store, cx| {
-            store.save_thread(
-                acp::SessionId::new(Arc::from("thread-1")),
-                make_test_thread(
-                    "Fix crash in project panel",
-                    chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 1, 3, 0, 0, 0).unwrap(),
-                ),
-                path_list.clone(),
-                cx,
-            )
-        });
-        save_task.await.unwrap();
+        save_thread_metadata(
+            acp::SessionId::new(Arc::from("thread-1")),
+            "Fix crash in project panel".into(),
+            chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 1, 3, 0, 0, 0).unwrap(),
+            path_list.clone(),
+            cx,
+        )
+        .await;
 
-        let save_task = thread_store.update(cx, |store, cx| {
-            store.save_thread(
-                acp::SessionId::new(Arc::from("thread-2")),
-                make_test_thread(
-                    "Add inline diff view",
-                    chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 1, 2, 0, 0, 0).unwrap(),
-                ),
-                path_list.clone(),
-                cx,
-            )
-        });
-        save_task.await.unwrap();
+        save_thread_metadata(
+            acp::SessionId::new(Arc::from("thread-2")),
+            "Add inline diff view".into(),
+            chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 1, 2, 0, 0, 0).unwrap(),
+            path_list.clone(),
+            cx,
+        )
+        .await;
         cx.run_until_parked();
 
         multi_workspace.update_in(cx, |_, _window, cx| cx.notify());
@@ -2703,20 +2690,15 @@ mod tests {
 
         // Single workspace with a thread
         let path_list = PathList::new(&[std::path::PathBuf::from("/project-a")]);
-        let thread_store = cx.update(|_window, cx| ThreadStore::global(cx));
 
-        let save_task = thread_store.update(cx, |store, cx| {
-            store.save_thread(
-                acp::SessionId::new(Arc::from("thread-a1")),
-                make_test_thread(
-                    "Thread A1",
-                    chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 1, 1, 0, 0, 0).unwrap(),
-                ),
-                path_list.clone(),
-                cx,
-            )
-        });
-        save_task.await.unwrap();
+        save_thread_metadata(
+            acp::SessionId::new(Arc::from("thread-a1")),
+            "Thread A1".into(),
+            chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 1, 1, 0, 0, 0).unwrap(),
+            path_list.clone(),
+            cx,
+        )
+        .await;
         cx.run_until_parked();
 
         multi_workspace.update_in(cx, |_, _window, cx| cx.notify());
@@ -3582,25 +3564,20 @@ mod tests {
         let sidebar = setup_sidebar(&multi_workspace, cx);
 
         let path_list = PathList::new(&[std::path::PathBuf::from("/my-project")]);
-        let thread_store = cx.update(|_window, cx| ThreadStore::global(cx));
 
         for (id, title, hour) in [
             ("t-1", "Fix crash in project panel", 3),
             ("t-2", "Add inline diff view", 2),
             ("t-3", "Refactor settings module", 1),
         ] {
-            let save_task = thread_store.update(cx, |store, cx| {
-                store.save_thread(
-                    acp::SessionId::new(Arc::from(id)),
-                    make_test_thread(
-                        title,
-                        chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 1, 1, hour, 0, 0).unwrap(),
-                    ),
-                    path_list.clone(),
-                    cx,
-                )
-            });
-            save_task.await.unwrap();
+            save_thread_metadata(
+                acp::SessionId::new(Arc::from(id)),
+                title.into(),
+                chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 1, 1, hour, 0, 0).unwrap(),
+                path_list.clone(),
+                cx,
+            )
+            .await;
         }
         cx.run_until_parked();
 
@@ -3640,20 +3617,15 @@ mod tests {
         let sidebar = setup_sidebar(&multi_workspace, cx);
 
         let path_list = PathList::new(&[std::path::PathBuf::from("/my-project")]);
-        let thread_store = cx.update(|_window, cx| ThreadStore::global(cx));
 
-        let save_task = thread_store.update(cx, |store, cx| {
-            store.save_thread(
-                acp::SessionId::new(Arc::from("thread-1")),
-                make_test_thread(
-                    "Fix Crash In Project Panel",
-                    chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 1, 1, 0, 0, 0).unwrap(),
-                ),
-                path_list.clone(),
-                cx,
-            )
-        });
-        save_task.await.unwrap();
+        save_thread_metadata(
+            acp::SessionId::new(Arc::from("thread-1")),
+            "Fix Crash In Project Panel".into(),
+            chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 1, 1, 0, 0, 0).unwrap(),
+            path_list.clone(),
+            cx,
+        )
+        .await;
         cx.run_until_parked();
 
         // Lowercase query matches mixed-case title.
@@ -3687,21 +3659,16 @@ mod tests {
         let sidebar = setup_sidebar(&multi_workspace, cx);
 
         let path_list = PathList::new(&[std::path::PathBuf::from("/my-project")]);
-        let thread_store = cx.update(|_window, cx| ThreadStore::global(cx));
 
         for (id, title, hour) in [("t-1", "Alpha thread", 2), ("t-2", "Beta thread", 1)] {
-            let save_task = thread_store.update(cx, |store, cx| {
-                store.save_thread(
-                    acp::SessionId::new(Arc::from(id)),
-                    make_test_thread(
-                        title,
-                        chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 1, 1, hour, 0, 0).unwrap(),
-                    ),
-                    path_list.clone(),
-                    cx,
-                )
-            });
-            save_task.await.unwrap();
+            save_thread_metadata(
+                acp::SessionId::new(Arc::from(id)),
+                title.into(),
+                chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 1, 1, hour, 0, 0).unwrap(),
+                path_list.clone(),
+                cx,
+            )
+            .await;
         }
         cx.run_until_parked();
 
@@ -3740,24 +3707,19 @@ mod tests {
         let sidebar = setup_sidebar(&multi_workspace, cx);
 
         let path_list_a = PathList::new(&[std::path::PathBuf::from("/project-a")]);
-        let thread_store = cx.update(|_window, cx| ThreadStore::global(cx));
 
         for (id, title, hour) in [
             ("a1", "Fix bug in sidebar", 2),
             ("a2", "Add tests for editor", 1),
         ] {
-            let save_task = thread_store.update(cx, |store, cx| {
-                store.save_thread(
-                    acp::SessionId::new(Arc::from(id)),
-                    make_test_thread(
-                        title,
-                        chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 1, 1, hour, 0, 0).unwrap(),
-                    ),
-                    path_list_a.clone(),
-                    cx,
-                )
-            });
-            save_task.await.unwrap();
+            save_thread_metadata(
+                acp::SessionId::new(Arc::from(id)),
+                title.into(),
+                chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 1, 1, hour, 0, 0).unwrap(),
+                path_list_a.clone(),
+                cx,
+            )
+            .await;
         }
 
         // Add a second workspace.
@@ -3772,18 +3734,14 @@ mod tests {
             ("b1", "Refactor sidebar layout", 3),
             ("b2", "Fix typo in README", 1),
         ] {
-            let save_task = thread_store.update(cx, |store, cx| {
-                store.save_thread(
-                    acp::SessionId::new(Arc::from(id)),
-                    make_test_thread(
-                        title,
-                        chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 1, 1, hour, 0, 0).unwrap(),
-                    ),
-                    path_list_b.clone(),
-                    cx,
-                )
-            });
-            save_task.await.unwrap();
+            save_thread_metadata(
+                acp::SessionId::new(Arc::from(id)),
+                title.into(),
+                chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 1, 1, hour, 0, 0).unwrap(),
+                path_list_b.clone(),
+                cx,
+            )
+            .await;
         }
         cx.run_until_parked();
 
@@ -3839,24 +3797,19 @@ mod tests {
         let sidebar = setup_sidebar(&multi_workspace, cx);
 
         let path_list_a = PathList::new(&[std::path::PathBuf::from("/alpha-project")]);
-        let thread_store = cx.update(|_window, cx| ThreadStore::global(cx));
 
         for (id, title, hour) in [
             ("a1", "Fix bug in sidebar", 2),
             ("a2", "Add tests for editor", 1),
         ] {
-            let save_task = thread_store.update(cx, |store, cx| {
-                store.save_thread(
-                    acp::SessionId::new(Arc::from(id)),
-                    make_test_thread(
-                        title,
-                        chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 1, 1, hour, 0, 0).unwrap(),
-                    ),
-                    path_list_a.clone(),
-                    cx,
-                )
-            });
-            save_task.await.unwrap();
+            save_thread_metadata(
+                acp::SessionId::new(Arc::from(id)),
+                title.into(),
+                chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 1, 1, hour, 0, 0).unwrap(),
+                path_list_a.clone(),
+                cx,
+            )
+            .await;
         }
 
         // Add a second workspace.
@@ -3871,18 +3824,14 @@ mod tests {
             ("b1", "Refactor sidebar layout", 3),
             ("b2", "Fix typo in README", 1),
         ] {
-            let save_task = thread_store.update(cx, |store, cx| {
-                store.save_thread(
-                    acp::SessionId::new(Arc::from(id)),
-                    make_test_thread(
-                        title,
-                        chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 1, 1, hour, 0, 0).unwrap(),
-                    ),
-                    path_list_b.clone(),
-                    cx,
-                )
-            });
-            save_task.await.unwrap();
+            save_thread_metadata(
+                acp::SessionId::new(Arc::from(id)),
+                title.into(),
+                chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 1, 1, hour, 0, 0).unwrap(),
+                path_list_b.clone(),
+                cx,
+            )
+            .await;
         }
         cx.run_until_parked();
 
@@ -3960,7 +3909,6 @@ mod tests {
         let sidebar = setup_sidebar(&multi_workspace, cx);
 
         let path_list = PathList::new(&[std::path::PathBuf::from("/my-project")]);
-        let thread_store = cx.update(|_window, cx| ThreadStore::global(cx));
 
         // Create 8 threads. The oldest one has a unique name and will be
         // behind View More (only 5 shown by default).
@@ -3970,18 +3918,14 @@ mod tests {
             } else {
                 format!("Thread {}", i + 1)
             };
-            let save_task = thread_store.update(cx, |store, cx| {
-                store.save_thread(
-                    acp::SessionId::new(Arc::from(format!("thread-{}", i))),
-                    make_test_thread(
-                        &title,
-                        chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 1, 1, 0, 0, i).unwrap(),
-                    ),
-                    path_list.clone(),
-                    cx,
-                )
-            });
-            save_task.await.unwrap();
+            save_thread_metadata(
+                acp::SessionId::new(Arc::from(format!("thread-{}", i))),
+                title.into(),
+                chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 1, 1, 0, 0, i).unwrap(),
+                path_list.clone(),
+                cx,
+            )
+            .await;
         }
         cx.run_until_parked();
 
@@ -4017,20 +3961,15 @@ mod tests {
         let sidebar = setup_sidebar(&multi_workspace, cx);
 
         let path_list = PathList::new(&[std::path::PathBuf::from("/my-project")]);
-        let thread_store = cx.update(|_window, cx| ThreadStore::global(cx));
 
-        let save_task = thread_store.update(cx, |store, cx| {
-            store.save_thread(
-                acp::SessionId::new(Arc::from("thread-1")),
-                make_test_thread(
-                    "Important thread",
-                    chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 1, 1, 0, 0, 0).unwrap(),
-                ),
-                path_list.clone(),
-                cx,
-            )
-        });
-        save_task.await.unwrap();
+        save_thread_metadata(
+            acp::SessionId::new(Arc::from("thread-1")),
+            "Important thread".into(),
+            chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 1, 1, 0, 0, 0).unwrap(),
+            path_list.clone(),
+            cx,
+        )
+        .await;
         cx.run_until_parked();
 
         // User focuses the sidebar and collapses the group using keyboard:
@@ -4063,25 +4002,20 @@ mod tests {
         let sidebar = setup_sidebar(&multi_workspace, cx);
 
         let path_list = PathList::new(&[std::path::PathBuf::from("/my-project")]);
-        let thread_store = cx.update(|_window, cx| ThreadStore::global(cx));
 
         for (id, title, hour) in [
             ("t-1", "Fix crash in panel", 3),
             ("t-2", "Fix lint warnings", 2),
             ("t-3", "Add new feature", 1),
         ] {
-            let save_task = thread_store.update(cx, |store, cx| {
-                store.save_thread(
-                    acp::SessionId::new(Arc::from(id)),
-                    make_test_thread(
-                        title,
-                        chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 1, 1, hour, 0, 0).unwrap(),
-                    ),
-                    path_list.clone(),
-                    cx,
-                )
-            });
-            save_task.await.unwrap();
+            save_thread_metadata(
+                acp::SessionId::new(Arc::from(id)),
+                title.into(),
+                chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 1, 1, hour, 0, 0).unwrap(),
+                path_list.clone(),
+                cx,
+            )
+            .await;
         }
         cx.run_until_parked();
 
@@ -4135,20 +4069,15 @@ mod tests {
         cx.run_until_parked();
 
         let path_list = PathList::new(&[std::path::PathBuf::from("/my-project")]);
-        let thread_store = cx.update(|_window, cx| ThreadStore::global(cx));
 
-        let save_task = thread_store.update(cx, |store, cx| {
-            store.save_thread(
-                acp::SessionId::new(Arc::from("hist-1")),
-                make_test_thread(
-                    "Historical Thread",
-                    chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 6, 1, 0, 0, 0).unwrap(),
-                ),
-                path_list.clone(),
-                cx,
-            )
-        });
-        save_task.await.unwrap();
+        save_thread_metadata(
+            acp::SessionId::new(Arc::from("hist-1")),
+            "Historical Thread".into(),
+            chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 6, 1, 0, 0, 0).unwrap(),
+            path_list.clone(),
+            cx,
+        )
+        .await;
         cx.run_until_parked();
         multi_workspace.update_in(cx, |_, _window, cx| cx.notify());
         cx.run_until_parked();
@@ -4533,28 +4462,6 @@ mod tests {
         });
     }
 
-    async fn save_named_thread(
-        session_id: &str,
-        title: &str,
-        path_list: &PathList,
-        cx: &mut gpui::VisualTestContext,
-    ) {
-        let thread_store = cx.update(|_window, cx| ThreadStore::global(cx));
-        let save_task = thread_store.update(cx, |store, cx| {
-            store.save_thread(
-                acp::SessionId::new(Arc::from(session_id)),
-                make_test_thread(
-                    title,
-                    chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 1, 1, 0, 0, 0).unwrap(),
-                ),
-                path_list.clone(),
-                cx,
-            )
-        });
-        save_task.await.unwrap();
-        cx.run_until_parked();
-    }
-
     async fn init_test_project_with_git(
         worktree_path: &str,
         cx: &mut TestAppContext,
@@ -4598,8 +4505,8 @@ mod tests {
 
         let main_paths = PathList::new(&[std::path::PathBuf::from("/project")]);
         let wt_paths = PathList::new(&[std::path::PathBuf::from("/wt/rosewood")]);
-        save_named_thread("main-t", "Unrelated Thread", &main_paths, cx).await;
-        save_named_thread("wt-t", "Fix Bug", &wt_paths, cx).await;
+        save_named_thread_metadata("main-t", "Unrelated Thread", &main_paths, cx).await;
+        save_named_thread_metadata("wt-t", "Fix Bug", &wt_paths, cx).await;
 
         multi_workspace.update_in(cx, |_, _window, cx| cx.notify());
         cx.run_until_parked();
@@ -4627,7 +4534,7 @@ mod tests {
 
         // Save a thread against a worktree path that doesn't exist yet.
         let wt_paths = PathList::new(&[std::path::PathBuf::from("/wt/rosewood")]);
-        save_named_thread("wt-thread", "Worktree Thread", &wt_paths, cx).await;
+        save_named_thread_metadata("wt-thread", "Worktree Thread", &wt_paths, cx).await;
 
         multi_workspace.update_in(cx, |_, _window, cx| cx.notify());
         cx.run_until_parked();
@@ -4719,8 +4626,8 @@ mod tests {
 
         let paths_a = PathList::new(&[std::path::PathBuf::from("/wt-feature-a")]);
         let paths_b = PathList::new(&[std::path::PathBuf::from("/wt-feature-b")]);
-        save_named_thread("thread-a", "Thread A", &paths_a, cx).await;
-        save_named_thread("thread-b", "Thread B", &paths_b, cx).await;
+        save_named_thread_metadata("thread-a", "Thread A", &paths_a, cx).await;
+        save_named_thread_metadata("thread-b", "Thread B", &paths_b, cx).await;
 
         multi_workspace.update_in(cx, |_, _window, cx| cx.notify());
         cx.run_until_parked();
@@ -4848,7 +4755,7 @@ mod tests {
 
         // Save a thread for the worktree path (no workspace for it).
         let paths_wt = PathList::new(&[std::path::PathBuf::from("/wt-feature-a")]);
-        save_named_thread("thread-wt", "WT Thread", &paths_wt, cx).await;
+        save_named_thread_metadata("thread-wt", "WT Thread", &paths_wt, cx).await;
 
         multi_workspace.update_in(cx, |_, _window, cx| cx.notify());
         cx.run_until_parked();
@@ -4965,8 +4872,8 @@ mod tests {
 
         let paths_main = PathList::new(&[std::path::PathBuf::from("/project")]);
         let paths_wt = PathList::new(&[std::path::PathBuf::from("/wt-feature-a")]);
-        save_named_thread("thread-main", "Main Thread", &paths_main, cx).await;
-        save_named_thread("thread-wt", "WT Thread", &paths_wt, cx).await;
+        save_named_thread_metadata("thread-main", "Main Thread", &paths_main, cx).await;
+        save_named_thread_metadata("thread-wt", "WT Thread", &paths_wt, cx).await;
 
         multi_workspace.update_in(cx, |_, _window, cx| cx.notify());
         cx.run_until_parked();
