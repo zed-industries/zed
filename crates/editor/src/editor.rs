@@ -8935,15 +8935,17 @@ impl Editor {
             else {
                 continue;
             };
-            let bookmarks = bookmark_store.read(cx).bookmarks_for_buffer(
-                buffer,
-                Some(
-                    buffer_snapshot.anchor_before(range.start)
-                        ..buffer_snapshot.anchor_after(range.end),
-                ),
-                buffer_snapshot,
-                cx,
-            );
+            let bookmarks = bookmark_store.update(cx, |store, cx| {
+                store.bookmarks_for_buffer(
+                    buffer,
+                    Some(
+                        buffer_snapshot.anchor_before(range.start)
+                            ..buffer_snapshot.anchor_after(range.end),
+                    ),
+                    buffer_snapshot,
+                    cx,
+                )
+            });
             for bookmark in bookmarks {
                 let multi_buffer_anchor = Anchor::in_buffer(excerpt_id, bookmark.anchor());
                 let position = multi_buffer_anchor
@@ -12273,38 +12275,41 @@ impl Editor {
         let selection = self
             .selections
             .newest::<MultiBufferOffset>(&self.display_snapshot(cx));
-        let bookmark_store = bookmark_store.read(cx);
         let multi_buffer_snapshot = self.buffer.read(cx).snapshot(cx);
 
-        let bookmarks_in_range = |range: Range<MultiBufferOffset>| -> Vec<Anchor> {
-            multi_buffer_snapshot
-                .range_to_buffer_ranges(range)
-                .into_iter()
-                .flat_map(|(buffer_snapshot, buffer_range, excerpt_id)| {
-                    let Some(buffer) = project
-                        .read(cx)
-                        .buffer_for_id(buffer_snapshot.remote_id(), cx)
-                    else {
-                        return Vec::new();
-                    };
-                    bookmark_store
-                        .bookmarks_for_buffer(
-                            buffer,
-                            Some(
-                                buffer_snapshot.anchor_before(buffer_range.start)
-                                    ..buffer_snapshot.anchor_after(buffer_range.end),
-                            ),
-                            buffer_snapshot,
-                            cx,
-                        )
-                        .map(|bookmark| Anchor::in_buffer(excerpt_id, bookmark.anchor()))
-                        .collect::<Vec<_>>()
-                })
-                .collect()
-        };
+        let bookmarks_in_range =
+            |range: Range<MultiBufferOffset>, cx: &mut Context<Self>| -> Vec<Anchor> {
+                multi_buffer_snapshot
+                    .range_to_buffer_ranges(range)
+                    .into_iter()
+                    .flat_map(|(buffer_snapshot, buffer_range, excerpt_id)| {
+                        let Some(buffer) = project
+                            .read(cx)
+                            .buffer_for_id(buffer_snapshot.remote_id(), cx)
+                        else {
+                            return Vec::new();
+                        };
+                        bookmark_store
+                            .update(cx, |store, cx| {
+                                store.bookmarks_for_buffer(
+                                    buffer,
+                                    Some(
+                                        buffer_snapshot.anchor_before(buffer_range.start)
+                                            ..buffer_snapshot.anchor_after(buffer_range.end),
+                                    ),
+                                    buffer_snapshot,
+                                    cx,
+                                )
+                            })
+                            .into_iter()
+                            .map(|bookmark| Anchor::in_buffer(excerpt_id, bookmark.anchor()))
+                            .collect::<Vec<_>>()
+                    })
+                    .collect()
+            };
 
-        let mut before = bookmarks_in_range(MultiBufferOffset(0)..selection.head());
-        let mut after = bookmarks_in_range(selection.head()..multi_buffer_snapshot.len());
+        let mut before = bookmarks_in_range(MultiBufferOffset(0)..selection.head(), cx);
+        let mut after = bookmarks_in_range(selection.head()..multi_buffer_snapshot.len(), cx);
         before.sort_by_key(|a| a.to_offset(&multi_buffer_snapshot));
         after.sort_by_key(|a| a.to_offset(&multi_buffer_snapshot));
 
@@ -12339,37 +12344,32 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Workspace>,
     ) {
-        let bookmarks_store = workspace.project().read(cx).bookmark_store();
+        let bookmark_store = workspace.project().read(cx).bookmark_store();
 
-        let bookmarks = bookmarks_store.read(cx).bookmarks();
+        let resolve_task = bookmark_store.update(cx, |store, cx| store.resolve_all(cx));
 
-        let mut locations: std::collections::HashMap<Entity<Buffer>, Vec<Range<Point>>> =
-            std::collections::HashMap::default();
+        cx.spawn_in(window, async move |workspace, cx| {
+            resolve_task.await.log_err();
 
-        for (_, bookmark) in bookmarks.iter() {
-            let buffer = bookmark.buffer().clone();
-            let buffer_snapshot = buffer.read(cx).snapshot();
-            let mut ranges_for_buffer: Vec<Range<Point>> = Vec::new();
-            for anchor in bookmark.bookmarks() {
-                let row = Point::from_anchor(&anchor.anchor(), &buffer_snapshot).row;
-                ranges_for_buffer.push(Point::row_range(row..row));
-            }
-            locations
-                .entry(buffer.clone())
-                .or_default()
-                .extend(ranges_for_buffer);
-        }
+            workspace
+                .update_in(cx, |workspace, window, cx| {
+                    let bookmark_store = workspace.project().read(cx).bookmark_store();
+                    let locations = bookmark_store.read(cx).all_bookmark_locations(cx);
 
-        Self::open_locations_in_multibuffer(
-            workspace,
-            locations,
-            "Bookmarks".into(),
-            false,
-            false,
-            MultibufferSelectionMode::First,
-            window,
-            cx,
-        );
+                    Editor::open_locations_in_multibuffer(
+                        workspace,
+                        locations,
+                        "Bookmarks".into(),
+                        false,
+                        false,
+                        MultibufferSelectionMode::First,
+                        window,
+                        cx,
+                    );
+                })
+                .log_err();
+        })
+        .detach();
     }
 
     pub fn toggle_breakpoint(

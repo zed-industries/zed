@@ -346,6 +346,20 @@ mod integration {
         let serialized = build_serialized(&[(path!("/project/file1.rs"), &[1, 100, 2])]);
         restore_bookmarks(&project, serialized, cx).await;
 
+        // Before resolution, unloaded bookmarks are stored as-is
+        let unresolved = get_all_bookmarks(&project, cx);
+        assert_bookmark_rows(&unresolved, path!("/project/file1.rs"), &[1, 2, 100]);
+
+        // Open the buffer to trigger lazy resolution
+        let buffer = open_buffer(&project, path!("/project/file1.rs"), cx).await;
+        project.update(cx, |project, cx| {
+            let buffer_snapshot = buffer.read(cx).snapshot();
+            project.bookmark_store().update(cx, |store, cx| {
+                store.bookmarks_for_buffer(buffer.clone(), None, &buffer_snapshot, cx);
+            });
+        });
+
+        // After resolution, out-of-range rows are filtered
         let restored = get_all_bookmarks(&project, cx);
         assert_bookmark_rows(&restored, path!("/project/file1.rs"), &[1, 2]);
     }
@@ -391,6 +405,20 @@ mod integration {
         let serialized = build_serialized(&[(path!("/project/tiny.rs"), &[5, 10])]);
         restore_bookmarks(&project, serialized, cx).await;
 
+        // Before resolution, unloaded bookmarks are stored as-is
+        let unresolved = get_all_bookmarks(&project, cx);
+        assert_eq!(unresolved.len(), 1);
+
+        // Open the buffer to trigger lazy resolution
+        let buffer = open_buffer(&project, path!("/project/tiny.rs"), cx).await;
+        project.update(cx, |project, cx| {
+            let buffer_snapshot = buffer.read(cx).snapshot();
+            project.bookmark_store().update(cx, |store, cx| {
+                store.bookmarks_for_buffer(buffer.clone(), None, &buffer_snapshot, cx);
+            });
+        });
+
+        // After resolution, all out-of-range rows are filtered away
         assert!(get_all_bookmarks(&project, cx).is_empty());
     }
 
