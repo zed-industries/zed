@@ -11,8 +11,8 @@ mod ios {
     use gpui::{
         AnyElement, App, AppContext as _, Application, ApplicationKeepAlive, Bounds, Context,
         Element, ElementId, ElementInputHandler, EntityInputHandler, FocusHandle, GlobalElementId,
-        InspectorElementId, IntoElement, LayoutId, Pixels, Point, Render, SharedString,
-        UTF16Selection, Window, WindowOptions, div, prelude::*,
+        InspectorElementId, IntoElement, LayoutId, MouseButton, MouseDownEvent, Pixels, Point,
+        Render, SharedString, UTF16Selection, Window, WindowOptions, div, prelude::*,
     };
     use gpui_ios::IosPlatform;
     use std::{cell::RefCell, ops::Range, rc::Rc};
@@ -46,9 +46,7 @@ mod ios {
     }
 
     impl Render for TextSmokeView {
-        fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-            // Grab focus on every render so the view owns the first responder.
-            window.focus(&self.focus_handle, cx);
+        fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
             TextSmokeElement {
                 view: cx.entity().clone(),
                 focus_handle: self.focus_handle.clone(),
@@ -169,16 +167,42 @@ mod ios {
             cx: &mut App,
         ) -> (LayoutId, Self::RequestLayoutState) {
             let text = self.view.read(cx).text.clone();
-            let display = SharedString::from(format!("{text}▌"));
+            let input_line = SharedString::from(format!("> {text}▌"));
+
+            // A column of numbered lines above the input gives the view enough
+            // content to scroll so two-finger pan can be verified.
+            let lines = (1..=50).map(|n| {
+                div()
+                    .text_color(gpui::rgb(0xa6adc8))
+                    .child(SharedString::from(format!("Line {n:02}: lorem ipsum dolor sit amet")))
+            });
+
+            let focus_handle = self.focus_handle.clone();
             let mut inner = div()
+                .id("smoke-scroll")
                 .size_full()
                 .bg(gpui::rgb(0x1e1e2e))
-                .flex()
-                .items_center()
-                .justify_center()
                 .text_color(gpui::rgb(0xcdd6f4))
                 .text_xl()
-                .child(display)
+                .flex()
+                .flex_col()
+                .overflow_y_scroll()
+                .p_4()
+                // Focus the text input when the user taps anywhere in this view.
+                // Without this, the keyboard would never appear.
+                .on_mouse_down(
+                    MouseButton::Left,
+                    move |_: &MouseDownEvent, window, cx| {
+                        window.focus(&focus_handle, cx);
+                    },
+                )
+                .children(lines)
+                .child(
+                    div()
+                        .mt_4()
+                        .text_color(gpui::rgb(0xcdd6f4))
+                        .child(input_line),
+                )
                 .into_any_element();
             let layout_id = inner.request_layout(window, cx);
             (layout_id, inner)

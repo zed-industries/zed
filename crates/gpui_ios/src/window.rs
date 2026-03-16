@@ -83,6 +83,11 @@ struct IosWindowState {
     current_capslock: Capslock,
     /// Last touch location in logical pixels; `None` when no finger is down.
     touch_position: Option<Point<Pixels>>,
+    /// Single-finger touch that has not yet moved past TOUCH_SLOP. We defer
+    /// `MouseDown` until the finger lifts (confirmed tap) or exceeds the slop
+    /// threshold (confirmed drag), so that the first finger of a two-finger
+    /// scroll gesture does not accidentally trigger click handlers.
+    pending_tap: Option<Point<Pixels>>,
     input_handler: Option<PlatformInputHandler>,
     /// Raw pointer to the `ZedMetalView` UIView. Not retained — the view is
     /// owned by the UIWindow hierarchy and outlives this state while the scene
@@ -178,6 +183,7 @@ impl IosWindow {
             current_modifiers: Modifiers::default(),
             current_capslock: Capslock::default(),
             touch_position: None,
+            pending_tap: None,
             input_handler: None,
             ui_view,
             renderer,
@@ -270,9 +276,6 @@ impl IosWindow {
             // The view retains the recognizer; release the alloc/init reference.
             let _: () = msg_send![pan, release];
 
-            // Become first responder so UIKit routes pressesBegan:/touchesBegan: to us.
-            let _: bool = msg_send![view, becomeFirstResponder];
-
             Ok(view)
         }
     }
@@ -358,6 +361,17 @@ impl PlatformWindow for IosWindow {
 
     fn set_input_handler(&mut self, input_handler: PlatformInputHandler) {
         self.state.borrow_mut().input_handler = Some(input_handler);
+        // Defer becomeFirstResponder to the next run-loop iteration (gpui-mobile pattern).
+        // Calling it synchronously inside a touch handler can cause UIKit re-entrancy
+        // while GPUI is mid-dispatch.
+        let view = self.state.borrow().ui_view;
+        unsafe {
+            let _: () = msg_send![view,
+                performSelector: sel!(becomeFirstResponder)
+                withObject: std::ptr::null::<Object>()
+                afterDelay: 0.0f64
+            ];
+        }
     }
 
     fn take_input_handler(&mut self) -> Option<PlatformInputHandler> {
@@ -742,7 +756,7 @@ fn register_metal_view_class() -> &'static Class {
             );
             decl.add_method(
                 sel!(touchesCancelled:withEvent:),
-                touches_ended as extern "C" fn(&Object, Sel, *mut Object, *mut Object),
+                touches_cancelled as extern "C" fn(&Object, Sel, *mut Object, *mut Object),
             );
             // Two-finger pan gesture → ScrollWheel
             decl.add_method(
@@ -1191,11 +1205,22 @@ extern "C" fn touches_ended(
     handle_touches(this, touches, TouchKind::Ended)
 }
 
+extern "C" fn touches_cancelled(
+    this: &Object,
+    _sel: Sel,
+    touches: *mut Object,
+    _event: *mut Object,
+) {
+    handle_touches(this, touches, TouchKind::Cancelled)
+}
+
 #[derive(PartialEq)]
 enum TouchKind {
     Began,
     Moved,
     Ended,
+    /// UIKit cancelled the touch (e.g. a gesture recognizer took over).
+    Cancelled,
 }
 
 // ─── UITextInput support ──────────────────────────────────────────────────────
@@ -1782,10 +1807,14 @@ extern "C" fn uit_selection_rects_for_range(
     unsafe { msg_send![class!(NSArray), array] }
 }
 
+/// Distance (in logical pixels) a finger must travel before a touch is
+/// reclassified from a pending tap to a drag. Matches gpui-mobile.
+const TOUCH_SLOP: f32 = 8.0;
+
 fn handle_touches(this: &Object, touches: *mut Object, kind: TouchKind) {
     let Some(state_rc) = state_from_view(this) else { return };
 
-    let (position, click_count) = unsafe {
+    let (position, tap_count) = unsafe {
         let array: *mut Object = msg_send![touches, allObjects];
         let count: usize = msg_send![array, count];
         // Multi-finger touches are handled by the UIPanGestureRecognizer.
@@ -1804,51 +1833,112 @@ fn handle_touches(this: &Object, touches: *mut Object, kind: TouchKind) {
     };
 
     state_rc.borrow_mut().touch_position = Some(position);
+    let modifiers = state_rc.borrow().current_modifiers;
 
-    // On touch began, reclaim first responder if the view lost it (e.g. after
-    // On touch began, reclaim first responder if lost (e.g. after keyboard
-    // dismissal or simulator hardware-keyboard toggle). becomeFirstResponder
-    // is a no-op when the view is already first responder.
-    if kind == TouchKind::Began {
-        let view = state_rc.borrow().ui_view;
-        unsafe {
-            let _: bool = msg_send![view, becomeFirstResponder];
+    match kind {
+        TouchKind::Began => {
+            // Record the start position; defer MouseDown until we know whether
+            // this is a tap or the beginning of a drag (or a cancelled touch
+            // because a second finger landed and the pan gesture took over).
+            state_rc.borrow_mut().pending_tap = Some(position);
+        }
+        TouchKind::Moved => {
+            let pending = state_rc.borrow().pending_tap;
+            if let Some(start) = pending {
+                let dx = f32::from(position.x) - f32::from(start.x);
+                let dy = f32::from(position.y) - f32::from(start.y);
+                if dx * dx + dy * dy > TOUCH_SLOP * TOUCH_SLOP {
+                    // Finger moved past slop — treat as a drag. Emit MouseDown
+                    // at the start position so drag interactions (e.g. selection)
+                    // work correctly, then immediately emit a MouseMove.
+                    state_rc.borrow_mut().pending_tap = None;
+                    dispatch_input_event(
+                        &state_rc,
+                        PlatformInput::MouseDown(MouseDownEvent {
+                            button: MouseButton::Left,
+                            position: start,
+                            modifiers,
+                            click_count: 1,
+                            first_mouse: false,
+                        }),
+                    );
+                    dispatch_input_event(
+                        &state_rc,
+                        PlatformInput::MouseMove(MouseMoveEvent {
+                            position,
+                            pressed_button: Some(MouseButton::Left),
+                            modifiers,
+                        }),
+                    );
+                }
+                // Still within slop — not yet a drag, emit nothing.
+            } else {
+                // Already dragging.
+                dispatch_input_event(
+                    &state_rc,
+                    PlatformInput::MouseMove(MouseMoveEvent {
+                        position,
+                        pressed_button: Some(MouseButton::Left),
+                        modifiers,
+                    }),
+                );
+            }
+        }
+        TouchKind::Ended => {
+            let pending = state_rc.borrow_mut().pending_tap.take();
+            if let Some(tap_pos) = pending {
+                // Finger lifted without leaving the slop zone: confirmed tap.
+                // Emit MouseDown + MouseUp at the original touch position.
+                dispatch_input_event(
+                    &state_rc,
+                    PlatformInput::MouseDown(MouseDownEvent {
+                        button: MouseButton::Left,
+                        position: tap_pos,
+                        modifiers,
+                        click_count: tap_count,
+                        first_mouse: false,
+                    }),
+                );
+                dispatch_input_event(
+                    &state_rc,
+                    PlatformInput::MouseUp(MouseUpEvent {
+                        button: MouseButton::Left,
+                        position: tap_pos,
+                        modifiers,
+                        click_count: tap_count,
+                    }),
+                );
+            } else {
+                // End of a drag — emit MouseUp at current position.
+                dispatch_input_event(
+                    &state_rc,
+                    PlatformInput::MouseUp(MouseUpEvent {
+                        button: MouseButton::Left,
+                        position,
+                        modifiers,
+                        click_count: 1,
+                    }),
+                );
+            }
+        }
+        TouchKind::Cancelled => {
+            // A gesture recognizer (e.g. UIPanGestureRecognizer) took over.
+            // If we hadn't yet emitted MouseDown (still pending), just clear
+            // state. If we were mid-drag, close it with a MouseUp.
+            let was_pending = state_rc.borrow_mut().pending_tap.take().is_some();
+            if !was_pending {
+                dispatch_input_event(
+                    &state_rc,
+                    PlatformInput::MouseUp(MouseUpEvent {
+                        button: MouseButton::Left,
+                        position,
+                        modifiers,
+                        click_count: 1,
+                    }),
+                );
+            }
         }
     }
-
-    let modifiers = state_rc.borrow().current_modifiers;
-    log::info!(
-        "touch {:?}: ({:.1}, {:.1}) clicks={}",
-        match kind {
-            TouchKind::Began => "began",
-            TouchKind::Moved => "moved",
-            TouchKind::Ended => "ended",
-        },
-        f32::from(position.x),
-        f32::from(position.y),
-        click_count,
-    );
-    let event = match kind {
-        TouchKind::Began => PlatformInput::MouseDown(MouseDownEvent {
-            button: MouseButton::Left,
-            position,
-            modifiers,
-            click_count,
-            first_mouse: false,
-        }),
-        TouchKind::Moved => PlatformInput::MouseMove(MouseMoveEvent {
-            position,
-            pressed_button: Some(MouseButton::Left),
-            modifiers,
-        }),
-        TouchKind::Ended => PlatformInput::MouseUp(MouseUpEvent {
-            button: MouseButton::Left,
-            position,
-            modifiers,
-            click_count,
-        }),
-    };
-    dispatch_input_event(&state_rc, event);
 }
 
 // ─── Two-finger pan gesture → scroll ─────────────────────────────────────────
