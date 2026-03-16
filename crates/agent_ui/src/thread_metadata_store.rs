@@ -132,13 +132,6 @@ impl ThreadMetadataStore {
         cx.observe_new::<acp_thread::AcpThread>(move |thread, _window, cx| {
             let thread_entity = cx.entity();
 
-            weak_store
-                .update(cx, |store, cx| {
-                    let metadata = Self::metadata_for_acp_thread(thread, cx);
-                    store.save(metadata, cx).detach_and_log_err(cx);
-                })
-                .ok();
-
             cx.on_release({
                 let weak_store = weak_store.clone();
                 move |thread, cx| {
