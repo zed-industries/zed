@@ -467,10 +467,11 @@ impl AgentRegistryPage {
                 let agent_id = agent.id().to_string();
                 Button::new(button_id, "Install")
                     .style(ButtonStyle::Tinted(ui::TintColor::Accent))
-                    .icon(IconName::Download)
-                    .icon_size(IconSize::Small)
-                    .icon_color(Color::Muted)
-                    .icon_position(IconPosition::Start)
+                    .start_icon(
+                        Icon::new(IconName::Download)
+                            .size(IconSize::Small)
+                            .color(Color::Muted),
+                    )
                     .on_click(move |_, _, cx| {
                         let agent_id = agent_id.clone();
                         update_settings_file(fs.clone(), cx, move |settings, _| {
@@ -541,9 +542,11 @@ impl Render for AgentRegistryPage {
                                 Button::new("learn-more", "Learn More")
                                     .style(ButtonStyle::Outlined)
                                     .size(ButtonSize::Medium)
-                                    .icon(IconName::ArrowUpRight)
-                                    .icon_color(Color::Muted)
-                                    .icon_size(IconSize::Small)
+                                    .end_icon(
+                                        Icon::new(IconName::ArrowUpRight)
+                                            .size(IconSize::Small)
+                                            .color(Color::Muted),
+                                    )
                                     .on_click(move |_, _, cx| {
                                         cx.open_url(&zed_urls::acp_registry_blog(cx))
                                     }),

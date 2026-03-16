@@ -12,7 +12,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{
     DefaultAgentView, DockPosition, LanguageModelParameters, LanguageModelSelection,
-    NotifyWhenAgentWaiting, RegisterSetting, Settings, ToolPermissionMode,
+    NewThreadLocation, NotifyWhenAgentWaiting, RegisterSetting, Settings, ToolPermissionMode,
 };
 
 pub use crate::agent_profile::*;
@@ -51,6 +51,7 @@ pub struct AgentSettings {
     pub message_editor_min_lines: usize,
     pub show_turn_stats: bool,
     pub tool_permissions: ToolPermissions,
+    pub new_thread_location: NewThreadLocation,
 }
 
 impl AgentSettings {
@@ -438,6 +439,7 @@ impl Settings for AgentSettings {
             message_editor_min_lines: agent.message_editor_min_lines.unwrap(),
             show_turn_stats: agent.show_turn_stats.unwrap(),
             tool_permissions: compile_tool_permissions(agent.tool_permissions),
+            new_thread_location: agent.new_thread_location.unwrap_or_default(),
         }
     }
 }

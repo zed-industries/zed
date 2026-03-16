@@ -1,3 +1,4 @@
+use feature_flags::{AgentV2FeatureFlag, FeatureFlagAppExt as _};
 use gpui::{Action as _, App};
 use itertools::Itertools as _;
 use settings::{
@@ -74,7 +75,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
         terminal_page(),
         version_control_page(),
         collaboration_page(),
-        ai_page(),
+        ai_page(cx),
         network_page(),
     ]
 }
@@ -4238,7 +4239,7 @@ fn window_and_layout_page() -> SettingsPage {
 }
 
 fn panels_page() -> SettingsPage {
-    fn project_panel_section() -> [SettingsPageItem; 22] {
+    fn project_panel_section() -> [SettingsPageItem; 23] {
         [
             SettingsPageItem::SectionHeader("Project Panel"),
             SettingsPageItem::SettingItem(SettingItem {
@@ -4511,6 +4512,32 @@ fn panels_page() -> SettingsPage {
                             .scrollbar
                             .get_or_insert_default()
                             .show = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Horizontal Scroll",
+                description: "Whether to allow horizontal scrolling in the project panel. When disabled, the view is always locked to the leftmost position and long file names are clipped.",
+                field: Box::new(SettingField {
+                    json_path: Some("project_panel.scrollbar.horizontal_scroll"),
+                    pick: |settings_content| {
+                        settings_content
+                            .project_panel
+                            .as_ref()?
+                            .scrollbar
+                            .as_ref()?
+                            .horizontal_scroll
+                            .as_ref()
+                    },
+                    write: |settings_content, value| {
+                        settings_content
+                            .project_panel
+                            .get_or_insert_default()
+                            .scrollbar
+                            .get_or_insert_default()
+                            .horizontal_scroll = value;
                     },
                 }),
                 metadata: None,
@@ -6952,7 +6979,7 @@ fn collaboration_page() -> SettingsPage {
     }
 }
 
-fn ai_page() -> SettingsPage {
+fn ai_page(cx: &App) -> SettingsPage {
     fn general_section() -> [SettingsPageItem; 2] {
         [
             SettingsPageItem::SectionHeader("General"),
@@ -6972,8 +6999,8 @@ fn ai_page() -> SettingsPage {
         ]
     }
 
-    fn agent_configuration_section() -> [SettingsPageItem; 12] {
-        [
+    fn agent_configuration_section(cx: &App) -> Box<[SettingsPageItem]> {
+        let mut items = vec![
             SettingsPageItem::SectionHeader("Agent Configuration"),
             SettingsPageItem::SubPageLink(SubPageLink {
                 title: "Tool Permissions".into(),
@@ -6984,6 +7011,34 @@ fn ai_page() -> SettingsPage {
                 files: USER,
                 render: render_tool_permissions_setup_page,
             }),
+        ];
+
+        if cx.has_flag::<AgentV2FeatureFlag>() {
+            items.push(SettingsPageItem::SettingItem(SettingItem {
+                title: "New Thread Location",
+                description: "Whether to start a new thread in the current local project or in a new Git worktree.",
+                field: Box::new(SettingField {
+                    json_path: Some("agent.new_thread_location"),
+                    pick: |settings_content| {
+                        settings_content
+                            .agent
+                            .as_ref()?
+                            .new_thread_location
+                            .as_ref()
+                    },
+                    write: |settings_content, value| {
+                        settings_content
+                            .agent
+                            .get_or_insert_default()
+                            .new_thread_location = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }));
+        }
+
+        items.extend([
             SettingsPageItem::SettingItem(SettingItem {
                 title: "Single File Review",
                 description: "When enabled, agent edits will also be displayed in single-file buffers for review.",
@@ -7188,7 +7243,9 @@ fn ai_page() -> SettingsPage {
                 metadata: None,
                 files: USER,
             }),
-        ]
+        ]);
+
+        items.into_boxed_slice()
     }
 
     fn context_servers_section() -> [SettingsPageItem; 2] {
@@ -7273,7 +7330,7 @@ fn ai_page() -> SettingsPage {
         title: "AI",
         items: concat_sections![
             general_section(),
-            agent_configuration_section(),
+            agent_configuration_section(cx),
             context_servers_section(),
             edit_prediction_language_settings_section(),
             edit_prediction_display_sub_section()

@@ -276,7 +276,7 @@ fn main() {
 
     zlog::init();
 
-    if true {
+    if stdout_is_a_pty() {
         zlog::init_output_stdout();
     } else {
         let result = zlog::init_output_file(paths::log_file(), Some(paths::old_log_file()));

@@ -1211,7 +1211,9 @@ async fn test_stack_frame_filter_persistence(
     cx.run_until_parked();
 
     let workspace_id = workspace
-        .update(cx, |workspace, _window, cx| workspace.database_id(cx))
+        .update(cx, |workspace, _window, cx| {
+            workspace.active_workspace_database_id(cx)
+        })
         .ok()
         .flatten()
         .expect("workspace id has to be some for this test to work properly");

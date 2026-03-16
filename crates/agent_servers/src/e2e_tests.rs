@@ -431,7 +431,7 @@ pub async fn new_test_thread(
     cx: &mut TestAppContext,
 ) -> Entity<AcpThread> {
     let store = project.read_with(cx, |project, _| project.agent_server_store().clone());
-    let delegate = AgentServerDelegate::new(store, project.clone(), None, None);
+    let delegate = AgentServerDelegate::new(store, None);
 
     let connection = cx.update(|cx| server.connect(delegate, cx)).await.unwrap();
 

@@ -275,10 +275,11 @@ fn render_tool_list_item(
                 .tab_index(tool_index as isize)
                 .style(ButtonStyle::OutlinedGhost)
                 .size(ButtonSize::Medium)
-                .icon(IconName::ChevronRight)
-                .icon_position(IconPosition::End)
-                .icon_color(Color::Muted)
-                .icon_size(IconSize::Small)
+                .end_icon(
+                    Icon::new(IconName::ChevronRight)
+                        .size(IconSize::Small)
+                        .color(Color::Muted),
+                )
                 .on_click(cx.listener(move |this, _, window, cx| {
                     this.push_dynamic_sub_page(
                         tool_name,
@@ -1090,9 +1091,7 @@ fn render_global_default_mode_section(current_mode: ToolPermissionMode) -> AnyEl
                         .tab_index(0_isize)
                         .style(ButtonStyle::Outlined)
                         .size(ButtonSize::Medium)
-                        .icon(IconName::ChevronDown)
-                        .icon_position(IconPosition::End)
-                        .icon_size(IconSize::Small),
+                        .end_icon(Icon::new(IconName::ChevronDown).size(IconSize::Small)),
                 )
                 .menu(move |window, cx| {
                     Some(ContextMenu::build(window, cx, move |menu, _, _| {
@@ -1141,9 +1140,7 @@ fn render_default_mode_section(
                         .tab_index(0_isize)
                         .style(ButtonStyle::Outlined)
                         .size(ButtonSize::Medium)
-                        .icon(IconName::ChevronDown)
-                        .icon_position(IconPosition::End)
-                        .icon_size(IconSize::Small),
+                        .end_icon(Icon::new(IconName::ChevronDown).size(IconSize::Small)),
                 )
                 .menu(move |window, cx| {
                     let tool_id = tool_id_owned.clone();

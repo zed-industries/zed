@@ -45,6 +45,7 @@ impl From<&DbThreadMetadata> for acp_thread::AgentSessionInfo {
             cwd: None,
             title: Some(meta.title.clone()),
             updated_at: Some(meta.updated_at),
+            created_at: meta.created_at,
             meta: None,
         }
     }
@@ -482,7 +483,10 @@ impl ThreadsDatabase {
         let data_type = DataType::Zstd;
         let data = compressed;
 
-        let created_at = Utc::now().to_rfc3339();
+        // Use the thread's updated_at as created_at for new threads.
+        // This ensures the creation time reflects when the thread was conceptually
+        // created, not when it was saved to the database.
+        let created_at = updated_at.clone();
 
         let mut insert = connection.exec_bound::<(Arc<str>, Option<Arc<str>>, Option<String>, Option<String>, String, String, DataType, Vec<u8>, String)>(indoc! {"
             INSERT INTO threads (id, parent_id, folder_paths, folder_paths_order, summary, updated_at, data_type, data, created_at)

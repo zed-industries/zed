@@ -7,7 +7,7 @@ license = "GPL-3.0-or-later"
 
 [features]
 test-support = [
-    "client/test-support",
+
     "editor/test-support",
     "gpui/test-support",
     "workspace/test-support",
@@ -47,7 +47,6 @@ ztracing.workspace = true
 tracing.workspace = true
 
 [dev-dependencies]
-client = { workspace = true, features = ["test-support"] }
 editor = { workspace = true, features = ["test-support"] }
 gpui = { workspace = true, features = ["test-support"] }
 language = { workspace = true, features = ["test-support"] }

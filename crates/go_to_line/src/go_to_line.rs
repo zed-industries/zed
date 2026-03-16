@@ -94,7 +94,9 @@ impl GoToLine {
                 .read(cx)
                 .excerpts_for_buffer(snapshot.remote_id(), cx)
                 .into_iter()
-                .map(move |(_, range)| text::ToPoint::to_point(&range.context.end, &snapshot).row)
+                .map(move |(_, _, range)| {
+                    text::ToPoint::to_point(&range.context.end, &snapshot).row
+                })
                 .max()
                 .unwrap_or(0);
 

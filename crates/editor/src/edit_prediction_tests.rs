@@ -4,7 +4,13 @@ use edit_prediction_types::{
 use gpui::{Entity, KeyBinding, Modifiers, prelude::*};
 use indoc::indoc;
 use multi_buffer::{Anchor, MultiBufferSnapshot, ToPoint};
-use std::{ops::Range, sync::Arc};
+use std::{
+    ops::Range,
+    sync::{
+        Arc,
+        atomic::{self, AtomicUsize},
+    },
+};
 use text::{Point, ToOffset};
 use ui::prelude::*;
 
@@ -12,6 +18,8 @@ use crate::{
     AcceptEditPrediction, EditPrediction, MenuEditPredictionsPolicy, editor_tests::init_test,
     test::editor_test_context::EditorTestContext,
 };
+use rpc::proto::PeerId;
+use workspace::CollaboratorId;
 
 #[gpui::test]
 async fn test_edit_prediction_insert(cx: &mut gpui::TestAppContext) {
@@ -360,6 +368,60 @@ async fn test_edit_prediction_jump_disabled_for_non_zed_providers(cx: &mut gpui:
 }
 
 #[gpui::test]
+async fn test_edit_prediction_refresh_suppressed_while_following(cx: &mut gpui::TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+    let provider = cx.new(|_| FakeEditPredictionDelegate::default());
+    assign_editor_completion_provider(provider.clone(), &mut cx);
+    cx.set_state("let x = ˇ;");
+
+    propose_edits(&provider, vec![(8..8, "42")], &mut cx);
+
+    cx.update_editor(|editor, window, cx| {
+        editor.refresh_edit_prediction(false, false, window, cx);
+        editor.update_visible_edit_prediction(window, cx);
+    });
+
+    assert_eq!(
+        provider.read_with(&cx.cx, |provider, _| {
+            provider.refresh_count.load(atomic::Ordering::SeqCst)
+        }),
+        1
+    );
+    cx.editor(|editor, _, _| {
+        assert!(editor.active_edit_prediction.is_some());
+    });
+
+    cx.update_editor(|editor, window, cx| {
+        editor.leader_id = Some(CollaboratorId::PeerId(PeerId::default()));
+        editor.refresh_edit_prediction(false, false, window, cx);
+    });
+
+    assert_eq!(
+        provider.read_with(&cx.cx, |provider, _| {
+            provider.refresh_count.load(atomic::Ordering::SeqCst)
+        }),
+        1
+    );
+    cx.editor(|editor, _, _| {
+        assert!(editor.active_edit_prediction.is_none());
+    });
+
+    cx.update_editor(|editor, window, cx| {
+        editor.leader_id = None;
+        editor.refresh_edit_prediction(false, false, window, cx);
+    });
+
+    assert_eq!(
+        provider.read_with(&cx.cx, |provider, _| {
+            provider.refresh_count.load(atomic::Ordering::SeqCst)
+        }),
+        2
+    );
+}
+
+#[gpui::test]
 async fn test_edit_prediction_preview_cleanup_on_toggle_off(cx: &mut gpui::TestAppContext) {
     init_test(cx, |_| {});
 
@@ -567,6 +629,7 @@ fn assign_editor_completion_provider_non_zed(
 #[derive(Default, Clone)]
 pub struct FakeEditPredictionDelegate {
     pub completion: Option<edit_prediction_types::EditPrediction>,
+    pub refresh_count: Arc<AtomicUsize>,
 }
 
 impl FakeEditPredictionDelegate {
@@ -619,6 +682,7 @@ impl EditPredictionDelegate for FakeEditPredictionDelegate {
         _debounce: bool,
         _cx: &mut gpui::Context<Self>,
     ) {
+        self.refresh_count.fetch_add(1, atomic::Ordering::SeqCst);
     }
 
     fn accept(&mut self, _cx: &mut gpui::Context<Self>) {}
