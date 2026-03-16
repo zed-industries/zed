@@ -652,7 +652,7 @@ pub enum AgentType {
     NativeAgent,
     TextThread,
     Custom {
-        #[serde(alias = "name")]
+        #[serde(rename = "name")]
         id: AgentId,
     },
 }

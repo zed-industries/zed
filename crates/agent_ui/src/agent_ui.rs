@@ -222,7 +222,7 @@ pub struct NewNativeAgentThreadFromSummary {
 pub enum Agent {
     NativeAgent,
     Custom {
-        #[serde(alias = "name")]
+        #[serde(rename = "name")]
         id: AgentId,
     },
 }
