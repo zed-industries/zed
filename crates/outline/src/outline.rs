@@ -305,12 +305,12 @@ impl PickerDelegate for OutlineViewDelegate {
                 let selected_index = if is_query_empty {
                     let (buffer, cursor_offset) =
                         this.delegate.active_editor.update(cx, |editor, cx| {
-                            let buffer = editor.buffer().read(cx).snapshot(cx);
+                            let snapshot = editor.display_snapshot(cx);
                             let cursor_offset = editor
                                 .selections
-                                .newest::<MultiBufferOffset>(&editor.display_snapshot(cx))
+                                .newest::<MultiBufferOffset>(&snapshot)
                                 .head();
-                            (buffer, cursor_offset)
+                            (snapshot.buffer().clone(), cursor_offset)
                         });
                     this.delegate
                         .matches
