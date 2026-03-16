@@ -210,7 +210,7 @@ impl ThreadMetadataStore {
             session_id,
             agent_id,
             title,
-            created_at: Some(updated_at.clone()), // handled by db `ON CONFLICT`
+            created_at: Some(updated_at), // handled by db `ON CONFLICT`
             updated_at,
             folder_paths,
         }
