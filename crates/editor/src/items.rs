@@ -1404,7 +1404,10 @@ impl SerializableItem for Editor {
         self.should_serialize_buffer()
             && matches!(
                 event,
-                EditorEvent::Saved | EditorEvent::DirtyChanged | EditorEvent::BufferEdited
+                EditorEvent::Saved
+                    | EditorEvent::DirtyChanged
+                    | EditorEvent::BufferEdited
+                    | EditorEvent::FileHandleChanged
             )
     }
 }
