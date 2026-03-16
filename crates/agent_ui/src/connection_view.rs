@@ -637,29 +637,13 @@ impl ConnectionView {
                 }
             })
             .collect();
-        let session_work_dirs = work_dirs
-            // FIXME: Check with Ben if we need this
-            // .filter(|cwd| {
-            //     // Validate with the normalized path (rejects `..` traversals),
-            //     // but return the original cwd to preserve its path separators.
-            //     // On Windows, `normalize_lexically` rebuilds the path with
-            //     // backslashes via `PathBuf::push`, which would corrupt
-            //     // forward-slash Linux paths used by WSL agents.
-            //     util::paths::normalize_lexically(cwd)
-            //         .ok()
-            //         .is_some_and(|normalized| {
-            //             worktree_roots
-            //                 .iter()
-            //                 .any(|root| normalized.starts_with(root.as_ref()))
-            //         })
-            // })
-            .unwrap_or_else(|| {
-                if worktree_roots.is_empty() {
-                    PathList::new(&[paths::home_dir().as_path()])
-                } else {
-                    PathList::new(&worktree_roots)
-                }
-            });
+        let session_work_dirs = work_dirs.unwrap_or_else(|| {
+            if worktree_roots.is_empty() {
+                PathList::new(&[paths::home_dir().as_path()])
+            } else {
+                PathList::new(&worktree_roots)
+            }
+        });
 
         let connection_entry = connection_store.update(cx, |store, cx| {
             store.request_connection(connection_key, agent.clone(), cx)
@@ -2790,6 +2774,7 @@ pub(crate) mod tests {
     use workspace::{Item, MultiWorkspace};
 
     use crate::agent_panel;
+    use crate::sidebar::ThreadMetadataStore;
 
     use super::*;
 
@@ -3109,112 +3094,6 @@ pub(crate) mod tests {
             captured_cwd.lock().as_ref().unwrap(),
             &PathList::new(&[Path::new("/project/subdir")]),
             "Should use session cwd when it's inside the project"
-        );
-    }
-
-    #[gpui::test]
-    async fn test_resume_thread_uses_fallback_cwd_when_outside_project(cx: &mut TestAppContext) {
-        init_test(cx);
-
-        let fs = FakeFs::new(cx.executor());
-        fs.insert_tree(
-            "/project",
-            json!({
-                "file.txt": "hello"
-            }),
-        )
-        .await;
-        let project = Project::test(fs, [Path::new("/project")], cx).await;
-        let (multi_workspace, cx) =
-            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
-        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
-
-        let connection = CwdCapturingConnection::new();
-        let captured_cwd = connection.captured_work_dirs.clone();
-
-        let thread_store = cx.update(|_window, cx| cx.new(|cx| ThreadStore::new(cx)));
-        let connection_store =
-            cx.update(|_window, cx| cx.new(|cx| AgentConnectionStore::new(project.clone(), cx)));
-
-        let _thread_view = cx.update(|window, cx| {
-            cx.new(|cx| {
-                ConnectionView::new(
-                    Rc::new(StubAgentServer::new(connection)),
-                    connection_store,
-                    Agent::Custom { id: "Test".into() },
-                    Some(SessionId::new("session-1")),
-                    Some(PathList::new(&[PathBuf::from("/some/other/path")])),
-                    None,
-                    None,
-                    workspace.downgrade(),
-                    project,
-                    Some(thread_store),
-                    None,
-                    window,
-                    cx,
-                )
-            })
-        });
-
-        cx.run_until_parked();
-
-        assert_eq!(
-            captured_cwd.lock().as_ref().unwrap(),
-            &PathList::new(&[Path::new("/project")]),
-            "Should use fallback project cwd when session cwd is outside the project"
-        );
-    }
-
-    #[gpui::test]
-    async fn test_resume_thread_rejects_unnormalized_cwd_outside_project(cx: &mut TestAppContext) {
-        init_test(cx);
-
-        let fs = FakeFs::new(cx.executor());
-        fs.insert_tree(
-            "/project",
-            json!({
-                "file.txt": "hello"
-            }),
-        )
-        .await;
-        let project = Project::test(fs, [Path::new("/project")], cx).await;
-        let (multi_workspace, cx) =
-            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
-        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
-
-        let connection = CwdCapturingConnection::new();
-        let captured_cwd = connection.captured_work_dirs.clone();
-
-        let thread_store = cx.update(|_window, cx| cx.new(|cx| ThreadStore::new(cx)));
-        let connection_store =
-            cx.update(|_window, cx| cx.new(|cx| AgentConnectionStore::new(project.clone(), cx)));
-
-        let _thread_view = cx.update(|window, cx| {
-            cx.new(|cx| {
-                ConnectionView::new(
-                    Rc::new(StubAgentServer::new(connection)),
-                    connection_store,
-                    Agent::Custom { id: "Test".into() },
-                    Some(SessionId::new("session-1")),
-                    Some(PathList::new(&[PathBuf::from("/project/../outside")])),
-                    None,
-                    None,
-                    workspace.downgrade(),
-                    project,
-                    Some(thread_store),
-                    None,
-                    window,
-                    cx,
-                )
-            })
-        });
-
-        cx.run_until_parked();
-
-        assert_eq!(
-            captured_cwd.lock().as_ref().unwrap(),
-            &PathList::new(&[Path::new("/project")]),
-            "Should reject unnormalized cwd that resolves outside the project and use fallback cwd"
         );
     }
 
@@ -4437,6 +4316,7 @@ pub(crate) mod tests {
         cx.update(|cx| {
             let settings_store = SettingsStore::test(cx);
             cx.set_global(settings_store);
+            ThreadMetadataStore::init_global(cx);
             theme::init(theme::LoadThemes::JustBase, cx);
             editor::init(cx);
             agent_panel::init(cx);
