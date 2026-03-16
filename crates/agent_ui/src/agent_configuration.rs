@@ -28,7 +28,7 @@ use language_model::{
 use language_models::AllLanguageModelSettings;
 use notifications::status_toast::{StatusToast, ToastIcon};
 use project::{
-    agent_server_store::{AgentServerStore, ExternalAgentServerName, ExternalAgentSource},
+    agent_server_store::{AgentId, AgentServerStore, ExternalAgentSource},
     context_server_store::{ContextServerConfiguration, ContextServerStatus, ContextServerStore},
 };
 use settings::{Settings, SettingsStore, update_settings_file};
@@ -1103,7 +1103,7 @@ impl AgentConfiguration {
             ExternalAgentSource::Custom => None,
         };
 
-        let agent_server_name = ExternalAgentServerName(id.clone());
+        let agent_server_name = AgentId(id.clone());
 
         let uninstall_button = match source {
             ExternalAgentSource::Extension => Some(

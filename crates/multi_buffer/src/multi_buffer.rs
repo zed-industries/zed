@@ -2141,7 +2141,7 @@ impl MultiBuffer {
             if point < start {
                 found = Some((start, excerpt_id));
             }
-            if point > end {
+            if point >= end {
                 found = Some((end, excerpt_id));
             }
         }

@@ -8,10 +8,10 @@ use collections::HashMap;
 use editor::{Editor, EditorEvent, EditorMode, MinimapVisibility, SizingBehavior};
 use gpui::{
     AnyEntity, App, AppContext as _, Entity, EntityId, EventEmitter, FocusHandle, Focusable,
-    ScrollHandle, SharedString, TextStyleRefinement, WeakEntity, Window,
+    ScrollHandle, TextStyleRefinement, WeakEntity, Window,
 };
 use language::language_settings::SoftWrap;
-use project::Project;
+use project::{AgentId, Project};
 use prompt_store::PromptStore;
 use rope::Point;
 use settings::Settings as _;
@@ -31,7 +31,7 @@ pub struct EntryViewState {
     entries: Vec<Entry>,
     prompt_capabilities: Rc<RefCell<acp::PromptCapabilities>>,
     available_commands: Rc<RefCell<Vec<acp::AvailableCommand>>>,
-    agent_name: SharedString,
+    agent_id: AgentId,
 }
 
 impl EntryViewState {
@@ -43,7 +43,7 @@ impl EntryViewState {
         prompt_store: Option<Entity<PromptStore>>,
         prompt_capabilities: Rc<RefCell<acp::PromptCapabilities>>,
         available_commands: Rc<RefCell<Vec<acp::AvailableCommand>>>,
-        agent_name: SharedString,
+        agent_id: AgentId,
     ) -> Self {
         Self {
             workspace,
@@ -54,7 +54,7 @@ impl EntryViewState {
             entries: Vec::new(),
             prompt_capabilities,
             available_commands,
-            agent_name,
+            agent_id,
         }
     }
 
@@ -96,7 +96,7 @@ impl EntryViewState {
                             self.prompt_store.clone(),
                             self.prompt_capabilities.clone(),
                             self.available_commands.clone(),
-                            self.agent_name.clone(),
+                            self.agent_id.clone(),
                             "Edit message － @ to include context",
                             editor::EditorMode::AutoHeight {
                                 min_lines: 1,
@@ -468,7 +468,7 @@ mod tests {
     use serde_json::json;
     use settings::SettingsStore;
     use util::path;
-    use workspace::MultiWorkspace;
+    use workspace::{MultiWorkspace, PathList};
 
     #[gpui::test]
     async fn test_diff_sync(cx: &mut TestAppContext) {
@@ -495,9 +495,11 @@ mod tests {
         let connection = Rc::new(StubAgentConnection::new());
         let thread = cx
             .update(|_, cx| {
-                connection
-                    .clone()
-                    .new_session(project.clone(), Path::new(path!("/project")), cx)
+                connection.clone().new_session(
+                    project.clone(),
+                    PathList::new(&[Path::new(path!("/project"))]),
+                    cx,
+                )
             })
             .await
             .unwrap();

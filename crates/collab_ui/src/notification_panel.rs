@@ -677,6 +677,9 @@ impl Panel for NotificationPanel {
     }
 
     fn icon_label(&self, _window: &Window, cx: &App) -> Option<String> {
+        if !NotificationPanelSettings::get_global(cx).show_count_badge {
+            return None;
+        }
         let count = self.notification_store.read(cx).unread_notification_count();
         if count == 0 {
             None

@@ -2,7 +2,7 @@ use gpui::{
     ClickEvent, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, MouseDownEvent, Render,
     linear_color_stop, linear_gradient,
 };
-use project::agent_server_store::GEMINI_NAME;
+use project::agent_server_store::GEMINI_ID;
 use ui::{TintColor, Vector, VectorName, prelude::*};
 use workspace::{ModalView, Workspace};
 
@@ -39,7 +39,7 @@ impl AcpOnboardingModal {
                 panel.update(cx, |panel, cx| {
                     panel.new_agent_thread(
                         AgentType::Custom {
-                            name: GEMINI_NAME.into(),
+                            id: GEMINI_ID.into(),
                         },
                         window,
                         cx,

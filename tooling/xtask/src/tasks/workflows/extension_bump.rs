@@ -427,11 +427,15 @@ fn release_action(
     tag: JobOutput,
     generated_token: StepOutput,
 ) -> Step<Use> {
-    named::uses("huacnlee", "zed-extension-action", "v2")
-        .add_with(("extension-name", extension_id.to_string()))
-        .add_with(("push-to", "zed-industries/extensions"))
-        .add_with(("tag", tag.to_string()))
-        .add_env(("COMMITTER_TOKEN", generated_token.to_string()))
+    named::uses(
+        "zed-extensions",
+        "update-action",
+        "1ef53b23be40fe2549be0baffaa98e9f51838fef",
+    )
+    .add_with(("extension-name", extension_id.to_string()))
+    .add_with(("push-to", "zed-industries/extensions"))
+    .add_with(("tag", tag.to_string()))
+    .add_env(("COMMITTER_TOKEN", generated_token.to_string()))
 }
 
 fn extension_workflow_secrets() -> (WorkflowSecret, WorkflowSecret) {

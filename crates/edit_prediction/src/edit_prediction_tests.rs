@@ -1323,6 +1323,7 @@ async fn test_empty_prediction(cx: &mut TestAppContext) {
             reason: EditPredictionRejectReason::Empty,
             was_shown: false,
             model_version: None,
+            e2e_latency_ms: Some(0),
         }]
     );
 }
@@ -1384,6 +1385,7 @@ async fn test_interpolated_empty(cx: &mut TestAppContext) {
             reason: EditPredictionRejectReason::InterpolatedEmpty,
             was_shown: false,
             model_version: None,
+            e2e_latency_ms: Some(0),
         }]
     );
 }
@@ -1477,6 +1479,7 @@ async fn test_replace_current(cx: &mut TestAppContext) {
             reason: EditPredictionRejectReason::Replaced,
             was_shown: false,
             model_version: None,
+            e2e_latency_ms: Some(0),
         }]
     );
 }
@@ -1572,6 +1575,7 @@ async fn test_current_preferred(cx: &mut TestAppContext) {
             reason: EditPredictionRejectReason::CurrentPreferred,
             was_shown: false,
             model_version: None,
+            e2e_latency_ms: Some(0),
         }]
     );
 }
@@ -1664,6 +1668,7 @@ async fn test_cancel_earlier_pending_requests(cx: &mut TestAppContext) {
             reason: EditPredictionRejectReason::Canceled,
             was_shown: false,
             model_version: None,
+            e2e_latency_ms: None,
         }]
     );
 }
@@ -1795,12 +1800,14 @@ async fn test_cancel_second_on_third_request(cx: &mut TestAppContext) {
                 reason: EditPredictionRejectReason::Canceled,
                 was_shown: false,
                 model_version: None,
+                e2e_latency_ms: None,
             },
             EditPredictionRejection {
                 request_id: first_id,
                 reason: EditPredictionRejectReason::Replaced,
                 was_shown: false,
                 model_version: None,
+                e2e_latency_ms: Some(0),
             }
         ]
     );
@@ -1963,12 +1970,14 @@ async fn test_rejections_flushing(cx: &mut TestAppContext) {
             EditPredictionRejectReason::Discarded,
             false,
             None,
+            None,
             cx,
         );
         ep_store.reject_prediction(
             EditPredictionId("test-2".into()),
             EditPredictionRejectReason::Canceled,
             true,
+            None,
             None,
             cx,
         );
@@ -1989,6 +1998,7 @@ async fn test_rejections_flushing(cx: &mut TestAppContext) {
             reason: EditPredictionRejectReason::Discarded,
             was_shown: false,
             model_version: None,
+            e2e_latency_ms: None
         }
     );
     assert_eq!(
@@ -1998,6 +2008,7 @@ async fn test_rejections_flushing(cx: &mut TestAppContext) {
             reason: EditPredictionRejectReason::Canceled,
             was_shown: true,
             model_version: None,
+            e2e_latency_ms: None
         }
     );
 
@@ -2008,6 +2019,7 @@ async fn test_rejections_flushing(cx: &mut TestAppContext) {
                 EditPredictionId(format!("batch-{}", i).into()),
                 EditPredictionRejectReason::Discarded,
                 false,
+                None,
                 None,
                 cx,
             );
@@ -2041,6 +2053,7 @@ async fn test_rejections_flushing(cx: &mut TestAppContext) {
             EditPredictionRejectReason::Discarded,
             false,
             None,
+            None,
             cx,
         );
     });
@@ -2060,6 +2073,7 @@ async fn test_rejections_flushing(cx: &mut TestAppContext) {
             EditPredictionId("retry-2".into()),
             EditPredictionRejectReason::Discarded,
             false,
+            None,
             None,
             cx,
         );
@@ -2394,8 +2408,6 @@ async fn test_edit_prediction_basic_interpolation(cx: &mut TestAppContext) {
             can_collect_data: false,
             repo_url: None,
         },
-        buffer_snapshotted_at: Instant::now(),
-        response_received_at: Instant::now(),
         model_version: None,
     };
 
@@ -3115,6 +3127,7 @@ async fn test_edit_prediction_settled(cx: &mut TestAppContext) {
             &snapshot_a,
             editable_region_a.clone(),
             None,
+            Duration::from_secs(0),
             cx,
         );
     });
@@ -3178,6 +3191,7 @@ async fn test_edit_prediction_settled(cx: &mut TestAppContext) {
             &snapshot_b2,
             editable_region_b.clone(),
             None,
+            Duration::from_secs(0),
             cx,
         );
     });

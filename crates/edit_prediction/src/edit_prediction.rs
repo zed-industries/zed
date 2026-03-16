@@ -385,6 +385,7 @@ impl ProjectState {
                         EditPredictionRejectReason::Canceled,
                         false,
                         None,
+                        None,
                         cx,
                     );
                 })
@@ -413,6 +414,7 @@ struct CurrentEditPrediction {
     pub prediction: EditPrediction,
     pub was_shown: bool,
     pub shown_with: Option<edit_prediction_types::SuggestionDisplayType>,
+    pub e2e_latency: std::time::Duration,
 }
 
 impl CurrentEditPrediction {
@@ -506,12 +508,14 @@ impl std::ops::Deref for BufferEditPrediction<'_> {
 }
 
 #[derive(Clone)]
+
 struct PendingSettledPrediction {
     request_id: EditPredictionId,
     editable_anchor_range: Range<Anchor>,
     example: Option<ExampleSpec>,
     enqueued_at: Instant,
     last_edit_at: Instant,
+    e2e_latency: std::time::Duration,
 }
 
 struct RegisteredBuffer {
@@ -1686,6 +1690,7 @@ impl EditPredictionStore {
                                         request_id = pending_prediction.request_id.0.clone(),
                                         settled_editable_region,
                                         example = pending_prediction.example.take(),
+                                        e2e_latency = pending_prediction.e2e_latency.as_millis(),
                                     );
 
                                     return false;
@@ -1715,6 +1720,7 @@ impl EditPredictionStore {
         edited_buffer_snapshot: &BufferSnapshot,
         editable_offset_range: Range<usize>,
         example: Option<ExampleSpec>,
+        e2e_latency: std::time::Duration,
         cx: &mut Context<Self>,
     ) {
         let this = &mut *self;
@@ -1729,6 +1735,7 @@ impl EditPredictionStore {
                 editable_anchor_range: edited_buffer_snapshot
                     .anchor_range_around(editable_offset_range),
                 example,
+                e2e_latency,
                 enqueued_at: now,
                 last_edit_at: now,
             });
@@ -1751,6 +1758,7 @@ impl EditPredictionStore {
                     reason,
                     prediction.was_shown,
                     model_version,
+                    Some(prediction.e2e_latency),
                     cx,
                 );
             }
@@ -1812,6 +1820,7 @@ impl EditPredictionStore {
         reason: EditPredictionRejectReason,
         was_shown: bool,
         model_version: Option<String>,
+        e2e_latency: Option<std::time::Duration>,
         cx: &App,
     ) {
         match self.edit_prediction_model {
@@ -1835,6 +1844,7 @@ impl EditPredictionStore {
                                 reason,
                                 was_shown,
                                 model_version,
+                                e2e_latency_ms: e2e_latency.map(|latency| latency.as_millis()),
                             },
                             organization_id,
                         })
@@ -2008,6 +2018,7 @@ impl EditPredictionStore {
                                 EditPredictionResult {
                                     id: prediction_result.id,
                                     prediction: Err(EditPredictionRejectReason::CurrentPreferred),
+                                    e2e_latency: prediction_result.e2e_latency,
                                 }
                             },
                             PredictionRequestedBy::DiagnosticsUpdate,
@@ -2205,6 +2216,7 @@ impl EditPredictionStore {
                                 prediction,
                                 was_shown: false,
                                 shown_with: None,
+                                e2e_latency: prediction_result.e2e_latency,
                             };
 
                             if let Some(current_prediction) =
@@ -2225,6 +2237,7 @@ impl EditPredictionStore {
                                         EditPredictionRejectReason::CurrentPreferred,
                                         false,
                                         new_prediction.prediction.model_version,
+                                        Some(new_prediction.e2e_latency),
                                         cx,
                                     );
                                     None
@@ -2239,6 +2252,7 @@ impl EditPredictionStore {
                                 reject_reason,
                                 false,
                                 None,
+                                Some(prediction_result.e2e_latency),
                                 cx,
                             );
                             None

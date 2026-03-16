@@ -408,7 +408,7 @@ mod tests {
     fn test_session(session_id: &str, title: &str) -> AgentSessionInfo {
         AgentSessionInfo {
             session_id: acp::SessionId::new(session_id),
-            cwd: None,
+            work_dirs: None,
             title: Some(title.to_string().into()),
             updated_at: None,
             created_at: None,
@@ -608,7 +608,7 @@ mod tests {
         let session_id = acp::SessionId::new("test-session");
         let sessions = vec![AgentSessionInfo {
             session_id: session_id.clone(),
-            cwd: None,
+            work_dirs: None,
             title: Some("Original Title".into()),
             updated_at: None,
             created_at: None,
@@ -641,7 +641,7 @@ mod tests {
         let session_id = acp::SessionId::new("test-session");
         let sessions = vec![AgentSessionInfo {
             session_id: session_id.clone(),
-            cwd: None,
+            work_dirs: None,
             title: Some("Original Title".into()),
             updated_at: None,
             created_at: None,
@@ -671,7 +671,7 @@ mod tests {
         let session_id = acp::SessionId::new("test-session");
         let sessions = vec![AgentSessionInfo {
             session_id: session_id.clone(),
-            cwd: None,
+            work_dirs: None,
             title: Some("Original Title".into()),
             updated_at: None,
             created_at: None,
@@ -704,7 +704,7 @@ mod tests {
         let session_id = acp::SessionId::new("test-session");
         let sessions = vec![AgentSessionInfo {
             session_id: session_id.clone(),
-            cwd: None,
+            work_dirs: None,
             title: None,
             updated_at: None,
             created_at: None,
@@ -741,7 +741,7 @@ mod tests {
         let session_id = acp::SessionId::new("test-session");
         let sessions = vec![AgentSessionInfo {
             session_id: session_id.clone(),
-            cwd: None,
+            work_dirs: None,
             title: Some("Server Title".into()),
             updated_at: None,
             created_at: None,
@@ -775,7 +775,7 @@ mod tests {
         let session_id = acp::SessionId::new("known-session");
         let sessions = vec![AgentSessionInfo {
             session_id,
-            cwd: None,
+            work_dirs: None,
             title: Some("Original".into()),
             updated_at: None,
             created_at: None,

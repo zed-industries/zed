@@ -6296,7 +6296,6 @@ dependencies = [
  "serde",
  "serde_json",
  "settings",
- "text",
  "theme",
  "ui",
  "util",
@@ -7356,6 +7355,7 @@ dependencies = [
  "db",
  "editor",
  "feature_flags",
+ "file_icons",
  "futures 0.3.31",
  "fuzzy",
  "git",
@@ -7520,6 +7520,7 @@ dependencies = [
  "indoc",
  "language",
  "menu",
+ "multi_buffer",
  "project",
  "rope",
  "serde",
@@ -22122,14 +22123,14 @@ dependencies = [
 
 [[package]]
 name = "zed_glsl"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "zed_extension_api 0.1.0",
 ]
 
 [[package]]
 name = "zed_html"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "zed_extension_api 0.7.0",
 ]
