@@ -5,6 +5,7 @@ use action_log::DiffStats;
 use agent::ZED_AGENT_ID;
 use agent_client_protocol::{self as acp, SessionId};
 use agent_settings::AgentSettings;
+use anyhow::Result;
 use chrono::{DateTime, Utc};
 use db::kvp::KEY_VALUE_STORE;
 use db::{
@@ -18,7 +19,8 @@ use editor::Editor;
 use feature_flags::{AgentV2FeatureFlag, FeatureFlagViewExt as _};
 use gpui::{
     Action as _, AnyElement, App, Context, Entity, FocusHandle, Focusable, Global, ListState,
-    Pixels, Render, SharedString, Subscription, WeakEntity, Window, actions, list, prelude::*, px,
+    Pixels, Render, SharedString, Subscription, Task, WeakEntity, Window, actions, list,
+    prelude::*, px,
 };
 use menu::{Cancel, Confirm, SelectFirst, SelectLast, SelectNext, SelectPrevious};
 use project::{AgentId, Event as ProjectEvent};
@@ -46,7 +48,7 @@ pub fn init(cx: &mut App) {
 struct GlobalThreadMetadataStore(Entity<ThreadMetadataStore>);
 impl Global for GlobalThreadMetadataStore {}
 
-struct ThreadMetadataStore {
+pub struct ThreadMetadataStore {
     session_subscriptions: HashMap<SessionId, Subscription>,
 }
 
@@ -58,6 +60,13 @@ impl ThreadMetadataStore {
 
     pub fn global(cx: &App) -> Entity<Self> {
         cx.global::<GlobalThreadMetadataStore>().0.clone()
+    }
+
+    pub fn save(&mut self, metadata: ThreadMetadata, cx: &mut Context<Self>) -> Task<Result<()>> {
+        cx.spawn(async move |this, cx| {
+            THREAD_METADATA_DB.save(&metadata).await?;
+            this.update(cx, |_this, cx| cx.notify())
+        })
     }
 
     fn new(cx: &mut Context<Self>) -> Self {
@@ -124,20 +133,18 @@ impl ThreadMetadataStore {
             PathList::new(&paths)
         };
 
-        cx.background_spawn(async move {
-            THREAD_METADATA_DB
-                .save(&ThreadMetadata {
-                    session_id,
-                    agent_id,
-                    title,
-                    updated_at,
-                    created_at: None,
-                    folder_paths,
-                })
-                .await
-                .log_err();
-        })
-        .detach();
+        self.save(
+            ThreadMetadata {
+                session_id,
+                agent_id,
+                title,
+                updated_at,
+                created_at: None, //FIXME
+                folder_paths,
+            },
+            cx,
+        )
+        .detach_and_log_err(cx);
     }
 }
 
@@ -571,6 +578,11 @@ impl Sidebar {
         })
         .detach();
 
+        cx.observe(&ThreadMetadataStore::global(cx), |this, _store, cx| {
+            this.update_entries(cx);
+        })
+        .detach();
+
         cx.observe_flag::<AgentV2FeatureFlag, _>(window, |_is_enabled, this, _window, cx| {
             this.update_entries(cx);
         })
@@ -752,6 +764,7 @@ impl Sidebar {
 
         // Read ALL sidebar thread metadata once and index by folder_paths.
         let all_sidebar_threads = THREAD_METADATA_DB.list().unwrap_or_default();
+
         let mut threads_by_paths: HashMap<PathList, Vec<ThreadMetadata>> = HashMap::new();
         for row in all_sidebar_threads {
             threads_by_paths
@@ -2386,6 +2399,7 @@ mod tests {
     use feature_flags::FeatureFlagAppExt as _;
     use fs::FakeFs;
     use gpui::TestAppContext;
+    use pretty_assertions::assert_eq;
     use std::{path::PathBuf, sync::Arc};
     use util::path_list::PathList;
 
@@ -2394,9 +2408,11 @@ mod tests {
         cx.update(|cx| {
             cx.update_flags(false, vec!["agent-v2".into()]);
             ThreadStore::init_global(cx);
+            ThreadMetadataStore::init_global(cx);
             language_model::LanguageModelRegistry::test(cx);
             prompt_store::init(cx);
         });
+
         // Clear the shared SidebarDb to prevent cross-test interference.
         cx.executor().allow_parking();
         cx.foreground_executor()
@@ -2475,43 +2491,53 @@ mod tests {
         path_list: &PathList,
         cx: &mut gpui::VisualTestContext,
     ) {
-        let thread_store = cx.update(|_window, cx| ThreadStore::global(cx));
         for i in 0..count {
-            let save_task = thread_store.update(cx, |store, cx| {
-                store.save_thread(
-                    acp::SessionId::new(Arc::from(format!("thread-{}", i))),
-                    make_test_thread(
-                        &format!("Thread {}", i + 1),
-                        chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 1, 1, 0, 0, i).unwrap(),
-                    ),
-                    path_list.clone(),
-                    cx,
-                )
-            });
-            save_task.await.unwrap();
+            save_thread_metadata(
+                acp::SessionId::new(Arc::from(format!("thread-{}", i))),
+                format!("Thread {}", i + 1).into(),
+                chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 1, 1, 0, 0, i).unwrap(),
+                path_list.clone(),
+                cx,
+            )
+            .await;
         }
         cx.run_until_parked();
     }
 
-    async fn save_thread_to_store(
+    async fn save_test_thread_metadata(
         session_id: &acp::SessionId,
-        path_list: &PathList,
-        cx: &mut gpui::VisualTestContext,
+        path_list: PathList,
+        cx: &mut TestAppContext,
     ) {
-        let thread_store = cx.update(|_window, cx| ThreadStore::global(cx));
-        let save_task = thread_store.update(cx, |store, cx| {
-            store.save_thread(
-                session_id.clone(),
-                make_test_thread(
-                    "Test",
-                    chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 1, 1, 0, 0, 0).unwrap(),
-                ),
-                path_list.clone(),
-                cx,
-            )
+        save_thread_metadata(
+            session_id.clone(),
+            "Test".into(),
+            chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 1, 1, 0, 0, 0).unwrap(),
+            path_list,
+            cx,
+        )
+        .await;
+    }
+
+    async fn save_thread_metadata(
+        session_id: acp::SessionId,
+        title: SharedString,
+        updated_at: DateTime<Utc>,
+        path_list: PathList,
+        cx: &mut TestAppContext,
+    ) {
+        let metadata = ThreadMetadata {
+            session_id,
+            agent_id: None,
+            title,
+            updated_at,
+            created_at: None,
+            folder_paths: path_list,
+        };
+        let task = cx.update(|cx| {
+            ThreadMetadataStore::global(cx).update(cx, |store, cx| store.save(metadata, cx))
         });
-        save_task.await.unwrap();
-        cx.run_until_parked();
+        task.await.unwrap();
     }
 
     fn open_and_focus_sidebar(sidebar: &Entity<Sidebar>, cx: &mut gpui::VisualTestContext) {
@@ -3446,7 +3472,7 @@ mod tests {
         send_message(&panel, cx);
 
         let session_id_a = active_session_id(&panel, cx);
-        save_thread_to_store(&session_id_a, &path_list, cx).await;
+        save_test_thread_metadata(&session_id_a, path_list.clone(), cx).await;
 
         cx.update(|_, cx| {
             connection.send_update(
@@ -3465,7 +3491,7 @@ mod tests {
         send_message(&panel, cx);
 
         let session_id_b = active_session_id(&panel, cx);
-        save_thread_to_store(&session_id_b, &path_list, cx).await;
+        save_test_thread_metadata(&session_id_b, path_list.clone(), cx).await;
 
         cx.run_until_parked();
 
@@ -3492,7 +3518,7 @@ mod tests {
         send_message(&panel_a, cx);
 
         let session_id_a = active_session_id(&panel_a, cx);
-        save_thread_to_store(&session_id_a, &path_list_a, cx).await;
+        save_test_thread_metadata(&session_id_a, path_list_a.clone(), cx).await;
 
         cx.update(|_, cx| {
             connection_a.send_update(
@@ -4171,32 +4197,25 @@ mod tests {
         let sidebar = setup_sidebar(&multi_workspace, cx);
 
         let path_list = PathList::new(&[std::path::PathBuf::from("/my-project")]);
-        let thread_store = cx.update(|_window, cx| ThreadStore::global(cx));
 
-        let save_task = thread_store.update(cx, |store, cx| {
-            store.save_thread(
-                acp::SessionId::new(Arc::from("t-1")),
-                make_test_thread(
-                    "Thread A",
-                    chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 1, 2, 0, 0, 0).unwrap(),
-                ),
-                path_list.clone(),
-                cx,
-            )
-        });
-        save_task.await.unwrap();
-        let save_task = thread_store.update(cx, |store, cx| {
-            store.save_thread(
-                acp::SessionId::new(Arc::from("t-2")),
-                make_test_thread(
-                    "Thread B",
-                    chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 1, 1, 0, 0, 0).unwrap(),
-                ),
-                path_list.clone(),
-                cx,
-            )
-        });
-        save_task.await.unwrap();
+        save_thread_metadata(
+            acp::SessionId::new(Arc::from("t-1")),
+            "Thread A".into(),
+            chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 1, 2, 0, 0, 0).unwrap(),
+            path_list.clone(),
+            cx,
+        )
+        .await;
+
+        save_thread_metadata(
+            acp::SessionId::new(Arc::from("t-2")),
+            "Thread B".into(),
+            chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 1, 1, 0, 0, 0).unwrap(),
+            path_list.clone(),
+            cx,
+        )
+        .await;
+
         cx.run_until_parked();
         multi_workspace.update_in(cx, |_, _window, cx| cx.notify());
         cx.run_until_parked();
@@ -4251,7 +4270,7 @@ mod tests {
         send_message(&panel, cx);
 
         let session_id = active_session_id(&panel, cx);
-        save_thread_to_store(&session_id, &path_list, cx).await;
+        save_test_thread_metadata(&session_id, path_list.clone(), cx).await;
         cx.run_until_parked();
 
         assert_eq!(
@@ -4299,7 +4318,7 @@ mod tests {
         open_thread_with_connection(&panel_a, connection_a, cx);
         send_message(&panel_a, cx);
         let session_id_a = active_session_id(&panel_a, cx);
-        save_thread_to_store(&session_id_a, &path_list_a, cx).await;
+        save_test_thread_metadata(&session_id_a, path_list_a.clone(), cx).await;
 
         // Add a second workspace with its own agent panel.
         let fs = cx.update(|_, cx| <dyn fs::Fs>::global(cx));
@@ -4386,7 +4405,7 @@ mod tests {
         send_message(&panel_b, cx);
         let session_id_b = active_session_id(&panel_b, cx);
         let path_list_b = PathList::new(&[std::path::PathBuf::from("/project-b")]);
-        save_thread_to_store(&session_id_b, &path_list_b, cx).await;
+        save_test_thread_metadata(&session_id_b, path_list_b.clone(), cx).await;
         cx.run_until_parked();
 
         // Opening a thread in a non-active workspace should NOT change
@@ -4465,7 +4484,7 @@ mod tests {
         open_thread_with_connection(&panel_b, connection_b2, cx);
         send_message(&panel_b, cx);
         let session_id_b2 = active_session_id(&panel_b, cx);
-        save_thread_to_store(&session_id_b2, &path_list_b, cx).await;
+        save_test_thread_metadata(&session_id_b2, path_list_b.clone(), cx).await;
         cx.run_until_parked();
 
         // Workspace A is still active, so focused_thread stays on session_id_a.
@@ -5019,7 +5038,7 @@ mod tests {
         // Save a thread with path_list pointing to project-b.
         let path_list_b = PathList::new(&[std::path::PathBuf::from("/project-b")]);
         let session_id = acp::SessionId::new(Arc::from("archived-1"));
-        save_thread_to_store(&session_id, &path_list_b, cx).await;
+        save_test_thread_metadata(&session_id, path_list_b.clone(), cx).await;
 
         // Ensure workspace A is active.
         multi_workspace.update_in(cx, |mw, window, cx| {
@@ -5204,7 +5223,6 @@ mod tests {
         // open workspace.
         let path_list_b = PathList::new(&[std::path::PathBuf::from("/project-b")]);
         let session_id = acp::SessionId::new(Arc::from("archived-new-ws"));
-        save_thread_to_store(&session_id, &path_list_b, cx).await;
 
         assert_eq!(
             multi_workspace.read_with(cx, |mw, _| mw.workspaces().len()),
@@ -5217,7 +5235,7 @@ mod tests {
                 Agent::NativeAgent,
                 acp_thread::AgentSessionInfo {
                     session_id: session_id.clone(),
-                    work_dirs: None,
+                    work_dirs: Some(path_list_b),
                     title: Some("New WS Thread".into()),
                     updated_at: None,
                     created_at: None,
