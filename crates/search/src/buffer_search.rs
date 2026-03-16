@@ -977,10 +977,17 @@ impl BufferSearchBar {
                 let mut handle = self.query_editor.focus_handle(cx);
                 let mut select_query = true;
 
-                let has_seed_text = self.query_suggestion(window, cx).is_some();
-                if deploy.replace_enabled && has_seed_text {
-                    handle = self.replacement_editor.focus_handle(cx);
-                    select_query = false;
+                if deploy.replace_enabled {
+                    let has_selection = self
+                        .active_searchable_item
+                        .as_ref()
+                        .map(|item| item.has_non_empty_selection(window, cx))
+                        .unwrap_or(false);
+
+                    if has_selection {
+                        handle = self.replacement_editor.focus_handle(cx);
+                        select_query = false;
+                    }
                 };
 
                 if select_query {
@@ -3227,6 +3234,39 @@ mod tests {
             assert!(
                 !search_bar.query_editor.focus_handle(cx).is_focused(window),
                 "search editor should not be focused when replacement editor is focused",
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_deploy_replace_without_selection_focuses_search_editor(cx: &mut TestAppContext) {
+        init_globals(cx);
+        let (_editor, search_bar, cx) = init_test(cx);
+
+        search_bar.update_in(cx, |search_bar, window, cx| {
+            search_bar.deploy(
+                &Deploy {
+                    focus: true,
+                    replace_enabled: true,
+                    selection_search_enabled: false,
+                },
+                window,
+                cx,
+            );
+        });
+        cx.run_until_parked();
+
+        search_bar.update_in(cx, |search_bar, window, cx| {
+            assert!(
+                search_bar.query_editor.focus_handle(cx).is_focused(window),
+                "search editor should be focused when deploying replace without a selection",
+            );
+            assert!(
+                !search_bar
+                    .replacement_editor
+                    .focus_handle(cx)
+                    .is_focused(window),
+                "replacement editor should not be focused when there is no selection",
             );
         });
     }

@@ -115,6 +115,9 @@ pub trait SearchableItem: Item + EventEmitter<SearchEvent> {
         cx: &mut Context<Self>,
     );
     fn query_suggestion(&mut self, window: &mut Window, cx: &mut Context<Self>) -> String;
+    fn has_non_empty_selection(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> bool {
+        false
+    }
     fn activate_match(
         &mut self,
         index: usize,
@@ -220,6 +223,7 @@ pub trait SearchableItemHandle: ItemHandle {
         cx: &mut App,
     );
     fn query_suggestion(&self, window: &mut Window, cx: &mut App) -> String;
+    fn has_non_empty_selection(&self, window: &mut Window, cx: &mut App) -> bool;
     fn activate_match(
         &self,
         index: usize,
@@ -335,6 +339,9 @@ impl<T: SearchableItem> SearchableItemHandle for Entity<T> {
     }
     fn query_suggestion(&self, window: &mut Window, cx: &mut App) -> String {
         self.update(cx, |this, cx| this.query_suggestion(window, cx))
+    }
+    fn has_non_empty_selection(&self, window: &mut Window, cx: &mut App) -> bool {
+        self.update(cx, |this, cx| this.has_non_empty_selection(window, cx))
     }
     fn activate_match(
         &self,
