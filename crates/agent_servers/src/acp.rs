@@ -698,7 +698,7 @@ impl AgentConnection for AcpConnection {
             ))));
         }
         // TODO: remove this once ACP supports multiple working directories
-        let Some(cwd) = work_dirs.ordered_paths().iter().next().cloned() else {
+        let Some(cwd) = work_dirs.ordered_paths().next().cloned() else {
             return Task::ready(Err(anyhow!("Working directory cannot be empty")));
         };
 
