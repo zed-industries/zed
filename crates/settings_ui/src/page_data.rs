@@ -5246,7 +5246,7 @@ fn panels_page() -> SettingsPage {
             }),
             SettingsPageItem::SettingItem(SettingItem {
                 title: "Show Count Badge",
-                description: "Show a badge on the git panel icon with the count of uncommitted changes.",
+                description: "Whether to show a badge on the git panel icon with the count of uncommitted changes.",
                 field: Box::new(SettingField {
                     json_path: Some("git_panel.show_count_badge"),
                     pick: |settings_content| {
