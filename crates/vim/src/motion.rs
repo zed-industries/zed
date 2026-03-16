@@ -1926,8 +1926,8 @@ fn next_subword_start(
                     && (!right.is_ascii_punctuation() || is_stopping_punct(right));
 
                 let found = (!right.is_whitespace() && (is_word_start || found_subword_start))
-                    || right == '\n' && left == '\n' // Prevents skipping repeated empty lines
-                    || at_newline && crossed_newline;
+                    || at_newline && crossed_newline
+                    || right == '\n' && left == '\n'; // Prevents skipping repeated empty lines
 
                 crossed_newline |= at_newline;
                 found
