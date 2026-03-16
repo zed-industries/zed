@@ -23664,6 +23664,14 @@ impl Editor {
                         editor.buffer.read(cx).buffer(excerpt.buffer_id())
                     })?;
 
+                    if current_execution_position
+                        .text_anchor
+                        .buffer_id
+                        .is_some_and(|id| id != buffer.read(cx).remote_id())
+                    {
+                        return Some(Task::ready(Ok(Vec::new())));
+                    }
+
                     let range =
                         buffer.read(cx).anchor_before(0)..current_execution_position.text_anchor;
 
