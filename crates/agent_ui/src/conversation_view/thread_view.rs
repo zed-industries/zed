@@ -4758,8 +4758,9 @@ impl ThreadView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let focus = window.focused(cx);
+        let previous_focus_handle = window.focused(cx);
         let entity = cx.entity();
+        let weak_self = cx.weak_entity();
         let workspace = self.workspace.clone();
         let is_at_top = self.list_state.logical_scroll_top().item_ix == 0;
 
@@ -4783,6 +4784,7 @@ impl ThreadView {
             })
             .unwrap_or(false);
 
+        let previous_focus_for_dismiss = previous_focus_handle.clone();
         let menu = ContextMenu::build(window, cx, move |menu, _, _cx| {
             let copy_this_agent_response =
                 ContextMenuEntry::new("Copy This Agent Response").handler({
@@ -4834,7 +4836,10 @@ impl ThreadView {
                     }
                 });
 
-            menu.when_some(focus, |menu, focus| menu.context(focus))
+            menu.when_some(
+                previous_focus_handle.clone(),
+                |menu, focus| menu.context(focus),
+            )
                 .action_disabled_when(
                     !has_selection,
                     "Copy Selection",
@@ -4846,18 +4851,36 @@ impl ThreadView {
                 .item(open_thread_as_markdown)
         });
 
+        window
+            .subscribe(&menu, cx, move |menu, _: &DismissEvent, window, cx| {
+                if menu.focus_handle(cx).contains_focused(window, cx)
+                    && let Some(previous_focus_handle) = previous_focus_for_dismiss.as_ref()
+                {
+                    window.focus(previous_focus_handle, cx);
+                }
+                weak_self
+                    .update(cx, |this, cx| {
+                        this.message_context_menu = None;
+                        this._message_context_menu_subscription = None;
+                        cx.notify();
+                    })
+                    .ok();
+            })
+            .detach();
+
         let focus_handle = menu.focus_handle(cx);
-        self._message_context_menu_subscription =
-            Some(cx.subscribe(&menu, |this, _, _: &DismissEvent, cx| {
-                this.message_context_menu = None;
-                this._message_context_menu_subscription = None;
-                cx.notify();
-            }));
         self.message_context_menu = Some((menu, position));
 
         window.prevent_default();
         cx.notify();
-        window.focus(&focus_handle, cx);
+
+        // Defer focus to next frame(s) to allow dispatch tree linking,
+        // keeping text selection visible momentarily.
+        window.on_next_frame(move |window, _cx| {
+            window.on_next_frame(move |window, cx| {
+                window.focus(&focus_handle, cx);
+            });
+        });
     }
 
     fn render_message_context_menu_overlay(&self) -> Option<impl IntoElement> {
