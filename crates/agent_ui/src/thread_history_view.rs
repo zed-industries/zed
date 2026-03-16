@@ -1,5 +1,5 @@
 use crate::thread_history::ThreadHistory;
-use crate::{AgentPanel, ConnectionView, RemoveHistory, RemoveSelectedThread};
+use crate::{AgentPanel, ConversationView, RemoveHistory, RemoveSelectedThread};
 use acp_thread::AgentSessionInfo;
 use chrono::{Datelike as _, Local, NaiveDate, TimeDelta, Utc};
 use editor::{Editor, EditorEvent};
@@ -640,7 +640,7 @@ impl Render for ThreadHistoryView {
 #[derive(IntoElement)]
 pub struct HistoryEntryElement {
     entry: AgentSessionInfo,
-    thread_view: WeakEntity<ConnectionView>,
+    conversation_view: WeakEntity<ConversationView>,
     selected: bool,
     hovered: bool,
     supports_delete: bool,
@@ -648,10 +648,10 @@ pub struct HistoryEntryElement {
 }
 
 impl HistoryEntryElement {
-    pub fn new(entry: AgentSessionInfo, thread_view: WeakEntity<ConnectionView>) -> Self {
+    pub fn new(entry: AgentSessionInfo, conversation_view: WeakEntity<ConversationView>) -> Self {
         Self {
             entry,
-            thread_view,
+            conversation_view,
             selected: false,
             hovered: false,
             supports_delete: false,
@@ -725,13 +725,13 @@ impl RenderOnce for HistoryEntryElement {
                             Tooltip::for_action("Delete", &RemoveSelectedThread, cx)
                         })
                         .on_click({
-                            let thread_view = self.thread_view.clone();
+                            let conversation_view = self.conversation_view.clone();
                             let session_id = self.entry.session_id.clone();
 
                             move |_event, _window, cx| {
-                                if let Some(thread_view) = thread_view.upgrade() {
-                                    thread_view.update(cx, |thread_view, cx| {
-                                        thread_view.delete_history_entry(&session_id, cx);
+                                if let Some(conversation_view) = conversation_view.upgrade() {
+                                    conversation_view.update(cx, |conversation_view, cx| {
+                                        conversation_view.delete_history_entry(&session_id, cx);
                                     });
                                 }
                             }
@@ -741,11 +741,11 @@ impl RenderOnce for HistoryEntryElement {
                 None
             })
             .on_click({
-                let thread_view = self.thread_view.clone();
+                let conversation_view = self.conversation_view.clone();
                 let entry = self.entry;
 
                 move |_event, window, cx| {
-                    if let Some(workspace) = thread_view
+                    if let Some(workspace) = conversation_view
                         .upgrade()
                         .and_then(|view| view.read(cx).workspace().upgrade())
                     {

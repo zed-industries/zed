@@ -498,7 +498,7 @@ impl Sidebar {
         self.focused_thread = active_workspace
             .as_ref()
             .and_then(|ws| ws.read(cx).panel::<AgentPanel>(cx))
-            .and_then(|panel| panel.read(cx).active_connection_view().cloned())
+            .and_then(|panel| panel.read(cx).active_conversation().cloned())
             .and_then(|cv| cv.read(cx).parent_id(cx));
 
         let thread_store = ThreadStore::try_global(cx);

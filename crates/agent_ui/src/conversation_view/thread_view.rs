@@ -167,7 +167,7 @@ pub struct ThreadView {
     pub parent_id: Option<acp::SessionId>,
     pub thread: Entity<AcpThread>,
     pub(crate) conversation: Entity<super::Conversation>,
-    pub server_view: WeakEntity<ConnectionView>,
+    pub server_view: WeakEntity<ConversationView>,
     pub agent_icon: IconName,
     pub agent_icon_from_external_svg: Option<SharedString>,
     pub agent_name: SharedString,
@@ -256,7 +256,7 @@ impl ThreadView {
         parent_id: Option<acp::SessionId>,
         thread: Entity<AcpThread>,
         conversation: Entity<super::Conversation>,
-        server_view: WeakEntity<ConnectionView>,
+        server_view: WeakEntity<ConversationView>,
         agent_icon: IconName,
         agent_icon_from_external_svg: Option<SharedString>,
         agent_name: SharedString,
@@ -882,7 +882,7 @@ impl ThreadView {
                     let agent_name = self.agent_name.clone();
                     let server_view = self.server_view.clone();
                     move |window, cx| {
-                        ConnectionView::handle_auth_required(
+                        ConversationView::handle_auth_required(
                             server_view.clone(),
                             AuthRequired::new(),
                             agent_name,
@@ -1755,7 +1755,7 @@ impl ThreadView {
     pub fn sync_thread(
         &mut self,
         project: Entity<Project>,
-        server_view: Entity<ConnectionView>,
+        server_view: Entity<ConversationView>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -7318,7 +7318,7 @@ impl ThreadView {
                     }
                     let connection = this.thread.read(cx).connection().clone();
                     window.defer(cx, |window, cx| {
-                        ConnectionView::handle_auth_required(
+                        ConversationView::handle_auth_required(
                             server_view,
                             AuthRequired::new(),
                             agent_name,

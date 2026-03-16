@@ -304,9 +304,9 @@ pub enum AcpServerViewEvent {
     ActiveThreadChanged,
 }
 
-impl EventEmitter<AcpServerViewEvent> for ConnectionView {}
+impl EventEmitter<AcpServerViewEvent> for ConversationView {}
 
-pub struct ConnectionView {
+pub struct ConversationView {
     agent: Rc<dyn AgentServer>,
     connection_store: Entity<AgentConnectionStore>,
     connection_key: Agent,
@@ -323,7 +323,7 @@ pub struct ConnectionView {
     _subscriptions: Vec<Subscription>,
 }
 
-impl ConnectionView {
+impl ConversationView {
     pub fn has_auth_methods(&self) -> bool {
         self.as_connected().map_or(false, |connected| {
             !connected.connection.auth_methods().is_empty()
@@ -476,7 +476,7 @@ impl ConnectedServerState {
     }
 }
 
-impl ConnectionView {
+impl ConversationView {
     pub fn new(
         agent: Rc<dyn AgentServer>,
         connection_store: Entity<AgentConnectionStore>,
@@ -2323,7 +2323,7 @@ impl ConnectionView {
     fn render_markdown(&self, markdown: Entity<Markdown>, style: MarkdownStyle) -> MarkdownElement {
         let workspace = self.workspace.clone();
         MarkdownElement::new(markdown, style).on_url_click(move |text, window, cx| {
-            crate::connection_view::thread_view::open_link(text, &workspace, window, cx);
+            crate::conversation_view::thread_view::open_link(text, &workspace, window, cx);
         })
     }
 
@@ -2654,7 +2654,7 @@ fn placeholder_text(agent_name: &str, has_commands: bool) -> String {
     }
 }
 
-impl Focusable for ConnectionView {
+impl Focusable for ConversationView {
     fn focus_handle(&self, cx: &App) -> FocusHandle {
         match self.active_thread() {
             Some(thread) => thread.read(cx).focus_handle(cx),
@@ -2664,7 +2664,7 @@ impl Focusable for ConnectionView {
 }
 
 #[cfg(any(test, feature = "test-support"))]
-impl ConnectionView {
+impl ConversationView {
     /// Expands a tool call so its content is visible.
     /// This is primarily useful for visual testing.
     pub fn expand_tool_call(&mut self, tool_call_id: acp::ToolCallId, cx: &mut Context<Self>) {
@@ -2677,7 +2677,7 @@ impl ConnectionView {
     }
 }
 
-impl Render for ConnectionView {
+impl Render for ConversationView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.sync_queued_message_editors(window, cx);
         let v2_flag = cx.has_flag::<AgentV2FeatureFlag>();
@@ -2797,9 +2797,10 @@ pub(crate) mod tests {
     async fn test_drop(cx: &mut TestAppContext) {
         init_test(cx);
 
-        let (thread_view, _cx) = setup_thread_view(StubAgentServer::default_response(), cx).await;
-        let weak_view = thread_view.downgrade();
-        drop(thread_view);
+        let (conversation_view, _cx) =
+            setup_conversation_view(StubAgentServer::default_response(), cx).await;
+        let weak_view = conversation_view.downgrade();
+        drop(conversation_view);
         assert!(!weak_view.is_upgradable());
     }
 
@@ -2812,14 +2813,14 @@ pub(crate) mod tests {
         };
         let initial_content = AgentInitialContent::FromExternalSource(prompt);
 
-        let (thread_view, cx) = setup_thread_view_with_initial_content(
+        let (conversation_view, cx) = setup_conversation_view_with_initial_content(
             StubAgentServer::default_response(),
             initial_content,
             cx,
         )
         .await;
 
-        active_thread(&thread_view, cx).read_with(cx, |view, cx| {
+        active_thread(&conversation_view, cx).read_with(cx, |view, cx| {
             assert!(view.show_external_source_prompt_warning);
             assert_eq!(view.thread.read(cx).entries().len(), 0);
             assert_eq!(view.message_editor.read(cx).text(cx), "Write me a script");
@@ -2835,17 +2836,18 @@ pub(crate) mod tests {
         };
         let initial_content = AgentInitialContent::FromExternalSource(prompt);
 
-        let (thread_view, cx) = setup_thread_view_with_initial_content(
+        let (conversation_view, cx) = setup_conversation_view_with_initial_content(
             StubAgentServer::default_response(),
             initial_content,
             cx,
         )
         .await;
 
-        active_thread(&thread_view, cx).update_in(cx, |view, window, cx| view.send(window, cx));
+        active_thread(&conversation_view, cx)
+            .update_in(cx, |view, window, cx| view.send(window, cx));
         cx.run_until_parked();
 
-        active_thread(&thread_view, cx).read_with(cx, |view, cx| {
+        active_thread(&conversation_view, cx).read_with(cx, |view, cx| {
             assert!(!view.show_external_source_prompt_warning);
             assert_eq!(view.message_editor.read(cx).text(cx), "");
             assert_eq!(view.thread.read(cx).entries().len(), 2);
@@ -2856,16 +2858,18 @@ pub(crate) mod tests {
     async fn test_notification_for_stop_event(cx: &mut TestAppContext) {
         init_test(cx);
 
-        let (thread_view, cx) = setup_thread_view(StubAgentServer::default_response(), cx).await;
+        let (conversation_view, cx) =
+            setup_conversation_view(StubAgentServer::default_response(), cx).await;
 
-        let message_editor = message_editor(&thread_view, cx);
+        let message_editor = message_editor(&conversation_view, cx);
         message_editor.update_in(cx, |editor, window, cx| {
             editor.set_text("Hello", window, cx);
         });
 
         cx.deactivate_window();
 
-        active_thread(&thread_view, cx).update_in(cx, |view, window, cx| view.send(window, cx));
+        active_thread(&conversation_view, cx)
+            .update_in(cx, |view, window, cx| view.send(window, cx));
 
         cx.run_until_parked();
 
@@ -2880,17 +2884,18 @@ pub(crate) mod tests {
     async fn test_notification_for_error(cx: &mut TestAppContext) {
         init_test(cx);
 
-        let (thread_view, cx) =
-            setup_thread_view(StubAgentServer::new(SaboteurAgentConnection), cx).await;
+        let (conversation_view, cx) =
+            setup_conversation_view(StubAgentServer::new(SaboteurAgentConnection), cx).await;
 
-        let message_editor = message_editor(&thread_view, cx);
+        let message_editor = message_editor(&conversation_view, cx);
         message_editor.update_in(cx, |editor, window, cx| {
             editor.set_text("Hello", window, cx);
         });
 
         cx.deactivate_window();
 
-        active_thread(&thread_view, cx).update_in(cx, |view, window, cx| view.send(window, cx));
+        active_thread(&conversation_view, cx)
+            .update_in(cx, |view, window, cx| view.send(window, cx));
 
         cx.run_until_parked();
 
@@ -2918,9 +2923,9 @@ pub(crate) mod tests {
         let connection_store =
             cx.update(|_window, cx| cx.new(|cx| AgentConnectionStore::new(project.clone(), cx)));
 
-        let thread_view = cx.update(|window, cx| {
+        let conversation_view = cx.update(|window, cx| {
             cx.new(|cx| {
-                ConnectionView::new(
+                ConversationView::new(
                     Rc::new(StubAgentServer::default_response()),
                     connection_store,
                     Agent::Custom {
@@ -2944,7 +2949,7 @@ pub(crate) mod tests {
         cx.run_until_parked();
 
         let history = cx.update(|_window, cx| {
-            thread_view
+            conversation_view
                 .read(cx)
                 .history()
                 .expect("Missing history")
@@ -2952,7 +2957,7 @@ pub(crate) mod tests {
         });
 
         // Initially empty because StubAgentConnection.session_list() returns None
-        active_thread(&thread_view, cx).read_with(cx, |view, _cx| {
+        active_thread(&conversation_view, cx).read_with(cx, |view, _cx| {
             assert_eq!(view.recent_history_entries.len(), 0);
         });
 
@@ -2964,7 +2969,7 @@ pub(crate) mod tests {
         });
         cx.run_until_parked();
 
-        active_thread(&thread_view, cx).read_with(cx, |view, _cx| {
+        active_thread(&conversation_view, cx).read_with(cx, |view, _cx| {
             assert_eq!(view.recent_history_entries.len(), 1);
             assert_eq!(
                 view.recent_history_entries[0].session_id,
@@ -2980,7 +2985,7 @@ pub(crate) mod tests {
         });
         cx.run_until_parked();
 
-        active_thread(&thread_view, cx).read_with(cx, |view, _cx| {
+        active_thread(&conversation_view, cx).read_with(cx, |view, _cx| {
             assert_eq!(view.recent_history_entries.len(), 1);
             assert_eq!(
                 view.recent_history_entries[0].session_id,
@@ -2994,7 +2999,7 @@ pub(crate) mod tests {
         init_test(cx);
 
         let session = AgentSessionInfo::new(SessionId::new("history-session"));
-        let (thread_view, history, cx) = setup_thread_view_with_history(
+        let (conversation_view, history, cx) = setup_thread_view_with_history(
             StubAgentServer::new(SessionHistoryConnection::new(vec![session.clone()])),
             cx,
         )
@@ -3007,7 +3012,7 @@ pub(crate) mod tests {
             );
         });
 
-        active_thread(&thread_view, cx).read_with(cx, |view, _cx| {
+        active_thread(&conversation_view, cx).read_with(cx, |view, _cx| {
             assert_eq!(view.recent_history_entries.len(), 1);
             assert_eq!(
                 view.recent_history_entries[0].session_id,
@@ -3030,9 +3035,9 @@ pub(crate) mod tests {
         let connection_store =
             cx.update(|_window, cx| cx.new(|cx| AgentConnectionStore::new(project.clone(), cx)));
 
-        let thread_view = cx.update(|window, cx| {
+        let conversation_view = cx.update(|window, cx| {
             cx.new(|cx| {
-                ConnectionView::new(
+                ConversationView::new(
                     Rc::new(StubAgentServer::new(ResumeOnlyAgentConnection)),
                     connection_store,
                     Agent::Custom {
@@ -3054,7 +3059,7 @@ pub(crate) mod tests {
 
         cx.run_until_parked();
 
-        thread_view.read_with(cx, |view, cx| {
+        conversation_view.read_with(cx, |view, cx| {
             let state = view.active_thread().unwrap();
             assert!(state.read(cx).resumed_without_history);
             assert_eq!(state.read(cx).list_state.item_count(), 0);
@@ -3087,9 +3092,9 @@ pub(crate) mod tests {
         let connection_store =
             cx.update(|_window, cx| cx.new(|cx| AgentConnectionStore::new(project.clone(), cx)));
 
-        let _thread_view = cx.update(|window, cx| {
+        let _conversation_view = cx.update(|window, cx| {
             cx.new(|cx| {
-                ConnectionView::new(
+                ConversationView::new(
                     Rc::new(StubAgentServer::new(connection)),
                     connection_store,
                     Agent::Custom {
@@ -3142,9 +3147,9 @@ pub(crate) mod tests {
         let connection_store =
             cx.update(|_window, cx| cx.new(|cx| AgentConnectionStore::new(project.clone(), cx)));
 
-        let _thread_view = cx.update(|window, cx| {
+        let _conversation_view = cx.update(|window, cx| {
             cx.new(|cx| {
-                ConnectionView::new(
+                ConversationView::new(
                     Rc::new(StubAgentServer::new(connection)),
                     connection_store,
                     Agent::Custom {
@@ -3197,9 +3202,9 @@ pub(crate) mod tests {
         let connection_store =
             cx.update(|_window, cx| cx.new(|cx| AgentConnectionStore::new(project.clone(), cx)));
 
-        let _thread_view = cx.update(|window, cx| {
+        let _conversation_view = cx.update(|window, cx| {
             cx.new(|cx| {
-                ConnectionView::new(
+                ConversationView::new(
                     Rc::new(StubAgentServer::new(connection)),
                     connection_store,
                     Agent::Custom {
@@ -3232,20 +3237,21 @@ pub(crate) mod tests {
     async fn test_refusal_handling(cx: &mut TestAppContext) {
         init_test(cx);
 
-        let (thread_view, cx) =
-            setup_thread_view(StubAgentServer::new(RefusalAgentConnection), cx).await;
+        let (conversation_view, cx) =
+            setup_conversation_view(StubAgentServer::new(RefusalAgentConnection), cx).await;
 
-        let message_editor = message_editor(&thread_view, cx);
+        let message_editor = message_editor(&conversation_view, cx);
         message_editor.update_in(cx, |editor, window, cx| {
             editor.set_text("Do something harmful", window, cx);
         });
 
-        active_thread(&thread_view, cx).update_in(cx, |view, window, cx| view.send(window, cx));
+        active_thread(&conversation_view, cx)
+            .update_in(cx, |view, window, cx| view.send(window, cx));
 
         cx.run_until_parked();
 
         // Check that the refusal error is set
-        thread_view.read_with(cx, |thread_view, cx| {
+        conversation_view.read_with(cx, |thread_view, cx| {
             let state = thread_view.active_thread().unwrap();
             assert!(
                 matches!(state.read(cx).thread_error, Some(ThreadError::Refusal)),
@@ -3258,9 +3264,9 @@ pub(crate) mod tests {
     async fn test_connect_failure_transitions_to_load_error(cx: &mut TestAppContext) {
         init_test(cx);
 
-        let (thread_view, cx) = setup_thread_view(FailingAgentServer, cx).await;
+        let (conversation_view, cx) = setup_conversation_view(FailingAgentServer, cx).await;
 
-        thread_view.read_with(cx, |view, cx| {
+        conversation_view.read_with(cx, |view, cx| {
             let title = view.title(cx);
             assert_eq!(
                 title.as_ref(),
@@ -3294,11 +3300,12 @@ pub(crate) mod tests {
         init_test(cx);
 
         let connection = AuthGatedAgentConnection::new();
-        let (thread_view, cx) = setup_thread_view(StubAgentServer::new(connection), cx).await;
+        let (conversation_view, cx) =
+            setup_conversation_view(StubAgentServer::new(connection), cx).await;
 
         // When new_session returns AuthRequired, the server should transition
         // to Connected + Unauthenticated rather than getting stuck in Loading.
-        thread_view.read_with(cx, |view, _cx| {
+        conversation_view.read_with(cx, |view, _cx| {
             let connected = view
                 .as_connected()
                 .expect("Should be in Connected state even though auth is required");
@@ -3316,7 +3323,7 @@ pub(crate) mod tests {
             );
         });
 
-        thread_view.read_with(cx, |view, _cx| {
+        conversation_view.read_with(cx, |view, _cx| {
             assert!(
                 view.active_thread().is_none(),
                 "active_thread() should be None when unauthenticated without a session"
@@ -3326,7 +3333,7 @@ pub(crate) mod tests {
         // Authenticate using the real authenticate flow on ConnectionView.
         // This calls connection.authenticate(), which flips the internal flag,
         // then on success triggers reset() -> new_session() which now succeeds.
-        thread_view.update_in(cx, |view, window, cx| {
+        conversation_view.update_in(cx, |view, window, cx| {
             view.authenticate(
                 acp::AuthMethodId::new(AuthGatedAgentConnection::AUTH_METHOD_ID),
                 window,
@@ -3336,7 +3343,7 @@ pub(crate) mod tests {
         cx.run_until_parked();
 
         // After auth, the server should have an active thread in the Ok state.
-        thread_view.read_with(cx, |view, cx| {
+        conversation_view.read_with(cx, |view, cx| {
             let connected = view
                 .as_connected()
                 .expect("Should still be in Connected state after auth");
@@ -3381,16 +3388,18 @@ pub(crate) mod tests {
 
         connection.set_next_prompt_updates(vec![acp::SessionUpdate::ToolCall(tool_call)]);
 
-        let (thread_view, cx) = setup_thread_view(StubAgentServer::new(connection), cx).await;
+        let (conversation_view, cx) =
+            setup_conversation_view(StubAgentServer::new(connection), cx).await;
 
-        let message_editor = message_editor(&thread_view, cx);
+        let message_editor = message_editor(&conversation_view, cx);
         message_editor.update_in(cx, |editor, window, cx| {
             editor.set_text("Hello", window, cx);
         });
 
         cx.deactivate_window();
 
-        active_thread(&thread_view, cx).update_in(cx, |view, window, cx| view.send(window, cx));
+        active_thread(&conversation_view, cx)
+            .update_in(cx, |view, window, cx| view.send(window, cx));
 
         cx.run_until_parked();
 
@@ -3405,11 +3414,12 @@ pub(crate) mod tests {
     async fn test_notification_when_panel_hidden(cx: &mut TestAppContext) {
         init_test(cx);
 
-        let (thread_view, cx) = setup_thread_view(StubAgentServer::default_response(), cx).await;
+        let (conversation_view, cx) =
+            setup_conversation_view(StubAgentServer::default_response(), cx).await;
 
-        add_to_workspace(thread_view.clone(), cx);
+        add_to_workspace(conversation_view.clone(), cx);
 
-        let message_editor = message_editor(&thread_view, cx);
+        let message_editor = message_editor(&conversation_view, cx);
 
         message_editor.update_in(cx, |editor, window, cx| {
             editor.set_text("Hello", window, cx);
@@ -3419,7 +3429,8 @@ pub(crate) mod tests {
         // Note: In the test environment, the panel is not actually added to the dock,
         // so is_agent_panel_hidden will return true
 
-        active_thread(&thread_view, cx).update_in(cx, |view, window, cx| view.send(window, cx));
+        active_thread(&conversation_view, cx)
+            .update_in(cx, |view, window, cx| view.send(window, cx));
 
         cx.run_until_parked();
 
@@ -3436,9 +3447,10 @@ pub(crate) mod tests {
     async fn test_notification_still_works_when_window_inactive(cx: &mut TestAppContext) {
         init_test(cx);
 
-        let (thread_view, cx) = setup_thread_view(StubAgentServer::default_response(), cx).await;
+        let (conversation_view, cx) =
+            setup_conversation_view(StubAgentServer::default_response(), cx).await;
 
-        let message_editor = message_editor(&thread_view, cx);
+        let message_editor = message_editor(&conversation_view, cx);
         message_editor.update_in(cx, |editor, window, cx| {
             editor.set_text("Hello", window, cx);
         });
@@ -3446,7 +3458,8 @@ pub(crate) mod tests {
         // Deactivate window - should show notification regardless of setting
         cx.deactivate_window();
 
-        active_thread(&thread_view, cx).update_in(cx, |view, window, cx| view.send(window, cx));
+        active_thread(&conversation_view, cx)
+            .update_in(cx, |view, window, cx| view.send(window, cx));
 
         cx.run_until_parked();
 
@@ -3514,9 +3527,9 @@ pub(crate) mod tests {
             cx.update(|_window, cx| cx.new(|cx| AgentConnectionStore::new(project1.clone(), cx)));
 
         let agent = StubAgentServer::default_response();
-        let thread_view = cx.update(|window, cx| {
+        let conversation_view = cx.update(|window, cx| {
             cx.new(|cx| {
-                ConnectionView::new(
+                ConversationView::new(
                     Rc::new(agent),
                     connection_store,
                     Agent::Custom {
@@ -3537,7 +3550,7 @@ pub(crate) mod tests {
         });
         cx.run_until_parked();
 
-        let message_editor = message_editor(&thread_view, cx);
+        let message_editor = message_editor(&conversation_view, cx);
         message_editor.update_in(cx, |editor, window, cx| {
             editor.set_text("Hello", window, cx);
         });
@@ -3564,7 +3577,8 @@ pub(crate) mod tests {
         // Window is active, agent panel is visible in workspace1, but workspace1
         // is in the background. The notification should show because the user
         // can't actually see the agent panel.
-        active_thread(&thread_view, cx).update_in(cx, |view, window, cx| view.send(window, cx));
+        active_thread(&conversation_view, cx)
+            .update_in(cx, |view, window, cx| view.send(window, cx));
 
         cx.run_until_parked();
 
@@ -3611,16 +3625,18 @@ pub(crate) mod tests {
             );
         });
 
-        let (thread_view, cx) = setup_thread_view(StubAgentServer::default_response(), cx).await;
+        let (conversation_view, cx) =
+            setup_conversation_view(StubAgentServer::default_response(), cx).await;
 
-        let message_editor = message_editor(&thread_view, cx);
+        let message_editor = message_editor(&conversation_view, cx);
         message_editor.update_in(cx, |editor, window, cx| {
             editor.set_text("Hello", window, cx);
         });
 
         // Window is active
 
-        active_thread(&thread_view, cx).update_in(cx, |view, window, cx| view.send(window, cx));
+        active_thread(&conversation_view, cx)
+            .update_in(cx, |view, window, cx| view.send(window, cx));
 
         cx.run_until_parked();
 
@@ -3637,18 +3653,20 @@ pub(crate) mod tests {
     async fn test_notification_closed_when_thread_view_dropped(cx: &mut TestAppContext) {
         init_test(cx);
 
-        let (thread_view, cx) = setup_thread_view(StubAgentServer::default_response(), cx).await;
+        let (conversation_view, cx) =
+            setup_conversation_view(StubAgentServer::default_response(), cx).await;
 
-        let weak_view = thread_view.downgrade();
+        let weak_view = conversation_view.downgrade();
 
-        let message_editor = message_editor(&thread_view, cx);
+        let message_editor = message_editor(&conversation_view, cx);
         message_editor.update_in(cx, |editor, window, cx| {
             editor.set_text("Hello", window, cx);
         });
 
         cx.deactivate_window();
 
-        active_thread(&thread_view, cx).update_in(cx, |view, window, cx| view.send(window, cx));
+        active_thread(&conversation_view, cx)
+            .update_in(cx, |view, window, cx| view.send(window, cx));
 
         cx.run_until_parked();
 
@@ -3661,7 +3679,7 @@ pub(crate) mod tests {
         );
 
         // Drop the thread view (simulating navigation to a new thread)
-        drop(thread_view);
+        drop(conversation_view);
         drop(message_editor);
         // Trigger an update to flush effects, which will call release_dropped_entities
         cx.update(|_window, _cx| {});
@@ -3682,45 +3700,49 @@ pub(crate) mod tests {
         );
     }
 
-    async fn setup_thread_view(
+    async fn setup_conversation_view(
         agent: impl AgentServer + 'static,
         cx: &mut TestAppContext,
-    ) -> (Entity<ConnectionView>, &mut VisualTestContext) {
-        let (thread_view, _history, cx) =
-            setup_thread_view_with_history_and_initial_content(agent, None, cx).await;
-        (thread_view, cx)
+    ) -> (Entity<ConversationView>, &mut VisualTestContext) {
+        let (conversation_view, _history, cx) =
+            setup_conversation_view_with_history_and_initial_content(agent, None, cx).await;
+        (conversation_view, cx)
     }
 
     async fn setup_thread_view_with_history(
         agent: impl AgentServer + 'static,
         cx: &mut TestAppContext,
     ) -> (
-        Entity<ConnectionView>,
+        Entity<ConversationView>,
         Entity<ThreadHistory>,
         &mut VisualTestContext,
     ) {
-        let (thread_view, history, cx) =
-            setup_thread_view_with_history_and_initial_content(agent, None, cx).await;
-        (thread_view, history.expect("Missing history"), cx)
+        let (conversation_view, history, cx) =
+            setup_conversation_view_with_history_and_initial_content(agent, None, cx).await;
+        (conversation_view, history.expect("Missing history"), cx)
     }
 
-    async fn setup_thread_view_with_initial_content(
+    async fn setup_conversation_view_with_initial_content(
         agent: impl AgentServer + 'static,
         initial_content: AgentInitialContent,
         cx: &mut TestAppContext,
-    ) -> (Entity<ConnectionView>, &mut VisualTestContext) {
-        let (thread_view, _history, cx) =
-            setup_thread_view_with_history_and_initial_content(agent, Some(initial_content), cx)
-                .await;
-        (thread_view, cx)
+    ) -> (Entity<ConversationView>, &mut VisualTestContext) {
+        let (conversation_view, _history, cx) =
+            setup_conversation_view_with_history_and_initial_content(
+                agent,
+                Some(initial_content),
+                cx,
+            )
+            .await;
+        (conversation_view, cx)
     }
 
-    async fn setup_thread_view_with_history_and_initial_content(
+    async fn setup_conversation_view_with_history_and_initial_content(
         agent: impl AgentServer + 'static,
         initial_content: Option<AgentInitialContent>,
         cx: &mut TestAppContext,
     ) -> (
-        Entity<ConnectionView>,
+        Entity<ConversationView>,
         Option<Entity<ThreadHistory>>,
         &mut VisualTestContext,
     ) {
@@ -3738,9 +3760,9 @@ pub(crate) mod tests {
             name: "Test".into(),
         };
 
-        let thread_view = cx.update(|window, cx| {
+        let conversation_view = cx.update(|window, cx| {
             cx.new(|cx| {
-                ConnectionView::new(
+                ConversationView::new(
                     Rc::new(agent),
                     connection_store.clone(),
                     agent_key.clone(),
@@ -3766,16 +3788,17 @@ pub(crate) mod tests {
                 .and_then(|e| e.read(cx).history().cloned())
         });
 
-        (thread_view, history, cx)
+        (conversation_view, history, cx)
     }
 
-    fn add_to_workspace(thread_view: Entity<ConnectionView>, cx: &mut VisualTestContext) {
-        let workspace = thread_view.read_with(cx, |thread_view, _cx| thread_view.workspace.clone());
+    fn add_to_workspace(conversation_view: Entity<ConversationView>, cx: &mut VisualTestContext) {
+        let workspace =
+            conversation_view.read_with(cx, |thread_view, _cx| thread_view.workspace.clone());
 
         workspace
             .update_in(cx, |workspace, window, cx| {
                 workspace.add_item_to_active_pane(
-                    Box::new(cx.new(|_| ThreadViewItem(thread_view.clone()))),
+                    Box::new(cx.new(|_| ThreadViewItem(conversation_view.clone()))),
                     None,
                     true,
                     window,
@@ -3785,7 +3808,7 @@ pub(crate) mod tests {
             .unwrap();
     }
 
-    struct ThreadViewItem(Entity<ConnectionView>);
+    struct ThreadViewItem(Entity<ConversationView>);
 
     impl Item for ThreadViewItem {
         type Event = ();
@@ -4436,11 +4459,11 @@ pub(crate) mod tests {
     }
 
     fn active_thread(
-        thread_view: &Entity<ConnectionView>,
+        conversation_view: &Entity<ConversationView>,
         cx: &TestAppContext,
     ) -> Entity<ThreadView> {
         cx.read(|cx| {
-            thread_view
+            conversation_view
                 .read(cx)
                 .active_thread()
                 .expect("No active thread")
@@ -4449,10 +4472,10 @@ pub(crate) mod tests {
     }
 
     fn message_editor(
-        thread_view: &Entity<ConnectionView>,
+        conversation_view: &Entity<ConversationView>,
         cx: &TestAppContext,
     ) -> Entity<MessageEditor> {
-        let thread = active_thread(thread_view, cx);
+        let thread = active_thread(conversation_view, cx);
         cx.read(|cx| thread.read(cx).message_editor.clone())
     }
 
@@ -4479,9 +4502,9 @@ pub(crate) mod tests {
             cx.update(|_window, cx| cx.new(|cx| AgentConnectionStore::new(project.clone(), cx)));
 
         let connection = Rc::new(StubAgentConnection::new());
-        let thread_view = cx.update(|window, cx| {
+        let conversation_view = cx.update(|window, cx| {
             cx.new(|cx| {
-                ConnectionView::new(
+                ConversationView::new(
                     Rc::new(StubAgentServer::new(connection.as_ref().clone())),
                     connection_store,
                     Agent::Custom {
@@ -4503,7 +4526,7 @@ pub(crate) mod tests {
 
         cx.run_until_parked();
 
-        let thread = thread_view
+        let thread = conversation_view
             .read_with(cx, |view, cx| {
                 view.active_thread().map(|r| r.read(cx).thread.clone())
             })
@@ -4529,7 +4552,7 @@ pub(crate) mod tests {
             assert_eq!(thread.entries().len(), 2);
         });
 
-        thread_view.read_with(cx, |view, cx| {
+        conversation_view.read_with(cx, |view, cx| {
             let entry_view_state = view
                 .active_thread()
                 .map(|active| active.read(cx).entry_view_state.clone())
@@ -4570,7 +4593,7 @@ pub(crate) mod tests {
             user_message.id.clone().unwrap()
         });
 
-        thread_view.read_with(cx, |view, cx| {
+        conversation_view.read_with(cx, |view, cx| {
             let entry_view_state = view
                 .active_thread()
                 .unwrap()
@@ -4609,7 +4632,7 @@ pub(crate) mod tests {
             assert_eq!(thread.entries().len(), 2);
         });
 
-        thread_view.read_with(cx, |view, cx| {
+        conversation_view.read_with(cx, |view, cx| {
             let active = view.active_thread().unwrap();
             active
                 .read(cx)
@@ -4642,10 +4665,10 @@ pub(crate) mod tests {
             acp::ContentChunk::new("Response 1".into()),
         )]);
 
-        let (thread_view, cx) =
-            setup_thread_view(StubAgentServer::new(connection.clone()), cx).await;
+        let (conversation_view, cx) =
+            setup_conversation_view(StubAgentServer::new(connection.clone()), cx).await;
 
-        let thread = thread_view
+        let thread = conversation_view
             .read_with(cx, |view, cx| {
                 view.active_thread().map(|r| r.read(cx).thread.clone())
             })
@@ -4668,12 +4691,12 @@ pub(crate) mod tests {
         cx.run_until_parked();
 
         // Move somewhere else first so we're not trivially already on the last user prompt.
-        active_thread(&thread_view, cx).update(cx, |view, cx| {
+        active_thread(&conversation_view, cx).update(cx, |view, cx| {
             view.scroll_to_top(cx);
         });
         cx.run_until_parked();
 
-        active_thread(&thread_view, cx).update(cx, |view, cx| {
+        active_thread(&conversation_view, cx).update(cx, |view, cx| {
             view.scroll_to_most_recent_user_prompt(cx);
             let scroll_top = view.list_state.logical_scroll_top();
             // Entries layout is: [User1, Assistant1, User2, Assistant2]
@@ -4687,10 +4710,11 @@ pub(crate) mod tests {
     ) {
         init_test(cx);
 
-        let (thread_view, cx) = setup_thread_view(StubAgentServer::default_response(), cx).await;
+        let (conversation_view, cx) =
+            setup_conversation_view(StubAgentServer::default_response(), cx).await;
 
         // With no entries, scrolling should be a no-op and must not panic.
-        active_thread(&thread_view, cx).update(cx, |view, cx| {
+        active_thread(&conversation_view, cx).update(cx, |view, cx| {
             view.scroll_to_most_recent_user_prompt(cx);
             let scroll_top = view.list_state.logical_scroll_top();
             assert_eq!(scroll_top.item_ix, 0);
@@ -4707,18 +4731,20 @@ pub(crate) mod tests {
             acp::ContentChunk::new("Response".into()),
         )]);
 
-        let (thread_view, cx) = setup_thread_view(StubAgentServer::new(connection), cx).await;
-        add_to_workspace(thread_view.clone(), cx);
+        let (conversation_view, cx) =
+            setup_conversation_view(StubAgentServer::new(connection), cx).await;
+        add_to_workspace(conversation_view.clone(), cx);
 
-        let message_editor = message_editor(&thread_view, cx);
+        let message_editor = message_editor(&conversation_view, cx);
         message_editor.update_in(cx, |editor, window, cx| {
             editor.set_text("Original message to edit", window, cx);
         });
-        active_thread(&thread_view, cx).update_in(cx, |view, window, cx| view.send(window, cx));
+        active_thread(&conversation_view, cx)
+            .update_in(cx, |view, window, cx| view.send(window, cx));
 
         cx.run_until_parked();
 
-        let user_message_editor = thread_view.read_with(cx, |view, cx| {
+        let user_message_editor = conversation_view.read_with(cx, |view, cx| {
             assert_eq!(
                 view.active_thread()
                     .and_then(|active| active.read(cx).editing_message),
@@ -4739,7 +4765,7 @@ pub(crate) mod tests {
 
         // Focus
         cx.focus(&user_message_editor);
-        thread_view.read_with(cx, |view, cx| {
+        conversation_view.read_with(cx, |view, cx| {
             assert_eq!(
                 view.active_thread()
                     .and_then(|active| active.read(cx).editing_message),
@@ -4757,7 +4783,7 @@ pub(crate) mod tests {
             window.dispatch_action(Box::new(editor::actions::Cancel), cx);
         });
 
-        thread_view.read_with(cx, |view, cx| {
+        conversation_view.read_with(cx, |view, cx| {
             assert_eq!(
                 view.active_thread()
                     .and_then(|active| active.read(cx).editing_message),
@@ -4776,16 +4802,17 @@ pub(crate) mod tests {
 
         let connection = StubAgentConnection::new();
 
-        let (thread_view, cx) = setup_thread_view(StubAgentServer::new(connection), cx).await;
-        add_to_workspace(thread_view.clone(), cx);
+        let (conversation_view, cx) =
+            setup_conversation_view(StubAgentServer::new(connection), cx).await;
+        add_to_workspace(conversation_view.clone(), cx);
 
-        let message_editor = message_editor(&thread_view, cx);
+        let message_editor = message_editor(&conversation_view, cx);
         message_editor.update_in(cx, |editor, window, cx| {
             editor.set_text("", window, cx);
         });
 
         let thread = cx.read(|cx| {
-            thread_view
+            conversation_view
                 .read(cx)
                 .active_thread()
                 .unwrap()
@@ -4795,7 +4822,7 @@ pub(crate) mod tests {
         });
         let entries_before = cx.read(|cx| thread.read(cx).entries().len());
 
-        active_thread(&thread_view, cx).update_in(cx, |view, window, cx| {
+        active_thread(&conversation_view, cx).update_in(cx, |view, window, cx| {
             view.send(window, cx);
         });
         cx.run_until_parked();
@@ -4817,19 +4844,20 @@ pub(crate) mod tests {
             acp::ContentChunk::new("Response".into()),
         )]);
 
-        let (thread_view, cx) =
-            setup_thread_view(StubAgentServer::new(connection.clone()), cx).await;
-        add_to_workspace(thread_view.clone(), cx);
+        let (conversation_view, cx) =
+            setup_conversation_view(StubAgentServer::new(connection.clone()), cx).await;
+        add_to_workspace(conversation_view.clone(), cx);
 
-        let message_editor = message_editor(&thread_view, cx);
+        let message_editor = message_editor(&conversation_view, cx);
         message_editor.update_in(cx, |editor, window, cx| {
             editor.set_text("Original message to edit", window, cx);
         });
-        active_thread(&thread_view, cx).update_in(cx, |view, window, cx| view.send(window, cx));
+        active_thread(&conversation_view, cx)
+            .update_in(cx, |view, window, cx| view.send(window, cx));
 
         cx.run_until_parked();
 
-        let user_message_editor = thread_view.read_with(cx, |view, cx| {
+        let user_message_editor = conversation_view.read_with(cx, |view, cx| {
             assert_eq!(
                 view.active_thread()
                     .and_then(|active| active.read(cx).editing_message),
@@ -4877,7 +4905,7 @@ pub(crate) mod tests {
 
         cx.run_until_parked();
 
-        thread_view.read_with(cx, |view, cx| {
+        conversation_view.read_with(cx, |view, cx| {
             assert_eq!(
                 view.active_thread()
                     .and_then(|active| active.read(cx).editing_message),
@@ -4920,19 +4948,20 @@ pub(crate) mod tests {
 
         let connection = StubAgentConnection::new();
 
-        let (thread_view, cx) =
-            setup_thread_view(StubAgentServer::new(connection.clone()), cx).await;
-        add_to_workspace(thread_view.clone(), cx);
+        let (conversation_view, cx) =
+            setup_conversation_view(StubAgentServer::new(connection.clone()), cx).await;
+        add_to_workspace(conversation_view.clone(), cx);
 
-        let message_editor = message_editor(&thread_view, cx);
+        let message_editor = message_editor(&conversation_view, cx);
         message_editor.update_in(cx, |editor, window, cx| {
             editor.set_text("Original message to edit", window, cx);
         });
-        active_thread(&thread_view, cx).update_in(cx, |view, window, cx| view.send(window, cx));
+        active_thread(&conversation_view, cx)
+            .update_in(cx, |view, window, cx| view.send(window, cx));
 
         cx.run_until_parked();
 
-        let (user_message_editor, session_id) = thread_view.read_with(cx, |view, cx| {
+        let (user_message_editor, session_id) = conversation_view.read_with(cx, |view, cx| {
             let thread = view.active_thread().unwrap().read(cx).thread.read(cx);
             assert_eq!(thread.entries().len(), 1);
 
@@ -4954,7 +4983,7 @@ pub(crate) mod tests {
         // Focus
         cx.focus(&user_message_editor);
 
-        thread_view.read_with(cx, |view, cx| {
+        conversation_view.read_with(cx, |view, cx| {
             assert_eq!(
                 view.active_thread()
                     .and_then(|active| active.read(cx).editing_message),
@@ -4967,7 +4996,7 @@ pub(crate) mod tests {
             editor.set_text("Edited message content", window, cx);
         });
 
-        thread_view.read_with(cx, |view, cx| {
+        conversation_view.read_with(cx, |view, cx| {
             assert_eq!(
                 view.active_thread()
                     .and_then(|active| active.read(cx).editing_message),
@@ -4985,7 +5014,7 @@ pub(crate) mod tests {
             connection.end_turn(session_id, acp::StopReason::EndTurn);
         });
 
-        thread_view.read_with(cx, |view, cx| {
+        conversation_view.read_with(cx, |view, cx| {
             assert_eq!(
                 view.active_thread()
                     .and_then(|active| active.read(cx).editing_message),
@@ -4999,7 +5028,7 @@ pub(crate) mod tests {
         cx.update(|window, cx| {
             assert!(user_message_editor.focus_handle(cx).is_focused(window));
             assert_eq!(
-                thread_view
+                conversation_view
                     .read(cx)
                     .active_thread()
                     .and_then(|active| active.read(cx).editing_message),
@@ -5013,7 +5042,7 @@ pub(crate) mod tests {
     }
 
     struct GeneratingThreadSetup {
-        thread_view: Entity<ConnectionView>,
+        conversation_view: Entity<ConversationView>,
         thread: Entity<AcpThread>,
         message_editor: Entity<MessageEditor>,
     }
@@ -5023,17 +5052,18 @@ pub(crate) mod tests {
     ) -> (GeneratingThreadSetup, &mut VisualTestContext) {
         let connection = StubAgentConnection::new();
 
-        let (thread_view, cx) =
-            setup_thread_view(StubAgentServer::new(connection.clone()), cx).await;
-        add_to_workspace(thread_view.clone(), cx);
+        let (conversation_view, cx) =
+            setup_conversation_view(StubAgentServer::new(connection.clone()), cx).await;
+        add_to_workspace(conversation_view.clone(), cx);
 
-        let message_editor = message_editor(&thread_view, cx);
+        let message_editor = message_editor(&conversation_view, cx);
         message_editor.update_in(cx, |editor, window, cx| {
             editor.set_text("Hello", window, cx);
         });
-        active_thread(&thread_view, cx).update_in(cx, |view, window, cx| view.send(window, cx));
+        active_thread(&conversation_view, cx)
+            .update_in(cx, |view, window, cx| view.send(window, cx));
 
-        let (thread, session_id) = thread_view.read_with(cx, |view, cx| {
+        let (thread, session_id) = conversation_view.read_with(cx, |view, cx| {
             let thread = view
                 .active_thread()
                 .as_ref()
@@ -5064,7 +5094,7 @@ pub(crate) mod tests {
 
         (
             GeneratingThreadSetup {
-                thread_view,
+                conversation_view,
                 thread,
                 message_editor,
             },
@@ -5079,13 +5109,13 @@ pub(crate) mod tests {
         let (setup, cx) = setup_generating_thread(cx).await;
 
         let focus_handle = setup
-            .thread_view
+            .conversation_view
             .read_with(cx, |view, cx| view.focus_handle(cx));
         cx.update(|window, cx| {
             window.focus(&focus_handle, cx);
         });
 
-        setup.thread_view.update_in(cx, |_, window, cx| {
+        setup.conversation_view.update_in(cx, |_, window, cx| {
             window.dispatch_action(menu::Cancel.boxed_clone(), cx);
         });
 
@@ -5124,11 +5154,11 @@ pub(crate) mod tests {
     async fn test_escape_when_idle_is_noop(cx: &mut TestAppContext) {
         init_test(cx);
 
-        let (thread_view, cx) =
-            setup_thread_view(StubAgentServer::new(StubAgentConnection::new()), cx).await;
-        add_to_workspace(thread_view.clone(), cx);
+        let (conversation_view, cx) =
+            setup_conversation_view(StubAgentServer::new(StubAgentConnection::new()), cx).await;
+        add_to_workspace(conversation_view.clone(), cx);
 
-        let thread = thread_view.read_with(cx, |view, cx| {
+        let thread = conversation_view.read_with(cx, |view, cx| {
             view.active_thread().unwrap().read(cx).thread.clone()
         });
 
@@ -5136,12 +5166,12 @@ pub(crate) mod tests {
             assert_eq!(thread.status(), ThreadStatus::Idle);
         });
 
-        let focus_handle = thread_view.read_with(cx, |view, _cx| view.focus_handle.clone());
+        let focus_handle = conversation_view.read_with(cx, |view, _cx| view.focus_handle.clone());
         cx.update(|window, cx| {
             window.focus(&focus_handle, cx);
         });
 
-        thread_view.update_in(cx, |_, window, cx| {
+        conversation_view.update_in(cx, |_, window, cx| {
             window.dispatch_action(menu::Cancel.boxed_clone(), cx);
         });
 
@@ -5158,17 +5188,18 @@ pub(crate) mod tests {
 
         let connection = StubAgentConnection::new();
 
-        let (thread_view, cx) =
-            setup_thread_view(StubAgentServer::new(connection.clone()), cx).await;
-        add_to_workspace(thread_view.clone(), cx);
+        let (conversation_view, cx) =
+            setup_conversation_view(StubAgentServer::new(connection.clone()), cx).await;
+        add_to_workspace(conversation_view.clone(), cx);
 
-        let message_editor = message_editor(&thread_view, cx);
+        let message_editor = message_editor(&conversation_view, cx);
         message_editor.update_in(cx, |editor, window, cx| {
             editor.set_text("Message 1", window, cx);
         });
-        active_thread(&thread_view, cx).update_in(cx, |view, window, cx| view.send(window, cx));
+        active_thread(&conversation_view, cx)
+            .update_in(cx, |view, window, cx| view.send(window, cx));
 
-        let (thread, session_id) = thread_view.read_with(cx, |view, cx| {
+        let (thread, session_id) = conversation_view.read_with(cx, |view, cx| {
             let thread = view.active_thread().unwrap().read(cx).thread.clone();
 
             (thread.clone(), thread.read(cx).session_id().clone())
@@ -5207,7 +5238,7 @@ pub(crate) mod tests {
         message_editor.update_in(cx, |editor, window, cx| {
             editor.set_text("Message 2", window, cx);
         });
-        active_thread(&thread_view, cx)
+        active_thread(&conversation_view, cx)
             .update_in(cx, |view, window, cx| view.interrupt_and_send(window, cx));
 
         cx.update(|_, cx| {
@@ -5289,18 +5320,20 @@ pub(crate) mod tests {
             acp::ContentChunk::new("Response".into()),
         )]);
 
-        let (thread_view, cx) = setup_thread_view(StubAgentServer::new(connection), cx).await;
-        add_to_workspace(thread_view.clone(), cx);
+        let (conversation_view, cx) =
+            setup_conversation_view(StubAgentServer::new(connection), cx).await;
+        add_to_workspace(conversation_view.clone(), cx);
 
-        let message_editor = message_editor(&thread_view, cx);
+        let message_editor = message_editor(&conversation_view, cx);
         message_editor.update_in(cx, |editor, window, cx| {
             editor.set_text("Original message to edit", window, cx)
         });
-        active_thread(&thread_view, cx).update_in(cx, |view, window, cx| view.send(window, cx));
+        active_thread(&conversation_view, cx)
+            .update_in(cx, |view, window, cx| view.send(window, cx));
         cx.run_until_parked();
 
-        let user_message_editor = thread_view.read_with(cx, |thread_view, cx| {
-            thread_view
+        let user_message_editor = conversation_view.read_with(cx, |conversation_view, cx| {
+            conversation_view
                 .active_thread()
                 .map(|active| &active.read(cx).entry_view_state)
                 .as_ref()
@@ -5314,7 +5347,7 @@ pub(crate) mod tests {
         });
 
         cx.focus(&user_message_editor);
-        thread_view.read_with(cx, |view, cx| {
+        conversation_view.read_with(cx, |view, cx| {
             assert_eq!(
                 view.active_thread()
                     .and_then(|active| active.read(cx).editing_message),
@@ -5330,8 +5363,11 @@ pub(crate) mod tests {
 
         // Create a simple buffer with some text so we can create a selection
         // that will then be added to the message being edited.
-        let (workspace, project) = thread_view.read_with(cx, |thread_view, _cx| {
-            (thread_view.workspace.clone(), thread_view.project.clone())
+        let (workspace, project) = conversation_view.read_with(cx, |conversation_view, _cx| {
+            (
+                conversation_view.workspace.clone(),
+                conversation_view.project.clone(),
+            )
         });
         let buffer = project.update(cx, |project, cx| {
             project.create_local_buffer("let a = 10 + 10;", None, false, cx)
@@ -5353,7 +5389,7 @@ pub(crate) mod tests {
             })
             .unwrap();
 
-        thread_view.update_in(cx, |view, window, cx| {
+        conversation_view.update_in(cx, |view, window, cx| {
             assert_eq!(
                 view.active_thread()
                     .and_then(|active| active.read(cx).editing_message),
@@ -5379,18 +5415,22 @@ pub(crate) mod tests {
             acp::ContentChunk::new("Response".into()),
         )]);
 
-        let (thread_view, cx) = setup_thread_view(StubAgentServer::new(connection), cx).await;
-        add_to_workspace(thread_view.clone(), cx);
+        let (conversation_view, cx) =
+            setup_conversation_view(StubAgentServer::new(connection), cx).await;
+        add_to_workspace(conversation_view.clone(), cx);
 
-        let message_editor = message_editor(&thread_view, cx);
+        let message_editor = message_editor(&conversation_view, cx);
         message_editor.update_in(cx, |editor, window, cx| {
             editor.set_text("Can you review this snippet ", window, cx)
         });
 
         // Create a simple buffer with some text so we can create a selection
         // that will then be added to the message being edited.
-        let (workspace, project) = thread_view.read_with(cx, |thread_view, _cx| {
-            (thread_view.workspace.clone(), thread_view.project.clone())
+        let (workspace, project) = conversation_view.read_with(cx, |conversation_view, _cx| {
+            (
+                conversation_view.workspace.clone(),
+                conversation_view.project.clone(),
+            )
         });
         let buffer = project.update(cx, |project, cx| {
             project.create_local_buffer("let a = 10 + 10;", None, false, cx)
@@ -5412,7 +5452,7 @@ pub(crate) mod tests {
             })
             .unwrap();
 
-        thread_view.update_in(cx, |view, window, cx| {
+        conversation_view.update_in(cx, |view, window, cx| {
             assert_eq!(
                 view.active_thread()
                     .and_then(|active| active.read(cx).editing_message),
@@ -5451,7 +5491,8 @@ pub(crate) mod tests {
 
         connection.set_next_prompt_updates(vec![acp::SessionUpdate::ToolCall(tool_call)]);
 
-        let (thread_view, cx) = setup_thread_view(StubAgentServer::new(connection), cx).await;
+        let (conversation_view, cx) =
+            setup_conversation_view(StubAgentServer::new(connection), cx).await;
 
         // Disable notifications to avoid popup windows
         cx.update(|_window, cx| {
@@ -5464,18 +5505,19 @@ pub(crate) mod tests {
             );
         });
 
-        let message_editor = message_editor(&thread_view, cx);
+        let message_editor = message_editor(&conversation_view, cx);
         message_editor.update_in(cx, |editor, window, cx| {
             editor.set_text("Run cargo build", window, cx);
         });
 
-        active_thread(&thread_view, cx).update_in(cx, |view, window, cx| view.send(window, cx));
+        active_thread(&conversation_view, cx)
+            .update_in(cx, |view, window, cx| view.send(window, cx));
 
         cx.run_until_parked();
 
         // Verify the tool call is in WaitingForConfirmation state with the expected options
-        thread_view.read_with(cx, |thread_view, cx| {
-            let thread = thread_view
+        conversation_view.read_with(cx, |conversation_view, cx| {
+            let thread = conversation_view
                 .active_thread()
                 .expect("Thread should exist")
                 .read(cx)
@@ -5559,7 +5601,8 @@ pub(crate) mod tests {
 
         connection.set_next_prompt_updates(vec![acp::SessionUpdate::ToolCall(tool_call)]);
 
-        let (thread_view, cx) = setup_thread_view(StubAgentServer::new(connection), cx).await;
+        let (conversation_view, cx) =
+            setup_conversation_view(StubAgentServer::new(connection), cx).await;
 
         // Disable notifications
         cx.update(|_window, cx| {
@@ -5572,18 +5615,19 @@ pub(crate) mod tests {
             );
         });
 
-        let message_editor = message_editor(&thread_view, cx);
+        let message_editor = message_editor(&conversation_view, cx);
         message_editor.update_in(cx, |editor, window, cx| {
             editor.set_text("Edit the main file", window, cx);
         });
 
-        active_thread(&thread_view, cx).update_in(cx, |view, window, cx| view.send(window, cx));
+        active_thread(&conversation_view, cx)
+            .update_in(cx, |view, window, cx| view.send(window, cx));
 
         cx.run_until_parked();
 
         // Verify the options
-        thread_view.read_with(cx, |thread_view, cx| {
-            let thread = thread_view
+        conversation_view.read_with(cx, |conversation_view, cx| {
+            let thread = conversation_view
                 .active_thread()
                 .expect("Thread should exist")
                 .read(cx)
@@ -5647,7 +5691,8 @@ pub(crate) mod tests {
 
         connection.set_next_prompt_updates(vec![acp::SessionUpdate::ToolCall(tool_call)]);
 
-        let (thread_view, cx) = setup_thread_view(StubAgentServer::new(connection), cx).await;
+        let (conversation_view, cx) =
+            setup_conversation_view(StubAgentServer::new(connection), cx).await;
 
         // Disable notifications
         cx.update(|_window, cx| {
@@ -5660,18 +5705,19 @@ pub(crate) mod tests {
             );
         });
 
-        let message_editor = message_editor(&thread_view, cx);
+        let message_editor = message_editor(&conversation_view, cx);
         message_editor.update_in(cx, |editor, window, cx| {
             editor.set_text("Fetch the docs", window, cx);
         });
 
-        active_thread(&thread_view, cx).update_in(cx, |view, window, cx| view.send(window, cx));
+        active_thread(&conversation_view, cx)
+            .update_in(cx, |view, window, cx| view.send(window, cx));
 
         cx.run_until_parked();
 
         // Verify the options
-        thread_view.read_with(cx, |thread_view, cx| {
-            let thread = thread_view
+        conversation_view.read_with(cx, |conversation_view, cx| {
+            let thread = conversation_view
                 .active_thread()
                 .expect("Thread should exist")
                 .read(cx)
@@ -5738,7 +5784,8 @@ pub(crate) mod tests {
 
         connection.set_next_prompt_updates(vec![acp::SessionUpdate::ToolCall(tool_call)]);
 
-        let (thread_view, cx) = setup_thread_view(StubAgentServer::new(connection), cx).await;
+        let (conversation_view, cx) =
+            setup_conversation_view(StubAgentServer::new(connection), cx).await;
 
         // Disable notifications
         cx.update(|_window, cx| {
@@ -5751,18 +5798,19 @@ pub(crate) mod tests {
             );
         });
 
-        let message_editor = message_editor(&thread_view, cx);
+        let message_editor = message_editor(&conversation_view, cx);
         message_editor.update_in(cx, |editor, window, cx| {
             editor.set_text("Run the deploy script", window, cx);
         });
 
-        active_thread(&thread_view, cx).update_in(cx, |view, window, cx| view.send(window, cx));
+        active_thread(&conversation_view, cx)
+            .update_in(cx, |view, window, cx| view.send(window, cx));
 
         cx.run_until_parked();
 
         // Verify only 2 options (no pattern button when command doesn't match pattern)
-        thread_view.read_with(cx, |thread_view, cx| {
-            let thread = thread_view
+        conversation_view.read_with(cx, |conversation_view, cx| {
+            let thread = conversation_view
                 .active_thread()
                 .expect("Thread should exist")
                 .read(cx)
@@ -5837,8 +5885,9 @@ pub(crate) mod tests {
 
         connection.set_next_prompt_updates(vec![acp::SessionUpdate::ToolCall(tool_call)]);
 
-        let (thread_view, cx) = setup_thread_view(StubAgentServer::new(connection), cx).await;
-        add_to_workspace(thread_view.clone(), cx);
+        let (conversation_view, cx) =
+            setup_conversation_view(StubAgentServer::new(connection), cx).await;
+        add_to_workspace(conversation_view.clone(), cx);
 
         cx.update(|_window, cx| {
             AgentSettings::override_global(
@@ -5850,18 +5899,19 @@ pub(crate) mod tests {
             );
         });
 
-        let message_editor = message_editor(&thread_view, cx);
+        let message_editor = message_editor(&conversation_view, cx);
         message_editor.update_in(cx, |editor, window, cx| {
             editor.set_text("Run tests", window, cx);
         });
 
-        active_thread(&thread_view, cx).update_in(cx, |view, window, cx| view.send(window, cx));
+        active_thread(&conversation_view, cx)
+            .update_in(cx, |view, window, cx| view.send(window, cx));
 
         cx.run_until_parked();
 
         // Verify tool call is waiting for confirmation
-        thread_view.read_with(cx, |thread_view, cx| {
-            let tool_call = thread_view.pending_tool_call(cx);
+        conversation_view.read_with(cx, |conversation_view, cx| {
+            let tool_call = conversation_view.pending_tool_call(cx);
             assert!(
                 tool_call.is_some(),
                 "Expected a tool call waiting for confirmation"
@@ -5869,7 +5919,7 @@ pub(crate) mod tests {
         });
 
         // Dispatch the AuthorizeToolCall action (simulating dropdown menu selection)
-        thread_view.update_in(cx, |_, window, cx| {
+        conversation_view.update_in(cx, |_, window, cx| {
             window.dispatch_action(
                 crate::AuthorizeToolCall {
                     tool_call_id: "action-test-1".to_string(),
@@ -5884,8 +5934,8 @@ pub(crate) mod tests {
         cx.run_until_parked();
 
         // Verify tool call is no longer waiting for confirmation (was authorized)
-        thread_view.read_with(cx, |thread_view, cx| {
-            let tool_call = thread_view.pending_tool_call(cx);
+        conversation_view.read_with(cx, |conversation_view, cx| {
+            let tool_call = conversation_view.pending_tool_call(cx);
             assert!(
                 tool_call.is_none(),
                 "Tool call should no longer be waiting for confirmation after AuthorizeToolCall action"
@@ -5913,8 +5963,9 @@ pub(crate) mod tests {
 
         connection.set_next_prompt_updates(vec![acp::SessionUpdate::ToolCall(tool_call)]);
 
-        let (thread_view, cx) = setup_thread_view(StubAgentServer::new(connection), cx).await;
-        add_to_workspace(thread_view.clone(), cx);
+        let (conversation_view, cx) =
+            setup_conversation_view(StubAgentServer::new(connection), cx).await;
+        add_to_workspace(conversation_view.clone(), cx);
 
         cx.update(|_window, cx| {
             AgentSettings::override_global(
@@ -5926,12 +5977,13 @@ pub(crate) mod tests {
             );
         });
 
-        let message_editor = message_editor(&thread_view, cx);
+        let message_editor = message_editor(&conversation_view, cx);
         message_editor.update_in(cx, |editor, window, cx| {
             editor.set_text("Install dependencies", window, cx);
         });
 
-        active_thread(&thread_view, cx).update_in(cx, |view, window, cx| view.send(window, cx));
+        active_thread(&conversation_view, cx)
+            .update_in(cx, |view, window, cx| view.send(window, cx));
 
         cx.run_until_parked();
 
@@ -5952,7 +6004,7 @@ pub(crate) mod tests {
         };
 
         // Dispatch action with the pattern option (simulating "Always allow `npm` commands")
-        thread_view.update_in(cx, |_, window, cx| {
+        conversation_view.update_in(cx, |_, window, cx| {
             window.dispatch_action(
                 crate::AuthorizeToolCall {
                     tool_call_id: "pattern-action-test-1".to_string(),
@@ -5967,8 +6019,8 @@ pub(crate) mod tests {
         cx.run_until_parked();
 
         // Verify tool call was authorized
-        thread_view.read_with(cx, |thread_view, cx| {
-            let tool_call = thread_view.pending_tool_call(cx);
+        conversation_view.read_with(cx, |conversation_view, cx| {
+            let tool_call = conversation_view.pending_tool_call(cx);
             assert!(
                 tool_call.is_none(),
                 "Tool call should be authorized after selecting pattern option"
@@ -5996,8 +6048,9 @@ pub(crate) mod tests {
 
         connection.set_next_prompt_updates(vec![acp::SessionUpdate::ToolCall(tool_call)]);
 
-        let (thread_view, cx) = setup_thread_view(StubAgentServer::new(connection), cx).await;
-        add_to_workspace(thread_view.clone(), cx);
+        let (conversation_view, cx) =
+            setup_conversation_view(StubAgentServer::new(connection), cx).await;
+        add_to_workspace(conversation_view.clone(), cx);
 
         cx.update(|_window, cx| {
             AgentSettings::override_global(
@@ -6009,26 +6062,27 @@ pub(crate) mod tests {
             );
         });
 
-        let message_editor = message_editor(&thread_view, cx);
+        let message_editor = message_editor(&conversation_view, cx);
         message_editor.update_in(cx, |editor, window, cx| {
             editor.set_text("Push changes", window, cx);
         });
 
-        active_thread(&thread_view, cx).update_in(cx, |view, window, cx| view.send(window, cx));
+        active_thread(&conversation_view, cx)
+            .update_in(cx, |view, window, cx| view.send(window, cx));
 
         cx.run_until_parked();
 
         // Use default granularity (last option = "Only this time")
         // Simulate clicking the Deny button
-        active_thread(&thread_view, cx).update_in(cx, |view, window, cx| {
+        active_thread(&conversation_view, cx).update_in(cx, |view, window, cx| {
             view.reject_once(&RejectOnce, window, cx)
         });
 
         cx.run_until_parked();
 
         // Verify tool call was rejected (no longer waiting for confirmation)
-        thread_view.read_with(cx, |thread_view, cx| {
-            let tool_call = thread_view.pending_tool_call(cx);
+        conversation_view.read_with(cx, |conversation_view, cx| {
+            let tool_call = conversation_view.pending_tool_call(cx);
             assert!(
                 tool_call.is_none(),
                 "Tool call should be rejected after Deny"
@@ -6094,10 +6148,11 @@ pub(crate) mod tests {
     async fn test_manually_editing_title_updates_acp_thread_title(cx: &mut TestAppContext) {
         init_test(cx);
 
-        let (thread_view, cx) = setup_thread_view(StubAgentServer::default_response(), cx).await;
-        add_to_workspace(thread_view.clone(), cx);
+        let (conversation_view, cx) =
+            setup_conversation_view(StubAgentServer::default_response(), cx).await;
+        add_to_workspace(conversation_view.clone(), cx);
 
-        let active = active_thread(&thread_view, cx);
+        let active = active_thread(&conversation_view, cx);
         let title_editor = cx.read(|cx| active.read(cx).title_editor.clone());
         let thread = cx.read(|cx| active.read(cx).thread.clone());
 
@@ -6105,7 +6160,7 @@ pub(crate) mod tests {
             assert!(!editor.read_only(cx));
         });
 
-        cx.focus(&thread_view);
+        cx.focus(&conversation_view);
         cx.focus(&title_editor);
 
         cx.dispatch_action(editor::actions::DeleteLine);
@@ -6125,10 +6180,10 @@ pub(crate) mod tests {
     async fn test_title_editor_is_read_only_when_set_title_unsupported(cx: &mut TestAppContext) {
         init_test(cx);
 
-        let (thread_view, cx) =
-            setup_thread_view(StubAgentServer::new(ResumeOnlyAgentConnection), cx).await;
+        let (conversation_view, cx) =
+            setup_conversation_view(StubAgentServer::new(ResumeOnlyAgentConnection), cx).await;
 
-        let active = active_thread(&thread_view, cx);
+        let active = active_thread(&conversation_view, cx);
         let title_editor = cx.read(|cx| active.read(cx).title_editor.clone());
 
         title_editor.read_with(cx, |editor, cx| {
@@ -6145,16 +6200,17 @@ pub(crate) mod tests {
 
         let connection = StubAgentConnection::new();
 
-        let (thread_view, cx) =
-            setup_thread_view(StubAgentServer::new(connection.clone()), cx).await;
+        let (conversation_view, cx) =
+            setup_conversation_view(StubAgentServer::new(connection.clone()), cx).await;
 
-        let message_editor = message_editor(&thread_view, cx);
+        let message_editor = message_editor(&conversation_view, cx);
         message_editor.update_in(cx, |editor, window, cx| {
             editor.set_text("Some prompt", window, cx);
         });
-        active_thread(&thread_view, cx).update_in(cx, |view, window, cx| view.send(window, cx));
+        active_thread(&conversation_view, cx)
+            .update_in(cx, |view, window, cx| view.send(window, cx));
 
-        let session_id = thread_view.read_with(cx, |view, cx| {
+        let session_id = conversation_view.read_with(cx, |view, cx| {
             view.active_thread()
                 .unwrap()
                 .read(cx)
@@ -6172,8 +6228,8 @@ pub(crate) mod tests {
 
         cx.run_until_parked();
 
-        thread_view.read_with(cx, |thread_view, cx| {
-            let state = thread_view.active_thread().unwrap();
+        conversation_view.read_with(cx, |conversation_view, cx| {
+            let state = conversation_view.active_thread().unwrap();
             let error = &state.read(cx).thread_error;
             match error {
                 Some(ThreadError::Other { message, .. }) => {
@@ -6464,11 +6520,11 @@ pub(crate) mod tests {
     async fn test_move_queued_message_to_empty_main_editor(cx: &mut TestAppContext) {
         init_test(cx);
 
-        let (connection_view, cx) =
-            setup_thread_view(StubAgentServer::default_response(), cx).await;
+        let (conversation_view, cx) =
+            setup_conversation_view(StubAgentServer::default_response(), cx).await;
 
         // Add a plain-text message to the queue directly.
-        active_thread(&connection_view, cx).update_in(cx, |thread, window, cx| {
+        active_thread(&conversation_view, cx).update_in(cx, |thread, window, cx| {
             thread.add_to_queue(
                 vec![acp::ContentBlock::Text(acp::TextContent::new(
                     "queued message".to_string(),
@@ -6485,12 +6541,12 @@ pub(crate) mod tests {
         cx.run_until_parked();
 
         // Queue should now be empty.
-        let queue_len = active_thread(&connection_view, cx)
+        let queue_len = active_thread(&conversation_view, cx)
             .read_with(cx, |thread, _cx| thread.local_queued_messages.len());
         assert_eq!(queue_len, 0, "Queue should be empty after move");
 
         // Main editor should contain the queued message text.
-        let text = message_editor(&connection_view, cx).update(cx, |editor, cx| editor.text(cx));
+        let text = message_editor(&conversation_view, cx).update(cx, |editor, cx| editor.text(cx));
         assert_eq!(
             text, "queued message",
             "Main editor should contain the moved queued message"
@@ -6501,11 +6557,11 @@ pub(crate) mod tests {
     async fn test_move_queued_message_to_non_empty_main_editor(cx: &mut TestAppContext) {
         init_test(cx);
 
-        let (connection_view, cx) =
-            setup_thread_view(StubAgentServer::default_response(), cx).await;
+        let (conversation_view, cx) =
+            setup_conversation_view(StubAgentServer::default_response(), cx).await;
 
         // Seed the main editor with existing content.
-        message_editor(&connection_view, cx).update_in(cx, |editor, window, cx| {
+        message_editor(&conversation_view, cx).update_in(cx, |editor, window, cx| {
             editor.set_message(
                 vec![acp::ContentBlock::Text(acp::TextContent::new(
                     "existing content".to_string(),
@@ -6516,7 +6572,7 @@ pub(crate) mod tests {
         });
 
         // Add a plain-text message to the queue.
-        active_thread(&connection_view, cx).update_in(cx, |thread, window, cx| {
+        active_thread(&conversation_view, cx).update_in(cx, |thread, window, cx| {
             thread.add_to_queue(
                 vec![acp::ContentBlock::Text(acp::TextContent::new(
                     "queued message".to_string(),
@@ -6530,12 +6586,12 @@ pub(crate) mod tests {
         cx.run_until_parked();
 
         // Queue should now be empty.
-        let queue_len = active_thread(&connection_view, cx)
+        let queue_len = active_thread(&conversation_view, cx)
             .read_with(cx, |thread, _cx| thread.local_queued_messages.len());
         assert_eq!(queue_len, 0, "Queue should be empty after move");
 
         // Main editor should contain existing content + separator + queued content.
-        let text = message_editor(&connection_view, cx).update(cx, |editor, cx| editor.text(cx));
+        let text = message_editor(&conversation_view, cx).update(cx, |editor, cx| editor.text(cx));
         assert_eq!(
             text, "existing content\n\nqueued message",
             "Main editor should have existing content and queued message separated by two newlines"
@@ -6557,9 +6613,9 @@ pub(crate) mod tests {
             cx.update(|_window, cx| cx.new(|cx| AgentConnectionStore::new(project.clone(), cx)));
 
         // StubAgentConnection defaults to supports_close_session() -> false
-        let thread_view = cx.update(|window, cx| {
+        let conversation_view = cx.update(|window, cx| {
             cx.new(|cx| {
-                ConnectionView::new(
+                ConversationView::new(
                     Rc::new(StubAgentServer::default_response()),
                     connection_store,
                     Agent::Custom {
@@ -6581,7 +6637,7 @@ pub(crate) mod tests {
 
         cx.run_until_parked();
 
-        thread_view.read_with(cx, |view, _cx| {
+        conversation_view.read_with(cx, |view, _cx| {
             let connected = view.as_connected().expect("Should be connected");
             assert!(
                 !connected.threads.is_empty(),
@@ -6593,7 +6649,7 @@ pub(crate) mod tests {
             );
         });
 
-        thread_view
+        conversation_view
             .update(cx, |view, cx| {
                 view.as_connected()
                     .expect("Should be connected")
@@ -6606,12 +6662,12 @@ pub(crate) mod tests {
     async fn test_close_all_sessions_calls_close_when_supported(cx: &mut TestAppContext) {
         init_test(cx);
 
-        let (thread_view, cx) =
-            setup_thread_view(StubAgentServer::new(CloseCapableConnection::new()), cx).await;
+        let (conversation_view, cx) =
+            setup_conversation_view(StubAgentServer::new(CloseCapableConnection::new()), cx).await;
 
         cx.run_until_parked();
 
-        let close_capable = thread_view.read_with(cx, |view, _cx| {
+        let close_capable = conversation_view.read_with(cx, |view, _cx| {
             let connected = view.as_connected().expect("Should be connected");
             assert!(
                 !connected.threads.is_empty(),
@@ -6629,7 +6685,7 @@ pub(crate) mod tests {
                 .expect("Should be CloseCapableConnection")
         });
 
-        thread_view
+        conversation_view
             .update(cx, |view, cx| {
                 view.as_connected()
                     .expect("Should be connected")
@@ -6648,11 +6704,12 @@ pub(crate) mod tests {
     async fn test_close_session_returns_error_when_unsupported(cx: &mut TestAppContext) {
         init_test(cx);
 
-        let (thread_view, cx) = setup_thread_view(StubAgentServer::default_response(), cx).await;
+        let (conversation_view, cx) =
+            setup_conversation_view(StubAgentServer::default_response(), cx).await;
 
         cx.run_until_parked();
 
-        let result = thread_view
+        let result = conversation_view
             .update(cx, |view, cx| {
                 let connected = view.as_connected().expect("Should be connected");
                 assert!(
