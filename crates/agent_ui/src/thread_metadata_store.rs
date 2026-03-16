@@ -21,7 +21,6 @@ use workspace::PathList;
 pub fn init(cx: &mut App) {
     ThreadMetadataStore::init_global(cx);
 
-    //TODO: Remove this after N weeks of shipping the sidebar
     if cx.has_flag::<AgentV2FeatureFlag>() {
         migrate_thread_metadata(cx);
     }
@@ -34,6 +33,8 @@ pub fn init(cx: &mut App) {
 }
 
 /// Migrate existing thread metadata from native agent thread store to the new metadata storage.
+///
+/// TODO: Remove this after N weeks of shipping the sidebar
 fn migrate_thread_metadata(cx: &mut App) {
     ThreadMetadataStore::global(cx).update(cx, |store, cx| {
         let list = store.list(cx);
@@ -90,6 +91,10 @@ pub struct ThreadMetadataStore {
 impl ThreadMetadataStore {
     #[cfg(not(any(test, feature = "test-support")))]
     pub fn init_global(cx: &mut App) {
+        if cx.has_global::<Self>() {
+            return;
+        }
+
         let db = THREAD_METADATA_DB.clone();
         let thread_store = cx.new(|cx| Self::new(db, cx));
         cx.set_global(GlobalThreadMetadataStore(thread_store));
@@ -123,6 +128,10 @@ impl ThreadMetadataStore {
     }
 
     pub fn save(&mut self, metadata: ThreadMetadata, cx: &mut Context<Self>) -> Task<Result<()>> {
+        if !cx.has_flag::<AgentV2FeatureFlag>() {
+            return Task::ready(Ok(()));
+        }
+
         let db = self.db.clone();
         cx.spawn(async move |this, cx| {
             db.save(metadata).await?;
@@ -135,6 +144,10 @@ impl ThreadMetadataStore {
         session_id: acp::SessionId,
         cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
+        if !cx.has_flag::<AgentV2FeatureFlag>() {
+            return Task::ready(Ok(()));
+        }
+
         let db = self.db.clone();
         cx.spawn(async move |this, cx| {
             db.delete(session_id).await?;
