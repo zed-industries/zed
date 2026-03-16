@@ -7356,6 +7356,7 @@ dependencies = [
  "db",
  "editor",
  "feature_flags",
+ "file_icons",
  "futures 0.3.31",
  "fuzzy",
  "git",
@@ -22129,7 +22130,7 @@ dependencies = [
 
 [[package]]
 name = "zed_html"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "zed_extension_api 0.7.0",
 ]

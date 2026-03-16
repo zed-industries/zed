@@ -277,6 +277,7 @@ impl MarkdownPreviewView {
             |this, editor, event: &EditorEvent, window, cx| {
                 match event {
                     EditorEvent::Edited { .. }
+                    | EditorEvent::BufferEdited { .. }
                     | EditorEvent::DirtyChanged
                     | EditorEvent::ExcerptsEdited { .. } => {
                         this.parse_markdown_from_active_editor(true, window, cx);
