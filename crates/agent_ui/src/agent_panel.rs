@@ -1055,7 +1055,7 @@ impl AgentPanel {
                                 .update(cx, |workspace, cx| {
                                     let status_toast = StatusToast::new(
                                         format!(
-                                            "MCP server '{}' requires authentication. Open settings to sign in.",
+                                            "MCP server '{}' requires authentication. Open agent settings to sign in.",
                                             name
                                         ),
                                         cx,

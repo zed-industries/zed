@@ -712,7 +712,7 @@ impl AgentConfiguration {
             .as_ref()
             .map(|config| matches!(config.as_ref(), ContextServerConfiguration::Http { .. }))
             .unwrap_or(false);
-        let may_have_oauth_credentials = server_configuration.as_ref().is_some_and(|config| {
+        let should_show_logout_button = server_configuration.as_ref().is_some_and(|config| {
             matches!(config.as_ref(), ContextServerConfiguration::Http { .. })
                 && !config.has_static_auth_header()
         });
@@ -777,7 +777,7 @@ impl AgentConfiguration {
                                 .ok();
                             }
                         }))
-                        .when(may_have_oauth_credentials, |this| {
+                        .when(should_show_logout_button, |this| {
                             this.entry("Log Out", None, {
                                 let context_server_store = context_server_store.clone();
                                 let context_server_id = context_server_id.clone();
