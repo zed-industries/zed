@@ -2142,7 +2142,7 @@ impl Editor {
                         editor.registered_buffers.clear();
                         editor.register_visible_buffers(cx);
                         editor.invalidate_semantic_tokens(None);
-                        editor.refresh_runnables(window, cx);
+                        editor.refresh_runnables(None, window, cx);
                         editor.update_lsp_data(None, window, cx);
                         editor.refresh_inlay_hints(InlayHintRefreshReason::ServerRemoved, cx);
                     }
@@ -2172,7 +2172,7 @@ impl Editor {
                         let buffer_id = *buffer_id;
                         if editor.buffer().read(cx).buffer(buffer_id).is_some() {
                             editor.register_buffer(buffer_id, cx);
-                            editor.refresh_runnables(window, cx);
+                            editor.refresh_runnables(Some(buffer_id), window, cx);
                             editor.update_lsp_data(Some(buffer_id), window, cx);
                             editor.refresh_inlay_hints(InlayHintRefreshReason::NewLinesShown, cx);
                             refresh_linked_ranges(editor, window, cx);
@@ -2251,7 +2251,7 @@ impl Editor {
                     &task_inventory,
                     window,
                     |editor, _, window, cx| {
-                        editor.refresh_runnables(window, cx);
+                        editor.refresh_runnables(None, window, cx);
                     },
                 ));
             };
@@ -6481,6 +6481,7 @@ impl Editor {
             .selections
             .all::<MultiBufferOffset>(&self.display_snapshot(cx));
         let mut ranges = Vec::new();
+        let mut all_commit_ranges = Vec::new();
         let mut linked_edits = LinkedEdits::new();
 
         let text: Arc<str> = new_text.clone().into();
@@ -6506,10 +6507,12 @@ impl Editor {
 
             ranges.push(range.clone());
 
+            let start_anchor = snapshot.anchor_before(range.start);
+            let end_anchor = snapshot.anchor_after(range.end);
+            let anchor_range = start_anchor.text_anchor..end_anchor.text_anchor;
+            all_commit_ranges.push(anchor_range.clone());
+
             if !self.linked_edit_ranges.is_empty() {
-                let start_anchor = snapshot.anchor_before(range.start);
-                let end_anchor = snapshot.anchor_after(range.end);
-                let anchor_range = start_anchor.text_anchor..end_anchor.text_anchor;
                 linked_edits.push(&self, anchor_range, text.clone(), cx);
             }
         }
@@ -6596,6 +6599,7 @@ impl Editor {
             completions_menu.completions.clone(),
             candidate_id,
             true,
+            all_commit_ranges,
             cx,
         );
 
@@ -7804,7 +7808,11 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<()> {
-        let provider = self.edit_prediction_provider()?;
+        if self.leader_id.is_some() {
+            self.discard_edit_prediction(EditPredictionDiscardReason::Ignored, cx);
+            return None;
+        }
+
         let cursor = self.selections.newest_anchor().head();
         let (buffer, cursor_buffer_position) =
             self.buffer.read(cx).text_anchor_for_position(cursor, cx)?;
@@ -7829,7 +7837,8 @@ impl Editor {
             return None;
         }
 
-        provider.refresh(buffer, cursor_buffer_position, debounce, cx);
+        self.edit_prediction_provider()?
+            .refresh(buffer, cursor_buffer_position, debounce, cx);
         Some(())
     }
 
@@ -7954,7 +7963,7 @@ impl Editor {
         cx: &App,
     ) -> bool {
         maybe!({
-            if self.read_only(cx) {
+            if self.read_only(cx) || self.leader_id.is_some() {
                 return Some(false);
             }
             let provider = self.edit_prediction_provider()?;
@@ -23789,7 +23798,7 @@ impl Editor {
                     .invalidate_buffer(&buffer.read(cx).remote_id());
                 self.update_lsp_data(Some(buffer_id), window, cx);
                 self.refresh_inlay_hints(InlayHintRefreshReason::NewLinesShown, cx);
-                self.refresh_runnables(window, cx);
+                self.refresh_runnables(None, window, cx);
                 self.colorize_brackets(false, cx);
                 self.refresh_selected_text_highlights(&self.display_snapshot(cx), true, window, cx);
                 cx.emit(EditorEvent::ExcerptsAdded {
@@ -23850,12 +23859,11 @@ impl Editor {
                 }
                 self.colorize_brackets(false, cx);
                 self.update_lsp_data(None, window, cx);
-                self.refresh_runnables(window, cx);
+                self.refresh_runnables(None, window, cx);
                 cx.emit(EditorEvent::ExcerptsExpanded { ids: ids.clone() })
             }
             multi_buffer::Event::Reparsed(buffer_id) => {
-                self.clear_runnables(Some(*buffer_id));
-                self.refresh_runnables(window, cx);
+                self.refresh_runnables(Some(*buffer_id), window, cx);
                 self.refresh_selected_text_highlights(&self.display_snapshot(cx), true, window, cx);
                 self.colorize_brackets(true, cx);
                 jsx_tag_auto_close::refresh_enabled_in_any_buffer(self, multibuffer, cx);
@@ -23863,7 +23871,7 @@ impl Editor {
                 cx.emit(EditorEvent::Reparsed(*buffer_id));
             }
             multi_buffer::Event::DiffHunksToggled => {
-                self.refresh_runnables(window, cx);
+                self.refresh_runnables(None, window, cx);
             }
             multi_buffer::Event::LanguageChanged(buffer_id, is_fresh_language) => {
                 if !is_fresh_language {
@@ -23999,7 +24007,7 @@ impl Editor {
                 .unwrap_or(DiagnosticSeverity::Hint);
             self.set_max_diagnostics_severity(new_severity, cx);
         }
-        self.refresh_runnables(window, cx);
+        self.refresh_runnables(None, window, cx);
         self.update_edit_prediction_settings(cx);
         self.refresh_edit_prediction(true, false, window, cx);
         self.refresh_inline_values(cx);
@@ -25379,7 +25387,7 @@ impl Editor {
         self.refresh_inlay_hints(InlayHintRefreshReason::NewLinesShown, cx);
         if !self.buffer().read(cx).is_singleton() {
             self.update_lsp_data(None, window, cx);
-            self.refresh_runnables(window, cx);
+            self.refresh_runnables(None, window, cx);
         }
     }
 }
@@ -26571,6 +26579,7 @@ pub trait CompletionProvider {
         _completions: Rc<RefCell<Box<[Completion]>>>,
         _completion_index: usize,
         _push_to_history: bool,
+        _all_commit_ranges: Vec<Range<language::Anchor>>,
         _cx: &mut Context<Editor>,
     ) -> Task<Result<Option<language::Transaction>>> {
         Task::ready(Ok(None))
@@ -26939,6 +26948,7 @@ impl CompletionProvider for Entity<Project> {
         completions: Rc<RefCell<Box<[Completion]>>>,
         completion_index: usize,
         push_to_history: bool,
+        all_commit_ranges: Vec<Range<language::Anchor>>,
         cx: &mut Context<Editor>,
     ) -> Task<Result<Option<language::Transaction>>> {
         self.update(cx, |project, cx| {
@@ -26948,6 +26958,7 @@ impl CompletionProvider for Entity<Project> {
                     completions,
                     completion_index,
                     push_to_history,
+                    all_commit_ranges,
                     cx,
                 )
             })

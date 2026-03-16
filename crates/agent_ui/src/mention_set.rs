@@ -604,7 +604,7 @@ impl MentionSet {
         })
     }
 
-    fn confirm_mention_for_git_diff(
+    pub fn confirm_mention_for_git_diff(
         &self,
         base_ref: SharedString,
         cx: &mut Context<Self>,

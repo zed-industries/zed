@@ -80,9 +80,8 @@ use search::{BufferSearchBar, buffer_search};
 use settings::{Settings, update_settings_file};
 use theme::ThemeSettings;
 use ui::{
-    Button, ButtonLike, Callout, ContextMenu, ContextMenuEntry, DocumentationSide, Indicator,
-    KeyBinding, PopoverMenu, PopoverMenuHandle, SpinnerLabel, Tab, TintColor, Tooltip, prelude::*,
-    utils::WithRemSize,
+    Button, Callout, ContextMenu, ContextMenuEntry, DocumentationSide, Indicator, KeyBinding,
+    PopoverMenu, PopoverMenuHandle, SpinnerLabel, Tab, Tooltip, prelude::*, utils::WithRemSize,
 };
 use util::{ResultExt as _, debug_panic};
 use workspace::{
@@ -3271,48 +3270,49 @@ impl AgentPanel {
 
         let content = match &self.active_view {
             ActiveView::AgentThread { server_view } => {
-                let is_generating_title = server_view
-                    .read(cx)
-                    .as_native_thread(cx)
-                    .map_or(false, |t| t.read(cx).is_generating_title());
+                let server_view_ref = server_view.read(cx);
+                let is_generating_title = server_view_ref.as_native_thread(cx).is_some()
+                    && server_view_ref.parent_thread(cx).map_or(false, |tv| {
+                        tv.read(cx).thread.read(cx).has_provisional_title()
+                    });
 
-                if let Some(title_editor) = server_view
-                    .read(cx)
+                if let Some(title_editor) = server_view_ref
                     .parent_thread(cx)
                     .map(|r| r.read(cx).title_editor.clone())
                 {
-                    let container = div()
-                        .w_full()
-                        .on_action({
-                            let thread_view = server_view.downgrade();
-                            move |_: &menu::Confirm, window, cx| {
-                                if let Some(thread_view) = thread_view.upgrade() {
-                                    thread_view.focus_handle(cx).focus(window, cx);
-                                }
-                            }
-                        })
-                        .on_action({
-                            let thread_view = server_view.downgrade();
-                            move |_: &editor::actions::Cancel, window, cx| {
-                                if let Some(thread_view) = thread_view.upgrade() {
-                                    thread_view.focus_handle(cx).focus(window, cx);
-                                }
-                            }
-                        })
-                        .child(title_editor);
-
                     if is_generating_title {
-                        container
+                        Label::new("New Thread…")
+                            .color(Color::Muted)
+                            .truncate()
                             .with_animation(
                                 "generating_title",
                                 Animation::new(Duration::from_secs(2))
                                     .repeat()
                                     .with_easing(pulsating_between(0.4, 0.8)),
-                                |div, delta| div.opacity(delta),
+                                |label, delta| label.alpha(delta),
                             )
                             .into_any_element()
                     } else {
-                        container.into_any_element()
+                        div()
+                            .w_full()
+                            .on_action({
+                                let thread_view = server_view.downgrade();
+                                move |_: &menu::Confirm, window, cx| {
+                                    if let Some(thread_view) = thread_view.upgrade() {
+                                        thread_view.focus_handle(cx).focus(window, cx);
+                                    }
+                                }
+                            })
+                            .on_action({
+                                let thread_view = server_view.downgrade();
+                                move |_: &editor::actions::Cancel, window, cx| {
+                                    if let Some(thread_view) = thread_view.upgrade() {
+                                        thread_view.focus_handle(cx).focus(window, cx);
+                                    }
+                                }
+                            })
+                            .child(title_editor)
+                            .into_any_element()
                     }
                 } else {
                     Label::new(server_view.read(cx).title(cx))
@@ -3636,11 +3636,7 @@ impl AgentPanel {
         };
 
         let trigger_button = Button::new("thread-target-trigger", trigger_label)
-            .icon(icon)
-            .icon_size(IconSize::XSmall)
-            .icon_position(IconPosition::End)
-            .icon_color(Color::Muted)
-            .selected_style(ButtonStyle::Tinted(TintColor::Accent))
+            .end_icon(Icon::new(icon).size(IconSize::XSmall).color(Color::Muted))
             .disabled(is_creating);
 
         let dock_position = AgentSettings::get_global(cx).dock;
@@ -4294,32 +4290,22 @@ impl AgentPanel {
                     (IconName::ChevronDown, Color::Muted, Color::Default)
                 };
 
-            let agent_icon_element: AnyElement =
-                if let Some(icon_path) = selected_agent_custom_icon_for_button {
-                    Icon::from_external_svg(icon_path)
-                        .size(IconSize::Small)
-                        .color(icon_color)
-                        .into_any_element()
-                } else {
-                    let icon_name = selected_agent_builtin_icon.unwrap_or(IconName::ZedAgent);
-                    Icon::new(icon_name)
-                        .size(IconSize::Small)
-                        .color(icon_color)
-                        .into_any_element()
-                };
+            let agent_icon = if let Some(icon_path) = selected_agent_custom_icon_for_button {
+                Icon::from_external_svg(icon_path)
+                    .size(IconSize::Small)
+                    .color(icon_color)
+            } else {
+                let icon_name = selected_agent_builtin_icon.unwrap_or(IconName::ZedAgent);
+                Icon::new(icon_name).size(IconSize::Small).color(icon_color)
+            };
 
-            let agent_selector_button = ButtonLike::new("agent-selector-trigger")
-                .selected_style(ButtonStyle::Tinted(TintColor::Accent))
-                .child(
-                    h_flex()
-                        .gap_1()
-                        .child(agent_icon_element)
-                        .child(Label::new(selected_agent_label).color(label_color).ml_0p5())
-                        .child(
-                            Icon::new(chevron_icon)
-                                .color(icon_color)
-                                .size(IconSize::XSmall),
-                        ),
+            let agent_selector_button = Button::new("agent-selector-trigger", selected_agent_label)
+                .start_icon(agent_icon)
+                .color(label_color)
+                .end_icon(
+                    Icon::new(chevron_icon)
+                        .color(icon_color)
+                        .size(IconSize::XSmall),
                 );
 
             let agent_selector_menu = PopoverMenu::new("new_thread_menu")

@@ -1799,10 +1799,13 @@ extern "C" fn handle_key_event(this: &Object, native_event: id, key_equivalent: 
             // may need them even if there is no marked text;
             // however we skip keys with control or the input handler adds control-characters to the buffer.
             // and keys with function, as the input handler swallows them.
+            // and keys with platform (Cmd), so that Cmd+key events (e.g. Cmd+`) are not
+            // consumed by the IME on non-QWERTY / dead-key layouts.
             if is_composing
                 || (key_down_event.keystroke.key_char.is_none()
                     && !key_down_event.keystroke.modifiers.control
-                    && !key_down_event.keystroke.modifiers.function)
+                    && !key_down_event.keystroke.modifiers.function
+                    && !key_down_event.keystroke.modifiers.platform)
             {
                 {
                     let mut lock = window_state.as_ref().lock();

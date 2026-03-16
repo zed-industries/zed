@@ -41,7 +41,7 @@ use settings::{
 use std::collections::{VecDeque, hash_map};
 use std::env;
 use text::{AnchorRangeExt, Edit};
-use workspace::Workspace;
+use workspace::{AppState, Workspace};
 use zeta_prompt::{ZetaFormat, ZetaPromptInput};
 
 use std::mem;
@@ -965,6 +965,10 @@ impl EditPredictionStore {
 
     pub fn has_mercury_api_token(&self, cx: &App) -> bool {
         self.mercury.api_token.read(cx).has_key()
+    }
+
+    pub fn mercury_has_payment_required_error(&self) -> bool {
+        self.mercury.has_payment_required_error()
     }
 
     pub fn clear_history(&mut self) {
@@ -1908,6 +1912,10 @@ impl EditPredictionStore {
             return;
         }
 
+        if currently_following(&project, cx) {
+            return;
+        }
+
         let Some(project_state) = self.projects.get_mut(&project.entity_id()) else {
             return;
         };
@@ -2042,6 +2050,25 @@ impl EditPredictionStore {
     }
 
     pub const THROTTLE_TIMEOUT: Duration = Duration::from_millis(300);
+}
+
+fn currently_following(project: &Entity<Project>, cx: &App) -> bool {
+    let Some(app_state) = AppState::try_global(cx).and_then(|app_state| app_state.upgrade()) else {
+        return false;
+    };
+
+    app_state
+        .workspace_store
+        .read(cx)
+        .workspaces()
+        .filter_map(|workspace| workspace.upgrade())
+        .any(|workspace| {
+            workspace.read(cx).project().entity_id() == project.entity_id()
+                && workspace
+                    .read(cx)
+                    .leader_for_pane(workspace.read(cx).active_pane())
+                    .is_some()
+        })
 }
 
 fn is_ep_store_provider(provider: EditPredictionProvider) -> bool {

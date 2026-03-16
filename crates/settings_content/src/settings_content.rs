@@ -721,6 +721,10 @@ pub struct FileFinderSettingsContent {
     ///
     /// Default: Smart
     pub include_ignored: Option<IncludeIgnoredContent>,
+    /// Whether to include text channels in file finder results.
+    ///
+    /// Default: false
+    pub include_channels: Option<bool>,
 }
 
 #[derive(

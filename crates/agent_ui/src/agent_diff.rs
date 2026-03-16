@@ -686,10 +686,11 @@ impl Render for AgentDiffPane {
                         .child(
                             Button::new("continue-iterating", "Continue Iterating")
                                 .style(ButtonStyle::Filled)
-                                .icon(IconName::ForwardArrow)
-                                .icon_position(IconPosition::Start)
-                                .icon_size(IconSize::Small)
-                                .icon_color(Color::Muted)
+                                .start_icon(
+                                    Icon::new(IconName::ForwardArrow)
+                                        .size(IconSize::Small)
+                                        .color(Color::Muted),
+                                )
                                 .full_width()
                                 .key_binding(KeyBinding::for_action_in(
                                     &ToggleFocus,

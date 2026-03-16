@@ -1,8 +1,12 @@
 use std::sync::Arc;
 
-use crate::{Agent, agent_connection_store::AgentConnectionStore, thread_history::ThreadHistory};
+use crate::{
+    Agent, RemoveSelectedThread, agent_connection_store::AgentConnectionStore,
+    thread_history::ThreadHistory,
+};
 use acp_thread::AgentSessionInfo;
 use agent::ThreadStore;
+use agent_client_protocol as acp;
 use chrono::{Datelike as _, Local, NaiveDate, TimeDelta, Utc};
 use editor::Editor;
 use fs::Fs;
@@ -109,6 +113,7 @@ pub struct ThreadsArchiveView {
     list_state: ListState,
     items: Vec<ArchiveListItem>,
     selection: Option<usize>,
+    hovered_index: Option<usize>,
     filter_editor: Entity<Editor>,
     _subscriptions: Vec<gpui::Subscription>,
     selected_agent_menu: PopoverMenuHandle<ContextMenu>,
@@ -152,6 +157,7 @@ impl ThreadsArchiveView {
             list_state: ListState::new(0, gpui::ListAlignment::Top, px(1000.)),
             items: Vec::new(),
             selection: None,
+            hovered_index: None,
             filter_editor,
             _subscriptions: vec![filter_editor_subscription],
             selected_agent_menu: PopoverMenuHandle::default(),
@@ -272,6 +278,37 @@ impl ThreadsArchiveView {
         });
     }
 
+    fn delete_thread(&mut self, session_id: &acp::SessionId, cx: &mut Context<Self>) {
+        let Some(history) = &self.history else {
+            return;
+        };
+        if !history.read(cx).supports_delete() {
+            return;
+        }
+        let session_id = session_id.clone();
+        history.update(cx, |history, cx| {
+            history
+                .delete_session(&session_id, cx)
+                .detach_and_log_err(cx);
+        });
+    }
+
+    fn remove_selected_thread(
+        &mut self,
+        _: &RemoveSelectedThread,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(ix) = self.selection else {
+            return;
+        };
+        let Some(ArchiveListItem::Entry { session, .. }) = self.items.get(ix) else {
+            return;
+        };
+        let session_id = session.session_id.clone();
+        self.delete_thread(&session_id, cx);
+    }
+
     fn is_selectable_item(&self, ix: usize) -> bool {
         matches!(self.items.get(ix), Some(ArchiveListItem::Entry { .. }))
     }
@@ -377,9 +414,17 @@ impl ThreadsArchiveView {
                 highlight_positions,
             } => {
                 let is_selected = self.selection == Some(ix);
+                let hovered = self.hovered_index == Some(ix);
+                let supports_delete = self
+                    .history
+                    .as_ref()
+                    .map(|h| h.read(cx).supports_delete())
+                    .unwrap_or(false);
                 let title: SharedString =
                     session.title.clone().unwrap_or_else(|| "Untitled".into());
                 let session_info = session.clone();
+                let session_id_for_delete = session.session_id.clone();
+                let focus_handle = self.focus_handle.clone();
                 let highlight_positions = highlight_positions.clone();
 
                 let timestamp = session.created_at.or(session.updated_at).map(|entry_time| {
@@ -429,12 +474,45 @@ impl ThreadsArchiveView {
                             .gap_2()
                             .justify_between()
                             .child(title_label)
-                            .when_some(timestamp, |this, ts| {
-                                this.child(
-                                    Label::new(ts).size(LabelSize::Small).color(Color::Muted),
-                                )
+                            .when(!(hovered && supports_delete), |this| {
+                                this.when_some(timestamp, |this, ts| {
+                                    this.child(
+                                        Label::new(ts).size(LabelSize::Small).color(Color::Muted),
+                                    )
+                                })
                             }),
                     )
+                    .on_hover(cx.listener(move |this, is_hovered, _window, cx| {
+                        if *is_hovered {
+                            this.hovered_index = Some(ix);
+                        } else if this.hovered_index == Some(ix) {
+                            this.hovered_index = None;
+                        }
+                        cx.notify();
+                    }))
+                    .end_slot::<IconButton>(if hovered && supports_delete {
+                        Some(
+                            IconButton::new("delete-thread", IconName::Trash)
+                                .icon_size(IconSize::Small)
+                                .icon_color(Color::Muted)
+                                .tooltip({
+                                    move |_window, cx| {
+                                        Tooltip::for_action_in(
+                                            "Delete Thread",
+                                            &RemoveSelectedThread,
+                                            &focus_handle,
+                                            cx,
+                                        )
+                                    }
+                                })
+                                .on_click(cx.listener(move |this, _, _, cx| {
+                                    this.delete_thread(&session_id_for_delete, cx);
+                                    cx.stop_propagation();
+                                })),
+                        )
+                    } else {
+                        None
+                    })
                     .on_click(cx.listener(move |this, _, window, cx| {
                         this.open_thread(session_info.clone(), window, cx);
                     }))
@@ -683,6 +761,7 @@ impl Render for ThreadsArchiveView {
             .on_action(cx.listener(Self::select_first))
             .on_action(cx.listener(Self::select_last))
             .on_action(cx.listener(Self::confirm))
+            .on_action(cx.listener(Self::remove_selected_thread))
             .size_full()
             .bg(cx.theme().colors().surface_background)
             .child(self.render_header(cx))

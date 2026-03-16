@@ -133,10 +133,11 @@ impl RenderOnce for ConfiguredApiCard {
                         elem.tab_index(tab_index)
                     })
                     .label_size(LabelSize::Small)
-                    .icon(IconName::Undo)
-                    .icon_size(IconSize::Small)
-                    .icon_color(Color::Muted)
-                    .icon_position(IconPosition::Start)
+                    .start_icon(
+                        Icon::new(IconName::Undo)
+                            .size(IconSize::Small)
+                            .color(Color::Muted),
+                    )
                     .disabled(self.disabled)
                     .when_some(self.tooltip_label, |this, label| {
                         this.tooltip(Tooltip::text(label))

@@ -10,6 +10,7 @@ use language::LanguageRegistry;
 use markdown::parser::PARSE_OPTIONS;
 use markup5ever_rcdom::RcDom;
 use pulldown_cmark::{Alignment, Event, Parser, Tag, TagEnd};
+use stacksafe::stacksafe;
 use std::{
     cell::RefCell, collections::HashMap, mem, ops::Range, path::PathBuf, rc::Rc, sync::Arc, vec,
 };
@@ -907,6 +908,7 @@ impl<'a> MarkdownParser<'a> {
         elements
     }
 
+    #[stacksafe]
     fn parse_html_node(
         &self,
         source_range: Range<usize>,
@@ -1013,6 +1015,7 @@ impl<'a> MarkdownParser<'a> {
         }
     }
 
+    #[stacksafe]
     fn parse_paragraph(
         &self,
         source_range: Range<usize>,

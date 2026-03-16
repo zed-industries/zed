@@ -429,10 +429,11 @@ impl Render for FileHistoryView {
                                     Button::new("load-more", "Load More")
                                         .disabled(self.loading_more)
                                         .label_size(LabelSize::Small)
-                                        .icon(IconName::ArrowCircle)
-                                        .icon_size(IconSize::Small)
-                                        .icon_color(Color::Muted)
-                                        .icon_position(IconPosition::Start)
+                                        .start_icon(
+                                            Icon::new(IconName::ArrowCircle)
+                                                .size(IconSize::Small)
+                                                .color(Color::Muted),
+                                        )
                                         .on_click(cx.listener(|this, _, window, cx| {
                                             this.load_more(window, cx);
                                         })),

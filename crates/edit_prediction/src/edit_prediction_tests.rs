@@ -8,6 +8,7 @@ use cloud_llm_client::{
     EditPredictionRejectReason, EditPredictionRejection, RejectEditPredictionsBody,
     predict_edits_v3::{PredictEditsV3Request, PredictEditsV3Response},
 };
+
 use futures::{
     AsyncReadExt, FutureExt, StreamExt,
     channel::{mpsc, oneshot},
@@ -35,11 +36,12 @@ use util::{
     test::{TextRangeMarker, marked_text_ranges_by},
 };
 use uuid::Uuid;
+use workspace::{AppState, CollaboratorId, MultiWorkspace};
 use zeta_prompt::ZetaPromptInput;
 
 use crate::{
     BufferEditPrediction, EDIT_PREDICTION_SETTLED_QUIESCENCE, EditPredictionId,
-    EditPredictionStore, REJECT_REQUEST_DEBOUNCE,
+    EditPredictionJumpsFeatureFlag, EditPredictionStore, REJECT_REQUEST_DEBOUNCE,
 };
 
 #[gpui::test]
@@ -175,6 +177,172 @@ async fn test_current_state(cx: &mut TestAppContext) {
             .prediction_at(&buffer2, None, &project, cx)
             .unwrap();
         assert_matches!(prediction, BufferEditPrediction::Local { .. });
+    });
+}
+
+#[gpui::test]
+async fn test_diagnostics_refresh_suppressed_while_following(cx: &mut TestAppContext) {
+    let (ep_store, mut requests) = init_test_with_fake_client(cx);
+
+    cx.update(|cx| {
+        cx.update_flags(
+            false,
+            vec![EditPredictionJumpsFeatureFlag::NAME.to_string()],
+        );
+    });
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        "/root",
+        json!({
+            "1.txt": "Hello!\nHow\nBye\n",
+            "2.txt": "Hola!\nComo\nAdios\n"
+        }),
+    )
+    .await;
+    let project = Project::test(fs, vec![path!("/root").as_ref()], cx).await;
+
+    let app_state = cx.update(|cx| {
+        let app_state = AppState::test(cx);
+        AppState::set_global(Arc::downgrade(&app_state), cx);
+        app_state
+    });
+
+    let multi_workspace =
+        cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let workspace = multi_workspace
+        .read_with(cx, |multi_workspace, _| multi_workspace.workspace().clone())
+        .unwrap();
+    cx.update(|cx| {
+        AppState::set_global(Arc::downgrade(workspace.read(cx).app_state()), cx);
+    });
+    let _ = app_state;
+
+    let buffer1 = project
+        .update(cx, |project, cx| {
+            let path = project.find_project_path(path!("root/1.txt"), cx).unwrap();
+            project.set_active_path(Some(path.clone()), cx);
+            project.open_buffer(path, cx)
+        })
+        .await
+        .unwrap();
+    let snapshot1 = buffer1.read_with(cx, |buffer, _cx| buffer.snapshot());
+    let position = snapshot1.anchor_before(language::Point::new(1, 3));
+
+    ep_store.update(cx, |ep_store, cx| {
+        ep_store.register_project(&project, cx);
+        ep_store.register_buffer(&buffer1, &project, cx);
+        ep_store.refresh_prediction_from_buffer(project.clone(), buffer1.clone(), position, cx);
+    });
+
+    let (request, respond_tx) = requests.predict.next().await.unwrap();
+    respond_tx
+        .send(model_response(
+            &request,
+            indoc! {r"
+                --- a/root/1.txt
+                +++ b/root/1.txt
+                @@ ... @@
+                 Hello!
+                -How
+                +How are you?
+                 Bye
+            "},
+        ))
+        .unwrap();
+    cx.run_until_parked();
+
+    ep_store.update(cx, |ep_store, cx| {
+        ep_store.reject_current_prediction(EditPredictionRejectReason::Discarded, &project, cx);
+    });
+
+    let _ = multi_workspace.update(cx, |multi_workspace, window, cx| {
+        multi_workspace.workspace().update(cx, |workspace, cx| {
+            workspace.start_following(CollaboratorId::Agent, window, cx);
+        });
+    });
+    cx.run_until_parked();
+
+    let diagnostic = lsp::Diagnostic {
+        range: lsp::Range::new(lsp::Position::new(1, 1), lsp::Position::new(1, 5)),
+        severity: Some(lsp::DiagnosticSeverity::ERROR),
+        message: "Sentence is incomplete".to_string(),
+        ..Default::default()
+    };
+
+    project.update(cx, |project, cx| {
+        project.lsp_store().update(cx, |lsp_store, cx| {
+            lsp_store
+                .update_diagnostics(
+                    LanguageServerId(0),
+                    lsp::PublishDiagnosticsParams {
+                        uri: lsp::Uri::from_file_path(path!("/root/2.txt")).unwrap(),
+                        diagnostics: vec![diagnostic.clone()],
+                        version: None,
+                    },
+                    None,
+                    language::DiagnosticSourceKind::Pushed,
+                    &[],
+                    cx,
+                )
+                .unwrap();
+        });
+    });
+
+    cx.run_until_parked();
+    assert_no_predict_request_ready(&mut requests.predict);
+
+    let _ = multi_workspace.update(cx, |multi_workspace, window, cx| {
+        multi_workspace.workspace().update(cx, |workspace, cx| {
+            workspace.unfollow(CollaboratorId::Agent, window, cx);
+        });
+    });
+    cx.run_until_parked();
+
+    project.update(cx, |project, cx| {
+        project.lsp_store().update(cx, |lsp_store, cx| {
+            lsp_store
+                .update_diagnostics(
+                    LanguageServerId(0),
+                    lsp::PublishDiagnosticsParams {
+                        uri: lsp::Uri::from_file_path(path!("/root/2.txt")).unwrap(),
+                        diagnostics: vec![diagnostic],
+                        version: None,
+                    },
+                    None,
+                    language::DiagnosticSourceKind::Pushed,
+                    &[],
+                    cx,
+                )
+                .unwrap();
+        });
+    });
+
+    let (request, respond_tx) = requests.predict.next().await.unwrap();
+    respond_tx
+        .send(model_response(
+            &request,
+            indoc! {r#"
+                --- a/root/2.txt
+                +++ b/root/2.txt
+                @@ ... @@
+                 Hola!
+                -Como
+                +Como estas?
+                 Adios
+            "#},
+        ))
+        .unwrap();
+    cx.run_until_parked();
+
+    ep_store.update(cx, |ep_store, cx| {
+        let prediction = ep_store
+            .prediction_at(&buffer1, None, &project, cx)
+            .unwrap();
+        assert_matches!(
+            prediction,
+            BufferEditPrediction::Jump { prediction } if prediction.snapshot.file().unwrap().full_path(cx) == Path::new(path!("root/2.txt"))
+        );
     });
 }
 
@@ -2102,6 +2270,7 @@ fn empty_response() -> PredictEditsV3Response {
 
 fn prompt_from_request(request: &PredictEditsV3Request) -> String {
     zeta_prompt::format_zeta_prompt(&request.input, zeta_prompt::ZetaFormat::default())
+        .expect("default zeta prompt formatting should succeed in edit prediction tests")
 }
 
 fn assert_no_predict_request_ready(
