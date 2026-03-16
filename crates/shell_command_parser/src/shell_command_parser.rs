@@ -50,11 +50,12 @@ pub fn extract_terminal_command_prefix(command: &str) -> Option<TerminalCommandP
     if let Some(prefix) = &simple_command.prefix {
         for item in &prefix.0 {
             if let ast::CommandPrefixOrSuffixItem::AssignmentWord(assignment, word) = item {
-                let normalized_assignment =
-                    normalize_assignment_for_command_prefix(assignment, word)?;
-                if let Some(normalized_assignment) = normalized_assignment {
-                    normalized_tokens.push(normalized_assignment);
-                    update_display_bounds(&mut display_start, &mut display_end, word);
+                match normalize_assignment_for_command_prefix(assignment, word)? {
+                    NormalizedAssignment::Included(normalized_assignment) => {
+                        normalized_tokens.push(normalized_assignment);
+                        update_display_bounds(&mut display_start, &mut display_end, word);
+                    }
+                    NormalizedAssignment::Skipped => {}
                 }
             }
         }
@@ -135,10 +136,15 @@ fn update_display_bounds(start: &mut Option<usize>, end: &mut Option<usize>, wor
     }
 }
 
+enum NormalizedAssignment {
+    Included(String),
+    Skipped,
+}
+
 fn normalize_assignment_for_command_prefix(
     assignment: &ast::Assignment,
     word: &ast::Word,
-) -> Option<Option<String>> {
+) -> Option<NormalizedAssignment> {
     let operator = if assignment.append { "+=" } else { "=" };
     let assignment_prefix = format!("{}{}", assignment.name, operator);
 
@@ -152,9 +158,11 @@ fn normalize_assignment_for_command_prefix(
                 normalized_value
             };
 
-            Some(Some(format!("{assignment_prefix}{rendered_value}")))
+            Some(NormalizedAssignment::Included(format!(
+                "{assignment_prefix}{rendered_value}"
+            )))
         }
-        ast::AssignmentValue::Array(_) => Some(None),
+        ast::AssignmentValue::Array(_) => Some(NormalizedAssignment::Skipped),
     }
 }
 
@@ -563,10 +571,11 @@ fn extract_commands_from_simple_command(
                     }
                 }
                 ast::CommandPrefixOrSuffixItem::AssignmentWord(assignment, word) => {
-                    if let Some(normalized_assignment) =
-                        normalize_assignment_for_command_prefix(assignment, word)?
-                    {
-                        words.push(normalized_assignment);
+                    match normalize_assignment_for_command_prefix(assignment, word)? {
+                        NormalizedAssignment::Included(normalized_assignment) => {
+                            words.push(normalized_assignment);
+                        }
+                        NormalizedAssignment::Skipped => {}
                     }
                 }
                 _ => {}
