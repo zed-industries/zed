@@ -15,11 +15,10 @@ pub(super) use std::sync::Arc;
 use rodio::{
     Decoder, DeviceSinkBuilder, MixerDeviceSink, Source,
     mixer::Mixer,
-    nz,
     source::{AutomaticGainControlSettings, Buffered},
 };
 use settings::Settings;
-use std::{io::Cursor, num::NonZero, path::PathBuf, sync::atomic::Ordering, time::Duration};
+use std::{io::Cursor, path::PathBuf, sync::atomic::Ordering, time::Duration};
 use util::ResultExt;
 
 mod audio_settings;
@@ -30,13 +29,9 @@ pub use rodio_ext::RodioExt;
 
 use audio_settings::LIVE_SETTINGS;
 
+use super::{CHANNEL_COUNT, SAMPLE_RATE};
 pub const BUFFER_SIZE: usize = // echo canceller and livekit want 10ms of audio
-    (LEGACY_SAMPLE_RATE.get() as usize / 100) * LEGACY_CHANNEL_COUNT.get() as usize;
-
-pub const LEGACY_SAMPLE_RATE: NonZero<u32> = nz!(48000);
-pub const LEGACY_CHANNEL_COUNT: NonZero<u16> = nz!(2);
-
-pub const REPLAY_DURATION: Duration = Duration::from_secs(30);
+    (SAMPLE_RATE.get() as usize / 100) * CHANNEL_COUNT.get() as usize;
 
 pub fn init(cx: &mut App) {
     LIVE_SETTINGS.initialize(cx);
@@ -140,7 +135,7 @@ impl Audio {
         let stream = open_input_stream(voip_parts.input_audio_device)?;
         let stream = stream
             .possibly_disconnected_channels_to_mono()
-            .constant_samplerate(LEGACY_SAMPLE_RATE)
+            .constant_params(CHANNEL_COUNT, SAMPLE_RATE)
             .process_buffer::<BUFFER_SIZE, _>(move |buffer| {
                 let mut int_buffer: [i16; _] = buffer.map(|s| s.to_sample());
                 if voip_parts
@@ -148,8 +143,8 @@ impl Audio {
                     .lock()
                     .process_stream(
                         &mut int_buffer,
-                        LEGACY_SAMPLE_RATE.get() as i32,
-                        LEGACY_CHANNEL_COUNT.get() as i32,
+                        SAMPLE_RATE.get() as i32,
+                        CHANNEL_COUNT.get() as i32,
                     )
                     .context("livekit audio processor error")
                     .log_err()
@@ -172,7 +167,7 @@ impl Audio {
                     .set_enabled(LIVE_SETTINGS.auto_microphone_volume.load(Ordering::Relaxed));
             });
 
-        let (replay, stream) = stream.replayable(REPLAY_DURATION)?;
+        let (replay, stream) = stream.replayable(crate::REPLAY_DURATION)?;
         voip_parts
             .replays
             .add_voip_stream("local microphone".to_string(), replay);
@@ -196,7 +191,7 @@ impl Audio {
             .periodic_access(Duration::from_millis(100), move |agc_source| {
                 agc_source.set_enabled(LIVE_SETTINGS.auto_speaker_volume.load(Ordering::Relaxed));
             })
-            .replayable(REPLAY_DURATION)
+            .replayable(crate::REPLAY_DURATION)
             .expect("REPLAY_DURATION is longer than 100ms");
         let output_audio_device = AudioSettings::get_global(cx).output_audio_device.clone();
 
@@ -332,6 +327,13 @@ pub fn resolve_device(device_id: Option<&DeviceId>, input: bool) -> anyhow::Resu
             .default_output_device()
             .context("no audio output device available")
     }
+}
+
+pub fn open_test_output(device_id: Option<DeviceId>) -> anyhow::Result<MixerDeviceSink> {
+    let device = resolve_device(device_id.as_ref(), false)?;
+    DeviceSinkBuilder::from_device(device)?
+        .open_stream()
+        .context("Could not open output stream")
 }
 
 pub fn open_output_stream(

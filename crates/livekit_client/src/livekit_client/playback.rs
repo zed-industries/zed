@@ -1,6 +1,6 @@
 use anyhow::{Context as _, Result};
 
-use audio::{AudioSettings, CHANNEL_COUNT, LEGACY_CHANNEL_COUNT, LEGACY_SAMPLE_RATE, SAMPLE_RATE};
+use audio::{AudioSettings, CHANNEL_COUNT, SAMPLE_RATE};
 use cpal::DeviceId;
 use cpal::traits::{DeviceTrait, StreamTrait as _};
 use futures::channel::mpsc::UnboundedSender;
@@ -99,8 +99,8 @@ impl AudioStack {
         let next_ssrc = self.next_ssrc.fetch_add(1, Ordering::Relaxed);
         let source = AudioMixerSource {
             ssrc: next_ssrc,
-            sample_rate: LEGACY_SAMPLE_RATE.get(),
-            num_channels: LEGACY_CHANNEL_COUNT.get() as u32,
+            sample_rate: SAMPLE_RATE.get(),
+            num_channels: CHANNEL_COUNT.get() as u32,
             buffer: Arc::default(),
         };
         self.mixer.lock().add_source(source.clone());
@@ -145,8 +145,8 @@ impl AudioStack {
                     executor,
                     apm,
                     mixer,
-                    LEGACY_SAMPLE_RATE.get(),
-                    LEGACY_CHANNEL_COUNT.get().into(),
+                    SAMPLE_RATE.get(),
+                    CHANNEL_COUNT.get().into(),
                     output_audio_device,
                 )
                 .await
@@ -171,8 +171,9 @@ impl AudioStack {
             NativeAudioSource::new(
                 // n.b. this struct's options are always ignored, noise cancellation is provided by apm.
                 AudioSourceOptions::default(),
-                LEGACY_SAMPLE_RATE.get(),
-                LEGACY_CHANNEL_COUNT.get().into(),
+                SAMPLE_RATE.get(), // TODO(audio): this was lagacy params,
+                                   // removed for now for simplicty
+                CHANNEL_COUNT.get().into(),
                 10,
             )
         } else {
@@ -233,8 +234,8 @@ impl AudioStack {
                     executor,
                     apm,
                     frame_tx,
-                    LEGACY_SAMPLE_RATE.get(),
-                    LEGACY_CHANNEL_COUNT.get().into(),
+                    SAMPLE_RATE.get(), // TODO(audio): was legacy removed for now
+                    CHANNEL_COUNT.get().into(),
                     input_audio_device,
                 )
                 .await
@@ -449,6 +450,7 @@ fn send_to_livekit(frame_tx: UnboundedSender<AudioFrame<'static>>, mut microphon
     use cpal::Sample;
     let sample_rate = microphone.sample_rate().get();
     let num_channels = microphone.channels().get() as u32;
+    dbg!(sample_rate, num_channels);
     let buffer_size = sample_rate / 100 * num_channels;
 
     loop {
