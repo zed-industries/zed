@@ -994,7 +994,6 @@ impl VsCodeSettings {
                 }
             }),
             zoomed_padding: None,
-            activity_bar: None,
         }
     }
 

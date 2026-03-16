@@ -4011,57 +4011,9 @@ fn window_and_layout_page() -> SettingsPage {
         ]
     }
 
-    fn layout_section() -> [SettingsPageItem; 6] {
+    fn layout_section() -> [SettingsPageItem; 4] {
         [
             SettingsPageItem::SectionHeader("Layout"),
-            SettingsPageItem::SettingItem(SettingItem {
-                title: "Activity Bar",
-                description: "Show a vertical activity bar with panel icons on the left side.",
-                field: Box::new(SettingField {
-                    json_path: Some("activity_bar.enabled"),
-                    pick: |settings_content| {
-                        settings_content
-                            .workspace
-                            .activity_bar
-                            .as_ref()?
-                            .enabled
-                            .as_ref()
-                    },
-                    write: |settings_content, value| {
-                        settings_content
-                            .workspace
-                            .activity_bar
-                            .get_or_insert_default()
-                            .enabled = value;
-                    },
-                }),
-                metadata: None,
-                files: USER,
-            }),
-            SettingsPageItem::SettingItem(SettingItem {
-                title: "Activity Bar Side",
-                description: "Which side of the workspace to show the activity bar on.",
-                field: Box::new(SettingField {
-                    json_path: Some("activity_bar.side"),
-                    pick: |settings_content| {
-                        settings_content
-                            .workspace
-                            .activity_bar
-                            .as_ref()?
-                            .side
-                            .as_ref()
-                    },
-                    write: |settings_content, value| {
-                        settings_content
-                            .workspace
-                            .activity_bar
-                            .get_or_insert_default()
-                            .side = value;
-                    },
-                }),
-                metadata: None,
-                files: USER,
-            }),
             SettingsPageItem::SettingItem(SettingItem {
                 title: "Bottom Dock Layout",
                 description: "Layout mode for the bottom dock.",
@@ -5262,7 +5214,11 @@ fn panels_page() -> SettingsPage {
                 field: Box::new(SettingField {
                     json_path: Some("git_panel.show_count_badge"),
                     pick: |settings_content| {
-                        settings_content.git_panel.as_ref()?.show_count_badge.as_ref()
+                        settings_content
+                            .git_panel
+                            .as_ref()?
+                            .show_count_badge
+                            .as_ref()
                     },
                     write: |settings_content, value| {
                         settings_content

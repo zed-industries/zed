@@ -84,16 +84,6 @@
     // Values are clamped to the [0.0, 1.0] range.
     "inactive_opacity": 1.0,
   },
-  // Settings for the activity bar (VS Code-style vertical panel icon strip on the left).
-  "activity_bar": {
-    // Whether to show the activity bar. Default: false
-    "enabled": false,
-    // Which side of the workspace to show the activity bar on. Default: left
-    //   choices: left, right
-    "side": "left",
-    // Persistent names of panels pinned to the activity bar. Default: []
-    "panels": []
-  },
   // Layout mode of the bottom dock. Defaults to "contained"
   //   choices: contained, full, left_aligned, right_aligned
   "bottom_dock_layout": "contained",
