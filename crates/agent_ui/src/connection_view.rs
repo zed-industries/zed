@@ -75,7 +75,7 @@ use crate::agent_diff::AgentDiff;
 use crate::entry_view_state::{EntryViewEvent, ViewEvent};
 use crate::message_editor::{MessageEditor, MessageEditorEvent};
 use crate::profile_selector::{ProfileProvider, ProfileSelector};
-use crate::sidebar::ThreadMetadataStore;
+use crate::thread_metadata_store::ThreadMetadataStore;
 use crate::ui::{AgentNotification, AgentNotificationEvent};
 use crate::{
     Agent, AgentDiffPane, AgentInitialContent, AgentPanel, AllowAlways, AllowOnce,
@@ -2778,7 +2778,6 @@ pub(crate) mod tests {
     use workspace::{Item, MultiWorkspace};
 
     use crate::agent_panel;
-    use crate::sidebar::ThreadMetadataStore;
 
     use super::*;
 
@@ -6454,9 +6453,7 @@ pub(crate) mod tests {
                 ConnectionView::new(
                     Rc::new(StubAgentServer::default_response()),
                     connection_store,
-                    Agent::Custom {
-                        name: "Test".into(),
-                    },
+                    Agent::Custom { id: "Test".into() },
                     None,
                     None,
                     None,
@@ -6585,6 +6582,10 @@ pub(crate) mod tests {
     }
 
     impl AgentConnection for CloseCapableConnection {
+        fn agent_id(&self) -> AgentId {
+            AgentId::new("close-capable")
+        }
+
         fn telemetry_id(&self) -> SharedString {
             "close-capable".into()
         }
@@ -6592,7 +6593,7 @@ pub(crate) mod tests {
         fn new_session(
             self: Rc<Self>,
             project: Entity<Project>,
-            cwd: &Path,
+            work_dirs: PathList,
             cx: &mut gpui::App,
         ) -> Task<gpui::Result<Entity<AcpThread>>> {
             let action_log = cx.new(|_| ActionLog::new(project.clone()));
@@ -6600,7 +6601,7 @@ pub(crate) mod tests {
                 AcpThread::new(
                     None,
                     "CloseCapableConnection",
-                    Some(cwd.to_path_buf()),
+                    Some(work_dirs),
                     self,
                     project,
                     action_log,

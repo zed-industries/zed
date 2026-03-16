@@ -34,6 +34,7 @@ mod text_thread_editor;
 mod text_thread_history;
 mod thread_history;
 mod thread_history_view;
+mod thread_metadata_store;
 mod threads_archive_view;
 mod ui;
 
@@ -385,7 +386,7 @@ pub fn init(
     agent_panel::init(cx);
     context_server_configuration::init(language_registry.clone(), fs.clone(), cx);
     TextThreadEditor::init(cx);
-    sidebar::init(cx);
+    thread_metadata_store::init(cx);
 
     register_slash_commands(cx);
     inline_assistant::init(fs.clone(), prompt_builder.clone(), cx);
