@@ -316,7 +316,7 @@ fn bump_version(
             --no-configured-files "$BUMP_TYPE" "${{BUMP_FILES[@]}}"
 
         if [[ -f "Cargo.toml" ]]; then
-            cargo update --workspace
+            cargo +stable update --workspace
         fi
 
         NEW_VERSION="$({VERSION_CHECK})"
@@ -395,6 +395,7 @@ fn trigger_release(
         Some(extension_registry),
     );
     let (get_extension_id, extension_id) = get_extension_id();
+    let (release_action, pull_request_number) = release_action(extension_id, tag, &generated_token);
 
     let job = dependant_job(dependencies)
         .defaults(extension_job_defaults())
@@ -403,7 +404,11 @@ fn trigger_release(
         .add_step(generate_token)
         .add_step(checkout_repo())
         .add_step(get_extension_id)
-        .add_step(release_action(extension_id, tag, generated_token));
+        .add_step(release_action)
+        .add_step(enable_automerge_if_staff(
+            pull_request_number,
+            generated_token,
+        ));
 
     named::job(job)
 }
@@ -425,17 +430,83 @@ fn get_extension_id() -> (Step<Run>, StepOutput) {
 fn release_action(
     extension_id: StepOutput,
     tag: JobOutput,
-    generated_token: StepOutput,
-) -> Step<Use> {
-    named::uses(
+    generated_token: &StepOutput,
+) -> (Step<Use>, StepOutput) {
+    let step = named::uses(
         "zed-extensions",
         "update-action",
-        "1ef53b23be40fe2549be0baffaa98e9f51838fef",
+        "72da482880c2f32ec8aa6e0a0427ab92d52ae32d",
     )
+    .id("extension-update")
     .add_with(("extension-name", extension_id.to_string()))
     .add_with(("push-to", "zed-industries/extensions"))
     .add_with(("tag", tag.to_string()))
-    .add_env(("COMMITTER_TOKEN", generated_token.to_string()))
+    .add_env(("COMMITTER_TOKEN", generated_token.to_string()));
+
+    let pull_request_number = StepOutput::new(&step, "pull-request-number");
+
+    (step, pull_request_number)
+}
+
+fn enable_automerge_if_staff(
+    pull_request_number: StepOutput,
+    generated_token: StepOutput,
+) -> Step<Use> {
+    named::uses("actions", "github-script", "v7")
+        .add_with(("github-token", generated_token.to_string()))
+        .add_with((
+            "script",
+            indoc! {r#"
+                const prNumber = process.env.PR_NUMBER;
+                if (!prNumber) {
+                    console.log('No pull request number set, skipping automerge.');
+                    return;
+                }
+
+                const author = process.env.GITHUB_ACTOR;
+                let isStaff = false;
+                try {
+                    const response = await github.rest.teams.getMembershipForUserInOrg({
+                        org: 'zed-industries',
+                        team_slug: 'staff',
+                        username: author
+                    });
+                    isStaff = response.data.state === 'active';
+                } catch (error) {
+                    if (error.status !== 404) {
+                        throw error;
+                    }
+                }
+
+                if (!isStaff) {
+                    console.log(`Actor ${author} is not a staff member, skipping automerge.`);
+                    return;
+                }
+
+
+                // Get the GraphQL node ID
+                const { data: pr } = await github.rest.pulls.get({
+                    owner: 'zed-industries',
+                    repo: 'extensions',
+                    pull_number: parseInt(prNumber)
+                });
+
+                await github.graphql(`
+                    mutation($pullRequestId: ID!) {
+                        enablePullRequestAutoMerge(input: { pullRequestId: $pullRequestId, mergeMethod: SQUASH }) {
+                            pullRequest {
+                                autoMergeRequest {
+                                    enabledAt
+                                }
+                            }
+                        }
+                    }
+                `, { pullRequestId: pr.node_id });
+
+                console.log(`Automerge enabled for PR #${prNumber} in zed-industries/extensions`);
+            "#},
+        ))
+        .add_env(("PR_NUMBER", pull_request_number.to_string()))
 }
 
 fn extension_workflow_secrets() -> (WorkflowSecret, WorkflowSecret) {
