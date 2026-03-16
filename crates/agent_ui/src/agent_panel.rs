@@ -6411,7 +6411,7 @@ mod tests {
         // open_external_thread_with_server overrides selected_agent_type.
         panel.update(cx, |panel, cx| {
             panel.selected_agent_type = AgentType::Custom {
-                name: CODEX_NAME.into(),
+                id: CODEX_ID.into(),
             };
             panel.set_start_thread_in(&StartThreadIn::NewWorktree, cx);
         });
@@ -6421,7 +6421,7 @@ mod tests {
             assert_eq!(
                 panel.selected_agent_type,
                 AgentType::Custom {
-                    name: CODEX_NAME.into()
+                    id: CODEX_ID.into()
                 },
             );
         });
@@ -6466,7 +6466,7 @@ mod tests {
         assert_eq!(
             found_codex,
             AgentType::Custom {
-                name: CODEX_NAME.into()
+                id: CODEX_ID.into()
             },
             "the new worktree workspace should use the same agent (Codex) that was selected in the original panel",
         );
