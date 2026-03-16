@@ -103,7 +103,7 @@ impl GoDebugAdapter {
                     while let Some(entry) = entries.next().await {
                         if let Ok(version_dir) = entry {
                             let candidate = version_dir.join(&binary_name);
-                            if delegate.fs().is_file(&candidate).await {
+                            if delegate.fs().metadata(&candidate).await.is_ok_and(|m| m.is_some()) {
                                 cached = Some(candidate);
                                 break;
                             }

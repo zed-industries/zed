@@ -230,7 +230,7 @@ impl PythonDebugAdapter {
                     .join("adapter");
 
                 if let Err(error) = self.maybe_fetch_new_wheel(toolchain, delegate).await {
-                    if adapter_path.exists() {
+                    if delegate.fs().metadata(&adapter_path).await.is_ok_and(|m| m.is_some()) {
                         log::warn!(
                             "Failed to fetch latest debugpy, using cached version: {error:#}"
                         );
