@@ -33,16 +33,15 @@ impl Vim {
 
                 let selected_register = vim.selected_register.take();
 
-                let Some((text, clipboard_selections)) = Vim::update_globals(cx, |globals, cx| {
+                let Some(register) = Vim::update_globals(cx, |globals, cx| {
                     globals.read_register(selected_register, Some(editor), cx)
                 })
-                .and_then(|reg| {
-                    (!reg.text.is_empty())
-                        .then_some(reg.text)
-                        .zip(reg.clipboard_selections)
-                }) else {
+                .filter(|reg| !reg.text.is_empty())
+                else {
                     return;
                 };
+                let text = register.text;
+                let clipboard_selections = register.clipboard_selections;
 
                 let display_map = editor.display_snapshot(cx);
                 let current_selections = editor.selections.all_adjusted_display(&display_map);
@@ -63,21 +62,23 @@ impl Vim {
                 let mut replacement_texts: Vec<String> = Vec::new();
 
                 for ix in 0..current_selections.len() {
-                    let to_insert = if let Some(clip_sel) = clipboard_selections.get(ix) {
-                        let end_offset = start_offset + clip_sel.len;
-                        let text = text[start_offset..end_offset].to_string();
-                        start_offset = if clip_sel.is_entire_line {
-                            end_offset
+                    let to_insert =
+                        if let Some(clip_sel) = clipboard_selections.as_ref().and_then(|s| s.get(ix))
+                        {
+                            let end_offset = start_offset + clip_sel.len;
+                            let text = text[start_offset..end_offset].to_string();
+                            start_offset = if clip_sel.is_entire_line {
+                                end_offset
+                            } else {
+                                end_offset + 1
+                            };
+                            text
+                        } else if let Some(last_text) = replacement_texts.last() {
+                            // We have more current selections than clipboard selections: repeat the last one.
+                            last_text.to_owned()
                         } else {
-                            end_offset + 1
+                            text.to_string()
                         };
-                        text
-                    } else if let Some(last_text) = replacement_texts.last() {
-                        // We have more current selections than clipboard selections: repeat the last one.
-                        last_text.to_owned()
-                    } else {
-                        text.to_string()
-                    };
                     replacement_texts.push(to_insert);
                 }
 
@@ -146,7 +147,32 @@ impl Vim {
 mod test {
     use indoc::indoc;
 
+    use gpui::ClipboardItem;
+
     use crate::{state::Mode, test::VimTestContext};
+
+    #[gpui::test]
+    async fn test_system_clipboard_paste(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+        cx.enable_helix();
+        cx.set_state(
+            indoc! {"
+            The quiˇck brown
+            fox jumps over
+            the lazy dog."},
+            Mode::HelixNormal,
+        );
+
+        cx.write_to_clipboard(ClipboardItem::new_string("clipboard".to_string()));
+        cx.simulate_keystrokes("p");
+        cx.assert_state(
+            indoc! {"
+            The quic«clipboardˇ»k brown
+            fox jumps over
+            the lazy dog."},
+            Mode::HelixNormal,
+        );
+    }
 
     #[gpui::test]
     async fn test_paste(cx: &mut gpui::TestAppContext) {
