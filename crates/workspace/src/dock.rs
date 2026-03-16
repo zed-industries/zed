@@ -12,7 +12,10 @@ use gpui::{
 };
 use settings::SettingsStore;
 use std::sync::Arc;
-use ui::{ContextMenu, CountBadge, Divider, DividerColor, IconButton, Tooltip, prelude::*, right_click_menu};
+use ui::{
+    ContextMenu, CountBadge, Divider, DividerColor, IconButton, Tooltip, prelude::*,
+    right_click_menu,
+};
 use util::ResultExt as _;
 
 pub(crate) const RESIZE_HANDLE_SIZE: Pixels = px(6.);
