@@ -1606,6 +1606,9 @@ impl Panel for TerminalPanel {
     }
 
     fn icon_label(&self, _window: &Window, cx: &App) -> Option<String> {
+        if !TerminalSettings::get_global(cx).show_count_badge {
+            return None;
+        }
         let count = self
             .center
             .panes()
