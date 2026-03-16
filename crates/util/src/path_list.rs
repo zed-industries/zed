@@ -13,7 +13,7 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 /// other path lists without regard to the order of the paths.
 ///
 /// The paths can be retrieved in the original order using `ordered_paths()`.
-#[derive(Default, PartialEq, Eq, Debug, Clone)]
+#[derive(Default, PartialEq, Eq, Hash, Debug, Clone)]
 pub struct PathList {
     /// The paths, in lexicographic order.
     paths: Arc<[PathBuf]>,

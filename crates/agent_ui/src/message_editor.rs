@@ -10,7 +10,7 @@ use crate::{
         Mention, MentionImage, MentionSet, insert_crease_for_mention, paste_images_as_context,
     },
 };
-use acp_thread::{AgentSessionInfo, MentionUri};
+use acp_thread::MentionUri;
 use agent::ThreadStore;
 use agent_client_protocol as acp;
 use anyhow::{Result, anyhow};
@@ -33,7 +33,7 @@ use rope::Point;
 use settings::Settings;
 use std::{cell::RefCell, fmt::Write, ops::Range, rc::Rc, sync::Arc};
 use theme::ThemeSettings;
-use ui::{ButtonLike, ButtonStyle, ContextMenu, Disclosure, ElevationIndex, prelude::*};
+use ui::{ContextMenu, Disclosure, ElevationIndex, prelude::*};
 use util::paths::PathStyle;
 use util::{ResultExt, debug_panic};
 use workspace::{CollaboratorId, Workspace};
@@ -80,6 +80,7 @@ impl PromptCompletionProviderDelegate for Entity<MessageEditor> {
                 PromptContextType::Diagnostics,
                 PromptContextType::Fetch,
                 PromptContextType::Rules,
+                PromptContextType::BranchDiff,
             ]);
         }
         supported
@@ -301,7 +302,8 @@ impl MessageEditor {
 
     pub fn insert_thread_summary(
         &mut self,
-        thread: AgentSessionInfo,
+        session_id: acp::SessionId,
+        title: Option<SharedString>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -311,13 +313,11 @@ impl MessageEditor {
         let Some(workspace) = self.workspace.upgrade() else {
             return;
         };
-        let thread_title = thread
-            .title
-            .clone()
+        let thread_title = title
             .filter(|title| !title.is_empty())
             .unwrap_or_else(|| SharedString::new_static("New Thread"));
         let uri = MentionUri::Thread {
-            id: thread.session_id,
+            id: session_id,
             name: thread_title.to_string(),
         };
         let content = format!("{}\n", uri.as_link());
@@ -1041,6 +1041,88 @@ impl MessageEditor {
         });
     }
 
+    pub fn insert_branch_diff_crease(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(workspace) = self.workspace.upgrade() else {
+            return;
+        };
+
+        let project = workspace.read(cx).project().clone();
+
+        let Some(repo) = project.read(cx).active_repository(cx) else {
+            return;
+        };
+
+        let default_branch_receiver = repo.update(cx, |repo, _| repo.default_branch(false));
+        let editor = self.editor.clone();
+        let mention_set = self.mention_set.clone();
+        let weak_workspace = self.workspace.clone();
+
+        window
+            .spawn(cx, async move |cx| {
+                let base_ref: SharedString = default_branch_receiver
+                    .await
+                    .ok()
+                    .and_then(|r| r.ok())
+                    .flatten()
+                    .ok_or_else(|| anyhow!("Could not determine default branch"))?;
+
+                cx.update(|window, cx| {
+                    let mention_uri = MentionUri::GitDiff {
+                        base_ref: base_ref.to_string(),
+                    };
+                    let mention_text = mention_uri.as_link().to_string();
+
+                    let (excerpt_id, text_anchor, content_len) = editor.update(cx, |editor, cx| {
+                        let buffer = editor.buffer().read(cx);
+                        let snapshot = buffer.snapshot(cx);
+                        let (excerpt_id, _, buffer_snapshot) = snapshot.as_singleton().unwrap();
+                        let text_anchor = editor
+                            .selections
+                            .newest_anchor()
+                            .start
+                            .text_anchor
+                            .bias_left(&buffer_snapshot);
+
+                        editor.insert(&mention_text, window, cx);
+                        editor.insert(" ", window, cx);
+
+                        (excerpt_id, text_anchor, mention_text.len())
+                    });
+
+                    let Some((crease_id, tx)) = insert_crease_for_mention(
+                        excerpt_id,
+                        text_anchor,
+                        content_len,
+                        mention_uri.name().into(),
+                        mention_uri.icon_path(cx),
+                        mention_uri.tooltip_text(),
+                        Some(mention_uri.clone()),
+                        Some(weak_workspace),
+                        None,
+                        editor,
+                        window,
+                        cx,
+                    ) else {
+                        return;
+                    };
+                    drop(tx);
+
+                    let confirm_task = mention_set.update(cx, |mention_set, cx| {
+                        mention_set.confirm_mention_for_git_diff(base_ref, cx)
+                    });
+
+                    let mention_task = cx
+                        .spawn(async move |_cx| confirm_task.await.map_err(|e| e.to_string()))
+                        .shared();
+
+                    mention_set.update(cx, |mention_set, _| {
+                        mention_set.insert_mention(crease_id, mention_uri, mention_task);
+                    });
+                })
+            })
+            .detach_and_log_err(cx);
+    }
+
     fn insert_crease_impl(
         &mut self,
         text: String,
@@ -1079,11 +1161,9 @@ impl MessageEditor {
                 render: Arc::new({
                     let title = title.clone();
                     move |_fold_id, _fold_range, _cx| {
-                        ButtonLike::new("crease")
-                            .style(ButtonStyle::Filled)
+                        Button::new("crease", title.clone())
                             .layer(ElevationIndex::ElevatedSurface)
-                            .child(Icon::new(icon))
-                            .child(Label::new(title.clone()).single_line())
+                            .start_icon(Icon::new(icon))
                             .into_any_element()
                     }
                 }),
@@ -1223,8 +1303,10 @@ impl MessageEditor {
 
     pub fn set_mode(&mut self, mode: EditorMode, cx: &mut Context<Self>) {
         self.editor.update(cx, |editor, cx| {
-            editor.set_mode(mode);
-            cx.notify()
+            if *editor.mode() != mode {
+                editor.set_mode(mode);
+                cx.notify()
+            }
         });
     }
 
@@ -1425,7 +1507,7 @@ impl MessageEditor {
         });
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-support"))]
     pub fn set_text(&mut self, text: &str, window: &mut Window, cx: &mut Context<Self>) {
         self.editor.update(cx, |editor, cx| {
             editor.set_text(text, window, cx);
@@ -1571,7 +1653,7 @@ fn find_matching_bracket(text: &str, open: char, close: char) -> Option<usize> {
 mod tests {
     use std::{cell::RefCell, ops::Range, path::Path, rc::Rc, sync::Arc};
 
-    use acp_thread::{AgentSessionInfo, MentionUri};
+    use acp_thread::MentionUri;
     use agent::{ThreadStore, outline};
     use agent_client_protocol as acp;
     use editor::{
@@ -1706,8 +1788,7 @@ mod tests {
         let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
 
         let thread_store = None;
-        let history =
-            cx.update(|window, cx| cx.new(|cx| crate::ThreadHistory::new(None, window, cx)));
+        let history = cx.update(|_window, cx| cx.new(|cx| crate::ThreadHistory::new(None, cx)));
 
         let message_editor = cx.update(|window, cx| {
             cx.new(|cx| {
@@ -1820,8 +1901,7 @@ mod tests {
         let (multi_workspace, cx) =
             cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
         let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
-        let history =
-            cx.update(|window, cx| cx.new(|cx| crate::ThreadHistory::new(None, window, cx)));
+        let history = cx.update(|_window, cx| cx.new(|cx| crate::ThreadHistory::new(None, cx)));
         let workspace_handle = workspace.downgrade();
         let message_editor = workspace.update_in(cx, |_, window, cx| {
             cx.new(|cx| {
@@ -1976,8 +2056,7 @@ mod tests {
         let mut cx = VisualTestContext::from_window(window.into(), cx);
 
         let thread_store = None;
-        let history =
-            cx.update(|window, cx| cx.new(|cx| crate::ThreadHistory::new(None, window, cx)));
+        let history = cx.update(|_window, cx| cx.new(|cx| crate::ThreadHistory::new(None, cx)));
         let prompt_capabilities = Rc::new(RefCell::new(acp::PromptCapabilities::default()));
         let available_commands = Rc::new(RefCell::new(vec![
             acp::AvailableCommand::new("quick-math", "2 + 2 = 4 - 1 = 3"),
@@ -2211,8 +2290,7 @@ mod tests {
         }
 
         let thread_store = cx.new(|cx| ThreadStore::new(cx));
-        let history =
-            cx.update(|window, cx| cx.new(|cx| crate::ThreadHistory::new(None, window, cx)));
+        let history = cx.update(|_window, cx| cx.new(|cx| crate::ThreadHistory::new(None, cx)));
         let prompt_capabilities = Rc::new(RefCell::new(acp::PromptCapabilities::default()));
 
         let (message_editor, editor) = workspace.update_in(&mut cx, |workspace, window, cx| {
@@ -2707,8 +2785,7 @@ mod tests {
         let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
 
         let thread_store = Some(cx.new(|cx| ThreadStore::new(cx)));
-        let history =
-            cx.update(|window, cx| cx.new(|cx| crate::ThreadHistory::new(None, window, cx)));
+        let history = cx.update(|_window, cx| cx.new(|cx| crate::ThreadHistory::new(None, cx)));
 
         let message_editor = cx.update(|window, cx| {
             cx.new(|cx| {
@@ -2808,17 +2885,10 @@ mod tests {
         let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
 
         let thread_store = Some(cx.new(|cx| ThreadStore::new(cx)));
-        let history =
-            cx.update(|window, cx| cx.new(|cx| crate::ThreadHistory::new(None, window, cx)));
+        let history = cx.update(|_window, cx| cx.new(|cx| crate::ThreadHistory::new(None, cx)));
 
-        // Create a thread metadata to insert as summary
-        let thread_metadata = AgentSessionInfo {
-            session_id: acp::SessionId::new("thread-123"),
-            cwd: None,
-            title: Some("Previous Conversation".into()),
-            updated_at: Some(chrono::Utc::now()),
-            meta: None,
-        };
+        let session_id = acp::SessionId::new("thread-123");
+        let title = Some("Previous Conversation".into());
 
         let message_editor = cx.update(|window, cx| {
             cx.new(|cx| {
@@ -2839,17 +2909,17 @@ mod tests {
                     window,
                     cx,
                 );
-                editor.insert_thread_summary(thread_metadata.clone(), window, cx);
+                editor.insert_thread_summary(session_id.clone(), title.clone(), window, cx);
                 editor
             })
         });
 
         // Construct expected values for verification
         let expected_uri = MentionUri::Thread {
-            id: thread_metadata.session_id.clone(),
-            name: thread_metadata.title.as_ref().unwrap().to_string(),
+            id: session_id.clone(),
+            name: title.as_ref().unwrap().to_string(),
         };
-        let expected_title = thread_metadata.title.as_ref().unwrap();
+        let expected_title = title.as_ref().unwrap();
         let expected_link = format!("[@{}]({})", expected_title, expected_uri.to_uri());
 
         message_editor.read_with(cx, |editor, cx| {
@@ -2890,16 +2960,7 @@ mod tests {
         let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
 
         let thread_store = None;
-        let history =
-            cx.update(|window, cx| cx.new(|cx| crate::ThreadHistory::new(None, window, cx)));
-
-        let thread_metadata = AgentSessionInfo {
-            session_id: acp::SessionId::new("thread-123"),
-            cwd: None,
-            title: Some("Previous Conversation".into()),
-            updated_at: Some(chrono::Utc::now()),
-            meta: None,
-        };
+        let history = cx.update(|_window, cx| cx.new(|cx| crate::ThreadHistory::new(None, cx)));
 
         let message_editor = cx.update(|window, cx| {
             cx.new(|cx| {
@@ -2920,7 +2981,12 @@ mod tests {
                     window,
                     cx,
                 );
-                editor.insert_thread_summary(thread_metadata, window, cx);
+                editor.insert_thread_summary(
+                    acp::SessionId::new("thread-123"),
+                    Some("Previous Conversation".into()),
+                    window,
+                    cx,
+                );
                 editor
             })
         });
@@ -2950,8 +3016,7 @@ mod tests {
         let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
 
         let thread_store = None;
-        let history =
-            cx.update(|window, cx| cx.new(|cx| crate::ThreadHistory::new(None, window, cx)));
+        let history = cx.update(|_window, cx| cx.new(|cx| crate::ThreadHistory::new(None, cx)));
 
         let message_editor = cx.update(|window, cx| {
             cx.new(|cx| {
@@ -3005,8 +3070,7 @@ mod tests {
         let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
 
         let thread_store = Some(cx.new(|cx| ThreadStore::new(cx)));
-        let history =
-            cx.update(|window, cx| cx.new(|cx| crate::ThreadHistory::new(None, window, cx)));
+        let history = cx.update(|_window, cx| cx.new(|cx| crate::ThreadHistory::new(None, cx)));
 
         let message_editor = cx.update(|window, cx| {
             cx.new(|cx| {
@@ -3061,8 +3125,7 @@ mod tests {
         let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
 
         let thread_store = Some(cx.new(|cx| ThreadStore::new(cx)));
-        let history =
-            cx.update(|window, cx| cx.new(|cx| crate::ThreadHistory::new(None, window, cx)));
+        let history = cx.update(|_window, cx| cx.new(|cx| crate::ThreadHistory::new(None, cx)));
 
         let message_editor = cx.update(|window, cx| {
             cx.new(|cx| {
@@ -3126,8 +3189,7 @@ mod tests {
         let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
 
         let thread_store = Some(cx.new(|cx| ThreadStore::new(cx)));
-        let history =
-            cx.update(|window, cx| cx.new(|cx| crate::ThreadHistory::new(None, window, cx)));
+        let history = cx.update(|_window, cx| cx.new(|cx| crate::ThreadHistory::new(None, cx)));
 
         let (message_editor, editor) = workspace.update_in(cx, |workspace, window, cx| {
             let workspace_handle = cx.weak_entity();
@@ -3286,8 +3348,7 @@ mod tests {
         });
 
         let thread_store = Some(cx.new(|cx| ThreadStore::new(cx)));
-        let history =
-            cx.update(|window, cx| cx.new(|cx| crate::ThreadHistory::new(None, window, cx)));
+        let history = cx.update(|_window, cx| cx.new(|cx| crate::ThreadHistory::new(None, cx)));
 
         // Create a new `MessageEditor`. The `EditorMode::full()` has to be used
         // to ensure we have a fixed viewport, so we can eventually actually
@@ -3407,8 +3468,7 @@ mod tests {
         let mut cx = VisualTestContext::from_window(window.into(), cx);
 
         let thread_store = cx.new(|cx| ThreadStore::new(cx));
-        let history =
-            cx.update(|window, cx| cx.new(|cx| crate::ThreadHistory::new(None, window, cx)));
+        let history = cx.update(|_window, cx| cx.new(|cx| crate::ThreadHistory::new(None, cx)));
 
         let (message_editor, editor) = workspace.update_in(&mut cx, |workspace, window, cx| {
             let workspace_handle = cx.weak_entity();
@@ -3490,8 +3550,7 @@ mod tests {
         let mut cx = VisualTestContext::from_window(window.into(), cx);
 
         let thread_store = cx.new(|cx| ThreadStore::new(cx));
-        let history =
-            cx.update(|window, cx| cx.new(|cx| crate::ThreadHistory::new(None, window, cx)));
+        let history = cx.update(|_window, cx| cx.new(|cx| crate::ThreadHistory::new(None, cx)));
 
         let (message_editor, editor) = workspace.update_in(&mut cx, |workspace, window, cx| {
             let workspace_handle = cx.weak_entity();
@@ -3575,8 +3634,7 @@ mod tests {
         let (multi_workspace, cx) =
             cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
         let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
-        let history =
-            cx.update(|window, cx| cx.new(|cx| crate::ThreadHistory::new(None, window, cx)));
+        let history = cx.update(|_window, cx| cx.new(|cx| crate::ThreadHistory::new(None, cx)));
 
         let message_editor = cx.update(|window, cx| {
             cx.new(|cx| {
@@ -3728,8 +3786,7 @@ mod tests {
         let (multi_workspace, cx) =
             cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
         let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
-        let history =
-            cx.update(|window, cx| cx.new(|cx| crate::ThreadHistory::new(None, window, cx)));
+        let history = cx.update(|_window, cx| cx.new(|cx| crate::ThreadHistory::new(None, cx)));
 
         let message_editor = cx.update(|window, cx| {
             cx.new(|cx| {

@@ -125,7 +125,7 @@ pub fn app_menus(cx: &mut App) -> Vec<Menu> {
                     } else {
                         "Open…"
                     },
-                    workspace::Open,
+                    workspace::Open::default(),
                 ),
                 MenuItem::action(
                     "Open Recent...",

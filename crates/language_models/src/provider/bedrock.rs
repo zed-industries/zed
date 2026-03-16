@@ -1574,7 +1574,8 @@ impl Render for ConfigurationView {
         }
 
         v_flex()
-            .size_full()
+            .min_w_0()
+            .w_full()
             .track_focus(&self.focus_handle)
             .on_action(cx.listener(Self::on_tab))
             .on_action(cx.listener(Self::on_tab_prev))

@@ -8,6 +8,7 @@ use gpui::{App, Context, Entity, EntityId, Global, SharedString, Subscription, T
 use jupyter_websocket_client::RemoteServer;
 use language::{Language, LanguageName};
 use project::{Fs, Project, ProjectPath, WorktreeId};
+use remote::RemoteConnectionOptions;
 use settings::{Settings, SettingsStore};
 use util::rel_path::RelPath;
 
@@ -26,6 +27,7 @@ pub struct ReplStore {
     enabled: bool,
     sessions: HashMap<EntityId, Entity<Session>>,
     kernel_specifications: Vec<KernelSpecification>,
+    kernelspecs_initialized: bool,
     selected_kernel_for_worktree: HashMap<WorktreeId, KernelSpecification>,
     kernel_specifications_for_worktree: HashMap<WorktreeId, Vec<KernelSpecification>>,
     active_python_toolchain_for_worktree: HashMap<WorktreeId, SharedString>,
@@ -38,12 +40,6 @@ impl ReplStore {
 
     pub(crate) fn init(fs: Arc<dyn Fs>, cx: &mut App) {
         let store = cx.new(move |cx| Self::new(fs, cx));
-
-        #[cfg(not(feature = "test-support"))]
-        store
-            .update(cx, |store, cx| store.refresh_kernelspecs(cx))
-            .detach_and_log_err(cx);
-
         cx.set_global(GlobalReplStore(store))
     }
 
@@ -64,6 +60,7 @@ impl ReplStore {
             enabled: JupyterSettings::enabled(cx),
             sessions: HashMap::default(),
             kernel_specifications: Vec::new(),
+            kernelspecs_initialized: false,
             _subscriptions: subscriptions,
             kernel_specifications_for_worktree: HashMap::default(),
             selected_kernel_for_worktree: HashMap::default(),
@@ -144,6 +141,14 @@ impl ReplStore {
         cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
         let is_remote = project.read(cx).is_remote();
+        // WSL does require access to global kernel specs, so we only exclude remote worktrees that aren't WSL.
+        // TODO: a better way to handle WSL vs SSH/remote projects,
+        let is_wsl_remote = project
+            .read(cx)
+            .remote_connection_options(cx)
+            .map_or(false, |opts| {
+                matches!(opts, RemoteConnectionOptions::Wsl(_))
+            });
         let kernel_specifications = python_env_kernel_specifications(project, worktree_id, cx);
         let active_toolchain = project.read(cx).active_toolchain(
             ProjectPath {
@@ -168,7 +173,7 @@ impl ReplStore {
                     this.active_python_toolchain_for_worktree
                         .insert(worktree_id, path);
                 }
-                if is_remote {
+                if is_remote && !is_wsl_remote {
                     this.remote_worktrees.insert(worktree_id);
                 } else {
                     this.remote_worktrees.remove(&worktree_id);
@@ -207,10 +212,17 @@ impl ReplStore {
         }
     }
 
+    pub fn ensure_kernelspecs(&mut self, cx: &mut Context<Self>) {
+        if self.kernelspecs_initialized {
+            return;
+        }
+        self.kernelspecs_initialized = true;
+        self.refresh_kernelspecs(cx).detach_and_log_err(cx);
+    }
+
     pub fn refresh_kernelspecs(&mut self, cx: &mut Context<Self>) -> Task<Result<()>> {
         let local_kernel_specifications = local_kernel_specifications(self.fs.clone());
         let wsl_kernel_specifications = wsl_kernel_specifications(cx.background_executor().clone());
-
         let remote_kernel_specifications = self.get_remote_kernel_specifications(cx);
 
         let all_specs = cx.background_spawn(async move {

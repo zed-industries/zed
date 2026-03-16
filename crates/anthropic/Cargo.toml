@@ -27,8 +27,4 @@ settings.workspace = true
 strum.workspace = true
 thiserror.workspace = true
 
-[dev-dependencies]
-reqwest_client.workspace = true
-gpui_tokio.workspace = true
-gpui.workspace = true
-tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+

@@ -2,6 +2,7 @@ use crate::{DbThread, DbThreadMetadata, ThreadsDatabase};
 use agent_client_protocol as acp;
 use anyhow::{Result, anyhow};
 use gpui::{App, Context, Entity, Global, Task, prelude::*};
+use std::collections::HashMap;
 use util::path_list::PathList;
 
 struct GlobalThreadStore(Entity<ThreadStore>);
@@ -10,6 +11,7 @@ impl Global for GlobalThreadStore {}
 
 pub struct ThreadStore {
     threads: Vec<DbThreadMetadata>,
+    threads_by_paths: HashMap<PathList, Vec<usize>>,
 }
 
 impl ThreadStore {
@@ -22,9 +24,14 @@ impl ThreadStore {
         cx.global::<GlobalThreadStore>().0.clone()
     }
 
+    pub fn try_global(cx: &App) -> Option<Entity<Self>> {
+        cx.try_global::<GlobalThreadStore>().map(|g| g.0.clone())
+    }
+
     pub fn new(cx: &mut Context<Self>) -> Self {
         let this = Self {
             threads: Vec::new(),
+            threads_by_paths: HashMap::default(),
         };
         this.reload(cx);
         this
@@ -87,14 +94,21 @@ impl ThreadStore {
         let database_connection = ThreadsDatabase::connect(cx);
         cx.spawn(async move |this, cx| {
             let database = database_connection.await.map_err(|err| anyhow!(err))?;
-            let threads = database
-                .list_threads()
-                .await?
-                .into_iter()
-                .filter(|thread| thread.parent_session_id.is_none())
-                .collect::<Vec<_>>();
+            let all_threads = database.list_threads().await?;
             this.update(cx, |this, cx| {
-                this.threads = threads;
+                this.threads.clear();
+                this.threads_by_paths.clear();
+                for thread in all_threads {
+                    if thread.parent_session_id.is_some() {
+                        continue;
+                    }
+                    let index = this.threads.len();
+                    this.threads_by_paths
+                        .entry(thread.folder_paths.clone())
+                        .or_default()
+                        .push(index);
+                    this.threads.push(thread);
+                }
                 cx.notify();
             })
         })
@@ -110,10 +124,12 @@ impl ThreadStore {
     }
 
     /// Returns threads whose folder_paths match the given paths exactly.
+    /// Uses a cached index for O(1) lookup per path list.
     pub fn threads_for_paths(&self, paths: &PathList) -> impl Iterator<Item = &DbThreadMetadata> {
-        self.threads
-            .iter()
-            .filter(move |thread| &thread.folder_paths == paths)
+        self.threads_by_paths
+            .get(paths)
+            .into_iter()
+            .flat_map(|indices| indices.iter().map(|&index| &self.threads[index]))
     }
 }
 

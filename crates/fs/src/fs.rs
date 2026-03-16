@@ -15,10 +15,14 @@ use gpui::Global;
 use gpui::ReadGlobal as _;
 use gpui::SharedString;
 use std::borrow::Cow;
+#[cfg(unix)]
+use std::ffi::CString;
 use util::command::new_command;
 
 #[cfg(unix)]
 use std::os::fd::{AsFd, AsRawFd};
+#[cfg(unix)]
+use std::os::unix::ffi::OsStrExt;
 
 #[cfg(unix)]
 use std::os::unix::fs::{FileTypeExt, MetadataExt};
@@ -33,7 +37,7 @@ use is_executable::IsExecutable;
 use rope::Rope;
 use serde::{Deserialize, Serialize};
 use smol::io::AsyncWriteExt;
-#[cfg(any(target_os = "windows", feature = "test-support"))]
+#[cfg(feature = "test-support")]
 use std::path::Component;
 use std::{
     io::{self, Write},
@@ -143,7 +147,7 @@ pub trait Fs: Send + Sync {
         &self,
         abs_dot_git: &Path,
         system_git_binary_path: Option<&Path>,
-    ) -> Option<Arc<dyn GitRepository>>;
+    ) -> Result<Arc<dyn GitRepository>>;
     async fn git_init(&self, abs_work_directory: &Path, fallback_branch_name: String)
     -> Result<()>;
     async fn git_clone(&self, repo_url: &str, abs_work_directory: &Path) -> Result<()>;
@@ -427,83 +431,101 @@ impl RealFs {
 
     #[cfg(target_os = "windows")]
     fn canonicalize(path: &Path) -> Result<PathBuf> {
-        let mut strip_prefix = None;
+        use std::ffi::OsString;
+        use std::os::windows::ffi::OsStringExt;
+        use windows::Win32::Storage::FileSystem::GetVolumePathNameW;
+        use windows::core::HSTRING;
 
-        let mut new_path = PathBuf::new();
-        for component in path.components() {
-            match component {
-                std::path::Component::Prefix(_) => {
-                    let component = component.as_os_str();
-                    let canonicalized = if component
-                        .to_str()
-                        .map(|e| e.ends_with("\\"))
-                        .unwrap_or(false)
-                    {
-                        std::fs::canonicalize(component)
-                    } else {
-                        let mut component = component.to_os_string();
-                        component.push("\\");
-                        std::fs::canonicalize(component)
-                    }?;
+        // std::fs::canonicalize resolves mapped network paths to UNC paths, which can
+        // confuse some software. To mitigate this, we canonicalize the input, then rebase
+        // the result onto the input's original volume root if both paths are on the same
+        // volume. This keeps the same drive letter or mount point the caller used.
 
-                    let mut strip = PathBuf::new();
-                    for component in canonicalized.components() {
-                        match component {
-                            Component::Prefix(prefix_component) => {
-                                match prefix_component.kind() {
-                                    std::path::Prefix::Verbatim(os_str) => {
-                                        strip.push(os_str);
-                                    }
-                                    std::path::Prefix::VerbatimUNC(host, share) => {
-                                        strip.push("\\\\");
-                                        strip.push(host);
-                                        strip.push(share);
-                                    }
-                                    std::path::Prefix::VerbatimDisk(disk) => {
-                                        strip.push(format!("{}:", disk as char));
-                                    }
-                                    _ => strip.push(component),
-                                };
-                            }
-                            _ => strip.push(component),
-                        }
-                    }
-                    strip_prefix = Some(strip);
-                    new_path.push(component);
-                }
-                std::path::Component::RootDir => {
-                    new_path.push(component);
-                }
-                std::path::Component::CurDir => {
-                    if strip_prefix.is_none() {
-                        // unrooted path
-                        new_path.push(component);
-                    }
-                }
-                std::path::Component::ParentDir => {
-                    if strip_prefix.is_some() {
-                        // rooted path
-                        new_path.pop();
-                    } else {
-                        new_path.push(component);
-                    }
-                }
-                std::path::Component::Normal(_) => {
-                    if let Ok(link) = std::fs::read_link(new_path.join(component)) {
-                        let link = match &strip_prefix {
-                            Some(e) => link.strip_prefix(e).unwrap_or(&link),
-                            None => &link,
-                        };
-                        new_path.extend(link);
-                    } else {
-                        new_path.push(component);
-                    }
-                }
-            }
+        let abs_path = if path.is_relative() {
+            std::env::current_dir()?.join(path)
+        } else {
+            path.to_path_buf()
+        };
+
+        let path_hstring = HSTRING::from(abs_path.as_os_str());
+        let mut vol_buf = vec![0u16; abs_path.as_os_str().len() + 2];
+        unsafe { GetVolumePathNameW(&path_hstring, &mut vol_buf)? };
+        let volume_root = {
+            let len = vol_buf
+                .iter()
+                .position(|&c| c == 0)
+                .unwrap_or(vol_buf.len());
+            PathBuf::from(OsString::from_wide(&vol_buf[..len]))
+        };
+
+        let resolved_path = dunce::canonicalize(&abs_path)?;
+        let resolved_root = dunce::canonicalize(&volume_root)?;
+
+        if let Ok(relative) = resolved_path.strip_prefix(&resolved_root) {
+            let mut result = volume_root;
+            result.push(relative);
+            Ok(result)
+        } else {
+            Ok(resolved_path)
         }
-
-        Ok(new_path)
     }
+}
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+fn rename_without_replace(source: &Path, target: &Path) -> io::Result<()> {
+    let source = path_to_c_string(source)?;
+    let target = path_to_c_string(target)?;
+
+    #[cfg(target_os = "macos")]
+    let result = unsafe { libc::renamex_np(source.as_ptr(), target.as_ptr(), libc::RENAME_EXCL) };
+
+    #[cfg(target_os = "linux")]
+    let result = unsafe {
+        libc::syscall(
+            libc::SYS_renameat2,
+            libc::AT_FDCWD,
+            source.as_ptr(),
+            libc::AT_FDCWD,
+            target.as_ptr(),
+            libc::RENAME_NOREPLACE,
+        )
+    };
+
+    if result == 0 {
+        Ok(())
+    } else {
+        Err(io::Error::last_os_error())
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn rename_without_replace(source: &Path, target: &Path) -> io::Result<()> {
+    use std::os::windows::ffi::OsStrExt;
+
+    use windows::Win32::Storage::FileSystem::{MOVE_FILE_FLAGS, MoveFileExW};
+    use windows::core::PCWSTR;
+
+    let source: Vec<u16> = source.as_os_str().encode_wide().chain(Some(0)).collect();
+    let target: Vec<u16> = target.as_os_str().encode_wide().chain(Some(0)).collect();
+
+    unsafe {
+        MoveFileExW(
+            PCWSTR(source.as_ptr()),
+            PCWSTR(target.as_ptr()),
+            MOVE_FILE_FLAGS::default(),
+        )
+    }
+    .map_err(|_| io::Error::last_os_error())
+}
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+fn path_to_c_string(path: &Path) -> io::Result<CString> {
+    CString::new(path.as_os_str().as_bytes()).map_err(|_| {
+        io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!("path contains interior NUL: {}", path.display()),
+        )
+    })
 }
 
 #[async_trait::async_trait]
@@ -588,17 +610,60 @@ impl Fs for RealFs {
     }
 
     async fn rename(&self, source: &Path, target: &Path, options: RenameOptions) -> Result<()> {
-        if !options.overwrite && smol::fs::metadata(target).await.is_ok() {
+        if options.create_parents {
+            if let Some(parent) = target.parent() {
+                self.create_dir(parent).await?;
+            }
+        }
+
+        if options.overwrite {
+            smol::fs::rename(source, target).await?;
+            return Ok(());
+        }
+
+        let use_metadata_fallback = {
+            #[cfg(any(target_os = "macos", target_os = "linux", target_os = "windows"))]
+            {
+                let source = source.to_path_buf();
+                let target = target.to_path_buf();
+                match self
+                    .executor
+                    .spawn(async move { rename_without_replace(&source, &target) })
+                    .await
+                {
+                    Ok(()) => return Ok(()),
+                    Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
+                        if options.ignore_if_exists {
+                            return Ok(());
+                        }
+                        return Err(error.into());
+                    }
+                    Err(error)
+                        if error.raw_os_error().is_some_and(|code| {
+                            code == libc::ENOSYS
+                                || code == libc::ENOTSUP
+                                || code == libc::EOPNOTSUPP
+                        }) =>
+                    {
+                        // For case when filesystem or kernel does not support atomic no-overwrite rename.
+                        true
+                    }
+                    Err(error) => return Err(error.into()),
+                }
+            }
+
+            #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
+            {
+                // For platforms which do not have an atomic no-overwrite rename yet.
+                true
+            }
+        };
+
+        if use_metadata_fallback && smol::fs::metadata(target).await.is_ok() {
             if options.ignore_if_exists {
                 return Ok(());
             } else {
                 anyhow::bail!("{target:?} already exists");
-            }
-        }
-
-        if options.create_parents {
-            if let Some(parent) = target.parent() {
-                self.create_dir(parent).await?;
             }
         }
 
@@ -1045,8 +1110,8 @@ impl Fs for RealFs {
         &self,
         dotgit_path: &Path,
         system_git_binary_path: Option<&Path>,
-    ) -> Option<Arc<dyn GitRepository>> {
-        Some(Arc::new(RealGitRepository::new(
+    ) -> Result<Arc<dyn GitRepository>> {
+        Ok(Arc::new(RealGitRepository::new(
             dotgit_path,
             self.bundled_git_binary_path.clone(),
             system_git_binary_path.map(|path| path.to_path_buf()),
@@ -2762,9 +2827,7 @@ impl Fs for FakeFs {
         &self,
         abs_dot_git: &Path,
         _system_git_binary: Option<&Path>,
-    ) -> Option<Arc<dyn GitRepository>> {
-        use util::ResultExt as _;
-
+    ) -> Result<Arc<dyn GitRepository>> {
         self.with_git_state_and_paths(
             abs_dot_git,
             false,
@@ -2780,7 +2843,6 @@ impl Fs for FakeFs {
                 }) as _
             },
         )
-        .log_err()
     }
 
     async fn git_init(

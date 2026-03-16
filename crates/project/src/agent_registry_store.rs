@@ -11,7 +11,7 @@ use http_client::{AsyncBody, HttpClient};
 use serde::Deserialize;
 use settings::Settings as _;
 
-use crate::agent_server_store::AllAgentServersSettings;
+use crate::DisableAiSettings;
 
 const REGISTRY_URL: &str = "https://cdn.agentclientprotocol.com/registry/v1/latest/registry.json";
 const REFRESH_THROTTLE_DURATION: Duration = Duration::from_secs(60 * 60);
@@ -129,13 +129,11 @@ impl AgentRegistryStore {
         let store = cx.new(|cx| Self::new(fs, http_client, cx));
         cx.set_global(GlobalAgentRegistryStore(store.clone()));
 
-        if AllAgentServersSettings::get_global(cx).has_registry_agents() {
-            store.update(cx, |store, cx| {
-                if store.agents.is_empty() {
-                    store.refresh(cx);
-                }
-            });
-        }
+        store.update(cx, |store, cx| {
+            if store.agents.is_empty() {
+                store.refresh(cx);
+            }
+        });
 
         store
     }
@@ -147,6 +145,22 @@ impl AgentRegistryStore {
     pub fn try_global(cx: &App) -> Option<Entity<Self>> {
         cx.try_global::<GlobalAgentRegistryStore>()
             .map(|store| store.0.clone())
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn init_test_global(cx: &mut App, agents: Vec<RegistryAgent>) -> Entity<Self> {
+        let fs: Arc<dyn Fs> = fs::FakeFs::new(cx.background_executor().clone());
+        let store = cx.new(|_cx| Self {
+            fs,
+            http_client: http_client::FakeHttpClient::with_404_response(),
+            agents,
+            is_fetching: false,
+            fetch_error: None,
+            pending_refresh: None,
+            last_refresh: None,
+        });
+        cx.set_global(GlobalAgentRegistryStore(store.clone()));
+        store
     }
 
     pub fn agents(&self) -> &[RegistryAgent] {
@@ -170,6 +184,10 @@ impl AgentRegistryStore {
     /// This will fetch the latest registry data and update the cache.
     pub fn refresh(&mut self, cx: &mut Context<Self>) {
         if self.pending_refresh.is_some() {
+            return;
+        }
+
+        if DisableAiSettings::get_global(cx).disable_ai {
             return;
         }
 
@@ -249,6 +267,10 @@ impl AgentRegistryStore {
         http_client: Arc<dyn HttpClient>,
         cx: &mut Context<Self>,
     ) {
+        if DisableAiSettings::get_global(cx).disable_ai {
+            return;
+        }
+
         cx.spawn(async move |this, cx| -> Result<()> {
             let cache_path = registry_cache_path();
             if !fs.is_file(&cache_path).await {

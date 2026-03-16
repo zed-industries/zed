@@ -72,7 +72,6 @@ windows.workspace = true
 
 [dev-dependencies]
 client = { workspace = true, features = ["test-support"] }
-dap = { workspace = true, features = ["test-support"] }
 db = { workspace = true, features = ["test-support"] }
 fs = { workspace = true, features = ["test-support"] }
 gpui = { workspace = true, features = ["test-support"] }
