@@ -37,6 +37,12 @@ pub struct MinCaptureVersion {
 }
 
 pub(crate) const POLL_INTERVAL: Duration = Duration::from_secs(2);
+const PARTITION_FETCH_MAX_RETRIES: usize = 3;
+const PARTITION_FETCH_RETRY_DELAYS: [Duration; PARTITION_FETCH_MAX_RETRIES] = [
+    Duration::from_millis(500),
+    Duration::from_secs(1),
+    Duration::from_secs(2),
+];
 
 /// Parse an input token of the form `captured-after:{timestamp}`.
 pub fn parse_captured_after_input(input: &str) -> Option<&str> {
@@ -131,8 +137,15 @@ async fn run_sql_with_polling(
 
             background_executor.timer(POLL_INTERVAL).await;
 
-            response =
-                fetch_partition(http_client.clone(), base_url, token, &statement_handle, 0).await?;
+            response = fetch_partition_with_retries(
+                http_client.clone(),
+                base_url,
+                token,
+                &statement_handle,
+                0,
+                background_executor.clone(),
+            )
+            .await?;
 
             if response.code.as_deref() != Some(SNOWFLAKE_ASYNC_IN_PROGRESS_CODE) {
                 break;
@@ -263,12 +276,13 @@ where
                     partition_count
                 ));
 
-                let partition_response = match fetch_partition(
+                let partition_response = match fetch_partition_with_retries(
                     http_client.clone(),
                     &snowflake.base_url,
                     &snowflake.token,
                     statement_handle,
                     partition,
+                    background_executor.clone(),
                 )
                 .await
                 {
@@ -414,6 +428,57 @@ pub(crate) async fn fetch_partition(
             status.as_u16(),
             body_preview
         )
+    })
+}
+
+async fn fetch_partition_with_retries(
+    http_client: Arc<dyn HttpClient>,
+    base_url: &str,
+    token: &str,
+    statement_handle: &str,
+    partition: usize,
+    background_executor: BackgroundExecutor,
+) -> Result<SnowflakeStatementResponse> {
+    let mut last_error = None;
+
+    for retry_attempt in 0..=PARTITION_FETCH_MAX_RETRIES {
+        match fetch_partition(
+            http_client.clone(),
+            base_url,
+            token,
+            statement_handle,
+            partition,
+        )
+        .await
+        {
+            Ok(response) => return Ok(response),
+            Err(error) => {
+                if retry_attempt == PARTITION_FETCH_MAX_RETRIES
+                    || !is_transient_partition_fetch_error(&error)
+                {
+                    return Err(error);
+                }
+
+                last_error = Some(error);
+                background_executor
+                    .timer(PARTITION_FETCH_RETRY_DELAYS[retry_attempt])
+                    .await;
+            }
+        }
+    }
+
+    match last_error {
+        Some(error) => Err(error),
+        None => anyhow::bail!("partition fetch retry loop exited without a result"),
+    }
+}
+
+fn is_transient_partition_fetch_error(error: &anyhow::Error) -> bool {
+    error.chain().any(|cause| {
+        let message = cause.to_string();
+        message.contains("failed to read Snowflake SQL API partition response body")
+            || message.contains("unexpected EOF")
+            || message.contains("peer closed connection without sending TLS close_notify")
     })
 }
 
