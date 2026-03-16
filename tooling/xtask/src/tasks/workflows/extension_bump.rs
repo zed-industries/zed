@@ -430,7 +430,7 @@ fn release_action(
     named::uses(
         "zed-extensions",
         "update-action",
-        "543925fc45da8866b0d017218a656c8a3296ed3f",
+        "1ae384bb66550d202a48220edc1b64807d37fd89",
     )
     .add_with(("extension-name", extension_id.to_string()))
     .add_with(("push-to", "zed-industries/extensions"))
