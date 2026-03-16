@@ -406,7 +406,6 @@ fn api_key_for_gemini_cli(cx: &mut App) -> Task<Result<String>> {
 }
 
 fn is_registry_agent(name: &str, cx: &App) -> bool {
-    let is_previous_built_in = matches!(name, CLAUDE_AGENT_NAME | CODEX_NAME | GEMINI_NAME);
     let is_in_registry = project::AgentRegistryStore::try_global(cx)
         .map(|store| store.read(cx).agent(name).is_some())
         .unwrap_or(false);
@@ -421,7 +420,7 @@ fn is_registry_agent(name: &str, cx: &App) -> bool {
                 )
             })
     });
-    is_previous_built_in || is_in_registry || is_settings_registry
+    is_in_registry || is_settings_registry
 }
 
 fn default_settings_for_agent(name: &str, cx: &App) -> settings::CustomAgentServerSettings {
@@ -506,16 +505,6 @@ mod tests {
     }
 
     #[gpui::test]
-    fn test_previous_builtins_are_registry(cx: &mut TestAppContext) {
-        init_test(cx);
-        cx.update(|cx| {
-            assert!(is_registry_agent(CLAUDE_AGENT_NAME, cx));
-            assert!(is_registry_agent(CODEX_NAME, cx));
-            assert!(is_registry_agent(GEMINI_NAME, cx));
-        });
-    }
-
-    #[gpui::test]
     fn test_unknown_agent_is_not_registry(cx: &mut TestAppContext) {
         init_test(cx);
         cx.update(|cx| {
@@ -574,25 +563,6 @@ mod tests {
         );
         cx.update(|cx| {
             assert!(!is_registry_agent("my-extension-agent", cx));
-        });
-    }
-
-    #[gpui::test]
-    fn test_default_settings_for_builtin_agent(cx: &mut TestAppContext) {
-        init_test(cx);
-        cx.update(|cx| {
-            assert!(matches!(
-                default_settings_for_agent(CODEX_NAME, cx),
-                settings::CustomAgentServerSettings::Registry { .. }
-            ));
-            assert!(matches!(
-                default_settings_for_agent(CLAUDE_AGENT_NAME, cx),
-                settings::CustomAgentServerSettings::Registry { .. }
-            ));
-            assert!(matches!(
-                default_settings_for_agent(GEMINI_NAME, cx),
-                settings::CustomAgentServerSettings::Registry { .. }
-            ));
         });
     }
 

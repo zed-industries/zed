@@ -16,10 +16,7 @@ use agent_servers::AgentServer;
 use collections::HashSet;
 use db::kvp::{Dismissable, KEY_VALUE_STORE};
 use itertools::Itertools;
-use project::{
-    ExternalAgentServerName,
-    agent_server_store::{CLAUDE_AGENT_NAME, CODEX_NAME, GEMINI_NAME},
-};
+use project::ExternalAgentServerName;
 use serde::{Deserialize, Serialize};
 use settings::{LanguageModelProviderSetting, LanguageModelSelection};
 
@@ -643,7 +640,7 @@ enum WhichFontSize {
 }
 
 // TODO unify this with ExternalAgent
-#[derive(Debug, Default, Clone, PartialEq, Serialize)]
+#[derive(Debug, Default, Clone, PartialEq, Serialize, Deserialize)]
 pub enum AgentType {
     #[default]
     NativeAgent,
@@ -651,63 +648,6 @@ pub enum AgentType {
     Custom {
         name: SharedString,
     },
-}
-
-// Custom impl handles legacy variant names from before the built-in agents were moved to
-// the registry: "ClaudeAgent" -> Custom { name: "claude-acp" }, "Codex" -> Custom { name:
-// "codex-acp" }, "Gemini" -> Custom { name: "gemini" }.
-// Can be removed at some point in the future and go back to #[derive(Deserialize)].
-impl<'de> Deserialize<'de> for AgentType {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        let value = serde_json::Value::deserialize(deserializer)?;
-
-        if let Some(s) = value.as_str() {
-            return match s {
-                "NativeAgent" => Ok(Self::NativeAgent),
-                "TextThread" => Ok(Self::TextThread),
-                "ClaudeAgent" | "ClaudeCode" => Ok(Self::Custom {
-                    name: CLAUDE_AGENT_NAME.into(),
-                }),
-                "Codex" => Ok(Self::Custom {
-                    name: CODEX_NAME.into(),
-                }),
-                "Gemini" => Ok(Self::Custom {
-                    name: GEMINI_NAME.into(),
-                }),
-                other => Err(serde::de::Error::unknown_variant(
-                    other,
-                    &[
-                        "NativeAgent",
-                        "TextThread",
-                        "Custom",
-                        "ClaudeAgent",
-                        "ClaudeCode",
-                        "Codex",
-                        "Gemini",
-                    ],
-                )),
-            };
-        }
-
-        if let Some(obj) = value.as_object() {
-            if let Some(inner) = obj.get("Custom") {
-                #[derive(Deserialize)]
-                struct CustomFields {
-                    name: SharedString,
-                }
-                let fields: CustomFields =
-                    serde_json::from_value(inner.clone()).map_err(serde::de::Error::custom)?;
-                return Ok(Self::Custom { name: fields.name });
-            }
-        }
-
-        Err(serde::de::Error::custom(
-            "expected a string variant or {\"Custom\": {\"name\": ...}}",
-        ))
-    }
 }
 
 impl AgentType {
@@ -3842,10 +3782,8 @@ impl AgentPanel {
                         .header("External Agents")
                         .map(|mut menu| {
                             let agent_server_store = agent_server_store.read(cx);
-                            let registry_store =
-                                project::AgentRegistryStore::try_global(cx);
-                            let registry_store_ref =
-                                registry_store.as_ref().map(|s| s.read(cx));
+                            let registry_store = project::AgentRegistryStore::try_global(cx);
+                            let registry_store_ref = registry_store.as_ref().map(|s| s.read(cx));
 
                             struct AgentMenuItem {
                                 id: ExternalAgentServerName,
@@ -3873,12 +3811,10 @@ impl AgentPanel {
                                 .collect::<Vec<_>>();
 
                             for item in &agent_items {
-                                let mut entry =
-                                    ContextMenuEntry::new(item.display_name.clone());
+                                let mut entry = ContextMenuEntry::new(item.display_name.clone());
 
-                                let icon_path = agent_server_store
-                                    .agent_icon(&item.id)
-                                    .or_else(|| {
+                                let icon_path =
+                                    agent_server_store.agent_icon(&item.id).or_else(|| {
                                         registry_store_ref
                                             .as_ref()
                                             .and_then(|store| store.agent(item.id.0.as_str()))
@@ -3897,9 +3833,9 @@ impl AgentPanel {
                                             name: item.id.0.clone(),
                                         }),
                                         |this| {
-                                            this.action(Box::new(
-                                                NewExternalAgentThread { agent: None },
-                                            ))
+                                            this.action(Box::new(NewExternalAgentThread {
+                                                agent: None,
+                                            }))
                                         },
                                     )
                                     .icon_color(Color::Muted)
@@ -3934,111 +3870,14 @@ impl AgentPanel {
                             menu
                         })
                         .separator()
-                        .map(|mut menu| {
-                            let agent_server_store = agent_server_store.read(cx);
-                            let registry_store =
-                                project::AgentRegistryStore::try_global(cx);
-                            let registry_store_ref =
-                                registry_store.as_ref().map(|s| s.read(cx));
-
-                            let previous_built_in_ids: &[ExternalAgentServerName] =
-                                &[CLAUDE_AGENT_NAME.into(), CODEX_NAME.into(), GEMINI_NAME.into()];
-
-                            let promoted_items = previous_built_in_ids
-                                .iter()
-                                .filter(|id| {
-                                    !agent_server_store.external_agents.contains_key(*id)
-                                })
-                                .filter_map(|name| {
-                                    let display_name = registry_store_ref
-                                        .as_ref()
-                                        .and_then(|store| store.agent(name.0.as_ref()))
-                                        .map(|a| a.name().clone())?;
-                                    Some((name.clone(), display_name))
-                                })
-                                .sorted_unstable_by_key(|(_, display_name)| display_name.to_lowercase())
-                                .collect::<Vec<_>>();
-
-                            for (agent_id, display_name) in &promoted_items {
-                                let mut entry =
-                                    ContextMenuEntry::new(display_name.clone());
-
-                                let icon_path = registry_store_ref
-                                    .as_ref()
-                                    .and_then(|store| store.agent(agent_id.0.as_str()))
-                                    .and_then(|a| a.icon_path().cloned());
-
-                                if let Some(icon_path) = icon_path {
-                                    entry = entry.custom_icon_svg(icon_path);
-                                } else {
-                                    entry = entry.icon(IconName::Sparkle);
-                                }
-
-                                entry = entry
-                                    .icon_color(Color::Muted)
-                                    .disabled(is_via_collab)
-                                    .handler({
-                                        let workspace = workspace.clone();
-                                        let agent_id = agent_id.clone();
-                                        move |window, cx| {
-                                            let fs = <dyn fs::Fs>::global(cx);
-                                            let agent_id_string =
-                                                agent_id.to_string();
-                                            settings::update_settings_file(
-                                                fs,
-                                                cx,
-                                                move |settings, _| {
-                                                    let agent_servers = settings
-                                                        .agent_servers
-                                                        .get_or_insert_default();
-                                                    agent_servers.entry(agent_id_string).or_insert_with(|| {
-                                                        settings::CustomAgentServerSettings::Registry {
-                                                            default_mode: None,
-                                                            default_model: None,
-                                                            env: Default::default(),
-                                                            favorite_models: Vec::new(),
-                                                            default_config_options: Default::default(),
-                                                            favorite_config_option_values: Default::default(),
-                                                        }
-                                                    });
-                                                },
-                                            );
-
-                                            if let Some(workspace) = workspace.upgrade() {
-                                                workspace.update(cx, |workspace, cx| {
-                                                    if let Some(panel) =
-                                                        workspace.panel::<AgentPanel>(cx)
-                                                    {
-                                                        panel.update(cx, |panel, cx| {
-                                                            panel.new_agent_thread(
-                                                                AgentType::Custom {
-                                                                    name: agent_id.0.clone(),
-                                                                },
-                                                                window,
-                                                                cx,
-                                                            );
-                                                        });
-                                                    }
-                                                });
-                                            }
-                                        }
-                                    });
-
-                                menu = menu.item(entry);
-                            }
-
-                            menu
-                        })
                         .item(
                             ContextMenuEntry::new("Add More Agents")
                                 .icon(IconName::Plus)
                                 .icon_color(Color::Muted)
                                 .handler({
                                     move |window, cx| {
-                                        window.dispatch_action(
-                                            Box::new(zed_actions::AcpRegistry),
-                                            cx,
-                                        )
+                                        window
+                                            .dispatch_action(Box::new(zed_actions::AcpRegistry), cx)
                                     }
                                 }),
                         )
@@ -6047,35 +5886,7 @@ mod tests {
     }
 
     #[test]
-    fn test_deserialize_legacy_agent_type_variants() {
-        assert_eq!(
-            serde_json::from_str::<AgentType>(r#""ClaudeAgent""#).unwrap(),
-            AgentType::Custom {
-                name: CLAUDE_AGENT_NAME.into(),
-            },
-        );
-        assert_eq!(
-            serde_json::from_str::<AgentType>(r#""ClaudeCode""#).unwrap(),
-            AgentType::Custom {
-                name: CLAUDE_AGENT_NAME.into(),
-            },
-        );
-        assert_eq!(
-            serde_json::from_str::<AgentType>(r#""Codex""#).unwrap(),
-            AgentType::Custom {
-                name: CODEX_NAME.into(),
-            },
-        );
-        assert_eq!(
-            serde_json::from_str::<AgentType>(r#""Gemini""#).unwrap(),
-            AgentType::Custom {
-                name: GEMINI_NAME.into(),
-            },
-        );
-    }
-
-    #[test]
-    fn test_deserialize_current_agent_type_variants() {
+    fn test_deserialize_agent_type_variants() {
         assert_eq!(
             serde_json::from_str::<AgentType>(r#""NativeAgent""#).unwrap(),
             AgentType::NativeAgent,
@@ -6088,33 +5899,6 @@ mod tests {
             serde_json::from_str::<AgentType>(r#"{"Custom":{"name":"my-agent"}}"#).unwrap(),
             AgentType::Custom {
                 name: "my-agent".into(),
-            },
-        );
-    }
-
-    #[test]
-    fn test_deserialize_legacy_serialized_panel() {
-        let json = serde_json::json!({
-            "width": 300.0,
-            "selected_agent": "ClaudeAgent",
-            "last_active_thread": {
-                "session_id": "test-session",
-                "agent_type": "Codex",
-            },
-        });
-
-        let panel: SerializedAgentPanel = serde_json::from_value(json).unwrap();
-        assert_eq!(
-            panel.selected_agent,
-            Some(AgentType::Custom {
-                name: CLAUDE_AGENT_NAME.into(),
-            }),
-        );
-        let thread = panel.last_active_thread.unwrap();
-        assert_eq!(
-            thread.agent_type,
-            AgentType::Custom {
-                name: CODEX_NAME.into(),
             },
         );
     }
