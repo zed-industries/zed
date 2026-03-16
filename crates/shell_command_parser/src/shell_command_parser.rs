@@ -358,12 +358,19 @@ fn compound_command_validation(
                 .chain(std::iter::once(do_group_validation(&for_clause.body))),
         ),
         ast::CompoundCommand::CaseClause(case_clause) => combine_validations(
-            std::iter::once(word_validation(&case_clause.value)).chain(
-                case_clause
-                    .cases
-                    .iter()
-                    .flat_map(|item| item.cmd.iter().map(compound_list_validation)),
-            ),
+            std::iter::once(word_validation(&case_clause.value))
+                .chain(
+                    case_clause
+                        .cases
+                        .iter()
+                        .flat_map(|item| item.cmd.iter().map(compound_list_validation)),
+                )
+                .chain(
+                    case_clause
+                        .cases
+                        .iter()
+                        .flat_map(|item| item.patterns.iter().map(word_validation)),
+                ),
         ),
         ast::CompoundCommand::IfClause(if_clause) => combine_validations(
             std::iter::once(compound_list_validation(&if_clause.condition))
@@ -383,9 +390,7 @@ fn compound_command_validation(
             compound_list_validation(&while_clause.0),
             do_group_validation(&while_clause.1),
         ]),
-        ast::CompoundCommand::ArithmeticForClause(arithmetic_for_clause) => {
-            do_group_validation(&arithmetic_for_clause.body)
-        }
+        ast::CompoundCommand::ArithmeticForClause(_) => TerminalProgramValidation::Unsafe,
         ast::CompoundCommand::Arithmetic(_) => TerminalProgramValidation::Unsafe,
     }
 }
@@ -1668,6 +1673,38 @@ mod tests {
         assert_eq!(
             validate_terminal_command("echo $(ls &&)"),
             TerminalCommandValidation::Unknown
+        );
+    }
+
+    #[test]
+    fn test_validate_terminal_command_rejects_substitution_in_case_pattern() {
+        assert_ne!(
+            validate_terminal_command("case x in $(echo y)) echo z;; esac"),
+            TerminalCommandValidation::Safe
+        );
+    }
+
+    #[test]
+    fn test_validate_terminal_command_safe_case_clause_without_substitutions() {
+        assert_eq!(
+            validate_terminal_command("case x in foo) echo hello;; esac"),
+            TerminalCommandValidation::Safe
+        );
+    }
+
+    #[test]
+    fn test_validate_terminal_command_rejects_substitution_in_arithmetic_for_clause() {
+        assert_ne!(
+            validate_terminal_command("for ((i=$(echo 0); i<3; i++)); do echo hello; done"),
+            TerminalCommandValidation::Safe
+        );
+    }
+
+    #[test]
+    fn test_validate_terminal_command_rejects_arithmetic_for_clause_unconditionally() {
+        assert_eq!(
+            validate_terminal_command("for ((i=0; i<3; i++)); do echo hello; done"),
+            TerminalCommandValidation::Unsafe
         );
     }
 }
