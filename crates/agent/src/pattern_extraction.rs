@@ -257,6 +257,23 @@ mod tests {
     }
 
     #[test]
+    fn test_extract_terminal_pattern_skips_redirects_before_subcommand() {
+        assert_eq!(
+            extract_terminal_pattern("git 2>/dev/null log --oneline"),
+            Some("^git\\s+log(\\s|$)".to_string())
+        );
+        assert_eq!(
+            extract_terminal_pattern_display("git 2>/dev/null log --oneline"),
+            Some("git 2>/dev/null log".to_string())
+        );
+
+        assert_eq!(
+            extract_terminal_pattern("rm --force foo"),
+            Some("^rm\\b".to_string())
+        );
+    }
+
+    #[test]
     fn test_extract_path_pattern() {
         assert_eq!(
             extract_path_pattern("/Users/alice/project/src/main.rs"),

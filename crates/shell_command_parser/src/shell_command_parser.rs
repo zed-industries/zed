@@ -68,12 +68,19 @@ pub fn extract_terminal_command_prefix(command: &str) -> Option<TerminalCommandP
 
     let mut subcommand = None;
     if let Some(suffix) = &simple_command.suffix {
-        if let Some(ast::CommandPrefixOrSuffixItem::Word(word)) = suffix.0.first() {
-            let normalized_word = normalize_word(word)?;
-            if !normalized_word.starts_with('-') {
-                subcommand = Some(normalized_word.clone());
-                normalized_tokens.push(normalized_word);
-                update_display_bounds(&mut display_start, &mut display_end, word);
+        for item in &suffix.0 {
+            match item {
+                ast::CommandPrefixOrSuffixItem::IoRedirect(_) => continue,
+                ast::CommandPrefixOrSuffixItem::Word(word) => {
+                    let normalized_word = normalize_word(word)?;
+                    if !normalized_word.starts_with('-') {
+                        subcommand = Some(normalized_word.clone());
+                        normalized_tokens.push(normalized_word);
+                        update_display_bounds(&mut display_start, &mut display_end, word);
+                    }
+                    break;
+                }
+                _ => break,
             }
         }
     }
@@ -1605,6 +1612,23 @@ mod tests {
                     "git".to_string(),
                     "log".to_string(),
                 ],
+                command: "git".to_string(),
+                subcommand: Some("log".to_string()),
+            }
+        );
+    }
+
+    #[test]
+    fn test_extract_terminal_command_prefix_skips_redirects_before_subcommand() {
+        let prefix = extract_terminal_command_prefix("git 2>/dev/null log --oneline")
+            .expect("expected terminal command prefix");
+
+        assert_eq!(
+            prefix,
+            TerminalCommandPrefix {
+                normalized: "git log".to_string(),
+                display: "git 2>/dev/null log".to_string(),
+                tokens: vec!["git".to_string(), "log".to_string()],
                 command: "git".to_string(),
                 subcommand: Some("log".to_string()),
             }
