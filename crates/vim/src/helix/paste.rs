@@ -102,13 +102,16 @@ impl Vim {
                     } else if action.before {
                         sel.start
                     } else if sel.start == sel.end {
-                        // Helix and Zed differ in how they understand
-                        // single-point cursors. In Helix, a single-point cursor
-                        // is "on top" of some character, and pasting after that
-                        // cursor means that the pasted content should go after
-                        // that character. (If the cursor is at the end of a
-                        // line, the pasted content goes on the next line.)
-                        movement::right(&display_map, sel.end)
+                        // In Helix, a single-point cursor is "on top" of a
+                        // character, and pasting after means after that character.
+                        // At line end this means the next line. But on an empty
+                        // line there is no character, so paste at the cursor.
+                        let right = movement::right(&display_map, sel.end);
+                        if right.row() != sel.end.row() && sel.end.column() == 0 {
+                            sel.end
+                        } else {
+                            right
+                        }
                     } else {
                         sel.end
                     };
@@ -171,6 +174,31 @@ mod test {
             the lazy dog."},
             Mode::HelixNormal,
         );
+
+        // Multiple cursors with system clipboard (no metadata) pastes
+        // the same text at each cursor.
+        cx.set_state(
+            indoc! {"
+            ˇThe quick brown
+            fox ˇjumps over
+            the lazy dog."},
+            Mode::HelixNormal,
+        );
+        cx.write_to_clipboard(ClipboardItem::new_string("hi".to_string()));
+        cx.simulate_keystrokes("p");
+        cx.assert_state(
+            indoc! {"
+            T«hiˇ»he quick brown
+            fox j«hiˇ»umps over
+            the lazy dog."},
+            Mode::HelixNormal,
+        );
+
+        // Multiple cursors on empty lines should paste on those same lines.
+        cx.set_state("ˇ\nˇ\nˇ\nend", Mode::HelixNormal);
+        cx.write_to_clipboard(ClipboardItem::new_string("X".to_string()));
+        cx.simulate_keystrokes("p");
+        cx.assert_state("«Xˇ»\n«Xˇ»\n«Xˇ»\nend", Mode::HelixNormal);
     }
 
     #[gpui::test]
