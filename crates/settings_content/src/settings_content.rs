@@ -633,7 +633,7 @@ pub struct GitPanelSettingsContent {
 
     /// Whether to show the addition/deletion change count next to each file in the Git panel.
     ///
-    /// Default: false
+    /// Default: true
     pub diff_stats: Option<bool>,
 }
 
@@ -732,6 +732,10 @@ pub struct FileFinderSettingsContent {
     ///
     /// Default: Smart
     pub include_ignored: Option<IncludeIgnoredContent>,
+    /// Whether to include text channels in file finder results.
+    ///
+    /// Default: false
+    pub include_channels: Option<bool>,
 }
 
 #[derive(

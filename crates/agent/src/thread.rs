@@ -219,6 +219,7 @@ impl UserMessage {
             "<rules>\nThe user has specified the following rules that should be applied:\n";
         const OPEN_DIAGNOSTICS_TAG: &str = "<diagnostics>";
         const OPEN_DIFFS_TAG: &str = "<diffs>";
+        const MERGE_CONFLICT_TAG: &str = "<merge_conflicts>";
 
         let mut file_context = OPEN_FILES_TAG.to_string();
         let mut directory_context = OPEN_DIRECTORIES_TAG.to_string();
@@ -229,6 +230,7 @@ impl UserMessage {
         let mut rules_context = OPEN_RULES_TAG.to_string();
         let mut diagnostics_context = OPEN_DIAGNOSTICS_TAG.to_string();
         let mut diffs_context = OPEN_DIFFS_TAG.to_string();
+        let mut merge_conflict_context = MERGE_CONFLICT_TAG.to_string();
 
         for chunk in &self.content {
             let chunk = match chunk {
@@ -336,6 +338,18 @@ impl UserMessage {
                             )
                             .ok();
                         }
+                        MentionUri::MergeConflict { file_path } => {
+                            write!(
+                                &mut merge_conflict_context,
+                                "\nMerge conflict in {}:\n{}",
+                                file_path,
+                                MarkdownCodeBlock {
+                                    tag: "diff",
+                                    text: content
+                                }
+                            )
+                            .ok();
+                        }
                     }
 
                     language_model::MessageContent::Text(uri.as_link().to_string())
@@ -408,6 +422,13 @@ impl UserMessage {
             message
                 .content
                 .push(language_model::MessageContent::Text(diagnostics_context));
+        }
+
+        if merge_conflict_context.len() > MERGE_CONFLICT_TAG.len() {
+            merge_conflict_context.push_str("</merge_conflicts>\n");
+            message
+                .content
+                .push(language_model::MessageContent::Text(merge_conflict_context));
         }
 
         if message.content.len() > len_before_context {
@@ -2549,6 +2570,14 @@ impl Thread {
                 .is_some()
             {
                 _ = this.update(cx, |this, cx| this.set_title(title.into(), cx));
+            } else {
+                // Emit TitleUpdated even on failure so that the propagation
+                // chain (agent::Thread → NativeAgent → AcpThread) fires and
+                // clears any provisional title that was set before the turn.
+                _ = this.update(cx, |_, cx| {
+                    cx.emit(TitleUpdated);
+                    cx.notify();
+                });
             }
             _ = this.update(cx, |this, _| this.pending_title_generation = None);
         }));

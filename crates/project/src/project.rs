@@ -3636,11 +3636,11 @@ impl Project {
         event: &BufferEvent,
         cx: &mut Context<Self>,
     ) -> Option<()> {
-        if matches!(event, BufferEvent::Edited | BufferEvent::Reloaded) {
+        if matches!(event, BufferEvent::Edited { .. } | BufferEvent::Reloaded) {
             self.request_buffer_diff_recalculation(&buffer, cx);
         }
 
-        if matches!(event, BufferEvent::Edited) {
+        if matches!(event, BufferEvent::Edited { .. }) {
             cx.emit(Event::BufferEdited);
         }
 

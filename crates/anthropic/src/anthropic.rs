@@ -995,7 +995,7 @@ pub enum Speed {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-struct StreamingRequest {
+pub struct StreamingRequest {
     #[serde(flatten)]
     pub base: Request,
     pub stream: bool,

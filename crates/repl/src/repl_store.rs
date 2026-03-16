@@ -27,6 +27,7 @@ pub struct ReplStore {
     enabled: bool,
     sessions: HashMap<EntityId, Entity<Session>>,
     kernel_specifications: Vec<KernelSpecification>,
+    kernelspecs_initialized: bool,
     selected_kernel_for_worktree: HashMap<WorktreeId, KernelSpecification>,
     kernel_specifications_for_worktree: HashMap<WorktreeId, Vec<KernelSpecification>>,
     active_python_toolchain_for_worktree: HashMap<WorktreeId, SharedString>,
@@ -39,12 +40,6 @@ impl ReplStore {
 
     pub(crate) fn init(fs: Arc<dyn Fs>, cx: &mut App) {
         let store = cx.new(move |cx| Self::new(fs, cx));
-
-        #[cfg(not(feature = "test-support"))]
-        store
-            .update(cx, |store, cx| store.refresh_kernelspecs(cx))
-            .detach_and_log_err(cx);
-
         cx.set_global(GlobalReplStore(store))
     }
 
@@ -65,6 +60,7 @@ impl ReplStore {
             enabled: JupyterSettings::enabled(cx),
             sessions: HashMap::default(),
             kernel_specifications: Vec::new(),
+            kernelspecs_initialized: false,
             _subscriptions: subscriptions,
             kernel_specifications_for_worktree: HashMap::default(),
             selected_kernel_for_worktree: HashMap::default(),
@@ -216,10 +212,17 @@ impl ReplStore {
         }
     }
 
+    pub fn ensure_kernelspecs(&mut self, cx: &mut Context<Self>) {
+        if self.kernelspecs_initialized {
+            return;
+        }
+        self.kernelspecs_initialized = true;
+        self.refresh_kernelspecs(cx).detach_and_log_err(cx);
+    }
+
     pub fn refresh_kernelspecs(&mut self, cx: &mut Context<Self>) -> Task<Result<()>> {
         let local_kernel_specifications = local_kernel_specifications(self.fs.clone());
         let wsl_kernel_specifications = wsl_kernel_specifications(cx.background_executor().clone());
-
         let remote_kernel_specifications = self.get_remote_kernel_specifications(cx);
 
         let all_specs = cx.background_spawn(async move {

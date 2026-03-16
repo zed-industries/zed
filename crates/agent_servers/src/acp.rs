@@ -131,6 +131,7 @@ impl AgentSessionList for AcpSessionList {
                                 .ok()
                                 .map(|dt| dt.with_timezone(&chrono::Utc))
                         }),
+                        created_at: None,
                         meta: s.meta,
                     })
                     .collect(),
@@ -278,7 +279,7 @@ impl AcpConnection {
                 acp::InitializeRequest::new(acp::ProtocolVersion::V1)
                     .client_capabilities(
                         acp::ClientCapabilities::new()
-                            .fs(acp::FileSystemCapability::new()
+                            .fs(acp::FileSystemCapabilities::new()
                                 .read_text_file(true)
                                 .write_text_file(true))
                             .terminal(true)
@@ -330,11 +331,11 @@ impl AcpConnection {
                 "env": command.env.clone().unwrap_or_default(),
             });
             let meta = acp::Meta::from_iter([("terminal-auth".to_string(), value)]);
-            vec![
-                acp::AuthMethod::new("spawn-gemini-cli", "Login")
+            vec![acp::AuthMethod::Agent(
+                acp::AuthMethodAgent::new("spawn-gemini-cli", "Login")
                     .description("Login with your Google or Vertex AI account")
                     .meta(meta),
-            ]
+            )]
         } else {
             response.auth_methods
         };
@@ -740,6 +741,31 @@ impl AgentConnection for AcpConnection {
             }
 
             Ok(thread)
+        })
+    }
+
+    fn supports_close_session(&self) -> bool {
+        self.agent_capabilities.session_capabilities.close.is_some()
+    }
+
+    fn close_session(
+        self: Rc<Self>,
+        session_id: &acp::SessionId,
+        cx: &mut App,
+    ) -> Task<Result<()>> {
+        if !self.supports_close_session() {
+            return Task::ready(Err(anyhow!(LoadError::Other(
+                "Closing sessions is not supported by this agent.".into()
+            ))));
+        }
+
+        let conn = self.connection.clone();
+        let session_id = session_id.clone();
+        cx.foreground_executor().spawn(async move {
+            conn.close_session(acp::CloseSessionRequest::new(session_id.clone()))
+                .await?;
+            self.sessions.borrow_mut().remove(&session_id);
+            Ok(())
         })
     }
 
@@ -1372,10 +1398,10 @@ impl acp::Client for ClientDelegate {
         Ok(acp::CreateTerminalResponse::new(terminal_id))
     }
 
-    async fn kill_terminal_command(
+    async fn kill_terminal(
         &self,
-        args: acp::KillTerminalCommandRequest,
-    ) -> Result<acp::KillTerminalCommandResponse, acp::Error> {
+        args: acp::KillTerminalRequest,
+    ) -> Result<acp::KillTerminalResponse, acp::Error> {
         self.session_thread(&args.session_id)?
             .update(&mut self.cx.clone(), |thread, cx| {
                 thread.kill_terminal(args.terminal_id, cx)

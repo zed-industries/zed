@@ -109,6 +109,7 @@ CREATE TABLE "project_repositories" (
     "head_commit_details" VARCHAR,
     "remote_upstream_url" VARCHAR,
     "remote_origin_url" VARCHAR,
+    "linked_worktrees" VARCHAR,
     PRIMARY KEY (project_id, id)
 );
 

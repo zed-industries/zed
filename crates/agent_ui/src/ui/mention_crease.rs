@@ -13,6 +13,8 @@ use theme::ThemeSettings;
 use ui::{ButtonLike, TintColor, Tooltip, prelude::*};
 use workspace::{OpenOptions, Workspace};
 
+use crate::Agent;
+
 #[derive(IntoElement)]
 pub struct MentionCrease {
     id: ElementId,
@@ -187,7 +189,8 @@ fn open_mention_uri(
         | MentionUri::Selection { abs_path: None, .. }
         | MentionUri::Diagnostics { .. }
         | MentionUri::TerminalSelection { .. }
-        | MentionUri::GitDiff { .. } => {}
+        | MentionUri::GitDiff { .. }
+        | MentionUri::MergeConflict { .. } => {}
     });
 }
 
@@ -274,8 +277,17 @@ fn open_thread(
         return;
     };
 
+    // Right now we only support loading threads in the native agent
     panel.update(cx, |panel, cx| {
-        panel.load_agent_thread(id, None, Some(name.into()), window, cx)
+        panel.load_agent_thread(
+            Agent::NativeAgent,
+            id,
+            None,
+            Some(name.into()),
+            true,
+            window,
+            cx,
+        )
     });
 }
 

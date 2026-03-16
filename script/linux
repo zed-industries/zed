@@ -39,6 +39,8 @@ if [[ -n $apt ]]; then
     make
     cmake
     clang
+    lld
+    llvm
     jq
     git
     curl
@@ -60,12 +62,21 @@ if [[ -n $apt ]]; then
     # Ubuntu 20.04 ships clang-10 and libstdc++-10 which lack adequate C++20
     # support for building webrtc-sys (requires -std=c++20, lambdas in
     # unevaluated contexts from clang 17+, and working std::ranges in the
-    # stdlib). clang-18 is available in focal-security/universe as an official
-    # backport, and libstdc++-11-dev from the ubuntu-toolchain-r PPA provides
-    # headers with working pointer_traits/contiguous_range.
+    # stdlib).
     # Note: the prebuilt libwebrtc.a is compiled with libstdc++, so we must
     # use libstdc++ (not libc++) to avoid ABI mismatches at link time.
-    $maysudo add-apt-repository -y ppa:ubuntu-toolchain-r/test
+
+    # libstdc++-11-dev (headers with working pointer_traits/contiguous_range)
+    # is only available from the ubuntu-toolchain-r PPA. Add the source list
+    # and GPG key manually instead of using add-apt-repository, whose HKP
+    # keyserver lookups (port 11371) frequently time out in CI.
+    $maysudo "$apt" install -y curl gnupg
+    codename=$(lsb_release -cs)
+    echo "deb https://ppa.launchpadcontent.net/ubuntu-toolchain-r/test/ubuntu $codename main" | \
+      $maysudo tee /etc/apt/sources.list.d/ubuntu-toolchain-r-test.list > /dev/null
+    curl -fsSL 'https://keyserver.ubuntu.com/pks/lookup?op=get&search=0x1E9377A2BA9EF27F' | \
+      sed -n '/-----BEGIN PGP PUBLIC KEY BLOCK-----/,/-----END PGP PUBLIC KEY BLOCK-----/p' | \
+      $maysudo gpg --dearmor -o /etc/apt/trusted.gpg.d/ubuntu-toolchain-r-test.gpg
     deps+=( clang-18 libstdc++-11-dev )
   fi
 

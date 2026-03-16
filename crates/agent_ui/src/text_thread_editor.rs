@@ -1191,11 +1191,11 @@ impl TextThreadEditor {
                                     Button::new("show-error", "Error")
                                         .color(Color::Error)
                                         .selected_label_color(Color::Error)
-                                        .selected_icon_color(Color::Error)
-                                        .icon(IconName::XCircle)
-                                        .icon_color(Color::Error)
-                                        .icon_size(IconSize::XSmall)
-                                        .icon_position(IconPosition::Start)
+                                        .start_icon(
+                                            Icon::new(IconName::XCircle)
+                                                .size(IconSize::XSmall)
+                                                .color(Color::Error),
+                                        )
                                         .tooltip(Tooltip::text("View Details"))
                                         .on_click({
                                             let text_thread = text_thread.clone();
@@ -2287,20 +2287,11 @@ impl TextThreadEditor {
 
         PickerPopoverMenu::new(
             self.language_model_selector.clone(),
-            ButtonLike::new("active-model")
-                .selected_style(ButtonStyle::Tinted(TintColor::Accent))
-                .child(
-                    h_flex()
-                        .gap_0p5()
-                        .child(provider_icon_element)
-                        .child(
-                            Label::new(model_name)
-                                .color(color)
-                                .size(LabelSize::Small)
-                                .ml_0p5(),
-                        )
-                        .child(Icon::new(icon).color(color).size(IconSize::XSmall)),
-                ),
+            Button::new("active-model", model_name)
+                .color(color)
+                .label_size(LabelSize::Small)
+                .start_icon(provider_icon_element)
+                .end_icon(Icon::new(icon).color(color).size(IconSize::XSmall)),
             tooltip,
             gpui::Corner::BottomRight,
             cx,
