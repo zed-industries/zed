@@ -2894,15 +2894,15 @@ impl AgentPanel {
             .worktree_directory
             .clone();
 
-        let (dock_structure, open_file_paths) = self
-            .workspace
-            .upgrade()
-            .map(|workspace| {
-                let dock_structure = workspace.read(cx).capture_dock_state(window, cx);
-                let open_file_paths = workspace.read(cx).open_item_abs_paths(cx);
-                (dock_structure, open_file_paths)
-            })
-            .unwrap_or_default();
+        let active_file_path = self.workspace.upgrade().and_then(|workspace| {
+            let workspace = workspace.read(cx);
+            let active_item = workspace.active_item(cx)?;
+            let project_path = active_item.project_path(cx)?;
+            workspace
+                .project()
+                .read(cx)
+                .absolute_path(&project_path, cx)
+        });
 
         let workspace = self.workspace.clone();
         let window_handle = window
@@ -3002,8 +3002,7 @@ impl AgentPanel {
                 all_paths,
                 app_state,
                 window_handle,
-                dock_structure,
-                open_file_paths,
+                active_file_path,
                 path_remapping,
                 non_git_paths,
                 has_non_git,
@@ -3035,27 +3034,20 @@ impl AgentPanel {
         all_paths: Vec<PathBuf>,
         app_state: Arc<workspace::AppState>,
         window_handle: Option<gpui::WindowHandle<workspace::MultiWorkspace>>,
-        dock_structure: workspace::DockStructure,
-        open_file_paths: Vec<PathBuf>,
+        active_file_path: Option<PathBuf>,
         path_remapping: Vec<(PathBuf, PathBuf)>,
         non_git_paths: Vec<PathBuf>,
         has_non_git: bool,
         content: Vec<acp::ContentBlock>,
         cx: &mut AsyncWindowContext,
     ) -> Result<()> {
-        let init: Option<
-            Box<dyn FnOnce(&mut Workspace, &mut Window, &mut gpui::Context<Workspace>) + Send>,
-        > = Some(Box::new(move |workspace, window, cx| {
-            workspace.set_dock_structure(dock_structure, window, cx);
-        }));
-
         let OpenResult {
             window: new_window_handle,
             workspace: new_workspace,
             ..
         } = cx
             .update(|_window, cx| {
-                Workspace::new_local(all_paths, app_state, window_handle, None, init, false, cx)
+                Workspace::new_local(all_paths, app_state, window_handle, None, None, false, cx)
             })?
             .await?;
 
@@ -3085,41 +3077,62 @@ impl AgentPanel {
                     );
                 }
 
-                let remapped_paths: Vec<PathBuf> = open_file_paths
-                    .iter()
-                    .filter_map(|original_path| {
-                        let best_match = path_remapping
-                            .iter()
-                            .filter_map(|(old_root, new_root)| {
-                                original_path.strip_prefix(old_root).ok().map(|relative| {
-                                    (old_root.components().count(), new_root.join(relative))
-                                })
+                // If we had an active buffer, remap its path and reopen it.
+                let should_zoom_agent_panel = active_file_path.is_none();
+
+                let remapped_active_path = active_file_path.and_then(|original_path| {
+                    let best_match = path_remapping
+                        .iter()
+                        .filter_map(|(old_root, new_root)| {
+                            original_path.strip_prefix(old_root).ok().map(|relative| {
+                                (old_root.components().count(), new_root.join(relative))
                             })
-                            .max_by_key(|(depth, _)| *depth);
+                        })
+                        .max_by_key(|(depth, _)| *depth);
 
-                        if let Some((_, remapped_path)) = best_match {
-                            return Some(remapped_path);
-                        }
+                    if let Some((_, remapped_path)) = best_match {
+                        return Some(remapped_path);
+                    }
 
-                        for non_git in &non_git_paths {
-                            if original_path.starts_with(non_git) {
-                                return Some(original_path.clone());
-                            }
+                    for non_git in &non_git_paths {
+                        if original_path.starts_with(non_git) {
+                            return Some(original_path.clone());
                         }
-                        None
+                    }
+                    None
+                });
+
+                if !should_zoom_agent_panel && remapped_active_path.is_none() {
+                    log::warn!(
+                        "Active file could not be remapped to the new worktree; it will not be reopened"
+                    );
+                }
+
+                if let Some(path) = remapped_active_path {
+                    let open_task = workspace.open_paths(
+                        vec![path],
+                        workspace::OpenOptions::default(),
+                        None,
+                        window,
+                        cx,
+                    );
+                    cx.spawn(async move |_, _| -> anyhow::Result<()> {
+                        for item in open_task.await.into_iter().flatten() {
+                            item?;
+                        }
+                        Ok(())
                     })
-                    .collect();
+                    .detach_and_log_err(cx);
+                }
 
-                if !remapped_paths.is_empty() {
-                    workspace
-                        .open_paths(
-                            remapped_paths,
-                            workspace::OpenOptions::default(),
-                            None,
-                            window,
-                            cx,
-                        )
-                        .detach();
+                // If no active buffer was open, zoom the agent panel
+                // (equivalent to cmd-esc fullscreen behavior).
+                if should_zoom_agent_panel {
+                    if let Some(panel) = workspace.panel::<AgentPanel>(cx) {
+                        panel.update(cx, |_panel, cx| {
+                            cx.emit(PanelEvent::ZoomIn);
+                        });
+                    }
                 }
 
                 workspace.focus_panel::<AgentPanel>(window, cx);
