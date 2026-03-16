@@ -614,6 +614,8 @@
     "breakpoints": true,
     // Whether to show fold buttons in the gutter.
     "folds": true,
+    // Whether to always show fold buttons for foldable rows in the gutter.
+    "always_show_fold_carets": false,
     // Minimum number of characters to reserve space for in the gutter.
     "min_line_number_digits": 4,
   },

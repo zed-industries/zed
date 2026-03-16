@@ -331,6 +331,11 @@ impl VsCodeSettings {
                 "never" => Some(false),
                 _ => None,
             }),
+            always_show_fold_carets: self.read_enum("editor.showFoldingControls", |s| match s {
+                "always" => Some(true),
+                "mouseover" => Some(false),
+                _ => None,
+            }),
         })
     }
 

@@ -431,6 +431,10 @@ pub struct GutterContent {
     ///
     /// Default: true
     pub folds: Option<bool>,
+    /// Whether to always show fold buttons for foldable rows in the gutter.
+    ///
+    /// Default: false
+    pub always_show_fold_carets: Option<bool>,
 }
 
 /// How to render LSP `textDocument/documentColor` colors in the editor.

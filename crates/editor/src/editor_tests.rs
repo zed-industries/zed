@@ -24079,7 +24079,7 @@ fn test_crease_insertion_and_rendering(cx: &mut TestAppContext) {
             editor.insert_creases(Some(crease), cx);
             let snapshot = editor.snapshot(window, cx);
             let _div =
-                snapshot.render_crease_toggle(MultiBufferRow(1), false, cx.entity(), window, cx);
+                snapshot.render_crease_toggle(MultiBufferRow(1), true, cx.entity(), window, cx);
             snapshot
         })
         .unwrap();
@@ -24109,7 +24109,7 @@ fn test_crease_insertion_and_rendering(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-fn test_custom_region_markers_render_gutter_toggle_without_hover(cx: &mut TestAppContext) {
+fn test_custom_region_markers_hide_gutter_toggle_without_hover_by_default(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
     let editor = cx.add_window(|window, cx| {
@@ -24126,8 +24126,47 @@ fn test_custom_region_markers_render_gutter_toggle_without_hover(cx: &mut TestAp
             assert!(
                 snapshot
                     .render_crease_toggle(MultiBufferRow(1), false, cx.entity(), window, cx)
+                    .is_none(),
+                "custom region markers should not show a gutter fold toggle without hover by default"
+            );
+        })
+        .unwrap();
+}
+
+#[gpui::test]
+fn test_custom_region_markers_render_gutter_toggle_without_hover_when_enabled(
+    cx: &mut TestAppContext,
+) {
+    init_test(cx, |_| {});
+
+    cx.update(|cx| {
+        cx.update_global::<SettingsStore, _>(|settings, cx| {
+            settings.update_user_settings(cx, |settings| {
+                settings
+                    .editor
+                    .gutter
+                    .get_or_insert_default()
+                    .always_show_fold_carets = Some(true);
+            });
+        });
+    });
+
+    let editor = cx.add_window(|window, cx| {
+        let buffer = MultiBuffer::build_simple(
+            "fn main() {\n    // region setup\n    let x = 1;\n    // endregion setup\n}\n",
+            cx,
+        );
+        build_editor(buffer, window, cx)
+    });
+
+    editor
+        .update(cx, |editor, window, cx| {
+            let snapshot = editor.snapshot(window, cx);
+            assert!(
+                snapshot
+                    .render_crease_toggle(MultiBufferRow(1), false, cx.entity(), window, cx)
                     .is_some(),
-                "custom region markers should show a gutter fold toggle without hover"
+                "custom region markers should show a gutter fold toggle without hover when enabled"
             );
         })
         .unwrap();

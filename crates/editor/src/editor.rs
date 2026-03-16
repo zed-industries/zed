@@ -27468,12 +27468,13 @@ impl EditorSnapshot {
     pub fn render_crease_toggle(
         &self,
         buffer_row: MultiBufferRow,
-        _row_contains_cursor: bool,
+        row_contains_cursor: bool,
         editor: Entity<Editor>,
         window: &mut Window,
         cx: &mut App,
     ) -> Option<AnyElement> {
         let folded = self.is_line_folded(buffer_row);
+        let always_show_fold_carets = EditorSettings::get_global(cx).gutter.always_show_fold_carets;
         let mut is_foldable = false;
 
         if let Some(crease) = self
@@ -27483,7 +27484,9 @@ impl EditorSnapshot {
             is_foldable = true;
             match crease {
                 Crease::Inline { render_toggle, .. } | Crease::Block { render_toggle, .. } => {
-                    if let Some(render_toggle) = render_toggle {
+                    if let Some(render_toggle) = render_toggle
+                        && (folded || row_contains_cursor || always_show_fold_carets)
+                    {
                         let toggle_callback =
                             Arc::new(move |folded, window: &mut Window, cx: &mut App| {
                                 if folded {
@@ -27510,7 +27513,7 @@ impl EditorSnapshot {
 
         is_foldable |= self.crease_for_buffer_row(buffer_row).is_some();
 
-        if folded || is_foldable {
+        if folded || (is_foldable && (row_contains_cursor || always_show_fold_carets)) {
             Some(
                 Disclosure::new(("gutter_crease", buffer_row.0), !folded)
                     .toggle_state(folded)

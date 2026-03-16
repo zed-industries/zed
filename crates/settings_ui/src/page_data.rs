@@ -1917,6 +1917,29 @@ fn editor_page() -> SettingsPage {
                 files: USER,
             }),
             SettingsPageItem::SettingItem(SettingItem {
+                title: "Always Show Fold Carets",
+                description: "Always show fold carets for foldable rows in the gutter instead of only on active rows.",
+                field: Box::new(SettingField {
+                    json_path: Some("gutter.always_show_fold_carets"),
+                    pick: |settings_content| {
+                        settings_content
+                            .editor
+                            .gutter
+                            .as_ref()
+                            .and_then(|gutter| gutter.always_show_fold_carets.as_ref())
+                    },
+                    write: |settings_content, value| {
+                        settings_content
+                            .editor
+                            .gutter
+                            .get_or_insert_default()
+                            .always_show_fold_carets = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
                 title: "Min Line Number Digits",
                 description: "Minimum number of characters to reserve space for in the gutter.",
                 field: Box::new(SettingField {

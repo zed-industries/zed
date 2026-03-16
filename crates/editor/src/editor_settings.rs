@@ -130,6 +130,7 @@ pub struct Gutter {
     pub runnables: bool,
     pub breakpoints: bool,
     pub folds: bool,
+    pub always_show_fold_carets: bool,
 }
 
 /// Forcefully enable or disable the scrollbar for each axis
@@ -250,6 +251,7 @@ impl Settings for EditorSettings {
                 runnables: gutter.runnables.unwrap(),
                 breakpoints: gutter.breakpoints.unwrap(),
                 folds: gutter.folds.unwrap(),
+                always_show_fold_carets: gutter.always_show_fold_carets.unwrap(),
             },
             scroll_beyond_last_line: editor.scroll_beyond_last_line.unwrap(),
             vertical_scroll_margin: editor.vertical_scroll_margin.unwrap() as f64,
