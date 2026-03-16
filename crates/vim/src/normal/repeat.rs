@@ -297,7 +297,7 @@ impl Vim {
         // For numbered registers, Neovim increments on each dot repeat so after
         // using `"1p`, using `.` will equate to `"2p", the next `.` to `"3p`,
         // etc..
-        let recorded_register = cx.global::<VimGlobals>().recorded_register;
+        let recorded_register = cx.global::<VimGlobals>().recorded_register_for_dot;
         let next_register = recorded_register
             .filter(|c| matches!(c, '1'..='9'))
             .map(|c| ((c as u8 + 1).min(b'9')) as char);
@@ -305,7 +305,7 @@ impl Vim {
         self.selected_register = next_register.or(recorded_register);
         if let Some(next_register) = next_register {
             Vim::update_globals(cx, |globals, _| {
-                globals.recorded_register = Some(next_register)
+                globals.recorded_register_for_dot = Some(next_register)
             })
         };
 
