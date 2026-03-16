@@ -753,7 +753,7 @@ impl AgentConnection for AcpConnection {
         session_id: &acp::SessionId,
         cx: &mut App,
     ) -> Task<Result<()>> {
-        if !self.agent_capabilities.session_capabilities.close.is_none() {
+        if !self.supports_close_session() {
             return Task::ready(Err(anyhow!(LoadError::Other(
                 "Closing sessions is not supported by this agent.".into()
             ))));

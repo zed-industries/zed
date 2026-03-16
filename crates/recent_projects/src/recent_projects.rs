@@ -935,7 +935,14 @@ impl PickerDelegate for RecentProjectsDelegate {
                                 }
                                 return;
                             } else {
-                                workspace.open_workspace_for_paths(false, paths, window, cx)
+                                workspace
+                                    .open_workspace_for_paths(false, paths, window, cx)
+                                    .detach_and_prompt_err(
+                                        "Failed to open project",
+                                        window,
+                                        cx,
+                                        |_, _, _| None,
+                                    );
                             }
                         }
                         SerializedWorkspaceLocation::Remote(mut connection) => {
@@ -964,14 +971,14 @@ impl PickerDelegate for RecentProjectsDelegate {
                                 )
                                 .await
                             })
+                            .detach_and_prompt_err(
+                                "Failed to open project",
+                                window,
+                                cx,
+                                |_, _, _| None,
+                            );
                         }
                     }
-                    .detach_and_prompt_err(
-                        "Failed to open project",
-                        window,
-                        cx,
-                        |_, _, _| None,
-                    );
                 });
                 cx.emit(DismissEvent);
             }

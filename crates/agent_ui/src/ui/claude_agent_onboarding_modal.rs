@@ -201,15 +201,16 @@ impl Render for ClaudeCodeOnboardingModal {
         let copy = "Powered by the Agent Client Protocol, you can now run Claude Agent as\na first-class citizen in Zed's agent panel.";
 
         let open_panel_button = Button::new("open-panel", "Start with Claude Agent")
-            .icon_size(IconSize::Indicator)
             .style(ButtonStyle::Tinted(TintColor::Accent))
             .full_width()
             .on_click(cx.listener(Self::open_panel));
 
         let docs_button = Button::new("add-other-agents", "Add Other Agents")
-            .icon(IconName::ArrowUpRight)
-            .icon_size(IconSize::Indicator)
-            .icon_color(Color::Muted)
+            .end_icon(
+                Icon::new(IconName::ArrowUpRight)
+                    .size(IconSize::Indicator)
+                    .color(Color::Muted),
+            )
             .full_width()
             .on_click(cx.listener(Self::view_docs));
 

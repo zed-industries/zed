@@ -194,6 +194,7 @@ pub struct ThreadView {
     pub expanded_tool_calls: HashSet<agent_client_protocol::ToolCallId>,
     pub expanded_tool_call_raw_inputs: HashSet<agent_client_protocol::ToolCallId>,
     pub expanded_thinking_blocks: HashSet<(usize, usize)>,
+    auto_expanded_thinking_block: Option<(usize, usize)>,
     pub subagent_scroll_handles: RefCell<HashMap<agent_client_protocol::SessionId, ScrollHandle>>,
     pub edits_expanded: bool,
     pub plan_expanded: bool,
@@ -425,6 +426,7 @@ impl ThreadView {
             expanded_tool_calls: HashSet::default(),
             expanded_tool_call_raw_inputs: HashSet::default(),
             expanded_thinking_blocks: HashSet::default(),
+            auto_expanded_thinking_block: None,
             subagent_scroll_handles: RefCell::new(HashMap::default()),
             edits_expanded: false,
             plan_expanded: false,
@@ -628,6 +630,7 @@ impl ThreadView {
                 if let Some(AgentThreadEntry::UserMessage(user_message)) =
                     self.thread.read(cx).entries().get(event.entry_index)
                     && user_message.id.is_some()
+                    && !self.is_subagent()
                 {
                     self.editing_message = Some(event.entry_index);
                     cx.notify();
@@ -637,6 +640,7 @@ impl ThreadView {
                 if let Some(AgentThreadEntry::UserMessage(user_message)) =
                     self.thread.read(cx).entries().get(event.entry_index)
                     && user_message.id.is_some()
+                    && !self.is_subagent()
                 {
                     if editor.read(cx).text(cx).as_str() == user_message.content.to_markdown(cx) {
                         self.editing_message = None;
@@ -646,7 +650,9 @@ impl ThreadView {
             }
             ViewEvent::MessageEditorEvent(_editor, MessageEditorEvent::SendImmediately) => {}
             ViewEvent::MessageEditorEvent(editor, MessageEditorEvent::Send) => {
-                self.regenerate(event.entry_index, editor.clone(), window, cx);
+                if !self.is_subagent() {
+                    self.regenerate(event.entry_index, editor.clone(), window, cx);
+                }
             }
             ViewEvent::MessageEditorEvent(_editor, MessageEditorEvent::Cancel) => {
                 self.cancel_editing(&Default::default(), window, cx);
@@ -2674,6 +2680,14 @@ impl ThreadView {
             return div().into_any_element();
         }
 
+        let is_generating = self.thread.read(cx).status() != ThreadStatus::Idle;
+        if let Some(model_selector) = &self.model_selector {
+            model_selector.update(cx, |selector, _| selector.set_disabled(is_generating));
+        }
+        if let Some(profile_selector) = &self.profile_selector {
+            profile_selector.update(cx, |selector, _| selector.set_disabled(is_generating));
+        }
+
         let focus_handle = self.message_editor.focus_handle(cx);
         let editor_bg_color = cx.theme().colors().editor_background;
         let editor_expanded = self.editor_expanded;
@@ -3223,6 +3237,7 @@ impl ThreadView {
             return None;
         }
 
+        let is_generating = self.thread.read(cx).status() != ThreadStatus::Idle;
         let thinking = thread.thinking_enabled();
 
         let (tooltip_label, icon, color) = if thinking {
@@ -3244,8 +3259,13 @@ impl ThreadView {
         let thinking_toggle = IconButton::new("thinking-mode", icon)
             .icon_size(IconSize::Small)
             .icon_color(color)
-            .tooltip(move |_, cx| {
-                Tooltip::for_action_in(tooltip_label, &ToggleThinkingMode, &focus_handle, cx)
+            .disabled(is_generating)
+            .tooltip(move |window, cx| {
+                if is_generating {
+                    Tooltip::text("Disabled until generation is done")(window, cx)
+                } else {
+                    Tooltip::for_action_in(tooltip_label, &ToggleThinkingMode, &focus_handle, cx)
+                }
             })
             .on_click(cx.listener(move |this, _, _window, cx| {
                 if let Some(thread) = this.as_native_thread(cx) {
@@ -3277,6 +3297,7 @@ impl ThreadView {
         let right_btn = self.render_effort_selector(
             model.supported_effort_levels(),
             thread.thinking_effort().cloned(),
+            is_generating,
             cx,
         );
 
@@ -3291,6 +3312,7 @@ impl ThreadView {
         &self,
         supported_effort_levels: Vec<LanguageModelEffortLevel>,
         selected_effort: Option<String>,
+        disabled: bool,
         cx: &Context<Self>,
     ) -> impl IntoElement {
         let weak_self = cx.weak_entity();
@@ -3359,6 +3381,7 @@ impl ThreadView {
         PopoverMenu::new("effort-selector")
             .trigger_with_tooltip(
                 ButtonLike::new_rounded_right("effort-selector-trigger")
+                    .disabled(disabled)
                     .selected_style(ButtonStyle::Tinted(TintColor::Accent))
                     .child(Label::new(label).size(LabelSize::Small).color(label_color))
                     .child(Icon::new(icon).size(IconSize::XSmall).color(Color::Muted)),
@@ -3540,6 +3563,7 @@ impl ThreadView {
         let message_editor = self.message_editor.clone();
         let workspace = self.workspace.clone();
         let supports_images = self.prompt_capabilities.borrow().image;
+        let supports_embedded_context = self.prompt_capabilities.borrow().embedded_context;
 
         let has_editor_selection = workspace
             .upgrade()
@@ -3655,6 +3679,20 @@ impl ThreadView {
                             }
                         }),
                 )
+                .item(
+                    ContextMenuEntry::new("Branch Diff")
+                        .icon(IconName::GitBranch)
+                        .icon_color(Color::Muted)
+                        .icon_size(IconSize::XSmall)
+                        .disabled(!supports_embedded_context)
+                        .handler({
+                            move |window, cx| {
+                                message_editor.update(cx, |editor, cx| {
+                                    editor.insert_branch_diff_crease(window, cx);
+                                });
+                            }
+                        }),
+                )
         })
     }
 
@@ -3758,14 +3796,12 @@ impl ThreadView {
                     .as_ref()
                     .is_some_and(|checkpoint| checkpoint.show);
 
-                let agent_name = self.agent_name.clone();
                 let is_subagent = self.is_subagent();
-
-                let non_editable_icon = || {
-                    IconButton::new("non_editable", IconName::PencilUnavailable)
-                        .icon_size(IconSize::Small)
-                        .icon_color(Color::Muted)
-                        .style(ButtonStyle::Transparent)
+                let is_editable = message.id.is_some() && !is_subagent;
+                let agent_name = if is_subagent {
+                    "subagents".into()
+                } else {
+                    self.agent_name.clone()
                 };
 
                 v_flex()
@@ -3786,19 +3822,16 @@ impl ThreadView {
                     .gap_1p5()
                     .w_full()
                     .children(rules_item)
-                    .children(message.id.clone().and_then(|message_id| {
-                        message.checkpoint.as_ref()?.show.then(|| {
+                    .when(is_editable && has_checkpoint_button, |this| {
+                        this.children(message.id.clone().map(|message_id| {
                             h_flex()
                                 .px_3()
                                 .gap_2()
                                 .child(Divider::horizontal())
                                 .child(
                                     Button::new("restore-checkpoint", "Restore Checkpoint")
-                                        .icon(IconName::Undo)
-                                        .icon_size(IconSize::XSmall)
-                                        .icon_position(IconPosition::Start)
+                                        .start_icon(Icon::new(IconName::Undo).size(IconSize::XSmall).color(Color::Muted))
                                         .label_size(LabelSize::XSmall)
-                                        .icon_color(Color::Muted)
                                         .color(Color::Muted)
                                         .tooltip(Tooltip::text("Restores all files in the project to the content they had at this point in the conversation."))
                                         .on_click(cx.listener(move |this, _, _window, cx| {
@@ -3806,8 +3839,8 @@ impl ThreadView {
                                         }))
                                 )
                                 .child(Divider::horizontal())
-                        })
-                    }))
+                        }))
+                    })
                     .child(
                         div()
                             .relative()
@@ -3823,8 +3856,11 @@ impl ThreadView {
                                     })
                                     .border_color(cx.theme().colors().border)
                                     .map(|this| {
-                                        if is_subagent {
-                                            return this.border_dashed();
+                                        if !is_editable {
+                                            if is_subagent {
+                                                return this.border_dashed();
+                                            }
+                                            return this;
                                         }
                                         if editing && editor_focus {
                                             return this.border_color(focus_border);
@@ -3832,12 +3868,9 @@ impl ThreadView {
                                         if editing && !editor_focus {
                                             return this.border_dashed()
                                         }
-                                        if message.id.is_some() {
-                                            return this.shadow_md().hover(|s| {
-                                                s.border_color(focus_border.opacity(0.8))
-                                            });
-                                        }
-                                        this
+                                        this.shadow_md().hover(|s| {
+                                            s.border_color(focus_border.opacity(0.8))
+                                        })
                                     })
                                     .text_xs()
                                     .child(editor.clone().into_any_element())
@@ -3855,20 +3888,7 @@ impl ThreadView {
                                     .overflow_hidden();
 
                                 let is_loading_contents = self.is_loading_contents;
-                                if is_subagent {
-                                    this.child(
-                                        base_container.border_dashed().child(
-                                            non_editable_icon().tooltip(move |_, cx| {
-                                                Tooltip::with_meta(
-                                                    "Unavailable Editing",
-                                                    None,
-                                                    "Editing subagent messages is currently not supported.",
-                                                    cx,
-                                                )
-                                            }),
-                                        ),
-                                    )
-                                } else if message.id.is_some() {
+                                if is_editable {
                                     this.child(
                                         base_container
                                             .child(
@@ -3907,26 +3927,29 @@ impl ThreadView {
                                     this.child(
                                         base_container
                                             .border_dashed()
-                                            .child(
-                                                non_editable_icon()
-                                                    .tooltip(Tooltip::element({
-                                                        move |_, _| {
-                                                            v_flex()
-                                                                .gap_1()
-                                                                .child(Label::new("Unavailable Editing")).child(
-                                                                    div().max_w_64().child(
-                                                                        Label::new(format!(
-                                                                            "Editing previous messages is not available for {} yet.",
-                                                                            agent_name.clone()
-                                                                        ))
-                                                                        .size(LabelSize::Small)
-                                                                        .color(Color::Muted),
-                                                                    ),
-                                                                )
-                                                                .into_any_element()
-                                                        }
-                                                    }))
-                                            )
+                                            .child(IconButton::new("non_editable", IconName::PencilUnavailable)
+                                                .icon_size(IconSize::Small)
+                                                .icon_color(Color::Muted)
+                                                .style(ButtonStyle::Transparent)
+                                                .tooltip(Tooltip::element({
+                                                    let agent_name = agent_name.clone();
+                                                    move |_, _| {
+                                                        v_flex()
+                                                            .gap_1()
+                                                            .child(Label::new("Unavailable Editing"))
+                                                            .child(
+                                                                div().max_w_64().child(
+                                                                    Label::new(format!(
+                                                                        "Editing previous messages is not available for {} yet.",
+                                                                        agent_name
+                                                                    ))
+                                                                    .size(LabelSize::Small)
+                                                                    .color(Color::Muted),
+                                                                ),
+                                                            )
+                                                            .into_any_element()
+                                                    }
+                                                }))),
                                     )
                                 }
                             }),
@@ -4544,6 +4567,53 @@ impl ThreadView {
             .into_any_element()
     }
 
+    /// If the last entry's last chunk is a streaming thought block, auto-expand it.
+    /// Also collapses the previously auto-expanded block when a new one starts.
+    pub(crate) fn auto_expand_streaming_thought(&mut self, cx: &mut Context<Self>) {
+        let key = {
+            let thread = self.thread.read(cx);
+            if thread.status() != ThreadStatus::Generating {
+                return;
+            }
+            let entries = thread.entries();
+            let last_ix = entries.len().saturating_sub(1);
+            match entries.get(last_ix) {
+                Some(AgentThreadEntry::AssistantMessage(msg)) => match msg.chunks.last() {
+                    Some(AssistantMessageChunk::Thought { .. }) => {
+                        Some((last_ix, msg.chunks.len() - 1))
+                    }
+                    _ => None,
+                },
+                _ => None,
+            }
+        };
+
+        if let Some(key) = key {
+            if self.auto_expanded_thinking_block != Some(key) {
+                if let Some(old_key) = self.auto_expanded_thinking_block.replace(key) {
+                    self.expanded_thinking_blocks.remove(&old_key);
+                }
+                self.expanded_thinking_blocks.insert(key);
+                cx.notify();
+            }
+        } else if self.auto_expanded_thinking_block.is_some() {
+            // The last chunk is no longer a thought (model transitioned to responding),
+            // so collapse the previously auto-expanded block.
+            self.collapse_auto_expanded_thinking_block();
+            cx.notify();
+        }
+    }
+
+    fn collapse_auto_expanded_thinking_block(&mut self) {
+        if let Some(key) = self.auto_expanded_thinking_block.take() {
+            self.expanded_thinking_blocks.remove(&key);
+        }
+    }
+
+    pub(crate) fn clear_auto_expand_tracking(&mut self) {
+        self.auto_expanded_thinking_block = None;
+    }
+
     fn render_thinking_block(
         &self,
         entry_ix: usize,
@@ -4564,20 +4634,6 @@ impl ThreadView {
             .read(cx)
             .entry(entry_ix)
             .and_then(|entry| entry.scroll_handle_for_assistant_message_chunk(chunk_ix));
-
-        let thinking_content = {
-            div()
-                .id(("thinking-content", chunk_ix))
-                .when_some(scroll_handle, |this, scroll_handle| {
-                    this.track_scroll(&scroll_handle)
-                })
-                .text_ui_sm(cx)
-                .overflow_hidden()
-                .child(self.render_markdown(
-                    chunk,
-                    MarkdownStyle::themed(MarkdownFont::Agent, window, cx),
-                ))
-        };
 
         v_flex()
             .gap_1()
@@ -4634,11 +4690,19 @@ impl ThreadView {
             .when(is_open, |this| {
                 this.child(
                     div()
+                        .id(("thinking-content", chunk_ix))
                         .ml_1p5()
                         .pl_3p5()
                         .border_l_1()
                         .border_color(self.tool_card_border_color(cx))
-                        .child(thinking_content),
+                        .when_some(scroll_handle, |this, scroll_handle| {
+                            this.track_scroll(&scroll_handle)
+                        })
+                        .overflow_hidden()
+                        .child(self.render_markdown(
+                            chunk,
+                            MarkdownStyle::themed(MarkdownFont::Agent, window, cx),
+                        )),
                 )
             })
             .into_any_element()
@@ -5751,10 +5815,11 @@ impl ThreadView {
                     .gap_0p5()
                     .child(
                         Button::new(("allow-btn", entry_ix), "Allow")
-                            .icon(IconName::Check)
-                            .icon_color(Color::Success)
-                            .icon_position(IconPosition::Start)
-                            .icon_size(IconSize::XSmall)
+                            .start_icon(
+                                Icon::new(IconName::Check)
+                                    .size(IconSize::XSmall)
+                                    .color(Color::Success),
+                            )
                             .label_size(LabelSize::Small)
                             .when(is_first, |this| {
                                 this.key_binding(
@@ -5785,10 +5850,11 @@ impl ThreadView {
                     )
                     .child(
                         Button::new(("deny-btn", entry_ix), "Deny")
-                            .icon(IconName::Close)
-                            .icon_color(Color::Error)
-                            .icon_position(IconPosition::Start)
-                            .icon_size(IconSize::XSmall)
+                            .start_icon(
+                                Icon::new(IconName::Close)
+                                    .size(IconSize::XSmall)
+                                    .color(Color::Error),
+                            )
                             .label_size(LabelSize::Small)
                             .when(is_first, |this| {
                                 this.key_binding(
@@ -5855,9 +5921,11 @@ impl ThreadView {
             .with_handle(permission_dropdown_handle)
             .trigger(
                 Button::new(("granularity-trigger", entry_ix), current_label)
-                    .icon(IconName::ChevronDown)
-                    .icon_size(IconSize::XSmall)
-                    .icon_color(Color::Muted)
+                    .end_icon(
+                        Icon::new(IconName::ChevronDown)
+                            .size(IconSize::XSmall)
+                            .color(Color::Muted),
+                    )
                     .label_size(LabelSize::Small)
                     .when(is_first, |this| {
                         this.key_binding(
@@ -5930,23 +5998,34 @@ impl ThreadView {
                 let option_id = SharedString::from(option.option_id.0.clone());
                 Button::new((option_id, entry_ix), option.name.clone())
                     .map(|this| {
-                        let (this, action) = match option.kind {
+                        let (icon, action) = match option.kind {
                             acp::PermissionOptionKind::AllowOnce => (
-                                this.icon(IconName::Check).icon_color(Color::Success),
+                                Icon::new(IconName::Check)
+                                    .size(IconSize::XSmall)
+                                    .color(Color::Success),
                                 Some(&AllowOnce as &dyn Action),
                             ),
                             acp::PermissionOptionKind::AllowAlways => (
-                                this.icon(IconName::CheckDouble).icon_color(Color::Success),
+                                Icon::new(IconName::CheckDouble)
+                                    .size(IconSize::XSmall)
+                                    .color(Color::Success),
                                 Some(&AllowAlways as &dyn Action),
                             ),
                             acp::PermissionOptionKind::RejectOnce => (
-                                this.icon(IconName::Close).icon_color(Color::Error),
+                                Icon::new(IconName::Close)
+                                    .size(IconSize::XSmall)
+                                    .color(Color::Error),
                                 Some(&RejectOnce as &dyn Action),
                             ),
-                            acp::PermissionOptionKind::RejectAlways | _ => {
-                                (this.icon(IconName::Close).icon_color(Color::Error), None)
-                            }
+                            acp::PermissionOptionKind::RejectAlways | _ => (
+                                Icon::new(IconName::Close)
+                                    .size(IconSize::XSmall)
+                                    .color(Color::Error),
+                                None,
+                            ),
                         };
+
+                        let this = this.start_icon(icon);
 
                         let Some(action) = action else {
                             return this;
@@ -5963,8 +6042,6 @@ impl ThreadView {
                                 .map(|kb| kb.size(rems_from_px(10.))),
                         )
                     })
-                    .icon_position(IconPosition::Start)
-                    .icon_size(IconSize::XSmall)
                     .label_size(LabelSize::Small)
                     .on_click(cx.listener({
                         let session_id = session_id.clone();
@@ -6341,9 +6418,11 @@ impl ThreadView {
                     .color(Color::Muted)
                     .truncate(true)
                     .when(is_file.is_none(), |this| {
-                        this.icon(IconName::ArrowUpRight)
-                            .icon_size(IconSize::XSmall)
-                            .icon_color(Color::Muted)
+                        this.end_icon(
+                            Icon::new(IconName::ArrowUpRight)
+                                .size(IconSize::XSmall)
+                                .color(Color::Muted),
+                        )
                     })
                     .on_click(cx.listener({
                         let workspace = self.workspace.clone();
@@ -7438,19 +7517,16 @@ impl ThreadView {
             .title("Codex on Windows")
             .description("For best performance, run Codex in Windows Subsystem for Linux (WSL2)")
             .actions_slot(
-                Button::new("open-wsl-modal", "Open in WSL")
-                    .icon_size(IconSize::Small)
-                    .icon_color(Color::Muted)
-                    .on_click(cx.listener({
-                        move |_, _, _window, cx| {
-                            #[cfg(windows)]
-                            _window.dispatch_action(
-                                zed_actions::wsl_actions::OpenWsl::default().boxed_clone(),
-                                cx,
-                            );
-                            cx.notify();
-                        }
-                    })),
+                Button::new("open-wsl-modal", "Open in WSL").on_click(cx.listener({
+                    move |_, _, _window, cx| {
+                        #[cfg(windows)]
+                        _window.dispatch_action(
+                            zed_actions::wsl_actions::OpenWsl::default().boxed_clone(),
+                            cx,
+                        );
+                        cx.notify();
+                    }
+                })),
             )
             .dismiss_action(
                 IconButton::new("dismiss", IconName::Close)
@@ -7722,6 +7798,9 @@ impl Render for ThreadView {
                 this.toggle_fast_mode(cx);
             }))
             .on_action(cx.listener(|this, _: &ToggleThinkingMode, _window, cx| {
+                if this.thread.read(cx).status() != ThreadStatus::Idle {
+                    return;
+                }
                 if let Some(thread) = this.as_native_thread(cx) {
                     thread.update(cx, |thread, cx| {
                         thread.set_thinking_enabled(!thread.thinking_enabled(), cx);
@@ -7729,9 +7808,19 @@ impl Render for ThreadView {
                 }
             }))
             .on_action(cx.listener(|this, _: &CycleThinkingEffort, _window, cx| {
+                if this.thread.read(cx).status() != ThreadStatus::Idle {
+                    return;
+                }
                 this.cycle_thinking_effort(cx);
             }))
-            .on_action(cx.listener(Self::toggle_thinking_effort_menu))
+            .on_action(
+                cx.listener(|this, action: &ToggleThinkingEffortMenu, window, cx| {
+                    if this.thread.read(cx).status() != ThreadStatus::Idle {
+                        return;
+                    }
+                    this.toggle_thinking_effort_menu(action, window, cx);
+                }),
+            )
             .on_action(cx.listener(|this, _: &SendNextQueuedMessage, window, cx| {
                 this.send_queued_message_at_index(0, true, window, cx);
             }))
@@ -7749,6 +7838,9 @@ impl Render for ThreadView {
                 cx.notify();
             }))
             .on_action(cx.listener(|this, _: &ToggleProfileSelector, window, cx| {
+                if this.thread.read(cx).status() != ThreadStatus::Idle {
+                    return;
+                }
                 if let Some(config_options_view) = this.config_options_view.clone() {
                     let handled = config_options_view.update(cx, |view, cx| {
                         view.toggle_category_picker(
@@ -7769,6 +7861,9 @@ impl Render for ThreadView {
                 }
             }))
             .on_action(cx.listener(|this, _: &CycleModeSelector, window, cx| {
+                if this.thread.read(cx).status() != ThreadStatus::Idle {
+                    return;
+                }
                 if let Some(config_options_view) = this.config_options_view.clone() {
                     let handled = config_options_view.update(cx, |view, cx| {
                         view.cycle_category_option(
@@ -7793,6 +7888,9 @@ impl Render for ThreadView {
                 }
             }))
             .on_action(cx.listener(|this, _: &ToggleModelSelector, window, cx| {
+                if this.thread.read(cx).status() != ThreadStatus::Idle {
+                    return;
+                }
                 if let Some(config_options_view) = this.config_options_view.clone() {
                     let handled = config_options_view.update(cx, |view, cx| {
                         view.toggle_category_picker(
@@ -7812,6 +7910,9 @@ impl Render for ThreadView {
                 }
             }))
             .on_action(cx.listener(|this, _: &CycleFavoriteModels, window, cx| {
+                if this.thread.read(cx).status() != ThreadStatus::Idle {
+                    return;
+                }
                 if let Some(config_options_view) = this.config_options_view.clone() {
                     let handled = config_options_view.update(cx, |view, cx| {
                         view.cycle_category_option(

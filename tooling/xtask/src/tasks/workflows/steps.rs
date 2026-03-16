@@ -10,7 +10,7 @@ pub(crate) fn use_clang(job: Job) -> Job {
 
 const SCCACHE_R2_BUCKET: &str = "sccache-zed";
 
-const BASH_SHELL: &str = "bash -euxo pipefail {0}";
+pub(crate) const BASH_SHELL: &str = "bash -euxo pipefail {0}";
 // https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-syntax#jobsjob_idstepsshell
 pub const PWSH_SHELL: &str = "pwsh";
 
@@ -24,13 +24,6 @@ pub(crate) fn cargo_nextest(platform: Platform) -> Nextest {
 }
 
 impl Nextest {
-    pub(crate) fn with_target(mut self, target: &str) -> Step<Run> {
-        if let Some(nextest_command) = self.0.value.run.as_mut() {
-            nextest_command.push_str(&format!(r#" --target "{target}""#));
-        }
-        self.into()
-    }
-
     #[allow(dead_code)]
     pub(crate) fn with_filter_expr(mut self, filter_expr: &str) -> Self {
         if let Some(nextest_command) = self.0.value.run.as_mut() {
@@ -269,18 +262,12 @@ pub fn setup_linux() -> Step<Run> {
     named::bash("./script/linux")
 }
 
-fn install_mold() -> Step<Run> {
-    named::bash("./script/install-mold")
-}
-
 fn download_wasi_sdk() -> Step<Run> {
     named::bash("./script/download-wasi-sdk")
 }
 
 pub(crate) fn install_linux_dependencies(job: Job) -> Job {
-    job.add_step(setup_linux())
-        .add_step(install_mold())
-        .add_step(download_wasi_sdk())
+    job.add_step(setup_linux()).add_step(download_wasi_sdk())
 }
 
 pub fn script(name: &str) -> Step<Run> {

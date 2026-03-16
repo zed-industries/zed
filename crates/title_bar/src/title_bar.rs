@@ -583,10 +583,11 @@ impl TitleBar {
             .style(ButtonStyle::Tinted(TintColor::Warning))
             .label_size(LabelSize::Small)
             .color(Color::Warning)
-            .icon(IconName::Warning)
-            .icon_color(Color::Warning)
-            .icon_size(IconSize::Small)
-            .icon_position(IconPosition::Start)
+            .start_icon(
+                Icon::new(IconName::Warning)
+                    .size(IconSize::Small)
+                    .color(Color::Warning),
+            )
             .tooltip(|_, cx| {
                 Tooltip::with_meta(
                     "You're in Restricted Mode",
@@ -697,9 +698,11 @@ impl TitleBar {
                 Button::new("project_name_trigger", display_name)
                     .label_size(LabelSize::Small)
                     .when(self.worktree_count(cx) > 1, |this| {
-                        this.icon(IconName::ChevronDown)
-                            .icon_color(Color::Muted)
-                            .icon_size(IconSize::XSmall)
+                        this.end_icon(
+                            Icon::new(IconName::ChevronDown)
+                                .size(IconSize::XSmall)
+                                .color(Color::Muted),
+                        )
                     })
                     .selected_style(ButtonStyle::Tinted(TintColor::Accent))
                     .when(!is_project_selected, |s| s.color(Color::Muted)),
@@ -779,11 +782,9 @@ impl TitleBar {
                         .color(Color::Muted)
                         .when(settings.show_branch_icon, |branch_button| {
                             let (icon, icon_color) = icon_info;
-                            branch_button
-                                .icon(icon)
-                                .icon_position(IconPosition::Start)
-                                .icon_color(icon_color)
-                                .icon_size(IconSize::Indicator)
+                            branch_button.start_icon(
+                                Icon::new(icon).size(IconSize::Indicator).color(icon_color),
+                            )
                         }),
                     move |_window, cx| {
                         Tooltip::with_meta(

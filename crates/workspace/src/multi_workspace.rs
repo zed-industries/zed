@@ -498,7 +498,7 @@ impl MultiWorkspace {
         paths: Vec<PathBuf>,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> Task<Result<()>> {
+    ) -> Task<Result<Entity<Workspace>>> {
         let workspace = self.workspace().clone();
 
         if multi_workspace_enabled(cx) {
@@ -519,7 +519,7 @@ impl MultiWorkspace {
                         })?
                         .await
                 } else {
-                    Ok(())
+                    Ok(workspace)
                 }
             })
         }

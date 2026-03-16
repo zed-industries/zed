@@ -1494,10 +1494,9 @@ impl GitGraph {
 
                                 this.child(
                                     Button::new("author-email-copy", author_email.clone())
-                                        .icon(icon)
-                                        .icon_size(IconSize::Small)
-                                        .icon_color(icon_color)
-                                        .icon_position(IconPosition::Start)
+                                        .start_icon(
+                                            Icon::new(icon).size(IconSize::Small).color(icon_color),
+                                        )
                                         .label_size(LabelSize::Small)
                                         .truncate(true)
                                         .color(Color::Muted)
@@ -1542,10 +1541,9 @@ impl GitGraph {
                                 };
 
                                 Button::new("sha-button", &full_sha)
-                                    .icon(icon)
-                                    .icon_size(IconSize::Small)
-                                    .icon_color(icon_color)
-                                    .icon_position(IconPosition::Start)
+                                    .start_icon(
+                                        Icon::new(icon).size(IconSize::Small).color(icon_color),
+                                    )
                                     .label_size(LabelSize::Small)
                                     .truncate(true)
                                     .color(Color::Muted)
@@ -1602,10 +1600,9 @@ impl GitGraph {
                                         "view-on-provider",
                                         format!("View on {}", provider_name),
                                     )
-                                    .icon(icon)
-                                    .icon_size(IconSize::Small)
-                                    .icon_color(Color::Muted)
-                                    .icon_position(IconPosition::Start)
+                                    .start_icon(
+                                        Icon::new(icon).size(IconSize::Small).color(Color::Muted),
+                                    )
                                     .label_size(LabelSize::Small)
                                     .truncate(true)
                                     .color(Color::Muted)

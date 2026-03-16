@@ -14,6 +14,8 @@ doctest = false
 
 [dependencies]
 anyhow.workspace = true
+channel.workspace = true
+client.workspace = true
 collections.workspace = true
 editor.workspace = true
 file_icons.workspace = true
@@ -45,3 +47,4 @@ serde_json.workspace = true
 theme = { workspace = true, features = ["test-support"] }
 workspace = { workspace = true, features = ["test-support"] }
 zlog.workspace = true
+remote_connection = { workspace = true, features = ["test-support"] }

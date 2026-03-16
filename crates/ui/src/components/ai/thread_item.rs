@@ -3,7 +3,8 @@ use crate::{
     IconDecorationKind, prelude::*,
 };
 
-use gpui::{AnyView, ClickEvent, Hsla, SharedString};
+use gpui::{Animation, AnimationExt, AnyView, ClickEvent, Hsla, SharedString, pulsating_between};
+use std::time::Duration;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum AgentThreadStatus {
@@ -23,6 +24,7 @@ pub struct ThreadItem {
     timestamp: SharedString,
     notified: bool,
     status: AgentThreadStatus,
+    generating_title: bool,
     selected: bool,
     focused: bool,
     hovered: bool,
@@ -48,6 +50,7 @@ impl ThreadItem {
             timestamp: "".into(),
             notified: false,
             status: AgentThreadStatus::default(),
+            generating_title: false,
             selected: false,
             focused: false,
             hovered: false,
@@ -86,6 +89,11 @@ impl ThreadItem {
 
     pub fn status(mut self, status: AgentThreadStatus) -> Self {
         self.status = status;
+        self
+    }
+
+    pub fn generating_title(mut self, generating: bool) -> Self {
+        self.generating_title = generating;
         self
     }
 
@@ -221,7 +229,18 @@ impl RenderOnce for ThreadItem {
 
         let title = self.title;
         let highlight_positions = self.highlight_positions;
-        let title_label = if highlight_positions.is_empty() {
+        let title_label = if self.generating_title {
+            Label::new("New Thread…")
+                .color(Color::Muted)
+                .with_animation(
+                    "generating-title",
+                    Animation::new(Duration::from_secs(2))
+                        .repeat()
+                        .with_easing(pulsating_between(0.4, 0.8)),
+                    |label, delta| label.alpha(delta),
+                )
+                .into_any_element()
+        } else if highlight_positions.is_empty() {
             Label::new(title).into_any_element()
         } else {
             HighlightedLabel::new(title, highlight_positions).into_any_element()
@@ -235,9 +254,9 @@ impl RenderOnce for ThreadItem {
 
         let gradient_overlay =
             GradientFade::new(base_bg, color.element_hover, color.element_active)
-                .width(px(32.0))
+                .width(px(64.0))
                 .right(px(-10.0))
-                .gradient_stop(0.8)
+                .gradient_stop(0.75)
                 .group_name("thread-item");
 
         let has_diff_stats = self.added.is_some() || self.removed.is_some();
@@ -264,6 +283,7 @@ impl RenderOnce for ThreadItem {
                     .border_color(color.border_focused)
             })
             .hover(|s| s.bg(color.element_hover))
+            .active(|s| s.bg(color.element_active))
             .on_hover(self.on_hover)
             .child(
                 h_flex()
@@ -283,7 +303,19 @@ impl RenderOnce for ThreadItem {
                     )
                     .child(gradient_overlay)
                     .when(self.hovered, |this| {
-                        this.when_some(self.action_slot, |this, slot| this.child(slot))
+                        this.when_some(self.action_slot, |this, slot| {
+                            let overlay = GradientFade::new(
+                                base_bg,
+                                color.element_hover,
+                                color.element_active,
+                            )
+                            .width(px(64.0))
+                            .right(px(6.))
+                            .gradient_stop(0.75)
+                            .group_name("thread-item");
+
+                            this.child(h_flex().relative().child(overlay).child(slot))
+                        })
                     }),
             )
             .when_some(self.worktree, |this, worktree| {
@@ -310,11 +342,10 @@ impl RenderOnce for ThreadItem {
                             this.child(dot_separator())
                         })
                         .when(has_diff_stats, |this| {
-                            this.child(DiffStat::new(
-                                diff_stat_id.clone(),
-                                added_count,
-                                removed_count,
-                            ))
+                            this.child(
+                                DiffStat::new(diff_stat_id.clone(), added_count, removed_count)
+                                    .tooltip("Unreviewed changes"),
+                            )
                         })
                         .when(has_diff_stats && has_timestamp, |this| {
                             this.child(dot_separator())
@@ -335,7 +366,10 @@ impl RenderOnce for ThreadItem {
                         .gap_1p5()
                         .child(icon_container()) // Icon Spacing
                         .when(has_diff_stats, |this| {
-                            this.child(DiffStat::new(diff_stat_id, added_count, removed_count))
+                            this.child(
+                                DiffStat::new(diff_stat_id, added_count, removed_count)
+                                    .tooltip("Unreviewed Changes"),
+                            )
                         })
                         .when(has_diff_stats && has_timestamp, |this| {
                             this.child(dot_separator())

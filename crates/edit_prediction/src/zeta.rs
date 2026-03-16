@@ -130,13 +130,14 @@ pub fn request_prediction_with_zeta(
                 return Err(anyhow::anyhow!("prompt contains special tokens"));
             }
 
+            let formatted_prompt = format_zeta_prompt(&prompt_input, zeta_version);
+
             if let Some(debug_tx) = &debug_tx {
-                let prompt = format_zeta_prompt(&prompt_input, zeta_version);
                 debug_tx
                     .unbounded_send(DebugEvent::EditPredictionStarted(
                         EditPredictionStartedDebugEvent {
                             buffer: buffer.downgrade(),
-                            prompt: Some(prompt),
+                            prompt: formatted_prompt.clone(),
                             position,
                         },
                     ))
@@ -145,11 +146,11 @@ pub fn request_prediction_with_zeta(
 
             log::trace!("Sending edit prediction request");
 
-            let (request_id, output, model_version, usage) =
-                if let Some(custom_settings) = &custom_server_settings {
+            let Some((request_id, output, model_version, usage)) =
+                (if let Some(custom_settings) = &custom_server_settings {
                     let max_tokens = custom_settings.max_output_tokens * 4;
 
-                    match custom_settings.prompt_format {
+                    Some(match custom_settings.prompt_format {
                         EditPredictionPromptFormat::Zeta => {
                             let ranges = &prompt_input.excerpt_ranges;
                             let editable_range_in_excerpt = ranges.editable_350.clone();
@@ -186,7 +187,9 @@ pub fn request_prediction_with_zeta(
                             (request_id, parsed_output, None, None)
                         }
                         EditPredictionPromptFormat::Zeta2 => {
-                            let prompt = format_zeta_prompt(&prompt_input, zeta_version);
+                            let Some(prompt) = formatted_prompt.clone() else {
+                                return Ok((None, None));
+                            };
                             let prefill = get_prefill(&prompt_input, zeta_version);
                             let prompt = format!("{prompt}{prefill}");
 
@@ -219,9 +222,11 @@ pub fn request_prediction_with_zeta(
                             (request_id, output_text, None, None)
                         }
                         _ => anyhow::bail!("unsupported prompt format"),
-                    }
+                    })
                 } else if let Some(config) = &raw_config {
-                    let prompt = format_zeta_prompt(&prompt_input, config.format);
+                    let Some(prompt) = format_zeta_prompt(&prompt_input, config.format) else {
+                        return Ok((None, None));
+                    };
                     let prefill = get_prefill(&prompt_input, config.format);
                     let prompt = format!("{prompt}{prefill}");
                     let environment = config
@@ -263,7 +268,7 @@ pub fn request_prediction_with_zeta(
                         None
                     };
 
-                    (request_id, output, None, usage)
+                    Some((request_id, output, None, usage))
                 } else {
                     // Use V3 endpoint - server handles model/version selection and suffix stripping
                     let (response, usage) = EditPredictionStore::send_v3_request(
@@ -284,8 +289,11 @@ pub fn request_prediction_with_zeta(
                         range_in_excerpt: response.editable_range,
                     };
 
-                    (request_id, Some(parsed_output), model_version, usage)
-                };
+                    Some((request_id, Some(parsed_output), model_version, usage))
+                })
+            else {
+                return Ok((None, None));
+            };
 
             let received_response_at = Instant::now();
 
@@ -296,7 +304,7 @@ pub fn request_prediction_with_zeta(
                 range_in_excerpt: editable_range_in_excerpt,
             }) = output
             else {
-                return Ok(((request_id, None), None));
+                return Ok((Some((request_id, None)), None));
             };
 
             let editable_range_in_buffer = editable_range_in_excerpt.start
@@ -342,7 +350,7 @@ pub fn request_prediction_with_zeta(
             );
 
             anyhow::Ok((
-                (
+                Some((
                     request_id,
                     Some(Prediction {
                         prompt_input,
@@ -354,14 +362,16 @@ pub fn request_prediction_with_zeta(
                         editable_range_in_buffer,
                         model_version,
                     }),
-                ),
+                )),
                 usage,
             ))
         }
     });
 
     cx.spawn(async move |this, cx| {
-        let (id, prediction) = handle_api_response(&this, request_task.await, cx)?;
+        let Some((id, prediction)) = handle_api_response(&this, request_task.await, cx)? else {
+            return Ok(None);
+        };
 
         let Some(Prediction {
             prompt_input: inputs,
