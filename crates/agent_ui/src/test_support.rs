@@ -1,7 +1,8 @@
 use acp_thread::{AgentConnection, StubAgentConnection};
 use agent_client_protocol as acp;
 use agent_servers::{AgentServer, AgentServerDelegate};
-use gpui::{Entity, SharedString, Task, TestAppContext, VisualTestContext};
+use gpui::{Entity, Task, TestAppContext, VisualTestContext};
+use project::AgentId;
 use settings::SettingsStore;
 use std::any::Any;
 use std::rc::Rc;
@@ -37,7 +38,7 @@ where
         ui::IconName::Ai
     }
 
-    fn name(&self) -> SharedString {
+    fn agent_id(&self) -> AgentId {
         "Test".into()
     }
 

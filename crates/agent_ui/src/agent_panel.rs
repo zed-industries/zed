@@ -17,8 +17,8 @@ use collections::HashSet;
 use db::kvp::{Dismissable, KEY_VALUE_STORE};
 use itertools::Itertools;
 use project::{
-    ExternalAgentServerName,
-    agent_server_store::{CLAUDE_AGENT_NAME, CODEX_NAME, GEMINI_NAME},
+    AgentId,
+    agent_server_store::{CLAUDE_AGENT_ID, CODEX_ID, GEMINI_ID},
 };
 use serde::{Deserialize, Serialize};
 use settings::{LanguageModelProviderSetting, LanguageModelSelection};
@@ -86,8 +86,8 @@ use ui::{
 use util::{ResultExt as _, debug_panic};
 use workspace::{
     CollaboratorId, DraggedSelection, DraggedSidebar, DraggedTab, FocusWorkspaceSidebar,
-    MultiWorkspace, OpenResult, SIDEBAR_RESIZE_HANDLE_SIZE, ToggleWorkspaceSidebar, ToggleZoom,
-    ToolbarItemView, Workspace, WorkspaceId,
+    MultiWorkspace, OpenResult, PathList, SIDEBAR_RESIZE_HANDLE_SIZE, SerializedPathList,
+    ToggleWorkspaceSidebar, ToggleZoom, ToolbarItemView, Workspace, WorkspaceId,
     dock::{DockPosition, Panel, PanelEvent},
     multi_workspace_enabled,
 };
@@ -180,7 +180,7 @@ fn read_legacy_serialized_panel() -> Option<SerializedAgentPanel> {
         .and_then(|json| serde_json::from_str::<SerializedAgentPanel>(&json).log_err())
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug)]
 struct SerializedAgentPanel {
     width: Option<Pixels>,
     selected_agent: Option<AgentType>,
@@ -190,12 +190,12 @@ struct SerializedAgentPanel {
     start_thread_in: Option<StartThreadIn>,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug)]
 struct SerializedActiveThread {
     session_id: String,
     agent_type: AgentType,
     title: Option<String>,
-    cwd: Option<std::path::PathBuf>,
+    work_dirs: Option<SerializedPathList>,
 }
 
 pub fn init(cx: &mut App) {
@@ -651,7 +651,8 @@ pub enum AgentType {
     NativeAgent,
     TextThread,
     Custom {
-        name: SharedString,
+        #[serde(rename = "name")]
+        id: AgentId,
     },
 }
 
@@ -671,13 +672,13 @@ impl<'de> Deserialize<'de> for AgentType {
                 "NativeAgent" => Ok(Self::NativeAgent),
                 "TextThread" => Ok(Self::TextThread),
                 "ClaudeAgent" | "ClaudeCode" => Ok(Self::Custom {
-                    name: CLAUDE_AGENT_NAME.into(),
+                    id: CLAUDE_AGENT_ID.into(),
                 }),
                 "Codex" => Ok(Self::Custom {
-                    name: CODEX_NAME.into(),
+                    id: CODEX_ID.into(),
                 }),
                 "Gemini" => Ok(Self::Custom {
-                    name: GEMINI_NAME.into(),
+                    id: GEMINI_ID.into(),
                 }),
                 other => Err(serde::de::Error::unknown_variant(
                     other,
@@ -702,7 +703,9 @@ impl<'de> Deserialize<'de> for AgentType {
                 }
                 let fields: CustomFields =
                     serde_json::from_value(inner.clone()).map_err(serde::de::Error::custom)?;
-                return Ok(Self::Custom { name: fields.name });
+                return Ok(Self::Custom {
+                    id: AgentId::new(fields.name),
+                });
             }
         }
 
@@ -720,7 +723,7 @@ impl AgentType {
     fn label(&self) -> SharedString {
         match self {
             Self::NativeAgent | Self::TextThread => "Zed Agent".into(),
-            Self::Custom { name, .. } => name.into(),
+            Self::Custom { id, .. } => id.0.clone(),
         }
     }
 
@@ -735,7 +738,7 @@ impl AgentType {
 impl From<Agent> for AgentType {
     fn from(value: Agent) -> Self {
         match value {
-            Agent::Custom { name } => Self::Custom { name },
+            Agent::Custom { id } => Self::Custom { id },
             Agent::NativeAgent => Self::NativeAgent,
         }
     }
@@ -913,6 +916,7 @@ impl AgentPanel {
         let last_active_thread = self.active_agent_thread(cx).map(|thread| {
             let thread = thread.read(cx);
             let title = thread.title();
+            let work_dirs = thread.work_dirs().cloned();
             SerializedActiveThread {
                 session_id: thread.session_id().0.to_string(),
                 agent_type: self.selected_agent_type.clone(),
@@ -921,7 +925,7 @@ impl AgentPanel {
                 } else {
                     None
                 },
-                cwd: None,
+                work_dirs: work_dirs.map(|dirs| dirs.serialize()),
             }
         });
 
@@ -979,7 +983,7 @@ impl AgentPanel {
 
             let last_active_thread = if let Some(thread_info) = serialized_panel
                 .as_ref()
-                .and_then(|p| p.last_active_thread.clone())
+                .and_then(|p| p.last_active_thread.as_ref())
             {
                 if thread_info.agent_type.is_native() {
                     let session_id = acp::SessionId::new(thread_info.session_id.clone());
@@ -1048,9 +1052,9 @@ impl AgentPanel {
                         if let Some(agent) = panel.selected_agent() {
                             panel.load_agent_thread(
                                 agent,
-                                thread_info.session_id.into(),
-                                thread_info.cwd,
-                                thread_info.title.map(SharedString::from),
+                                thread_info.session_id.clone().into(),
+                                thread_info.work_dirs.as_ref().map(|dirs| PathList::deserialize(dirs)),
+                                thread_info.title.as_ref().map(|t| t.clone().into()),
                                 false,
                                 window,
                                 cx,
@@ -1292,7 +1296,7 @@ impl AgentPanel {
     pub fn open_thread(
         &mut self,
         session_id: acp::SessionId,
-        cwd: Option<PathBuf>,
+        work_dirs: Option<PathList>,
         title: Option<SharedString>,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -1300,7 +1304,7 @@ impl AgentPanel {
         self.external_thread(
             Some(crate::Agent::NativeAgent),
             Some(session_id),
-            cwd,
+            work_dirs,
             title,
             None,
             true,
@@ -1437,7 +1441,7 @@ impl AgentPanel {
         &mut self,
         agent_choice: Option<crate::Agent>,
         resume_session_id: Option<acp::SessionId>,
-        cwd: Option<PathBuf>,
+        work_dirs: Option<PathList>,
         title: Option<SharedString>,
         initial_content: Option<AgentInitialContent>,
         focus: bool,
@@ -1478,7 +1482,7 @@ impl AgentPanel {
             self.create_agent_thread(
                 server,
                 resume_session_id,
-                cwd,
+                work_dirs,
                 title,
                 initial_content,
                 workspace,
@@ -1511,7 +1515,7 @@ impl AgentPanel {
                     agent_panel.create_agent_thread(
                         server,
                         resume_session_id,
-                        cwd,
+                        work_dirs,
                         title,
                         initial_content,
                         workspace,
@@ -1571,8 +1575,8 @@ impl AgentPanel {
     fn has_history_for_selected_agent(&self, cx: &App) -> bool {
         match &self.selected_agent_type {
             AgentType::TextThread | AgentType::NativeAgent => true,
-            AgentType::Custom { name } => {
-                let agent = Agent::Custom { name: name.clone() };
+            AgentType::Custom { id } => {
+                let agent = Agent::Custom { id: id.clone() };
                 self.connection_store
                     .read(cx)
                     .entry(&agent)
@@ -1601,8 +1605,8 @@ impl AgentPanel {
                     view: self.create_thread_history_view(Agent::NativeAgent, history, window, cx),
                 })
             }
-            AgentType::Custom { name } => {
-                let agent = Agent::Custom { name: name.clone() };
+            AgentType::Custom { id, .. } => {
+                let agent = Agent::Custom { id: id.clone() };
                 let history = self
                     .connection_store
                     .read(cx)
@@ -1637,7 +1641,7 @@ impl AgentPanel {
                     this.load_agent_thread(
                         agent.clone(),
                         thread.session_id.clone(),
-                        thread.cwd.clone(),
+                        thread.work_dirs.clone(),
                         thread.title.clone(),
                         true,
                         window,
@@ -2293,7 +2297,7 @@ impl AgentPanel {
                                         this.load_agent_thread(
                                             agent,
                                             entry.session_id.clone(),
-                                            entry.cwd.clone(),
+                                            entry.work_dirs.clone(),
                                             entry.title.clone(),
                                             true,
                                             window,
@@ -2422,7 +2426,7 @@ impl AgentPanel {
     pub(crate) fn selected_agent(&self) -> Option<Agent> {
         match &self.selected_agent_type {
             AgentType::NativeAgent => Some(Agent::NativeAgent),
-            AgentType::Custom { name } => Some(Agent::Custom { name: name.clone() }),
+            AgentType::Custom { id } => Some(Agent::Custom { id: id.clone() }),
             AgentType::TextThread => None,
         }
     }
@@ -2501,8 +2505,8 @@ impl AgentPanel {
                 window,
                 cx,
             ),
-            AgentType::Custom { name } => self.external_thread(
-                Some(crate::Agent::Custom { name }),
+            AgentType::Custom { id } => self.external_thread(
+                Some(crate::Agent::Custom { id }),
                 None,
                 None,
                 None,
@@ -2518,7 +2522,7 @@ impl AgentPanel {
         &mut self,
         agent: Agent,
         session_id: acp::SessionId,
-        cwd: Option<PathBuf>,
+        work_dirs: Option<PathList>,
         title: Option<SharedString>,
         focus: bool,
         window: &mut Window,
@@ -2562,7 +2566,7 @@ impl AgentPanel {
         self.external_thread(
             Some(agent),
             Some(session_id),
-            cwd,
+            work_dirs,
             title,
             None,
             focus,
@@ -2575,7 +2579,7 @@ impl AgentPanel {
         &mut self,
         server: Rc<dyn AgentServer>,
         resume_session_id: Option<acp::SessionId>,
-        cwd: Option<PathBuf>,
+        work_dirs: Option<PathList>,
         title: Option<SharedString>,
         initial_content: Option<AgentInitialContent>,
         workspace: WeakEntity<Workspace>,
@@ -2604,7 +2608,7 @@ impl AgentPanel {
                 connection_store,
                 ext_agent,
                 resume_session_id,
-                cwd,
+                work_dirs,
                 title,
                 initial_content,
                 workspace.clone(),
@@ -3892,12 +3896,12 @@ impl AgentPanel {
         let docked_right = agent_panel_dock_position(cx) == DockPosition::Right;
 
         let (selected_agent_custom_icon, selected_agent_label) =
-            if let AgentType::Custom { name, .. } = &self.selected_agent_type {
+            if let AgentType::Custom { id, .. } = &self.selected_agent_type {
                 let store = agent_server_store.read(cx);
-                let icon = store.agent_icon(&ExternalAgentServerName(name.clone()));
+                let icon = store.agent_icon(&id);
 
                 let label = store
-                    .agent_display_name(&ExternalAgentServerName(name.clone()))
+                    .agent_display_name(&id)
                     .unwrap_or_else(|| self.selected_agent_type.label());
                 (icon, label)
             } else {
@@ -4028,24 +4032,24 @@ impl AgentPanel {
                                 registry_store.as_ref().map(|s| s.read(cx));
 
                             struct AgentMenuItem {
-                                id: ExternalAgentServerName,
+                                id: AgentId,
                                 display_name: SharedString,
                             }
 
                             let agent_items = agent_server_store
                                 .external_agents()
-                                .map(|name| {
+                                .map(|agent_id| {
                                     let display_name = agent_server_store
-                                        .agent_display_name(name)
+                                        .agent_display_name(agent_id)
                                         .or_else(|| {
                                             registry_store_ref
                                                 .as_ref()
-                                                .and_then(|store| store.agent(name.0.as_ref()))
+                                                .and_then(|store| store.agent(agent_id))
                                                 .map(|a| a.name().clone())
                                         })
-                                        .unwrap_or_else(|| name.0.clone());
+                                        .unwrap_or_else(|| agent_id.0.clone());
                                     AgentMenuItem {
-                                        id: name.clone(),
+                                        id: agent_id.clone(),
                                         display_name,
                                     }
                                 })
@@ -4061,7 +4065,7 @@ impl AgentPanel {
                                     .or_else(|| {
                                         registry_store_ref
                                             .as_ref()
-                                            .and_then(|store| store.agent(item.id.0.as_str()))
+                                            .and_then(|store| store.agent(&item.id))
                                             .and_then(|a| a.icon_path().cloned())
                                     });
 
@@ -4074,7 +4078,7 @@ impl AgentPanel {
                                 entry = entry
                                     .when(
                                         is_agent_selected(AgentType::Custom {
-                                            name: item.id.0.clone(),
+                                            id: item.id.clone(),
                                         }),
                                         |this| {
                                             this.action(Box::new(
@@ -4096,7 +4100,7 @@ impl AgentPanel {
                                                         panel.update(cx, |panel, cx| {
                                                             panel.new_agent_thread(
                                                                 AgentType::Custom {
-                                                                    name: agent_id.0.clone(),
+                                                                    id: agent_id.clone(),
                                                                 },
                                                                 window,
                                                                 cx,
@@ -4121,20 +4125,20 @@ impl AgentPanel {
                             let registry_store_ref =
                                 registry_store.as_ref().map(|s| s.read(cx));
 
-                            let previous_built_in_ids: &[ExternalAgentServerName] =
-                                &[CLAUDE_AGENT_NAME.into(), CODEX_NAME.into(), GEMINI_NAME.into()];
+                            let previous_built_in_ids: &[AgentId] =
+                                &[CLAUDE_AGENT_ID.into(), CODEX_ID.into(), GEMINI_ID.into()];
 
                             let promoted_items = previous_built_in_ids
                                 .iter()
                                 .filter(|id| {
                                     !agent_server_store.external_agents.contains_key(*id)
                                 })
-                                .filter_map(|name| {
+                                .filter_map(|id| {
                                     let display_name = registry_store_ref
                                         .as_ref()
-                                        .and_then(|store| store.agent(name.0.as_ref()))
+                                        .and_then(|store| store.agent(&id))
                                         .map(|a| a.name().clone())?;
-                                    Some((name.clone(), display_name))
+                                    Some((id.clone(), display_name))
                                 })
                                 .sorted_unstable_by_key(|(_, display_name)| display_name.to_lowercase())
                                 .collect::<Vec<_>>();
@@ -4145,7 +4149,7 @@ impl AgentPanel {
 
                                 let icon_path = registry_store_ref
                                     .as_ref()
-                                    .and_then(|store| store.agent(agent_id.0.as_str()))
+                                    .and_then(|store| store.agent(agent_id))
                                     .and_then(|a| a.icon_path().cloned());
 
                                 if let Some(icon_path) = icon_path {
@@ -4192,7 +4196,7 @@ impl AgentPanel {
                                                         panel.update(cx, |panel, cx| {
                                                             panel.new_agent_thread(
                                                                 AgentType::Custom {
-                                                                    name: agent_id.0.clone(),
+                                                                    id: agent_id.clone(),
                                                                 },
                                                                 window,
                                                                 cx,
@@ -5242,7 +5246,7 @@ impl AgentPanel {
         let project = self.project.clone();
 
         let ext_agent = Agent::Custom {
-            name: server.name(),
+            id: server.agent_id(),
         };
 
         self.create_agent_thread(
@@ -5404,7 +5408,7 @@ mod tests {
         panel_b.update(cx, |panel, _cx| {
             panel.width = Some(px(400.0));
             panel.selected_agent_type = AgentType::Custom {
-                name: "claude-acp".into(),
+                id: "claude-acp".into(),
             };
         });
 
@@ -5455,7 +5459,7 @@ mod tests {
             assert_eq!(
                 panel.selected_agent_type,
                 AgentType::Custom {
-                    name: "claude-acp".into()
+                    id: "claude-acp".into()
                 },
                 "workspace B agent type should be restored"
             );
@@ -6254,25 +6258,25 @@ mod tests {
         assert_eq!(
             serde_json::from_str::<AgentType>(r#""ClaudeAgent""#).unwrap(),
             AgentType::Custom {
-                name: CLAUDE_AGENT_NAME.into(),
+                id: CLAUDE_AGENT_ID.into(),
             },
         );
         assert_eq!(
             serde_json::from_str::<AgentType>(r#""ClaudeCode""#).unwrap(),
             AgentType::Custom {
-                name: CLAUDE_AGENT_NAME.into(),
+                id: CLAUDE_AGENT_ID.into(),
             },
         );
         assert_eq!(
             serde_json::from_str::<AgentType>(r#""Codex""#).unwrap(),
             AgentType::Custom {
-                name: CODEX_NAME.into(),
+                id: CODEX_ID.into(),
             },
         );
         assert_eq!(
             serde_json::from_str::<AgentType>(r#""Gemini""#).unwrap(),
             AgentType::Custom {
-                name: GEMINI_NAME.into(),
+                id: GEMINI_ID.into(),
             },
         );
     }
@@ -6290,7 +6294,7 @@ mod tests {
         assert_eq!(
             serde_json::from_str::<AgentType>(r#"{"Custom":{"name":"my-agent"}}"#).unwrap(),
             AgentType::Custom {
-                name: "my-agent".into(),
+                id: "my-agent".into(),
             },
         );
     }
@@ -6310,14 +6314,14 @@ mod tests {
         assert_eq!(
             panel.selected_agent,
             Some(AgentType::Custom {
-                name: CLAUDE_AGENT_NAME.into(),
+                id: CLAUDE_AGENT_ID.into(),
             }),
         );
         let thread = panel.last_active_thread.unwrap();
         assert_eq!(
             thread.agent_type,
             AgentType::Custom {
-                name: CODEX_NAME.into(),
+                id: CODEX_ID.into(),
             },
         );
     }

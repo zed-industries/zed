@@ -755,7 +755,7 @@ impl RenderOnce for HistoryEntryElement {
                                     panel.load_agent_thread(
                                         agent,
                                         entry.session_id.clone(),
-                                        entry.cwd.clone(),
+                                        entry.work_dirs.clone(),
                                         entry.title.clone(),
                                         true,
                                         window,
