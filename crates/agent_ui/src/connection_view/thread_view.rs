@@ -733,10 +733,13 @@ impl ThreadView {
                 }
             }
         }));
+        if self.parent_id.is_none() {
+            self.suppress_merge_conflict_notification(cx);
+        }
         generation
     }
 
-    pub fn stop_turn(&mut self, generation: usize) {
+    pub fn stop_turn(&mut self, generation: usize, cx: &mut Context<Self>) {
         if self.turn_fields.turn_generation != generation {
             return;
         }
@@ -747,6 +750,25 @@ impl ThreadView {
             .map(|started| started.elapsed());
         self.turn_fields.last_turn_tokens = self.turn_fields.turn_tokens.take();
         self.turn_fields._turn_timer_task = None;
+        if self.parent_id.is_none() {
+            self.unsuppress_merge_conflict_notification(cx);
+        }
+    }
+
+    fn suppress_merge_conflict_notification(&self, cx: &mut Context<Self>) {
+        self.workspace
+            .update(cx, |workspace, cx| {
+                workspace.suppress_notification(&workspace::merge_conflict_notification_id(), cx);
+            })
+            .ok();
+    }
+
+    fn unsuppress_merge_conflict_notification(&self, cx: &mut Context<Self>) {
+        self.workspace
+            .update(cx, |workspace, _cx| {
+                workspace.unsuppress(workspace::merge_conflict_notification_id());
+            })
+            .ok();
     }
 
     pub fn update_turn_tokens(&mut self, cx: &App) {
@@ -956,7 +978,7 @@ impl ThreadView {
                 let mut cx = cx.clone();
                 move || {
                     this.update(&mut cx, |this, cx| {
-                        this.stop_turn(generation);
+                        this.stop_turn(generation, cx);
                         cx.notify();
                     })
                     .ok();

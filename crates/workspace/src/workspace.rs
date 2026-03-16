@@ -7269,18 +7269,9 @@ impl GlobalAnyActiveCall {
     }
 }
 
-/// Callbacks for checking agent activity state.
-pub struct AgentActivityCallbacks {
-    pub is_generating_in_workspace: fn(workspace: &Workspace, cx: &App) -> bool,
-}
-
-impl Global for AgentActivityCallbacks {}
-
-impl AgentActivityCallbacks {
-    pub fn is_generating(workspace: &Workspace, cx: &App) -> bool {
-        cx.try_global::<Self>()
-            .is_some_and(|callbacks| (callbacks.is_generating_in_workspace)(workspace, cx))
-    }
+pub fn merge_conflict_notification_id() -> NotificationId {
+    struct MergeConflictNotification;
+    NotificationId::unique::<MergeConflictNotification>()
 }
 
 /// Workspace-local view of a remote participant's location.
