@@ -38,6 +38,7 @@ use workspace::{
 };
 
 use anyhow::{Result, anyhow};
+use terminal::TerminalIdentity;
 use zed_actions::assistant::InlineAssist;
 
 const TERMINAL_PANEL_KEY: &str = "TerminalPanel";
@@ -491,7 +492,11 @@ impl TerminalPanel {
                         cx,
                         working_directory,
                     ),
-                    None => project.create_terminal_shell(working_directory, cx),
+                    None => project.create_terminal_shell(
+                        working_directory,
+                        TerminalIdentity::Anonymous,
+                        cx,
+                    ),
                 })
                 .await
                 .log_err()?;
@@ -533,11 +538,17 @@ impl TerminalPanel {
         terminal_panel
             .update(cx, |panel, cx| {
                 if action.local {
-                    panel.add_local_terminal_shell(RevealStrategy::Always, window, cx)
+                    panel.add_local_terminal_shell(
+                        RevealStrategy::Always,
+                        TerminalIdentity::persistable(),
+                        window,
+                        cx,
+                    )
                 } else {
                     panel.add_terminal_shell(
                         Some(action.working_directory.clone()),
                         RevealStrategy::Always,
+                        TerminalIdentity::persistable(),
                         window,
                         cx,
                     )
@@ -641,7 +652,11 @@ impl TerminalPanel {
                 .workspace
                 .update(cx, |workspace, cx| {
                     Self::add_center_terminal(workspace, window, cx, |project, cx| {
-                        project.create_terminal_task(spawn_task, cx)
+                        project.create_terminal_task(
+                            spawn_task,
+                            TerminalIdentity::persistable(),
+                            cx,
+                        )
                     })
                 })
                 .unwrap_or_else(|e| Task::ready(Err(e))),
@@ -663,11 +678,17 @@ impl TerminalPanel {
         terminal_panel
             .update(cx, |this, cx| {
                 if action.local {
-                    this.add_local_terminal_shell(RevealStrategy::Always, window, cx)
+                    this.add_local_terminal_shell(
+                        RevealStrategy::Always,
+                        TerminalIdentity::persistable(),
+                        window,
+                        cx,
+                    )
                 } else {
                     this.add_terminal_shell(
                         default_working_directory(workspace, cx),
                         RevealStrategy::Always,
+                        TerminalIdentity::persistable(),
                         window,
                         cx,
                     )
@@ -785,7 +806,9 @@ impl TerminalPanel {
             })?;
             let project = workspace.read_with(cx, |workspace, _| workspace.project().clone())?;
             let terminal = project
-                .update(cx, |project, cx| project.create_terminal_task(task, cx))
+                .update(cx, |project, cx| {
+                    project.create_terminal_task(task, TerminalIdentity::Anonymous, cx)
+                })
                 .await?;
             let result = workspace.update_in(cx, |workspace, window, cx| {
                 let terminal_view = Box::new(cx.new(|cx| {
@@ -829,19 +852,21 @@ impl TerminalPanel {
         &mut self,
         cwd: Option<PathBuf>,
         reveal_strategy: RevealStrategy,
+        identity: TerminalIdentity,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Task<Result<WeakEntity<Terminal>>> {
-        self.add_terminal_shell_internal(false, cwd, reveal_strategy, window, cx)
+        self.add_terminal_shell_internal(false, cwd, reveal_strategy, identity, window, cx)
     }
 
     fn add_local_terminal_shell(
         &mut self,
         reveal_strategy: RevealStrategy,
+        identity: TerminalIdentity,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Task<Result<WeakEntity<Terminal>>> {
-        self.add_terminal_shell_internal(true, None, reveal_strategy, window, cx)
+        self.add_terminal_shell_internal(true, None, reveal_strategy, identity, window, cx)
     }
 
     fn add_terminal_shell_internal(
@@ -849,6 +874,7 @@ impl TerminalPanel {
         force_local: bool,
         cwd: Option<PathBuf>,
         reveal_strategy: RevealStrategy,
+        identity: TerminalIdentity,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Task<Result<WeakEntity<Terminal>>> {
@@ -865,11 +891,15 @@ impl TerminalPanel {
             let project = workspace.read_with(cx, |workspace, _| workspace.project().clone())?;
             let terminal = if force_local {
                 project
-                    .update(cx, |project, cx| project.create_local_terminal(cx))
+                    .update(cx, |project, cx| {
+                        project.create_local_terminal(identity, cx)
+                    })
                     .await
             } else {
                 project
-                    .update(cx, |project, cx| project.create_terminal_shell(cwd, cx))
+                    .update(cx, |project, cx| {
+                        project.create_terminal_shell(cwd, identity, cx)
+                    })
                     .await
             };
 
@@ -991,7 +1021,7 @@ impl TerminalPanel {
             })??;
             let new_terminal = project
                 .update(cx, |project, cx| {
-                    project.create_terminal_task(spawn_task, cx)
+                    project.create_terminal_task(spawn_task, TerminalIdentity::Anonymous, cx)
                 })
                 .await?;
             terminal_to_replace.update_in(cx, |terminal_to_replace, window, cx| {
@@ -1600,8 +1630,14 @@ impl Panel for TerminalPanel {
                 return;
             };
 
-            this.add_terminal_shell(kind, RevealStrategy::Always, window, cx)
-                .detach_and_log_err(cx)
+            this.add_terminal_shell(
+                kind,
+                RevealStrategy::Always,
+                TerminalIdentity::persistable(),
+                window,
+                cx,
+            )
+            .detach_and_log_err(cx)
         })
     }
 
@@ -1761,7 +1797,13 @@ mod tests {
             let task = window_handle
                 .update(cx, |_, window, cx| {
                     terminal_panel.update(cx, |panel, cx| {
-                        panel.add_terminal_shell(None, RevealStrategy::Always, window, cx)
+                        panel.add_terminal_shell(
+                            None,
+                            RevealStrategy::Always,
+                            TerminalIdentity::Anonymous,
+                            window,
+                            cx,
+                        )
                     })
                 })
                 .unwrap();
@@ -1844,7 +1886,13 @@ mod tests {
         window_handle
             .update(cx, |_, window, cx| {
                 terminal_panel.update(cx, |terminal_panel, cx| {
-                    terminal_panel.add_terminal_shell(None, RevealStrategy::Always, window, cx)
+                    terminal_panel.add_terminal_shell(
+                        None,
+                        RevealStrategy::Always,
+                        TerminalIdentity::Anonymous,
+                        window,
+                        cx,
+                    )
                 })
             })
             .unwrap()
@@ -1888,7 +1936,12 @@ mod tests {
         let result = window_handle
             .update(cx, |_, window, cx| {
                 terminal_panel.update(cx, |terminal_panel, cx| {
-                    terminal_panel.add_local_terminal_shell(RevealStrategy::Always, window, cx)
+                    terminal_panel.add_local_terminal_shell(
+                        RevealStrategy::Always,
+                        TerminalIdentity::Anonymous,
+                        window,
+                        cx,
+                    )
                 })
             })
             .unwrap()

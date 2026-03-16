@@ -33,7 +33,7 @@ use task::TaskId;
 use terminal::{
     Clear, Copy, Event, HoveredWord, MaybeNavigationTarget, Paste, ScrollLineDown, ScrollLineUp,
     ScrollPageDown, ScrollPageUp, ScrollToBottom, ScrollToTop, ShowCharacterPalette, TaskState,
-    TaskStatus, Terminal, TerminalBounds, ToggleViMode,
+    TaskStatus, Terminal, TerminalBounds, TerminalIdentity, ToggleViMode,
     alacritty_terminal::{
         index::Point as AlacPoint,
         term::{TermMode, point_to_viewport, search::RegexSearch},
@@ -212,11 +212,12 @@ impl TerminalView {
     ) {
         let local = action.local;
         let working_directory = default_working_directory(workspace, cx);
+        let identity = TerminalIdentity::persistable();
         TerminalPanel::add_center_terminal(workspace, window, cx, move |project, cx| {
             if local {
-                project.create_local_terminal(cx)
+                project.create_local_terminal(identity, cx)
             } else {
-                project.create_terminal_shell(working_directory, cx)
+                project.create_terminal_shell(working_directory, identity, cx)
             }
         })
         .detach_and_log_err(cx);
@@ -1703,6 +1704,7 @@ impl SerializableItem for TerminalView {
         _window: &mut Window,
         cx: &mut App,
     ) -> Task<anyhow::Result<()>> {
+        log::info!("scheduling delete terminal db with alive items: {alive_items:?}");
         delete_unloaded_items(alive_items, workspace_id, "terminals", &TERMINAL_DB, cx)
     }
 
@@ -1726,6 +1728,7 @@ impl SerializableItem for TerminalView {
         let workspace_id = self.workspace_id?;
         let cwd = terminal.working_directory();
         let custom_title = self.custom_title.clone();
+        let identity = terminal.identity().clone();
         self.needs_serialize = false;
 
         Some(cx.background_spawn(async move {
@@ -1736,6 +1739,9 @@ impl SerializableItem for TerminalView {
             }
             TERMINAL_DB
                 .save_custom_title(item_id, workspace_id, custom_title)
+                .await?;
+            TERMINAL_DB
+                .save_identity(item_id, workspace_id, identity)
                 .await?;
             Ok(())
         }))
@@ -1754,7 +1760,7 @@ impl SerializableItem for TerminalView {
         cx: &mut App,
     ) -> Task<anyhow::Result<Entity<Self>>> {
         window.spawn(cx, async move |cx| {
-            let (cwd, custom_title) = cx
+            let (cwd, custom_title, identity) = cx
                 .update(|_window, cx| {
                     let from_db = TERMINAL_DB
                         .get_working_directory(item_id, workspace_id)
@@ -1775,13 +1781,19 @@ impl SerializableItem for TerminalView {
                         .log_err()
                         .flatten()
                         .filter(|title| !title.trim().is_empty());
-                    (cwd, custom_title)
+                    let identity = TERMINAL_DB
+                        .get_identity(item_id, workspace_id)
+                        .log_err()
+                        .unwrap_or_else(TerminalIdentity::persistable);
+                    (cwd, custom_title, identity)
                 })
                 .ok()
-                .unwrap_or((None, None));
+                .unwrap_or_else(|| (None, None, TerminalIdentity::persistable()));
 
             let terminal = project
-                .update(cx, |project, cx| project.create_terminal_shell(cwd, cx))
+                .update(cx, |project, cx| {
+                    project.create_terminal_shell(cwd, identity, cx)
+                })
                 .await?;
             cx.update(|window, cx| {
                 cx.new(|cx| {
@@ -2492,7 +2504,9 @@ mod tests {
         let (project, workspace) = init_test(cx).await;
 
         let terminal = project
-            .update(cx, |project, cx| project.create_terminal_shell(None, cx))
+            .update(cx, |project, cx| {
+                project.create_terminal_shell(None, TerminalIdentity::Anonymous, cx)
+            })
             .await
             .unwrap();
 
@@ -2522,7 +2536,9 @@ mod tests {
         let (project, workspace) = init_test(cx).await;
 
         let terminal = project
-            .update(cx, |project, cx| project.create_terminal_shell(None, cx))
+            .update(cx, |project, cx| {
+                project.create_terminal_shell(None, TerminalIdentity::Anonymous, cx)
+            })
             .await
             .unwrap();
 
@@ -2553,7 +2569,9 @@ mod tests {
         let (project, workspace) = init_test(cx).await;
 
         let terminal = project
-            .update(cx, |project, cx| project.create_terminal_shell(None, cx))
+            .update(cx, |project, cx| {
+                project.create_terminal_shell(None, TerminalIdentity::Anonymous, cx)
+            })
             .await
             .unwrap();
 
@@ -2590,7 +2608,9 @@ mod tests {
         let (project, workspace) = init_test(cx).await;
 
         let terminal = project
-            .update(cx, |project, cx| project.create_terminal_shell(None, cx))
+            .update(cx, |project, cx| {
+                project.create_terminal_shell(None, TerminalIdentity::Anonymous, cx)
+            })
             .await
             .unwrap();
 
@@ -2622,7 +2642,9 @@ mod tests {
         let (project, workspace) = init_test(cx).await;
 
         let terminal = project
-            .update(cx, |project, cx| project.create_terminal_shell(None, cx))
+            .update(cx, |project, cx| {
+                project.create_terminal_shell(None, TerminalIdentity::Anonymous, cx)
+            })
             .await
             .unwrap();
 
@@ -2662,7 +2684,9 @@ mod tests {
         let (project, workspace) = init_test(cx).await;
 
         let terminal = project
-            .update(cx, |project, cx| project.create_terminal_shell(None, cx))
+            .update(cx, |project, cx| {
+                project.create_terminal_shell(None, TerminalIdentity::Anonymous, cx)
+            })
             .await
             .unwrap();
 

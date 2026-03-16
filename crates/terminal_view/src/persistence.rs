@@ -14,6 +14,7 @@ use db::{
     sqlez::{domain::Domain, statement::Statement, thread_safe_connection::ThreadSafeConnection},
     sqlez_macros::sql,
 };
+use terminal::TerminalIdentity;
 use workspace::{
     ItemHandle, ItemId, Member, Pane, PaneAxis, PaneGroup, SerializableItem as _, Workspace,
     WorkspaceDb, WorkspaceId,
@@ -253,7 +254,8 @@ async fn deserialize_pane_group(
                             .flatten();
                         let terminal = project
                             .update(cx, |project, cx| {
-                                project.create_terminal_shell(working_directory, cx)
+                                let identity = TerminalIdentity::Anonymous;
+                                project.create_terminal_shell(working_directory, identity, cx)
                             })
                             .await
                             .log_err();
@@ -422,6 +424,9 @@ impl Domain for TerminalDb {
         sql! (
             ALTER TABLE terminals ADD COLUMN custom_title TEXT;
         ),
+        sql! (
+            ALTER TABLE terminals ADD COLUMN identity TEXT;
+        ),
     ];
 }
 
@@ -511,6 +516,33 @@ impl TerminalDb {
             SELECT custom_title
             FROM terminals
             WHERE item_id = ? AND workspace_id = ?
+        }
+    }
+
+    query! {
+        fn query_identity(item_id: ItemId, workspace_id: WorkspaceId) -> Result<Option<String>> {
+            SELECT identity FROM terminals WHERE item_id = ? AND workspace_id = ?
+        }
+    }
+
+    pub fn get_identity(
+        &self,
+        item_id: ItemId,
+        workspace_id: WorkspaceId,
+    ) -> Result<TerminalIdentity> {
+        let identity = self.query_identity(item_id, workspace_id)?;
+        match identity {
+            None => Ok(TerminalIdentity::persistable()),
+            Some(id) => Ok(TerminalIdentity::Persisted(uuid::Uuid::try_parse(&id)?)),
+        }
+    }
+
+    query! {
+        pub async fn save_identity(item_id: ItemId, workspace_id: WorkspaceId, identity: TerminalIdentity) -> Result<()> {
+            INSERT INTO terminals (item_id, workspace_id, identity)
+            VALUES (?1, ?2, ?3)
+            ON CONFLICT (workspace_id, item_id)
+            DO UPDATE SET identity = excluded.identity;
         }
     }
 }

@@ -2377,6 +2377,7 @@ pub fn delete_unloaded_items(
         let query = format!(
             "DELETE FROM {table} WHERE workspace_id = ? AND item_id NOT IN ({placeholders})"
         );
+        log::info!("delete_unloaded_items from {table}");
 
         db.write(move |conn| {
             let mut statement = Statement::prepare(conn, query)?;

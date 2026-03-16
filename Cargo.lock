@@ -4712,6 +4712,7 @@ dependencies = [
  "sysinfo 0.37.2",
  "task",
  "tasks_ui",
+ "terminal",
  "terminal_view",
  "text",
  "theme",
@@ -17326,6 +17327,7 @@ dependencies = [
  "serde",
  "settings",
  "smol",
+ "sqlez",
  "sysinfo 0.37.2",
  "task",
  "theme",
@@ -17334,6 +17336,7 @@ dependencies = [
  "urlencoding",
  "util",
  "util_macros",
+ "uuid",
  "windows 0.61.3",
 ]
 
@@ -17378,6 +17381,7 @@ dependencies = [
  "theme",
  "ui",
  "util",
+ "uuid",
  "workspace",
  "zed_actions",
 ]

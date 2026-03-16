@@ -66,13 +66,14 @@ use std::{
 };
 use thiserror::Error;
 
+use crate::mappings::{colors::to_alac_rgb, keys::to_esc_str};
 use gpui::{
     App, AppContext as _, BackgroundExecutor, Bounds, ClipboardItem, Context, EventEmitter, Hsla,
     Keystroke, Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point,
     Rgba, ScrollWheelEvent, Size, Task, TouchPhase, Window, actions, black, px,
 };
-
-use crate::mappings::{colors::to_alac_rgb, keys::to_esc_str};
+use sqlez::bindable::Bind;
+use sqlez::statement::Statement;
 
 actions!(
     terminal,
@@ -417,6 +418,7 @@ impl TerminalBuilder {
             path_style,
             #[cfg(any(test, feature = "test-support"))]
             input_log: Vec::new(),
+            identity: TerminalIdentity::Anonymous,
         };
 
         Ok(TerminalBuilder {
@@ -441,6 +443,7 @@ impl TerminalBuilder {
         cx: &App,
         activation_script: Vec<String>,
         path_style: PathStyle,
+        identity: TerminalIdentity,
     ) -> Task<Result<TerminalBuilder>> {
         let version = release_channel::AppVersion::global(cx);
         let background_executor = cx.background_executor().clone();
@@ -650,6 +653,7 @@ impl TerminalBuilder {
                 path_style,
                 #[cfg(any(test, feature = "test-support"))]
                 input_log: Vec::new(),
+                identity,
             };
 
             if !activation_script.is_empty() && no_task {
@@ -842,6 +846,46 @@ enum TerminalType {
     DisplayOnly,
 }
 
+#[derive(Clone)]
+pub enum TerminalIdentity {
+    Anonymous,
+    Persisted(uuid::Uuid),
+}
+
+impl TerminalIdentity {
+    pub fn persistable() -> Self {
+        Self::Persisted(uuid::Uuid::new_v4())
+    }
+
+    pub fn add_into_env(&self, env: &mut HashMap<String, String>) {
+        match self {
+            TerminalIdentity::Anonymous => {}
+            TerminalIdentity::Persisted(id) => {
+                let key = "ZED_PERSISTENCE_ID".to_string();
+                env.insert(key, format!("{}", id.as_hyphenated()));
+            }
+        }
+    }
+
+    pub fn to_string(&self) -> String {
+        match self {
+            TerminalIdentity::Anonymous => String::new(),
+            TerminalIdentity::Persisted(id) => format!("{}", id.as_hyphenated()),
+        }
+    }
+}
+
+impl Bind for TerminalIdentity {
+    fn bind(&self, statement: &Statement, start_index: i32) -> Result<i32> {
+        match self {
+            TerminalIdentity::Anonymous => None::<Option<String>>.bind(statement, start_index),
+            TerminalIdentity::Persisted(id) => {
+                format!("{}", id.as_hyphenated()).bind(statement, start_index)
+            }
+        }
+    }
+}
+
 pub struct Terminal {
     terminal_type: TerminalType,
     completion_tx: Option<Sender<Option<ExitStatus>>>,
@@ -876,6 +920,8 @@ pub struct Terminal {
     path_style: PathStyle,
     #[cfg(any(test, feature = "test-support"))]
     input_log: Vec<Vec<u8>>,
+    /// Marker to identify terminals across sessions
+    identity: TerminalIdentity,
 }
 
 struct CopyTemplate {
@@ -2294,11 +2340,18 @@ impl Terminal {
 
     pub fn clone_builder(&self, cx: &App, cwd: Option<PathBuf>) -> Task<Result<TerminalBuilder>> {
         let working_directory = self.working_directory().or_else(|| cwd);
+        let mut env = self.template.env.clone();
+        let identity = match &self.identity {
+            TerminalIdentity::Anonymous => self.identity.clone(),
+            TerminalIdentity::Persisted(_) => TerminalIdentity::persistable(),
+        };
+        identity.add_into_env(&mut env);
+
         TerminalBuilder::new(
             working_directory,
             None,
             self.template.shell.clone(),
-            self.template.env.clone(),
+            env,
             self.template.cursor_shape,
             self.template.alternate_scroll,
             self.template.max_scroll_history_lines,
@@ -2310,7 +2363,12 @@ impl Terminal {
             cx,
             self.activation_script.clone(),
             self.path_style,
+            identity,
         )
+    }
+
+    pub fn identity(&self) -> &TerminalIdentity {
+        &self.identity
     }
 }
 
@@ -2597,6 +2655,7 @@ mod tests {
                     cx,
                     vec![],
                     PathStyle::local(),
+                    TerminalIdentity::Anonymous,
                 )
             })
             .await
@@ -2819,6 +2878,7 @@ mod tests {
                     cx,
                     Vec::new(),
                     PathStyle::local(),
+                    TerminalIdentity::Anonymous,
                 )
             })
             .await
@@ -3307,6 +3367,7 @@ mod tests {
                         cx,
                         vec![],
                         PathStyle::local(),
+                        TerminalIdentity::Anonymous,
                     )
                 })
                 .await
