@@ -3,6 +3,7 @@ use parking_lot::Mutex;
 use std::{
     collections::{BTreeMap, HashMap},
     ops::DerefMut,
+    path::Path,
     sync::{Arc, OnceLock},
 };
 use util::{ResultExt, paths::SanitizedPath};
@@ -131,9 +132,7 @@ impl Watcher for FsWatcher {
                         if pending_paths.is_empty() {
                             tx.try_send(()).ok();
                         }
-                        if is_rescan_event {
-                            pending_paths.retain(|p| &p.path != callback_path.as_ref());
-                        }
+                        coalesce_pending_rescans(&mut pending_paths, &mut path_events);
                         util::extend_sorted(
                             &mut *pending_paths,
                             path_events,
@@ -160,6 +159,57 @@ impl Watcher for FsWatcher {
 
         global(|w| w.remove(registration))
     }
+}
+
+fn coalesce_pending_rescans(pending_paths: &mut Vec<PathEvent>, path_events: &mut Vec<PathEvent>) {
+    if !path_events
+        .iter()
+        .any(|event| event.kind == Some(PathEventKind::Rescan))
+    {
+        return;
+    }
+
+    let mut new_rescan_paths: Vec<std::path::PathBuf> = path_events
+        .iter()
+        .filter(|e| e.kind == Some(PathEventKind::Rescan))
+        .map(|e| e.path.clone())
+        .collect();
+    new_rescan_paths.sort_unstable();
+
+    let mut deduped_rescans: Vec<std::path::PathBuf> = Vec::with_capacity(new_rescan_paths.len());
+    for path in new_rescan_paths {
+        if deduped_rescans
+            .iter()
+            .any(|ancestor| path != *ancestor && path.starts_with(ancestor))
+        {
+            continue;
+        }
+        deduped_rescans.push(path);
+    }
+
+    deduped_rescans.retain(|new_path| {
+        !pending_paths
+            .iter()
+            .any(|pending| is_covered_rescan(pending.kind, new_path, &pending.path))
+    });
+
+    if !deduped_rescans.is_empty() {
+        pending_paths.retain(|pending| {
+            !deduped_rescans.iter().any(|rescan_path| {
+                pending.path == *rescan_path
+                    || is_covered_rescan(pending.kind, &pending.path, rescan_path)
+            })
+        });
+    }
+
+    path_events.retain(|event| {
+        event.kind != Some(PathEventKind::Rescan)
+            || deduped_rescans.iter().any(|p| event.path == *p)
+    });
+}
+
+fn is_covered_rescan(kind: Option<PathEventKind>, path: &Path, ancestor: &Path) -> bool {
+    kind == Some(PathEventKind::Rescan) && path != ancestor && path.starts_with(ancestor)
 }
 
 #[derive(Default, Debug, Copy, Clone, PartialEq, Eq, Hash)]
@@ -258,6 +308,97 @@ impl GlobalWatcher {
 
 static FS_WATCHER_INSTANCE: OnceLock<anyhow::Result<GlobalWatcher, notify::Error>> =
     OnceLock::new();
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::PathBuf;
+
+    fn rescan(path: &str) -> PathEvent {
+        PathEvent {
+            path: PathBuf::from(path),
+            kind: Some(PathEventKind::Rescan),
+        }
+    }
+
+    fn changed(path: &str) -> PathEvent {
+        PathEvent {
+            path: PathBuf::from(path),
+            kind: Some(PathEventKind::Changed),
+        }
+    }
+
+    struct TestCase {
+        name: &'static str,
+        pending_paths: Vec<PathEvent>,
+        path_events: Vec<PathEvent>,
+        expected_pending_paths: Vec<PathEvent>,
+        expected_path_events: Vec<PathEvent>,
+    }
+
+    #[test]
+    fn test_coalesce_pending_rescans() {
+        let test_cases = [
+            TestCase {
+                name: "coalesces descendant rescans under pending ancestor",
+                pending_paths: vec![rescan("/root")],
+                path_events: vec![rescan("/root/child"), rescan("/root/child/grandchild")],
+                expected_pending_paths: vec![rescan("/root")],
+                expected_path_events: vec![],
+            },
+            TestCase {
+                name: "new ancestor rescan replaces pending descendant rescans",
+                pending_paths: vec![
+                    changed("/other"),
+                    rescan("/root/child"),
+                    rescan("/root/child/grandchild"),
+                ],
+                path_events: vec![rescan("/root")],
+                expected_pending_paths: vec![changed("/other")],
+                expected_path_events: vec![rescan("/root")],
+            },
+            TestCase {
+                name: "same path rescan replaces pending non-rescan event",
+                pending_paths: vec![changed("/root")],
+                path_events: vec![rescan("/root")],
+                expected_pending_paths: vec![],
+                expected_path_events: vec![rescan("/root")],
+            },
+            TestCase {
+                name: "unrelated rescans are preserved",
+                pending_paths: vec![rescan("/root-a")],
+                path_events: vec![rescan("/root-b")],
+                expected_pending_paths: vec![rescan("/root-a")],
+                expected_path_events: vec![rescan("/root-b")],
+            },
+            TestCase {
+                name: "batch ancestor rescan replaces descendant rescan",
+                pending_paths: vec![],
+                path_events: vec![rescan("/root/child"), rescan("/root")],
+                expected_pending_paths: vec![],
+                expected_path_events: vec![rescan("/root")],
+            },
+        ];
+
+        for test_case in test_cases {
+            let mut pending_paths = test_case.pending_paths;
+            let mut path_events = test_case.path_events;
+
+            coalesce_pending_rescans(&mut pending_paths, &mut path_events);
+
+            assert_eq!(
+                pending_paths, test_case.expected_pending_paths,
+                "pending_paths mismatch for case: {}",
+                test_case.name
+            );
+            assert_eq!(
+                path_events, test_case.expected_path_events,
+                "path_events mismatch for case: {}",
+                test_case.name
+            );
+        }
+    }
+}
 
 fn handle_event(event: Result<notify::Event, notify::Error>) {
     log::trace!("global handle event: {event:?}");
