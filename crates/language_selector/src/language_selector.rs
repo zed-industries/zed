@@ -280,20 +280,28 @@ impl PickerDelegate for LanguageSelectorDelegate {
             };
 
             this.update_in(cx, |this, window, cx| {
-                let delegate = &mut this.delegate;
-                delegate.matches = matches;
-                delegate.selected_index = delegate
-                    .selected_index
-                    .min(delegate.matches.len().saturating_sub(1));
-
-                if query_is_empty {
-                    if let Some(index) = delegate
-                        .current_language_candidate_index
-                        .and_then(|ci| delegate.matches.iter().position(|m| m.candidate_id == ci))
-                    {
-                        this.set_selected_index(index, None, false, window, cx);
-                    }
+                if matches.is_empty() {
+                    this.delegate.matches = matches;
+                    this.delegate.selected_index = 0;
+                    cx.notify();
+                    return;
                 }
+
+                let selected_index = if query_is_empty {
+                    this.delegate
+                        .current_language_candidate_index
+                        .and_then(|current_language_candidate_index| {
+                            matches.iter().position(|mat| {
+                                mat.candidate_id == current_language_candidate_index
+                            })
+                        })
+                        .unwrap_or(0)
+                } else {
+                    0
+                };
+
+                this.delegate.matches = matches;
+                this.set_selected_index(selected_index, None, false, window, cx);
                 cx.notify();
             })
             .log_err();
@@ -345,28 +353,25 @@ mod tests {
     fn register_test_languages(project: &Entity<Project>, cx: &mut VisualTestContext) {
         project.read_with(cx, |project, _| {
             let language_registry = project.languages();
-            language_registry.add(Arc::new(Language::new(
-                LanguageConfig {
-                    name: "Rust".into(),
-                    matcher: LanguageMatcher {
-                        path_suffixes: vec!["rs".to_string()],
+            for (language_name, path_suffix) in [
+                ("C", "c"),
+                ("Go", "go"),
+                ("Ruby", "rb"),
+                ("Rust", "rs"),
+                ("TypeScript", "ts"),
+            ] {
+                language_registry.add(Arc::new(Language::new(
+                    LanguageConfig {
+                        name: language_name.into(),
+                        matcher: LanguageMatcher {
+                            path_suffixes: vec![path_suffix.to_string()],
+                            ..Default::default()
+                        },
                         ..Default::default()
                     },
-                    ..Default::default()
-                },
-                None,
-            )));
-            language_registry.add(Arc::new(Language::new(
-                LanguageConfig {
-                    name: "TypeScript".into(),
-                    matcher: LanguageMatcher {
-                        path_suffixes: vec!["ts".to_string()],
-                        ..Default::default()
-                    },
-                    ..Default::default()
-                },
-                None,
-            )));
+                    None,
+                )));
+            }
         });
     }
 
@@ -407,6 +412,24 @@ mod tests {
         project: &Entity<Project>,
         cx: &mut VisualTestContext,
     ) -> Entity<Editor> {
+        let editor = open_new_buffer_editor(workspace, project, cx).await;
+        // Ensure the buffer has no language after the editor is created
+        let (_, buffer, _) = editor.read_with(cx, |editor, cx| {
+            editor
+                .active_excerpt(cx)
+                .expect("editor should have an active excerpt")
+        });
+        buffer.update(cx, |buffer, cx| {
+            buffer.set_language(None, cx);
+        });
+        editor
+    }
+
+    async fn open_new_buffer_editor(
+        workspace: &Entity<Workspace>,
+        project: &Entity<Project>,
+        cx: &mut VisualTestContext,
+    ) -> Entity<Editor> {
         let create_buffer = project.update(cx, |project, cx| project.create_buffer(None, true, cx));
         let buffer = create_buffer.await.expect("empty buffer should be created");
         let editor = cx.new_window_entity(|window, cx| {
@@ -414,10 +437,6 @@ mod tests {
         });
         workspace.update_in(cx, |workspace, window, cx| {
             workspace.add_item_to_center(Box::new(editor.clone()), window, cx);
-        });
-        // Ensure the buffer has no language after the editor is created
-        buffer.update(cx, |buffer, cx| {
-            buffer.set_language(None, cx);
         });
         editor
     }
@@ -559,15 +578,86 @@ mod tests {
 
         assert_selected_language_for_editor(&workspace, &rust_editor, Some("Rust"), cx);
         assert_selected_language_for_editor(&workspace, &typescript_editor, Some("TypeScript"), cx);
-        // Ensure the empty editor's buffer has no language before asserting
-        let (_, buffer, _) = empty_editor.read_with(cx, |editor, cx| {
-            editor
-                .active_excerpt(cx)
-                .expect("editor should have an active excerpt")
-        });
-        buffer.update(cx, |buffer, cx| {
-            buffer.set_language(None, cx);
-        });
         assert_selected_language_for_editor(&workspace, &empty_editor, None, cx);
+    }
+
+    #[gpui::test]
+    async fn test_language_selector_selects_first_match_after_querying_new_buffer(
+        cx: &mut TestAppContext,
+    ) {
+        let app_state = init_test(cx);
+        app_state
+            .fs
+            .as_fake()
+            .insert_tree(path!("/test"), json!({}))
+            .await;
+
+        let project = Project::test(app_state.fs.clone(), [path!("/test").as_ref()], cx).await;
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace =
+            multi_workspace.read_with(cx, |multi_workspace, _| multi_workspace.workspace().clone());
+        register_test_languages(&project, cx);
+
+        let editor = open_new_buffer_editor(&workspace, &project, cx).await;
+        workspace.update_in(cx, |workspace, window, cx| {
+            let was_activated = workspace.activate_item(&editor, true, true, window, cx);
+            assert!(
+                was_activated,
+                "editor should be activated before opening the modal"
+            );
+        });
+        cx.run_until_parked();
+
+        let picker = open_selector(&workspace, cx);
+        picker.read_with(cx, |picker, _| {
+            let selected_match = picker
+                .delegate
+                .matches
+                .get(picker.delegate.selected_index)
+                .expect("selected index should point to a match");
+            let selected_candidate = picker
+                .delegate
+                .candidates
+                .get(selected_match.candidate_id)
+                .expect("selected match should map to a candidate");
+
+            assert_eq!(selected_candidate.string, "Plain Text");
+            assert!(
+                picker
+                    .delegate
+                    .current_language_candidate_index
+                    .is_some_and(|current_language_candidate_index| {
+                        current_language_candidate_index > 1
+                    }),
+                "test setup should place Plain Text after at least two earlier languages",
+            );
+        });
+
+        picker.update_in(cx, |picker, window, cx| {
+            picker.update_matches("ru".to_string(), window, cx)
+        });
+        cx.run_until_parked();
+
+        picker.read_with(cx, |picker, _| {
+            assert!(
+                picker.delegate.matches.len() > 1,
+                "query should return multiple matches"
+            );
+            assert_eq!(picker.delegate.selected_index, 0);
+
+            let first_match = picker
+                .delegate
+                .matches
+                .first()
+                .expect("query should produce at least one match");
+            let selected_match = picker
+                .delegate
+                .matches
+                .get(picker.delegate.selected_index)
+                .expect("selected index should point to a match");
+
+            assert_eq!(selected_match.candidate_id, first_match.candidate_id);
+        });
     }
 }

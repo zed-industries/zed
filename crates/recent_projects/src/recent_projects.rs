@@ -750,12 +750,7 @@ impl PickerDelegate for RecentProjectsDelegate {
         self.selected_index = ix;
     }
 
-    fn can_select(
-        &mut self,
-        ix: usize,
-        _window: &mut Window,
-        _cx: &mut Context<Picker<Self>>,
-    ) -> bool {
+    fn can_select(&self, ix: usize, _window: &mut Window, _cx: &mut Context<Picker<Self>>) -> bool {
         matches!(
             self.filtered_entries.get(ix),
             Some(ProjectPickerEntry::OpenFolder { .. } | ProjectPickerEntry::RecentProject(_))
@@ -940,7 +935,14 @@ impl PickerDelegate for RecentProjectsDelegate {
                                 }
                                 return;
                             } else {
-                                workspace.open_workspace_for_paths(false, paths, window, cx)
+                                workspace
+                                    .open_workspace_for_paths(false, paths, window, cx)
+                                    .detach_and_prompt_err(
+                                        "Failed to open project",
+                                        window,
+                                        cx,
+                                        |_, _, _| None,
+                                    );
                             }
                         }
                         SerializedWorkspaceLocation::Remote(mut connection) => {
@@ -969,14 +971,14 @@ impl PickerDelegate for RecentProjectsDelegate {
                                 )
                                 .await
                             })
+                            .detach_and_prompt_err(
+                                "Failed to open project",
+                                window,
+                                cx,
+                                |_, _, _| None,
+                            );
                         }
                     }
-                    .detach_and_prompt_err(
-                        "Failed to open project",
-                        window,
-                        cx,
-                        |_, _, _| None,
-                    );
                 });
                 cx.emit(DismissEvent);
             }
@@ -1113,12 +1115,21 @@ impl PickerDelegate for RecentProjectsDelegate {
                 let (_, location, paths, _) = self.workspaces.get(hit.candidate_id)?;
                 let is_local = matches!(location, SerializedWorkspaceLocation::Local);
                 let paths_to_add = paths.paths().to_vec();
-                let tooltip_path: SharedString = paths
+                let ordered_paths: Vec<_> = paths
                     .ordered_paths()
                     .map(|p| p.compact().to_string_lossy().to_string())
-                    .collect::<Vec<_>>()
-                    .join("\n")
-                    .into();
+                    .collect();
+                let tooltip_path: SharedString = match &location {
+                    SerializedWorkspaceLocation::Remote(options) => {
+                        let host = options.display_name();
+                        if ordered_paths.len() == 1 {
+                            format!("{} ({})", ordered_paths[0], host).into()
+                        } else {
+                            format!("{}\n({})", ordered_paths.join("\n"), host).into()
+                        }
+                    }
+                    _ => ordered_paths.join("\n").into(),
+                };
 
                 let mut path_start_offset = 0;
                 let (match_labels, paths): (Vec<_>, Vec<_>) = paths
@@ -1246,8 +1257,8 @@ impl PickerDelegate for RecentProjectsDelegate {
         let focus_handle = self.focus_handle.clone();
         let popover_style = matches!(self.style, ProjectPickerStyle::Popover);
         let open_folder_section = matches!(
-            self.filtered_entries.get(self.selected_index)?,
-            ProjectPickerEntry::OpenFolder { .. }
+            self.filtered_entries.get(self.selected_index),
+            Some(ProjectPickerEntry::OpenFolder { .. })
         );
 
         if popover_style {
@@ -1258,17 +1269,16 @@ impl PickerDelegate for RecentProjectsDelegate {
                     .gap_1()
                     .border_t_1()
                     .border_color(cx.theme().colors().border_variant)
-                    .child(
+                    .child({
+                        let open_action = workspace::Open {
+                            create_new_window: self.create_new_window,
+                        };
                         Button::new("open_local_folder", "Open Local Project")
-                            .key_binding(KeyBinding::for_action_in(
-                                &workspace::Open,
-                                &focus_handle,
-                                cx,
-                            ))
-                            .on_click(|_, window, cx| {
-                                window.dispatch_action(workspace::Open.boxed_clone(), cx)
-                            }),
-                    )
+                            .key_binding(KeyBinding::for_action_in(&open_action, &focus_handle, cx))
+                            .on_click(move |_, window, cx| {
+                                window.dispatch_action(open_action.boxed_clone(), cx)
+                            })
+                    })
                     .child(
                         Button::new("open_remote_folder", "Open Remote Project")
                             .key_binding(KeyBinding::for_action(
@@ -1359,6 +1369,7 @@ impl PickerDelegate for RecentProjectsDelegate {
                         )
                         .menu({
                             let focus_handle = focus_handle.clone();
+                            let create_new_window = self.create_new_window;
 
                             move |window, cx| {
                                 Some(ContextMenu::build(window, cx, {
@@ -1367,7 +1378,7 @@ impl PickerDelegate for RecentProjectsDelegate {
                                         menu.context(focus_handle)
                                             .action(
                                                 "Open Local Project",
-                                                workspace::Open.boxed_clone(),
+                                                workspace::Open { create_new_window }.boxed_clone(),
                                             )
                                             .action(
                                                 "Open Remote Project",

@@ -7,7 +7,7 @@ use std::{
 use clock::Global;
 use collections::{HashMap, HashSet};
 use futures::future::join_all;
-use gpui::{App, Entity, Task};
+use gpui::{App, Entity, Pixels, Task};
 use itertools::Itertools;
 use language::{
     BufferRow,
@@ -292,7 +292,7 @@ impl Editor {
         reason: InlayHintRefreshReason,
         cx: &mut Context<Self>,
     ) {
-        if !self.mode().is_full() || self.inlay_hints.is_none() {
+        if !self.lsp_data_enabled() || self.inlay_hints.is_none() {
             return;
         }
         let Some(semantics_provider) = self.semantics_provider() else {
@@ -569,6 +569,7 @@ impl Editor {
         &mut self,
         snapshot: &EditorSnapshot,
         point_for_position: PointForPosition,
+        mouse_position: Option<gpui::Point<Pixels>>,
         secondary_held: bool,
         shift_held: bool,
         window: &mut Window,
@@ -748,7 +749,7 @@ impl Editor {
             self.hide_hovered_link(cx)
         }
         if !hover_updated {
-            hover_popover::hover_at(self, None, window, cx);
+            hover_popover::hover_at(self, None, mouse_position, window, cx);
         }
     }
 

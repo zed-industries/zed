@@ -73,6 +73,30 @@ fn test_singleton(cx: &mut App) {
 }
 
 #[gpui::test]
+fn test_buffer_point_to_anchor_at_end_of_singleton_buffer(cx: &mut App) {
+    let buffer = cx.new(|cx| Buffer::local("abc", cx));
+    let multibuffer = cx.new(|cx| MultiBuffer::singleton(buffer.clone(), cx));
+
+    let excerpt_id = multibuffer
+        .read(cx)
+        .excerpt_ids()
+        .into_iter()
+        .next()
+        .unwrap();
+    let anchor = multibuffer
+        .read(cx)
+        .buffer_point_to_anchor(&buffer, Point::new(0, 3), cx);
+
+    assert_eq!(
+        anchor,
+        Some(Anchor::in_buffer(
+            excerpt_id,
+            buffer.read(cx).snapshot().anchor_after(Point::new(0, 3)),
+        ))
+    );
+}
+
+#[gpui::test]
 fn test_remote(cx: &mut App) {
     let host_buffer = cx.new(|cx| Buffer::local("a", cx));
     let guest_buffer = cx.new(|cx| {
@@ -171,12 +195,15 @@ fn test_excerpt_boundaries_and_clipping(cx: &mut App) {
         &[
             Event::Edited {
                 edited_buffer: None,
+                is_local: true,
             },
             Event::Edited {
                 edited_buffer: None,
+                is_local: true,
             },
             Event::Edited {
                 edited_buffer: None,
+                is_local: true,
             }
         ]
     );
@@ -1285,7 +1312,7 @@ fn test_resolving_anchors_after_replacing_their_excerpts(cx: &mut App) {
         let mut ids = multibuffer
             .excerpts_for_buffer(buffer_2.read(cx).remote_id(), cx)
             .into_iter()
-            .map(|(id, _)| id);
+            .map(|(id, _, _)| id);
         (ids.next().unwrap(), ids.next().unwrap())
     });
     let snapshot_2 = multibuffer.read(cx).snapshot(cx);

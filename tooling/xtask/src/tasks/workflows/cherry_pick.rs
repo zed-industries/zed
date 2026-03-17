@@ -35,7 +35,10 @@ fn run_cherry_pick(
         channel: &WorkflowInput,
         token: &StepOutput,
     ) -> Step<Run> {
-        named::bash(&format!("./script/cherry-pick {branch} {commit} {channel}"))
+        named::bash(r#"./script/cherry-pick "$BRANCH" "$COMMIT" "$CHANNEL""#)
+            .add_env(("BRANCH", branch.to_string()))
+            .add_env(("COMMIT", commit.to_string()))
+            .add_env(("CHANNEL", channel.to_string()))
             .add_env(("GIT_COMMITTER_NAME", "Zed Zippy"))
             .add_env(("GIT_COMMITTER_EMAIL", "hi@zed.dev"))
             .add_env(("GITHUB_TOKEN", token))

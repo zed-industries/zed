@@ -151,6 +151,7 @@ pub struct TitleBar {
     user_store: Entity<UserStore>,
     client: Arc<Client>,
     workspace: WeakEntity<Workspace>,
+    multi_workspace: Option<WeakEntity<MultiWorkspace>>,
     application_menu: Option<Entity<ApplicationMenu>>,
     _subscriptions: Vec<Subscription>,
     banner: Entity<OnboardingBanner>,
@@ -188,7 +189,7 @@ impl Render for TitleBar {
                                 .when(title_bar_settings.show_project_items, |title_bar| {
                                     title_bar
                                         .children(self.render_project_host(cx))
-                                        .child(self.render_project_name(cx))
+                                        .child(self.render_project_name(window, cx))
                                 })
                                 .when(title_bar_settings.show_branch_name, |title_bar| {
                                     title_bar.children(self.render_project_branch(cx))
@@ -369,7 +370,7 @@ impl TitleBar {
                         return;
                     };
 
-                    let is_open = multi_workspace.read(cx).is_sidebar_open();
+                    let is_open = multi_workspace.read(cx).sidebar_open();
                     let has_notifications = multi_workspace.read(cx).sidebar_has_notifications(cx);
                     platform_titlebar.update(cx, |titlebar, cx| {
                         titlebar.set_workspace_sidebar_open(is_open, cx);
@@ -378,7 +379,7 @@ impl TitleBar {
 
                     let platform_titlebar = platform_titlebar.clone();
                     let subscription = cx.observe(&multi_workspace, move |mw, cx| {
-                        let is_open = mw.read(cx).is_sidebar_open();
+                        let is_open = mw.read(cx).sidebar_open();
                         let has_notifications = mw.read(cx).sidebar_has_notifications(cx);
                         platform_titlebar.update(cx, |titlebar, cx| {
                             titlebar.set_workspace_sidebar_open(is_open, cx);
@@ -389,6 +390,7 @@ impl TitleBar {
                     if let Some(this) = this.upgrade() {
                         this.update(cx, |this, _| {
                             this._subscriptions.push(subscription);
+                            this.multi_workspace = Some(multi_workspace.downgrade());
                         });
                     }
                 });
@@ -400,6 +402,7 @@ impl TitleBar {
             platform_titlebar,
             application_menu,
             workspace: workspace.weak_handle(),
+            multi_workspace: None,
             project,
             user_store,
             client,
@@ -604,10 +607,11 @@ impl TitleBar {
             .style(ButtonStyle::Tinted(TintColor::Warning))
             .label_size(LabelSize::Small)
             .color(Color::Warning)
-            .icon(IconName::Warning)
-            .icon_color(Color::Warning)
-            .icon_size(IconSize::Small)
-            .icon_position(IconPosition::Start)
+            .start_icon(
+                Icon::new(IconName::Warning)
+                    .size(IconSize::Small)
+                    .color(Color::Warning),
+            )
             .tooltip(|_, cx| {
                 Tooltip::with_meta(
                     "You're in Restricted Mode",
@@ -701,24 +705,27 @@ impl TitleBar {
         let has_notifications = self.platform_titlebar.read(cx).sidebar_has_notifications();
 
         Some(
-            IconButton::new("toggle-workspace-sidebar", IconName::WorkspaceNavClosed)
-                .icon_size(IconSize::Small)
-                .when(has_notifications, |button| {
-                    button
-                        .indicator(Indicator::dot().color(Color::Accent))
-                        .indicator_border_color(Some(cx.theme().colors().title_bar_background))
-                })
-                .tooltip(move |_, cx| {
-                    Tooltip::for_action("Open Workspace Sidebar", &ToggleWorkspaceSidebar, cx)
-                })
-                .on_click(|_, window, cx| {
-                    window.dispatch_action(ToggleWorkspaceSidebar.boxed_clone(), cx);
-                })
-                .into_any_element(),
+            IconButton::new(
+                "toggle-workspace-sidebar",
+                IconName::ThreadsSidebarLeftClosed,
+            )
+            .icon_size(IconSize::Small)
+            .when(has_notifications, |button| {
+                button
+                    .indicator(Indicator::dot().color(Color::Accent))
+                    .indicator_border_color(Some(cx.theme().colors().title_bar_background))
+            })
+            .tooltip(move |_, cx| {
+                Tooltip::for_action("Open Threads Sidebar", &ToggleWorkspaceSidebar, cx)
+            })
+            .on_click(|_, window, cx| {
+                window.dispatch_action(ToggleWorkspaceSidebar.boxed_clone(), cx);
+            })
+            .into_any_element(),
         )
     }
 
-    pub fn render_project_name(&self, cx: &mut Context<Self>) -> impl IntoElement {
+    pub fn render_project_name(&self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let workspace = self.workspace.clone();
 
         let name = self.effective_active_worktree(cx).map(|worktree| {
@@ -753,9 +760,11 @@ impl TitleBar {
                 Button::new("project_name_trigger", display_name)
                     .label_size(LabelSize::Small)
                     .when(self.worktree_count(cx) > 1, |this| {
-                        this.icon(IconName::ChevronDown)
-                            .icon_color(Color::Muted)
-                            .icon_size(IconSize::XSmall)
+                        this.end_icon(
+                            Icon::new(IconName::ChevronDown)
+                                .size(IconSize::XSmall)
+                                .color(Color::Muted),
+                        )
                     })
                     .selected_style(ButtonStyle::Tinted(TintColor::Accent))
                     .when(!is_project_selected, |s| s.color(Color::Muted)),
@@ -835,11 +844,9 @@ impl TitleBar {
                         .color(Color::Muted)
                         .when(settings.show_branch_icon, |branch_button| {
                             let (icon, icon_color) = icon_info;
-                            branch_button
-                                .icon(icon)
-                                .icon_position(IconPosition::Start)
-                                .icon_color(icon_color)
-                                .icon_size(IconSize::Indicator)
+                            branch_button.start_icon(
+                                Icon::new(icon).size(IconSize::Indicator).color(icon_color),
+                            )
                         }),
                     move |_window, cx| {
                         Tooltip::with_meta(
@@ -1014,9 +1021,9 @@ impl TitleBar {
                                     let user_store = user_store.clone();
                                     let organization = organization.clone();
                                     move |_window, cx| {
-                                        user_store.update(cx, |user_store, _cx| {
+                                        user_store.update(cx, |user_store, cx| {
                                             user_store
-                                                .set_current_organization(organization.clone());
+                                                .set_current_organization(organization.clone(), cx);
                                         });
                                     }
                                 },

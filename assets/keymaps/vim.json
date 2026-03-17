@@ -427,6 +427,7 @@
       "escape": "vim::SwitchToHelixNormalMode",
       "i": "vim::HelixInsert",
       "a": "vim::HelixAppend",
+      "shift-a": "vim::HelixInsertEndOfLine",
       "ctrl-[": "editor::Cancel",
     },
   },
@@ -1099,6 +1100,8 @@
       "ctrl-d": "markdown::ScrollPageDown",
       "ctrl-y": "markdown::ScrollUp",
       "ctrl-e": "markdown::ScrollDown",
+      "g g": "markdown::ScrollToTop",
+      "shift-g": "markdown::ScrollToBottom",
     },
   },
   {

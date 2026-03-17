@@ -35,12 +35,13 @@ actions!(
     ]
 );
 
-pub enum SidebarEvent {
-    Open,
-    Close,
+pub enum MultiWorkspaceEvent {
+    ActiveWorkspaceChanged,
+    WorkspaceAdded(Entity<Workspace>),
+    WorkspaceRemoved(EntityId),
 }
 
-pub trait Sidebar: EventEmitter<SidebarEvent> + Focusable + Render + Sized {
+pub trait Sidebar: Focusable + Render + Sized {
     fn width(&self, cx: &App) -> Pixels;
     fn set_width(&mut self, width: Option<Pixels>, cx: &mut Context<Self>);
     fn has_notifications(&self, cx: &App) -> bool;
@@ -102,12 +103,13 @@ pub struct MultiWorkspace {
     active_workspace_index: usize,
     sidebar: Option<Box<dyn SidebarHandle>>,
     sidebar_open: bool,
-    _sidebar_subscription: Option<Subscription>,
     pending_removal_tasks: Vec<Task<()>>,
     _serialize_task: Option<Task<()>>,
     _create_task: Option<Task<()>>,
     _subscriptions: Vec<Subscription>,
 }
+
+impl EventEmitter<MultiWorkspaceEvent> for MultiWorkspace {}
 
 impl MultiWorkspace {
     pub fn new(workspace: Entity<Workspace>, window: &mut Window, cx: &mut Context<Self>) -> Self {
@@ -136,7 +138,6 @@ impl MultiWorkspace {
             active_workspace_index: 0,
             sidebar: None,
             sidebar_open: false,
-            _sidebar_subscription: None,
             pending_removal_tasks: Vec::new(),
             _serialize_task: None,
             _create_task: None,
@@ -148,21 +149,8 @@ impl MultiWorkspace {
         }
     }
 
-    pub fn register_sidebar<T: Sidebar>(
-        &mut self,
-        sidebar: Entity<T>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let subscription =
-            cx.subscribe_in(&sidebar, window, |this, _, event, window, cx| match event {
-                SidebarEvent::Open => this.toggle_sidebar(window, cx),
-                SidebarEvent::Close => {
-                    this.close_sidebar(window, cx);
-                }
-            });
+    pub fn register_sidebar<T: Sidebar>(&mut self, sidebar: Entity<T>) {
         self.sidebar = Some(Box::new(sidebar));
-        self._sidebar_subscription = Some(subscription);
     }
 
     pub fn sidebar(&self) -> Option<&dyn SidebarHandle> {
@@ -170,7 +158,7 @@ impl MultiWorkspace {
     }
 
     pub fn sidebar_open(&self) -> bool {
-        self.sidebar_open && self.sidebar.is_some()
+        self.sidebar_open
     }
 
     pub fn sidebar_has_notifications(&self, cx: &App) -> bool {
@@ -284,10 +272,6 @@ impl MultiWorkspace {
         .detach();
     }
 
-    pub fn is_sidebar_open(&self) -> bool {
-        self.sidebar_open
-    }
-
     pub fn workspace(&self) -> &Entity<Workspace> {
         &self.workspaces[self.active_workspace_index]
     }
@@ -304,6 +288,7 @@ impl MultiWorkspace {
         if !self.multi_workspace_enabled(cx) {
             self.workspaces[0] = workspace;
             self.active_workspace_index = 0;
+            cx.emit(MultiWorkspaceEvent::ActiveWorkspaceChanged);
             cx.notify();
             return;
         }
@@ -321,7 +306,11 @@ impl MultiWorkspace {
         cx: &mut Context<Self>,
     ) -> usize {
         let index = self.add_workspace(workspace, cx);
+        let changed = self.active_workspace_index != index;
         self.active_workspace_index = index;
+        if changed {
+            cx.emit(MultiWorkspaceEvent::ActiveWorkspaceChanged);
+        }
         cx.notify();
         index
     }
@@ -338,7 +327,8 @@ impl MultiWorkspace {
                 });
             }
             Self::subscribe_to_workspace(&workspace, cx);
-            self.workspaces.push(workspace);
+            self.workspaces.push(workspace.clone());
+            cx.emit(MultiWorkspaceEvent::WorkspaceAdded(workspace));
             cx.notify();
             self.workspaces.len() - 1
         }
@@ -349,9 +339,13 @@ impl MultiWorkspace {
             index < self.workspaces.len(),
             "workspace index out of bounds"
         );
+        let changed = self.active_workspace_index != index;
         self.active_workspace_index = index;
         self.serialize(cx);
         self.focus_active_workspace(window, cx);
+        if changed {
+            cx.emit(MultiWorkspaceEvent::ActiveWorkspaceChanged);
+        }
         cx.notify();
     }
 
@@ -406,7 +400,7 @@ impl MultiWorkspace {
         }
     }
 
-    fn focus_active_workspace(&self, window: &mut Window, cx: &mut App) {
+    pub fn focus_active_workspace(&self, window: &mut Window, cx: &mut App) {
         // If a dock panel is zoomed, focus it instead of the center pane.
         // Otherwise, focusing the center pane triggers dismiss_zoomed_items_to_reveal
         // which closes the zoomed dock.
@@ -633,6 +627,10 @@ impl MultiWorkspace {
 
         self.serialize(cx);
         self.focus_active_workspace(window, cx);
+        cx.emit(MultiWorkspaceEvent::WorkspaceRemoved(
+            removed_workspace.entity_id(),
+        ));
+        cx.emit(MultiWorkspaceEvent::ActiveWorkspaceChanged);
         cx.notify();
     }
 
@@ -641,7 +639,7 @@ impl MultiWorkspace {
         paths: Vec<PathBuf>,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> Task<Result<()>> {
+    ) -> Task<Result<Entity<Workspace>>> {
         let workspace = self.workspace().clone();
 
         if self.multi_workspace_enabled(cx) {
@@ -662,7 +660,7 @@ impl MultiWorkspace {
                         })?
                         .await
                 } else {
-                    Ok(())
+                    Ok(workspace)
                 }
             })
         }
@@ -673,7 +671,7 @@ impl Render for MultiWorkspace {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let multi_workspace_enabled = self.multi_workspace_enabled(cx);
 
-        let sidebar: Option<AnyElement> = if multi_workspace_enabled && self.sidebar_open {
+        let sidebar: Option<AnyElement> = if multi_workspace_enabled && self.sidebar_open() {
             self.sidebar.as_ref().map(|sidebar_handle| {
                 let weak = cx.weak_entity();
 
@@ -789,7 +787,7 @@ impl Render for MultiWorkspace {
             window,
             cx,
             Tiling {
-                left: multi_workspace_enabled && self.sidebar_open,
+                left: multi_workspace_enabled && self.sidebar_open(),
                 ..Tiling::default()
             },
         )
@@ -828,7 +826,7 @@ mod tests {
 
         multi_workspace.update_in(cx, |mw, _window, cx| {
             mw.open_sidebar(cx);
-            assert!(mw.is_sidebar_open());
+            assert!(mw.sidebar_open());
         });
 
         cx.update(|_window, cx| {
@@ -838,7 +836,7 @@ mod tests {
 
         multi_workspace.read_with(cx, |mw, cx| {
             assert!(
-                !mw.is_sidebar_open(),
+                !mw.sidebar_open(),
                 "Sidebar should be closed when disable_ai is true"
             );
             assert!(
@@ -852,7 +850,7 @@ mod tests {
         });
         multi_workspace.read_with(cx, |mw, _cx| {
             assert!(
-                !mw.is_sidebar_open(),
+                !mw.sidebar_open(),
                 "Sidebar should remain closed when toggled with disable_ai true"
             );
         });
@@ -868,7 +866,7 @@ mod tests {
                 "Multi-workspace should be enabled after re-enabling AI"
             );
             assert!(
-                !mw.is_sidebar_open(),
+                !mw.sidebar_open(),
                 "Sidebar should still be closed after re-enabling AI (not auto-opened)"
             );
         });
@@ -878,7 +876,7 @@ mod tests {
         });
         multi_workspace.read_with(cx, |mw, _cx| {
             assert!(
-                mw.is_sidebar_open(),
+                mw.sidebar_open(),
                 "Sidebar should open when toggled after re-enabling AI"
             );
         });
