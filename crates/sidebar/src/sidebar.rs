@@ -1265,6 +1265,7 @@ impl Sidebar {
             .border_b_1()
             .border_color(color.border.opacity(0.5))
             .child(header_element)
+            .shadow_xs()
             .into_any_element();
 
         Some(element)
