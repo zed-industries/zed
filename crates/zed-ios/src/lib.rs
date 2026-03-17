@@ -16,7 +16,7 @@ mod ios {
         div, prelude::*,
     };
     use gpui_ios::IosPlatform;
-    use std::{cell::RefCell, ops::Range, rc::Rc};
+    use std::{cell::RefCell, ops::Range, rc::Rc, sync::Arc};
 
     thread_local! {
         /// Keeps the GPUI application alive for the process lifetime.
@@ -281,9 +281,100 @@ mod ios {
         let keepalive = app.keep_alive();
         APP_KEEPALIVE.with(|cell| *cell.borrow_mut() = Some(keepalive));
 
-        app.run(|_cx: &mut App| {
-            // Window is opened from zed_ios_open_window when the UIWindowScene activates.
+        app.run(|cx: &mut App| {
+            init_zed(cx);
         });
+    }
+
+    fn init_zed(cx: &mut App) {
+        use fs::{Fs, RealFs};
+        use language::LanguageRegistry;
+        use node_runtime::NodeRuntime;
+        use session::{AppSession, Session};
+        use workspace::{AppState, WorkspaceStore};
+
+        release_channel::init(semver::Version::new(0, 1, 0), cx);
+
+        // Settings — use empty default settings for now
+        settings::init(cx);
+
+        // HTTP client
+        let http = Arc::new(
+            reqwest_client::ReqwestClient::new()
+        );
+        cx.set_http_client(http);
+
+        // Theme and fonts
+        theme::init(theme::LoadThemes::JustBase, cx);
+        load_embedded_fonts(cx);
+
+        // Filesystem
+        let fs = Arc::new(RealFs::new(
+            None,
+            cx.background_executor().clone(),
+        ));
+        <dyn Fs>::set_global(fs.clone(), cx);
+
+        // Core services
+        let client = client::Client::production(cx);
+        cx.set_http_client(client.http_client());
+        client::init(&client, cx);
+
+        let user_store = cx.new(|cx| client::UserStore::new(client.clone(), cx));
+        let workspace_store = cx.new(|cx| WorkspaceStore::new(client.clone(), cx));
+        let languages = Arc::new(LanguageRegistry::new(cx.background_executor().clone()));
+
+        // Menu and actions
+        menu::init();
+        zed_actions::init();
+
+        // Session::new is async (reads KVP store). Spawn the rest of init
+        // to run after the session is created.
+        let client_for_state = client.clone();
+        cx.spawn(async move |cx| {
+            let session_id = format!("ios-{}", std::process::id());
+            let session_data = Session::new(session_id).await;
+            cx.update(|cx| {
+                let session = cx.new(|cx| AppSession::new(session_data, cx));
+                let app_state = Arc::new(AppState {
+                    client: client_for_state,
+                    fs,
+                    languages,
+                    user_store,
+                    workspace_store,
+                    node_runtime: NodeRuntime::unavailable(),
+                    build_window_options: |_, _| Default::default(),
+                    session,
+                });
+
+                workspace::init(app_state.clone(), cx);
+                APP_STATE.with(|cell| *cell.borrow_mut() = Some(app_state));
+                log::info!("[zed-ios] Zed initialized successfully");
+            });
+        })
+        .detach();
+    }
+
+    fn load_embedded_fonts(cx: &App) {
+        use util::ResultExt as _;
+
+        let asset_source = cx.asset_source();
+        let font_paths = asset_source.list("fonts").unwrap_or_default();
+        let mut embedded_fonts = Vec::new();
+        for font_path in &font_paths {
+            if font_path.ends_with(".ttf") {
+                if let Ok(Some(font_bytes)) = asset_source.load(font_path) {
+                    embedded_fonts.push(font_bytes);
+                }
+            }
+        }
+        cx.text_system()
+            .add_fonts(embedded_fonts)
+            .log_err();
+    }
+
+    thread_local! {
+        static APP_STATE: RefCell<Option<Arc<workspace::AppState>>> = RefCell::new(None);
     }
 
     pub fn ios_open_window() {
@@ -291,10 +382,32 @@ mod ios {
             let borrowed = cell.borrow();
             if let Some(keepalive) = borrowed.as_ref() {
                 keepalive.update(|cx| {
-                    if let Err(err) = cx.open_window(WindowOptions::default(), |_window, cx| {
-                        cx.new(TextSmokeView::new)
-                    }) {
-                        log::error!("[zed-ios] open_window failed: {err:?}");
+                    let app_state = APP_STATE.with(|cell| cell.borrow().clone());
+                    if let Some(app_state) = app_state {
+                        // Open a real Zed workspace
+                        let task = workspace::Workspace::new_local(
+                            vec![],
+                            app_state,
+                            None,
+                            None,
+                            None,
+                            true,
+                            cx,
+                        );
+                        cx.spawn(async move |_cx| {
+                            match task.await {
+                                Ok(_result) => log::info!("[zed-ios] Workspace opened"),
+                                Err(err) => log::error!("[zed-ios] Failed to open workspace: {err:?}"),
+                            }
+                        })
+                        .detach();
+                    } else {
+                        // Fallback to smoke test if init hasn't run
+                        if let Err(err) = cx.open_window(WindowOptions::default(), |_window, cx| {
+                            cx.new(TextSmokeView::new)
+                        }) {
+                            log::error!("[zed-ios] open_window failed: {err:?}");
+                        }
                     }
                 });
             } else {

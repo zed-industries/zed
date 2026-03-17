@@ -22124,10 +22124,28 @@ dependencies = [
 name = "zed-ios"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
+ "assets",
+ "client",
  "env_logger 0.11.8",
+ "fs",
  "gpui",
  "gpui_ios",
+ "http_client",
+ "language",
  "log",
+ "menu",
+ "node_runtime",
+ "paths",
+ "release_channel",
+ "reqwest_client",
+ "semver",
+ "session",
+ "settings",
+ "theme",
+ "util",
+ "workspace",
+ "zed_actions",
 ]
 
 [[package]]

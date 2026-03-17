@@ -890,7 +890,7 @@ impl VsCodeSettings {
         let platform = "windows";
         #[cfg(target_os = "linux")]
         let platform = "linux";
-        #[cfg(target_os = "macos")]
+        #[cfg(any(target_os = "macos", target_os = "ios"))]
         let platform = "osx";
         #[cfg(target_os = "freebsd")]
         let platform = "freebsd";

@@ -108,6 +108,10 @@ pub fn os_name() -> String {
     {
         "macOS".to_string()
     }
+    #[cfg(target_os = "ios")]
+    {
+        "iPadOS".to_string()
+    }
     #[cfg(target_os = "linux")]
     {
         format!("Linux {}", gpui::guess_compositor())
@@ -137,6 +141,10 @@ pub fn os_version() -> String {
         MACOS_VERSION_REGEX
             .replace_all(&version_string, "")
             .to_string()
+    }
+    #[cfg(target_os = "ios")]
+    {
+        "unknown".to_string()
     }
     #[cfg(any(target_os = "linux", target_os = "freebsd"))]
     {

@@ -1,4 +1,9 @@
+#[cfg(not(target_os = "ios"))]
 pub mod fs_watcher;
+#[cfg(target_os = "ios")]
+pub mod fs_watcher_stub;
+#[cfg(target_os = "ios")]
+pub use fs_watcher_stub as fs_watcher;
 
 use parking_lot::Mutex;
 use std::sync::atomic::{AtomicU8, AtomicUsize, Ordering};
@@ -15,19 +20,19 @@ use gpui::Global;
 use gpui::ReadGlobal as _;
 use gpui::SharedString;
 use std::borrow::Cow;
-#[cfg(unix)]
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 use std::ffi::CString;
 use util::command::new_command;
 
 #[cfg(unix)]
 use std::os::fd::{AsFd, AsRawFd};
-#[cfg(unix)]
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 use std::os::unix::ffi::OsStrExt;
 
 #[cfg(unix)]
 use std::os::unix::fs::{FileTypeExt, MetadataExt};
 
-#[cfg(any(target_os = "macos", target_os = "freebsd"))]
+#[cfg(any(target_os = "macos", target_os = "ios", target_os = "freebsd"))]
 use std::mem::MaybeUninit;
 
 use async_tar::Archive;
@@ -328,7 +333,7 @@ pub trait FileHandle: Send + Sync + std::fmt::Debug {
 }
 
 impl FileHandle for std::fs::File {
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", target_os = "ios"))]
     fn current_path(&self, _: &Arc<dyn Fs>) -> Result<PathBuf> {
         use std::{
             ffi::{CStr, OsStr},
