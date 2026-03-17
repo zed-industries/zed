@@ -22,8 +22,8 @@ use std::path::Path;
 use std::sync::Arc;
 use theme::ActiveTheme;
 use ui::{
-    AgentThreadStatus, ButtonStyle, HighlightedLabel, IconButtonShape, ListItem, PopoverMenuHandle,
-    Tab, ThreadItem, Tooltip, WithScrollbar, prelude::*,
+    AgentThreadStatus, ButtonStyle, HighlightedLabel, IconButtonShape, ListItem, Tab, ThreadItem,
+    Tooltip, WithScrollbar, prelude::*,
 };
 use util::ResultExt as _;
 use util::path_list::PathList;
@@ -252,7 +252,6 @@ pub struct Sidebar {
     expanded_groups: HashMap<PathList, usize>,
     view: SidebarView,
     archive_view: Option<Entity<ThreadsArchiveView>>,
-    recent_projects_popover_handle: PopoverMenuHandle<recent_projects::RecentProjects>,
     _subscriptions: Vec<gpui::Subscription>,
     _update_entries_task: Option<gpui::Task<()>>,
 }
@@ -343,7 +342,6 @@ impl Sidebar {
             expanded_groups: HashMap::new(),
             view: SidebarView::default(),
             archive_view: None,
-            recent_projects_popover_handle: PopoverMenuHandle::default(),
             _subscriptions: Vec::new(),
         }
     }
@@ -2130,14 +2128,6 @@ impl WorkspaceSidebar for Sidebar {
 
     fn has_notifications(&self, _cx: &App) -> bool {
         !self.contents.notified_threads.is_empty()
-    }
-
-    fn toggle_recent_projects_popover(&self, window: &mut Window, cx: &mut App) {
-        self.recent_projects_popover_handle.toggle(window, cx);
-    }
-
-    fn is_recent_projects_popover_deployed(&self) -> bool {
-        self.recent_projects_popover_handle.is_deployed()
     }
 }
 
