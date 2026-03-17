@@ -49,6 +49,21 @@ use devcontainer_api::read_devcontainer_configuration;
 use crate::devcontainer_api::DevContainerError;
 use crate::devcontainer_api::apply_dev_container_template;
 
+fn read_use_podman_from_devcontainer_json(project_directory: &Path) -> Option<bool> {
+    let devcontainer_json_path = project_directory.join(".devcontainer").join("devcontainer.json");
+    let root_devcontainer_json_path = project_directory.join(".devcontainer.json");
+
+    let try_read = |path: &Path| {
+        let content = std::fs::read_to_string(path).ok()?;
+        serde_json::from_str::<serde_json::Value>(&content)
+            .ok()?
+            .get("use_podman")
+            .and_then(|v| v.as_bool())
+    };
+
+    try_read(&devcontainer_json_path).or_else(|| try_read(&root_devcontainer_json_path))
+}
+
 pub use devcontainer_api::{
     DevContainerConfig, find_configs_in_snapshot, find_devcontainer_configs,
     start_dev_container_with_config,
@@ -63,7 +78,8 @@ pub struct DevContainerContext {
 impl DevContainerContext {
     pub fn from_workspace(workspace: &Workspace, cx: &App) -> Option<Self> {
         let project_directory = workspace.project().read(cx).active_project_directory(cx)?;
-        let use_podman = DevContainerSettings::get_global(cx).use_podman;
+        let use_podman = read_use_podman_from_devcontainer_json(&project_directory)
+            .unwrap_or_else(|| DevContainerSettings::get_global(cx).use_podman);
         let node_runtime = workspace.app_state().node_runtime.clone();
         Some(Self {
             project_directory,
