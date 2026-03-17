@@ -3856,6 +3856,57 @@ mod tests {
         assert_eq!(new_text, "new_content");
     }
 
+    #[gpui::test]
+    async fn test_streaming_reject_created_file_deletes_it(cx: &mut TestAppContext) {
+        let (tool, _project, action_log, fs, _thread) = setup_test(cx, json!({"dir": {}})).await;
+        cx.update(|cx| {
+            let mut settings = agent_settings::AgentSettings::get_global(cx).clone();
+            settings.tool_permissions.default = settings::ToolPermissionMode::Allow;
+            agent_settings::AgentSettings::override_global(settings, cx);
+        });
+
+        // Create a new file via the streaming edit file tool
+        let (event_stream, _rx) = ToolCallEventStream::test();
+        let task = cx.update(|cx| {
+            tool.clone().run(
+                ToolInput::resolved(StreamingEditFileToolInput {
+                    display_description: "Create new file".into(),
+                    path: "root/dir/new_file.txt".into(),
+                    mode: StreamingEditFileMode::Write,
+                    content: Some("Hello, World!".into()),
+                    edits: None,
+                }),
+                event_stream,
+                cx,
+            )
+        });
+        let result = task.await;
+        assert!(result.is_ok(), "create should succeed: {:?}", result.err());
+        cx.run_until_parked();
+
+        assert!(
+            fs.is_file(path!("/root/dir/new_file.txt").as_ref()).await,
+            "file should exist after creation"
+        );
+
+        // Reject all edits — this should delete the newly created file
+        let changed = action_log.read_with(cx, |log, cx| log.changed_buffers(cx));
+        assert!(
+            !changed.is_empty(),
+            "action_log should track the created file as changed"
+        );
+
+        action_log
+            .update(cx, |log, cx| log.reject_all_edits(None, cx))
+            .await;
+        cx.run_until_parked();
+
+        assert!(
+            !fs.is_file(path!("/root/dir/new_file.txt").as_ref()).await,
+            "file should be deleted after rejecting creation, but an empty file was left behind"
+        );
+    }
+
     async fn setup_test_with_fs(
         cx: &mut TestAppContext,
         fs: Arc<project::FakeFs>,
