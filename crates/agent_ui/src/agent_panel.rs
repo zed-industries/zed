@@ -16,8 +16,11 @@ use agent_servers::AgentServer;
 use collections::HashSet;
 use db::kvp::{Dismissable, KeyValueStore};
 use itertools::Itertools;
-use project::AgentId;
 use notifications::status_toast::{StatusToast, ToastIcon};
+use project::{
+    AgentId,
+    context_server_store::{ContextServerStatus, ServerStatusChangedEvent},
+};
 use serde::{Deserialize, Serialize};
 use settings::{LanguageModelProviderSetting, LanguageModelSelection};
 

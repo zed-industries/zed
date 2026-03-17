@@ -62,6 +62,13 @@ pub(crate) struct Client {
     #[allow(dead_code)]
     transport: Arc<dyn Transport>,
     request_timeout: Option<Duration>,
+    /// Single-slot side channel for the last transport-level error. When the
+    /// output task encounters a send failure it stashes the error here and
+    /// exits; the next request to observe cancellation `.take()`s it so it can
+    /// propagate a typed error (e.g. `TransportError::AuthRequired`) instead
+    /// of a generic "cancelled". This works because `initialize` is the sole
+    /// in-flight request at startup, but would need rethinking if concurrent
+    /// requests are ever issued during that phase.
     last_transport_error: Arc<Mutex<Option<anyhow::Error>>>,
 }
 
