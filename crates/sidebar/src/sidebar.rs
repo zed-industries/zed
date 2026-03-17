@@ -2,7 +2,6 @@ use acp_thread::ThreadStatus;
 use action_log::DiffStats;
 use agent::ThreadStore;
 use agent_client_protocol::{self as acp};
-use agent_settings::AgentSettings;
 use agent_ui::thread_metadata_store::{ThreadMetadata, ThreadMetadataStore};
 use agent_ui::threads_archive_view::{ThreadsArchiveView, ThreadsArchiveViewEvent};
 use agent_ui::{Agent, AgentPanel, AgentPanelEvent, NewThread, RemoveSelectedThread};
@@ -17,7 +16,6 @@ use gpui::{
 use menu::{Cancel, Confirm, SelectFirst, SelectLast, SelectNext, SelectPrevious};
 use project::{AgentId, Event as ProjectEvent};
 
-use settings::Settings;
 use std::collections::{HashMap, HashSet};
 use std::mem;
 use std::path::Path;
@@ -988,8 +986,6 @@ impl Sidebar {
         let is_group_header_after_first =
             ix > 0 && matches!(entry, ListEntry::ProjectHeader { .. });
 
-        let docked_right = AgentSettings::get_global(cx).dock == settings::DockPosition::Right;
-
         let rendered = match entry {
             ListEntry::ProjectHeader {
                 path_list,
@@ -1006,12 +1002,9 @@ impl Sidebar {
                 highlight_positions,
                 *has_threads,
                 is_selected,
-                docked_right,
                 cx,
             ),
-            ListEntry::Thread(thread) => {
-                self.render_thread(ix, thread, is_selected, docked_right, cx)
-            }
+            ListEntry::Thread(thread) => self.render_thread(ix, thread, is_selected, cx),
             ListEntry::ViewMore {
                 path_list,
                 remaining_count,
@@ -1052,7 +1045,6 @@ impl Sidebar {
         highlight_positions: &[usize],
         has_threads: bool,
         is_selected: bool,
-        docked_right: bool,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let id_prefix = if is_sticky { "sticky-" } else { "" };
@@ -1068,7 +1060,6 @@ impl Sidebar {
         };
         let workspace_for_new_thread = workspace.clone();
         let workspace_for_remove = workspace.clone();
-        // let workspace_for_activate = workspace.clone();
 
         let path_list_for_toggle = path_list.clone();
         let path_list_for_collapse = path_list.clone();
@@ -1099,7 +1090,6 @@ impl Sidebar {
             .group_name(group_name)
             .toggle_state(is_active_workspace)
             .focused(is_selected)
-            .docked_right(docked_right)
             .child(
                 h_flex()
                     .relative()
@@ -1184,7 +1174,6 @@ impl Sidebar {
 
     fn render_sticky_header(
         &self,
-        docked_right: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<AnyElement> {
@@ -1228,7 +1217,6 @@ impl Sidebar {
             &highlight_positions,
             *has_threads,
             is_selected,
-            docked_right,
             cx,
         );
 
@@ -1700,7 +1688,6 @@ impl Sidebar {
         ix: usize,
         thread: &ThreadEntry,
         is_focused: bool,
-        docked_right: bool,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let has_notification = self
@@ -1770,7 +1757,6 @@ impl Sidebar {
             })
             .selected(is_selected)
             .focused(is_focused)
-            .docked_right(docked_right)
             .hovered(is_hovered)
             .on_hover(cx.listener(move |this, is_hovered: &bool, _window, cx| {
                 if *is_hovered {
@@ -1945,84 +1931,71 @@ impl Sidebar {
 
     fn render_thread_list_header(
         &self,
-        docked_right: bool,
+        window: &Window,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let has_query = self.has_filter_query(cx);
+        let needs_traffic_light_padding = cfg!(target_os = "macos") && !window.is_fullscreen();
 
-        h_flex()
-            .h(Tab::container_height(cx))
+        v_flex()
             .flex_none()
-            .gap_1p5()
-            .border_b_1()
-            .border_color(cx.theme().colors().border)
-            .when(!docked_right, |this| {
-                this.child(self.render_sidebar_toggle_button(false, cx))
-            })
-            .child(self.render_filter_input())
             .child(
                 h_flex()
-                    .gap_0p5()
-                    .when(!docked_right, |this| this.pr_1p5())
-                    .when(has_query, |this| {
-                        this.child(
-                            IconButton::new("clear_filter", IconName::Close)
-                                .shape(IconButtonShape::Square)
-                                .tooltip(Tooltip::text("Clear Search"))
-                                .on_click(cx.listener(|this, _, window, cx| {
-                                    this.reset_filter_editor_text(window, cx);
-                                    this.update_entries(false, cx);
-                                })),
-                        )
+                    .h(Tab::container_height(cx) - px(1.))
+                    .border_b_1()
+                    .border_color(cx.theme().colors().border)
+                    .when(needs_traffic_light_padding, |this| {
+                        this.pl(px(ui::utils::TRAFFIC_LIGHT_PADDING))
                     })
+                    .child(self.render_sidebar_toggle_button(cx)),
+            )
+            .child(
+                h_flex()
+                    .h(Tab::container_height(cx) - px(1.))
+                    .gap_1p5()
+                    .px_1p5()
+                    .border_b_1()
+                    .border_color(cx.theme().colors().border)
+                    .child(self.render_filter_input())
                     .child(
-                        IconButton::new("archive", IconName::Archive)
-                            .icon_size(IconSize::Small)
-                            .tooltip(Tooltip::text("Archive"))
-                            .on_click(cx.listener(|this, _, window, cx| {
-                                this.show_archive(window, cx);
-                            })),
+                        h_flex()
+                            .gap_0p5()
+                            .when(has_query, |this| {
+                                this.child(
+                                    IconButton::new("clear_filter", IconName::Close)
+                                        .shape(IconButtonShape::Square)
+                                        .tooltip(Tooltip::text("Clear Search"))
+                                        .on_click(cx.listener(|this, _, window, cx| {
+                                            this.reset_filter_editor_text(window, cx);
+                                            this.update_entries(false, cx);
+                                        })),
+                                )
+                            })
+                            .child(
+                                IconButton::new("archive", IconName::Archive)
+                                    .icon_size(IconSize::Small)
+                                    .tooltip(Tooltip::text("Archive"))
+                                    .on_click(cx.listener(|this, _, window, cx| {
+                                        this.show_archive(window, cx);
+                                    })),
+                            ),
                     ),
             )
-            .when(docked_right, |this| {
-                this.pl_2()
-                    .pr_0p5()
-                    .child(self.render_sidebar_toggle_button(true, cx))
-            })
     }
 
-    fn render_sidebar_toggle_button(
-        &self,
-        docked_right: bool,
-        cx: &mut Context<Self>,
-    ) -> impl IntoElement {
-        let icon = if docked_right {
-            IconName::ThreadsSidebarRightOpen
-        } else {
-            IconName::ThreadsSidebarLeftOpen
-        };
+    fn render_sidebar_toggle_button(&self, _cx: &mut Context<Self>) -> impl IntoElement {
+        let icon = IconName::ThreadsSidebarLeftOpen;
 
-        h_flex()
-            .h_full()
-            .px_1()
-            .map(|this| {
-                if docked_right {
-                    this.pr_1p5().border_l_1()
-                } else {
-                    this.border_r_1()
-                }
-            })
-            .border_color(cx.theme().colors().border_variant)
-            .child(
-                IconButton::new("sidebar-close-toggle", icon)
-                    .icon_size(IconSize::Small)
-                    .tooltip(move |_, cx| {
-                        Tooltip::for_action("Close Threads Sidebar", &ToggleWorkspaceSidebar, cx)
-                    })
-                    .on_click(|_, window, cx| {
-                        window.dispatch_action(ToggleWorkspaceSidebar.boxed_clone(), cx);
-                    }),
-            )
+        h_flex().h_full().child(
+            IconButton::new("sidebar-close-toggle", icon)
+                .icon_size(IconSize::Small)
+                .tooltip(move |_, cx| {
+                    Tooltip::for_action("Close Threads Sidebar", &ToggleWorkspaceSidebar, cx)
+                })
+                .on_click(|_, window, cx| {
+                    window.dispatch_action(ToggleWorkspaceSidebar.boxed_clone(), cx);
+                }),
+        )
     }
 }
 
@@ -2178,8 +2151,7 @@ impl Render for Sidebar {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let _titlebar_height = ui::utils::platform_title_bar_height(window);
         let ui_font = theme::setup_ui_font(window, cx);
-        let docked_right = AgentSettings::get_global(cx).dock == settings::DockPosition::Right;
-        let sticky_header = self.render_sticky_header(docked_right, window, cx);
+        let sticky_header = self.render_sticky_header(window, cx);
 
         v_flex()
             .id("workspace-sidebar")
@@ -2200,9 +2172,11 @@ impl Render for Sidebar {
             .h_full()
             .w(self.width)
             .bg(cx.theme().colors().surface_background)
+            .border_r_1()
+            .border_color(cx.theme().colors().border)
             .map(|this| match self.view {
                 SidebarView::ThreadList => this
-                    .child(self.render_thread_list_header(docked_right, cx))
+                    .child(self.render_thread_list_header(window, cx))
                     .child(
                         v_flex()
                             .relative()
