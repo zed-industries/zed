@@ -1,4 +1,6 @@
 mod cursor;
+#[cfg(any(test, feature = "test-support"))]
+pub mod property_test;
 mod tree_map;
 
 use arrayvec::ArrayVec;
@@ -401,7 +403,7 @@ impl<T: Item> SumTree<T> {
         }
 
         let mut pos = D::zero(cx);
-        return match Self::find_recurse::<_, _, true>(cx, target, bias, &mut pos, self) {
+        return match Self::find_iterate::<_, _, true>(cx, target, bias, &mut pos, self) {
             Some((item, end)) => (pos, end, Some(item)),
             None => (pos.clone(), pos, None),
         };
@@ -427,68 +429,157 @@ impl<T: Item> SumTree<T> {
         }
 
         let mut pos = D::zero(cx);
-        return match Self::find_recurse::<_, _, false>(cx, target, bias, &mut pos, self) {
+        return match Self::find_iterate::<_, _, false>(cx, target, bias, &mut pos, self) {
             Some((item, end)) => (pos, end, Some(item)),
             None => (pos.clone(), pos, None),
         };
     }
 
-    fn find_recurse<'tree, 'a, D, Target, const EXACT: bool>(
+    fn find_iterate<'tree, 'a, D, Target, const EXACT: bool>(
         cx: <T::Summary as Summary>::Context<'a>,
         target: &Target,
         bias: Bias,
         position: &mut D,
-        this: &'tree SumTree<T>,
+        mut this: &'tree SumTree<T>,
     ) -> Option<(&'tree T, D)>
     where
         D: Dimension<'tree, T::Summary>,
         Target: SeekTarget<'tree, T::Summary, D>,
     {
-        match &*this.0 {
-            Node::Internal {
-                child_summaries,
-                child_trees,
-                ..
-            } => {
-                for (child_tree, child_summary) in child_trees.iter().zip(child_summaries) {
-                    let child_end = position.clone().with_added_summary(child_summary, cx);
+        'iterate: loop {
+            match &*this.0 {
+                Node::Internal {
+                    child_summaries,
+                    child_trees,
+                    ..
+                } => {
+                    for (child_tree, child_summary) in child_trees.iter().zip(child_summaries) {
+                        let child_end = position.clone().with_added_summary(child_summary, cx);
 
-                    let comparison = target.cmp(&child_end, cx);
-                    let target_in_child = comparison == Ordering::Less
-                        || (comparison == Ordering::Equal && bias == Bias::Left);
-                    if target_in_child {
-                        return Self::find_recurse::<D, Target, EXACT>(
-                            cx, target, bias, position, child_tree,
-                        );
+                        let comparison = target.cmp(&child_end, cx);
+                        let target_in_child = comparison == Ordering::Less
+                            || (comparison == Ordering::Equal && bias == Bias::Left);
+                        if target_in_child {
+                            this = child_tree;
+                            continue 'iterate;
+                        }
+                        *position = child_end;
                     }
-                    *position = child_end;
+                }
+                Node::Leaf {
+                    items,
+                    item_summaries,
+                    ..
+                } => {
+                    for (item, item_summary) in items.iter().zip(item_summaries) {
+                        let mut child_end = position.clone();
+                        child_end.add_summary(item_summary, cx);
+
+                        let comparison = target.cmp(&child_end, cx);
+                        let entry_found = if EXACT {
+                            comparison == Ordering::Equal
+                        } else {
+                            comparison == Ordering::Less
+                                || (comparison == Ordering::Equal && bias == Bias::Left)
+                        };
+                        if entry_found {
+                            return Some((item, child_end));
+                        }
+
+                        *position = child_end;
+                    }
                 }
             }
-            Node::Leaf {
-                items,
-                item_summaries,
-                ..
-            } => {
-                for (item, item_summary) in items.iter().zip(item_summaries) {
-                    let mut child_end = position.clone();
-                    child_end.add_summary(item_summary, cx);
-
-                    let comparison = target.cmp(&child_end, cx);
-                    let entry_found = if EXACT {
-                        comparison == Ordering::Equal
-                    } else {
-                        comparison == Ordering::Less
-                            || (comparison == Ordering::Equal && bias == Bias::Left)
-                    };
-                    if entry_found {
-                        return Some((item, child_end));
-                    }
-
-                    *position = child_end;
-                }
-            }
+            return None;
         }
-        None
+    }
+
+    /// A more efficient version of `Cursor::new()` + `Cursor::seek()` + `Cursor::item()`
+    #[instrument(skip_all)]
+    pub fn find_with_prev<'a, 'slf, D, Target>(
+        &'slf self,
+        cx: <T::Summary as Summary>::Context<'a>,
+        target: &Target,
+        bias: Bias,
+    ) -> (D, D, Option<(Option<&'slf T>, &'slf T)>)
+    where
+        D: Dimension<'slf, T::Summary>,
+        Target: SeekTarget<'slf, T::Summary, D>,
+    {
+        let tree_end = D::zero(cx).with_added_summary(self.summary(), cx);
+        let comparison = target.cmp(&tree_end, cx);
+        if comparison == Ordering::Greater || (comparison == Ordering::Equal && bias == Bias::Right)
+        {
+            return (tree_end.clone(), tree_end, None);
+        }
+
+        let mut pos = D::zero(cx);
+        return match Self::find_with_prev_iterate::<_, _, false>(cx, target, bias, &mut pos, self) {
+            Some((prev, item, end)) => (pos, end, Some((prev, item))),
+            None => (pos.clone(), pos, None),
+        };
+    }
+
+    fn find_with_prev_iterate<'tree, 'a, D, Target, const EXACT: bool>(
+        cx: <T::Summary as Summary>::Context<'a>,
+        target: &Target,
+        bias: Bias,
+        position: &mut D,
+        mut this: &'tree SumTree<T>,
+    ) -> Option<(Option<&'tree T>, &'tree T, D)>
+    where
+        D: Dimension<'tree, T::Summary>,
+        Target: SeekTarget<'tree, T::Summary, D>,
+    {
+        let mut prev = None;
+        'iterate: loop {
+            match &*this.0 {
+                Node::Internal {
+                    child_summaries,
+                    child_trees,
+                    ..
+                } => {
+                    for (child_tree, child_summary) in child_trees.iter().zip(child_summaries) {
+                        let child_end = position.clone().with_added_summary(child_summary, cx);
+
+                        let comparison = target.cmp(&child_end, cx);
+                        let target_in_child = comparison == Ordering::Less
+                            || (comparison == Ordering::Equal && bias == Bias::Left);
+                        if target_in_child {
+                            this = child_tree;
+                            continue 'iterate;
+                        }
+                        prev = child_tree.last();
+                        *position = child_end;
+                    }
+                }
+                Node::Leaf {
+                    items,
+                    item_summaries,
+                    ..
+                } => {
+                    for (item, item_summary) in items.iter().zip(item_summaries) {
+                        let mut child_end = position.clone();
+                        child_end.add_summary(item_summary, cx);
+
+                        let comparison = target.cmp(&child_end, cx);
+                        let entry_found = if EXACT {
+                            comparison == Ordering::Equal
+                        } else {
+                            comparison == Ordering::Less
+                                || (comparison == Ordering::Equal && bias == Bias::Left)
+                        };
+                        if entry_found {
+                            return Some((prev, item, child_end));
+                        }
+
+                        prev = Some(item);
+                        *position = child_end;
+                    }
+                }
+            }
+            return None;
+        }
     }
 
     pub fn cursor<'a, 'b, D>(
@@ -524,6 +615,10 @@ impl<T: Item> SumTree<T> {
         self.rightmost_leaf().0.items().last()
     }
 
+    pub fn last_summary(&self) -> Option<&T::Summary> {
+        self.rightmost_leaf().0.child_summaries().last()
+    }
+
     pub fn update_last(
         &mut self,
         f: impl FnOnce(&mut T),
@@ -556,6 +651,51 @@ impl<T: Item> SumTree<T> {
                 item_summaries,
             } => {
                 if let Some((item, item_summary)) = items.last_mut().zip(item_summaries.last_mut())
+                {
+                    (f)(item);
+                    *item_summary = item.summary(cx);
+                    *summary = sum(item_summaries.iter(), cx);
+                    Some(summary.clone())
+                } else {
+                    None
+                }
+            }
+        }
+    }
+
+    pub fn update_first(
+        &mut self,
+        f: impl FnOnce(&mut T),
+        cx: <T::Summary as Summary>::Context<'_>,
+    ) {
+        self.update_first_recursive(f, cx);
+    }
+
+    fn update_first_recursive(
+        &mut self,
+        f: impl FnOnce(&mut T),
+        cx: <T::Summary as Summary>::Context<'_>,
+    ) -> Option<T::Summary> {
+        match Arc::make_mut(&mut self.0) {
+            Node::Internal {
+                summary,
+                child_summaries,
+                child_trees,
+                ..
+            } => {
+                let first_summary = child_summaries.first_mut().unwrap();
+                let first_child = child_trees.first_mut().unwrap();
+                *first_summary = first_child.update_first_recursive(f, cx).unwrap();
+                *summary = sum(child_summaries.iter(), cx);
+                Some(summary.clone())
+            }
+            Node::Leaf {
+                summary,
+                items,
+                item_summaries,
+            } => {
+                if let Some((item, item_summary)) =
+                    items.first_mut().zip(item_summaries.first_mut())
                 {
                     (f)(item);
                     *item_summary = item.summary(cx);

@@ -1,6 +1,6 @@
 use crate::{
     ActiveDiagnostic, Anchor, AnchorRangeExt, DisplayPoint, DisplayRow, Editor, EditorSettings,
-    EditorSnapshot, GlobalDiagnosticRenderer, Hover,
+    EditorSnapshot, GlobalDiagnosticRenderer, HighlightKey, Hover,
     display_map::{InlayOffset, ToDisplayPoint, is_invisible},
     hover_links::{InlayHighlight, RangeInEditor},
     movement::TextLayoutDetails,
@@ -8,10 +8,10 @@ use crate::{
 };
 use anyhow::Context as _;
 use gpui::{
-    AnyElement, AsyncWindowContext, Context, Entity, Focusable as _, FontWeight, Hsla,
+    AnyElement, App, AsyncWindowContext, Bounds, Context, Entity, Focusable as _, FontWeight, Hsla,
     InteractiveElement, IntoElement, MouseButton, ParentElement, Pixels, ScrollHandle, Size,
     StatefulInteractiveElement, StyleRefinement, Styled, Subscription, Task, TextStyleRefinement,
-    Window, div, px,
+    Window, canvas, div, px,
 };
 use itertools::Itertools;
 use language::{DiagnosticEntry, Language, LanguageRegistry};
@@ -20,11 +20,14 @@ use markdown::{Markdown, MarkdownElement, MarkdownStyle};
 use multi_buffer::{MultiBufferOffset, ToOffset, ToPoint};
 use project::{HoverBlock, HoverBlockKind, InlayHintLabelPart};
 use settings::Settings;
-use std::{borrow::Cow, cell::RefCell};
+use std::{
+    borrow::Cow,
+    cell::{Cell, RefCell},
+};
 use std::{ops::Range, sync::Arc, time::Duration};
 use std::{path::PathBuf, rc::Rc};
 use theme::ThemeSettings;
-use ui::{Scrollbars, WithScrollbar, prelude::*, theme_is_transparent};
+use ui::{CopyButton, Scrollbars, WithScrollbar, prelude::*, theme_is_transparent};
 use url::Url;
 use util::TryFutureExt;
 use workspace::{OpenOptions, OpenVisible, Workspace};
@@ -45,6 +48,7 @@ pub fn hover(editor: &mut Editor, _: &Hover, window: &mut Window, cx: &mut Conte
 pub fn hover_at(
     editor: &mut Editor,
     anchor: Option<Anchor>,
+    mouse_position: Option<gpui::Point<Pixels>>,
     window: &mut Window,
     cx: &mut Context<Editor>,
 ) {
@@ -52,10 +56,32 @@ pub fn hover_at(
         if show_keyboard_hover(editor, window, cx) {
             return;
         }
+
         if let Some(anchor) = anchor {
+            editor.hover_state.hiding_delay_task = None;
+            editor.hover_state.closest_mouse_distance = None;
             show_hover(editor, anchor, false, window, cx);
         } else {
-            hide_hover(editor, cx);
+            let mut getting_closer = false;
+            if let Some(mouse_position) = mouse_position {
+                getting_closer = editor.hover_state.is_mouse_getting_closer(mouse_position);
+            }
+
+            // If we are moving away and a timer is already running, just let it count down.
+            if !getting_closer && editor.hover_state.hiding_delay_task.is_some() {
+                return;
+            }
+
+            // If we are moving closer, or if no timer is running at all, start/restart the 300ms timer.
+            let delay = Duration::from_millis(300u64);
+            let task = cx.spawn(async move |this, cx| {
+                cx.background_executor().timer(delay).await;
+                this.update(cx, |editor, cx| {
+                    hide_hover(editor, cx);
+                })
+                .ok();
+            });
+            editor.hover_state.hiding_delay_task = Some(task);
         }
     }
 }
@@ -106,12 +132,12 @@ pub fn find_hovered_hint_part(
     hovered_offset: InlayOffset,
 ) -> Option<(InlayHintLabelPart, Range<InlayOffset>)> {
     if hovered_offset >= hint_start {
-        let mut hovered_character = hovered_offset - hint_start;
+        let mut offset_in_hint = hovered_offset - hint_start;
         let mut part_start = hint_start;
         for part in label_parts {
-            let part_len = part.value.chars().count();
-            if hovered_character > part_len {
-                hovered_character -= part_len;
+            let part_len = part.value.len();
+            if offset_in_hint >= part_len {
+                offset_in_hint -= part_len;
                 part_start.0 += part_len;
             } else {
                 let part_end = InlayOffset(part_start.0 + part_len);
@@ -156,6 +182,9 @@ pub fn hover_at_inlay(
 
         let hover_popover_delay = EditorSettings::get_global(cx).hover_popover_delay.0;
 
+        editor.hover_state.hiding_delay_task = None;
+        editor.hover_state.closest_mouse_distance = None;
+
         let task = cx.spawn_in(window, async move |this, cx| {
             async move {
                 cx.background_executor()
@@ -165,7 +194,7 @@ pub fn hover_at_inlay(
                     this.hover_state.diagnostic_popover = None;
                 })?;
 
-                let language_registry = project.read_with(cx, |p, _| p.languages().clone())?;
+                let language_registry = project.read_with(cx, |p, _| p.languages().clone());
                 let blocks = vec![inlay_hover.tooltip];
                 let parsed_content =
                     parse_blocks(&blocks, Some(&language_registry), None, cx).await;
@@ -187,6 +216,7 @@ pub fn hover_at_inlay(
                     scroll_handle,
                     keyboard_grace: Rc::new(RefCell::new(false)),
                     anchor: None,
+                    last_bounds: Rc::new(Cell::new(None)),
                     _subscription: subscription,
                 };
 
@@ -216,8 +246,10 @@ pub fn hide_hover(editor: &mut Editor, cx: &mut Context<Editor>) -> bool {
 
     editor.hover_state.info_task = None;
     editor.hover_state.triggered_from = None;
+    editor.hover_state.hiding_delay_task = None;
+    editor.hover_state.closest_mouse_distance = None;
 
-    editor.clear_background_highlights::<HoverState>(cx);
+    editor.clear_background_highlights(HighlightKey::HoverState, cx);
 
     if did_hide {
         cx.notify();
@@ -253,6 +285,9 @@ fn show_hover(
         .project()
         .map(|project| project.read(cx).languages().clone());
     let provider = editor.semantics_provider.clone()?;
+
+    editor.hover_state.hiding_delay_task = None;
+    editor.hover_state.closest_mouse_distance = None;
 
     if !ignore_timeout {
         if same_info_hover(editor, &snapshot, anchor)
@@ -398,6 +433,7 @@ fn show_hover(
                     background_color,
                     keyboard_grace: Rc::new(RefCell::new(ignore_timeout)),
                     anchor,
+                    last_bounds: Rc::new(Cell::new(None)),
                     _subscription: subscription,
                 })
             } else {
@@ -466,6 +502,7 @@ fn show_hover(
                     scroll_handle,
                     keyboard_grace: Rc::new(RefCell::new(ignore_timeout)),
                     anchor: Some(anchor),
+                    last_bounds: Rc::new(Cell::new(None)),
                     _subscription: subscription,
                 })
             }
@@ -507,16 +544,18 @@ fn show_hover(
                     scroll_handle,
                     keyboard_grace: Rc::new(RefCell::new(ignore_timeout)),
                     anchor: Some(anchor),
+                    last_bounds: Rc::new(Cell::new(None)),
                     _subscription: subscription,
                 });
             }
 
             this.update_in(cx, |editor, window, cx| {
                 if hover_highlights.is_empty() {
-                    editor.clear_background_highlights::<HoverState>(cx);
+                    editor.clear_background_highlights(HighlightKey::HoverState, cx);
                 } else {
                     // Highlight the selected symbol using a background highlight
-                    editor.highlight_background::<HoverState>(
+                    editor.highlight_background(
+                        HighlightKey::HoverState,
                         &hover_highlights,
                         |_, theme| theme.colors().element_hover, // todo update theme
                         cx,
@@ -612,6 +651,7 @@ pub fn hover_markdown_style(window: &Window, cx: &App) -> MarkdownStyle {
     let buffer_font_family = settings.buffer_font.family.clone();
     let buffer_font_features = settings.buffer_font.features.clone();
     let buffer_font_fallbacks = settings.buffer_font.fallbacks.clone();
+    let buffer_font_weight = settings.buffer_font.weight;
 
     let mut base_text_style = window.text_style();
     base_text_style.refine(&TextStyleRefinement {
@@ -626,12 +666,14 @@ pub fn hover_markdown_style(window: &Window, cx: &App) -> MarkdownStyle {
         code_block: StyleRefinement::default()
             .my(rems(1.))
             .font_buffer(cx)
-            .font_features(buffer_font_features.clone()),
+            .font_features(buffer_font_features.clone())
+            .font_weight(buffer_font_weight),
         inline_code: TextStyleRefinement {
             background_color: Some(cx.theme().colors().background),
             font_family: Some(buffer_font_family),
             font_features: Some(buffer_font_features),
             font_fallbacks: buffer_font_fallbacks,
+            font_weight: Some(buffer_font_weight),
             ..Default::default()
         },
         rule_color: cx.theme().colors().border,
@@ -718,7 +760,7 @@ pub fn diagnostics_markdown_style(window: &Window, cx: &App) -> MarkdownStyle {
 pub fn open_markdown_url(link: SharedString, window: &mut Window, cx: &mut App) {
     if let Ok(uri) = Url::parse(&link)
         && uri.scheme() == "file"
-        && let Some(workspace) = window.root::<Workspace>().flatten()
+        && let Some(workspace) = Workspace::for_window(window, cx)
     {
         workspace.update(cx, |workspace, cx| {
             let task = workspace.open_abs_path(
@@ -774,11 +816,67 @@ pub struct HoverState {
     pub diagnostic_popover: Option<DiagnosticPopover>,
     pub triggered_from: Option<Anchor>,
     pub info_task: Option<Task<Option<()>>>,
+    pub closest_mouse_distance: Option<Pixels>,
+    pub hiding_delay_task: Option<Task<()>>,
 }
 
 impl HoverState {
     pub fn visible(&self) -> bool {
         !self.info_popovers.is_empty() || self.diagnostic_popover.is_some()
+    }
+
+    pub fn is_mouse_getting_closer(&mut self, mouse_position: gpui::Point<Pixels>) -> bool {
+        if !self.visible() {
+            return false;
+        }
+
+        let mut popover_bounds = Vec::new();
+        for info_popover in &self.info_popovers {
+            if let Some(bounds) = info_popover.last_bounds.get() {
+                popover_bounds.push(bounds);
+            }
+        }
+        if let Some(diagnostic_popover) = &self.diagnostic_popover {
+            if let Some(bounds) = diagnostic_popover.last_bounds.get() {
+                popover_bounds.push(bounds);
+            }
+        }
+
+        if popover_bounds.is_empty() {
+            return false;
+        }
+
+        let distance = popover_bounds
+            .iter()
+            .map(|bounds| self.distance_from_point_to_bounds(mouse_position, *bounds))
+            .min_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal))
+            .unwrap_or(px(f32::MAX));
+
+        if let Some(closest_distance) = self.closest_mouse_distance {
+            if distance > closest_distance + px(4.0) {
+                return false;
+            }
+        }
+
+        self.closest_mouse_distance =
+            Some(distance.min(self.closest_mouse_distance.unwrap_or(distance)));
+        true
+    }
+
+    fn distance_from_point_to_bounds(
+        &self,
+        point: gpui::Point<Pixels>,
+        bounds: Bounds<Pixels>,
+    ) -> Pixels {
+        let center_x = bounds.origin.x + bounds.size.width / 2.;
+        let center_y = bounds.origin.y + bounds.size.height / 2.;
+        let dx: f32 = ((point.x - center_x).abs() - bounds.size.width / 2.)
+            .max(px(0.0))
+            .into();
+        let dy: f32 = ((point.y - center_y).abs() - bounds.size.height / 2.)
+            .max(px(0.0))
+            .into();
+        px((dx.powi(2) + dy.powi(2)).sqrt())
     }
 
     pub(crate) fn render(
@@ -883,6 +981,7 @@ pub struct InfoPopover {
     pub scroll_handle: ScrollHandle,
     pub keyboard_grace: Rc<RefCell<bool>>,
     pub anchor: Option<Anchor>,
+    pub last_bounds: Rc<Cell<Option<Bounds<Pixels>>>>,
     _subscription: Option<Subscription>,
 }
 
@@ -894,13 +993,36 @@ impl InfoPopover {
         cx: &mut Context<Editor>,
     ) -> AnyElement {
         let keyboard_grace = Rc::clone(&self.keyboard_grace);
+        let this = cx.entity().downgrade();
+        let bounds_cell = self.last_bounds.clone();
         div()
             .id("info_popover")
             .occlude()
             .elevation_2(cx)
+            .child(
+                canvas(
+                    {
+                        move |bounds, _window, _cx| {
+                            bounds_cell.set(Some(bounds));
+                        }
+                    },
+                    |_, _, _, _| {},
+                )
+                .absolute()
+                .size_full(),
+            )
             // Prevent a mouse down/move on the popover from being propagated to the editor,
             // because that would dismiss the popover.
-            .on_mouse_move(|_, _, cx| cx.stop_propagation())
+            .on_mouse_move({
+                move |_, _, cx: &mut App| {
+                    this.update(cx, |editor, _| {
+                        editor.hover_state.closest_mouse_distance = Some(px(0.0));
+                        editor.hover_state.hiding_delay_task = None;
+                    })
+                    .ok();
+                    cx.stop_propagation()
+                }
+            })
             .on_mouse_down(MouseButton::Left, move |_, _, cx| {
                 let mut keyboard_grace = keyboard_grace.borrow_mut();
                 *keyboard_grace = false;
@@ -953,6 +1075,7 @@ pub struct DiagnosticPopover {
     background_color: Hsla,
     pub keyboard_grace: Rc<RefCell<bool>>,
     pub anchor: Anchor,
+    pub last_bounds: Rc<Cell<Option<Bounds<Pixels>>>>,
     _subscription: Subscription,
     pub scroll_handle: ScrollHandle,
 }
@@ -966,10 +1089,23 @@ impl DiagnosticPopover {
     ) -> AnyElement {
         let keyboard_grace = Rc::clone(&self.keyboard_grace);
         let this = cx.entity().downgrade();
+        let bounds_cell = self.last_bounds.clone();
         div()
             .id("diagnostic")
             .occlude()
             .elevation_2_borderless(cx)
+            .child(
+                canvas(
+                    {
+                        move |bounds, _window, _cx| {
+                            bounds_cell.set(Some(bounds));
+                        }
+                    },
+                    |_, _, _, _| {},
+                )
+                .absolute()
+                .size_full(),
+            )
             // Don't draw the background color if the theme
             // allows transparent surfaces.
             .when(theme_is_transparent(cx), |this| {
@@ -977,7 +1113,17 @@ impl DiagnosticPopover {
             })
             // Prevent a mouse move on the popover from being propagated to the editor,
             // because that would dismiss the popover.
-            .on_mouse_move(|_, _, cx| cx.stop_propagation())
+            .on_mouse_move({
+                let this = this.clone();
+                move |_, _, cx: &mut App| {
+                    this.update(cx, |editor, _| {
+                        editor.hover_state.closest_mouse_distance = Some(px(0.0));
+                        editor.hover_state.hiding_delay_task = None;
+                    })
+                    .ok();
+                    cx.stop_propagation()
+                }
+            })
             // Prevent a mouse down on the popover from being propagated to the editor,
             // because that would move the cursor.
             .on_mouse_down(MouseButton::Left, move |_, _, cx| {
@@ -987,8 +1133,10 @@ impl DiagnosticPopover {
             })
             .child(
                 div()
+                    .relative()
                     .py_1()
-                    .px_2()
+                    .pl_2()
+                    .pr_8()
                     .bg(self.background_color)
                     .border_1()
                     .border_color(self.border_color)
@@ -996,9 +1144,9 @@ impl DiagnosticPopover {
                     .child(
                         div()
                             .id("diagnostic-content-container")
-                            .overflow_y_scroll()
                             .max_w(max_size.width)
                             .max_h(max_size.height)
+                            .overflow_y_scroll()
                             .track_scroll(&self.scroll_handle)
                             .child(
                                 MarkdownElement::new(
@@ -1023,6 +1171,10 @@ impl DiagnosticPopover {
                                 ),
                             ),
                     )
+                    .child(div().absolute().top_1().right_1().child({
+                        let message = self.local_diagnostic.diagnostic.message.clone();
+                        CopyButton::new("copy-diagnostic", message).tooltip_label("Copy Diagnostic")
+                    }))
                     .custom_scrollbars(
                         Scrollbars::for_settings::<EditorSettings>()
                             .tracked_scroll_handle(&self.scroll_handle),
@@ -1141,7 +1293,7 @@ mod tests {
             let anchor = snapshot
                 .buffer_snapshot()
                 .anchor_before(hover_point.to_offset(&snapshot, Bias::Left));
-            hover_at(editor, Some(anchor), window, cx)
+            hover_at(editor, Some(anchor), None, window, cx)
         });
         assert!(!cx.editor(|editor, _window, _cx| editor.hover_state.visible()));
 
@@ -1241,7 +1393,7 @@ mod tests {
             let anchor = snapshot
                 .buffer_snapshot()
                 .anchor_before(hover_point.to_offset(&snapshot, Bias::Left));
-            hover_at(editor, Some(anchor), window, cx)
+            hover_at(editor, Some(anchor), None, window, cx)
         });
         cx.background_executor
             .advance_clock(Duration::from_millis(get_hover_popover_delay(&cx) + 100));
@@ -1279,7 +1431,7 @@ mod tests {
             let anchor = snapshot
                 .buffer_snapshot()
                 .anchor_before(hover_point.to_offset(&snapshot, Bias::Left));
-            hover_at(editor, Some(anchor), window, cx)
+            hover_at(editor, Some(anchor), None, window, cx)
         });
         assert!(!cx.editor(|editor, _window, _cx| editor.hover_state.visible()));
 
@@ -1333,7 +1485,7 @@ mod tests {
             let anchor = snapshot
                 .buffer_snapshot()
                 .anchor_before(hover_point.to_offset(&snapshot, Bias::Left));
-            hover_at(editor, Some(anchor), window, cx)
+            hover_at(editor, Some(anchor), None, window, cx)
         });
         cx.background_executor
             .advance_clock(Duration::from_millis(get_hover_popover_delay(&cx) + 100));
@@ -1742,6 +1894,7 @@ mod tests {
             editor.update_inlay_link_and_hover_points(
                 &editor.snapshot(window, cx),
                 new_type_hint_part_hover_position,
+                None,
                 true,
                 false,
                 window,
@@ -1812,6 +1965,7 @@ mod tests {
             editor.update_inlay_link_and_hover_points(
                 &editor.snapshot(window, cx),
                 new_type_hint_part_hover_position,
+                None,
                 true,
                 false,
                 window,
@@ -1867,6 +2021,7 @@ mod tests {
             editor.update_inlay_link_and_hover_points(
                 &editor.snapshot(window, cx),
                 struct_hint_part_hover_position,
+                None,
                 true,
                 false,
                 window,
@@ -1900,5 +2055,99 @@ mod tests {
                 "Rendered markdown element should remove backticks from text"
             );
         });
+    }
+
+    #[test]
+    fn test_find_hovered_hint_part_with_multibyte_characters() {
+        use crate::display_map::InlayOffset;
+        use multi_buffer::MultiBufferOffset;
+        use project::InlayHintLabelPart;
+
+        // Test with multi-byte UTF-8 character "→" (3 bytes, 1 character)
+        let label = "→ app/Livewire/UserProfile.php";
+        let label_parts = vec![InlayHintLabelPart {
+            value: label.to_string(),
+            tooltip: None,
+            location: None,
+        }];
+
+        let hint_start = InlayOffset(MultiBufferOffset(100));
+
+        // Verify the label has more bytes than characters (due to "→")
+        assert_eq!(label.len(), 32); // bytes
+        assert_eq!(label.chars().count(), 30); // characters
+
+        // Test hovering at the last byte (should find the part)
+        let last_byte_offset = InlayOffset(MultiBufferOffset(100 + label.len() - 1));
+        let result = find_hovered_hint_part(label_parts.clone(), hint_start, last_byte_offset);
+        assert!(
+            result.is_some(),
+            "Should find part when hovering at last byte"
+        );
+        let (part, range) = result.unwrap();
+        assert_eq!(part.value, label);
+        assert_eq!(range.start, hint_start);
+        assert_eq!(range.end, InlayOffset(MultiBufferOffset(100 + label.len())));
+
+        // Test hovering at the first byte of "→" (byte 0)
+        let first_byte_offset = InlayOffset(MultiBufferOffset(100));
+        let result = find_hovered_hint_part(label_parts.clone(), hint_start, first_byte_offset);
+        assert!(
+            result.is_some(),
+            "Should find part when hovering at first byte"
+        );
+
+        // Test hovering in the middle of "→" (byte 1, still part of the arrow character)
+        let mid_arrow_offset = InlayOffset(MultiBufferOffset(101));
+        let result = find_hovered_hint_part(label_parts, hint_start, mid_arrow_offset);
+        assert!(
+            result.is_some(),
+            "Should find part when hovering in middle of multi-byte char"
+        );
+
+        // Test with multiple parts containing multi-byte characters
+        // Part ranges are [start, end) - start inclusive, end exclusive
+        // "→ " occupies bytes [0, 4), "path" occupies bytes [4, 8)
+        let parts = vec![
+            InlayHintLabelPart {
+                value: "→ ".to_string(), // 4 bytes (3 + 1)
+                tooltip: None,
+                location: None,
+            },
+            InlayHintLabelPart {
+                value: "path".to_string(), // 4 bytes
+                tooltip: None,
+                location: None,
+            },
+        ];
+
+        // Hover at byte 3 (last byte of "→ ", the space character)
+        let arrow_last_byte = InlayOffset(MultiBufferOffset(100 + 3));
+        let result = find_hovered_hint_part(parts.clone(), hint_start, arrow_last_byte);
+        assert!(result.is_some(), "Should find first part at its last byte");
+        let (part, range) = result.unwrap();
+        assert_eq!(part.value, "→ ");
+        assert_eq!(
+            range,
+            InlayOffset(MultiBufferOffset(100))..InlayOffset(MultiBufferOffset(104))
+        );
+
+        // Hover at byte 4 (first byte of "path", at the boundary)
+        let path_start_offset = InlayOffset(MultiBufferOffset(100 + 4));
+        let result = find_hovered_hint_part(parts.clone(), hint_start, path_start_offset);
+        assert!(result.is_some(), "Should find second part at boundary");
+        let (part, _) = result.unwrap();
+        assert_eq!(part.value, "path");
+
+        // Hover at byte 7 (last byte of "path")
+        let path_end_offset = InlayOffset(MultiBufferOffset(100 + 7));
+        let result = find_hovered_hint_part(parts, hint_start, path_end_offset);
+        assert!(result.is_some(), "Should find second part at last byte");
+        let (part, range) = result.unwrap();
+        assert_eq!(part.value, "path");
+        assert_eq!(
+            range,
+            InlayOffset(MultiBufferOffset(104))..InlayOffset(MultiBufferOffset(108))
+        );
     }
 }

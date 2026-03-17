@@ -116,7 +116,7 @@ fn editor_render(bencher: &mut Bencher<'_>, cx: &TestAppContext) {
 }
 
 pub fn benches() {
-    let dispatcher = TestDispatcher::new(StdRng::seed_from_u64(1));
+    let dispatcher = TestDispatcher::new(1);
     let cx = gpui::TestAppContext::build(dispatcher, None);
     cx.update(|cx| {
         let store = SettingsStore::test(cx);

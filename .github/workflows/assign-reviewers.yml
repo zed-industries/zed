@@ -1,0 +1,81 @@
+# Assign Reviewers — Smart team assignment based on diff weight
+#
+# Triggers on PR open and ready_for_review events. Checks out the coordinator
+# repo (zed-industries/codeowner-coordinator) to access the assignment script and rules,
+# then assigns the 1-2 most relevant teams as reviewers.
+#
+# NOTE: This file is stored in the codeowner-coordinator repo but must be deployed to
+# the zed repo at .github/workflows/assign-reviewers.yml. See INSTALL.md.
+#
+# AUTH NOTE: Uses a GitHub App (COORDINATOR_APP_ID + COORDINATOR_APP_PRIVATE_KEY)
+# for all API operations: cloning the private coordinator repo, requesting team
+# reviewers, and setting PR assignees. GITHUB_TOKEN is not used.
+
+name: Assign Reviewers
+
+on:
+  pull_request:
+    types: [opened, ready_for_review]
+
+# GITHUB_TOKEN is not used — all operations use the GitHub App token.
+# Declare minimal permissions so the default token has no write access.
+permissions: {}
+
+# Only run for PRs from within the org (not forks) — fork PRs don't have
+# write access to request team reviewers.
+jobs:
+  assign-reviewers:
+    if: >-
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.draft == false &&
+      contains(fromJSON('["MEMBER", "OWNER"]'), github.event.pull_request.author_association)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Generate app token
+        id: app-token
+        uses: actions/create-github-app-token@29824e69f54612133e76f7eaac726eef6c875baf  # v2.2.1
+        with:
+          app-id: ${{ vars.COORDINATOR_APP_ID }}
+          private-key: ${{ secrets.COORDINATOR_APP_PRIVATE_KEY }}
+          repositories: codeowner-coordinator,zed
+
+      - name: Checkout coordinator repo
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4.3.1
+        with:
+          repository: zed-industries/codeowner-coordinator
+          ref: main
+          path: codeowner-coordinator
+          token: ${{ steps.app-token.outputs.token }}
+          persist-credentials: false
+
+      - name: Setup Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065  # v5.6.0
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install pyyaml==6.0.3
+
+      - name: Assign reviewers
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          TARGET_REPO: ${{ github.repository }}
+        run: |
+          cd codeowner-coordinator
+          python .github/scripts/assign-reviewers.py \
+            --pr "$PR_URL" \
+            --apply \
+            --rules-file team-membership-rules.yml \
+            --repo "$TARGET_REPO" \
+            --org zed-industries \
+            --min-association member \
+            2>&1 | tee /tmp/assign-reviewers-output.txt
+
+      - name: Upload output
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
+        with:
+          name: assign-reviewers-output
+          path: /tmp/assign-reviewers-output.txt
+          retention-days: 30

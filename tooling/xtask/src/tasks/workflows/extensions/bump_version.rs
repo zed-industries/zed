@@ -1,21 +1,22 @@
 use gh_workflow::{
-    Event, Expression, Input, Job, PullRequest, PullRequestType, Push, Run, Step, UsesJob,
-    Workflow, WorkflowDispatch,
+    Event, Expression, Input, Job, Level, Permissions, PullRequest, PullRequestType, Push, Run,
+    Step, UsesJob, Workflow, WorkflowDispatch,
 };
-use indexmap::IndexMap;
 use indoc::indoc;
 
 use crate::tasks::workflows::{
+    GenerateWorkflowArgs, GitSha,
+    extensions::WithAppSecrets,
     runners,
-    steps::{NamedJob, named},
-    vars::{self, JobOutput, StepOutput, one_workflow_per_non_main_branch_and_token},
+    steps::{CommonJobConditions, NamedJob, named},
+    vars::{JobOutput, StepOutput, one_workflow_per_non_main_branch_and_token},
 };
 
-pub(crate) fn bump_version() -> Workflow {
+pub(crate) fn bump_version(args: &GenerateWorkflowArgs) -> Workflow {
     let (determine_bump_type, bump_type) = determine_bump_type();
     let bump_type = bump_type.as_job_output(&determine_bump_type);
 
-    let call_bump_version = call_bump_version(&determine_bump_type, bump_type);
+    let call_bump_version = call_bump_version(args.sha.as_ref(), &determine_bump_type, bump_type);
 
     named::workflow()
         .on(Event::default()
@@ -32,6 +33,7 @@ pub(crate) fn bump_version() -> Workflow {
 }
 
 pub(crate) fn call_bump_version(
+    target_ref: Option<&GitSha>,
     depending_job: &NamedJob,
     bump_type: JobOutput,
 ) -> NamedJob<UsesJob> {
@@ -40,25 +42,26 @@ pub(crate) fn call_bump_version(
             "github.event.action != 'labeled' || {} != 'patch'",
             bump_type.expr()
         )))
+        .permissions(
+            Permissions::default()
+                .contents(Level::Write)
+                .issues(Level::Write)
+                .pull_requests(Level::Write)
+                .actions(Level::Write),
+        )
         .uses(
             "zed-industries",
             "zed",
             ".github/workflows/extension_bump.yml",
-            "main",
+            target_ref.map_or("main", AsRef::as_ref),
         )
         .add_need(depending_job.name.clone())
         .with(
             Input::default()
                 .add("bump-type", bump_type.to_string())
-                .add("force-bump", true),
+                .add("force-bump", "${{ github.event_name != 'push' }}"),
         )
-        .secrets(IndexMap::from([
-            ("app-id".to_owned(), vars::ZED_ZIPPY_APP_ID.to_owned()),
-            (
-                "app-secret".to_owned(),
-                vars::ZED_ZIPPY_APP_PRIVATE_KEY.to_owned(),
-            ),
-        ]));
+        .with_app_secrets();
 
     named::job(job)
 }
@@ -66,7 +69,9 @@ pub(crate) fn call_bump_version(
 fn determine_bump_type() -> (NamedJob, StepOutput) {
     let (get_bump_type, output) = get_bump_type();
     let job = Job::default()
-        .runs_on(runners::LINUX_DEFAULT)
+        .with_repository_owner_guard()
+        .permissions(Permissions::default())
+        .runs_on(runners::LINUX_SMALL)
         .add_step(get_bump_type)
         .outputs([(output.name.to_owned(), output.to_string())]);
     (named::job(job), output)

@@ -23,7 +23,7 @@ mod toolchain;
 pub mod buffer_tests;
 
 use crate::language_settings::SoftWrap;
-pub use crate::language_settings::{EditPredictionsMode, IndentGuideSettings};
+pub use crate::language_settings::{AutoIndentMode, EditPredictionsMode, IndentGuideSettings};
 use anyhow::{Context as _, Result};
 use async_trait::async_trait;
 use collections::{HashMap, HashSet, IndexSet};
@@ -66,8 +66,9 @@ use syntax_map::{QueryCursorHandle, SyntaxSnapshot};
 use task::RunnableTag;
 pub use task_context::{ContextLocation, ContextProvider, RunnableRange};
 pub use text_diff::{
-    DiffOptions, apply_diff_patch, line_diff, text_diff, text_diff_with_options, unified_diff,
-    unified_diff_with_offsets, word_diff_ranges,
+    DiffOptions, apply_diff_patch, apply_reversed_diff_patch, char_diff, line_diff, text_diff,
+    text_diff_with_options, unified_diff, unified_diff_with_context, unified_diff_with_offsets,
+    word_diff_ranges,
 };
 use theme::SyntaxTheme;
 pub use toolchain::{
@@ -96,6 +97,7 @@ pub use tree_sitter::{Node, Parser, Tree, TreeCursor};
 static QUERY_CURSORS: Mutex<Vec<QueryCursor>> = Mutex::new(vec![]);
 static PARSERS: Mutex<Vec<Parser>> = Mutex::new(vec![]);
 
+#[ztracing::instrument(skip_all)]
 pub fn with_parser<F, R>(func: F) -> R
 where
     F: FnOnce(&mut Parser) -> R,
@@ -194,6 +196,13 @@ pub trait ToLspPosition {
 pub struct Location {
     pub buffer: Entity<Buffer>,
     pub range: Range<Anchor>,
+}
+
+#[derive(Debug, Clone)]
+pub struct Symbol {
+    pub name: String,
+    pub kind: lsp::SymbolKind,
+    pub container_name: Option<String>,
 }
 
 type ServerBinaryCache = futures::lock::Mutex<Option<(bool, LanguageServerBinary)>>;
@@ -315,7 +324,7 @@ impl CachedLspAdapter {
 
     pub async fn labels_for_symbols(
         &self,
-        symbols: &[(String, lsp::SymbolKind)],
+        symbols: &[Symbol],
         language: &Arc<Language>,
     ) -> Result<Vec<Option<CodeLabel>>> {
         self.adapter
@@ -331,6 +340,32 @@ impl CachedLspAdapter {
             .unwrap_or_else(|| language_name.lsp_id())
     }
 
+    pub async fn initialization_options_schema(
+        &self,
+        delegate: &Arc<dyn LspAdapterDelegate>,
+        cx: &mut AsyncApp,
+    ) -> Option<serde_json::Value> {
+        self.adapter
+            .clone()
+            .initialization_options_schema(
+                delegate,
+                self.cached_binary.clone().lock_owned().await,
+                cx,
+            )
+            .await
+    }
+
+    pub async fn settings_schema(
+        &self,
+        delegate: &Arc<dyn LspAdapterDelegate>,
+        cx: &mut AsyncApp,
+    ) -> Option<serde_json::Value> {
+        self.adapter
+            .clone()
+            .settings_schema(delegate, self.cached_binary.clone().lock_owned().await, cx)
+            .await
+    }
+
     pub fn process_prompt_response(&self, context: &PromptResponseContext, cx: &mut AsyncApp) {
         self.adapter.process_prompt_response(context, cx)
     }
@@ -344,7 +379,7 @@ pub trait LspAdapterDelegate: Send + Sync {
     fn http_client(&self) -> Arc<dyn HttpClient>;
     fn worktree_id(&self) -> WorktreeId;
     fn worktree_root_path(&self) -> &Path;
-    fn resolve_executable_path(&self, path: PathBuf) -> PathBuf;
+    fn resolve_relative_path(&self, path: PathBuf) -> PathBuf;
     fn update_status(&self, language: LanguageServerName, status: BinaryStatus);
     fn registered_lsp_adapters(&self) -> Vec<Arc<dyn LspAdapter>>;
     async fn language_server_download_dir(&self, name: &LanguageServerName) -> Option<Arc<Path>>;
@@ -430,12 +465,12 @@ pub trait LspAdapter: 'static + Send + Sync + DynLspInstaller {
 
     async fn labels_for_symbols(
         self: Arc<Self>,
-        symbols: &[(String, lsp::SymbolKind)],
+        symbols: &[Symbol],
         language: &Arc<Language>,
     ) -> Result<Vec<Option<CodeLabel>>> {
         let mut labels = Vec::new();
-        for (ix, (name, kind)) in symbols.iter().enumerate() {
-            let label = self.label_for_symbol(name, *kind, language).await;
+        for (ix, symbol) in symbols.iter().enumerate() {
+            let label = self.label_for_symbol(symbol, language).await;
             if let Some(label) = label {
                 labels.resize(ix + 1, None);
                 *labels.last_mut().unwrap() = Some(label);
@@ -446,9 +481,8 @@ pub trait LspAdapter: 'static + Send + Sync + DynLspInstaller {
 
     async fn label_for_symbol(
         &self,
-        _: &str,
-        _: lsp::SymbolKind,
-        _: &Arc<Language>,
+        _symbol: &Symbol,
+        _language: &Arc<Language>,
     ) -> Option<CodeLabel> {
         None
     }
@@ -457,6 +491,7 @@ pub trait LspAdapter: 'static + Send + Sync + DynLspInstaller {
     async fn initialization_options(
         self: Arc<Self>,
         _: &Arc<dyn LspAdapterDelegate>,
+        _cx: &mut AsyncApp,
     ) -> Result<Option<Value>> {
         Ok(None)
     }
@@ -464,7 +499,21 @@ pub trait LspAdapter: 'static + Send + Sync + DynLspInstaller {
     /// Returns the JSON schema of the initialization_options for the language server.
     async fn initialization_options_schema(
         self: Arc<Self>,
-        _language_server_binary: &LanguageServerBinary,
+        _delegate: &Arc<dyn LspAdapterDelegate>,
+        _cached_binary: OwnedMutexGuard<Option<(bool, LanguageServerBinary)>>,
+        _cx: &mut AsyncApp,
+    ) -> Option<serde_json::Value> {
+        None
+    }
+
+    /// Returns the JSON schema of the settings for the language server.
+    /// This corresponds to the `settings` field in `LspSettings`, which is used
+    /// to respond to `workspace/configuration` requests from the language server.
+    async fn settings_schema(
+        self: Arc<Self>,
+        _delegate: &Arc<dyn LspAdapterDelegate>,
+        _cached_binary: OwnedMutexGuard<Option<(bool, LanguageServerBinary)>>,
+        _cx: &mut AsyncApp,
     ) -> Option<serde_json::Value> {
         None
     }
@@ -591,6 +640,7 @@ pub trait DynLspInstaller {
         pre_release: bool,
         cx: &mut AsyncApp,
     ) -> Result<LanguageServerBinary>;
+
     fn get_language_server_command(
         self: Arc<Self>,
         delegate: Arc<dyn LspAdapterDelegate>,
@@ -686,17 +736,17 @@ where
                 return (Ok(binary), None);
             }
 
+            if let Some((pre_release, cached_binary)) = cached_binary_deref
+                && *pre_release == binary_options.pre_release
+            {
+                return (Ok(cached_binary.clone()), None);
+            }
+
             if !binary_options.allow_binary_download {
                 return (
                     Err(anyhow::anyhow!("downloading language servers disabled")),
                     None,
                 );
-            }
-
-            if let Some((pre_release, cached_binary)) = cached_binary_deref
-                && *pre_release == binary_options.pre_release
-            {
-                return (Ok(cached_binary.clone()), None);
             }
 
             let Some(container_dir) = delegate.language_server_download_dir(&self.name()).await
@@ -785,6 +835,11 @@ pub struct LanguageConfig {
     pub name: LanguageName,
     /// The name of this language for a Markdown code fence block
     pub code_fence_block_name: Option<Arc<str>>,
+    /// Alternative language names that Jupyter kernels may report for this language.
+    /// Used when a kernel's `language` field differs from Zed's language name.
+    /// For example, the Nu extension would set this to `["nushell"]`.
+    #[serde(default)]
+    pub kernel_language_names: Vec<Arc<str>>,
     // The name of the grammar in a WASM bundle (experimental).
     pub grammar: Option<Arc<str>>,
     /// The criteria for matching this language to a given file.
@@ -904,6 +959,15 @@ pub struct LanguageConfig {
     #[serde(default, deserialize_with = "deserialize_regex")]
     #[schemars(schema_with = "regex_json_schema")]
     pub import_path_strip_regex: Option<Regex>,
+}
+
+impl LanguageConfig {
+    pub const FILE_NAME: &str = "config.toml";
+
+    pub fn load(config_path: impl AsRef<Path>) -> Result<Self> {
+        let config = std::fs::read_to_string(config_path.as_ref())?;
+        toml::from_str(&config).map_err(Into::into)
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, Default, JsonSchema)]
@@ -1091,6 +1155,7 @@ impl Default for LanguageConfig {
         Self {
             name: LanguageName::new_static(""),
             code_fence_block_name: None,
+            kernel_language_names: Default::default(),
             grammar: None,
             matcher: LanguageMatcher::default(),
             brackets: Default::default(),
@@ -1308,7 +1373,6 @@ pub struct Grammar {
     pub(crate) indents_config: Option<IndentConfig>,
     pub outline_config: Option<OutlineConfig>,
     pub text_object_config: Option<TextObjectConfig>,
-    pub embedding_config: Option<EmbeddingConfig>,
     pub(crate) injection_config: Option<InjectionConfig>,
     pub(crate) override_config: Option<OverrideConfig>,
     pub(crate) debug_variables_config: Option<DebugVariablesConfig>,
@@ -1393,16 +1457,6 @@ impl TextObject {
 pub struct TextObjectConfig {
     pub query: Query,
     pub text_objects_by_capture_ix: Vec<(u32, TextObject)>,
-}
-
-#[derive(Debug)]
-pub struct EmbeddingConfig {
-    pub query: Query,
-    pub item_capture_ix: u32,
-    pub name_capture_ix: Option<u32>,
-    pub context_capture_ix: Option<u32>,
-    pub collapse_capture_ix: Option<u32>,
-    pub keep_capture_ix: Option<u32>,
 }
 
 struct InjectionConfig {
@@ -1501,7 +1555,6 @@ impl Language {
                     brackets_config: None,
                     outline_config: None,
                     text_object_config: None,
-                    embedding_config: None,
                     indents_config: None,
                     injection_config: None,
                     override_config: None,
@@ -1555,11 +1608,6 @@ impl Language {
             self = self
                 .with_outline_query(query.as_ref())
                 .context("Error loading outline query")?;
-        }
-        if let Some(query) = queries.embedding {
-            self = self
-                .with_embedding_query(query.as_ref())
-                .context("Error loading embedding query")?;
         }
         if let Some(query) = queries.injections {
             self = self
@@ -1706,38 +1754,6 @@ impl Language {
             query,
             text_objects_by_capture_ix,
         });
-        Ok(self)
-    }
-
-    pub fn with_embedding_query(mut self, source: &str) -> Result<Self> {
-        let query = Query::new(&self.expect_grammar()?.ts_language, source)?;
-        let mut item_capture_ix = 0;
-        let mut name_capture_ix = None;
-        let mut context_capture_ix = None;
-        let mut collapse_capture_ix = None;
-        let mut keep_capture_ix = None;
-        if populate_capture_indices(
-            &query,
-            &self.config.name,
-            "embedding",
-            &[],
-            &mut [
-                Capture::Required("item", &mut item_capture_ix),
-                Capture::Optional("name", &mut name_capture_ix),
-                Capture::Optional("context", &mut context_capture_ix),
-                Capture::Optional("keep", &mut keep_capture_ix),
-                Capture::Optional("collapse", &mut collapse_capture_ix),
-            ],
-        ) {
-            self.grammar_mut()?.embedding_config = Some(EmbeddingConfig {
-                query,
-                item_capture_ix,
-                name_capture_ix,
-                context_capture_ix,
-                collapse_capture_ix,
-                keep_capture_ix,
-            });
-        }
         Ok(self)
     }
 
@@ -2072,6 +2088,23 @@ impl Language {
             .code_fence_block_name
             .clone()
             .unwrap_or_else(|| self.config.name.as_ref().to_lowercase().into())
+    }
+
+    pub fn matches_kernel_language(&self, kernel_language: &str) -> bool {
+        let kernel_language_lower = kernel_language.to_lowercase();
+
+        if self.code_fence_block_name().to_lowercase() == kernel_language_lower {
+            return true;
+        }
+
+        if self.config.name.as_ref().to_lowercase() == kernel_language_lower {
+            return true;
+        }
+
+        self.config
+            .kernel_language_names
+            .iter()
+            .any(|name| name.to_lowercase() == kernel_language_lower)
     }
 
     pub fn context_provider(&self) -> Option<Arc<dyn ContextProvider>> {
@@ -2638,6 +2671,7 @@ impl LspAdapter for FakeLspAdapter {
     async fn initialization_options(
         self: Arc<Self>,
         _: &Arc<dyn LspAdapterDelegate>,
+        _cx: &mut AsyncApp,
     ) -> Result<Option<Value>> {
         Ok(self.initialization_options.clone())
     }
@@ -2786,9 +2820,6 @@ pub fn rust_lang() -> Arc<Language> {
         ))),
         highlights: Some(Cow::from(include_str!(
             "../../languages/src/rust/highlights.scm"
-        ))),
-        embedding: Some(Cow::from(include_str!(
-            "../../languages/src/rust/embedding.scm"
         ))),
         injections: Some(Cow::from(include_str!(
             "../../languages/src/rust/injections.scm"

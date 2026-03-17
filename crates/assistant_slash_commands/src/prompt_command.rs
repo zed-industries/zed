@@ -47,7 +47,7 @@ impl SlashCommand for PromptSlashCommand {
             let cancellation_flag = Arc::new(AtomicBool::default());
             let prompts: Vec<PromptMetadata> = store
                 .await?
-                .read_with(cx, |store, cx| store.search(query, cancellation_flag, cx))?
+                .read_with(cx, |store, cx| store.search(query, cancellation_flag, cx))
                 .await;
             Ok(prompts
                 .into_iter()
@@ -91,7 +91,7 @@ impl SlashCommand for PromptSlashCommand {
                             .id_for_title(&title)
                             .with_context(|| format!("no prompt found with title {:?}", title))?;
                         anyhow::Ok(store.load(prompt_id, cx))
-                    })??
+                    })?
                     .await?;
                 anyhow::Ok(body)
             }

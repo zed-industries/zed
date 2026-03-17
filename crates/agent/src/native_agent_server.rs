@@ -1,4 +1,4 @@
-use std::{any::Any, path::Path, rc::Rc, sync::Arc};
+use std::{any::Any, rc::Rc, sync::Arc};
 
 use agent_client_protocol as acp;
 use agent_servers::{AgentServer, AgentServerDelegate};
@@ -6,27 +6,28 @@ use agent_settings::AgentSettings;
 use anyhow::Result;
 use collections::HashSet;
 use fs::Fs;
-use gpui::{App, Entity, SharedString, Task};
+use gpui::{App, Entity, Task};
+use project::AgentId;
 use prompt_store::PromptStore;
 use settings::{LanguageModelSelection, Settings as _, update_settings_file};
 
-use crate::{HistoryStore, NativeAgent, NativeAgentConnection, templates::Templates};
+use crate::{NativeAgent, NativeAgentConnection, ThreadStore, templates::Templates};
 
 #[derive(Clone)]
 pub struct NativeAgentServer {
     fs: Arc<dyn Fs>,
-    history: Entity<HistoryStore>,
+    thread_store: Entity<ThreadStore>,
 }
 
 impl NativeAgentServer {
-    pub fn new(fs: Arc<dyn Fs>, history: Entity<HistoryStore>) -> Self {
-        Self { fs, history }
+    pub fn new(fs: Arc<dyn Fs>, thread_store: Entity<ThreadStore>) -> Self {
+        Self { fs, thread_store }
     }
 }
 
 impl AgentServer for NativeAgentServer {
-    fn name(&self) -> SharedString {
-        "Zed Agent".into()
+    fn agent_id(&self) -> AgentId {
+        crate::ZED_AGENT_ID.clone()
     }
 
     fn logo(&self) -> ui::IconName {
@@ -35,22 +36,12 @@ impl AgentServer for NativeAgentServer {
 
     fn connect(
         &self,
-        _root_dir: Option<&Path>,
-        delegate: AgentServerDelegate,
+        _delegate: AgentServerDelegate,
         cx: &mut App,
-    ) -> Task<
-        Result<(
-            Rc<dyn acp_thread::AgentConnection>,
-            Option<task::SpawnInTerminal>,
-        )>,
-    > {
-        log::debug!(
-            "NativeAgentServer::connect called for path: {:?}",
-            _root_dir
-        );
-        let project = delegate.project().clone();
+    ) -> Task<Result<Rc<dyn acp_thread::AgentConnection>>> {
+        log::debug!("NativeAgentServer::connect");
         let fs = self.fs.clone();
-        let history = self.history.clone();
+        let thread_store = self.thread_store.clone();
         let prompt_store = PromptStore::global(cx);
         cx.spawn(async move |cx| {
             log::debug!("Creating templates for native agent");
@@ -58,17 +49,14 @@ impl AgentServer for NativeAgentServer {
             let prompt_store = prompt_store.await?;
 
             log::debug!("Creating native agent entity");
-            let agent =
-                NativeAgent::new(project, history, templates, Some(prompt_store), fs, cx).await?;
+            let agent = cx
+                .update(|cx| NativeAgent::new(thread_store, templates, Some(prompt_store), fs, cx));
 
             // Create the connection wrapper
             let connection = NativeAgentConnection(agent);
             log::debug!("NativeAgentServer connection established successfully");
 
-            Ok((
-                Rc::new(connection) as Rc<dyn acp_thread::AgentConnection>,
-                None,
-            ))
+            Ok(Rc::new(connection) as Rc<dyn acp_thread::AgentConnection>)
         })
     }
 
@@ -106,6 +94,8 @@ fn model_id_to_selection(model_id: &acp::ModelId) -> LanguageModelSelection {
     LanguageModelSelection {
         provider: provider.to_owned().into(),
         model: model.to_owned(),
+        enable_thinking: false,
+        effort: None,
     }
 }
 
@@ -113,11 +103,10 @@ fn model_id_to_selection(model_id: &acp::ModelId) -> LanguageModelSelection {
 mod tests {
     use super::*;
 
-    use assistant_text_thread::TextThreadStore;
     use gpui::AppContext;
 
     agent_servers::e2e_tests::common_e2e_tests!(
-        async |fs, project, cx| {
+        async |fs, cx| {
             let auth = cx.update(|cx| {
                 prompt_store::init(cx);
                 let registry = language_model::LanguageModelRegistry::read_global(cx);
@@ -145,13 +134,9 @@ mod tests {
                 });
             });
 
-            let history = cx.update(|cx| {
-                let text_thread_store =
-                    cx.new(move |cx| TextThreadStore::fake(project.clone(), cx));
-                cx.new(move |cx| HistoryStore::new(text_thread_store, cx))
-            });
+            let thread_store = cx.update(|cx| cx.new(|cx| ThreadStore::new(cx)));
 
-            NativeAgentServer::new(fs.clone(), history)
+            NativeAgentServer::new(fs.clone(), thread_store)
         },
         allow_option_id = "allow"
     );

@@ -1,3 +1,8 @@
+---
+title: Update Zed
+description: "Zed is designed to keep itself up to date automatically. You can always update this behavior in your settings."
+---
+
 # Update Zed
 
 Zed is designed to keep itself up to date automatically. You can always update this behavior in your settings.

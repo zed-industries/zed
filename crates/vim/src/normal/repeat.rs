@@ -112,7 +112,7 @@ impl Replayer {
         let this = self.clone();
         window.defer(cx, move |window, cx| {
             this.next(window, cx);
-            let Some(Some(workspace)) = window.root::<Workspace>() else {
+            let Some(workspace) = Workspace::for_window(window, cx) else {
                 return;
             };
             let Some(editor) = workspace
@@ -145,7 +145,13 @@ impl Replayer {
         lock.ix += 1;
         drop(lock);
         let Some(action) = action else {
-            Vim::globals(cx).replayer.take();
+            // The `globals.dot_replaying = false` is a fail-safe to ensure that
+            // this value is always reset, in the case that the focus is moved
+            // away from the editor, effectively preventing the `EndRepeat`
+            // action from being handled.
+            let globals = Vim::globals(cx);
+            globals.replayer.take();
+            globals.dot_replaying = false;
             return;
         };
         match action {
@@ -159,7 +165,7 @@ impl Replayer {
                 text,
                 utf16_range_to_replace,
             } => {
-                let Some(Some(workspace)) = window.root::<Workspace>() else {
+                let Some(workspace) = Workspace::for_window(window, cx) else {
                     return;
                 };
                 let Some(editor) = workspace
@@ -285,6 +291,24 @@ impl Vim {
         }) else {
             return;
         };
+
+        // Dot repeat always uses the recorded register, ignoring any "X
+        // override, as the register is an inherent part of the recorded action.
+        // For numbered registers, Neovim increments on each dot repeat so after
+        // using `"1p`, using `.` will equate to `"2p", the next `.` to `"3p`,
+        // etc..
+        let recorded_register = cx.global::<VimGlobals>().recorded_register_for_dot;
+        let next_register = recorded_register
+            .filter(|c| matches!(c, '1'..='9'))
+            .map(|c| ((c as u8 + 1).min(b'9')) as char);
+
+        self.selected_register = next_register.or(recorded_register);
+        if let Some(next_register) = next_register {
+            Vim::update_globals(cx, |globals, _| {
+                globals.recorded_register_for_dot = Some(next_register)
+            })
+        };
+
         if mode != Some(self.mode) {
             if let Some(mode) = mode {
                 self.switch_mode(mode, false, window, cx)
@@ -396,6 +420,7 @@ mod test {
     use gpui::EntityInputHandler;
 
     use crate::{
+        VimGlobals,
         state::Mode,
         test::{NeovimBackedTestContext, VimTestContext},
     };
@@ -432,6 +457,207 @@ mod test {
         cx.run_until_parked();
         cx.simulate_shared_keystrokes(".").await;
         cx.shared_state().await.assert_eq("THE QUICK ˇbrown fox");
+    }
+
+    #[gpui::test]
+    async fn test_dot_repeat_registers_paste(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+
+        // basic paste repeat uses the unnamed register
+        cx.set_shared_state("ˇhello\n").await;
+        cx.simulate_shared_keystrokes("y y p").await;
+        cx.shared_state().await.assert_eq("hello\nˇhello\n");
+        cx.simulate_shared_keystrokes(".").await;
+        cx.shared_state().await.assert_eq("hello\nhello\nˇhello\n");
+
+        // "_ (blackhole) is recorded and replayed, so the pasted text is still
+        // the original yanked line.
+        cx.set_shared_state(indoc! {"
+            ˇone
+            two
+            three
+            four
+        "})
+            .await;
+        cx.simulate_shared_keystrokes("y y j \" _ d d . p").await;
+        cx.shared_state().await.assert_eq(indoc! {"
+            one
+            four
+            ˇone
+        "});
+
+        // the recorded register is replayed, not whatever is in the unnamed register
+        cx.set_shared_state(indoc! {"
+            ˇone
+            two
+        "})
+            .await;
+        cx.simulate_shared_keystrokes("y y j \" a y y \" a p .")
+            .await;
+        cx.shared_state().await.assert_eq(indoc! {"
+            one
+            two
+            two
+            ˇtwo
+        "});
+
+        // `"X.` ignores the override and always uses the recorded register.
+        // Both `dd` calls go into register `a`, so register `b` is empty and
+        // `"bp` pastes nothing.
+        cx.set_shared_state(indoc! {"
+            ˇone
+            two
+            three
+        "})
+            .await;
+        cx.simulate_shared_keystrokes("\" a d d \" b .").await;
+        cx.shared_state().await.assert_eq(indoc! {"
+            ˇthree
+        "});
+        cx.simulate_shared_keystrokes("\" a p \" b p").await;
+        cx.shared_state().await.assert_eq(indoc! {"
+            three
+            ˇtwo
+        "});
+
+        // numbered registers cycle on each dot repeat: "1p . . uses registers 2, 3, …
+        // Since the cycling behavior caps at register 9, the first line to be
+        // deleted `1`, is no longer in any of the registers.
+        cx.set_shared_state(indoc! {"
+            ˇone
+            two
+            three
+            four
+            five
+            six
+            seven
+            eight
+            nine
+            ten
+        "})
+            .await;
+        cx.simulate_shared_keystrokes("d d . . . . . . . . .").await;
+        cx.shared_state().await.assert_eq(indoc! {"ˇ"});
+        cx.simulate_shared_keystrokes("\" 1 p . . . . . . . . .")
+            .await;
+        cx.shared_state().await.assert_eq(indoc! {"
+
+            ten
+            nine
+            eight
+            seven
+            six
+            five
+            four
+            three
+            two
+            ˇtwo"});
+
+        // unnamed register repeat: dd records None, so . pastes the same
+        // deleted text
+        cx.set_shared_state(indoc! {"
+            ˇone
+            two
+            three
+        "})
+            .await;
+        cx.simulate_shared_keystrokes("d d p .").await;
+        cx.shared_state().await.assert_eq(indoc! {"
+            two
+            one
+            ˇone
+            three
+        "});
+
+        // After `"1p` cycles to `2`, using `"ap` resets recorded_register to `a`,
+        // so the next `.` uses `a` and not 3.
+        cx.set_shared_state(indoc! {"
+            one
+            two
+            ˇthree
+        "})
+            .await;
+        cx.simulate_shared_keystrokes("\" 2 y y k k \" a y y j \" 1 y y k \" 1 p . \" a p .")
+            .await;
+        cx.shared_state().await.assert_eq(indoc! {"
+            one
+            two
+            three
+            one
+            ˇone
+            two
+            three
+        "});
+    }
+
+    // This needs to be a separate test from `test_dot_repeat_registers_paste`
+    // as Neovim doesn't have support for using registers in replace operations
+    // by default.
+    #[gpui::test]
+    async fn test_dot_repeat_registers_replace(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+
+        cx.set_state(
+            indoc! {"
+            line ˇone
+            line two
+            line three
+        "},
+            Mode::Normal,
+        );
+
+        // 1. Yank `one` into register `a`
+        // 2. Move down and yank `two` into the default register
+        // 3. Replace `two` with the contents of register `a`
+        cx.simulate_keystrokes("\" a y w j y w \" a g R w");
+        cx.assert_state(
+            indoc! {"
+            line one
+            line onˇe
+            line three
+        "},
+            Mode::Normal,
+        );
+
+        // 1. Move down to `three`
+        // 2. Repeat the replace operation
+        cx.simulate_keystrokes("j .");
+        cx.assert_state(
+            indoc! {"
+            line one
+            line one
+            line onˇe
+        "},
+            Mode::Normal,
+        );
+
+        // Similar test, but this time using numbered registers, as those should
+        // automatically increase on successive uses of `.` .
+        cx.set_state(
+            indoc! {"
+            line ˇone
+            line two
+            line three
+            line four
+        "},
+            Mode::Normal,
+        );
+
+        // 1. Yank `one` into register `1`
+        // 2. Yank `two` into register `2`
+        // 3. Move down and yank `three` into the default register
+        // 4. Replace `three` with the contents of register `1`
+        // 5. Move down and repeat
+        cx.simulate_keystrokes("\" 1 y w j \" 2 y w j y w \" 1 g R w j .");
+        cx.assert_state(
+            indoc! {"
+            line one
+            line two
+            line one
+            line twˇo
+        "},
+            Mode::Normal,
+        );
     }
 
     #[gpui::test]
@@ -737,6 +963,48 @@ mod test {
         cx.simulate_shared_keystrokes(": escape").await;
         cx.simulate_shared_keystrokes(".").await;
         cx.shared_state().await.assert_eq("ˇx hello\n");
+    }
+
+    #[gpui::test]
+    async fn test_repeat_after_blur_resets_dot_replaying(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+
+        // Bind `ctrl-f` to the `buffer_search::Deploy` action so that this can
+        // be triggered while in Insert mode, ensuring that an action which
+        // moves the focus away from the editor, gets recorded.
+        cx.update(|_, cx| {
+            cx.bind_keys([gpui::KeyBinding::new(
+                "ctrl-f",
+                search::buffer_search::Deploy::find(),
+                None,
+            )])
+        });
+
+        cx.set_state("ˇhello", Mode::Normal);
+
+        // We're going to enter insert mode, which will start recording, type a
+        // character and then immediately use `ctrl-f` to trigger the buffer
+        // search. Triggering the buffer search will move focus away from the
+        // editor, effectively stopping the recording immediately after
+        // `buffer_search::Deploy` is recorded. The first `escape` is used to
+        // dismiss the search bar, while the second is used to move from Insert
+        // to Normal mode.
+        cx.simulate_keystrokes("i x ctrl-f escape escape");
+        cx.run_until_parked();
+
+        // Using the `.` key will dispatch the `vim::Repeat` action, repeating
+        // the set of recorded actions. This will eventually focus on the search
+        // bar, preventing the `EndRepeat` action from being correctly handled.
+        cx.simulate_keystrokes(".");
+        cx.run_until_parked();
+
+        // After replay finishes, even though the `EndRepeat` action wasn't
+        // handled, seeing as the editor lost focus during replay, the
+        // `dot_replaying` value should be set back to `false`.
+        assert!(
+            !cx.update(|_, cx| cx.global::<VimGlobals>().dot_replaying),
+            "dot_replaying should be false after repeat completes"
+        );
     }
 
     #[gpui::test]

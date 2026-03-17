@@ -1,3 +1,8 @@
+---
+title: Tab Switcher
+description: "The Tab Switcher provides a quick way to navigate between open tabs in Zed. It displays a list of your open tabs sorted by recent usage, making it easy to ju..."
+---
+
 # Tab Switcher
 
 The Tab Switcher provides a quick way to navigate between open tabs in Zed. It
@@ -20,10 +25,8 @@ the switcher is closed.
 
 ## Opening the Tab Switcher
 
-The Tab Switcher can also be opened with either {#action tab_switcher::Toggle}
-or {#action tab_switcher::ToggleAll}. Using {#kb tab_switcher::Toggle} will show
-only the tabs for the current pane, while {#kb tab_switcher::ToggleAll} shows
-all tabs for all panes.
+The Tab Switcher can also be opened with either {#action tab_switcher::Toggle} ({#kb tab_switcher::Toggle})
+or {#action tab_switcher::ToggleAll}.
 
 While the Tab Switcher is open, you can:
 

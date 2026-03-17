@@ -15,12 +15,12 @@ path = "src/storybook.rs"
 [dependencies]
 anyhow.workspace = true
 clap = { workspace = true, features = ["derive", "string"] }
-collab_ui = { workspace = true, features = ["stories"] }
 ctrlc = "3.4"
 dialoguer = { version = "0.11.0", features = ["fuzzy-select"] }
 editor.workspace = true
 fuzzy.workspace = true
 gpui = { workspace = true, default-features = true }
+gpui_platform.workspace = true
 indoc.workspace = true
 language.workspace = true
 log.workspace = true
