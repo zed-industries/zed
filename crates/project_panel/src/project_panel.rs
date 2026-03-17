@@ -4326,7 +4326,7 @@ impl ProjectPanel {
                     return Ok(());
                 }
 
-                let ((worktree_id, task)) = worktree.update(cx, |worktree, cx| {
+                let (worktree_id, task) = worktree.update(cx, |worktree, cx| {
                     (
                         worktree.id(),
                         worktree.copy_external_entries(target_directory, paths, fs, cx),
