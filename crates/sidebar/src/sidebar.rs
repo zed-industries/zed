@@ -1951,6 +1951,22 @@ impl Sidebar {
     ) -> impl IntoElement {
         let has_query = self.has_filter_query(cx);
         let needs_traffic_light_padding = cfg!(target_os = "macos") && !window.is_fullscreen();
+        let has_open_projects = self
+            .multi_workspace
+            .upgrade()
+            .map(|mw| {
+                let mw = mw.read(cx);
+                mw.workspaces().len() > 1
+                    || mw
+                        .workspace()
+                        .read(cx)
+                        .project()
+                        .read(cx)
+                        .visible_worktrees(cx)
+                        .next()
+                        .is_some()
+            })
+            .unwrap_or(false);
 
         v_flex()
             .flex_none()
@@ -1994,17 +2010,19 @@ impl Sidebar {
                                         this.show_archive(window, cx);
                                     })),
                             )
-                            .child(
-                                IconButton::new(
-                                    "close-all-projects",
-                                    IconName::Exit,
+                            .when(has_open_projects, |this| {
+                                this.child(
+                                    IconButton::new(
+                                        "close-all-projects",
+                                        IconName::Exit,
+                                    )
+                                    .icon_size(IconSize::Small)
+                                    .tooltip(Tooltip::text("Close All Projects"))
+                                    .on_click(cx.listener(|this, _, window, cx| {
+                                        this.close_all_projects(window, cx);
+                                    })),
                                 )
-                                .icon_size(IconSize::Small)
-                                .tooltip(Tooltip::text("Close All Projects"))
-                                .on_click(cx.listener(|this, _, window, cx| {
-                                    this.close_all_projects(window, cx);
-                                })),
-                            ),
+                            }),
                     ),
             )
     }
