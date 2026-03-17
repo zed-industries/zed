@@ -785,6 +785,7 @@ where
                             error,
                             prev_downloaded_binary.path
                         );
+                        delegate.update_status(self.name(), BinaryStatus::None);
                         binary = Ok(prev_downloaded_binary);
                     } else {
                         delegate.update_status(
