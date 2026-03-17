@@ -1,0 +1,54 @@
+[package]
+name = "sidebar"
+version = "0.1.0"
+edition.workspace = true
+publish.workspace = true
+license = "GPL-3.0-or-later"
+
+[lints]
+workspace = true
+
+[lib]
+path = "src/sidebar.rs"
+
+[features]
+default = []
+
+[dependencies]
+acp_thread.workspace = true
+action_log.workspace = true
+agent.workspace = true
+agent-client-protocol.workspace = true
+agent_ui.workspace = true
+anyhow.workspace = true
+chrono.workspace = true
+editor.workspace = true
+feature_flags.workspace = true
+fs.workspace = true
+gpui.workspace = true
+menu.workspace = true
+project.workspace = true
+settings.workspace = true
+theme.workspace = true
+ui.workspace = true
+util.workspace = true
+workspace.workspace = true
+zed_actions.workspace = true
+
+[dev-dependencies]
+acp_thread = { workspace = true, features = ["test-support"] }
+agent = { workspace = true, features = ["test-support"] }
+agent_ui = { workspace = true, features = ["test-support"] }
+assistant_text_thread = { workspace = true, features = ["test-support"] }
+editor.workspace = true
+language_model = { workspace = true, features = ["test-support"] }
+pretty_assertions.workspace = true
+prompt_store.workspace = true
+serde_json.workspace = true
+feature_flags.workspace = true
+fs = { workspace = true, features = ["test-support"] }
+git.workspace = true
+gpui = { workspace = true, features = ["test-support"] }
+project = { workspace = true, features = ["test-support"] }
+settings = { workspace = true, features = ["test-support"] }
+workspace = { workspace = true, features = ["test-support"] }

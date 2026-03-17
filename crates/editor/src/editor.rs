@@ -23989,6 +23989,7 @@ impl Editor {
                 }
                 jsx_tag_auto_close::refresh_enabled_in_any_buffer(self, multibuffer, cx);
                 cx.emit(EditorEvent::Reparsed(*buffer_id));
+                self.update_edit_prediction_settings(cx);
                 cx.notify();
             }
             multi_buffer::Event::DirtyChanged => cx.emit(EditorEvent::DirtyChanged),

@@ -2130,7 +2130,7 @@ impl ConversationView {
         acp_thread.connection().clone().downcast()
     }
 
-    pub(crate) fn as_native_thread(&self, cx: &App) -> Option<Entity<agent::Thread>> {
+    pub fn as_native_thread(&self, cx: &App) -> Option<Entity<agent::Thread>> {
         let acp_thread = self.active_thread()?.read(cx).thread.read(cx);
         self.as_native_connection(cx)?
             .thread(acp_thread.session_id(), cx)
@@ -2342,7 +2342,7 @@ impl ConversationView {
         }
 
         if let Some(multi_workspace) = window.root::<MultiWorkspace>().flatten() {
-            crate::agent_panel::sidebar_is_open(window, cx)
+            multi_workspace.read(cx).sidebar_open()
                 || self.agent_panel_visible(&multi_workspace, cx)
         } else {
             self.workspace

@@ -405,8 +405,6 @@ fn api_key_for_gemini_cli(cx: &mut App) -> Task<Result<String>> {
 
 fn is_registry_agent(agent_id: impl Into<AgentId>, cx: &App) -> bool {
     let agent_id = agent_id.into();
-    let is_previous_built_in =
-        matches!(agent_id.0.as_ref(), CLAUDE_AGENT_ID | CODEX_ID | GEMINI_ID);
     let is_in_registry = project::AgentRegistryStore::try_global(cx)
         .map(|store| store.read(cx).agent(&agent_id).is_some())
         .unwrap_or(false);
@@ -421,7 +419,7 @@ fn is_registry_agent(agent_id: impl Into<AgentId>, cx: &App) -> bool {
                 )
             })
     });
-    is_previous_built_in || is_in_registry || is_settings_registry
+    is_in_registry || is_settings_registry
 }
 
 fn default_settings_for_agent(
@@ -510,16 +508,6 @@ mod tests {
     }
 
     #[gpui::test]
-    fn test_previous_builtins_are_registry(cx: &mut TestAppContext) {
-        init_test(cx);
-        cx.update(|cx| {
-            assert!(is_registry_agent(CLAUDE_AGENT_ID, cx));
-            assert!(is_registry_agent(CODEX_ID, cx));
-            assert!(is_registry_agent(GEMINI_ID, cx));
-        });
-    }
-
-    #[gpui::test]
     fn test_unknown_agent_is_not_registry(cx: &mut TestAppContext) {
         init_test(cx);
         cx.update(|cx| {
@@ -578,25 +566,6 @@ mod tests {
         );
         cx.update(|cx| {
             assert!(!is_registry_agent("my-extension-agent", cx));
-        });
-    }
-
-    #[gpui::test]
-    fn test_default_settings_for_builtin_agent(cx: &mut TestAppContext) {
-        init_test(cx);
-        cx.update(|cx| {
-            assert!(matches!(
-                default_settings_for_agent(CODEX_ID, cx),
-                settings::CustomAgentServerSettings::Registry { .. }
-            ));
-            assert!(matches!(
-                default_settings_for_agent(CLAUDE_AGENT_ID, cx),
-                settings::CustomAgentServerSettings::Registry { .. }
-            ));
-            assert!(matches!(
-                default_settings_for_agent(GEMINI_ID, cx),
-                settings::CustomAgentServerSettings::Registry { .. }
-            ));
         });
     }
 

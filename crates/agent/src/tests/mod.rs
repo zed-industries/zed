@@ -48,7 +48,7 @@ use std::{
     rc::Rc,
     sync::{
         Arc,
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicUsize, Ordering},
     },
     time::Duration,
 };
@@ -58,14 +58,14 @@ mod edit_file_thread_test;
 mod test_tools;
 use test_tools::*;
 
-fn init_test(cx: &mut TestAppContext) {
+pub(crate) fn init_test(cx: &mut TestAppContext) {
     cx.update(|cx| {
         let settings_store = SettingsStore::test(cx);
         cx.set_global(settings_store);
     });
 }
 
-struct FakeTerminalHandle {
+pub(crate) struct FakeTerminalHandle {
     killed: Arc<AtomicBool>,
     stopped_by_user: Arc<AtomicBool>,
     exit_sender: std::cell::RefCell<Option<futures::channel::oneshot::Sender<()>>>,
@@ -75,7 +75,7 @@ struct FakeTerminalHandle {
 }
 
 impl FakeTerminalHandle {
-    fn new_never_exits(cx: &mut App) -> Self {
+    pub(crate) fn new_never_exits(cx: &mut App) -> Self {
         let killed = Arc::new(AtomicBool::new(false));
         let stopped_by_user = Arc::new(AtomicBool::new(false));
 
@@ -99,7 +99,7 @@ impl FakeTerminalHandle {
         }
     }
 
-    fn new_with_immediate_exit(cx: &mut App, exit_code: u32) -> Self {
+    pub(crate) fn new_with_immediate_exit(cx: &mut App, exit_code: u32) -> Self {
         let killed = Arc::new(AtomicBool::new(false));
         let stopped_by_user = Arc::new(AtomicBool::new(false));
         let (exit_sender, _exit_receiver) = futures::channel::oneshot::channel();
@@ -118,15 +118,15 @@ impl FakeTerminalHandle {
         }
     }
 
-    fn was_killed(&self) -> bool {
+    pub(crate) fn was_killed(&self) -> bool {
         self.killed.load(Ordering::SeqCst)
     }
 
-    fn set_stopped_by_user(&self, stopped: bool) {
+    pub(crate) fn set_stopped_by_user(&self, stopped: bool) {
         self.stopped_by_user.store(stopped, Ordering::SeqCst);
     }
 
-    fn signal_exit(&self) {
+    pub(crate) fn signal_exit(&self) {
         if let Some(sender) = self.exit_sender.borrow_mut().take() {
             let _ = sender.send(());
         }
@@ -178,17 +178,22 @@ impl SubagentHandle for FakeSubagentHandle {
 }
 
 #[derive(Default)]
-struct FakeThreadEnvironment {
+pub(crate) struct FakeThreadEnvironment {
     terminal_handle: Option<Rc<FakeTerminalHandle>>,
     subagent_handle: Option<Rc<FakeSubagentHandle>>,
+    terminal_creations: Arc<AtomicUsize>,
 }
 
 impl FakeThreadEnvironment {
-    pub fn with_terminal(self, terminal_handle: FakeTerminalHandle) -> Self {
+    pub(crate) fn with_terminal(self, terminal_handle: FakeTerminalHandle) -> Self {
         Self {
             terminal_handle: Some(terminal_handle.into()),
             ..self
         }
+    }
+
+    pub(crate) fn terminal_creation_count(&self) -> usize {
+        self.terminal_creations.load(Ordering::SeqCst)
     }
 }
 
@@ -200,6 +205,7 @@ impl crate::ThreadEnvironment for FakeThreadEnvironment {
         _output_byte_limit: Option<u64>,
         _cx: &mut AsyncApp,
     ) -> Task<Result<Rc<dyn crate::TerminalHandle>>> {
+        self.terminal_creations.fetch_add(1, Ordering::SeqCst);
         let handle = self
             .terminal_handle
             .clone()

@@ -31,6 +31,8 @@ pub struct PlatformTitleBar {
     children: SmallVec<[AnyElement; 2]>,
     should_move: bool,
     system_window_tabs: Entity<SystemWindowTabs>,
+    workspace_sidebar_open: bool,
+    sidebar_has_notifications: bool,
 }
 
 impl PlatformTitleBar {
@@ -44,6 +46,8 @@ impl PlatformTitleBar {
             children: SmallVec::new(),
             should_move: false,
             system_window_tabs,
+            workspace_sidebar_open: false,
+            sidebar_has_notifications: false,
         }
     }
 
@@ -70,6 +74,28 @@ impl PlatformTitleBar {
         SystemWindowTabs::init(cx);
     }
 
+    pub fn is_workspace_sidebar_open(&self) -> bool {
+        self.workspace_sidebar_open
+    }
+
+    pub fn set_workspace_sidebar_open(&mut self, open: bool, cx: &mut Context<Self>) {
+        self.workspace_sidebar_open = open;
+        cx.notify();
+    }
+
+    pub fn sidebar_has_notifications(&self) -> bool {
+        self.sidebar_has_notifications
+    }
+
+    pub fn set_sidebar_has_notifications(
+        &mut self,
+        has_notifications: bool,
+        cx: &mut Context<Self>,
+    ) {
+        self.sidebar_has_notifications = has_notifications;
+        cx.notify();
+    }
+
     pub fn is_multi_workspace_enabled(cx: &App) -> bool {
         cx.has_flag::<AgentV2FeatureFlag>() && !DisableAiSettings::get_global(cx).disable_ai
     }
@@ -83,6 +109,9 @@ impl Render for PlatformTitleBar {
         let titlebar_color = self.title_bar_color(window, cx);
         let close_action = Box::new(workspace::CloseWindow);
         let children = mem::take(&mut self.children);
+
+        let is_multiworkspace_sidebar_open =
+            PlatformTitleBar::is_multi_workspace_enabled(cx) && self.is_workspace_sidebar_open();
 
         let title_bar = h_flex()
             .window_control_area(WindowControlArea::Drag)
@@ -132,7 +161,9 @@ impl Render for PlatformTitleBar {
             .map(|this| {
                 if window.is_fullscreen() {
                     this.pl_2()
-                } else if self.platform_style == PlatformStyle::Mac {
+                } else if self.platform_style == PlatformStyle::Mac
+                    && !is_multiworkspace_sidebar_open
+                {
                     this.pl(px(TRAFFIC_LIGHT_PADDING))
                 } else {
                     this.pl_2()
@@ -144,9 +175,10 @@ impl Render for PlatformTitleBar {
                     .when(!(tiling.top || tiling.right), |el| {
                         el.rounded_tr(theme::CLIENT_SIDE_DECORATION_ROUNDING)
                     })
-                    .when(!(tiling.top || tiling.left), |el| {
-                        el.rounded_tl(theme::CLIENT_SIDE_DECORATION_ROUNDING)
-                    })
+                    .when(
+                        !(tiling.top || tiling.left) && !is_multiworkspace_sidebar_open,
+                        |el| el.rounded_tl(theme::CLIENT_SIDE_DECORATION_ROUNDING),
+                    )
                     // this border is to avoid a transparent gap in the rounded corners
                     .mt(px(-1.))
                     .mb(px(-1.))

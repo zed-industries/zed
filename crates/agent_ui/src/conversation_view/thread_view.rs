@@ -532,7 +532,7 @@ impl ThreadView {
         acp_thread.connection().clone().downcast()
     }
 
-    pub(crate) fn as_native_thread(&self, cx: &App) -> Option<Entity<agent::Thread>> {
+    pub fn as_native_thread(&self, cx: &App) -> Option<Entity<agent::Thread>> {
         let acp_thread = self.thread.read(cx);
         self.as_native_connection(cx)?
             .thread(acp_thread.session_id(), cx)
