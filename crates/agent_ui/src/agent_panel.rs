@@ -1955,6 +1955,20 @@ impl AgentPanel {
         self.background_threads.contains_key(session_id)
     }
 
+    pub fn cancel_thread(&self, session_id: &acp::SessionId, cx: &mut Context<Self>) {
+        let conversation_views = self
+            .active_conversation_view()
+            .into_iter()
+            .chain(self.background_threads.values());
+
+        for conversation_view in conversation_views {
+            if let Some(thread_view) = conversation_view.read(cx).thread_view(session_id) {
+                thread_view.update(cx, |view, cx| view.cancel_generation(cx));
+                return;
+            }
+        }
+    }
+
     /// active thread plus any background threads that are still running or
     /// completed but unseen.
     pub fn parent_threads(&self, cx: &App) -> Vec<Entity<ThreadView>> {

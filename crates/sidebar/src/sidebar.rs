@@ -23,7 +23,7 @@ use std::sync::Arc;
 use theme::ActiveTheme;
 use ui::{
     AgentThreadStatus, ButtonStyle, HighlightedLabel, KeyBinding, ListItem, Tab, ThreadItem,
-    Tooltip, WithScrollbar, prelude::*,
+    TintColor, Tooltip, WithScrollbar, prelude::*,
 };
 use util::ResultExt as _;
 use util::path_list::PathList;
@@ -1690,6 +1690,21 @@ impl Sidebar {
         }
     }
 
+    fn stop_thread(&mut self, session_id: &acp::SessionId, cx: &mut Context<Self>) {
+        let Some(multi_workspace) = self.multi_workspace.upgrade() else {
+            return;
+        };
+
+        let workspaces = multi_workspace.read(cx).workspaces().to_vec();
+        for workspace in workspaces {
+            if let Some(agent_panel) = workspace.read(cx).panel::<AgentPanel>(cx) {
+                agent_panel.update(cx, |panel, cx| {
+                    panel.cancel_thread(session_id, cx);
+                });
+            }
+        }
+    }
+
     fn delete_thread(
         &mut self,
         session_id: &acp::SessionId,
@@ -1825,6 +1840,10 @@ impl Sidebar {
 
         let is_hovered = self.hovered_thread_index == Some(ix);
         let is_selected = self.focused_thread.as_ref() == Some(&session_info.session_id);
+        let is_running = matches!(
+            thread.status,
+            AgentThreadStatus::Running | AgentThreadStatus::WaitingForConfirmation
+        );
         let can_delete = thread.agent == Agent::NativeAgent;
         let session_id_for_delete = thread.session_info.session_id.clone();
         let focus_handle = self.focus_handle.clone();
@@ -1887,7 +1906,22 @@ impl Sidebar {
                 }
                 cx.notify();
             }))
-            .when(is_hovered && can_delete, |this| {
+            .when(is_hovered && is_running, |this| {
+                this.action_slot(
+                    IconButton::new("stop-thread", IconName::Stop)
+                        .icon_color(Color::Error)
+                        .style(ButtonStyle::Tinted(TintColor::Error))
+                        .shape(ui::IconButtonShape::Square)
+                        .tooltip(Tooltip::text("Stop Generation"))
+                        .on_click({
+                            let session_id = session_id_for_delete.clone();
+                            cx.listener(move |this, _, _window, cx| {
+                                this.stop_thread(&session_id, cx);
+                            })
+                        }),
+                )
+            })
+            .when(is_hovered && can_delete && !is_running, |this| {
                 this.action_slot(
                     IconButton::new("delete-thread", IconName::Trash)
                         .icon_size(IconSize::Small)
