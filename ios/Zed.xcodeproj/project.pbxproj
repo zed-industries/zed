@@ -317,6 +317,8 @@
 				OTHER_LDFLAGS = (
 					"-lzed_ios",
 					"-lc++",
+					"-lz",
+					"-liconv",
 					"-framework",
 					UIKit,
 					"-framework",
@@ -358,6 +360,8 @@
 				OTHER_LDFLAGS = (
 					"-lzed_ios",
 					"-lc++",
+					"-lz",
+					"-liconv",
 					"-framework",
 					UIKit,
 					"-framework",

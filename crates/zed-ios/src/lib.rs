@@ -17,6 +17,7 @@ mod ios {
     };
     use gpui_ios::IosPlatform;
     use std::{cell::RefCell, ops::Range, rc::Rc, sync::Arc};
+    use util::ResultExt as _;
 
     thread_local! {
         /// Keeps the GPUI application alive for the process lifetime.
@@ -274,7 +275,8 @@ mod ios {
             .try_init();
 
         let platform = Rc::new(IosPlatform::new());
-        let app = Application::with_platform(platform);
+        let app = Application::with_platform(platform)
+            .with_assets(assets::Assets);
 
         // Keep the app alive — Application::run() returns immediately on iOS
         // because UIKit owns the run loop.
@@ -306,7 +308,7 @@ mod ios {
 
         // Theme and fonts
         theme::init(theme::LoadThemes::JustBase, cx);
-        load_embedded_fonts(cx);
+        assets::Assets.load_fonts(cx).log_err();
 
         // Filesystem
         let fs = Arc::new(RealFs::new(
@@ -348,29 +350,29 @@ mod ios {
                 });
 
                 workspace::init(app_state.clone(), cx);
-                APP_STATE.with(|cell| *cell.borrow_mut() = Some(app_state));
+                APP_STATE.with(|cell| *cell.borrow_mut() = Some(app_state.clone()));
                 log::info!("[zed-ios] Zed initialized successfully");
+
+                // Open the workspace window now that init is complete.
+                let task = workspace::Workspace::new_local(
+                    vec![],
+                    app_state,
+                    None,
+                    None,
+                    None,
+                    true,
+                    cx,
+                );
+                cx.spawn(async move |_cx| {
+                    match task.await {
+                        Ok(_) => log::info!("[zed-ios] Workspace opened"),
+                        Err(err) => log::error!("[zed-ios] Failed to open workspace: {err:?}"),
+                    }
+                })
+                .detach();
             });
         })
         .detach();
-    }
-
-    fn load_embedded_fonts(cx: &App) {
-        use util::ResultExt as _;
-
-        let asset_source = cx.asset_source();
-        let font_paths = asset_source.list("fonts").unwrap_or_default();
-        let mut embedded_fonts = Vec::new();
-        for font_path in &font_paths {
-            if font_path.ends_with(".ttf") {
-                if let Ok(Some(font_bytes)) = asset_source.load(font_path) {
-                    embedded_fonts.push(font_bytes);
-                }
-            }
-        }
-        cx.text_system()
-            .add_fonts(embedded_fonts)
-            .log_err();
     }
 
     thread_local! {
@@ -378,42 +380,10 @@ mod ios {
     }
 
     pub fn ios_open_window() {
-        APP_KEEPALIVE.with(|cell| {
-            let borrowed = cell.borrow();
-            if let Some(keepalive) = borrowed.as_ref() {
-                keepalive.update(|cx| {
-                    let app_state = APP_STATE.with(|cell| cell.borrow().clone());
-                    if let Some(app_state) = app_state {
-                        // Open a real Zed workspace
-                        let task = workspace::Workspace::new_local(
-                            vec![],
-                            app_state,
-                            None,
-                            None,
-                            None,
-                            true,
-                            cx,
-                        );
-                        cx.spawn(async move |_cx| {
-                            match task.await {
-                                Ok(_result) => log::info!("[zed-ios] Workspace opened"),
-                                Err(err) => log::error!("[zed-ios] Failed to open workspace: {err:?}"),
-                            }
-                        })
-                        .detach();
-                    } else {
-                        // Fallback to smoke test if init hasn't run
-                        if let Err(err) = cx.open_window(WindowOptions::default(), |_window, cx| {
-                            cx.new(TextSmokeView::new)
-                        }) {
-                            log::error!("[zed-ios] open_window failed: {err:?}");
-                        }
-                    }
-                });
-            } else {
-                log::error!("[zed-ios] APP_KEEPALIVE is None — zed_ios_main must be called first");
-            }
-        });
+        // The first workspace window is opened by init_zed after async Session
+        // creation completes. Subsequent calls from SceneDelegate (e.g. Stage
+        // Manager multi-window) would open additional workspaces here.
+        log::info!("[zed-ios] ios_open_window called");
     }
 }
 
