@@ -14,6 +14,7 @@ use gpui::{
 };
 use menu::{Cancel, Confirm, SelectFirst, SelectLast, SelectNext, SelectPrevious};
 use project::{AgentId, Event as ProjectEvent};
+use ui::utils::platform_title_bar_height;
 
 use std::collections::{HashMap, HashSet};
 use std::mem;
@@ -21,8 +22,8 @@ use std::path::Path;
 use std::sync::Arc;
 use theme::ActiveTheme;
 use ui::{
-    AgentThreadStatus, ButtonStyle, HighlightedLabel, IconButtonShape, ListItem, Tab, ThreadItem,
-    Tooltip, WithScrollbar, prelude::*,
+    AgentThreadStatus, ButtonStyle, HighlightedLabel, ListItem, Tab, ThreadItem, Tooltip,
+    WithScrollbar, prelude::*,
 };
 use util::ResultExt as _;
 use util::path_list::PathList;
@@ -1912,67 +1913,71 @@ impl Sidebar {
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let has_query = self.has_filter_query(cx);
-        let needs_traffic_light_padding = cfg!(target_os = "macos") && !window.is_fullscreen();
+        let traffic_lights = cfg!(target_os = "macos") && !window.is_fullscreen();
+        let header_height = platform_title_bar_height(window);
 
         v_flex()
-            .flex_none()
             .child(
                 h_flex()
-                    .h(Tab::container_height(cx) - px(1.))
-                    .border_b_1()
-                    .border_color(cx.theme().colors().border)
-                    .when(needs_traffic_light_padding, |this| {
+                    .h(header_height)
+                    .mt_px()
+                    .pb_px()
+                    .when(traffic_lights, |this| {
                         this.pl(px(ui::utils::TRAFFIC_LIGHT_PADDING))
                     })
-                    .child(self.render_sidebar_toggle_button(cx)),
+                    .pr_1p5()
+                    .border_b_1()
+                    .border_color(cx.theme().colors().border)
+                    .justify_between()
+                    .child(self.render_sidebar_toggle_button(cx))
+                    .child(
+                        IconButton::new("archive", IconName::Archive)
+                            .icon_size(IconSize::Small)
+                            .tooltip(Tooltip::text("View Archived Threads"))
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.show_archive(window, cx);
+                            })),
+                    ),
             )
             .child(
                 h_flex()
                     .h(Tab::container_height(cx))
+                    .p_2()
+                    .pr_1p5()
                     .gap_1p5()
-                    .px_1p5()
                     .border_b_1()
                     .border_color(cx.theme().colors().border)
-                    .child(self.render_filter_input())
                     .child(
-                        h_flex()
-                            .gap_0p5()
-                            .when(has_query, |this| {
-                                this.child(
-                                    IconButton::new("clear_filter", IconName::Close)
-                                        .shape(IconButtonShape::Square)
-                                        .tooltip(Tooltip::text("Clear Search"))
-                                        .on_click(cx.listener(|this, _, window, cx| {
-                                            this.reset_filter_editor_text(window, cx);
-                                            this.update_entries(false, cx);
-                                        })),
-                                )
-                            })
-                            .child(
-                                IconButton::new("archive", IconName::Archive)
-                                    .icon_size(IconSize::Small)
-                                    .tooltip(Tooltip::text("Archive"))
-                                    .on_click(cx.listener(|this, _, window, cx| {
-                                        this.show_archive(window, cx);
-                                    })),
-                            ),
-                    ),
+                        Icon::new(IconName::MagnifyingGlass)
+                            .size(IconSize::Small)
+                            .color(Color::Muted),
+                    )
+                    .child(self.render_filter_input())
+                    .when(has_query, |this| {
+                        this.child(
+                            IconButton::new("clear_filter", IconName::Close)
+                                .icon_size(IconSize::Small)
+                                .tooltip(Tooltip::text("Clear Search"))
+                                .on_click(cx.listener(|this, _, window, cx| {
+                                    this.reset_filter_editor_text(window, cx);
+                                    this.update_entries(false, cx);
+                                })),
+                        )
+                    }),
             )
     }
 
     fn render_sidebar_toggle_button(&self, _cx: &mut Context<Self>) -> impl IntoElement {
         let icon = IconName::ThreadsSidebarLeftOpen;
 
-        h_flex().h_full().child(
-            IconButton::new("sidebar-close-toggle", icon)
-                .icon_size(IconSize::Small)
-                .tooltip(move |_, cx| {
-                    Tooltip::for_action("Close Threads Sidebar", &ToggleWorkspaceSidebar, cx)
-                })
-                .on_click(|_, window, cx| {
-                    window.dispatch_action(ToggleWorkspaceSidebar.boxed_clone(), cx);
-                }),
-        )
+        IconButton::new("sidebar-close-toggle", icon)
+            .icon_size(IconSize::Small)
+            .tooltip(move |_, cx| {
+                Tooltip::for_action("Close Threads Sidebar", &ToggleWorkspaceSidebar, cx)
+            })
+            .on_click(|_, window, cx| {
+                window.dispatch_action(ToggleWorkspaceSidebar.boxed_clone(), cx);
+            })
     }
 }
 

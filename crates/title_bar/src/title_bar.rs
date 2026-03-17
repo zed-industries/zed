@@ -14,6 +14,7 @@ pub use platform_title_bar::{
     self, DraggedWindowTab, MergeAllWindows, MoveTabToNewWindow, PlatformTitleBar,
     ShowNextWindowTab, ShowPreviousWindowTab,
 };
+use ui::Divider;
 
 #[cfg(not(target_os = "macos"))]
 use crate::application_menu::{
@@ -169,6 +170,7 @@ impl Render for TitleBar {
 
         children.push(
             h_flex()
+                .h_full()
                 .gap_0p5()
                 .map(|title_bar| {
                     let mut render_project_items = title_bar_settings.show_branch_name
@@ -705,23 +707,29 @@ impl TitleBar {
         let has_notifications = self.platform_titlebar.read(cx).sidebar_has_notifications();
 
         Some(
-            IconButton::new(
-                "toggle-workspace-sidebar",
-                IconName::ThreadsSidebarLeftClosed,
-            )
-            .icon_size(IconSize::Small)
-            .when(has_notifications, |button| {
-                button
-                    .indicator(Indicator::dot().color(Color::Accent))
-                    .indicator_border_color(Some(cx.theme().colors().title_bar_background))
-            })
-            .tooltip(move |_, cx| {
-                Tooltip::for_action("Open Threads Sidebar", &ToggleWorkspaceSidebar, cx)
-            })
-            .on_click(|_, window, cx| {
-                window.dispatch_action(ToggleWorkspaceSidebar.boxed_clone(), cx);
-            })
-            .into_any_element(),
+            h_flex()
+                .h_full()
+                .gap_0p5()
+                .child(
+                    IconButton::new(
+                        "toggle-workspace-sidebar",
+                        IconName::ThreadsSidebarLeftClosed,
+                    )
+                    .icon_size(IconSize::Small)
+                    .when(has_notifications, |button| {
+                        button
+                            .indicator(Indicator::dot().color(Color::Accent))
+                            .indicator_border_color(Some(cx.theme().colors().title_bar_background))
+                    })
+                    .tooltip(move |_, cx| {
+                        Tooltip::for_action("Open Threads Sidebar", &ToggleWorkspaceSidebar, cx)
+                    })
+                    .on_click(|_, window, cx| {
+                        window.dispatch_action(ToggleWorkspaceSidebar.boxed_clone(), cx);
+                    }),
+                )
+                .child(Divider::vertical().color(ui::DividerColor::Border))
+                .into_any_element(),
         )
     }
 
