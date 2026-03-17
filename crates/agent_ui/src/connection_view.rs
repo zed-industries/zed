@@ -6293,7 +6293,7 @@ pub(crate) mod tests {
         tool_call_id: &str,
         option_id: &str,
         cx: &mut TestAppContext,
-    ) -> Task<acp::RequestPermissionOutcome> {
+    ) -> Task<acp_thread::RequestPermissionOutcome> {
         let tool_call_id = acp::ToolCallId::new(tool_call_id);
         let label = format!("Tool {tool_call_id}");
         let option_id = acp::PermissionOptionId::new(option_id);

@@ -532,6 +532,7 @@ impl ThreadView {
             is_loading_contents: false,
             new_server_version_available: None,
             permission_selections: HashMap::default(),
+            resume_thread_metadata: None,
             _cancel_task: None,
             _save_task: None,
             _draft_resolve_task: None,

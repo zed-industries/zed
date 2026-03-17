@@ -1167,7 +1167,7 @@ impl acp::Client for ClientDelegate {
 
         let outcome = task.await;
 
-        Ok(acp::RequestPermissionResponse::new(outcome))
+        Ok(acp::RequestPermissionResponse::new(outcome.into()))
     }
 
     async fn write_text_file(

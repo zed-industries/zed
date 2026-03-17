@@ -489,6 +489,53 @@ impl From<&ResolvedLocation> for AgentLocation {
 }
 
 #[derive(Debug)]
+pub struct SelectedPermissionOutcome {
+    pub option_id: acp::PermissionOptionId,
+    pub params: Option<()>,
+}
+
+impl SelectedPermissionOutcome {
+    pub fn new(option_id: acp::PermissionOptionId) -> Self {
+        Self {
+            option_id,
+            params: None,
+        }
+    }
+
+    pub fn params(mut self, params: Option<()>) -> Self {
+        self.params = params;
+        self
+    }
+}
+
+impl From<acp::PermissionOptionId> for SelectedPermissionOutcome {
+    fn from(option_id: acp::PermissionOptionId) -> Self {
+        Self::new(option_id)
+    }
+}
+
+impl From<SelectedPermissionOutcome> for acp::SelectedPermissionOutcome {
+    fn from(value: SelectedPermissionOutcome) -> Self {
+        Self::new(value.option_id)
+    }
+}
+
+#[derive(Debug)]
+pub enum RequestPermissionOutcome {
+    Cancelled,
+    Selected(SelectedPermissionOutcome),
+}
+
+impl From<RequestPermissionOutcome> for acp::RequestPermissionOutcome {
+    fn from(value: RequestPermissionOutcome) -> Self {
+        match value {
+            RequestPermissionOutcome::Cancelled => Self::Cancelled,
+            RequestPermissionOutcome::Selected(outcome) => Self::Selected(outcome.into()),
+        }
+    }
+}
+
+#[derive(Debug)]
 pub enum ToolCallStatus {
     /// The tool call hasn't started running yet, but we start showing it to
     /// the user.
@@ -496,7 +543,7 @@ pub enum ToolCallStatus {
     /// The tool call is waiting for confirmation from the user.
     WaitingForConfirmation {
         options: PermissionOptions,
-        respond_tx: oneshot::Sender<acp::PermissionOptionId>,
+        respond_tx: oneshot::Sender<SelectedPermissionOutcome>,
     },
     /// The tool call is currently running.
     InProgress,
@@ -1741,7 +1788,7 @@ impl AcpThread {
         tool_call: acp::ToolCallUpdate,
         options: PermissionOptions,
         cx: &mut Context<Self>,
-    ) -> Result<Task<acp::RequestPermissionOutcome>> {
+    ) -> Result<Task<RequestPermissionOutcome>> {
         let (tx, rx) = oneshot::channel();
 
         let status = ToolCallStatus::WaitingForConfirmation {
@@ -1757,10 +1804,8 @@ impl AcpThread {
 
         Ok(cx.spawn(async move |this, cx| {
             let outcome = match rx.await {
-                Ok(option) => acp::RequestPermissionOutcome::Selected(
-                    acp::SelectedPermissionOutcome::new(option),
-                ),
-                Err(oneshot::Canceled) => acp::RequestPermissionOutcome::Cancelled,
+                Ok(outcome) => RequestPermissionOutcome::Selected(outcome),
+                Err(oneshot::Canceled) => RequestPermissionOutcome::Cancelled,
             };
             this.update(cx, |_this, cx| {
                 cx.emit(AcpThreadEvent::ToolAuthorizationReceived(tool_call_id))
@@ -1794,7 +1839,12 @@ impl AcpThread {
         let curr_status = mem::replace(&mut call.status, new_status);
 
         if let ToolCallStatus::WaitingForConfirmation { respond_tx, .. } = curr_status {
-            respond_tx.send(option_id).log_err();
+            respond_tx
+                .send(SelectedPermissionOutcome {
+                    option_id,
+                    params: None,
+                })
+                .log_err();
         } else if cfg!(debug_assertions) {
             panic!("tried to authorize an already authorized tool call");
         }

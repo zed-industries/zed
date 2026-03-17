@@ -882,7 +882,7 @@ impl ToolPermissionContext {
 pub struct ToolCallAuthorization {
     pub tool_call: acp::ToolCallUpdate,
     pub options: acp_thread::PermissionOptions,
-    pub response: oneshot::Sender<acp::PermissionOptionId>,
+    pub response: oneshot::Sender<acp_thread::SelectedPermissionOutcome>,
     pub context: Option<ToolPermissionContext>,
 }
 
@@ -3651,7 +3651,8 @@ impl ToolCallEventStream {
 
         let fs = self.fs.clone();
         cx.spawn(async move |cx| {
-            let response_str = response_rx.await?.0.to_string();
+            // FIXME: use the response params field
+            let response_str = response_rx.await?.option_id.0.to_string();
 
             if response_str == format!("always_allow_mcp:{}", tool_id) {
                 if let Some(fs) = fs.clone() {
@@ -3722,7 +3723,8 @@ impl ToolCallEventStream {
 
         let fs = self.fs.clone();
         cx.spawn(async move |cx| {
-            let response_str = response_rx.await?.0.to_string();
+            // FIXME: use the response params field
+            let response_str = response_rx.await?.option_id.0.to_string();
 
             // Handle "always allow tool" - e.g., "always_allow:terminal"
             if let Some(tool) = response_str.strip_prefix("always_allow:") {
