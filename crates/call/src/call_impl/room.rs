@@ -541,13 +541,14 @@ impl Room {
         }
     }
 
-    pub fn get_stats(
-        &self,
-    ) -> impl Future<Output = Option<livekit::SessionStats>> + Send + 'static {
-        let future = self.live_kit.as_ref().map(|lk| lk.room.stats_future());
-        async move {
-            let future = future?;
-            future.await.ok()
+    pub fn get_stats(&self, cx: &App) -> Task<Option<livekit::SessionStats>> {
+        match self.live_kit.as_ref() {
+            Some(lk) => {
+                let task = lk.room.stats_task(cx);
+                cx.background_executor()
+                    .spawn(async move { task.await.ok() })
+            }
+            None => Task::ready(None),
         }
     }
 

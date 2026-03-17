@@ -7,7 +7,6 @@ use gpui_tokio::Tokio;
 use log::info;
 use playback::capture_local_video_track;
 use settings::Settings;
-use std::future::Future;
 use std::sync::Arc;
 use std::sync::atomic::AtomicU64;
 
@@ -168,16 +167,15 @@ impl Room {
         self.room.get_stats().await.map_err(anyhow::Error::from)
     }
 
-    /// Returns a `Send + 'static` future that fetches room stats.
+    /// Returns a `Task` that fetches room stats on the Tokio runtime.
     ///
-    /// This clones the inner `livekit::Room` (an `Arc` bump) so that the
-    /// returned future does not capture the `Rc<Room>` wrapper, making it
-    /// safe to run on a background executor.
-    pub fn stats_future(
-        &self,
-    ) -> impl Future<Output = Result<livekit::SessionStats>> + Send + 'static {
+    /// LiveKit's SDK is Tokio-based, so the stats fetch must run within
+    /// a Tokio context rather than on GPUI's smol-based background executor.
+    pub fn stats_task(&self, cx: &impl gpui::AppContext) -> Task<Result<livekit::SessionStats>> {
         let inner = self.room.clone();
-        async move { inner.get_stats().await.map_err(anyhow::Error::from) }
+        Tokio::spawn_result(cx, async move {
+            inner.get_stats().await.map_err(anyhow::Error::from)
+        })
     }
 }
 

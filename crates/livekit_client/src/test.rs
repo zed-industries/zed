@@ -8,7 +8,6 @@ use gpui::{App, AsyncApp, BackgroundExecutor};
 use livekit_api::{proto, token};
 use parking_lot::Mutex;
 use postage::{mpsc, sink::Sink};
-use std::future::Future;
 use std::sync::{
     Arc, Weak,
     atomic::{AtomicBool, Ordering::SeqCst},
@@ -757,8 +756,8 @@ impl Room {
         Ok(SessionStats::default())
     }
 
-    pub fn stats_future(&self) -> impl Future<Output = Result<SessionStats>> + Send + 'static {
-        futures::future::ready(Ok(SessionStats::default()))
+    pub fn stats_task(&self, _cx: &impl gpui::AppContext) -> gpui::Task<Result<SessionStats>> {
+        gpui::Task::ready(Ok(SessionStats::default()))
     }
 }
 

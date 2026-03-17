@@ -104,13 +104,13 @@ impl CallStatsModal {
         };
 
         let connection_quality = room.read(cx).connection_quality();
-        let stats_future = room.read(cx).get_stats();
+        let stats_task = room.read(cx).get_stats(cx);
         self.input_lag = room.read(cx).input_lag();
 
         self.network_stats.connection_quality = Some(connection_quality);
 
         let background_task = cx.background_executor().spawn(async move {
-            let session_stats = stats_future.await;
+            let session_stats = stats_task.await;
             session_stats.map(|stats| Self::compute_network_stats(&stats))
         });
 
