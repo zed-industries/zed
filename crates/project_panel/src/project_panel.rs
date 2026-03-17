@@ -1198,13 +1198,7 @@ impl ProjectPanel {
                             .separator()
                             .when(is_local, |menu| {
                                 menu.action(
-                                    if cfg!(target_os = "macos") && !is_remote {
-                                        "Reveal in Finder"
-                                    } else if cfg!(target_os = "windows") && !is_remote {
-                                        "Reveal in File Explorer"
-                                    } else {
-                                        "Reveal in File Manager"
-                                    },
+                                    ui::utils::reveal_in_file_manager_label(is_remote),
                                     Box::new(RevealInFileManager),
                                 )
                             })

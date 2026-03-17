@@ -3245,29 +3245,24 @@ impl Pane {
                                 })
                                 .when(is_local, |menu| {
                                     menu.when_some(reveal_path, |menu, reveal_path| {
-                                        menu.entry(
-                                            if cfg!(target_os = "macos") && !is_remote {
-                                                "Reveal in Finder"
-                                            } else if cfg!(target_os = "windows") && !is_remote {
-                                                "Reveal in File Explorer"
-                                            } else {
-                                                "Reveal in File Manager"
-                                            },
-                                            None::<Box<dyn Action>>,
-                                            window.handler_for(&pane, move |pane, _, cx| {
-                                                if let Some(project) = pane.project.upgrade() {
-                                                    project.update(cx, |project, cx| {
-                                                        project.reveal_path(&reveal_path, cx);
-                                                    });
-                                                } else {
-                                                    cx.reveal_path(&reveal_path);
-                                                }
-                                            }),
-                                        )
+                                        menu.separator()
+                                            .entry(
+                                                ui::utils::reveal_in_file_manager_label(is_remote),
+                                                None::<Box<dyn Action>>,
+                                                window.handler_for(&pane, move |pane, _, cx| {
+                                                    if let Some(project) = pane.project.upgrade() {
+                                                        project.update(cx, |project, cx| {
+                                                            project.reveal_path(&reveal_path, cx);
+                                                        });
+                                                    } else {
+                                                        cx.reveal_path(&reveal_path);
+                                                    }
+                                                }),
+                                            )
+                                            .separator()
                                     })
                                 })
                                 .map(pin_tab_entries)
-                                .separator()
                                 .when(visible_in_project_panel, |menu| {
                                     menu.entry(
                                         "Reveal In Project Panel",

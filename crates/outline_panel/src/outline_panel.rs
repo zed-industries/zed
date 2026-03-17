@@ -1488,13 +1488,7 @@ impl OutlinePanel {
         let context_menu = ContextMenu::build(window, cx, |menu, _, _| {
             menu.context(self.focus_handle.clone())
                 .action(
-                    if cfg!(target_os = "macos") {
-                        "Reveal in Finder"
-                    } else if cfg!(target_os = "windows") {
-                        "Reveal in File Explorer"
-                    } else {
-                        "Reveal in File Manager"
-                    },
+                    ui::utils::reveal_in_file_manager_label(false),
                     Box::new(RevealInFileManager),
                 )
                 .action("Open in Terminal", Box::new(OpenInTerminal))
