@@ -47,7 +47,7 @@ use crate::parser::CodeBlockKind;
 /// A callback function that can be used to customize the style of links based on the destination URL.
 /// If the callback returns `None`, the default link style will be used.
 type LinkStyleCallback = Rc<dyn Fn(&str, &App) -> Option<TextStyleRefinement>>;
-
+type SourceClickCallback = Box<dyn Fn(usize, usize, &mut Window, &mut App) -> bool>;
 /// Defines custom style refinements for each heading level (H1-H6)
 #[derive(Clone, Default)]
 pub struct HeadingLevelStyles {
@@ -239,6 +239,7 @@ pub struct Markdown {
     selection: Selection,
     pressed_link: Option<RenderedLink>,
     autoscroll_request: Option<usize>,
+    active_root_block: Option<usize>,
     parsed_markdown: ParsedMarkdown,
     images_by_source_offset: HashMap<usize, Arc<Image>>,
     should_reparse: bool,
@@ -307,6 +308,7 @@ impl Markdown {
             selection: Selection::default(),
             pressed_link: None,
             autoscroll_request: None,
+            active_root_block: None,
             should_reparse: false,
             images_by_source_offset: Default::default(),
             parsed_markdown: ParsedMarkdown::default(),
@@ -332,6 +334,7 @@ impl Markdown {
             selection: Selection::default(),
             pressed_link: None,
             autoscroll_request: None,
+            active_root_block: None,
             should_reparse: false,
             parsed_markdown: ParsedMarkdown::default(),
             images_by_source_offset: Default::default(),
@@ -408,6 +411,30 @@ impl Markdown {
     pub fn replace(&mut self, source: impl Into<SharedString>, cx: &mut Context<Self>) {
         self.source = source.into();
         self.parse(cx);
+    }
+
+    pub fn request_autoscroll_to_source_index(
+        &mut self,
+        source_index: usize,
+        cx: &mut Context<Self>,
+    ) {
+        self.autoscroll_request = Some(source_index);
+        cx.refresh_windows();
+    }
+
+    pub fn set_active_root_for_source_index(
+        &mut self,
+        source_index: Option<usize>,
+        cx: &mut Context<Self>,
+    ) {
+        let active_root_block =
+            source_index.and_then(|index| self.parsed_markdown.root_block_for_source_index(index));
+        if self.active_root_block == active_root_block {
+            return;
+        }
+
+        self.active_root_block = active_root_block;
+        cx.notify();
     }
 
     pub fn reset(&mut self, source: SharedString, cx: &mut Context<Self>) {
@@ -489,6 +516,16 @@ impl Markdown {
 
     fn parse(&mut self, cx: &mut Context<Self>) {
         if self.source.is_empty() {
+            self.should_reparse = false;
+            self.pending_parse.take();
+            self.parsed_markdown = ParsedMarkdown {
+                source: self.source.clone(),
+                ..Default::default()
+            };
+            self.active_root_block = None;
+            self.images_by_source_offset.clear();
+            cx.notify();
+            cx.refresh_windows();
             return;
         }
 
@@ -514,12 +551,14 @@ impl Markdown {
                         source,
                         languages_by_name: TreeMap::default(),
                         languages_by_path: TreeMap::default(),
+                        root_block_starts: Arc::default(),
                     },
                     Default::default(),
                 );
             }
 
-            let (events, language_names, paths) = parse_markdown(&source);
+            let (events, language_names, paths, root_block_starts) = parse_markdown(&source);
+            let root_block_starts = Arc::from(root_block_starts);
             let mut images_by_source_offset = HashMap::default();
             let mut languages_by_name = TreeMap::default();
             let mut languages_by_path = TreeMap::default();
@@ -578,6 +617,7 @@ impl Markdown {
                     events: Arc::from(events),
                     languages_by_name,
                     languages_by_path,
+                    root_block_starts,
                 },
                 images_by_source_offset,
             )
@@ -589,10 +629,16 @@ impl Markdown {
             this.update(cx, |this, cx| {
                 this.parsed_markdown = parsed;
                 this.images_by_source_offset = images_by_source_offset;
+                if this.active_root_block.is_some_and(|block_index| {
+                    block_index >= this.parsed_markdown.root_block_starts.len()
+                }) {
+                    this.active_root_block = None;
+                }
                 this.pending_parse.take();
                 if this.should_reparse {
                     this.parse(cx);
                 }
+                cx.notify();
                 cx.refresh_windows();
             })
             .ok();
@@ -686,6 +732,7 @@ pub struct ParsedMarkdown {
     pub events: Arc<[(Range<usize>, MarkdownEvent)]>,
     pub languages_by_name: TreeMap<SharedString, Arc<Language>>,
     pub languages_by_path: TreeMap<Arc<str>, Arc<Language>>,
+    pub root_block_starts: Arc<[usize]>,
 }
 
 impl ParsedMarkdown {
@@ -696,6 +743,30 @@ impl ParsedMarkdown {
     pub fn events(&self) -> &Arc<[(Range<usize>, MarkdownEvent)]> {
         &self.events
     }
+
+    pub fn root_block_starts(&self) -> &Arc<[usize]> {
+        &self.root_block_starts
+    }
+
+    pub fn root_block_for_source_index(&self, source_index: usize) -> Option<usize> {
+        if self.root_block_starts.is_empty() {
+            return None;
+        }
+
+        let partition = self
+            .root_block_starts
+            .partition_point(|block_start| *block_start <= source_index);
+
+        Some(partition.saturating_sub(1))
+    }
+}
+
+pub enum AutoscrollBehavior {
+    /// Propagate the request up the element tree for the nearest
+    /// scrollable ancestor (e.g. `List`) to handle.
+    Propagate,
+    /// Directly control a specific scroll handle.
+    Controlled(ScrollHandle),
 }
 
 pub struct MarkdownElement {
@@ -703,6 +774,9 @@ pub struct MarkdownElement {
     style: MarkdownStyle,
     code_block_renderer: CodeBlockRenderer,
     on_url_click: Option<Box<dyn Fn(SharedString, &mut Window, &mut App)>>,
+    on_source_click: Option<SourceClickCallback>,
+    show_root_block_markers: bool,
+    autoscroll: AutoscrollBehavior,
 }
 
 impl MarkdownElement {
@@ -716,6 +790,9 @@ impl MarkdownElement {
                 border: false,
             },
             on_url_click: None,
+            on_source_click: None,
+            show_root_block_markers: false,
+            autoscroll: AutoscrollBehavior::Propagate,
         }
     }
 
@@ -750,6 +827,24 @@ impl MarkdownElement {
         handler: impl Fn(SharedString, &mut Window, &mut App) + 'static,
     ) -> Self {
         self.on_url_click = Some(Box::new(handler));
+        self
+    }
+
+    pub fn on_source_click(
+        mut self,
+        handler: impl Fn(usize, usize, &mut Window, &mut App) -> bool + 'static,
+    ) -> Self {
+        self.on_source_click = Some(Box::new(handler));
+        self
+    }
+
+    pub fn show_root_block_markers(mut self) -> Self {
+        self.show_root_block_markers = true;
+        self
+    }
+
+    pub fn scroll_handle(mut self, scroll_handle: ScrollHandle) -> Self {
+        self.autoscroll = AutoscrollBehavior::Controlled(scroll_handle);
         self
     }
 
@@ -846,6 +941,7 @@ impl MarkdownElement {
         }
 
         let on_open_url = self.on_url_click.take();
+        let on_source_click = self.on_source_click.take();
 
         self.on_mouse_event(window, cx, {
             let hitbox = hitbox.clone();
@@ -873,6 +969,16 @@ impl MarkdownElement {
                                 match rendered_text.source_index_for_position(event.position) {
                                     Ok(ix) | Err(ix) => ix,
                                 };
+                            if let Some(handler) = on_source_click.as_ref() {
+                                let blocked = handler(source_index, event.click_count, window, cx);
+                                if blocked {
+                                    markdown.selection = Selection::default();
+                                    markdown.pressed_link = None;
+                                    window.prevent_default();
+                                    cx.notify();
+                                    return;
+                                }
+                            }
                             let (range, mode) = match event.click_count {
                                 1 => {
                                     let range = source_index..source_index;
@@ -980,14 +1086,38 @@ impl MarkdownElement {
             .update(cx, |markdown, _| markdown.autoscroll_request.take())?;
         let (position, line_height) = rendered_text.position_for_source_index(autoscroll_index)?;
 
-        let text_style = self.style.base_text_style.clone();
-        let font_id = window.text_system().resolve_font(&text_style.font());
-        let font_size = text_style.font_size.to_pixels(window.rem_size());
-        let em_width = window.text_system().em_width(font_id, font_size).unwrap();
-        window.request_autoscroll(Bounds::from_corners(
-            point(position.x - 3. * em_width, position.y - 3. * line_height),
-            point(position.x + 3. * em_width, position.y + 3. * line_height),
-        ));
+        match &self.autoscroll {
+            AutoscrollBehavior::Controlled(scroll_handle) => {
+                let viewport = scroll_handle.bounds();
+                let margin = line_height * 3.;
+                let top_goal = viewport.top() + margin;
+                let bottom_goal = viewport.bottom() - margin;
+                let current_offset = scroll_handle.offset();
+
+                let new_offset_y = if position.y < top_goal {
+                    current_offset.y + (top_goal - position.y)
+                } else if position.y + line_height > bottom_goal {
+                    current_offset.y + (bottom_goal - (position.y + line_height))
+                } else {
+                    current_offset.y
+                };
+
+                scroll_handle.set_offset(point(
+                    current_offset.x,
+                    new_offset_y.clamp(-scroll_handle.max_offset().y, Pixels::ZERO),
+                ));
+            }
+            AutoscrollBehavior::Propagate => {
+                let text_style = self.style.base_text_style.clone();
+                let font_id = window.text_system().resolve_font(&text_style.font());
+                let font_size = text_style.font_size.to_pixels(window.rem_size());
+                let em_width = window.text_system().em_width(font_id, font_size).unwrap();
+                window.request_autoscroll(Bounds::from_corners(
+                    point(position.x - 3. * em_width, position.y - 3. * line_height),
+                    point(position.x + 3. * em_width, position.y + 3. * line_height),
+                ));
+            }
+        }
         Some(())
     }
 
@@ -1039,11 +1169,12 @@ impl Element for MarkdownElement {
             self.style.base_text_style.clone(),
             self.style.syntax.clone(),
         );
-        let (parsed_markdown, images) = {
+        let (parsed_markdown, images, active_root_block) = {
             let markdown = self.markdown.read(cx);
             (
                 markdown.parsed_markdown.clone(),
                 markdown.images_by_source_offset.clone(),
+                markdown.active_root_block,
             )
         };
         let markdown_end = if let Some(last) = parsed_markdown.events.last() {
@@ -1063,6 +1194,20 @@ impl Element for MarkdownElement {
             }
 
             match event {
+                MarkdownEvent::RootStart => {
+                    if self.show_root_block_markers {
+                        builder.push_root_block(range, markdown_end);
+                    }
+                }
+                MarkdownEvent::RootEnd(root_block_index) => {
+                    if self.show_root_block_markers {
+                        builder.pop_root_block(
+                            active_root_block == Some(*root_block_index),
+                            cx.theme().colors().border,
+                            cx.theme().colors().border_variant,
+                        );
+                    }
+                }
                 MarkdownEvent::Start(tag) => {
                     match tag {
                         MarkdownTag::Image { .. } => {
@@ -1843,11 +1988,49 @@ impl MarkdownElementBuilder {
         self.div_stack.push(div);
     }
 
+    fn push_root_block(&mut self, range: &Range<usize>, markdown_end: usize) {
+        self.push_div(
+            div().group("markdown-root-block").relative(),
+            range,
+            markdown_end,
+        );
+        self.push_div(div().pl_4(), range, markdown_end);
+    }
+
     fn modify_current_div(&mut self, f: impl FnOnce(AnyDiv) -> AnyDiv) {
         self.flush_text();
         if let Some(div) = self.div_stack.pop() {
             self.div_stack.push(f(div));
         }
+    }
+
+    fn pop_root_block(
+        &mut self,
+        is_active: bool,
+        active_gutter_color: Hsla,
+        hovered_gutter_color: Hsla,
+    ) {
+        self.pop_div();
+        self.modify_current_div(|el| {
+            el.child(
+                div()
+                    .h_full()
+                    .w(px(4.0))
+                    .when(is_active, |this| this.bg(active_gutter_color))
+                    .group_hover("markdown-root-block", |this| {
+                        if is_active {
+                            this
+                        } else {
+                            this.bg(hovered_gutter_color)
+                        }
+                    })
+                    .rounded_xs()
+                    .absolute()
+                    .left_0()
+                    .top_0(),
+            )
+        });
+        self.pop_div();
     }
 
     fn pop_div(&mut self) {
