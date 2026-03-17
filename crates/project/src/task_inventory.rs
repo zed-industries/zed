@@ -986,7 +986,7 @@ impl ContextProvider for BasicContextProvider {
         }
 
         if let Some(language) = buffer.language() {
-            task_variables.insert(VariableName::Language, language.name().0.to_string());
+            task_variables.insert(VariableName::Language, language.name().to_string());
         }
 
         Task::ready(Ok(task_variables))
