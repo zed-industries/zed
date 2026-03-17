@@ -241,6 +241,7 @@ pub struct Sidebar {
     recent_projects_popover_handle: PopoverMenuHandle<RecentProjects>,
     _subscriptions: Vec<gpui::Subscription>,
     _update_entries_task: Option<gpui::Task<()>>,
+    _draft_observation: Option<gpui::Subscription>,
 }
 
 impl Sidebar {
@@ -287,6 +288,7 @@ impl Sidebar {
                     } else {
                         this.focused_thread = None;
                     }
+                    this.observe_draft_editor(cx);
                     this.update_entries(false, cx);
                 }
                 MultiWorkspaceEvent::WorkspaceAdded(workspace) => {
@@ -351,6 +353,7 @@ impl Sidebar {
             archive_view: None,
             recent_projects_popover_handle: PopoverMenuHandle::default(),
             _subscriptions: Vec::new(),
+            _draft_observation: None,
         }
     }
 
@@ -417,6 +420,7 @@ impl Sidebar {
                 .read(cx)
                 .active_conversation()
                 .and_then(|cv| cv.read(cx).parent_id(cx));
+            self.observe_draft_editor(cx);
         }
     }
 
@@ -448,6 +452,7 @@ impl Sidebar {
                                 .read(cx)
                                 .active_conversation()
                                 .and_then(|cv| cv.read(cx).parent_id(cx));
+                            this.observe_draft_editor(cx);
                         }
                         this.update_entries(false, cx);
                     }
@@ -470,6 +475,41 @@ impl Sidebar {
             },
         )
         .detach();
+    }
+
+    fn observe_draft_editor(&mut self, cx: &mut Context<Self>) {
+        self._draft_observation = self
+            .multi_workspace
+            .upgrade()
+            .and_then(|mw| {
+                let ws = mw.read(cx).workspace();
+                ws.read(cx).panel::<AgentPanel>(cx)
+            })
+            .and_then(|panel| {
+                let cv = panel.read(cx).active_conversation()?;
+                let tv = cv.read(cx).active_thread()?;
+                Some(tv.read(cx).message_editor.clone())
+            })
+            .map(|editor| {
+                cx.observe(&editor, |_this, _editor, cx| {
+                    cx.notify();
+                })
+            });
+    }
+
+    fn active_draft_text(&self, cx: &App) -> Option<SharedString> {
+        let mw = self.multi_workspace.upgrade()?;
+        let workspace = mw.read(cx).workspace();
+        let panel = workspace.read(cx).panel::<AgentPanel>(cx)?;
+        let conversation_view = panel.read(cx).active_conversation()?;
+        let thread_view = conversation_view.read(cx).active_thread()?;
+        let raw = thread_view.read(cx).message_editor.read(cx).text(cx);
+        let text: String = raw.split_whitespace().collect::<Vec<_>>().join(" ");
+        if text.is_empty() {
+            None
+        } else {
+            Some(text.into())
+        }
     }
 
     fn all_thread_infos_for_workspace(
@@ -2118,10 +2158,17 @@ impl Sidebar {
                 .upgrade()
                 .map_or(false, |mw| mw.read(cx).workspace() == workspace);
 
+        let label: SharedString = if is_active {
+            self.active_draft_text(cx)
+                .unwrap_or_else(|| "New Thread".into())
+        } else {
+            "New Thread".into()
+        };
+
         let workspace = workspace.clone();
         let id = SharedString::from(format!("new-thread-btn-{}", ix));
 
-        ThreadItem::new(id, "New Thread")
+        ThreadItem::new(id, label)
             .icon(IconName::Plus)
             .selected(is_active)
             .focused(is_selected)
