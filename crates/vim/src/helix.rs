@@ -711,42 +711,34 @@ impl Vim {
                 let display_map = editor.display_snapshot(cx);
                 let selections = editor.selections.all_display(&display_map);
 
-                // Store selection info for positioning after edit
-                let selection_info: Vec<_> = selections
-                    .iter()
-                    .map(|selection| {
-                        let range = selection.range();
-                        let start_offset = range.start.to_offset(&display_map, Bias::Left);
-                        let end_offset = range.end.to_offset(&display_map, Bias::Left);
-                        let was_empty = range.is_empty();
-                        let was_reversed = selection.reversed;
-                        (
-                            display_map.buffer_snapshot().anchor_before(start_offset),
-                            end_offset - start_offset,
-                            was_empty,
-                            was_reversed,
-                        )
-                    })
-                    .collect();
-
                 let mut edits = Vec::new();
+                let mut selection_info = Vec::new();
                 for selection in &selections {
                     let mut range = selection.range();
+                    let was_empty = range.is_empty();
+                    let was_reversed = selection.reversed;
 
-                    // For empty selections, extend to replace one character
-                    if range.is_empty() {
+                    if was_empty {
                         range.end = movement::saturating_right(&display_map, range.start);
                     }
 
                     let byte_range = range.start.to_offset(&display_map, Bias::Left)
                         ..range.end.to_offset(&display_map, Bias::Left);
 
+                    let char_count = display_map
+                        .buffer_snapshot()
+                        .text_for_range(byte_range.clone())
+                        .map(|chunk| chunk.chars().count())
+                        .sum::<usize>();
+
+                    selection_info.push((
+                        display_map.buffer_snapshot().anchor_before(byte_range.start),
+                        char_count,
+                        was_empty,
+                        was_reversed,
+                    ));
+
                     if !byte_range.is_empty() {
-                        let char_count = display_map
-                            .buffer_snapshot()
-                            .text_for_range(byte_range.clone())
-                            .map(|chunk| chunk.chars().count())
-                            .sum::<usize>();
                         let replacement_text = text.repeat(char_count);
                         edits.push((byte_range, replacement_text));
                     }
@@ -758,14 +750,12 @@ impl Vim {
                 let snapshot = editor.buffer().read(cx).snapshot(cx);
                 let ranges: Vec<_> = selection_info
                     .into_iter()
-                    .map(|(start_anchor, original_len, was_empty, was_reversed)| {
+                    .map(|(start_anchor, char_count, was_empty, was_reversed)| {
                         let start_point = start_anchor.to_point(&snapshot);
                         if was_empty {
-                            // For cursor-only, collapse to start
                             start_point..start_point
                         } else {
-                            // For selections, span the replaced text
-                            let replacement_len = text.len() * original_len;
+                            let replacement_len = text.len() * char_count;
                             let end_offset = start_anchor.to_offset(&snapshot) + replacement_len;
                             let end_point = snapshot.offset_to_point(end_offset);
                             if was_reversed {
@@ -2379,5 +2369,16 @@ mod test {
             line twoˇ"},
             Mode::Insert,
         );
+    }
+
+    #[gpui::test]
+    async fn test_helix_replace_multibyte(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+        cx.enable_helix();
+
+        // "Hällö" is 5 chars but 7 bytes; replace should produce 5 '1's, not 7
+        cx.set_state("«Hällöˇ» Wörld", Mode::HelixNormal);
+        cx.simulate_keystrokes("r 1");
+        cx.assert_state("«11111ˇ» Wörld", Mode::HelixNormal);
     }
 }
