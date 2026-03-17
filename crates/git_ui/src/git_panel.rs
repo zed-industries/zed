@@ -284,8 +284,8 @@ impl GitHeaderEntry {
             Section::Conflict => {
                 repo.had_conflict_on_last_merge_head_change(&status_entry.repo_path)
             }
-            Section::Tracked => !status.is_created(),
-            Section::New => status.is_created(),
+            Section::Tracked => !status.is_untracked(),
+            Section::New => status.is_untracked(),
         }
     }
     pub fn title(&self) -> &'static str {
@@ -1663,7 +1663,7 @@ impl GitPanel {
             .entries
             .iter()
             .filter_map(|entry| entry.status_entry())
-            .filter(|status_entry| status_entry.status.is_created())
+            .filter(|status_entry| status_entry.status.is_untracked())
             .cloned()
             .collect::<Vec<_>>();
 
@@ -3526,7 +3526,7 @@ impl GitPanel {
         for entry in repo.cached_status() {
             self.changes_count += 1;
             let is_conflict = repo.had_conflict_on_last_merge_head_change(&entry.repo_path);
-            let is_new = entry.status.is_created();
+            let is_new = entry.status.is_untracked();
             let staging = entry.status.staging();
 
             if let Some(pending) = repo.pending_ops_for_path(&entry.repo_path)
