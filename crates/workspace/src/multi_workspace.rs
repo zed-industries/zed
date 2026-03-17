@@ -41,12 +41,7 @@ pub enum MultiWorkspaceEvent {
     WorkspaceRemoved(EntityId),
 }
 
-pub enum SidebarEvent {
-    Open,
-    Close,
-}
-
-pub trait Sidebar: EventEmitter<SidebarEvent> + Focusable + Render + Sized {
+pub trait Sidebar: Focusable + Render + Sized {
     fn width(&self, cx: &App) -> Pixels;
     fn set_width(&mut self, width: Option<Pixels>, cx: &mut Context<Self>);
     fn has_notifications(&self, cx: &App) -> bool;
@@ -108,7 +103,6 @@ pub struct MultiWorkspace {
     active_workspace_index: usize,
     sidebar: Option<Box<dyn SidebarHandle>>,
     sidebar_open: bool,
-    _sidebar_subscription: Option<Subscription>,
     pending_removal_tasks: Vec<Task<()>>,
     _serialize_task: Option<Task<()>>,
     _create_task: Option<Task<()>>,
@@ -144,7 +138,6 @@ impl MultiWorkspace {
             active_workspace_index: 0,
             sidebar: None,
             sidebar_open: false,
-            _sidebar_subscription: None,
             pending_removal_tasks: Vec::new(),
             _serialize_task: None,
             _create_task: None,
@@ -156,21 +149,8 @@ impl MultiWorkspace {
         }
     }
 
-    pub fn register_sidebar<T: Sidebar>(
-        &mut self,
-        sidebar: Entity<T>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let subscription =
-            cx.subscribe_in(&sidebar, window, |this, _, event, window, cx| match event {
-                SidebarEvent::Open => this.toggle_sidebar(window, cx),
-                SidebarEvent::Close => {
-                    this.close_sidebar(window, cx);
-                }
-            });
+    pub fn register_sidebar<T: Sidebar>(&mut self, sidebar: Entity<T>) {
         self.sidebar = Some(Box::new(sidebar));
-        self._sidebar_subscription = Some(subscription);
     }
 
     pub fn sidebar(&self) -> Option<&dyn SidebarHandle> {
@@ -178,7 +158,7 @@ impl MultiWorkspace {
     }
 
     pub fn sidebar_open(&self) -> bool {
-        self.sidebar_open && self.sidebar.is_some()
+        self.sidebar_open
     }
 
     pub fn sidebar_has_notifications(&self, cx: &App) -> bool {
@@ -290,10 +270,6 @@ impl MultiWorkspace {
             }
         })
         .detach();
-    }
-
-    pub fn is_sidebar_open(&self) -> bool {
-        self.sidebar_open
     }
 
     pub fn workspace(&self) -> &Entity<Workspace> {
@@ -695,7 +671,7 @@ impl Render for MultiWorkspace {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let multi_workspace_enabled = self.multi_workspace_enabled(cx);
 
-        let sidebar: Option<AnyElement> = if multi_workspace_enabled && self.sidebar_open {
+        let sidebar: Option<AnyElement> = if multi_workspace_enabled && self.sidebar_open() {
             self.sidebar.as_ref().map(|sidebar_handle| {
                 let weak = cx.weak_entity();
 
@@ -811,7 +787,7 @@ impl Render for MultiWorkspace {
             window,
             cx,
             Tiling {
-                left: multi_workspace_enabled && self.sidebar_open,
+                left: multi_workspace_enabled && self.sidebar_open(),
                 ..Tiling::default()
             },
         )
@@ -850,7 +826,7 @@ mod tests {
 
         multi_workspace.update_in(cx, |mw, _window, cx| {
             mw.open_sidebar(cx);
-            assert!(mw.is_sidebar_open());
+            assert!(mw.sidebar_open());
         });
 
         cx.update(|_window, cx| {
@@ -860,7 +836,7 @@ mod tests {
 
         multi_workspace.read_with(cx, |mw, cx| {
             assert!(
-                !mw.is_sidebar_open(),
+                !mw.sidebar_open(),
                 "Sidebar should be closed when disable_ai is true"
             );
             assert!(
@@ -874,7 +850,7 @@ mod tests {
         });
         multi_workspace.read_with(cx, |mw, _cx| {
             assert!(
-                !mw.is_sidebar_open(),
+                !mw.sidebar_open(),
                 "Sidebar should remain closed when toggled with disable_ai true"
             );
         });
@@ -890,7 +866,7 @@ mod tests {
                 "Multi-workspace should be enabled after re-enabling AI"
             );
             assert!(
-                !mw.is_sidebar_open(),
+                !mw.sidebar_open(),
                 "Sidebar should still be closed after re-enabling AI (not auto-opened)"
             );
         });
@@ -900,7 +876,7 @@ mod tests {
         });
         multi_workspace.read_with(cx, |mw, _cx| {
             assert!(
-                mw.is_sidebar_open(),
+                mw.sidebar_open(),
                 "Sidebar should open when toggled after re-enabling AI"
             );
         });

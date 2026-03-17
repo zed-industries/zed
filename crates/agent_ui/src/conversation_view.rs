@@ -2342,7 +2342,7 @@ impl ConversationView {
         }
 
         if let Some(multi_workspace) = window.root::<MultiWorkspace>().flatten() {
-            multi_workspace.read(cx).is_sidebar_open()
+            multi_workspace.read(cx).sidebar_open()
                 || self.agent_panel_visible(&multi_workspace, cx)
         } else {
             self.workspace

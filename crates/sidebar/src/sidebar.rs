@@ -6,12 +6,11 @@ use agent_ui::thread_metadata_store::{ThreadMetadata, ThreadMetadataStore};
 use agent_ui::threads_archive_view::{ThreadsArchiveView, ThreadsArchiveViewEvent};
 use agent_ui::{Agent, AgentPanel, AgentPanelEvent, NewThread, RemoveSelectedThread};
 use chrono::Utc;
-use db::kvp::KEY_VALUE_STORE;
 use editor::Editor;
 use feature_flags::{AgentV2FeatureFlag, FeatureFlagViewExt as _};
 use gpui::{
-    Action as _, AnyElement, App, Context, Entity, EventEmitter, FocusHandle, Focusable, ListState,
-    Pixels, Render, SharedString, WeakEntity, Window, actions, list, prelude::*, px,
+    Action as _, AnyElement, App, Context, Entity, FocusHandle, Focusable, ListState, Pixels,
+    Render, SharedString, WeakEntity, Window, actions, list, prelude::*, px,
 };
 use menu::{Cancel, Confirm, SelectFirst, SelectLast, SelectNext, SelectPrevious};
 use project::{AgentId, Event as ProjectEvent};
@@ -28,8 +27,8 @@ use ui::{
 use util::ResultExt as _;
 use util::path_list::PathList;
 use workspace::{
-    MultiWorkspace, MultiWorkspaceEvent, Sidebar as WorkspaceSidebar, SidebarEvent,
-    ToggleWorkspaceSidebar, Workspace,
+    MultiWorkspace, MultiWorkspaceEvent, Sidebar as WorkspaceSidebar, ToggleWorkspaceSidebar,
+    Workspace,
 };
 
 use zed_actions::editor::{MoveDown, MoveUp};
@@ -48,33 +47,12 @@ const DEFAULT_WIDTH: Pixels = px(320.0);
 const MIN_WIDTH: Pixels = px(200.0);
 const MAX_WIDTH: Pixels = px(800.0);
 const DEFAULT_THREADS_SHOWN: usize = 5;
-const SIDEBAR_STATE_KEY: &str = "sidebar_state";
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 enum SidebarView {
     #[default]
     ThreadList,
     Archive,
-}
-
-fn read_sidebar_open_state(multi_workspace_id: u64) -> bool {
-    KEY_VALUE_STORE
-        .scoped(SIDEBAR_STATE_KEY)
-        .read(&multi_workspace_id.to_string())
-        .log_err()
-        .flatten()
-        .and_then(|json| serde_json::from_str::<bool>(&json).ok())
-        .unwrap_or(false)
-}
-
-async fn save_sidebar_open_state(multi_workspace_id: u64, is_open: bool) {
-    if let Ok(json) = serde_json::to_string(&is_open) {
-        KEY_VALUE_STORE
-            .scoped(SIDEBAR_STATE_KEY)
-            .write(multi_workspace_id.to_string(), json)
-            .await
-            .log_err();
-    }
 }
 
 #[derive(Clone, Debug)]
@@ -235,8 +213,6 @@ fn workspace_label_from_path_list(path_list: &PathList) -> SharedString {
 pub struct Sidebar {
     multi_workspace: WeakEntity<MultiWorkspace>,
     width: Pixels,
-    is_open: bool,
-    persistence_key: Option<u64>,
     focus_handle: FocusHandle,
     filter_editor: Entity<Editor>,
     list_state: ListState,
@@ -255,8 +231,6 @@ pub struct Sidebar {
     _subscriptions: Vec<gpui::Subscription>,
     _update_entries_task: Option<gpui::Task<()>>,
 }
-
-impl EventEmitter<SidebarEvent> for Sidebar {}
 
 impl Sidebar {
     pub fn new(
@@ -322,15 +296,10 @@ impl Sidebar {
             this.update_entries(false, cx);
         });
 
-        let multi_workspace_id = multi_workspace.entity_id().as_u64();
-        let is_open = read_sidebar_open_state(multi_workspace_id);
-
         Self {
             _update_entries_task: None,
             multi_workspace: multi_workspace.downgrade(),
             width: DEFAULT_WIDTH,
-            is_open,
-            persistence_key: Some(multi_workspace_id),
             focus_handle,
             filter_editor,
             list_state: ListState::new(0, gpui::ListAlignment::Top, px(1000.)),
@@ -2008,10 +1977,6 @@ impl Sidebar {
 }
 
 impl Sidebar {
-    pub fn is_open(&self) -> bool {
-        self.is_open
-    }
-
     fn show_archive(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(active_workspace) = self.multi_workspace.upgrade().and_then(|w| {
             w.read(cx)
@@ -2075,54 +2040,6 @@ impl Sidebar {
         self._subscriptions.clear();
         window.focus(&self.focus_handle, cx);
         cx.notify();
-    }
-
-    pub fn set_open(&mut self, open: bool, cx: &mut Context<Self>) {
-        if self.is_open == open {
-            return;
-        }
-        self.is_open = open;
-        cx.notify();
-        if let Some(key) = self.persistence_key {
-            let is_open = self.is_open;
-            cx.background_spawn(async move {
-                save_sidebar_open_state(key, is_open).await;
-            })
-            .detach();
-        }
-    }
-
-    pub fn toggle(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let new_state = !self.is_open;
-        self.set_open(new_state, cx);
-        if new_state {
-            cx.focus_self(window);
-        }
-    }
-
-    pub fn focus_or_unfocus(
-        &mut self,
-        workspace: &mut Workspace,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        if self.is_open {
-            let sidebar_is_focused = self.focus_handle(cx).contains_focused(window, cx);
-            if sidebar_is_focused {
-                let active_pane = workspace.active_pane().clone();
-                let pane_focus = active_pane.read(cx).focus_handle(cx);
-                window.focus(&pane_focus, cx);
-            } else {
-                cx.focus_self(window);
-            }
-        } else {
-            self.set_open(true, cx);
-            cx.focus_self(window);
-        }
-    }
-
-    pub fn width(&self, _cx: &App) -> Pixels {
-        self.width
     }
 }
 
@@ -2253,8 +2170,8 @@ mod tests {
         let multi_workspace = multi_workspace.clone();
         let sidebar =
             cx.update(|window, cx| cx.new(|cx| Sidebar::new(multi_workspace.clone(), window, cx)));
-        multi_workspace.update_in(cx, |mw, window, cx| {
-            mw.register_sidebar(sidebar.clone(), window, cx);
+        multi_workspace.update(cx, |mw, _cx| {
+            mw.register_sidebar(sidebar.clone());
         });
         cx.run_until_parked();
         sidebar
@@ -2335,7 +2252,7 @@ mod tests {
         let multi_workspace = sidebar.read_with(cx, |s, _| s.multi_workspace.upgrade());
         if let Some(multi_workspace) = multi_workspace {
             multi_workspace.update_in(cx, |mw, window, cx| {
-                if !mw.is_sidebar_open() {
+                if !mw.sidebar_open() {
                     mw.toggle_sidebar(window, cx);
                 }
             });

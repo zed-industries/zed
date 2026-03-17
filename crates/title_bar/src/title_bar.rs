@@ -370,7 +370,7 @@ impl TitleBar {
                         return;
                     };
 
-                    let is_open = multi_workspace.read(cx).is_sidebar_open();
+                    let is_open = multi_workspace.read(cx).sidebar_open();
                     let has_notifications = multi_workspace.read(cx).sidebar_has_notifications(cx);
                     platform_titlebar.update(cx, |titlebar, cx| {
                         titlebar.set_workspace_sidebar_open(is_open, cx);
@@ -379,7 +379,7 @@ impl TitleBar {
 
                     let platform_titlebar = platform_titlebar.clone();
                     let subscription = cx.observe(&multi_workspace, move |mw, cx| {
-                        let is_open = mw.read(cx).is_sidebar_open();
+                        let is_open = mw.read(cx).sidebar_open();
                         let has_notifications = mw.read(cx).sidebar_has_notifications(cx);
                         platform_titlebar.update(cx, |titlebar, cx| {
                             titlebar.set_workspace_sidebar_open(is_open, cx);

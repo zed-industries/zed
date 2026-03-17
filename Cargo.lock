@@ -15860,7 +15860,6 @@ dependencies = [
  "anyhow",
  "assistant_text_thread",
  "chrono",
- "db",
  "editor",
  "feature_flags",
  "fs",
