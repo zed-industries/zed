@@ -2,8 +2,8 @@ use std::ops::Range;
 
 use editor::{DisplayPoint, MultiBufferOffset, display_map::DisplaySnapshot};
 use gpui::Context;
-use language::{self, PointUtf16};
-use multi_buffer;
+use language::{Point, PointUtf16};
+use multi_buffer::MultiBufferRow;
 use text::Bias;
 use ui::Window;
 
@@ -90,33 +90,33 @@ fn find_next_valid_duplicate_space(
     let end_col_utf16 = buffer.point_to_point_utf16(origin.end.to_point(map)).column;
 
     let line_len_utf16 = |row: u32| {
-        let byte_len = buffer.line_len(multi_buffer::MultiBufferRow(row));
+        let byte_len = buffer.line_len(MultiBufferRow(row));
         buffer
-            .point_to_point_utf16(language::Point::new(row, byte_len))
+            .point_to_point_utf16(Point::new(row, byte_len))
             .column
     };
 
-    let mut tracker = origin;
+    let mut candidate = origin;
     loop {
         match direction {
             Direction::Below => {
-                if tracker.end.row() >= map.max_point().row() {
+                if candidate.end.row() >= map.max_point().row() {
                     return None;
                 }
-                *tracker.start.row_mut() += 1;
-                *tracker.end.row_mut() += 1;
+                *candidate.start.row_mut() += 1;
+                *candidate.end.row_mut() += 1;
             }
             Direction::Above => {
-                if tracker.start.row() == DisplayPoint::zero().row() {
+                if candidate.start.row() == DisplayPoint::zero().row() {
                     return None;
                 }
-                *tracker.start.row_mut() = tracker.start.row().0.saturating_sub(1);
-                *tracker.end.row_mut() = tracker.end.row().0.saturating_sub(1);
+                *candidate.start.row_mut() = candidate.start.row().0.saturating_sub(1);
+                *candidate.end.row_mut() = candidate.end.row().0.saturating_sub(1);
             }
         }
 
-        let start_row = DisplayPoint::new(tracker.start.row(), 0).to_point(map).row;
-        let end_row = DisplayPoint::new(tracker.end.row(), 0).to_point(map).row;
+        let start_row = DisplayPoint::new(candidate.start.row(), 0).to_point(map).row;
+        let end_row = DisplayPoint::new(candidate.end.row(), 0).to_point(map).row;
 
         if start_col_utf16 > line_len_utf16(start_row) || end_col_utf16 > line_len_utf16(end_row) {
             continue;
@@ -129,8 +129,8 @@ fn find_next_valid_duplicate_space(
             .point_utf16_to_point(PointUtf16::new(end_row, end_col_utf16))
             .column;
 
-        let candidate_start = DisplayPoint::new(tracker.start.row(), start_col);
-        let candidate_end = DisplayPoint::new(tracker.end.row(), end_col);
+        let candidate_start = DisplayPoint::new(candidate.start.row(), start_col);
+        let candidate_end = DisplayPoint::new(candidate.end.row(), end_col);
 
         if map.clip_point(candidate_start, Bias::Left) == candidate_start
             && map.clip_point(candidate_end, Bias::Right) == candidate_end
@@ -260,6 +260,32 @@ mod tests {
             fox «jˇ»umps
             over« ˇ»the
             lazy« ˇ»dog."},
+            Mode::HelixNormal,
+        );
+    }
+
+    #[gpui::test]
+    async fn test_selection_duplication_multiline_multibyte(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+        cx.enable_helix();
+
+        // Multiline selection on rows with multibyte chars should preserve
+        // the visual column on both start and end rows.
+        cx.set_state(
+            indoc! {"
+            «Häˇ»llo
+            Hëllo
+            Hallo"},
+            Mode::HelixNormal,
+        );
+
+        cx.simulate_keystrokes("C");
+
+        cx.assert_state(
+            indoc! {"
+            «Häˇ»llo
+            «Hëˇ»llo
+            Hallo"},
             Mode::HelixNormal,
         );
     }
