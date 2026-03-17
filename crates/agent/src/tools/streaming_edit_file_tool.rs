@@ -528,10 +528,10 @@ impl EditSession {
             }
         }) as Box<dyn FnOnce()>);
 
-        if matches!(mode, StreamingEditFileMode::Write) {
-            tool.action_log
-                .update(cx, |log, cx| log.buffer_created(buffer.clone(), cx));
-        }
+        tool.action_log.update(cx, |log, cx| match mode {
+            StreamingEditFileMode::Write => log.buffer_created(buffer.clone(), cx),
+            StreamingEditFileMode::Edit => log.buffer_read(buffer.clone(), cx),
+        });
 
         let old_snapshot = buffer.read_with(cx, |buffer, _cx| buffer.snapshot());
         let old_text = cx
@@ -982,6 +982,7 @@ fn agent_edit_buffer<I, S, T>(
         buffer.update(cx, |buffer, cx| {
             buffer.edit(edits, None, cx);
         });
+        dbg!("edited");
         action_log.update(cx, |log, cx| log.buffer_edited(buffer.clone(), cx));
     });
 }
@@ -3709,7 +3710,7 @@ mod tests {
         assert!(
             !changed.is_empty(),
             "action_log.changed_buffers() should be non-empty after streaming edit,
-             but no changed buffers were found \u{2014} Accept All / Reject All will not appear"
+             but no changed buffers were found - Accept All / Reject All will not appear"
         );
     }
 
