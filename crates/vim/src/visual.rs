@@ -788,7 +788,12 @@ impl Vim {
                     {
                         let range = row_range.start.to_offset(&display_map, Bias::Right)
                             ..row_range.end.to_offset(&display_map, Bias::Right);
-                        let text = text.repeat(range.end - range.start);
+                        let char_count = display_map
+                            .buffer_snapshot()
+                            .text_for_range(range.clone())
+                            .map(|chunk| chunk.chars().count())
+                            .sum::<usize>();
+                        let text = text.repeat(char_count);
                         edits.push((range, text));
                     }
                 }
@@ -1984,5 +1989,15 @@ mod test {
         // The specific behavior of syntax sibling selection in vim mode
         // would depend on the key bindings configured, but the actions
         // are now available for use
+    }
+
+    #[gpui::test]
+    async fn test_visual_replace_multibyte(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+
+        // "Hällö" is 5 chars but 7 bytes; replace should produce 5 '1's, not 7
+        cx.set_state("«Hällöˇ» Wörld", Mode::Visual);
+        cx.simulate_keystrokes("r 1");
+        cx.assert_state("ˇ11111 Wörld", Mode::Normal);
     }
 }

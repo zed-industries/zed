@@ -742,7 +742,12 @@ impl Vim {
                         ..range.end.to_offset(&display_map, Bias::Left);
 
                     if !byte_range.is_empty() {
-                        let replacement_text = text.repeat(byte_range.end - byte_range.start);
+                        let char_count = display_map
+                            .buffer_snapshot()
+                            .text_for_range(byte_range.clone())
+                            .map(|chunk| chunk.chars().count())
+                            .sum::<usize>();
+                        let replacement_text = text.repeat(char_count);
                         edits.push((byte_range, replacement_text));
                     }
                 }
