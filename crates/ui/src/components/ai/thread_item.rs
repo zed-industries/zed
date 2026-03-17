@@ -3,7 +3,10 @@ use crate::{
     IconDecorationKind, prelude::*,
 };
 
-use gpui::{Animation, AnimationExt, AnyView, ClickEvent, Hsla, SharedString, pulsating_between};
+use gpui::{
+    Animation, AnimationExt, AnyView, ClickEvent, Hsla, MouseButton, SharedString,
+    pulsating_between,
+};
 use std::time::Duration;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -318,7 +321,15 @@ impl RenderOnce for ThreadItem {
                             .gradient_stop(0.75)
                             .group_name("thread-item");
 
-                            this.child(h_flex().relative().child(overlay).child(slot))
+                            this.child(
+                                h_flex()
+                                    .relative()
+                                    .on_mouse_down(MouseButton::Left, |_, _, cx| {
+                                        cx.stop_propagation()
+                                    })
+                                    .child(overlay)
+                                    .child(slot),
+                            )
                         })
                     }),
             )
