@@ -3565,7 +3565,7 @@ impl AgentPanel {
 
                     menu.header("Start Thread In…")
                         .item(
-                            ContextMenuEntry::new("Current Project")
+                            ContextMenuEntry::new("Current Worktree")
                                 .toggleable(IconPosition::End, is_local_selected)
                                 .documentation_aside(documentation_side, move |_| {
                                     HoldForDefault::new(is_local_default)
@@ -3593,7 +3593,7 @@ impl AgentPanel {
                                 }),
                         )
                         .item({
-                            let entry = ContextMenuEntry::new("New Worktree")
+                            let entry = ContextMenuEntry::new("New Git Worktree")
                                 .toggleable(IconPosition::End, is_new_worktree_selected)
                                 .disabled(new_worktree_disabled)
                                 .handler({
