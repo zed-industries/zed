@@ -582,11 +582,9 @@ impl ContextServerStore {
             .await
             .context("Failed to create context server configuration")?;
 
-            let config = Arc::new(configuration);
-            let (new_server, config) =
-                Self::create_context_server(this.downgrade(), id.clone(), config, cx).await?;
-
-            this.update(cx, |this, cx| this.run_server(new_server, config, cx));
+            this.update(cx, |this, cx| {
+                this.run_server(server, Arc::new(configuration), cx)
+            });
             Ok(())
         })
         .detach_and_log_err(cx);
