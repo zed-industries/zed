@@ -168,7 +168,8 @@ impl<'a> MarkdownParser<'a> {
             Event::Start(tag) => match tag {
                 Tag::Paragraph => {
                     self.cursor += 1;
-                    let text = self.parse_text(false, Some(source_range));
+                    let mut text = self.parse_text(false, Some(source_range));
+                    Self::group_inline_images(&mut text);
                     Some(vec![ParsedMarkdownElement::Paragraph(text)])
                 }
                 Tag::Heading { level, .. } => {
@@ -955,6 +956,7 @@ impl<'a> MarkdownParser<'a> {
                     );
 
                     if !paragraph.is_empty() {
+                        Self::group_inline_images(&mut paragraph);
                         elements.push(ParsedMarkdownElement::Paragraph(paragraph));
                     }
                 } else if matches!(
@@ -1149,6 +1151,71 @@ impl<'a> MarkdownParser<'a> {
     ) {
         for node in node.children.borrow().iter() {
             self.parse_paragraph(source_range.clone(), node, paragraph, highlights, regions);
+        }
+    }
+
+    /// Collapses consecutive runs of inline images (separated only by
+    /// whitespace-only text) into `ImageGroup` chunks so the renderer can
+    /// lay them out side-by-side without re-scanning on every frame.
+    fn group_inline_images(paragraph: &mut MarkdownParagraph) {
+        // Fast path: fewer than 2 images can never form a group.
+        let image_count = paragraph
+            .iter()
+            .filter(|chunk| matches!(chunk, MarkdownParagraphChunk::Image(_)))
+            .count();
+        if image_count < 2 {
+            return;
+        }
+
+        let mut result = Vec::with_capacity(paragraph.len());
+        let mut chunks = std::mem::take(paragraph).into_iter().peekable();
+
+        while let Some(chunk) = chunks.next() {
+            if !matches!(chunk, MarkdownParagraphChunk::Image(_)) {
+                result.push(chunk);
+                continue;
+            }
+
+            // Start of a potential image run.
+            let mut run = vec![chunk];
+            loop {
+                match chunks.peek() {
+                    Some(MarkdownParagraphChunk::Image(_)) => {
+                        if let Some(next) = chunks.next() {
+                            run.push(next);
+                        }
+                    }
+                    Some(MarkdownParagraphChunk::Text(text)) if text.contents.trim().is_empty() => {
+                        // Whitespace text — only include if followed by another image.
+                        let whitespace = chunks.next();
+                        if matches!(chunks.peek(), Some(MarkdownParagraphChunk::Image(_))) {
+                            run.extend(whitespace);
+                        } else {
+                            Self::flush_run(&mut result, run);
+                            result.extend(whitespace);
+                            run = Vec::new();
+                            break;
+                        }
+                    }
+                    _ => break,
+                }
+            }
+
+            Self::flush_run(&mut result, run);
+        }
+
+        *paragraph = result;
+    }
+
+    fn flush_run(result: &mut Vec<MarkdownParagraphChunk>, run: Vec<MarkdownParagraphChunk>) {
+        let image_count = run
+            .iter()
+            .filter(|chunk| matches!(chunk, MarkdownParagraphChunk::Image(_)))
+            .count();
+        if image_count > 1 {
+            result.push(MarkdownParagraphChunk::ImageGroup(run));
+        } else {
+            result.extend(run);
         }
     }
 
@@ -1479,6 +1546,7 @@ impl<'a> MarkdownParser<'a> {
                             &mut Vec::new(),
                             &mut Vec::new(),
                         );
+                        Self::group_inline_images(&mut paragraph);
                         caption = Some(paragraph);
                     }
                     if local_name!("thead") == name.local {
@@ -3286,6 +3354,134 @@ fn main() {
     impl PartialEq for ParsedMarkdownText {
         fn eq(&self, other: &Self) -> bool {
             self.source_range == other.source_range && self.contents == other.contents
+        }
+    }
+
+    fn mk_text(content: &str) -> MarkdownParagraphChunk {
+        MarkdownParagraphChunk::Text(ParsedMarkdownText {
+            source_range: 0..content.len(),
+            contents: SharedString::new(content),
+            highlights: Default::default(),
+            regions: Default::default(),
+        })
+    }
+
+    fn mk_image(url: &str) -> MarkdownParagraphChunk {
+        MarkdownParagraphChunk::Image(Image {
+            source_range: 0..1,
+            link: Link::Web {
+                url: url.to_string(),
+            },
+            alt_text: None,
+            height: None,
+            width: None,
+        })
+    }
+
+    fn is_image_group(chunk: &MarkdownParagraphChunk) -> bool {
+        matches!(chunk, MarkdownParagraphChunk::ImageGroup(_))
+    }
+
+    #[test]
+    fn test_group_inline_images_consecutive() {
+        let mut chunks = vec![
+            mk_image("a.png"),
+            mk_text(" "),
+            mk_image("b.png"),
+            mk_text(" "),
+            mk_image("c.png"),
+        ];
+        MarkdownParser::group_inline_images(&mut chunks);
+        assert_eq!(chunks.len(), 1);
+        assert!(is_image_group(&chunks[0]));
+    }
+
+    #[test]
+    fn test_group_inline_images_single_not_grouped() {
+        let mut chunks = vec![mk_image("a.png")];
+        MarkdownParser::group_inline_images(&mut chunks);
+        assert_eq!(chunks.len(), 1);
+        assert!(matches!(chunks[0], MarkdownParagraphChunk::Image(_)));
+    }
+
+    #[test]
+    fn test_group_inline_images_text_breaks_run() {
+        let mut chunks = vec![mk_image("a.png"), mk_text(" hello "), mk_image("b.png")];
+        MarkdownParser::group_inline_images(&mut chunks);
+        assert_eq!(chunks.len(), 3);
+        assert!(!is_image_group(&chunks[0]));
+        assert!(!is_image_group(&chunks[2]));
+    }
+
+    #[test]
+    fn test_group_inline_images_mixed_content() {
+        let mut chunks = vec![
+            mk_text("Check out "),
+            mk_image("a.png"),
+            mk_text(" "),
+            mk_image("b.png"),
+            mk_text(" "),
+            mk_image("c.png"),
+            mk_text(" cool stuff"),
+        ];
+        MarkdownParser::group_inline_images(&mut chunks);
+        // "Check out " + ImageGroup(...) + " cool stuff"
+        assert_eq!(chunks.len(), 3);
+        assert!(is_image_group(&chunks[1]));
+    }
+
+    #[test]
+    fn test_group_inline_images_no_images() {
+        let mut chunks = vec![mk_text("just text"), mk_text(" more text")];
+        MarkdownParser::group_inline_images(&mut chunks);
+        assert_eq!(chunks.len(), 2);
+    }
+
+    #[test]
+    fn test_group_inline_images_adjacent() {
+        let mut chunks = vec![mk_image("a.png"), mk_image("b.png")];
+        MarkdownParser::group_inline_images(&mut chunks);
+        assert_eq!(chunks.len(), 1);
+        assert!(is_image_group(&chunks[0]));
+    }
+
+    #[test]
+    fn test_group_inline_images_two_separate_groups() {
+        let mut chunks = vec![
+            mk_image("a.png"),
+            mk_image("b.png"),
+            mk_text("hello"),
+            mk_image("c.png"),
+            mk_image("d.png"),
+        ];
+        MarkdownParser::group_inline_images(&mut chunks);
+        assert_eq!(chunks.len(), 3);
+        assert!(is_image_group(&chunks[0]));
+        assert!(!is_image_group(&chunks[1]));
+        assert!(is_image_group(&chunks[2]));
+    }
+
+    #[test]
+    fn test_group_inline_images_verifies_group_contents() {
+        let mut chunks = vec![
+            mk_image("a.png"),
+            mk_text(" "),
+            mk_image("b.png"),
+            mk_text(" "),
+            mk_image("c.png"),
+        ];
+        MarkdownParser::group_inline_images(&mut chunks);
+        assert_eq!(chunks.len(), 1);
+        if let MarkdownParagraphChunk::ImageGroup(children) = &chunks[0] {
+            // 3 images + 2 whitespace separators
+            assert_eq!(children.len(), 5);
+            assert!(matches!(children[0], MarkdownParagraphChunk::Image(_)));
+            assert!(matches!(children[1], MarkdownParagraphChunk::Text(_)));
+            assert!(matches!(children[2], MarkdownParagraphChunk::Image(_)));
+            assert!(matches!(children[3], MarkdownParagraphChunk::Text(_)));
+            assert!(matches!(children[4], MarkdownParagraphChunk::Image(_)));
+        } else {
+            panic!("expected ImageGroup");
         }
     }
 }

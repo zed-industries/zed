@@ -33,6 +33,13 @@ impl ParsedMarkdownElement {
             Self::Paragraph(text) => match text.get(0)? {
                 MarkdownParagraphChunk::Text(t) => t.source_range.clone(),
                 MarkdownParagraphChunk::Image(image) => image.source_range.clone(),
+                MarkdownParagraphChunk::ImageGroup(children) => {
+                    children.first().and_then(|chunk| match chunk {
+                        MarkdownParagraphChunk::Text(text) => Some(text.source_range.clone()),
+                        MarkdownParagraphChunk::Image(image) => Some(image.source_range.clone()),
+                        MarkdownParagraphChunk::ImageGroup(_) => None,
+                    })?
+                }
             },
             Self::HorizontalRule(range) => range.clone(),
             Self::Image(image) => image.source_range.clone(),
@@ -51,6 +58,7 @@ pub type MarkdownParagraph = Vec<MarkdownParagraphChunk>;
 pub enum MarkdownParagraphChunk {
     Text(ParsedMarkdownText),
     Image(Image),
+    ImageGroup(Vec<MarkdownParagraphChunk>),
 }
 
 #[derive(Debug)]
