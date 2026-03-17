@@ -1288,29 +1288,6 @@ mod tests {
     use language_model::LanguageModelCompletionError;
 
     #[test]
-    fn test_split_token_display_supported_providers() {
-        use cloud_llm_client::LanguageModelProvider::*;
-
-        // OpenAi and XAi should support split token display
-        for provider in [OpenAi, XAi] {
-            assert!(
-                matches!(provider, OpenAi | XAi),
-                "expected supports_split_token_display for {:?}",
-                provider
-            );
-        }
-
-        // Anthropic and Google should not support split token display
-        for provider in [Anthropic, Google] {
-            assert!(
-                !matches!(provider, OpenAi | XAi),
-                "expected no split token display for {:?}",
-                provider
-            );
-        }
-    }
-
-    #[test]
     fn test_api_error_conversion_with_upstream_http_error() {
         // upstream_http_error with 503 status should become ServerOverloaded
         let error_body = r#"{"code":"upstream_http_error","message":"Received an error from the Anthropic API: upstream connect error or disconnect/reset before headers, reset reason: connection timeout","upstream_status":503}"#;
