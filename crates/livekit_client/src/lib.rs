@@ -67,7 +67,7 @@ pub enum Participant {
     Remote(RemoteParticipant),
 }
 
-#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+#[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
 pub enum ConnectionQuality {
     Excellent,
     Good,

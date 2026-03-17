@@ -194,6 +194,41 @@ fn extract_metrics(
     }
 }
 
+fn metric_quality(value: f64, warn_threshold: f64, error_threshold: f64) -> ConnectionQuality {
+    if value < warn_threshold {
+        ConnectionQuality::Excellent
+    } else if value < error_threshold {
+        ConnectionQuality::Poor
+    } else {
+        ConnectionQuality::Lost
+    }
+}
+
+/// Computes the effective connection quality by taking the worst of the
+/// LiveKit-reported quality and each individual metric rating.
+fn effective_connection_quality(
+    livekit_quality: ConnectionQuality,
+    stats: &CallStats,
+) -> ConnectionQuality {
+    let mut worst = livekit_quality;
+
+    if let Some(latency) = stats.latency_ms {
+        worst = worst.max(metric_quality(latency, 100.0, 300.0));
+    }
+    if let Some(jitter) = stats.jitter_ms {
+        worst = worst.max(metric_quality(jitter, 30.0, 75.0));
+    }
+    if let Some(loss) = stats.packet_loss_pct {
+        worst = worst.max(metric_quality(loss, 1.0, 5.0));
+    }
+    if let Some(lag) = stats.input_lag {
+        let lag_ms = lag.as_secs_f64() * 1000.0;
+        worst = worst.max(metric_quality(lag_ms, 20.0, 50.0));
+    }
+
+    worst
+}
+
 fn format_stat(value: Option<f64>, format: impl Fn(f64) -> String) -> String {
     match value {
         Some(v) => format(v),
@@ -534,7 +569,8 @@ impl TitleBar {
 
         let mut children = Vec::new();
 
-        let (signal_icon, signal_color, quality_label) = match connection_quality {
+        let effective_quality = effective_connection_quality(connection_quality, &self.call_stats);
+        let (signal_icon, signal_color, quality_label) = match effective_quality {
             ConnectionQuality::Excellent => (IconName::Signal, None, "Excellent"),
             ConnectionQuality::Good => (IconName::SignalHigh, None, "Good"),
             ConnectionQuality::Poor => (IconName::SignalMedium, Some(Color::Warning), "Poor"),
