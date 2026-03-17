@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use acp_thread::{AgentModelIcon, AgentModelInfo, AgentModelSelector};
 use fs::Fs;
-use gpui::{AnyView, Entity, FocusHandle};
+use gpui::{Entity, FocusHandle};
 use picker::popover_menu::PickerPopoverMenu;
 use ui::{PopoverMenuHandle, Tooltip, prelude::*};
 
@@ -67,13 +67,13 @@ impl Render for ModelSelectorPopover {
 
         let show_cycle_row = selector.delegate.favorites_count() > 1;
 
-        let tooltip: Box<dyn Fn(&mut Window, &mut App) -> AnyView> = Box::new(Tooltip::element({
+        let tooltip = Tooltip::element({
             move |_, _cx| {
                 ModelSelectorTooltip::new()
                     .show_cycle_row(show_cycle_row)
                     .into_any_element()
             }
-        }));
+        });
 
         PickerPopoverMenu::new(
             self.selector.clone(),
