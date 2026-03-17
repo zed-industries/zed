@@ -60,7 +60,7 @@ impl TitleBar {
         };
 
         self.call_stats.input_lag = room.read(cx).input_lag();
-        let stats_future = room.read(cx).get_stats();
+        let stats_future = room.read(cx).get_stats(cx);
 
         let background_task = cx.background_executor().spawn(async move {
             let session_stats = stats_future.await;
