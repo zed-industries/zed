@@ -818,10 +818,10 @@ impl UserStore {
         self.organizations = response.organizations.into_iter().map(Arc::new).collect();
         self.current_organization = response
             .default_organization_id
-            .and_then(|default| {
+            .and_then(|default_organization_id| {
                 self.organizations
                     .iter()
-                    .find(|organization| organization.id == default)
+                    .find(|organization| organization.id == default_organization_id)
                     .cloned()
             })
             .or_else(|| self.organizations.first().cloned());
