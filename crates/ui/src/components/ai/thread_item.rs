@@ -246,10 +246,14 @@ impl RenderOnce for ThreadItem {
             HighlightedLabel::new(title, highlight_positions).into_any_element()
         };
 
+        let b_bg = color
+            .title_bar_background
+            .blend(color.panel_background.opacity(0.8));
+
         let base_bg = if self.selected {
             color.element_active
         } else {
-            color.panel_background
+            b_bg
         };
 
         let gradient_overlay =

@@ -787,7 +787,6 @@ impl Render for ThreadsArchiveView {
             .on_action(cx.listener(Self::confirm))
             .on_action(cx.listener(Self::remove_selected_thread))
             .size_full()
-            .bg(cx.theme().colors().surface_background)
             .child(self.render_header(window, cx))
             .child(content)
     }

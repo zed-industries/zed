@@ -2128,6 +2128,11 @@ impl Render for Sidebar {
         let _titlebar_height = ui::utils::platform_title_bar_height(window);
         let ui_font = theme::setup_ui_font(window, cx);
         let sticky_header = self.render_sticky_header(window, cx);
+        let bg = cx
+            .theme()
+            .colors()
+            .title_bar_background
+            .blend(cx.theme().colors().panel_background.opacity(0.8));
 
         v_flex()
             .id("workspace-sidebar")
@@ -2148,7 +2153,7 @@ impl Render for Sidebar {
             .font(ui_font)
             .h_full()
             .w(self.width)
-            .bg(cx.theme().colors().surface_background)
+            .bg(bg)
             .border_r_1()
             .border_color(cx.theme().colors().border)
             .map(|this| match self.view {
