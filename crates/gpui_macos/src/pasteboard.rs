@@ -334,7 +334,7 @@ mod tests {
     use cocoa::{
         appkit::{NSFilenamesPboardType, NSPasteboard, NSPasteboardTypeString},
         base::{id, nil},
-        foundation::{NSArray, NSData, NSString},
+        foundation::{NSArray, NSData},
     };
     use std::ffi::c_void;
 
@@ -344,10 +344,7 @@ mod tests {
 
     unsafe fn simulate_external_file_copy(pasteboard: &Pasteboard, paths: &[&str]) {
         unsafe {
-            let ns_paths: Vec<id> = paths
-                .iter()
-                .map(|p| NSString::alloc(nil).init_str(p))
-                .collect();
+            let ns_paths: Vec<id> = paths.iter().map(|p| ns_string(p)).collect();
             let ns_array = NSArray::arrayWithObjects(nil, &ns_paths);
 
             let mut types = vec![NSFilenamesPboardType];
