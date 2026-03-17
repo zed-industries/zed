@@ -273,7 +273,7 @@ impl IosWindow {
 
             let _: () = msg_send![container, addSubview: view];
 
-            // Attach a two-finger pan gesture recognizer for scrolling.
+            // Attach a two-finger pan gesture recognizer for direct touch scrolling.
             // Raw touchesBegan: is filtered to single-finger only so there is no overlap.
             let pan: *mut Object = msg_send![class!(UIPanGestureRecognizer), alloc];
             let pan: *mut Object =
@@ -281,8 +281,22 @@ impl IosWindow {
             let _: () = msg_send![pan, setMinimumNumberOfTouches: 2usize];
             let _: () = msg_send![pan, setMaximumNumberOfTouches: 2usize];
             let _: () = msg_send![view, addGestureRecognizer: pan];
-            // The view retains the recognizer; release the alloc/init reference.
             let _: () = msg_send![pan, release];
+
+            // Separate pan gesture for trackpad/mouse scroll (iPadOS 13.4+,
+            // also used by the simulator for trackpad scroll gestures).
+            // Trackpad scroll events have zero touches, so this recognizer
+            // must allow 0 minimum touches and opt into scroll event types
+            // via allowedScrollTypesMask.
+            let trackpad_pan: *mut Object = msg_send![class!(UIPanGestureRecognizer), alloc];
+            let trackpad_pan: *mut Object =
+                msg_send![trackpad_pan, initWithTarget: view action: sel!(handlePanGesture:)];
+            let _: () = msg_send![trackpad_pan, setMinimumNumberOfTouches: 0usize];
+            let _: () = msg_send![trackpad_pan, setMaximumNumberOfTouches: 0usize];
+            // UIScrollTypeMask: Discrete=1, Continuous=2; allow both (3).
+            let _: () = msg_send![trackpad_pan, setAllowedScrollTypesMask: 3usize];
+            let _: () = msg_send![view, addGestureRecognizer: trackpad_pan];
+            let _: () = msg_send![trackpad_pan, release];
 
             // Observe UIKeyboardDidHideNotification so our keyboard_shown state
             // stays in sync when the user dismisses the keyboard via UIKit's own
@@ -446,13 +460,77 @@ impl PlatformWindow for IosWindow {
 
     fn prompt(
         &self,
-        _level: PromptLevel,
-        _msg: &str,
-        _detail: Option<&str>,
-        _answers: &[PromptButton],
+        level: PromptLevel,
+        msg: &str,
+        detail: Option<&str>,
+        answers: &[PromptButton],
     ) -> Option<oneshot::Receiver<usize>> {
-        // TODO Phase 2: UIAlertController prompt
-        None
+        let (tx, rx) = oneshot::channel::<usize>();
+        let tx = Arc::new(Mutex::new(Some(tx)));
+
+        unsafe {
+            // UIAlertControllerStyleAlert == 1
+            let title = ns_string(msg);
+            let message = detail.map(|d| ns_string(d)).unwrap_or(std::ptr::null_mut());
+            let alert: *mut Object = msg_send![class!(UIAlertController),
+                alertControllerWithTitle: title
+                message: message
+                preferredStyle: 1isize
+            ];
+            let _: () = msg_send![title, release];
+            if !message.is_null() {
+                let _: () = msg_send![message, release];
+            }
+
+            for (index, answer) in answers.iter().enumerate() {
+                let style: isize = match answer {
+                    PromptButton::Cancel(_) => 1, // UIAlertActionStyleCancel
+                    _ => {
+                        if level == PromptLevel::Critical {
+                            2 // UIAlertActionStyleDestructive
+                        } else {
+                            0 // UIAlertActionStyleDefault
+                        }
+                    }
+                };
+                let label = match answer {
+                    PromptButton::Ok(s) | PromptButton::Cancel(s) | PromptButton::Other(s) => s,
+                };
+                let label_ns = ns_string(label);
+
+                let tx_clone = tx.clone();
+                let handler = block::ConcreteBlock::new(move |_action: *mut Object| {
+                    if let Some(sender) = tx_clone.lock().take() {
+                        sender.send(index).ok();
+                    }
+                });
+                let handler = handler.copy();
+
+                let action: *mut Object = msg_send![class!(UIAlertAction),
+                    actionWithTitle: label_ns
+                    style: style
+                    handler: &*handler
+                ];
+                let _: () = msg_send![alert, addAction: action];
+                let _: () = msg_send![label_ns, release];
+            }
+
+            // Present on the root view controller of the key window
+            let app: *mut Object = msg_send![class!(UIApplication), sharedApplication];
+            let key_window: *mut Object = msg_send![app, keyWindow];
+            if !key_window.is_null() {
+                let root_vc: *mut Object = msg_send![key_window, rootViewController];
+                if !root_vc.is_null() {
+                    let _: () = msg_send![root_vc,
+                        presentViewController: alert
+                        animated: true
+                        completion: std::ptr::null::<c_void>()
+                    ];
+                }
+            }
+        }
+
+        Some(rx)
     }
 
     fn activate(&self) {}
@@ -833,6 +911,21 @@ fn register_metal_view_class() -> &'static Class {
                 handle_pan_gesture as extern "C" fn(&Object, Sel, *mut Object),
             );
 
+            // Mouse wheel scroll without pointer capture — the simulator
+            // forwards macOS scroll wheel events as scrollWheel: when the
+            // pointer is not captured. Harmless on device (never called).
+            decl.add_method(
+                sel!(scrollWheel:),
+                handle_scroll_wheel as extern "C" fn(&Object, Sel, *mut Object),
+            );
+
+            // Simulator Cmd+K sends toggleSoftwareKeyboard: up the responder
+            // chain. Override it to toggle our keyboard suppression state.
+            decl.add_method(
+                sel!(toggleSoftwareKeyboard:),
+                toggle_software_keyboard as extern "C" fn(&Object, Sel, *mut Object),
+            );
+
             // ── Responder actions (long-press context menu) ───────────────────
             // Return false for all edit actions until clipboard is wired up.
             // This prevents the system from showing a context menu with broken actions.
@@ -997,6 +1090,43 @@ extern "C" fn metal_view_dismiss_keyboard(this: &Object, _sel: Sel) {
         let this_mut = this as *const Object as *mut Object;
         (*this_mut).set_ivar("_keyboard_requested", false);
         let _: bool = msg_send![this, resignFirstResponder];
+    }
+}
+
+/// Simulator Cmd+K toggle. Flip keyboard state and reload input views so
+/// UIKit re-queries `inputView`.
+extern "C" fn toggle_software_keyboard(this: &Object, _sel: Sel, _sender: *mut Object) {
+    let keyboard_shown = state_from_view(this)
+        .map(|s| s.borrow().keyboard_shown)
+        .unwrap_or(false);
+
+    if keyboard_shown {
+        // Hide
+        if let Some(state_rc) = state_from_view(this) {
+            let mut state = state_rc.borrow_mut();
+            state.keyboard_shown = false;
+        }
+        unsafe {
+            let this_mut = this as *const Object as *mut Object;
+            (*this_mut).set_ivar("_keyboard_requested", false);
+            let _: () = msg_send![this, reloadInputViews];
+        }
+    } else {
+        // Show — only if there's an active input handler (text element is focused)
+        let has_handler = state_from_view(this)
+            .map(|s| s.borrow().input_handler.is_some())
+            .unwrap_or(false);
+        if has_handler {
+            if let Some(state_rc) = state_from_view(this) {
+                let mut state = state_rc.borrow_mut();
+                state.keyboard_shown = true;
+            }
+            unsafe {
+                let this_mut = this as *const Object as *mut Object;
+                (*this_mut).set_ivar("_keyboard_requested", true);
+                let _: () = msg_send![this, reloadInputViews];
+            }
+        }
     }
 }
 
@@ -1530,6 +1660,42 @@ extern "C" fn handle_pan_gesture(this: &Object, _sel: Sel, recognizer: *mut Obje
             }),
             modifiers,
             touch_phase,
+        });
+        dispatch_input_event(&state_rc, event);
+    }
+}
+
+// ─── Scroll wheel (simulator mouse wheel without pointer capture) ────────────
+
+extern "C" fn handle_scroll_wheel(this: &Object, _sel: Sel, ui_event: *mut Object) {
+    let Some(state_rc) = state_from_view(this) else { return };
+
+    unsafe {
+        let dx: f64 = msg_send![ui_event, _scrollingDeltaX];
+        let dy: f64 = msg_send![ui_event, _scrollingDeltaY];
+
+        if dx == 0.0 && dy == 0.0 {
+            return;
+        }
+
+        // Fall back to view center since the simulator scroll wheel event
+        // doesn't carry touch location.
+        let view = this as *const Object as *mut Object;
+        let bounds: CGRect = msg_send![view, bounds];
+        let position = Point {
+            x: gpui::px((bounds.size.width / 2.0) as f32),
+            y: gpui::px((bounds.size.height / 2.0) as f32),
+        };
+
+        let modifiers = state_rc.borrow().current_modifiers;
+        let event = PlatformInput::ScrollWheel(ScrollWheelEvent {
+            position,
+            delta: ScrollDelta::Pixels(Point {
+                x: gpui::px(dx as f32),
+                y: gpui::px(dy as f32),
+            }),
+            modifiers,
+            touch_phase: TouchPhase::Moved,
         });
         dispatch_input_event(&state_rc, event);
     }

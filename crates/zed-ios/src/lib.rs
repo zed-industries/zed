@@ -12,7 +12,8 @@ mod ios {
         AnyElement, App, AppContext as _, Application, ApplicationKeepAlive, Bounds, Context,
         Element, ElementId, ElementInputHandler, EntityInputHandler, FocusHandle, GlobalElementId,
         InspectorElementId, IntoElement, LayoutId, MouseButton, MouseDownEvent, Pixels, Point,
-        Render, SharedString, UTF16Selection, Window, WindowOptions, div, prelude::*,
+        PromptButton, PromptLevel, Render, SharedString, UTF16Selection, Window, WindowOptions,
+        div, prelude::*,
     };
     use gpui_ios::IosPlatform;
     use std::{cell::RefCell, ops::Range, rc::Rc};
@@ -201,6 +202,32 @@ mod ios {
                             },
                         )
                         .child(input_line),
+                )
+                .child(
+                    div()
+                        .id("test-prompt")
+                        .mt_4()
+                        .px_4()
+                        .py_2()
+                        .bg(gpui::rgb(0x585b70))
+                        .rounded_md()
+                        .text_color(gpui::rgb(0xcdd6f4))
+                        .on_mouse_down(
+                            MouseButton::Left,
+                            |_: &MouseDownEvent, window, cx| {
+                                let _receiver = window.prompt(
+                                    PromptLevel::Info,
+                                    "Test Prompt",
+                                    Some("Phase 1.3 UIAlertController is working!"),
+                                    &[
+                                        PromptButton::Ok("Nice".into()),
+                                        PromptButton::Cancel("Cancel".into()),
+                                    ],
+                                    cx,
+                                );
+                            },
+                        )
+                        .child("Test Prompt"),
                 )
                 .into_any_element();
             let layout_id = inner.request_layout(window, cx);

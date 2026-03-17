@@ -133,13 +133,43 @@ impl Platform for IosPlatform {
     }
 
     fn window_appearance(&self) -> WindowAppearance {
-        // TODO Phase 1.3: query UITraitCollection.userInterfaceStyle from the
-        // current UIWindowScene.
-        WindowAppearance::Light
+        unsafe {
+            let app: *mut Object = msg_send![class!(UIApplication), sharedApplication];
+            let key_window: *mut Object = msg_send![app, keyWindow];
+            if key_window.is_null() {
+                return WindowAppearance::Light;
+            }
+            let trait_collection: *mut Object = msg_send![key_window, traitCollection];
+            // UIUserInterfaceStyleDark == 2
+            let style: usize = msg_send![trait_collection, userInterfaceStyle];
+            if style == 2 {
+                WindowAppearance::Dark
+            } else {
+                WindowAppearance::Light
+            }
+        }
     }
 
-    fn open_url(&self, _url: &str) {
-        // TODO Phase 1.3: UIApplication.shared.open(_:options:completionHandler:)
+    fn open_url(&self, url: &str) {
+        unsafe {
+            let app: *mut Object = msg_send![class!(UIApplication), sharedApplication];
+            let url_str: *mut Object = msg_send![class!(NSString), alloc];
+            let url_str: *mut Object = msg_send![url_str,
+                initWithBytes: url.as_ptr()
+                length: url.len()
+                encoding: 4usize // NSUTF8StringEncoding
+            ];
+            let ns_url: *mut Object = msg_send![class!(NSURL), URLWithString: url_str];
+            if !ns_url.is_null() {
+                let empty_dict: *mut Object = msg_send![class!(NSDictionary), dictionary];
+                let _: () = msg_send![app,
+                    openURL: ns_url
+                    options: empty_dict
+                    completionHandler: std::ptr::null::<c_void>()
+                ];
+            }
+            let _: () = msg_send![url_str, release];
+        }
     }
 
     fn on_open_urls(&self, callback: Box<dyn FnMut(Vec<String>)>) {
@@ -213,8 +243,17 @@ impl Platform for IosPlatform {
     }
 
     fn thermal_state(&self) -> ThermalState {
-        // TODO Phase 1.3: query NSProcessInfo.processInfo.thermalState
-        ThermalState::Nominal
+        unsafe {
+            let info: *mut Object = msg_send![class!(NSProcessInfo), processInfo];
+            // NSProcessInfoThermalState: 0=Nominal, 1=Fair, 2=Serious, 3=Critical
+            let state: isize = msg_send![info, thermalState];
+            match state {
+                1 => ThermalState::Fair,
+                2 => ThermalState::Serious,
+                3 => ThermalState::Critical,
+                _ => ThermalState::Nominal,
+            }
+        }
     }
 
     fn on_thermal_state_change(&self, callback: Box<dyn FnMut()>) {
@@ -226,10 +265,17 @@ impl Platform for IosPlatform {
     }
 
     fn app_path(&self) -> Result<PathBuf> {
-        // iOS sandbox: app bundle is at NSBundle.mainBundle.bundlePath
-        Err(anyhow::anyhow!(
-            "app_path: not yet implemented for iOS — use NSBundle.mainBundle"
-        ))
+        unsafe {
+            let bundle: *mut Object = msg_send![class!(NSBundle), mainBundle];
+            let path: *mut Object = msg_send![bundle, bundlePath];
+            let ptr: *const i8 = msg_send![path, UTF8String];
+            if ptr.is_null() {
+                return Err(anyhow::anyhow!("NSBundle.mainBundle.bundlePath returned nil"));
+            }
+            Ok(PathBuf::from(
+                std::ffi::CStr::from_ptr(ptr).to_str()?,
+            ))
+        }
     }
 
     fn path_for_auxiliary_executable(&self, _name: &str) -> Result<PathBuf> {
@@ -247,12 +293,34 @@ impl Platform for IosPlatform {
     }
 
     fn read_from_clipboard(&self) -> Option<ClipboardItem> {
-        // TODO Phase 1.3: UIPasteboard.general
-        None
+        unsafe {
+            let pasteboard: *mut Object = msg_send![class!(UIPasteboard), generalPasteboard];
+            let string: *mut Object = msg_send![pasteboard, string];
+            if string.is_null() {
+                return None;
+            }
+            let ptr: *const i8 = msg_send![string, UTF8String];
+            if ptr.is_null() {
+                return None;
+            }
+            let text = std::ffi::CStr::from_ptr(ptr).to_str().ok()?.to_owned();
+            Some(ClipboardItem::new_string(text))
+        }
     }
 
-    fn write_to_clipboard(&self, _item: ClipboardItem) {
-        // TODO Phase 1.3: UIPasteboard.general
+    fn write_to_clipboard(&self, item: ClipboardItem) {
+        let Some(text) = item.text() else { return };
+        unsafe {
+            let pasteboard: *mut Object = msg_send![class!(UIPasteboard), generalPasteboard];
+            let ns_str: *mut Object = msg_send![class!(NSString), alloc];
+            let ns_str: *mut Object = msg_send![ns_str,
+                initWithBytes: text.as_ptr()
+                length: text.len()
+                encoding: 4usize // NSUTF8StringEncoding
+            ];
+            let _: () = msg_send![pasteboard, setString: ns_str];
+            let _: () = msg_send![ns_str, release];
+        }
     }
 
     fn write_credentials(&self, _url: &str, _username: &str, _password: &[u8]) -> Task<Result<()>> {
