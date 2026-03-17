@@ -194,7 +194,7 @@ use std::{
     iter::{self, Peekable},
     mem,
     num::NonZeroU32,
-    ops::{ControlFlow, Deref, DerefMut, Not, Range, RangeInclusive},
+    ops::{Deref, DerefMut, Not, Range, RangeInclusive},
     path::{Path, PathBuf},
     rc::Rc,
     sync::Arc,
@@ -256,7 +256,6 @@ pub(crate) const SCROLL_CENTER_TOP_BOTTOM_DEBOUNCE_TIMEOUT: Duration = Duration:
 pub const LSP_REQUEST_DEBOUNCE_TIMEOUT: Duration = Duration::from_millis(50);
 
 pub(crate) const EDIT_PREDICTION_KEY_CONTEXT: &str = "edit_prediction";
-pub(crate) const EDIT_PREDICTION_CONFLICT_KEY_CONTEXT: &str = "edit_prediction_conflict";
 pub(crate) const MINIMAP_FONT_SIZE: AbsoluteLength = AbsoluteLength::Pixels(px(2.));
 
 pub type RenderDiffHunkControlsFn = Arc<
@@ -1225,8 +1224,6 @@ pub struct Editor {
     show_completions_on_input_override: Option<bool>,
     menu_edit_predictions_policy: MenuEditPredictionsPolicy,
     edit_prediction_preview: EditPredictionPreview,
-    edit_prediction_indent_conflict: bool,
-    edit_prediction_requires_modifier_in_indent_conflict: bool,
     next_inlay_id: usize,
     next_color_inlay_id: usize,
     _subscriptions: Vec<Subscription>,
@@ -2473,8 +2470,6 @@ impl Editor {
             show_completions_on_input_override: None,
             menu_edit_predictions_policy: MenuEditPredictionsPolicy::ByProvider,
             edit_prediction_settings: EditPredictionSettings::Disabled,
-            edit_prediction_indent_conflict: false,
-            edit_prediction_requires_modifier_in_indent_conflict: true,
             custom_context_menu: None,
             show_git_blame_gutter: false,
             show_git_blame_inline: false,
@@ -2856,12 +2851,8 @@ impl Editor {
         }
 
         if has_active_edit_prediction {
-            if self.edit_prediction_in_conflict() {
-                key_context.add(EDIT_PREDICTION_CONFLICT_KEY_CONTEXT);
-            } else {
-                key_context.add(EDIT_PREDICTION_KEY_CONTEXT);
-                key_context.add("copilot_suggestion");
-            }
+            key_context.add(EDIT_PREDICTION_KEY_CONTEXT);
+            key_context.add("copilot_suggestion");
         }
 
         if self.selection_mark_mode {
@@ -2915,32 +2906,13 @@ impl Editor {
         }
     }
 
-    pub fn edit_prediction_in_conflict(&self) -> bool {
-        if !self.show_edit_predictions_in_menu() {
-            return false;
-        }
-
-        let showing_completions = self
-            .context_menu
-            .borrow()
-            .as_ref()
-            .is_some_and(|context| matches!(context, CodeContextMenu::Completions(_)));
-
-        showing_completions
-            || self.edit_prediction_requires_modifier()
-            // Require modifier key when the cursor is on leading whitespace, to allow `tab`
-            // bindings to insert tab characters.
-            || (self.edit_prediction_requires_modifier_in_indent_conflict && self.edit_prediction_indent_conflict)
-    }
-
     pub fn accept_edit_prediction_keybind(
         &self,
         granularity: EditPredictionGranularity,
         window: &mut Window,
         cx: &mut App,
     ) -> AcceptEditPredictionBinding {
-        let key_context = self.key_context_internal(true, window, cx);
-        let in_conflict = self.edit_prediction_in_conflict();
+        let key_context = self.key_context_internal(self.has_active_edit_prediction(), window, cx);
 
         let bindings =
             match granularity {
@@ -2953,13 +2925,7 @@ impl Editor {
                 }
             };
 
-        AcceptEditPredictionBinding(bindings.into_iter().rev().find(|binding| {
-            !in_conflict
-                || binding
-                    .keystrokes()
-                    .first()
-                    .is_some_and(|keystroke| keystroke.modifiers().modified())
-        }))
+        AcceptEditPredictionBinding(bindings.into_iter().rev().next())
     }
 
     pub fn new_file(
@@ -3596,7 +3562,6 @@ impl Editor {
             self.refresh_matching_bracket_highlights(&display_map, cx);
             self.refresh_outline_symbols_at_cursor(cx);
             self.update_visible_edit_prediction(window, cx);
-            self.edit_prediction_requires_modifier_in_indent_conflict = true;
             self.inline_blame_popover.take();
             if self.git_blame_inline_enabled {
                 self.start_inline_blame_timer(window, cx);
@@ -8216,8 +8181,6 @@ impl Editor {
                 }
             }
         }
-
-        self.edit_prediction_requires_modifier_in_indent_conflict = false;
     }
 
     pub fn accept_next_word_edit_prediction(
@@ -8579,27 +8542,6 @@ impl Editor {
 
         self.edit_prediction_settings =
             self.edit_prediction_settings_at_position(&buffer, cursor_buffer_position, cx);
-
-        self.edit_prediction_indent_conflict = multibuffer.is_line_whitespace_upto(cursor);
-
-        if self.edit_prediction_indent_conflict {
-            let cursor_point = cursor.to_point(&multibuffer);
-            let mut suggested_indent = None;
-            multibuffer.suggested_indents_callback(
-                cursor_point.row..cursor_point.row + 1,
-                &mut |_, indent| {
-                    suggested_indent = Some(indent);
-                    ControlFlow::Break(())
-                },
-                cx,
-            );
-
-            if let Some(indent) = suggested_indent
-                && indent.len == cursor_point.column
-            {
-                self.edit_prediction_indent_conflict = false;
-            }
-        }
 
         let edit_prediction = provider.suggest(&buffer, cursor_buffer_position, cx)?;
 
