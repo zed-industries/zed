@@ -4842,12 +4842,14 @@ impl EditorElement {
                             window,
                             cx,
                         );
+                        let preview_binding = editor.preview_edit_prediction_keybind(window, cx);
                         let mut element = editor.render_edit_prediction_cursor_popover(
                             min_width,
                             max_width,
                             cursor_point,
                             style,
                             accept_binding.keystroke(),
+                            preview_binding.keystroke(),
                             window,
                             cx,
                         )?;

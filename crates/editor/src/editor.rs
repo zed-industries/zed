@@ -2928,6 +2928,21 @@ impl Editor {
         AcceptEditPredictionBinding(bindings.into_iter().rev().next())
     }
 
+    pub fn preview_edit_prediction_keybind(
+        &self,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> AcceptEditPredictionBinding {
+        let key_context = self.key_context_internal(self.has_active_edit_prediction(), window, cx);
+        let bindings = window.bindings_for_action_in_context(&AcceptEditPrediction, key_context);
+        AcceptEditPredictionBinding(bindings.into_iter().rev().find(|binding| {
+            binding
+                .keystrokes()
+                .first()
+                .is_some_and(|keystroke| keystroke.modifiers().modified())
+        }))
+    }
+
     pub fn new_file(
         workspace: &mut Workspace,
         _: &workspace::NewFile,
@@ -8429,21 +8444,20 @@ impl Editor {
     ) {
         let mut modifiers_held = false;
 
-        // Check bindings for all granularities.
-        // If the user holds the key for Word, Line, or Full, we want to show the preview.
-        let granularities = [
-            EditPredictionGranularity::Full,
-            EditPredictionGranularity::Line,
-            EditPredictionGranularity::Word,
+        let key_context = self.key_context_internal(self.has_active_edit_prediction(), window, cx);
+        let actions: [&dyn Action; 3] = [
+            &AcceptEditPrediction,
+            &AcceptNextWordEditPrediction,
+            &AcceptNextLineEditPrediction,
         ];
 
-        for granularity in granularities {
-            if let Some(keystroke) = self
-                .accept_edit_prediction_keybind(granularity, window, cx)
-                .keystroke()
-            {
-                modifiers_held = modifiers_held
-                    || (keystroke.modifiers() == modifiers && keystroke.modifiers().modified());
+        for action in actions {
+            let bindings = window.bindings_for_action_in_context(action, key_context.clone());
+            for binding in bindings {
+                if let Some(keystroke) = binding.keystrokes().first() {
+                    modifiers_held = modifiers_held
+                        || (keystroke.modifiers() == modifiers && keystroke.modifiers().modified());
+                }
             }
         }
 
@@ -9905,6 +9919,7 @@ impl Editor {
         cursor_point: Point,
         style: &EditorStyle,
         accept_keystroke: Option<&gpui::KeybindingKeystroke>,
+        preview_keystroke: Option<&gpui::KeybindingKeystroke>,
         _window: &Window,
         cx: &mut Context<Editor>,
     ) -> Option<AnyElement> {
@@ -9985,13 +10000,23 @@ impl Editor {
                                     .when_some(
                                         accept_keystroke.as_ref(),
                                         |el, accept_keystroke| {
-                                            el.child(h_flex().children(ui::render_modifiers(
-                                                accept_keystroke.modifiers(),
-                                                PlatformStyle::platform(),
-                                                Some(Color::Default),
-                                                Some(IconSize::XSmall.rems().into()),
-                                                false,
-                                            )))
+                                            if accept_keystroke.modifiers().modified() {
+                                                el.child(h_flex().children(ui::render_modifiers(
+                                                    accept_keystroke.modifiers(),
+                                                    PlatformStyle::platform(),
+                                                    Some(Color::Default),
+                                                    Some(IconSize::XSmall.rems().into()),
+                                                    false,
+                                                )))
+                                            } else {
+                                                el.child(
+                                                    Key::new(
+                                                        util::capitalize(accept_keystroke.key()),
+                                                        Some(Color::Default),
+                                                    )
+                                                    .size(Some(IconSize::XSmall.rems().into())),
+                                                )
+                                            }
                                         },
                                     ),
                             )
@@ -10056,9 +10081,13 @@ impl Editor {
                         .child(completion),
                 )
                 .when_some(accept_keystroke, |el, accept_keystroke| {
-                    if !accept_keystroke.modifiers().modified() {
-                        return el;
-                    }
+                    let preview_key = if accept_keystroke.modifiers().modified() {
+                        accept_keystroke
+                    } else if let Some(pk) = preview_keystroke {
+                        pk
+                    } else {
+                        accept_keystroke
+                    };
 
                     el.child(
                         h_flex()
@@ -10070,24 +10099,39 @@ impl Editor {
                             .gap_1()
                             .py_1()
                             .px_2()
-                            .child(
-                                h_flex()
-                                    .font(theme::ThemeSettings::get_global(cx).buffer_font.clone())
-                                    .when(is_platform_style_mac, |parent| parent.gap_1())
-                                    .child(h_flex().children(ui::render_modifiers(
-                                        accept_keystroke.modifiers(),
-                                        PlatformStyle::platform(),
-                                        Some(if !has_completion {
-                                            Color::Muted
-                                        } else {
-                                            Color::Default
-                                        }),
-                                        None,
-                                        false,
-                                    ))),
-                            )
-                            .child(Label::new("Preview").into_any_element())
-                            .opacity(if has_completion { 1.0 } else { 0.4 }),
+                            .when(!accept_keystroke.modifiers().modified(), |el| {
+                                el.child(
+                                    Key::new(
+                                        util::capitalize(accept_keystroke.key()),
+                                        Some(Color::Default),
+                                    )
+                                    .size(Some(IconSize::XSmall.rems().into())),
+                                )
+                            })
+                            .when(preview_key.modifiers().modified(), |el| {
+                                el.child(
+                                    h_flex()
+                                        .font(
+                                            theme::ThemeSettings::get_global(cx)
+                                                .buffer_font
+                                                .clone(),
+                                        )
+                                        .when(is_platform_style_mac, |parent| parent.gap_1())
+                                        .child(h_flex().children(ui::render_modifiers(
+                                            preview_key.modifiers(),
+                                            PlatformStyle::platform(),
+                                            Some(if !has_completion {
+                                                Color::Muted
+                                            } else {
+                                                Color::Default
+                                            }),
+                                            None,
+                                            false,
+                                        ))),
+                                )
+                                .child(Label::new("Preview").into_any_element())
+                                .opacity(if has_completion { 1.0 } else { 0.4 })
+                            }),
                     )
                 })
                 .into_any(),
