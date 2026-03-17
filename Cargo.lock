@@ -15870,6 +15870,7 @@ dependencies = [
  "pretty_assertions",
  "project",
  "prompt_store",
+ "recent_projects",
  "serde_json",
  "settings",
  "theme",

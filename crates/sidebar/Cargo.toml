@@ -28,6 +28,7 @@ fs.workspace = true
 gpui.workspace = true
 menu.workspace = true
 project.workspace = true
+recent_projects.workspace = true
 settings.workspace = true
 theme.workspace = true
 ui.workspace = true
