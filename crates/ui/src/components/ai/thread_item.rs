@@ -240,7 +240,7 @@ impl RenderOnce for ThreadItem {
         let title = self.title;
         let highlight_positions = self.highlight_positions;
         let title_label = if self.generating_title {
-            Label::new("New Thread…")
+            Label::new(title)
                 .color(Color::Muted)
                 .with_animation(
                     "generating-title",

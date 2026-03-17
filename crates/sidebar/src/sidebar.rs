@@ -503,12 +503,41 @@ impl Sidebar {
         let conversation_view = panel.read(cx).active_conversation()?;
         let thread_view = conversation_view.read(cx).active_thread()?;
         let raw = thread_view.read(cx).message_editor.read(cx).text(cx);
-        let text: String = raw.split_whitespace().collect::<Vec<_>>().join(" ");
+        let cleaned = Self::clean_mention_links(&raw);
+        let mut text: String = cleaned.split_whitespace().collect::<Vec<_>>().join(" ");
         if text.is_empty() {
             None
         } else {
+            const MAX_CHARS: usize = 250;
+            if let Some((truncate_at, _)) = text.char_indices().nth(MAX_CHARS) {
+                text.truncate(truncate_at);
+            }
             Some(text.into())
         }
+    }
+
+    fn clean_mention_links(input: &str) -> String {
+        let mut result = String::with_capacity(input.len());
+        let mut remaining = input;
+
+        while let Some(start) = remaining.find("[@") {
+            result.push_str(&remaining[..start]);
+            let after_bracket = &remaining[start + 1..]; // skip '['
+            if let Some(close_bracket) = after_bracket.find("](") {
+                let mention = &after_bracket[..close_bracket]; // "@something"
+                let after_link_start = &after_bracket[close_bracket + 2..]; // after "]("
+                if let Some(close_paren) = after_link_start.find(')') {
+                    result.push_str(mention);
+                    remaining = &after_link_start[close_paren + 1..];
+                    continue;
+                }
+            }
+            // Couldn't parse full link syntax — emit the literal "[@" and move on.
+            result.push_str("[@");
+            remaining = &remaining[start + 2..];
+        }
+        result.push_str(remaining);
+        result
     }
 
     fn all_thread_infos_for_workspace(
@@ -2670,6 +2699,44 @@ mod tests {
                 })
                 .collect()
         })
+    }
+
+    #[test]
+    fn test_clean_mention_links() {
+        // Simple mention link
+        assert_eq!(
+            Sidebar::clean_mention_links("check [@Button.tsx](file:///path/to/Button.tsx)"),
+            "check @Button.tsx"
+        );
+
+        // Multiple mention links
+        assert_eq!(
+            Sidebar::clean_mention_links(
+                "look at [@foo.rs](file:///foo.rs) and [@bar.rs](file:///bar.rs)"
+            ),
+            "look at @foo.rs and @bar.rs"
+        );
+
+        // No mention links — passthrough
+        assert_eq!(
+            Sidebar::clean_mention_links("plain text with no mentions"),
+            "plain text with no mentions"
+        );
+
+        // Incomplete link syntax — preserved as-is
+        assert_eq!(
+            Sidebar::clean_mention_links("broken [@mention without closing"),
+            "broken [@mention without closing"
+        );
+
+        // Regular markdown link (no @) — not touched
+        assert_eq!(
+            Sidebar::clean_mention_links("see [docs](https://example.com)"),
+            "see [docs](https://example.com)"
+        );
+
+        // Empty input
+        assert_eq!(Sidebar::clean_mention_links(""), "");
     }
 
     #[gpui::test]
