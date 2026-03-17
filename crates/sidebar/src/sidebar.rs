@@ -2332,7 +2332,7 @@ mod tests {
     }
 
     fn open_and_focus_sidebar(sidebar: &Entity<Sidebar>, cx: &mut gpui::VisualTestContext) {
-        let multi_workspace = sidebar.read_with(cx, |s, cx| s.multi_workspace.upgrade());
+        let multi_workspace = sidebar.read_with(cx, |s, _| s.multi_workspace.upgrade());
         if let Some(multi_workspace) = multi_workspace {
             multi_workspace.update_in(cx, |mw, window, cx| {
                 if !mw.is_sidebar_open() {
