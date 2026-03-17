@@ -6346,7 +6346,7 @@ impl MultiBufferSnapshot {
     pub fn runnable_ranges(
         &self,
         range: Range<Anchor>,
-    ) -> impl Iterator<Item = (Range<MultiBufferOffset>, language::RunnableRange)> + '_ {
+    ) -> impl Iterator<Item = (Range<Anchor>, language::RunnableRange)> + '_ {
         let range = range.start.to_offset(self)..range.end.to_offset(self);
         self.lift_buffer_metadata(range, move |buffer, range| {
             Some(
@@ -6359,7 +6359,12 @@ impl MultiBufferSnapshot {
                     .map(|runnable| (runnable.run_range.clone(), runnable)),
             )
         })
-        .map(|(run_range, runnable, _)| (run_range, runnable))
+        .map(|(run_range, runnable, _)| {
+            (
+                self.anchor_after(run_range.start)..self.anchor_before(run_range.end),
+                runnable,
+            )
+        })
     }
 
     pub fn line_indents(
