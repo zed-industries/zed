@@ -378,6 +378,10 @@ impl Worktree {
         cx: &mut AsyncApp,
     ) -> Result<Entity<Self>> {
         let abs_path = path.into();
+        let abs_path: Arc<Path> = match fs.canonicalize(&abs_path).await {
+            Ok(canonical) => canonical.into(),
+            Err(_) => abs_path,
+        };
         let metadata = fs
             .metadata(&abs_path)
             .await
