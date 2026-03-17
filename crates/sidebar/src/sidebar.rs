@@ -320,7 +320,7 @@ impl Sidebar {
     }
 
     fn subscribe_to_workspace(
-        &self,
+        &mut self,
         workspace: &Entity<Workspace>,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -375,11 +375,18 @@ impl Sidebar {
 
         if let Some(agent_panel) = workspace.read(cx).panel::<AgentPanel>(cx) {
             self.subscribe_to_agent_panel(&agent_panel, window, cx);
+            // Seed the initial focused_thread so the correct thread item is
+            // highlighted right away, without waiting for the panel to emit
+            // an event (which only happens on *changes*, not on first load).
+            self.focused_thread = agent_panel
+                .read(cx)
+                .active_conversation()
+                .and_then(|cv| cv.read(cx).parent_id(cx));
         }
     }
 
     fn subscribe_to_agent_panel(
-        &self,
+        &mut self,
         agent_panel: &Entity<AgentPanel>,
         window: &mut Window,
         cx: &mut Context<Self>,
