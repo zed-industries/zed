@@ -8,6 +8,8 @@ use log::info;
 use playback::capture_local_video_track;
 use settings::Settings;
 use std::future::Future;
+use std::sync::Arc;
+use std::sync::atomic::AtomicU64;
 
 mod playback;
 
@@ -110,8 +112,8 @@ impl Room {
         user_name: String,
         is_staff: bool,
         cx: &mut AsyncApp,
-    ) -> Result<(LocalTrackPublication, playback::AudioStream)> {
-        let (track, stream) = self
+    ) -> Result<(LocalTrackPublication, playback::AudioStream, Arc<AtomicU64>)> {
+        let (track, stream, input_lag_us) = self
             .playback
             .capture_local_microphone_track(user_name, is_staff, &cx)?;
         let publication = self
@@ -126,7 +128,7 @@ impl Room {
             )
             .await?;
 
-        Ok((publication, stream))
+        Ok((publication, stream, input_lag_us))
     }
 
     pub async fn unpublish_local_track(

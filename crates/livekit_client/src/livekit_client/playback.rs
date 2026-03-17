@@ -76,7 +76,6 @@ pub(crate) fn play_remote_audio_track(
     });
     Ok(AudioStream::Output {
         _drop: Box::new(on_drop),
-        input_lag_us: Arc::new(AtomicU64::new(0)),
     })
 }
 
@@ -135,7 +134,6 @@ impl AudioStack {
 
         AudioStream::Output {
             _drop: Box::new(on_drop),
-            input_lag_us: Arc::new(AtomicU64::new(0)),
         }
     }
 
@@ -169,7 +167,7 @@ impl AudioStack {
         user_name: String,
         is_staff: bool,
         cx: &AsyncApp,
-    ) -> Result<(crate::LocalAudioTrack, AudioStream)> {
+    ) -> Result<(crate::LocalAudioTrack, AudioStream, Arc<AtomicU64>)> {
         let legacy_audio_compatible =
             AudioSettings::try_read_global(cx, |setting| setting.legacy_audio_compatible)
                 .unwrap_or(true);
@@ -261,8 +259,8 @@ impl AudioStack {
             super::LocalAudioTrack(track),
             AudioStream::Output {
                 _drop: Box::new(on_drop),
-                input_lag_us,
             },
+            input_lag_us,
         ))
     }
 
@@ -388,6 +386,7 @@ impl AudioStack {
                                 &config.config(),
                                 config.sample_format(),
                                 move |data, _: &_| {
+                                    let captured_at = Instant::now();
                                     let data = crate::get_sample_data(config.sample_format(), data)
                                         .log_err();
                                     let Some(data) = data else {
@@ -428,7 +427,7 @@ impl AudioStack {
                                                         num_channels,
                                                         samples_per_channel: sample_rate / 100,
                                                     },
-                                                    captured_at: Instant::now(),
+                                                    captured_at,
                                                 })
                                                 .ok();
                                         }
@@ -497,29 +496,8 @@ fn send_to_livekit(mut frame_tx: Sender<TimestampedFrame>, mut microphone: impl 
 use super::LocalVideoTrack;
 
 pub enum AudioStream {
-    Input {
-        _task: Task<()>,
-    },
-    Output {
-        _drop: Box<dyn std::any::Any>,
-        input_lag_us: Arc<AtomicU64>,
-    },
-}
-
-impl AudioStream {
-    pub fn input_lag(&self) -> Option<Duration> {
-        match self {
-            AudioStream::Output { input_lag_us, .. } => {
-                let us = input_lag_us.load(Ordering::Relaxed);
-                if us > 0 {
-                    Some(Duration::from_micros(us))
-                } else {
-                    None
-                }
-            }
-            _ => None,
-        }
-    }
+    Input { _task: Task<()> },
+    Output { _drop: Box<dyn std::any::Any> },
 }
 
 pub(crate) async fn capture_local_video_track(

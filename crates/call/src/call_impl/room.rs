@@ -23,6 +23,7 @@ use livekit_client::{self as livekit, AudioStream, TrackSid};
 use postage::{sink::Sink, stream::Stream, watch};
 use project::Project;
 use settings::Settings as _;
+use std::sync::atomic::AtomicU64;
 use std::{future::Future, mem, rc::Rc, sync::Arc, time::Duration, time::Instant};
 use util::{ResultExt, TryFutureExt, paths::PathStyle, post_inc};
 use workspace::ParticipantLocation;
@@ -550,11 +551,17 @@ impl Room {
         }
     }
 
-    pub fn input_lag(&self) -> Option<std::time::Duration> {
-        let live_kit = self.live_kit.as_ref()?;
-        match &live_kit.microphone_track {
-            LocalTrack::Published { _stream, .. } => _stream.input_lag(),
-            _ => None,
+    pub fn input_lag(&self) -> Option<Duration> {
+        let us = self
+            .live_kit
+            .as_ref()?
+            .input_lag_us
+            .as_ref()?
+            .load(std::sync::atomic::Ordering::Relaxed);
+        if us > 0 {
+            Some(Duration::from_micros(us))
+        } else {
+            None
         }
     }
 
@@ -1408,7 +1415,7 @@ impl Room {
                 };
 
                 match publication {
-                    Ok((publication, stream)) => {
+                    Ok((publication, stream, input_lag_us)) => {
                         if canceled {
                             cx.spawn(async move |_, cx| {
                                 room.unpublish_local_track(publication.sid(), cx).await
@@ -1418,6 +1425,7 @@ impl Room {
                             if live_kit.muted_by_user || live_kit.deafened {
                                 publication.mute(cx);
                             }
+                            live_kit.input_lag_us = Some(input_lag_us);
                             live_kit.microphone_track = LocalTrack::Published {
                                 track_publication: publication,
                                 _stream: Box::new(stream),
@@ -1667,6 +1675,7 @@ fn spawn_room_connection(
                     room: Rc::new(room),
                     screen_track: LocalTrack::None,
                     microphone_track: LocalTrack::None,
+                    input_lag_us: None,
                     next_publish_id: 0,
                     muted_by_user,
                     deafened: false,
@@ -1690,6 +1699,9 @@ struct LiveKitRoom {
     room: Rc<livekit::Room>,
     screen_track: LocalTrack<dyn ScreenCaptureStream>,
     microphone_track: LocalTrack<AudioStream>,
+    /// Shared atomic storing the most recent input lag measurement in microseconds.
+    /// Written by the audio capture/transmit pipeline, read here for diagnostics.
+    input_lag_us: Option<Arc<AtomicU64>>,
     /// Tracks whether we're currently in a muted state due to auto-mute from deafening or manual mute performed by user.
     muted_by_user: bool,
     deafened: bool,
@@ -1706,6 +1718,7 @@ impl LiveKitRoom {
         } = mem::replace(&mut self.microphone_track, LocalTrack::None)
         {
             tracks_to_unpublish.push(track_publication.sid());
+            self.input_lag_us = None;
             cx.notify();
         }
 
