@@ -225,6 +225,12 @@ pub struct Sidebar {
     /// Note: This is NOT the same as the active item.
     selection: Option<usize>,
     focused_thread: Option<acp::SessionId>,
+    /// Set to true when WorkspaceRemoved fires so the subsequent
+    /// ActiveWorkspaceChanged event knows not to clear focused_thread.
+    /// A workspace removal changes the active workspace as a side-effect, but
+    /// that should not reset the user's thread focus the way an explicit
+    /// workspace switch does.
+    pending_workspace_removal: bool,
     active_entry_index: Option<usize>,
     hovered_thread_index: Option<usize>,
     collapsed_groups: HashSet<PathList>,
@@ -256,7 +262,29 @@ impl Sidebar {
             window,
             |this, _multi_workspace, event: &MultiWorkspaceEvent, window, cx| match event {
                 MultiWorkspaceEvent::ActiveWorkspaceChanged => {
-                    this.focused_thread = None;
+                    // Don't clear focused_thread when the active workspace
+                    // changed because a workspace was removed — the focused
+                    // thread may still be valid in the new active workspace.
+                    // Only clear it for explicit user-initiated switches.
+                    if this.pending_workspace_removal {
+                        this.pending_workspace_removal = false;
+                        // If the removed workspace had no focused thread, seed
+                        // from the new active panel so its current thread gets
+                        // highlighted — same logic as subscribe_to_workspace.
+                        if this.focused_thread.is_none() {
+                            if let Some(mw) = this.multi_workspace.upgrade() {
+                                let ws = mw.read(cx).workspace();
+                                if let Some(panel) = ws.read(cx).panel::<AgentPanel>(cx) {
+                                    this.focused_thread = panel
+                                        .read(cx)
+                                        .active_conversation()
+                                        .and_then(|cv| cv.read(cx).parent_id(cx));
+                                }
+                            }
+                        }
+                    } else {
+                        this.focused_thread = None;
+                    }
                     this.update_entries(false, cx);
                 }
                 MultiWorkspaceEvent::WorkspaceAdded(workspace) => {
@@ -264,6 +292,9 @@ impl Sidebar {
                     this.update_entries(false, cx);
                 }
                 MultiWorkspaceEvent::WorkspaceRemoved(_) => {
+                    // Signal that the upcoming ActiveWorkspaceChanged event is
+                    // a consequence of this removal, not a user workspace switch.
+                    this.pending_workspace_removal = true;
                     this.update_entries(false, cx);
                 }
             },
@@ -309,6 +340,7 @@ impl Sidebar {
             contents: SidebarContents::default(),
             selection: None,
             focused_thread: None,
+            pending_workspace_removal: false,
             active_entry_index: None,
             hovered_thread_index: None,
             collapsed_groups: HashSet::new(),
@@ -394,26 +426,43 @@ impl Sidebar {
         cx.subscribe_in(
             agent_panel,
             window,
-            |this, agent_panel, event: &AgentPanelEvent, _window, cx| match event {
-                AgentPanelEvent::ActiveViewChanged => {
-                    this.focused_thread = agent_panel
-                        .read(cx)
-                        .active_conversation()
-                        .and_then(|cv| cv.read(cx).parent_id(cx));
-                    this.update_entries(false, cx);
-                }
-                AgentPanelEvent::ThreadFocused => {
-                    let new_focused = agent_panel
-                        .read(cx)
-                        .active_conversation()
-                        .and_then(|cv| cv.read(cx).parent_id(cx));
-                    if new_focused.is_some() && new_focused != this.focused_thread {
-                        this.focused_thread = new_focused;
+            |this, agent_panel, event: &AgentPanelEvent, _window, cx| {
+                // Check whether the panel that emitted this event belongs to
+                // the currently active workspace. Only the active workspace's
+                // panel should drive focused_thread — otherwise running threads
+                // in background workspaces would continuously overwrite it,
+                // causing the selection highlight to jump around.
+                let is_active_panel = this
+                    .multi_workspace
+                    .upgrade()
+                    .and_then(|mw| mw.read(cx).workspace().read(cx).panel::<AgentPanel>(cx))
+                    .is_some_and(|active_panel| active_panel == *agent_panel);
+
+                match event {
+                    AgentPanelEvent::ActiveViewChanged => {
+                        if is_active_panel {
+                            this.focused_thread = agent_panel
+                                .read(cx)
+                                .active_conversation()
+                                .and_then(|cv| cv.read(cx).parent_id(cx));
+                        }
                         this.update_entries(false, cx);
                     }
-                }
-                AgentPanelEvent::BackgroundThreadChanged => {
-                    this.update_entries(false, cx);
+                    AgentPanelEvent::ThreadFocused => {
+                        if is_active_panel {
+                            let new_focused = agent_panel
+                                .read(cx)
+                                .active_conversation()
+                                .and_then(|cv| cv.read(cx).parent_id(cx));
+                            if new_focused.is_some() && new_focused != this.focused_thread {
+                                this.focused_thread = new_focused;
+                                this.update_entries(false, cx);
+                            }
+                        }
+                    }
+                    AgentPanelEvent::BackgroundThreadChanged => {
+                        this.update_entries(false, cx);
+                    }
                 }
             },
         )
@@ -495,6 +544,19 @@ impl Sidebar {
         let query = self.filter_editor.read(cx).text(cx);
 
         let previous = mem::take(&mut self.contents);
+
+        // Collect the session IDs that were visible before this rebuild so we
+        // can distinguish a thread that was deleted/removed (was in the list,
+        // now gone) from a brand-new thread that hasn't been saved to the
+        // metadata store yet (never was in the list).
+        let previous_session_ids: HashSet<acp::SessionId> = previous
+            .entries
+            .iter()
+            .filter_map(|entry| match entry {
+                ListEntry::Thread(t) => Some(t.session_info.session_id.clone()),
+                _ => None,
+            })
+            .collect();
 
         let old_statuses: HashMap<acp::SessionId, AgentThreadStatus> = previous
             .entries
@@ -792,15 +854,6 @@ impl Sidebar {
                     continue;
                 }
 
-                if active_entry_index.is_none()
-                    && self.focused_thread.is_none()
-                    && active_workspace
-                        .as_ref()
-                        .is_some_and(|active| active == workspace)
-                {
-                    active_entry_index = Some(entries.len());
-                }
-
                 entries.push(ListEntry::ProjectHeader {
                     path_list: path_list.clone(),
                     label,
@@ -824,16 +877,6 @@ impl Sidebar {
                 }
             } else {
                 let has_threads = !threads.is_empty();
-
-                // Check if this header is the active entry before pushing it.
-                if active_entry_index.is_none()
-                    && self.focused_thread.is_none()
-                    && active_workspace
-                        .as_ref()
-                        .is_some_and(|active| active == workspace)
-                {
-                    active_entry_index = Some(entries.len());
-                }
 
                 entries.push(ListEntry::ProjectHeader {
                     path_list: path_list.clone(),
@@ -895,6 +938,22 @@ impl Sidebar {
             .enumerate()
             .filter_map(|(i, e)| matches!(e, ListEntry::ProjectHeader { .. }).then_some(i))
             .collect();
+
+        // If focused_thread points to a thread that was previously in the
+        // list but is now gone (deleted, or its workspace was removed), clear
+        // it. We don't try to redirect to a thread in a different project
+        // group — the delete_thread method already handles within-group
+        // neighbor selection. If it was never in the list it's a brand-new
+        // thread that hasn't been saved to the metadata store yet — leave
+        // things alone and wait for the next rebuild.
+        let focused_thread_was_known = self
+            .focused_thread
+            .as_ref()
+            .is_some_and(|id| previous_session_ids.contains(id));
+
+        if focused_thread_was_known && active_entry_index.is_none() {
+            self.focused_thread = None;
+        }
 
         self.active_entry_index = active_entry_index;
         self.contents = SidebarContents {
@@ -1056,10 +1115,6 @@ impl Sidebar {
         let workspace_count = multi_workspace
             .as_ref()
             .map_or(0, |mw| mw.read(cx).workspaces().len());
-        let is_active_workspace = self.focused_thread.is_none()
-            && multi_workspace
-                .as_ref()
-                .is_some_and(|mw| mw.read(cx).workspace() == workspace);
 
         let label = if highlight_positions.is_empty() {
             Label::new(label.clone())
@@ -1075,7 +1130,6 @@ impl Sidebar {
 
         ListItem::new(id)
             .group_name(group_name)
-            .toggle_state(is_active_workspace)
             .focused(is_selected)
             .child(
                 h_flex()
@@ -1636,7 +1690,87 @@ impl Sidebar {
         }
     }
 
-    fn delete_thread(&mut self, session_id: &acp::SessionId, cx: &mut Context<Self>) {
+    fn delete_thread(
+        &mut self,
+        session_id: &acp::SessionId,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        // If we're deleting the currently focused thread, move focus to the
+        // nearest thread within the same project group. We never cross group
+        // boundaries — if the group has no other threads, clear focus and open
+        // a blank new thread in the panel instead.
+        if self.focused_thread.as_ref() == Some(session_id) {
+            let current_pos = self.contents.entries.iter().position(|entry| {
+                matches!(entry, ListEntry::Thread(t) if &t.session_info.session_id == session_id)
+            });
+
+            let next_thread = current_pos.and_then(|pos| {
+                let group_start = self.contents.entries[..pos]
+                    .iter()
+                    .rposition(|e| matches!(e, ListEntry::ProjectHeader { .. }))
+                    .map_or(0, |i| i + 1);
+                let group_end = self.contents.entries[pos + 1..]
+                    .iter()
+                    .position(|e| matches!(e, ListEntry::ProjectHeader { .. }))
+                    .map_or(self.contents.entries.len(), |i| pos + 1 + i);
+
+                let above = self.contents.entries[group_start..pos]
+                    .iter()
+                    .rev()
+                    .find_map(|entry| {
+                        if let ListEntry::Thread(t) = entry {
+                            Some(t)
+                        } else {
+                            None
+                        }
+                    });
+
+                above.or_else(|| {
+                    self.contents.entries[pos + 1..group_end]
+                        .iter()
+                        .find_map(|entry| {
+                            if let ListEntry::Thread(t) = entry {
+                                Some(t)
+                            } else {
+                                None
+                            }
+                        })
+                })
+            });
+
+            if let Some(next) = next_thread {
+                self.focused_thread = Some(next.session_info.session_id.clone());
+
+                if let Some(multi_workspace) = self.multi_workspace.upgrade() {
+                    let workspace = multi_workspace.read(cx).workspace().clone();
+                    if let Some(agent_panel) = workspace.read(cx).panel::<AgentPanel>(cx) {
+                        agent_panel.update(cx, |panel, cx| {
+                            panel.load_agent_thread(
+                                next.agent.clone(),
+                                next.session_info.session_id.clone(),
+                                next.session_info.work_dirs.clone(),
+                                next.session_info.title.clone(),
+                                true,
+                                window,
+                                cx,
+                            );
+                        });
+                    }
+                }
+            } else {
+                self.focused_thread = None;
+                if let Some(multi_workspace) = self.multi_workspace.upgrade() {
+                    let workspace = multi_workspace.read(cx).workspace().clone();
+                    if let Some(agent_panel) = workspace.read(cx).panel::<AgentPanel>(cx) {
+                        agent_panel.update(cx, |panel, cx| {
+                            panel.new_thread(&NewThread, window, cx);
+                        });
+                    }
+                }
+            }
+        }
+
         let Some(thread_store) = ThreadStore::try_global(cx) else {
             return;
         };
@@ -1654,7 +1788,7 @@ impl Sidebar {
     fn remove_selected_thread(
         &mut self,
         _: &RemoveSelectedThread,
-        _window: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         let Some(ix) = self.selection else {
@@ -1667,7 +1801,7 @@ impl Sidebar {
             return;
         }
         let session_id = thread.session_info.session_id.clone();
-        self.delete_thread(&session_id, cx);
+        self.delete_thread(&session_id, window, cx);
     }
 
     fn render_thread(
@@ -1771,8 +1905,8 @@ impl Sidebar {
                         })
                         .on_click({
                             let session_id = session_id_for_delete.clone();
-                            cx.listener(move |this, _, _window, cx| {
-                                this.delete_thread(&session_id, cx);
+                            cx.listener(move |this, _, window, cx| {
+                                this.delete_thread(&session_id, window, cx);
                             })
                         }),
                 )
@@ -1898,6 +2032,12 @@ impl Sidebar {
         let Some(multi_workspace) = self.multi_workspace.upgrade() else {
             return;
         };
+
+        // Clear focused_thread immediately so no existing thread stays
+        // highlighted while the new blank thread is being shown. Without this,
+        // if the target workspace is already active (so ActiveWorkspaceChanged
+        // never fires), the previous thread's highlight would linger.
+        self.focused_thread = None;
 
         multi_workspace.update(cx, |multi_workspace, cx| {
             multi_workspace.activate(workspace.clone(), cx);
@@ -4087,18 +4227,14 @@ mod tests {
         let workspace_a = multi_workspace.read_with(cx, |mw, _cx| mw.workspaces()[0].clone());
 
         // ── 1. Initial state: no focused thread ──────────────────────────────
-        // Workspace B is active (just added), so its header is the active entry.
         sidebar.read_with(cx, |sidebar, _cx| {
             assert_eq!(
                 sidebar.focused_thread, None,
                 "Initially no thread should be focused"
             );
-            let active_entry = sidebar
-                .active_entry_index
-                .and_then(|ix| sidebar.contents.entries.get(ix));
-            assert!(
-                matches!(active_entry, Some(ListEntry::ProjectHeader { .. })),
-                "Active entry should be the active workspace header"
+            assert_eq!(
+                sidebar.active_entry_index, None,
+                "No active entry when no thread is focused"
             );
         });
 
@@ -4202,12 +4338,9 @@ mod tests {
                 sidebar.focused_thread, None,
                 "External workspace switch should clear focused_thread"
             );
-            let active_entry = sidebar
-                .active_entry_index
-                .and_then(|ix| sidebar.contents.entries.get(ix));
-            assert!(
-                matches!(active_entry, Some(ListEntry::ProjectHeader { .. })),
-                "Active entry should be the workspace header after external switch"
+            assert_eq!(
+                sidebar.active_entry_index, None,
+                "No active entry when no thread is focused"
             );
         });
 
@@ -4221,11 +4354,14 @@ mod tests {
         save_test_thread_metadata(&session_id_b2, path_list_b.clone(), cx).await;
         cx.run_until_parked();
 
+        // Panel B is not the active workspace's panel (workspace A is
+        // active), so opening a thread there should not change focused_thread.
+        // This prevents running threads in background workspaces from causing
+        // the selection highlight to jump around.
         sidebar.read_with(cx, |sidebar, _cx| {
             assert_eq!(
-                sidebar.focused_thread.as_ref(),
-                Some(&session_id_b2),
-                "Opening a thread externally should set focused_thread"
+                sidebar.focused_thread, None,
+                "Opening a thread in a non-active panel should not set focused_thread"
             );
         });
 
@@ -4236,9 +4372,8 @@ mod tests {
 
         sidebar.read_with(cx, |sidebar, _cx| {
             assert_eq!(
-                sidebar.focused_thread.as_ref(),
-                Some(&session_id_b2),
-                "Defocusing the sidebar should not clear focused_thread"
+                sidebar.focused_thread, None,
+                "Defocusing the sidebar should not set focused_thread"
             );
         });
 
@@ -4252,12 +4387,9 @@ mod tests {
                 sidebar.focused_thread, None,
                 "Clicking a workspace header should clear focused_thread"
             );
-            let active_entry = sidebar
-                .active_entry_index
-                .and_then(|ix| sidebar.contents.entries.get(ix));
-            assert!(
-                matches!(active_entry, Some(ListEntry::ProjectHeader { .. })),
-                "Active entry should be the workspace header"
+            assert_eq!(
+                sidebar.active_entry_index, None,
+                "No active entry when no thread is focused"
             );
         });
 
