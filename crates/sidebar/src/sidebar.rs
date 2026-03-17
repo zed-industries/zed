@@ -269,8 +269,7 @@ impl Sidebar {
                     // changed because a workspace was removed — the focused
                     // thread may still be valid in the new active workspace.
                     // Only clear it for explicit user-initiated switches.
-                    if this.pending_workspace_removal {
-                        this.pending_workspace_removal = false;
+                    if mem::take(&mut this.pending_workspace_removal) {
                         // If the removed workspace had no focused thread, seed
                         // from the new active panel so its current thread gets
                         // highlighted — same logic as subscribe_to_workspace.
@@ -1720,9 +1719,11 @@ impl Sidebar {
         let workspaces = multi_workspace.read(cx).workspaces().to_vec();
         for workspace in workspaces {
             if let Some(agent_panel) = workspace.read(cx).panel::<AgentPanel>(cx) {
-                agent_panel.update(cx, |panel, cx| {
-                    panel.cancel_thread(session_id, cx);
-                });
+                let cancelled =
+                    agent_panel.update(cx, |panel, cx| panel.cancel_thread(session_id, cx));
+                if cancelled {
+                    return;
+                }
             }
         }
     }
@@ -1740,6 +1741,20 @@ impl Sidebar {
         if self.focused_thread.as_ref() == Some(session_id) {
             let current_pos = self.contents.entries.iter().position(|entry| {
                 matches!(entry, ListEntry::Thread(t) if &t.session_info.session_id == session_id)
+            });
+
+            // Find the workspace that owns this thread's project group by
+            // walking backwards to the nearest ProjectHeader. We must use
+            // *this* workspace (not the active workspace) because the user
+            // might be deleting a thread in a non-active group.
+            let group_workspace = current_pos.and_then(|pos| {
+                self.contents.entries[..pos]
+                    .iter()
+                    .rev()
+                    .find_map(|e| match e {
+                        ListEntry::ProjectHeader { workspace, .. } => Some(workspace.clone()),
+                        _ => None,
+                    })
             });
 
             let next_thread = current_pos.and_then(|pos| {
@@ -1779,8 +1794,7 @@ impl Sidebar {
             if let Some(next) = next_thread {
                 self.focused_thread = Some(next.session_info.session_id.clone());
 
-                if let Some(multi_workspace) = self.multi_workspace.upgrade() {
-                    let workspace = multi_workspace.read(cx).workspace().clone();
+                if let Some(workspace) = &group_workspace {
                     if let Some(agent_panel) = workspace.read(cx).panel::<AgentPanel>(cx) {
                         agent_panel.update(cx, |panel, cx| {
                             panel.load_agent_thread(
@@ -1797,8 +1811,7 @@ impl Sidebar {
                 }
             } else {
                 self.focused_thread = None;
-                if let Some(multi_workspace) = self.multi_workspace.upgrade() {
-                    let workspace = multi_workspace.read(cx).workspace().clone();
+                if let Some(workspace) = &group_workspace {
                     if let Some(agent_panel) = workspace.read(cx).panel::<AgentPanel>(cx) {
                         agent_panel.update(cx, |panel, cx| {
                             panel.new_thread(&NewThread, window, cx);
@@ -1931,9 +1944,9 @@ impl Sidebar {
             .when(is_hovered && is_running, |this| {
                 this.action_slot(
                     IconButton::new("stop-thread", IconName::Stop)
+                        .icon_size(IconSize::Small)
                         .icon_color(Color::Error)
                         .style(ButtonStyle::Tinted(TintColor::Error))
-                        .shape(ui::IconButtonShape::Square)
                         .tooltip(Tooltip::text("Stop Generation"))
                         .on_click({
                             let session_id = session_id_for_delete.clone();
