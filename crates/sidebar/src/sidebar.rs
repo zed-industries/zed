@@ -279,6 +279,7 @@ impl Sidebar {
             window,
             |this, _multi_workspace, event: &MultiWorkspaceEvent, window, cx| match event {
                 MultiWorkspaceEvent::ActiveWorkspaceChanged => {
+                    this.focused_thread = None;
                     this.update_entries(false, cx);
                 }
                 MultiWorkspaceEvent::WorkspaceAdded(workspace) => {
@@ -414,10 +415,25 @@ impl Sidebar {
         cx.subscribe_in(
             agent_panel,
             window,
-            |this, _agent_panel, event: &AgentPanelEvent, _window, cx| match event {
-                AgentPanelEvent::ActiveViewChanged
-                | AgentPanelEvent::ThreadFocused
-                | AgentPanelEvent::BackgroundThreadChanged => {
+            |this, agent_panel, event: &AgentPanelEvent, _window, cx| match event {
+                AgentPanelEvent::ActiveViewChanged => {
+                    this.focused_thread = agent_panel
+                        .read(cx)
+                        .active_conversation()
+                        .and_then(|cv| cv.read(cx).parent_id(cx));
+                    this.update_entries(false, cx);
+                }
+                AgentPanelEvent::ThreadFocused => {
+                    let new_focused = agent_panel
+                        .read(cx)
+                        .active_conversation()
+                        .and_then(|cv| cv.read(cx).parent_id(cx));
+                    if new_focused.is_some() && new_focused != this.focused_thread {
+                        this.focused_thread = new_focused;
+                        this.update_entries(false, cx);
+                    }
+                }
+                AgentPanelEvent::BackgroundThreadChanged => {
                     this.update_entries(false, cx);
                 }
             },
@@ -483,12 +499,6 @@ impl Sidebar {
         let mw = multi_workspace.read(cx);
         let workspaces = mw.workspaces().to_vec();
         let active_workspace = mw.workspaces().get(mw.active_workspace_index()).cloned();
-
-        self.focused_thread = active_workspace
-            .as_ref()
-            .and_then(|ws| ws.read(cx).panel::<AgentPanel>(cx))
-            .and_then(|panel| panel.read(cx).active_conversation().cloned())
-            .and_then(|cv| cv.read(cx).parent_id(cx));
 
         let mut threads_by_paths: HashMap<PathList, Vec<ThreadMetadata>> = HashMap::new();
         for row in thread_entries {
@@ -2322,6 +2332,14 @@ mod tests {
     }
 
     fn open_and_focus_sidebar(sidebar: &Entity<Sidebar>, cx: &mut gpui::VisualTestContext) {
+        let multi_workspace = sidebar.read_with(cx, |s, cx| s.multi_workspace.upgrade());
+        if let Some(multi_workspace) = multi_workspace {
+            multi_workspace.update_in(cx, |mw, window, cx| {
+                if !mw.is_sidebar_open() {
+                    mw.toggle_sidebar(window, cx);
+                }
+            });
+        }
         cx.run_until_parked();
         sidebar.update_in(cx, |_, window, cx| {
             cx.focus_self(window);
@@ -3220,7 +3238,9 @@ mod tests {
         cx.update(|cx| {
             cx.update_flags(false, vec!["agent-v2".into()]);
             ThreadStore::init_global(cx);
+            ThreadMetadataStore::init_global(cx);
             language_model::LanguageModelRegistry::test(cx);
+            prompt_store::init(cx);
         });
 
         let fs = FakeFs::new(cx.executor());
