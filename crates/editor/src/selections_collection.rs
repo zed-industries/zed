@@ -408,11 +408,11 @@ impl SelectionsCollection {
     }
 
     /// Attempts to build a selection in the provided buffer row using the
-    /// same buffer column range as specified.
+    /// same UTF-16 column range as specified.
     /// Returns `None` if the range is not empty but it starts past the line's
     /// length, meaning that the line isn't long enough to be contained within
     /// part of the provided range.
-    pub fn build_columnar_selection_from_buffer_columns(
+    pub fn build_columnar_selection_from_utf16_columns(
         &mut self,
         display_map: &DisplaySnapshot,
         buffer_row: u32,
@@ -431,19 +431,16 @@ impl SelectionsCollection {
 
         let (start, end) = if is_empty {
             let column = std::cmp::min(positions.start, line_len_utf16);
-            let point = snapshot
-                .point_utf16_to_point(PointUtf16::new(buffer_row, column));
+            let point = snapshot.point_utf16_to_point(PointUtf16::new(buffer_row, column));
             (point, point)
         } else {
             if positions.start >= line_len_utf16 {
                 return None;
             }
 
-            let start = snapshot
-                .point_utf16_to_point(PointUtf16::new(buffer_row, positions.start));
+            let start = snapshot.point_utf16_to_point(PointUtf16::new(buffer_row, positions.start));
             let end_column = std::cmp::min(positions.end, line_len_utf16);
-            let end = snapshot
-                .point_utf16_to_point(PointUtf16::new(buffer_row, end_column));
+            let end = snapshot.point_utf16_to_point(PointUtf16::new(buffer_row, end_column));
             (start, end)
         };
 
@@ -517,7 +514,7 @@ impl SelectionsCollection {
             row = new_row.row();
             let buffer_row = new_row.to_point(display_map).row;
 
-            if let Some(selection) = self.build_columnar_selection_from_buffer_columns(
+            if let Some(selection) = self.build_columnar_selection_from_utf16_columns(
                 display_map,
                 buffer_row,
                 goal_columns,
