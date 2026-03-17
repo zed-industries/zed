@@ -204,7 +204,7 @@ impl ThreadMetadataStore {
         event: &acp_thread::AcpThreadEvent,
         cx: &mut Context<Self>,
     ) {
-        // Do not save metadata for subagent threads.
+        // Don't track subagent threads in the sidebar.
         if thread.read(cx).parent_session_id().is_some() {
             return;
         }
