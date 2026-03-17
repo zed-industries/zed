@@ -23,7 +23,6 @@ mod mode_selector;
 mod model_selector;
 mod model_selector_popover;
 mod profile_selector;
-pub mod sidebar;
 mod slash_command;
 mod slash_command_picker;
 mod terminal_codegen;
@@ -34,8 +33,8 @@ mod text_thread_editor;
 mod text_thread_history;
 mod thread_history;
 mod thread_history_view;
-mod thread_metadata_store;
-mod threads_archive_view;
+pub mod thread_metadata_store;
+pub mod threads_archive_view;
 mod ui;
 
 use std::rc::Rc;
