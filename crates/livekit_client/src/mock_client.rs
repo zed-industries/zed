@@ -19,6 +19,12 @@ pub use test::{ConnectionState, ParticipantIdentity, RtcStats, SessionStats, Tra
 
 pub struct AudioStream {}
 
+impl AudioStream {
+    pub fn input_lag(&self) -> Option<std::time::Duration> {
+        None
+    }
+}
+
 #[cfg(not(target_os = "macos"))]
 pub type RemoteVideoFrame = std::sync::Arc<gpui::RenderImage>;
 

@@ -37,6 +37,7 @@ struct ComputedNetworkStats {
 
 pub struct CallStatsModal {
     focus_handle: FocusHandle,
+    input_lag: Option<Duration>,
     network_stats: NetworkStats,
     poll_task: Option<Task<()>>,
     _active_call_subscription: Option<Subscription>,
@@ -47,6 +48,7 @@ impl CallStatsModal {
         let mut this = Self {
             focus_handle: cx.focus_handle(),
             network_stats: NetworkStats::default(),
+            input_lag: None,
             poll_task: None,
             _active_call_subscription: None,
         };
@@ -104,6 +106,7 @@ impl CallStatsModal {
 
         let connection_quality = room.read(cx).connection_quality();
         let stats_future = room.read(cx).get_stats();
+        self.input_lag = room.read(cx).input_lag();
 
         self.network_stats.connection_quality = Some(connection_quality);
 
@@ -276,6 +279,16 @@ fn metric_rating(label: &str, value_ms: f64) -> (&'static str, Color) {
     }
 }
 
+fn input_lag_rating(value_ms: f64) -> (&'static str, Color) {
+    if value_ms < 20.0 {
+        ("Normal", Color::Success)
+    } else if value_ms < 50.0 {
+        ("High", Color::Warning)
+    } else {
+        ("Poor", Color::Error)
+    }
+}
+
 fn packet_loss_rating(loss_pct: f64) -> (&'static str, Color) {
     if loss_pct < 1.0 {
         ("Normal", Color::Success)
@@ -356,6 +369,13 @@ impl Render for CallStatsModal {
                             self.network_stats.packet_loss_pct,
                             |v| format!("{:.1}%", v),
                             |v| packet_loss_rating(v),
+                        ))
+                        .child(self.render_metric_row(
+                            "Input lag",
+                            "Delay from audio capture to WebRTC",
+                            self.input_lag.map(|d| d.as_secs_f64() * 1000.0),
+                            |v| format!("{:.1}ms", v),
+                            |v| input_lag_rating(v),
                         )),
                 )
             })

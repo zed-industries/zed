@@ -550,6 +550,14 @@ impl Room {
         }
     }
 
+    pub fn input_lag(&self) -> Option<std::time::Duration> {
+        let live_kit = self.live_kit.as_ref()?;
+        match &live_kit.microphone_track {
+            LocalTrack::Published { _stream, .. } => _stream.input_lag(),
+            _ => None,
+        }
+    }
+
     pub fn connection_quality(&self) -> livekit::ConnectionQuality {
         self.live_kit
             .as_ref()
