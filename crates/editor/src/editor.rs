@@ -15441,8 +15441,14 @@ impl Editor {
                     if let Some(oldest_selection) =
                         columnar_selections.iter().find(|s| s.id == *oldest_id)
                     {
-                        let start_col = oldest_selection.start.column;
-                        let end_col = oldest_selection.end.column;
+                        let start_col = display_map
+                            .buffer_snapshot()
+                            .point_to_point_utf16(oldest_selection.start)
+                            .column;
+                        let end_col = display_map
+                            .buffer_snapshot()
+                            .point_to_point_utf16(oldest_selection.end)
+                            .column;
                         let goal_columns = start_col.min(end_col)..start_col.max(end_col);
                         for id in &group.stack {
                             map.insert(*id, goal_columns.clone());
@@ -15483,8 +15489,14 @@ impl Editor {
                         let goal_columns = goal_columns_by_selection_id
                             .remove(&selection.id)
                             .unwrap_or_else(|| {
-                                let start_col = selection.start.column;
-                                let end_col = selection.end.column;
+                                let start_col = display_map
+                                    .buffer_snapshot()
+                                    .point_to_point_utf16(selection.start)
+                                    .column;
+                                let end_col = display_map
+                                    .buffer_snapshot()
+                                    .point_to_point_utf16(selection.end)
+                                    .column;
                                 start_col.min(end_col)..start_col.max(end_col)
                             });
                         self.selections.find_next_columnar_selection_by_buffer_row(
