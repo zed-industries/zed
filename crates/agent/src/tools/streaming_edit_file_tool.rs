@@ -982,7 +982,6 @@ fn agent_edit_buffer<I, S, T>(
         buffer.update(cx, |buffer, cx| {
             buffer.edit(edits, None, cx);
         });
-        dbg!("edited");
         action_log.update(cx, |log, cx| log.buffer_edited(buffer.clone(), cx));
     });
 }
