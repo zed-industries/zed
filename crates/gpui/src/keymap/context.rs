@@ -815,140 +815,77 @@ mod tests {
 
     #[test]
     fn test_context_display() {
+        fn ident(s: &str) -> Box<KeyBindingContextPredicate> {
+            Box::new(Identifier(SharedString::new(s)))
+        }
+        fn eq(a: &str, b: &str) -> Box<KeyBindingContextPredicate> {
+            Box::new(Equal(SharedString::new(a), SharedString::new(b)))
+        }
+        fn not_eq(a: &str, b: &str) -> Box<KeyBindingContextPredicate> {
+            Box::new(NotEqual(SharedString::new(a), SharedString::new(b)))
+        }
+        fn and(
+            a: Box<KeyBindingContextPredicate>,
+            b: Box<KeyBindingContextPredicate>,
+        ) -> Box<KeyBindingContextPredicate> {
+            Box::new(And(a, b))
+        }
+        fn or(
+            a: Box<KeyBindingContextPredicate>,
+            b: Box<KeyBindingContextPredicate>,
+        ) -> Box<KeyBindingContextPredicate> {
+            Box::new(Or(a, b))
+        }
+        fn descendant(
+            a: Box<KeyBindingContextPredicate>,
+            b: Box<KeyBindingContextPredicate>,
+        ) -> Box<KeyBindingContextPredicate> {
+            Box::new(Descendant(a, b))
+        }
+        fn not(a: Box<KeyBindingContextPredicate>) -> Box<KeyBindingContextPredicate> {
+            Box::new(Not(a))
+        }
+
         let test_cases = [
-            (Identifier("a".into()), "a"),
-            (Equal("a".into(), "b".into()), "a == b"),
-            (NotEqual("a".into(), "b".into()), "a != b"),
+            (ident("a"), "a"),
+            (eq("a", "b"), "a == b"),
+            (not_eq("a", "b"), "a != b"),
+            (descendant(ident("a"), ident("b")), "a > b"),
+            (not(ident("a")), "!a"),
+            (not_eq("a", "b"), "a != b"),
+            (descendant(ident("a"), ident("b")), "a > b"),
+            (not(and(ident("a"), ident("b"))), "!(a && b)"),
+            (not(or(ident("a"), ident("b"))), "!(a || b)"),
+            (and(ident("a"), ident("b")), "a && b"),
+            (and(and(ident("a"), ident("b")), ident("c")), "a && b && c"),
+            (or(ident("a"), ident("b")), "a || b"),
+            (or(or(ident("a"), ident("b")), ident("c")), "a || b || c"),
+            (or(ident("a"), and(ident("b"), ident("c"))), "a || (b && c)"),
             (
-                Descendant(
-                    Box::new(Identifier("a".into())),
-                    Box::new(Identifier("b".into())),
-                ),
-                "a > b",
-            ),
-            (Not(Box::new(Identifier("a".into()))), "!a"),
-            (Not(Box::new(Equal("a".into(), "b".into()))), "!(a == b)"),
-            (
-                Not(Box::new(Descendant(
-                    Box::new(Identifier("a".into())),
-                    Box::new(Identifier("b".into())),
-                ))),
-                "!(a > b)",
-            ),
-            (
-                Not(Box::new(And(
-                    Box::new(Identifier("a".into())),
-                    Box::new(Identifier("b".into())),
-                ))),
-                "!(a && b)",
-            ),
-            (
-                Not(Box::new(Or(
-                    Box::new(Identifier("a".into())),
-                    Box::new(Identifier("b".into())),
-                ))),
-                "!(a || b)",
-            ),
-            (
-                And(
-                    Box::new(Identifier("a".into())),
-                    Box::new(Identifier("b".into())),
-                ),
-                "a && b",
-            ),
-            (
-                And(
-                    Box::new(And(
-                        Box::new(Identifier("a".into())),
-                        Box::new(Identifier("b".into())),
-                    )),
-                    Box::new(Identifier("c".into())),
-                ),
-                "a && b && c",
-            ),
-            (
-                And(
-                    Box::new(Identifier("a".into())),
-                    Box::new(Or(
-                        Box::new(Identifier("b".into())),
-                        Box::new(Identifier("c".into())),
-                    )),
-                ),
-                "a && (b || c)",
-            ),
-            (
-                Or(
-                    Box::new(Identifier("a".into())),
-                    Box::new(Identifier("b".into())),
-                ),
-                "a || b",
-            ),
-            (
-                Or(
-                    Box::new(Or(
-                        Box::new(Identifier("a".into())),
-                        Box::new(Identifier("b".into())),
-                    )),
-                    Box::new(Identifier("c".into())),
-                ),
-                "a || b || c",
-            ),
-            (
-                Or(
-                    Box::new(Identifier("a".into())),
-                    Box::new(And(
-                        Box::new(Identifier("b".into())),
-                        Box::new(Identifier("c".into())),
-                    )),
-                ),
-                "a || (b && c)",
-            ),
-            (
-                And(
-                    Box::new(And(
-                        Box::new(And(
-                            Box::new(Identifier("a".into())),
-                            Box::new(Equal("b".into(), "c".into())),
-                        )),
-                        Box::new(Not(Box::new(Descendant(
-                            Box::new(Identifier("d".into())),
-                            Box::new(Identifier("e".into())),
-                        )))),
-                    )),
-                    Box::new(Equal("f".into(), "g".into())),
+                and(
+                    and(
+                        and(ident("a"), eq("b", "c")),
+                        not(descendant(ident("d"), ident("e"))),
+                    ),
+                    eq("f", "g"),
                 ),
                 "a && b == c && !(d > e) && f == g",
             ),
             (
-                And(
-                    Box::new(And(
-                        Box::new(Identifier("a".into())),
-                        Box::new(Or(
-                            Box::new(Identifier("b".into())),
-                            Box::new(Identifier("c".into())),
-                        )),
-                    )),
-                    Box::new(Identifier("d".into())),
-                ),
+                and(and(ident("a"), or(ident("b"), ident("c"))), ident("d")),
                 "a && (b || c) && d",
             ),
             (
-                Or(
-                    Box::new(Or(
-                        Box::new(Identifier("a".into())),
-                        Box::new(And(
-                            Box::new(Identifier("b".into())),
-                            Box::new(Identifier("c".into())),
-                        )),
-                    )),
-                    Box::new(Identifier("d".into())),
-                ),
+                or(or(ident("a"), and(ident("b"), ident("c"))), ident("d")),
                 "a || (b && c) || d",
             ),
         ];
 
         for (predicate, expected) in test_cases {
-            assert_eq!(predicate.to_string(), expected);
+            let actual = predicate.to_string();
+            assert_eq!(actual, expected);
+            let parsed = KeyBindingContextPredicate::parse(&actual).unwrap();
+            assert_eq!(parsed, *predicate);
         }
     }
 }
