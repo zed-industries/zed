@@ -228,8 +228,8 @@ pub struct ThreadView {
     pub hovered_recent_history_item: Option<usize>,
     pub show_external_source_prompt_warning: bool,
     pub show_codex_windows_warning: bool,
-    pub history: Entity<ThreadHistory>,
-    pub _history_subscription: Subscription,
+    pub history: Option<Entity<ThreadHistory>>,
+    pub _history_subscription: Option<Subscription>,
 }
 impl Focusable for ThreadView {
     fn focus_handle(&self, cx: &App) -> FocusHandle {
@@ -273,7 +273,7 @@ impl ThreadView {
         resumed_without_history: bool,
         project: WeakEntity<Project>,
         thread_store: Option<Entity<ThreadStore>>,
-        history: Entity<ThreadHistory>,
+        history: Option<Entity<ThreadHistory>>,
         prompt_store: Option<Entity<PromptStore>>,
         initial_content: Option<AgentInitialContent>,
         mut subscriptions: Vec<Subscription>,
@@ -284,8 +284,10 @@ impl ThreadView {
 
         let placeholder = placeholder_text(agent_display_name.as_ref(), false);
 
-        let history_subscription = cx.observe(&history, |this, history, cx| {
-            this.update_recent_history_from_cache(&history, cx);
+        let history_subscription = history.as_ref().map(|h| {
+            cx.observe(h, |this, history, cx| {
+                this.update_recent_history_from_cache(&history, cx);
+            })
         });
 
         let mut should_auto_submit = false;
@@ -296,7 +298,7 @@ impl ThreadView {
                 workspace.clone(),
                 project.clone(),
                 thread_store,
-                history.downgrade(),
+                history.as_ref().map(|h| h.downgrade()),
                 prompt_store,
                 prompt_capabilities.clone(),
                 available_commands.clone(),
@@ -392,7 +394,10 @@ impl ThreadView {
             }));
         }));
 
-        let recent_history_entries = history.read(cx).get_recent_sessions(3);
+        let recent_history_entries = history
+            .as_ref()
+            .map(|h| h.read(cx).get_recent_sessions(3))
+            .unwrap_or_default();
 
         let mut this = Self {
             id,
@@ -7502,7 +7507,10 @@ impl ThreadView {
                             ),
                         )
                         .child(v_flex().p_1().pr_1p5().gap_1().children({
-                            let supports_delete = self.history.read(cx).supports_delete();
+                            let supports_delete = self
+                                .history
+                                .as_ref()
+                                .map_or(false, |h| h.read(cx).supports_delete());
                             recent_history
                                 .into_iter()
                                 .enumerate()

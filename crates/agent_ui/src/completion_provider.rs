@@ -223,7 +223,7 @@ pub struct PromptCompletionProvider<T: PromptCompletionProviderDelegate> {
     source: Arc<T>,
     editor: WeakEntity<Editor>,
     mention_set: Entity<MentionSet>,
-    history: WeakEntity<ThreadHistory>,
+    history: Option<WeakEntity<ThreadHistory>>,
     prompt_store: Option<Entity<PromptStore>>,
     workspace: WeakEntity<Workspace>,
 }
@@ -233,7 +233,7 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
         source: T,
         editor: WeakEntity<Editor>,
         mention_set: Entity<MentionSet>,
-        history: WeakEntity<ThreadHistory>,
+        history: Option<WeakEntity<ThreadHistory>>,
         prompt_store: Option<Entity<PromptStore>>,
         workspace: WeakEntity<Workspace>,
     ) -> Self {
@@ -920,7 +920,7 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
             }
 
             Some(PromptContextType::Thread) => {
-                if let Some(history) = self.history.upgrade() {
+                if let Some(history) = self.history.as_ref().and_then(|h| h.upgrade()) {
                     let sessions = history
                         .read(cx)
                         .sessions()
@@ -1146,7 +1146,7 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
             return Task::ready(recent);
         }
 
-        if let Some(history) = self.history.upgrade() {
+        if let Some(history) = self.history.as_ref().and_then(|h| h.upgrade()) {
             const RECENT_COUNT: usize = 2;
             recent.extend(
                 history
