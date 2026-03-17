@@ -2004,15 +2004,12 @@ impl Sidebar {
                             })
                             .when(has_open_projects, |this| {
                                 this.child(
-                                    IconButton::new(
-                                        "close-all-projects",
-                                        IconName::Exit,
-                                    )
-                                    .icon_size(IconSize::Small)
-                                    .tooltip(Tooltip::text("Close All Projects"))
-                                    .on_click(cx.listener(|this, _, window, cx| {
-                                        this.close_all_projects(window, cx);
-                                    })),
+                                    IconButton::new("close-all-projects", IconName::Exit)
+                                        .icon_size(IconSize::Small)
+                                        .tooltip(Tooltip::text("Close All Projects"))
+                                        .on_click(cx.listener(|this, _, window, cx| {
+                                            this.close_all_projects(window, cx);
+                                        })),
                                 )
                             })
                             .child(
