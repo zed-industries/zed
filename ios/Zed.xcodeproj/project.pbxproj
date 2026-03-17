@@ -147,19 +147,18 @@
 /* Begin PBXShellScriptBuildPhase section */
 		AA0000000000000000000033 /* Cargo — Build zed-ios staticlib */ = {
 			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
 			buildActionMask = 2147483647;
 			files = (
 			);
 			inputFileListPaths = (
 			);
 			inputPaths = (
-				"$(PROJECT_DIR)/../crates/zed-ios/src/lib.rs",
 			);
 			name = "Cargo — Build zed-ios staticlib";
 			outputFileListPaths = (
 			);
 			outputPaths = (
-				"$(BUILT_PRODUCTS_DIR)/libzed_ios.a",
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/bash;

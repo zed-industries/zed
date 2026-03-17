@@ -1,6 +1,11 @@
 #!/bin/bash
 # Cargo build script invoked as an Xcode build phase.
 # Builds the zed-ios static library and copies libzed_ios.a to BUILT_PRODUCTS_DIR.
+#
+# This script runs on EVERY Xcode build (alwaysOutOfDate = 1 in the project
+# file) because Xcode cannot track Rust source dependencies. Cargo's own
+# incrementality makes no-op builds fast (~1s). The copy step uses rsync
+# --checksum so Xcode only re-links when the library actually changed.
 
 set -euo pipefail
 
@@ -40,5 +45,11 @@ cargo build \
 LIB_SRC="$REPO_ROOT/target/$RUST_TARGET/$CARGO_PROFILE_DIR/libzed_ios.a"
 LIB_DST="$BUILT_PRODUCTS_DIR/libzed_ios.a"
 
-cp "$LIB_SRC" "$LIB_DST"
-echo "Copied $LIB_SRC → $LIB_DST"
+# Only copy when the binary differs. This preserves the destination mtime so
+# Xcode's linker skips re-linking on true no-op cargo builds.
+if ! cmp -s "$LIB_SRC" "$LIB_DST" 2>/dev/null; then
+    cp "$LIB_SRC" "$LIB_DST"
+    echo "Copied $LIB_SRC → $LIB_DST"
+else
+    echo "libzed_ios.a unchanged, skipping copy"
+fi

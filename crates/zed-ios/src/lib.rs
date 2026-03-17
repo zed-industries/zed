@@ -188,19 +188,18 @@ mod ios {
                 .flex_col()
                 .overflow_y_scroll()
                 .p_4()
-                // Focus the text input when the user taps anywhere in this view.
-                // Without this, the keyboard would never appear.
-                .on_mouse_down(
-                    MouseButton::Left,
-                    move |_: &MouseDownEvent, window, cx| {
-                        window.focus(&focus_handle, cx);
-                    },
-                )
                 .children(lines)
                 .child(
                     div()
+                        .id("text-input")
                         .mt_4()
                         .text_color(gpui::rgb(0xcdd6f4))
+                        .on_mouse_down(
+                            MouseButton::Left,
+                            move |_: &MouseDownEvent, window, cx| {
+                                window.focus(&focus_handle, cx);
+                            },
+                        )
                         .child(input_line),
                 )
                 .into_any_element();

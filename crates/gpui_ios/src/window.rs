@@ -93,6 +93,12 @@ struct IosWindowState {
     /// owned by the UIWindow hierarchy and outlives this state while the scene
     /// is connected.
     ui_view: *mut Object,
+    /// Whether the software keyboard is currently visible.
+    keyboard_shown: bool,
+    /// Set by confirmed single-finger taps; consumed by `set_input_handler`
+    /// when transitioning to a newly-focused input element. Prevents keyboard
+    /// from appearing on app launch (auto-focus) or during scroll gestures.
+    show_keyboard_after_tap: bool,
     renderer: MetalRenderer,
     callbacks: IosWindowCallbacks,
 }
@@ -186,6 +192,8 @@ impl IosWindow {
             pending_tap: None,
             input_handler: None,
             ui_view,
+            keyboard_shown: false,
+            show_keyboard_after_tap: false,
             renderer,
             callbacks: IosWindowCallbacks::default(),
         }));
@@ -276,6 +284,18 @@ impl IosWindow {
             // The view retains the recognizer; release the alloc/init reference.
             let _: () = msg_send![pan, release];
 
+            // Observe UIKeyboardDidHideNotification so our keyboard_shown state
+            // stays in sync when the user dismisses the keyboard via UIKit's own
+            // controls (e.g. the dismiss key on iPadOS).
+            let center: *mut Object = msg_send![class!(NSNotificationCenter), defaultCenter];
+            let name = ns_string("UIKeyboardDidHideNotification");
+            let _: () = msg_send![center,
+                addObserver: view
+                selector: sel!(keyboardDidHide:)
+                name: name
+                object: std::ptr::null::<Object>()
+            ];
+
             Ok(view)
         }
     }
@@ -360,22 +380,68 @@ impl PlatformWindow for IosWindow {
     }
 
     fn set_input_handler(&mut self, input_handler: PlatformInputHandler) {
-        self.state.borrow_mut().input_handler = Some(input_handler);
-        // Defer becomeFirstResponder to the next run-loop iteration (gpui-mobile pattern).
-        // Calling it synchronously inside a touch handler can cause UIKit re-entrancy
-        // while GPUI is mid-dispatch.
-        let view = self.state.borrow().ui_view;
-        unsafe {
-            let _: () = msg_send![view,
-                performSelector: sel!(becomeFirstResponder)
-                withObject: std::ptr::null::<Object>()
-                afterDelay: 0.0f64
-            ];
+        let mut state = self.state.borrow_mut();
+        state.input_handler = Some(input_handler);
+
+        if state.keyboard_shown {
+            // Keyboard is already visible. Cancel any deferred dismiss that
+            // take_input_handler scheduled earlier in this draw cycle — focus
+            // is still on an input element, so the keyboard stays up.
+            let view = state.ui_view;
+            drop(state);
+            unsafe {
+                let _: () = msg_send![class!(NSObject),
+                    cancelPreviousPerformRequestsWithTarget: view
+                    selector: sel!(dismissKeyboard)
+                    object: std::ptr::null::<Object>()
+                ];
+            }
+            return;
+        }
+
+        // Show the software keyboard if the user just tapped. The flag is
+        // only set by confirmed single-finger taps in handle_touches, so
+        // this won't fire on app launch (auto-focus) or scroll gestures.
+        if state.show_keyboard_after_tap {
+            state.show_keyboard_after_tap = false;
+            state.keyboard_shown = true;
+            let view = state.ui_view;
+            drop(state);
+            unsafe {
+                (*(view)).set_ivar("_keyboard_requested", true);
+                let _: bool = msg_send![view, becomeFirstResponder];
+            }
+            return;
         }
     }
 
     fn take_input_handler(&mut self) -> Option<PlatformInputHandler> {
-        self.state.borrow_mut().input_handler.take()
+        let handler = self.state.borrow_mut().input_handler.take();
+        let had_handler = handler.is_some();
+        let state = self.state.borrow_mut();
+
+        // If we had a handler and keyboard is visible, defer a dismiss.
+        // If set_input_handler is called later in the same draw cycle (normal
+        // per-frame recycle), it will cancel this. If set is NOT called (focus
+        // left the input element), the dismiss fires on the next run-loop turn.
+        if had_handler && state.keyboard_shown {
+            let view = state.ui_view;
+            drop(state);
+            unsafe {
+                let _: () = msg_send![class!(NSObject),
+                    cancelPreviousPerformRequestsWithTarget: view
+                    selector: sel!(dismissKeyboard)
+                    object: std::ptr::null::<Object>()
+                ];
+                let _: () = msg_send![view,
+                    performSelector: sel!(dismissKeyboard)
+                    withObject: std::ptr::null::<Object>()
+                    afterDelay: 0.0f64
+                ];
+            }
+        }
+
+        handler
     }
 
     fn prompt(
@@ -705,11 +771,14 @@ fn register_metal_view_class() -> &'static Class {
         // Stores a raw pointer to `Box<Weak<RefCell<IosWindowState>>>`.
         // Set after IosWindow construction; freed in `dealloc`.
         decl.add_ivar::<*mut c_void>("_window_state");
-        // Weak storage for the UITextInputDelegate set by UIKit before keyboard sessions.
-        decl.add_ivar::<*mut Object>("_input_delegate");
 
-        // Conform to UITextInput (which subsumes UIKeyInput).
-        if let Some(protocol) = Protocol::get("UITextInput") {
+        // Controls whether inputView returns nil (show keyboard) or an empty
+        // UIView (suppress keyboard). Only set to true when we explicitly want
+        // the software keyboard.
+        decl.add_ivar::<bool>("_keyboard_requested");
+
+        // Conform to UIKeyInput so UIKit routes software keyboard input here.
+        if let Some(protocol) = Protocol::get("UIKeyInput") {
             decl.add_protocol(protocol);
         }
 
@@ -764,10 +833,29 @@ fn register_metal_view_class() -> &'static Class {
                 handle_pan_gesture as extern "C" fn(&Object, Sel, *mut Object),
             );
 
-            // ── UITextInputTraits — disable autocorrect/autocap for code editing ─
-            // UITextInput subsumes UITextInputTraits; UIKit reads these properties
-            // during keyboard session setup. We implement only the getters; setters
-            // are no-ops (UIKit doesn't call them in practice for programmatic views).
+            // ── Responder actions (long-press context menu) ───────────────────
+            // Return false for all edit actions until clipboard is wired up.
+            // This prevents the system from showing a context menu with broken actions.
+            decl.add_method(
+                sel!(canPerformAction:withSender:),
+                can_perform_action as extern "C" fn(&Object, Sel, Sel, *mut Object) -> bool,
+            );
+
+            // ── UIKeyInput methods ────────────────────────────────────────────
+            decl.add_method(
+                sel!(hasText),
+                uit_has_text as extern "C" fn(&Object, Sel) -> bool,
+            );
+            decl.add_method(
+                sel!(insertText:),
+                uit_insert_text as extern "C" fn(&Object, Sel, *mut Object),
+            );
+            decl.add_method(
+                sel!(deleteBackward),
+                uit_delete_backward as extern "C" fn(&Object, Sel),
+            );
+
+            // ── UITextInputTraits ─────────────────────────────────────────────
             decl.add_method(
                 sel!(autocorrectionType),
                 traits_autocorrection_type as extern "C" fn(&Object, Sel) -> isize,
@@ -789,179 +877,29 @@ fn register_metal_view_class() -> &'static Class {
                 traits_smart_dashes_type as extern "C" fn(&Object, Sel) -> isize,
             );
 
-            // ── Responder actions (long-press context menu) ───────────────────
-            // Return false for all edit actions until clipboard is wired up.
-            // This prevents the system from showing a context menu with broken actions.
+            // ── Keyboard control ──────────────────────────────────────────────
+            // Override `inputView` to conditionally show/suppress the keyboard.
             decl.add_method(
-                sel!(canPerformAction:withSender:),
-                can_perform_action as extern "C" fn(&Object, Sel, Sel, *mut Object) -> bool,
+                sel!(inputView),
+                metal_view_input_view as extern "C" fn(&Object, Sel) -> *mut Object,
+            );
+            // Also suppress the input accessory view (QuickType/predictive bar).
+            decl.add_method(
+                sel!(inputAccessoryView),
+                metal_view_input_accessory_view as extern "C" fn(&Object, Sel) -> *mut Object,
+            );
+            // Custom method called via deferred performSelector: to dismiss the
+            // keyboard. Updates `keyboard_shown` state before resigning.
+            decl.add_method(
+                sel!(dismissKeyboard),
+                metal_view_dismiss_keyboard as extern "C" fn(&Object, Sel),
+            );
+            // Notification handler for UIKeyboardDidHideNotification.
+            decl.add_method(
+                sel!(keyboardDidHide:),
+                keyboard_did_hide as extern "C" fn(&Object, Sel, *mut Object),
             );
 
-            // ── UIKeyInput (required subset of UITextInput) ───────────────────
-            decl.add_method(
-                sel!(insertText:),
-                uit_insert_text as extern "C" fn(&Object, Sel, *mut Object),
-            );
-            decl.add_method(
-                sel!(deleteBackward),
-                uit_delete_backward as extern "C" fn(&Object, Sel),
-            );
-            decl.add_method(
-                sel!(hasText),
-                uit_has_text as extern "C" fn(&Object, Sel) -> bool,
-            );
-
-            // ── UITextInput — text mutation ───────────────────────────────────
-            decl.add_method(
-                sel!(setMarkedText:selectedRange:),
-                uit_set_marked_text as extern "C" fn(&Object, Sel, *mut Object, NSRange),
-            );
-            decl.add_method(
-                sel!(unmarkText),
-                uit_unmark_text as extern "C" fn(&Object, Sel),
-            );
-
-            // ── UITextInput — text query ──────────────────────────────────────
-            decl.add_method(
-                sel!(textInRange:),
-                uit_text_in_range as extern "C" fn(&Object, Sel, *mut Object) -> *mut Object,
-            );
-            decl.add_method(
-                sel!(shouldChangeTextInRange:replacementText:),
-                uit_should_change_text_in_range
-                    as extern "C" fn(&Object, Sel, *mut Object, *mut Object) -> bool,
-            );
-
-            // ── UITextInput — selection & marking properties ──────────────────
-            decl.add_method(
-                sel!(selectedTextRange),
-                uit_get_selected_text_range as extern "C" fn(&Object, Sel) -> *mut Object,
-            );
-            decl.add_method(
-                sel!(setSelectedTextRange:),
-                uit_set_selected_text_range as extern "C" fn(&Object, Sel, *mut Object),
-            );
-            decl.add_method(
-                sel!(markedTextRange),
-                uit_get_marked_text_range as extern "C" fn(&Object, Sel) -> *mut Object,
-            );
-            decl.add_method(
-                sel!(markedTextStyle),
-                uit_get_marked_text_style as extern "C" fn(&Object, Sel) -> *mut Object,
-            );
-            decl.add_method(
-                sel!(setMarkedTextStyle:),
-                uit_set_marked_text_style as extern "C" fn(&Object, Sel, *mut Object),
-            );
-
-            // ── UITextInput — document boundary ───────────────────────────────
-            decl.add_method(
-                sel!(beginningOfDocument),
-                uit_beginning_of_document as extern "C" fn(&Object, Sel) -> *mut Object,
-            );
-            decl.add_method(
-                sel!(endOfDocument),
-                uit_end_of_document as extern "C" fn(&Object, Sel) -> *mut Object,
-            );
-
-            // ── UITextInput — position/range arithmetic ───────────────────────
-            decl.add_method(
-                sel!(textRangeFromPosition:toPosition:),
-                uit_text_range_from_position_to_position
-                    as extern "C" fn(&Object, Sel, *mut Object, *mut Object) -> *mut Object,
-            );
-            decl.add_method(
-                sel!(positionFromPosition:offset:),
-                uit_position_from_position_offset
-                    as extern "C" fn(&Object, Sel, *mut Object, isize) -> *mut Object,
-            );
-            decl.add_method(
-                sel!(positionFromPosition:inDirection:offset:),
-                uit_position_from_position_in_direction_offset
-                    as extern "C" fn(&Object, Sel, *mut Object, usize, isize) -> *mut Object,
-            );
-            decl.add_method(
-                sel!(comparePosition:toPosition:),
-                uit_compare_position_to_position
-                    as extern "C" fn(&Object, Sel, *mut Object, *mut Object) -> isize,
-            );
-            decl.add_method(
-                sel!(offsetFromPosition:toPosition:),
-                uit_offset_from_position_to_position
-                    as extern "C" fn(&Object, Sel, *mut Object, *mut Object) -> isize,
-            );
-            decl.add_method(
-                sel!(positionWithinRange:farthestInDirection:),
-                uit_position_within_range_farthest_in_direction
-                    as extern "C" fn(&Object, Sel, *mut Object, usize) -> *mut Object,
-            );
-            decl.add_method(
-                sel!(characterRangeByExtendingPosition:inDirection:),
-                uit_character_range_by_extending_position_in_direction
-                    as extern "C" fn(&Object, Sel, *mut Object, usize) -> *mut Object,
-            );
-
-            // ── UITextInput — writing direction ───────────────────────────────
-            decl.add_method(
-                sel!(baseWritingDirectionForPosition:inDirection:),
-                uit_base_writing_direction_for_position
-                    as extern "C" fn(&Object, Sel, *mut Object, usize) -> isize,
-            );
-            decl.add_method(
-                sel!(setBaseWritingDirection:forRange:),
-                uit_set_base_writing_direction_for_range
-                    as extern "C" fn(&Object, Sel, isize, *mut Object),
-            );
-
-            // ── UITextInput — geometry ────────────────────────────────────────
-            decl.add_method(
-                sel!(firstRectForRange:),
-                uit_first_rect_for_range as extern "C" fn(&Object, Sel, *mut Object) -> CGRect,
-            );
-            decl.add_method(
-                sel!(caretRectForPosition:),
-                uit_caret_rect_for_position
-                    as extern "C" fn(&Object, Sel, *mut Object) -> CGRect,
-            );
-            decl.add_method(
-                sel!(closestPositionToPoint:),
-                uit_closest_position_to_point
-                    as extern "C" fn(&Object, Sel, CGPoint) -> *mut Object,
-            );
-            decl.add_method(
-                sel!(closestPositionToPoint:withinRange:),
-                uit_closest_position_to_point_within_range
-                    as extern "C" fn(&Object, Sel, CGPoint, *mut Object) -> *mut Object,
-            );
-            decl.add_method(
-                sel!(characterRangeAtPoint:),
-                uit_character_range_at_point
-                    as extern "C" fn(&Object, Sel, CGPoint) -> *mut Object,
-            );
-            decl.add_method(
-                sel!(replaceRange:withText:),
-                uit_replace_range_with_text
-                    as extern "C" fn(&Object, Sel, *mut Object, *mut Object),
-            );
-
-            // ── UITextInput — delegate & tokenizer ────────────────────────────
-            decl.add_method(
-                sel!(inputDelegate),
-                uit_get_input_delegate as extern "C" fn(&Object, Sel) -> *mut Object,
-            );
-            decl.add_method(
-                sel!(setInputDelegate:),
-                uit_set_input_delegate as extern "C" fn(&Object, Sel, *mut Object),
-            );
-            decl.add_method(
-                sel!(tokenizer),
-                uit_get_tokenizer as extern "C" fn(&Object, Sel) -> *mut Object,
-            );
-            decl.add_method(
-                sel!(selectionRectsForRange:),
-                uit_selection_rects_for_range
-                    as extern "C" fn(&Object, Sel, *mut Object) -> *mut Object,
-            );
         }
 
         decl.register()
@@ -1011,6 +949,9 @@ extern "C" fn layout_subviews(this: &Object, _sel: Sel) {
 /// released, then calls `[super dealloc]`.
 extern "C" fn view_dealloc(this: &Object, _sel: Sel) {
     unsafe {
+        let center: *mut Object = msg_send![class!(NSNotificationCenter), defaultCenter];
+        let _: () = msg_send![center, removeObserver: this];
+
         let raw: *mut c_void = *this.get_ivar("_window_state");
         if !raw.is_null() {
             drop(Box::from_raw(raw as *mut Weak<RefCell<IosWindowState>>));
@@ -1024,6 +965,52 @@ extern "C" fn view_dealloc(this: &Object, _sel: Sel) {
 
 extern "C" fn can_become_first_responder(_this: &Object, _sel: Sel) -> bool {
     true
+}
+
+extern "C" fn metal_view_input_view(this: &Object, _sel: Sel) -> *mut Object {
+    unsafe {
+        let requested: bool = *this.get_ivar::<bool>("_keyboard_requested");
+        if requested {
+            // Keyboard explicitly requested — return nil so UIKit shows the system keyboard.
+            std::ptr::null_mut()
+        } else {
+            // Default: return an empty UIView to suppress the keyboard.
+            let empty: *mut Object = msg_send![class!(UIView), new];
+            let _: *mut Object = msg_send![empty, autorelease];
+            empty
+        }
+    }
+}
+
+/// Suppress the QuickType / predictive text accessory bar above the keyboard.
+extern "C" fn metal_view_input_accessory_view(_this: &Object, _sel: Sel) -> *mut Object {
+    std::ptr::null_mut()
+}
+
+extern "C" fn metal_view_dismiss_keyboard(this: &Object, _sel: Sel) {
+    if let Some(state_rc) = state_from_view(this) {
+        let mut state = state_rc.borrow_mut();
+        state.keyboard_shown = false;
+        state.show_keyboard_after_tap = false;
+    }
+    unsafe {
+        let this_mut = this as *const Object as *mut Object;
+        (*this_mut).set_ivar("_keyboard_requested", false);
+        let _: bool = msg_send![this, resignFirstResponder];
+    }
+}
+
+/// Called when UIKit hides the keyboard for any reason (user dismiss key,
+/// system gesture, etc.). Syncs our state so a subsequent tap can re-show it.
+extern "C" fn keyboard_did_hide(this: &Object, _sel: Sel, _notification: *mut Object) {
+    if let Some(state_rc) = state_from_view(this) {
+        let mut state = state_rc.borrow_mut();
+        state.keyboard_shown = false;
+    }
+    unsafe {
+        let this_mut = this as *const Object as *mut Object;
+        (*this_mut).set_ivar("_keyboard_requested", false);
+    }
 }
 
 // ─── Hardware keyboard input ──────────────────────────────────────────────────
@@ -1042,9 +1029,11 @@ fn state_from_view(this: &Object) -> Option<Rc<RefCell<IosWindowState>>> {
 }
 
 /// Processes a `UIPress` set and emits `ModifiersChanged` and `KeyDown`/`KeyUp`
-/// events. `is_down` controls which key event is generated.
-fn handle_presses(this: &Object, presses: *mut Object, is_down: bool) {
-    let Some(state_rc) = state_from_view(this) else { return };
+/// events. `is_down` controls which key event is generated. Returns `true` if
+/// at least one key was handled by GPUI (propagate=false or default_prevented=true).
+fn handle_presses(this: &Object, presses: *mut Object, is_down: bool) -> bool {
+    let Some(state_rc) = state_from_view(this) else { return false };
+    let mut any_handled = false;
 
     unsafe {
         let array: *mut Object = msg_send![presses, allObjects];
@@ -1086,8 +1075,6 @@ fn handle_presses(this: &Object, presses: *mut Object, is_down: bool) {
                     keystroke.key_char,
                 );
                 if is_down {
-                    let key_char = keystroke.key_char.clone();
-                    let key_name = keystroke.key.clone();
                     let result = dispatch_input_event(
                         &state_rc,
                         PlatformInput::KeyDown(KeyDownEvent {
@@ -1096,28 +1083,8 @@ fn handle_presses(this: &Object, presses: *mut Object, is_down: bool) {
                             prefer_character_input: false,
                         }),
                     );
-                    // In the simulator's "Connect Hardware Keyboard" mode UIKit
-                    // sends presses via pressesBegan: only — insertText: and
-                    // deleteBackward are NOT called for hardware keyboard input.
-                    // Forward unhandled keys to the UITextInput methods, which
-                    // already have correct implementations.
-                    log::info!(
-                        "hw key fallback: propagate={} default_prevented={} key_char={:?} key_name={:?}",
-                        result.propagate,
-                        result.default_prevented,
-                        key_char,
-                        key_name,
-                    );
-                    if result.propagate && !result.default_prevented {
-                        let view = this as *const Object as *mut Object;
-                        if let Some(text) = key_char {
-                            let ns_text: *mut Object =
-                                msg_send![class!(NSString), stringWithUTF8String: text.as_ptr() as *const std::ffi::c_char];
-                            let _: () = msg_send![view, insertText: ns_text];
-                        } else if key_name == "backspace" {
-                            log::info!("hw key fallback: calling deleteBackward");
-                            let _: () = msg_send![view, deleteBackward];
-                        }
+                    if !result.propagate || result.default_prevented {
+                        any_handled = true;
                     }
                 } else {
                     dispatch_input_event(&state_rc, PlatformInput::KeyUp(KeyUpEvent { keystroke }));
@@ -1125,12 +1092,16 @@ fn handle_presses(this: &Object, presses: *mut Object, is_down: bool) {
             }
         }
     }
+
+    any_handled
 }
 
 extern "C" fn presses_began(this: &Object, _sel: Sel, presses: *mut Object, event: *mut Object) {
-    handle_presses(this, presses, true);
-    unsafe {
-        let _: () = msg_send![super(this, class!(UIView)), pressesBegan: presses withEvent: event];
+    let handled = handle_presses(this, presses, true);
+    if !handled {
+        unsafe {
+            let _: () = msg_send![super(this, class!(UIView)), pressesBegan: presses withEvent: event];
+        }
     }
 }
 
@@ -1225,22 +1196,13 @@ enum TouchKind {
 
 // ─── UITextInput support ──────────────────────────────────────────────────────
 
-/// `NSRange` as used by UITextInput APIs. `location == NS_NOT_FOUND` signals nil/invalid.
-#[repr(C)]
-#[derive(Clone, Copy, Default)]
-struct NSRange {
-    location: usize,
-    length: usize,
+/// Creates an autoreleased NSString from a Rust `&str`.
+unsafe fn ns_string(s: &str) -> *mut Object {
+    let ns: *mut Object = msg_send![class!(NSString), alloc];
+    msg_send![ns, initWithBytes: s.as_ptr()
+                         length: s.len()
+                       encoding: 4usize] // NSUTF8StringEncoding
 }
-
-unsafe impl objc::Encode for NSRange {
-    fn encode() -> objc::Encoding {
-        // NSRange is encoded as {_NSRange=QQ} on 64-bit (two NSUInteger).
-        unsafe { objc::Encoding::from_str("{_NSRange=QQ}") }
-    }
-}
-
-const NS_NOT_FOUND: usize = isize::MAX as usize;
 
 fn ns_string_to_string(ns_str: *mut Object) -> String {
     if ns_str.is_null() {
@@ -1252,22 +1214,6 @@ fn ns_string_to_string(ns_str: *mut Object) -> String {
             return String::new();
         }
         CStr::from_ptr(ptr).to_str().unwrap_or("").to_owned()
-    }
-}
-
-/// Returns the UTF-16 length of the full document by querying the input handler,
-/// or 0 if no handler is set.
-fn document_length(state_rc: &Rc<RefCell<IosWindowState>>) -> usize {
-    let mut adjusted: Option<std::ops::Range<usize>> = None;
-    let text = state_rc
-        .borrow_mut()
-        .input_handler
-        .as_mut()
-        .and_then(|h| h.text_for_range(0..usize::MAX, &mut adjusted));
-    if text.is_some() {
-        adjusted.map(|r| r.end).unwrap_or(0)
-    } else {
-        0
     }
 }
 
@@ -1345,38 +1291,6 @@ unsafe fn new_text_position(offset: usize) -> *mut Object {
     }
 }
 
-/// Creates an autoreleased `ZedTextRange` spanning `start..end`.
-unsafe fn new_text_range(start: usize, end: usize) -> *mut Object {
-    unsafe {
-        let cls = register_text_range_class();
-        let obj: *mut Object = msg_send![cls, alloc];
-        let obj: *mut Object = msg_send![obj, init];
-        (*obj).set_ivar("_start", start);
-        (*obj).set_ivar("_end", end);
-        msg_send![obj, autorelease]
-    }
-}
-
-unsafe fn read_text_position(pos: *mut Object) -> usize {
-    unsafe {
-        if pos.is_null() {
-            return 0;
-        }
-        *(*pos).get_ivar("_offset")
-    }
-}
-
-unsafe fn read_text_range(range: *mut Object) -> (usize, usize) {
-    unsafe {
-        if range.is_null() {
-            return (0, 0);
-        }
-        let start: usize = *(*range).get_ivar("_start");
-        let end: usize = *(*range).get_ivar("_end");
-        (start, end)
-    }
-}
-
 // ── UITextInput method implementations ────────────────────────────────────────
 
 extern "C" fn uit_insert_text(this: &Object, _sel: Sel, text: *mut Object) {
@@ -1432,379 +1346,6 @@ extern "C" fn uit_has_text(this: &Object, _sel: Sel) -> bool {
         .as_mut()
         .and_then(|h| h.selected_text_range(false))
         .is_some()
-}
-
-/// `selectedTextRange` property getter — returns a `ZedTextRange*` or nil.
-extern "C" fn uit_get_selected_text_range(this: &Object, _sel: Sel) -> *mut Object {
-    let Some(state_rc) = state_from_view(this) else {
-        return std::ptr::null_mut();
-    };
-    let selection = state_rc
-        .borrow_mut()
-        .input_handler
-        .as_mut()
-        .and_then(|h| h.selected_text_range(false));
-    match selection {
-        Some(sel) => unsafe { new_text_range(sel.range.start, sel.range.end) },
-        None => std::ptr::null_mut(),
-    }
-}
-
-/// `setSelectedTextRange:` property setter — ignored for now.
-extern "C" fn uit_set_selected_text_range(
-    _this: &Object,
-    _sel: Sel,
-    _range: *mut Object,
-) {
-}
-
-/// `markedTextRange` property getter — returns `ZedTextRange*` or nil.
-extern "C" fn uit_get_marked_text_range(this: &Object, _sel: Sel) -> *mut Object {
-    let Some(state_rc) = state_from_view(this) else {
-        return std::ptr::null_mut();
-    };
-    let range = state_rc
-        .borrow_mut()
-        .input_handler
-        .as_mut()
-        .and_then(|h| h.marked_text_range());
-    match range {
-        Some(r) => unsafe { new_text_range(r.start, r.end) },
-        None => std::ptr::null_mut(),
-    }
-}
-
-/// `markedTextStyle` property getter — we don't supply custom marking styles.
-extern "C" fn uit_get_marked_text_style(_this: &Object, _sel: Sel) -> *mut Object {
-    std::ptr::null_mut()
-}
-
-/// `setMarkedTextStyle:` property setter — no-op.
-extern "C" fn uit_set_marked_text_style(_this: &Object, _sel: Sel, _style: *mut Object) {}
-
-/// `setMarkedText:selectedRange:` — IME composition update.
-/// `text` may be an `NSString` or `NSAttributedString`; we extract the plain string.
-extern "C" fn uit_set_marked_text(
-    this: &Object,
-    _sel: Sel,
-    text: *mut Object,
-    selected_range: NSRange,
-) {
-    let Some(state_rc) = state_from_view(this) else { return };
-    let text_str = unsafe {
-        // text may be NSAttributedString — extract the plain string if so.
-        let is_attr: bool = msg_send![text, isKindOfClass: class!(NSAttributedString)];
-        if is_attr {
-            let ns_str: *mut Object = msg_send![text, string];
-            ns_string_to_string(ns_str)
-        } else {
-            ns_string_to_string(text)
-        }
-    };
-
-    let new_selected = if selected_range.location == NS_NOT_FOUND {
-        None
-    } else {
-        let start = selected_range.location;
-        let end = selected_range.location + selected_range.length;
-        Some(start..end)
-    };
-
-    log::info!(
-        "UITextInput setMarkedText: {:?} selectedRange={:?}",
-        text_str,
-        new_selected
-    );
-
-    state_rc
-        .borrow_mut()
-        .input_handler
-        .as_mut()
-        .map(|h| h.replace_and_mark_text_in_range(None, &text_str, new_selected));
-}
-
-extern "C" fn uit_unmark_text(this: &Object, _sel: Sel) {
-    let Some(state_rc) = state_from_view(this) else { return };
-    log::info!("UITextInput unmarkText");
-    state_rc
-        .borrow_mut()
-        .input_handler
-        .as_mut()
-        .map(|h| h.unmark_text());
-}
-
-extern "C" fn uit_beginning_of_document(_this: &Object, _sel: Sel) -> *mut Object {
-    unsafe { new_text_position(0) }
-}
-
-extern "C" fn uit_end_of_document(this: &Object, _sel: Sel) -> *mut Object {
-    let end = state_from_view(this)
-        .map(|rc| document_length(&rc))
-        .unwrap_or(0);
-    unsafe { new_text_position(end) }
-}
-
-extern "C" fn uit_text_range_from_position_to_position(
-    _this: &Object,
-    _sel: Sel,
-    from: *mut Object,
-    to: *mut Object,
-) -> *mut Object {
-    unsafe {
-        let start = read_text_position(from);
-        let end = read_text_position(to);
-        if start <= end {
-            new_text_range(start, end)
-        } else {
-            new_text_range(end, start)
-        }
-    }
-}
-
-extern "C" fn uit_position_from_position_offset(
-    this: &Object,
-    _sel: Sel,
-    pos: *mut Object,
-    offset: isize,
-) -> *mut Object {
-    let doc_len = state_from_view(this).map(|rc| document_length(&rc)).unwrap_or(0);
-    let base = unsafe { read_text_position(pos) } as isize;
-    let new_pos = base + offset;
-    if new_pos < 0 || new_pos as usize > doc_len {
-        return std::ptr::null_mut();
-    }
-    unsafe { new_text_position(new_pos as usize) }
-}
-
-/// `positionFromPosition:inDirection:offset:` — same arithmetic as the non-direction variant.
-extern "C" fn uit_position_from_position_in_direction_offset(
-    this: &Object,
-    _sel: Sel,
-    pos: *mut Object,
-    _direction: usize,
-    offset: isize,
-) -> *mut Object {
-    uit_position_from_position_offset(this, _sel, pos, offset)
-}
-
-/// `comparePosition:toPosition:` — returns NSComparisonResult (isize).
-extern "C" fn uit_compare_position_to_position(
-    _this: &Object,
-    _sel: Sel,
-    pos: *mut Object,
-    other: *mut Object,
-) -> isize {
-    let a = unsafe { read_text_position(pos) };
-    let b = unsafe { read_text_position(other) };
-    if a < b { -1 } else if a > b { 1 } else { 0 }
-}
-
-/// `offsetFromPosition:toPosition:` — returns signed distance (NSInteger).
-extern "C" fn uit_offset_from_position_to_position(
-    _this: &Object,
-    _sel: Sel,
-    from: *mut Object,
-    to: *mut Object,
-) -> isize {
-    let a = unsafe { read_text_position(from) } as isize;
-    let b = unsafe { read_text_position(to) } as isize;
-    b - a
-}
-
-/// `positionWithinRange:farthestInDirection:` — returns start or end of range.
-extern "C" fn uit_position_within_range_farthest_in_direction(
-    _this: &Object,
-    _sel: Sel,
-    range: *mut Object,
-    direction: usize,
-) -> *mut Object {
-    let (start, end) = unsafe { read_text_range(range) };
-    // UITextLayoutDirectionLeft = 3, UITextLayoutDirectionUp = 4 → start
-    // UITextLayoutDirectionRight = 2, UITextLayoutDirectionDown = 5 → end
-    let use_start = matches!(direction, 3 | 4);
-    unsafe { new_text_position(if use_start { start } else { end }) }
-}
-
-/// `characterRangeByExtendingPosition:inDirection:` — returns a single-character range.
-extern "C" fn uit_character_range_by_extending_position_in_direction(
-    _this: &Object,
-    _sel: Sel,
-    pos: *mut Object,
-    _direction: usize,
-) -> *mut Object {
-    let offset = unsafe { read_text_position(pos) };
-    unsafe { new_text_range(offset, offset) }
-}
-
-/// `baseWritingDirectionForPosition:inDirection:` — always LTR.
-extern "C" fn uit_base_writing_direction_for_position(
-    _this: &Object,
-    _sel: Sel,
-    _pos: *mut Object,
-    _direction: usize,
-) -> isize {
-    0 // NSWritingDirectionLeftToRight
-}
-
-/// `setBaseWritingDirection:forRange:` — no-op.
-extern "C" fn uit_set_base_writing_direction_for_range(
-    _this: &Object,
-    _sel: Sel,
-    _direction: isize,
-    _range: *mut Object,
-) {
-}
-
-/// `firstRectForRange:` — returns the pixel rect for the given text range.
-extern "C" fn uit_first_rect_for_range(
-    this: &Object,
-    _sel: Sel,
-    range: *mut Object,
-) -> CGRect {
-    let Some(state_rc) = state_from_view(this) else {
-        return CGRect::default();
-    };
-    let (start, end) = unsafe { read_text_range(range) };
-    let bounds = state_rc
-        .borrow_mut()
-        .input_handler
-        .as_mut()
-        .and_then(|h| h.bounds_for_range(start..end));
-    match bounds {
-        Some(b) => CGRect {
-            origin: CGPoint {
-                x: f32::from(b.origin.x) as f64,
-                y: f32::from(b.origin.y) as f64,
-            },
-            size: CGSize {
-                width: f32::from(b.size.width) as f64,
-                height: f32::from(b.size.height) as f64,
-            },
-        },
-        None => CGRect::default(),
-    }
-}
-
-/// `caretRectForPosition:` — stub; returns zero rect.
-extern "C" fn uit_caret_rect_for_position(
-    _this: &Object,
-    _sel: Sel,
-    _pos: *mut Object,
-) -> CGRect {
-    CGRect::default()
-}
-
-/// `closestPositionToPoint:` — returns the beginning of document as a stub.
-extern "C" fn uit_closest_position_to_point(
-    _this: &Object,
-    _sel: Sel,
-    _point: CGPoint,
-) -> *mut Object {
-    unsafe { new_text_position(0) }
-}
-
-/// `closestPositionToPoint:withinRange:` — returns start of the given range.
-extern "C" fn uit_closest_position_to_point_within_range(
-    _this: &Object,
-    _sel: Sel,
-    _point: CGPoint,
-    range: *mut Object,
-) -> *mut Object {
-    let (start, _) = unsafe { read_text_range(range) };
-    unsafe { new_text_position(start) }
-}
-
-/// `characterRangeAtPoint:` — stub; returns nil.
-extern "C" fn uit_character_range_at_point(
-    _this: &Object,
-    _sel: Sel,
-    _point: CGPoint,
-) -> *mut Object {
-    std::ptr::null_mut()
-}
-
-/// `textInRange:` — returns the text for the given range.
-extern "C" fn uit_text_in_range(this: &Object, _sel: Sel, range: *mut Object) -> *mut Object {
-    let Some(state_rc) = state_from_view(this) else {
-        return std::ptr::null_mut();
-    };
-    let (start, end) = unsafe { read_text_range(range) };
-    let mut adjusted = None;
-    let text = state_rc
-        .borrow_mut()
-        .input_handler
-        .as_mut()
-        .and_then(|h| h.text_for_range(start..end, &mut adjusted));
-    match text {
-        Some(s) => unsafe {
-            let ns: *mut Object = msg_send![class!(NSString), alloc];
-            let ns: *mut Object =
-                msg_send![ns, initWithBytes: s.as_ptr() length: s.len() encoding: 4u32]; // NSUTF8StringEncoding = 4
-            msg_send![ns, autorelease]
-        },
-        None => std::ptr::null_mut(),
-    }
-}
-
-/// `shouldChangeTextInRange:replacementText:` — always allow.
-extern "C" fn uit_should_change_text_in_range(
-    _this: &Object,
-    _sel: Sel,
-    _range: *mut Object,
-    _replacement: *mut Object,
-) -> bool {
-    true
-}
-
-/// `replaceRange:withText:` — called by autocorrect and predictive text.
-extern "C" fn uit_replace_range_with_text(
-    this: &Object,
-    _sel: Sel,
-    range: *mut Object,
-    text: *mut Object,
-) {
-    let Some(state_rc) = state_from_view(this) else { return };
-    let (start, end) = unsafe { read_text_range(range) };
-    let text_str = ns_string_to_string(text);
-    state_rc
-        .borrow_mut()
-        .input_handler
-        .as_mut()
-        .map(|h| h.replace_text_in_range(Some(start..end), &text_str));
-}
-
-/// `inputDelegate` property getter.
-extern "C" fn uit_get_input_delegate(this: &Object, _sel: Sel) -> *mut Object {
-    unsafe { *this.get_ivar("_input_delegate") }
-}
-
-/// `setInputDelegate:` property setter. UIKit calls this before/after keyboard sessions.
-extern "C" fn uit_set_input_delegate(this: &Object, _sel: Sel, delegate: *mut Object) {
-    unsafe {
-        let this_mut = this as *const Object as *mut Object;
-        (*this_mut).set_ivar("_input_delegate", delegate);
-    }
-}
-
-/// `tokenizer` property getter — returns a `UITextInputStringTokenizer`.
-extern "C" fn uit_get_tokenizer(this: &Object, _sel: Sel) -> *mut Object {
-    unsafe {
-        let view = this as *const Object as *mut Object;
-        let tok: *mut Object = msg_send![class!(UITextInputStringTokenizer), alloc];
-        let tok: *mut Object = msg_send![tok, initWithTextInput: view];
-        msg_send![tok, autorelease]
-    }
-}
-
-/// `selectionRectsForRange:` — returns an empty array.
-/// UIKit calls this to draw selection highlight rects. Returning an empty
-/// array prevents the "unrecognized selector" crash; highlights just won't appear.
-extern "C" fn uit_selection_rects_for_range(
-    _this: &Object,
-    _sel: Sel,
-    _range: *mut Object,
-) -> *mut Object {
-    unsafe { msg_send![class!(NSArray), array] }
 }
 
 /// Distance (in logical pixels) a finger must travel before a touch is
@@ -1908,6 +1449,10 @@ fn handle_touches(this: &Object, touches: *mut Object, kind: TouchKind) {
                         click_count: tap_count,
                     }),
                 );
+                // Signal that the next input-handler focus transition should
+                // show the software keyboard. This flag is consumed by
+                // set_input_handler on the next draw cycle.
+                state_rc.borrow_mut().show_keyboard_after_tap = true;
             } else {
                 // End of a drag — emit MouseUp at current position.
                 dispatch_input_event(
