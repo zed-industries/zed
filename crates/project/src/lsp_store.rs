@@ -10770,6 +10770,12 @@ impl LspStore {
             }
         };
 
+        let name_from_seed = local
+            .language_server_ids
+            .iter()
+            .find(|(_, state)| state.id == server_id)
+            .map(|(seed, _)| seed.name.clone());
+
         // Remove this server ID from all entries in the given worktree.
         local
             .language_server_ids
@@ -10833,7 +10839,8 @@ impl LspStore {
                 } else {
                     None
                 }
-            });
+            })
+            .or(name_from_seed);
 
         if let Some(name) = name {
             log::info!("stopping language server {name}");
