@@ -302,7 +302,9 @@ pub struct StreamOptions {
 
 impl Default for StreamOptions {
     fn default() -> Self {
-        Self { include_usage: true }
+        Self {
+            include_usage: true,
+        }
     }
 }
 
