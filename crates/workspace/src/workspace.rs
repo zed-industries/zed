@@ -6929,6 +6929,12 @@ impl Workspace {
         self.modal_layer.read(cx).has_active_modal()
     }
 
+    pub fn active_modal_blocks_focus_change_autosave(&self, cx: &App) -> bool {
+        self.modal_layer
+            .read(cx)
+            .active_modal_blocks_focus_change_autosave(cx)
+    }
+
     pub fn active_modal<V: ManagedView + 'static>(&self, cx: &App) -> Option<Entity<V>> {
         self.modal_layer.read(cx).active_modal()
     }

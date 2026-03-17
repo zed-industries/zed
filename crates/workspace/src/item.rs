@@ -950,7 +950,7 @@ impl<T: Item> ItemHandle for Entity<T> {
                         // since the user is still interacting with the workspace.
                         let focus_handle = item.item_focus_handle(cx);
                         if !focus_handle.contains_focused(window, cx)
-                            && !workspace.has_active_modal(window, cx)
+                            && !workspace.active_modal_blocks_focus_change_autosave(cx)
                         {
                             Pane::autosave_item(&item, workspace.project.clone(), window, cx)
                                 .detach_and_log_err(cx);

@@ -26,6 +26,10 @@ pub trait ModalView: ManagedView {
     fn render_bare(&self) -> bool {
         false
     }
+
+    fn blocks_focus_change_autosave(&self) -> bool {
+        true
+    }
 }
 
 trait ModalViewHandle {
@@ -33,6 +37,7 @@ trait ModalViewHandle {
     fn view(&self) -> AnyView;
     fn fade_out_background(&self, cx: &mut App) -> bool;
     fn render_bare(&self, cx: &mut App) -> bool;
+    fn blocks_focus_change_autosave(&self, cx: &App) -> bool;
 }
 
 impl<V: ModalView> ModalViewHandle for Entity<V> {
@@ -50,6 +55,10 @@ impl<V: ModalView> ModalViewHandle for Entity<V> {
 
     fn render_bare(&self, cx: &mut App) -> bool {
         self.read(cx).render_bare()
+    }
+
+    fn blocks_focus_change_autosave(&self, cx: &App) -> bool {
+        self.read(cx).blocks_focus_change_autosave()
     }
 }
 
@@ -188,6 +197,12 @@ impl ModalLayer {
 
     pub fn has_active_modal(&self) -> bool {
         self.active_modal.is_some()
+    }
+
+    pub fn active_modal_blocks_focus_change_autosave(&self, cx: &App) -> bool {
+        self.active_modal
+            .as_ref()
+            .is_some_and(|modal| modal.modal.blocks_focus_change_autosave(cx))
     }
 }
 

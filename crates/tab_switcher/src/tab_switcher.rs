@@ -56,7 +56,11 @@ pub struct TabSwitcher {
     init_modifiers: Option<Modifiers>,
 }
 
-impl ModalView for TabSwitcher {}
+impl ModalView for TabSwitcher {
+    fn blocks_focus_change_autosave(&self) -> bool {
+        false
+    }
+}
 
 pub fn init(cx: &mut App) {
     cx.observe_new(TabSwitcher::register).detach();
