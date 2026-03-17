@@ -571,7 +571,9 @@ impl TitleBar {
 
         let effective_quality = effective_connection_quality(connection_quality, &self.call_stats);
         let (signal_icon, signal_color, quality_label) = match effective_quality {
-            ConnectionQuality::Excellent => (IconName::Signal, None, "Excellent"),
+            ConnectionQuality::Excellent => {
+                (IconName::SignalHigh, Some(Color::Success), "Excellent")
+            }
             ConnectionQuality::Good => (IconName::SignalHigh, None, "Good"),
             ConnectionQuality::Poor => (IconName::SignalMedium, Some(Color::Warning), "Poor"),
             ConnectionQuality::Lost => (IconName::SignalLow, Some(Color::Error), "Lost"),
@@ -598,8 +600,7 @@ impl TitleBar {
                         format!("Connection: {quality_label}"),
                         Some(&ShowCallStats),
                         format!(
-                            "Latency: {} · Jitter: {} · Loss: {} · Input lag: {}",
-                            latency, jitter, packet_loss, input_lag
+                            "Latency: {latency} · Jitter: {jitter} · Loss: {packet_loss} · Input lag: {input_lag}",
                         ),
                         cx,
                     )

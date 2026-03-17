@@ -218,7 +218,6 @@ pub enum IconName {
     Settings,
     ShieldCheck,
     Shift,
-    Signal,
     SignalHigh,
     SignalLow,
     SignalMedium,
