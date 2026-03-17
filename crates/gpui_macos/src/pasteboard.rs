@@ -8,7 +8,7 @@ use cocoa::{
         NSPasteboardTypeTIFF,
     },
     base::{id, nil},
-    foundation::{NSData, NSFastEnumeration, NSString},
+    foundation::{NSArray, NSData, NSFastEnumeration, NSString},
 };
 use objc::{msg_send, runtime::Object, sel, sel_impl};
 use smallvec::SmallVec;
@@ -49,12 +49,9 @@ impl Pasteboard {
 
     pub fn read(&self) -> Option<ClipboardItem> {
         unsafe {
-            // Check for file paths first (e.g. files copied in Finder), because Finder
-            // puts both NSFilenamesPboardType and public.utf8-plain-text on the pasteboard.
-            // If we checked strings first, we'd return the path as plain text and never
-            // see the file paths.
+            // Check for file paths first
             let filenames = NSPasteboard::propertyListForType(self.inner, NSFilenamesPboardType);
-            if filenames != nil {
+            if filenames != nil && NSArray::count(filenames) > 0 {
                 let mut paths = SmallVec::new();
                 for file in filenames.iter() {
                     let f = NSString::UTF8String(file);
@@ -125,6 +122,8 @@ impl Pasteboard {
             let text_bytes: &[u8] = if data == nil {
                 return None;
             } else if data.bytes().is_null() {
+                // https://developer.apple.com/documentation/foundation/nsdata/1410616-bytes?language=objc
+                // "If the length of the NSData object is 0, this property returns nil."
                 &[]
             } else {
                 slice::from_raw_parts(data.bytes() as *mut u8, data.length() as usize)
@@ -332,11 +331,46 @@ impl UTType {
 
 #[cfg(test)]
 mod tests {
-    use cocoa::{appkit::NSPasteboardTypeString, foundation::NSData};
+    use cocoa::{
+        appkit::{NSFilenamesPboardType, NSPasteboard, NSPasteboardTypeString},
+        base::{id, nil},
+        foundation::{NSArray, NSData, NSString},
+    };
+    use std::ffi::c_void;
 
-    use gpui::{ClipboardEntry, ClipboardItem, ClipboardString};
+    use gpui::{ClipboardEntry, ClipboardItem, ClipboardString, ImageFormat};
 
     use super::*;
+
+    unsafe fn simulate_external_file_copy(pasteboard: &Pasteboard, paths: &[&str]) {
+        unsafe {
+            let ns_paths: Vec<id> = paths
+                .iter()
+                .map(|p| NSString::alloc(nil).init_str(p))
+                .collect();
+            let ns_array = NSArray::arrayWithObjects(nil, &ns_paths);
+
+            let mut types = vec![NSFilenamesPboardType];
+            types.push(NSPasteboardTypeString);
+
+            let types_array = NSArray::arrayWithObjects(nil, &types);
+            pasteboard.inner.declareTypes_owner(types_array, nil);
+
+            pasteboard
+                .inner
+                .setPropertyList_forType(ns_array, NSFilenamesPboardType);
+
+            let joined = paths.join("\n");
+            let bytes = NSData::dataWithBytes_length_(
+                nil,
+                joined.as_ptr() as *const c_void,
+                joined.len() as u64,
+            );
+            pasteboard
+                .inner
+                .setData_forType(bytes, NSPasteboardTypeString);
+        }
+    }
 
     #[test]
     fn test_string() {
@@ -370,5 +404,125 @@ mod tests {
             pasteboard.read(),
             Some(ClipboardItem::new_string(text_from_other_app.to_string()))
         );
+    }
+
+    #[test]
+    fn test_read_external_path() {
+        let pasteboard = Pasteboard::unique();
+
+        unsafe {
+            simulate_external_file_copy(&pasteboard, &["/test.txt"]);
+        }
+
+        let item = pasteboard.read().expect("should read clipboard item");
+
+        // Test both ExternalPaths and String entries exist
+        assert_eq!(item.entries.len(), 2);
+
+        // Test first entry is ExternalPaths
+        match &item.entries[0] {
+            ClipboardEntry::ExternalPaths(ep) => {
+                assert_eq!(ep.paths(), &[PathBuf::from("/test.txt")]);
+            }
+            other => panic!("expected ExternalPaths, got {:?}", other),
+        }
+
+        // Test second entry is String
+        match &item.entries[1] {
+            ClipboardEntry::String(s) => {
+                assert_eq!(s.text(), "/test.txt");
+            }
+            other => panic!("expected String, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_read_external_paths_with_spaces() {
+        let pasteboard = Pasteboard::unique();
+        let paths = ["/some file with spaces.txt"];
+
+        unsafe {
+            simulate_external_file_copy(&pasteboard, &paths);
+        }
+
+        let item = pasteboard.read().expect("should read clipboard item");
+
+        match &item.entries[0] {
+            ClipboardEntry::ExternalPaths(ep) => {
+                assert_eq!(ep.paths(), &[PathBuf::from("/some file with spaces.txt")]);
+            }
+            other => panic!("expected ExternalPaths, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_read_multiple_external_paths() {
+        let pasteboard = Pasteboard::unique();
+        let paths = ["/file.txt", "/image.png"];
+
+        unsafe {
+            simulate_external_file_copy(&pasteboard, &paths);
+        }
+
+        let item = pasteboard.read().expect("should read clipboard item");
+        assert_eq!(item.entries.len(), 2);
+
+        // Test both ExternalPaths and String entries exist
+        match &item.entries[0] {
+            ClipboardEntry::ExternalPaths(ep) => {
+                assert_eq!(
+                    ep.paths(),
+                    &[PathBuf::from("/file.txt"), PathBuf::from("/image.png"),]
+                );
+            }
+            other => panic!("expected ExternalPaths, got {:?}", other),
+        }
+
+        match &item.entries[1] {
+            ClipboardEntry::String(s) => {
+                assert_eq!(s.text(), "/file.txt\n/image.png");
+                assert_eq!(s.metadata, None);
+            }
+            other => panic!("expected String, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_read_image() {
+        let pasteboard = Pasteboard::unique();
+
+        // Smallest valid PNG: 1x1 transparent pixel
+        let png_bytes: &[u8] = &[
+            0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x0D, 0x49, 0x48,
+            0x44, 0x52, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x06, 0x00, 0x00,
+            0x00, 0x1F, 0x15, 0xC4, 0x89, 0x00, 0x00, 0x00, 0x0A, 0x49, 0x44, 0x41, 0x54, 0x78,
+            0x9C, 0x62, 0x00, 0x00, 0x00, 0x02, 0x00, 0x01, 0xE5, 0x27, 0xDE, 0xFC, 0x00, 0x00,
+            0x00, 0x00, 0x49, 0x45, 0x4E, 0x44, 0xAE, 0x42, 0x60, 0x82,
+        ];
+
+        unsafe {
+            let ns_png_type = NSPasteboardTypePNG;
+            let types_array = NSArray::arrayWithObjects(nil, &[ns_png_type]);
+            pasteboard.inner.declareTypes_owner(types_array, nil);
+
+            let data = NSData::dataWithBytes_length_(
+                nil,
+                png_bytes.as_ptr() as *const c_void,
+                png_bytes.len() as u64,
+            );
+            pasteboard.inner.setData_forType(data, ns_png_type);
+        }
+
+        let item = pasteboard.read().expect("should read PNG image");
+
+        // Test Image entry exists
+        assert_eq!(item.entries.len(), 1);
+        match &item.entries[0] {
+            ClipboardEntry::Image(img) => {
+                assert_eq!(img.format, ImageFormat::Png);
+                assert_eq!(img.bytes, png_bytes);
+            }
+            other => panic!("expected Image, got {:?}", other),
+        }
     }
 }
