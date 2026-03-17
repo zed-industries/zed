@@ -1681,7 +1681,7 @@ mod tests {
                 {
                     "type": "function_call_output",
                     "call_id": "call-42",
-                    "output": "{\"forecast\":\"Sunny\"}"
+                    "output": "Sunny"
                 }
             ],
             "stream": true,
