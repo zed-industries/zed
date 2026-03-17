@@ -127,11 +127,7 @@ impl ThreadMetadataStore {
         })
     }
 
-    pub(crate) fn save(
-        &mut self,
-        metadata: ThreadMetadata,
-        cx: &mut Context<Self>,
-    ) -> Task<Result<()>> {
+    pub fn save(&mut self, metadata: ThreadMetadata, cx: &mut Context<Self>) -> Task<Result<()>> {
         if !cx.has_flag::<AgentV2FeatureFlag>() {
             return Task::ready(Ok(()));
         }
