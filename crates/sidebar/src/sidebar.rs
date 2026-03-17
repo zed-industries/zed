@@ -29,8 +29,8 @@ use ui::{
 use util::ResultExt as _;
 use util::path_list::PathList;
 use workspace::{
-    MultiWorkspace, MultiWorkspaceEvent, Sidebar as WorkspaceSidebar, ToggleWorkspaceSidebar,
-    Workspace,
+    FocusWorkspaceSidebar, MultiWorkspace, MultiWorkspaceEvent, Sidebar as WorkspaceSidebar,
+    ToggleWorkspaceSidebar, Workspace,
 };
 
 use zed_actions::OpenRecent;
@@ -2265,7 +2265,7 @@ impl Sidebar {
                             .border_color(cx.theme().colors().border_variant)
                             .justify_between()
                             .child(Label::new("Focus Sidebar"))
-                            .child(KeyBinding::for_action(&ToggleWorkspaceSidebar, cx)),
+                            .child(KeyBinding::for_action(&FocusWorkspaceSidebar, cx)),
                     )
                     .into_any_element()
             }))
