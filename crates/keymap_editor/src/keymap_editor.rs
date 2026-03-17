@@ -73,6 +73,8 @@ actions!(
         CopyContext,
         /// Toggles Conflict Filtering
         ToggleConflictFilter,
+        /// Toggles whether NoAction bindings are shown
+        ToggleNoActionBindings,
         /// Toggle Keystroke search
         ToggleKeystrokeSearch,
         /// Toggles exact matching for keystroke search
@@ -412,6 +414,7 @@ struct KeymapEditor {
     keybindings: Vec<ProcessedBinding>,
     keybinding_conflict_state: ConflictState,
     filter_state: FilterState,
+    show_no_action_bindings: bool,
     search_mode: SearchMode,
     search_query_debounce: Option<Task<()>>,
     // corresponds 1 to 1 with keybindings
@@ -539,6 +542,7 @@ impl KeymapEditor {
             keybindings: vec![],
             keybinding_conflict_state: ConflictState::default(),
             filter_state: FilterState::default(),
+            show_no_action_bindings: true,
             search_mode: SearchMode::default(),
             string_match_candidates: Arc::new(vec![]),
             matches: vec![],
@@ -695,12 +699,14 @@ impl KeymapEditor {
                 SearchMode::Normal => {}
             }
 
-            // Filter out NoAction suppression bindings. These are internal markers
-            // created when a user deletes a default binding (to suppress the default
-            // at the GPUI level), not real bindings the user should see.
-            matches.retain(|item| {
-                this.keybindings[item.candidate_id].action().name != gpui::NoAction.name()
-            });
+            // Filter out NoAction suppression bindings by default. These are internal
+            // markers created when a user deletes a default binding (to suppress the
+            // default at the GPUI level), not real bindings the user should usually see.
+            if !this.show_no_action_bindings {
+                matches.retain(|item| {
+                    this.keybindings[item.candidate_id].action().name != gpui::NoAction.name()
+                });
+            }
 
             if action_query.is_empty() {
                 matches.sort_by(|item1, item2| {
@@ -1374,6 +1380,16 @@ impl KeymapEditor {
         self.set_filter_state(self.filter_state.invert(), cx);
     }
 
+    fn toggle_no_action_bindings(
+        &mut self,
+        _: &ToggleNoActionBindings,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.show_no_action_bindings = !self.show_no_action_bindings;
+        self.on_query_changed(cx);
+    }
+
     fn set_filter_state(&mut self, filter_state: FilterState, cx: &mut Context<Self>) {
         if self.filter_state != filter_state {
             self.filter_state = filter_state;
@@ -1718,6 +1734,7 @@ impl Render for KeymapEditor {
             .on_action(cx.listener(Self::copy_action_to_clipboard))
             .on_action(cx.listener(Self::copy_context_to_clipboard))
             .on_action(cx.listener(Self::toggle_conflict_filter))
+            .on_action(cx.listener(Self::toggle_no_action_bindings))
             .on_action(cx.listener(Self::toggle_keystroke_search))
             .on_action(cx.listener(Self::toggle_exact_keystroke_matching))
             .on_action(cx.listener(Self::show_matching_keystrokes))
@@ -1780,6 +1797,38 @@ impl Render for KeymapEditor {
                                         .on_click(|_, window, cx| {
                                             window.dispatch_action(
                                                 ToggleKeystrokeSearch.boxed_clone(),
+                                                cx,
+                                            );
+                                        }),
+                                    )
+                                    .child(
+                                        IconButton::new(
+                                            "KeymapEditorToggleNoActionBindingsIcon",
+                                            IconName::Eye,
+                                        )
+                                        .icon_size(IconSize::Small)
+                                        .tooltip({
+                                            let show_no_action_bindings =
+                                                self.show_no_action_bindings;
+                                            let focus_handle = focus_handle.clone();
+
+                                            move |_window, cx| {
+                                                Tooltip::for_action_in(
+                                                    if show_no_action_bindings {
+                                                        "Hide NoAction Bindings"
+                                                    } else {
+                                                        "Show NoAction Bindings"
+                                                    },
+                                                    &ToggleNoActionBindings,
+                                                    &focus_handle.clone(),
+                                                    cx,
+                                                )
+                                            }
+                                        })
+                                        .toggle_state(self.show_no_action_bindings)
+                                        .on_click(|_, window, cx| {
+                                            window.dispatch_action(
+                                                ToggleNoActionBindings.boxed_clone(),
                                                 cx,
                                             );
                                         }),
