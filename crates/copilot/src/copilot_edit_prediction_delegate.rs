@@ -417,8 +417,6 @@ mod tests {
             assert!(!editor.has_active_edit_prediction());
             assert_eq!(editor.display_text(cx), "one.c\ntwo\nthree\n");
             assert_eq!(editor.text(cx), "one.c\ntwo\nthree\n");
-
-            editor.next_edit_prediction(&Default::default(), window, cx);
         });
         executor.advance_clock(COPILOT_DEBOUNCE_TIMEOUT);
         cx.editor(|editor, _, cx| {
