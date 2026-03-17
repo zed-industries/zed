@@ -2180,11 +2180,7 @@ impl Sidebar {
             .into_any_element()
     }
 
-    fn render_thread_list_header(
-        &self,
-        window: &Window,
-        cx: &mut Context<Self>,
-    ) -> impl IntoElement {
+    fn rename_sidebar_header(&self, window: &Window, cx: &mut Context<Self>) -> impl IntoElement {
         let has_query = self.has_filter_query(cx);
         let traffic_lights = cfg!(target_os = "macos") && !window.is_fullscreen();
         let header_height = platform_title_bar_height(window);
@@ -2220,15 +2216,16 @@ impl Sidebar {
             .child(
                 h_flex()
                     .h(Tab::container_height(cx))
-                    .p_2()
-                    .pr_1p5()
+                    .px_1p5()
                     .gap_1p5()
                     .border_b_1()
                     .border_color(cx.theme().colors().border)
                     .child(
-                        Icon::new(IconName::MagnifyingGlass)
-                            .size(IconSize::Small)
-                            .color(Color::Muted),
+                        h_flex().size_4().flex_none().justify_center().child(
+                            Icon::new(IconName::MagnifyingGlass)
+                                .size(IconSize::Small)
+                                .color(Color::Muted),
+                        ),
                     )
                     .child(self.render_filter_input())
                     .when(has_query, |this| {
@@ -2408,9 +2405,8 @@ impl Render for Sidebar {
             .border_r_1()
             .border_color(cx.theme().colors().border)
             .map(|this| match self.view {
-                SidebarView::ThreadList => this
-                    .child(self.render_thread_list_header(window, cx))
-                    .child(
+                SidebarView::ThreadList => {
+                    this.child(self.rename_sidebar_header(window, cx)).child(
                         v_flex()
                             .relative()
                             .flex_1()
@@ -2425,7 +2421,8 @@ impl Render for Sidebar {
                             )
                             .when_some(sticky_header, |this, header| this.child(header))
                             .vertical_scrollbar_for(&self.list_state, window, cx),
-                    ),
+                    )
+                }
                 SidebarView::Archive => {
                     if let Some(archive_view) = &self.archive_view {
                         this.child(archive_view.clone())
