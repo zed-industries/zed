@@ -636,13 +636,13 @@ parse_int = "0.9"
 pciid-parser = "0.8.0"
 pathdiff = "0.2"
 percent-encoding = "2.3.2"
-pet = { git = "https://github.com/microsoft/python-environment-tools.git", rev = "72123ab4e91c799fb577283437c62b4dfe0e9d56" }
-pet-conda = { git = "https://github.com/microsoft/python-environment-tools.git", rev = "72123ab4e91c799fb577283437c62b4dfe0e9d56" }
-pet-core = { git = "https://github.com/microsoft/python-environment-tools.git", rev = "72123ab4e91c799fb577283437c62b4dfe0e9d56" }
-pet-fs = { git = "https://github.com/microsoft/python-environment-tools.git", rev = "72123ab4e91c799fb577283437c62b4dfe0e9d56" }
-pet-poetry = { git = "https://github.com/microsoft/python-environment-tools.git", rev = "72123ab4e91c799fb577283437c62b4dfe0e9d56" }
-pet-reporter = { git = "https://github.com/microsoft/python-environment-tools.git", rev = "72123ab4e91c799fb577283437c62b4dfe0e9d56" }
-pet-virtualenv = { git = "https://github.com/microsoft/python-environment-tools.git", rev = "72123ab4e91c799fb577283437c62b4dfe0e9d56" }
+pet = { git = "https://github.com/microsoft/python-environment-tools.git", rev = "9e61a22af989fe54937bf07c9f9cff1bc53d9056" }
+pet-conda = { git = "https://github.com/microsoft/python-environment-tools.git", rev = "9e61a22af989fe54937bf07c9f9cff1bc53d9056" }
+pet-core = { git = "https://github.com/microsoft/python-environment-tools.git", rev = "9e61a22af989fe54937bf07c9f9cff1bc53d9056" }
+pet-fs = { git = "https://github.com/microsoft/python-environment-tools.git", rev = "9e61a22af989fe54937bf07c9f9cff1bc53d9056" }
+pet-poetry = { git = "https://github.com/microsoft/python-environment-tools.git", rev = "9e61a22af989fe54937bf07c9f9cff1bc53d9056" }
+pet-reporter = { git = "https://github.com/microsoft/python-environment-tools.git", rev = "9e61a22af989fe54937bf07c9f9cff1bc53d9056" }
+pet-virtualenv = { git = "https://github.com/microsoft/python-environment-tools.git", rev = "9e61a22af989fe54937bf07c9f9cff1bc53d9056" }
 portable-pty = "0.9.0"
 postage = { version = "0.5", features = ["futures-traits"] }
 pretty_assertions = { version = "1.3.0", features = ["unstable"] }
