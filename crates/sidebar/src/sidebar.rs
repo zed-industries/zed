@@ -22,8 +22,8 @@ use std::path::Path;
 use std::sync::Arc;
 use theme::ActiveTheme;
 use ui::{
-    AgentThreadStatus, ButtonStyle, HighlightedLabel, ListItem, Tab, ThreadItem, Tooltip,
-    WithScrollbar, prelude::*,
+    AgentThreadStatus, ButtonStyle, HighlightedLabel, KeyBinding, ListItem, Tab, ThreadItem,
+    Tooltip, WithScrollbar, prelude::*,
 };
 use util::ResultExt as _;
 use util::path_list::PathList;
@@ -2007,9 +2007,28 @@ impl Sidebar {
 
         IconButton::new("sidebar-close-toggle", icon)
             .icon_size(IconSize::Small)
-            .tooltip(move |_, cx| {
-                Tooltip::for_action("Close Threads Sidebar", &ToggleWorkspaceSidebar, cx)
-            })
+            .tooltip(Tooltip::element(move |_window, cx| {
+                v_flex()
+                    .gap_1()
+                    .child(
+                        h_flex()
+                            .gap_2()
+                            .justify_between()
+                            .child(Label::new("Toggle Sidebar"))
+                            .child(KeyBinding::for_action(&ToggleWorkspaceSidebar, cx)),
+                    )
+                    .child(
+                        h_flex()
+                            .pt_1()
+                            .gap_2()
+                            .border_t_1()
+                            .border_color(cx.theme().colors().border_variant)
+                            .justify_between()
+                            .child(Label::new("Focus Sidebar"))
+                            .child(KeyBinding::for_action(&ToggleWorkspaceSidebar, cx)),
+                    )
+                    .into_any_element()
+            }))
             .on_click(|_, window, cx| {
                 window.dispatch_action(ToggleWorkspaceSidebar.boxed_clone(), cx);
             })
