@@ -1314,6 +1314,44 @@ impl Sidebar {
         });
     }
 
+    fn close_all_projects(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(multi_workspace) = self.multi_workspace.upgrade() else {
+            return;
+        };
+
+        let workspace_count = multi_workspace.read(cx).workspaces().len();
+        let active_index = multi_workspace.read(cx).active_workspace_index();
+
+        // Remove all workspaces except the active one, iterating in reverse
+        // so that indices of not-yet-visited workspaces remain valid.
+        for index in (0..workspace_count).rev() {
+            if index != active_index {
+                multi_workspace.update(cx, |multi_workspace, cx| {
+                    multi_workspace.remove_workspace(index, window, cx);
+                });
+            }
+        }
+
+        // Remove all worktrees from the remaining workspace so it becomes empty.
+        let workspace = multi_workspace.read(cx).workspace().clone();
+        let worktree_ids: Vec<_> = workspace
+            .read(cx)
+            .project()
+            .read(cx)
+            .visible_worktrees(cx)
+            .map(|worktree| worktree.read(cx).id())
+            .collect();
+
+        workspace.update(cx, |workspace, cx| {
+            let project = workspace.project().clone();
+            project.update(cx, |project, cx| {
+                for worktree_id in worktree_ids {
+                    project.remove_worktree(worktree_id, cx);
+                }
+            });
+        });
+    }
+
     fn toggle_collapse(
         &mut self,
         path_list: &PathList,
@@ -1955,6 +1993,17 @@ impl Sidebar {
                                     .on_click(cx.listener(|this, _, window, cx| {
                                         this.show_archive(window, cx);
                                     })),
+                            )
+                            .child(
+                                IconButton::new(
+                                    "close-all-projects",
+                                    IconName::Exit,
+                                )
+                                .icon_size(IconSize::Small)
+                                .tooltip(Tooltip::text("Close All Projects"))
+                                .on_click(cx.listener(|this, _, window, cx| {
+                                    this.close_all_projects(window, cx);
+                                })),
                             ),
                     ),
             )
