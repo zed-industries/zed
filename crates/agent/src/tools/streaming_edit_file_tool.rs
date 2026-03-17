@@ -528,8 +528,10 @@ impl EditSession {
             }
         }) as Box<dyn FnOnce()>);
 
-        tool.action_log
-            .update(cx, |log, cx| log.buffer_read(buffer.clone(), cx));
+        if matches!(mode, StreamingEditFileMode::Write) {
+            tool.action_log
+                .update(cx, |log, cx| log.buffer_created(buffer.clone(), cx));
+        }
 
         let old_snapshot = buffer.read_with(cx, |buffer, _cx| buffer.snapshot());
         let old_text = cx
@@ -568,10 +570,6 @@ impl EditSession {
 
                 let events = self.parser.finalize_content(&content);
                 self.process_events(&events, tool, event_stream, cx)?;
-
-                tool.action_log.update(cx, |log, cx| {
-                    log.buffer_created(self.buffer.clone(), cx);
-                });
             }
             StreamingEditFileMode::Edit => {
                 let edits = input.edits.ok_or_else(|| {
