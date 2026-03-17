@@ -21975,7 +21975,6 @@ dependencies = [
  "command_palette",
  "component",
  "component_preview",
- "context_server",
  "copilot",
  "copilot_chat",
  "copilot_ui",
