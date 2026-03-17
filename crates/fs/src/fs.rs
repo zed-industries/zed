@@ -644,9 +644,12 @@ impl Fs for RealFs {
                             code == libc::ENOSYS
                                 || code == libc::ENOTSUP
                                 || code == libc::EOPNOTSUPP
+                                || code == libc::EINVAL
                         }) =>
                     {
                         // For case when filesystem or kernel does not support atomic no-overwrite rename.
+                        // EINVAL is returned by FUSE-based filesystems (e.g. NTFS via ntfs-3g)
+                        // that don't support RENAME_NOREPLACE.
                         true
                     }
                     Err(error) => return Err(error.into()),
