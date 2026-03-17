@@ -2180,7 +2180,7 @@ impl Sidebar {
             .into_any_element()
     }
 
-    fn rename_sidebar_header(&self, window: &Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render_sidebar_header(&self, window: &Window, cx: &mut Context<Self>) -> impl IntoElement {
         let has_query = self.has_filter_query(cx);
         let traffic_lights = cfg!(target_os = "macos") && !window.is_fullscreen();
         let header_height = platform_title_bar_height(window);
@@ -2406,7 +2406,7 @@ impl Render for Sidebar {
             .border_color(cx.theme().colors().border)
             .map(|this| match self.view {
                 SidebarView::ThreadList => {
-                    this.child(self.rename_sidebar_header(window, cx)).child(
+                    this.child(self.render_sidebar_header(window, cx)).child(
                         v_flex()
                             .relative()
                             .flex_1()
