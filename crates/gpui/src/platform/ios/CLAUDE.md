@@ -1,27 +1,24 @@
-# crates/gpui/src/platform/ios/ — GPUI iOS Platform Layer
+# crates/gpui/src/platform/ios/ — Stub redirect
 
-This is the largest single engineering effort in the iPad port. Nothing else works
-until this module renders pixels on an iPad screen.
+The iOS platform layer does **not** live here. It is in a separate crate:
 
-## What to implement
-Implement `Platform`, `PlatformWindow`, and `PlatformDisplay` traits for iOS.
-Mirror the structure of `../mac/` — that's the closest reference (shared Metal + CoreText).
+**`crates/gpui_ios/`** (~4900 lines, Phase 1 COMPLETE)
 
-## Code reuse from platform/mac/
-- **metal_renderer.rs**: ~70-80% reusable. Shaders are 100% portable.
-  Delta: CVDisplayLink → CADisplayLink, NSView → UIView layerClass override.
-- **text_system.rs**: ~85-90% reusable. Same CoreText API.
-  Delta: font discovery (no /Library/Fonts on iOS), coordinate flip (top-left origin).
-- **dispatcher.rs**: Similar shape. Replace CFRunLoop with DispatchQueue.main.async.
+This directory only contains a `mod.rs` stub that re-exports the `gpui_ios` crate's
+types so that `gpui` can reference them via `platform::ios::*`.
 
-## Key differences from macOS
-- UIApplication not NSApplication — do NOT link AppKit
-- UITextInput protocol (full implementation) instead of NSTextInputClient
-- CADisplayLink instead of CVDisplayLink for frame timing
-- pressesBegan:withEvent: for hardware keyboard (catches keys UIKeyCommand misses)
-- UIPointerInteraction for trackpad/mouse hover and click
-- UIScene lifecycle for multi-window (Stage Manager)
-- No swap space — aggressive Metal texture cache management required
+## What's implemented in gpui_ios
 
-## For full details
-Read `docs/ios-port-plan.md` Phase 1 section.
+- Metal renderer (runtime shaders, MSAA, instance buffering) — `metal_renderer.rs`
+- CoreText text system (font loading, shaping, glyph rasterization) — `text_system.rs`
+- UIKit window (touch input, hardware/software keyboard, trackpad scroll) — `window.rs`
+- GCD dispatcher (foreground/background, timers) — `dispatcher.rs`
+- Display (UIScreen queries, scale factor) — `display.rs`
+- CADisplayLink vsync driver — `display_link.rs`
+- Platform trait impl (clipboard, dark mode, prompts, open_url, thermal state) — `platform.rs`
+
+## Why a separate crate?
+
+The `gpui_ios` crate has a `build.rs` that runs `cbindgen` to generate the C header
+for the Swift bridging layer. Keeping it separate avoids polluting `gpui`'s build
+with iOS-specific build scripts and dependencies (Metal, CoreText, UIKit via objc).

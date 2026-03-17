@@ -78,9 +78,12 @@ for reconnection on relaunch. `UIApplicationSupportsMultipleScenes = YES` in Inf
 
 ## Fonts
 
-Bundle monospace fonts in the app and register via `UIAppFonts` in Info.plist.
-iOS only guarantees SF Mono, Menlo, and Courier New. Bundle at minimum:
-Fira Code, JetBrains Mono. Keep total font bundle under 5MB.
+Fonts are embedded into the Rust static library at compile time via `RustEmbed`
+(the `assets` crate). They are loaded by calling `assets::Assets.load_fonts(cx)`
+during `init_zed()`. No `UIAppFonts` in Info.plist or bundle resource copying needed.
+
+The asset source must be set on the GPUI `Application` with `.with_assets(assets::Assets)`
+before fonts can be loaded — without this, `cx.asset_source()` returns an empty default.
 
 ## For the full plan
 
