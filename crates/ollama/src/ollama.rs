@@ -605,7 +605,10 @@ mod tests {
             ..Default::default()
         };
         let serialized = serde_json::to_string(&options_no_stop).unwrap();
-        assert!(!serialized.contains("stop"), "stop should not be in JSON when None");
+        assert!(
+            !serialized.contains("stop"),
+            "stop should not be in JSON when None"
+        );
         assert!(serialized.contains("num_ctx"));
         assert!(serialized.contains("temperature"));
 
@@ -644,7 +647,7 @@ mod tests {
 
         let serialized = serde_json::to_string(&request).unwrap();
         let parsed: serde_json::Value = serde_json::from_str(&serialized).unwrap();
-        
+
         let stop = parsed["options"]["stop"].as_array().unwrap();
         assert_eq!(stop.len(), 2);
         assert_eq!(stop[0].as_str().unwrap(), "<|eot_id|>");
@@ -674,7 +677,7 @@ mod tests {
         };
 
         let serialized = serde_json::to_string(&request).unwrap();
-        
+
         // The key check: "stop" should not appear in the serialized JSON
         assert!(
             !serialized.contains("\"stop\""),
