@@ -1115,12 +1115,21 @@ impl PickerDelegate for RecentProjectsDelegate {
                 let (_, location, paths, _) = self.workspaces.get(hit.candidate_id)?;
                 let is_local = matches!(location, SerializedWorkspaceLocation::Local);
                 let paths_to_add = paths.paths().to_vec();
-                let tooltip_path: SharedString = paths
+                let ordered_paths: Vec<_> = paths
                     .ordered_paths()
                     .map(|p| p.compact().to_string_lossy().to_string())
-                    .collect::<Vec<_>>()
-                    .join("\n")
-                    .into();
+                    .collect();
+                let tooltip_path: SharedString = match &location {
+                    SerializedWorkspaceLocation::Remote(options) => {
+                        let host = options.display_name();
+                        if ordered_paths.len() == 1 {
+                            format!("{} ({})", ordered_paths[0], host).into()
+                        } else {
+                            format!("{}\n({})", ordered_paths.join("\n"), host).into()
+                        }
+                    }
+                    _ => ordered_paths.join("\n").into(),
+                };
 
                 let mut path_start_offset = 0;
                 let (match_labels, paths): (Vec<_>, Vec<_>) = paths

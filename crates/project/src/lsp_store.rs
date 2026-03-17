@@ -9840,7 +9840,9 @@ impl LspStore {
                     let typ = match event.kind? {
                         PathEventKind::Created => lsp::FileChangeType::CREATED,
                         PathEventKind::Removed => lsp::FileChangeType::DELETED,
-                        PathEventKind::Changed => lsp::FileChangeType::CHANGED,
+                        PathEventKind::Changed | PathEventKind::Rescan => {
+                            lsp::FileChangeType::CHANGED
+                        }
                     };
                     Some(lsp::FileEvent {
                         uri: file_path_to_lsp_url(&event.path).log_err()?,

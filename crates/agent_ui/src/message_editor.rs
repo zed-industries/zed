@@ -110,7 +110,7 @@ impl MessageEditor {
         workspace: WeakEntity<Workspace>,
         project: WeakEntity<Project>,
         thread_store: Option<Entity<ThreadStore>>,
-        history: WeakEntity<ThreadHistory>,
+        history: Option<WeakEntity<ThreadHistory>>,
         prompt_store: Option<Entity<PromptStore>>,
         prompt_capabilities: Rc<RefCell<acp::PromptCapabilities>>,
         available_commands: Rc<RefCell<Vec<acp::AvailableCommand>>>,
@@ -1789,7 +1789,6 @@ mod tests {
         let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
 
         let thread_store = None;
-        let history = cx.update(|_window, cx| cx.new(|cx| crate::ThreadHistory::new(None, cx)));
 
         let message_editor = cx.update(|window, cx| {
             cx.new(|cx| {
@@ -1797,7 +1796,7 @@ mod tests {
                     workspace.downgrade(),
                     project.downgrade(),
                     thread_store.clone(),
-                    history.downgrade(),
+                    None,
                     None,
                     Default::default(),
                     Default::default(),
@@ -1902,7 +1901,6 @@ mod tests {
         let (multi_workspace, cx) =
             cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
         let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
-        let history = cx.update(|_window, cx| cx.new(|cx| crate::ThreadHistory::new(None, cx)));
         let workspace_handle = workspace.downgrade();
         let message_editor = workspace.update_in(cx, |_, window, cx| {
             cx.new(|cx| {
@@ -1910,7 +1908,7 @@ mod tests {
                     workspace_handle.clone(),
                     project.downgrade(),
                     thread_store.clone(),
-                    history.downgrade(),
+                    None,
                     None,
                     prompt_capabilities.clone(),
                     available_commands.clone(),
@@ -2057,7 +2055,6 @@ mod tests {
         let mut cx = VisualTestContext::from_window(window.into(), cx);
 
         let thread_store = None;
-        let history = cx.update(|_window, cx| cx.new(|cx| crate::ThreadHistory::new(None, cx)));
         let prompt_capabilities = Rc::new(RefCell::new(acp::PromptCapabilities::default()));
         let available_commands = Rc::new(RefCell::new(vec![
             acp::AvailableCommand::new("quick-math", "2 + 2 = 4 - 1 = 3"),
@@ -2075,7 +2072,7 @@ mod tests {
                     workspace_handle,
                     project.downgrade(),
                     thread_store.clone(),
-                    history.downgrade(),
+                    None,
                     None,
                     prompt_capabilities.clone(),
                     available_commands.clone(),
@@ -2291,7 +2288,6 @@ mod tests {
         }
 
         let thread_store = cx.new(|cx| ThreadStore::new(cx));
-        let history = cx.update(|_window, cx| cx.new(|cx| crate::ThreadHistory::new(None, cx)));
         let prompt_capabilities = Rc::new(RefCell::new(acp::PromptCapabilities::default()));
 
         let (message_editor, editor) = workspace.update_in(&mut cx, |workspace, window, cx| {
@@ -2301,7 +2297,7 @@ mod tests {
                     workspace_handle,
                     project.downgrade(),
                     Some(thread_store),
-                    history.downgrade(),
+                    None,
                     None,
                     prompt_capabilities.clone(),
                     Default::default(),
@@ -2786,7 +2782,6 @@ mod tests {
         let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
 
         let thread_store = Some(cx.new(|cx| ThreadStore::new(cx)));
-        let history = cx.update(|_window, cx| cx.new(|cx| crate::ThreadHistory::new(None, cx)));
 
         let message_editor = cx.update(|window, cx| {
             cx.new(|cx| {
@@ -2794,7 +2789,7 @@ mod tests {
                     workspace.downgrade(),
                     project.downgrade(),
                     thread_store.clone(),
-                    history.downgrade(),
+                    None,
                     None,
                     Default::default(),
                     Default::default(),
@@ -2886,7 +2881,6 @@ mod tests {
         let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
 
         let thread_store = Some(cx.new(|cx| ThreadStore::new(cx)));
-        let history = cx.update(|_window, cx| cx.new(|cx| crate::ThreadHistory::new(None, cx)));
 
         let session_id = acp::SessionId::new("thread-123");
         let title = Some("Previous Conversation".into());
@@ -2897,7 +2891,7 @@ mod tests {
                     workspace.downgrade(),
                     project.downgrade(),
                     thread_store.clone(),
-                    history.downgrade(),
+                    None,
                     None,
                     Default::default(),
                     Default::default(),
@@ -2961,7 +2955,6 @@ mod tests {
         let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
 
         let thread_store = None;
-        let history = cx.update(|_window, cx| cx.new(|cx| crate::ThreadHistory::new(None, cx)));
 
         let message_editor = cx.update(|window, cx| {
             cx.new(|cx| {
@@ -2969,7 +2962,7 @@ mod tests {
                     workspace.downgrade(),
                     project.downgrade(),
                     thread_store.clone(),
-                    history.downgrade(),
+                    None,
                     None,
                     Default::default(),
                     Default::default(),
@@ -3017,7 +3010,6 @@ mod tests {
         let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
 
         let thread_store = None;
-        let history = cx.update(|_window, cx| cx.new(|cx| crate::ThreadHistory::new(None, cx)));
 
         let message_editor = cx.update(|window, cx| {
             cx.new(|cx| {
@@ -3025,7 +3017,7 @@ mod tests {
                     workspace.downgrade(),
                     project.downgrade(),
                     thread_store.clone(),
-                    history.downgrade(),
+                    None,
                     None,
                     Default::default(),
                     Default::default(),
@@ -3071,7 +3063,6 @@ mod tests {
         let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
 
         let thread_store = Some(cx.new(|cx| ThreadStore::new(cx)));
-        let history = cx.update(|_window, cx| cx.new(|cx| crate::ThreadHistory::new(None, cx)));
 
         let message_editor = cx.update(|window, cx| {
             cx.new(|cx| {
@@ -3079,7 +3070,7 @@ mod tests {
                     workspace.downgrade(),
                     project.downgrade(),
                     thread_store.clone(),
-                    history.downgrade(),
+                    None,
                     None,
                     Default::default(),
                     Default::default(),
@@ -3126,7 +3117,6 @@ mod tests {
         let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
 
         let thread_store = Some(cx.new(|cx| ThreadStore::new(cx)));
-        let history = cx.update(|_window, cx| cx.new(|cx| crate::ThreadHistory::new(None, cx)));
 
         let message_editor = cx.update(|window, cx| {
             cx.new(|cx| {
@@ -3134,7 +3124,7 @@ mod tests {
                     workspace.downgrade(),
                     project.downgrade(),
                     thread_store.clone(),
-                    history.downgrade(),
+                    None,
                     None,
                     Default::default(),
                     Default::default(),
@@ -3190,7 +3180,6 @@ mod tests {
         let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
 
         let thread_store = Some(cx.new(|cx| ThreadStore::new(cx)));
-        let history = cx.update(|_window, cx| cx.new(|cx| crate::ThreadHistory::new(None, cx)));
 
         let (message_editor, editor) = workspace.update_in(cx, |workspace, window, cx| {
             let workspace_handle = cx.weak_entity();
@@ -3199,7 +3188,7 @@ mod tests {
                     workspace_handle,
                     project.downgrade(),
                     thread_store.clone(),
-                    history.downgrade(),
+                    None,
                     None,
                     Default::default(),
                     Default::default(),
@@ -3349,7 +3338,6 @@ mod tests {
         });
 
         let thread_store = Some(cx.new(|cx| ThreadStore::new(cx)));
-        let history = cx.update(|_window, cx| cx.new(|cx| crate::ThreadHistory::new(None, cx)));
 
         // Create a new `MessageEditor`. The `EditorMode::full()` has to be used
         // to ensure we have a fixed viewport, so we can eventually actually
@@ -3361,7 +3349,7 @@ mod tests {
                     workspace_handle,
                     project.downgrade(),
                     thread_store.clone(),
-                    history.downgrade(),
+                    None,
                     None,
                     Default::default(),
                     Default::default(),
@@ -3469,7 +3457,6 @@ mod tests {
         let mut cx = VisualTestContext::from_window(window.into(), cx);
 
         let thread_store = cx.new(|cx| ThreadStore::new(cx));
-        let history = cx.update(|_window, cx| cx.new(|cx| crate::ThreadHistory::new(None, cx)));
 
         let (message_editor, editor) = workspace.update_in(&mut cx, |workspace, window, cx| {
             let workspace_handle = cx.weak_entity();
@@ -3478,7 +3465,7 @@ mod tests {
                     workspace_handle,
                     project.downgrade(),
                     Some(thread_store),
-                    history.downgrade(),
+                    None,
                     None,
                     Default::default(),
                     Default::default(),
@@ -3551,7 +3538,6 @@ mod tests {
         let mut cx = VisualTestContext::from_window(window.into(), cx);
 
         let thread_store = cx.new(|cx| ThreadStore::new(cx));
-        let history = cx.update(|_window, cx| cx.new(|cx| crate::ThreadHistory::new(None, cx)));
 
         let (message_editor, editor) = workspace.update_in(&mut cx, |workspace, window, cx| {
             let workspace_handle = cx.weak_entity();
@@ -3560,7 +3546,7 @@ mod tests {
                     workspace_handle,
                     project.downgrade(),
                     Some(thread_store),
-                    history.downgrade(),
+                    None,
                     None,
                     Default::default(),
                     Default::default(),
@@ -3635,7 +3621,6 @@ mod tests {
         let (multi_workspace, cx) =
             cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
         let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
-        let history = cx.update(|_window, cx| cx.new(|cx| crate::ThreadHistory::new(None, cx)));
 
         let message_editor = cx.update(|window, cx| {
             cx.new(|cx| {
@@ -3643,7 +3628,7 @@ mod tests {
                     workspace.downgrade(),
                     project.downgrade(),
                     None,
-                    history.downgrade(),
+                    None,
                     None,
                     Default::default(),
                     Default::default(),
@@ -3787,7 +3772,6 @@ mod tests {
         let (multi_workspace, cx) =
             cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
         let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
-        let history = cx.update(|_window, cx| cx.new(|cx| crate::ThreadHistory::new(None, cx)));
 
         let message_editor = cx.update(|window, cx| {
             cx.new(|cx| {
@@ -3795,7 +3779,7 @@ mod tests {
                     workspace.downgrade(),
                     project.downgrade(),
                     None,
-                    history.downgrade(),
+                    None,
                     None,
                     Default::default(),
                     Default::default(),

@@ -1461,13 +1461,9 @@ impl AgentPanel {
                     .read(cx)
                     .history()?
                     .clone();
-                if history.read(cx).has_session_list() {
-                    Some(History::AgentThreads {
-                        view: self.create_thread_history_view(agent, history, window, cx),
-                    })
-                } else {
-                    None
-                }
+                Some(History::AgentThreads {
+                    view: self.create_thread_history_view(agent, history, window, cx),
+                })
             }
         }
     }
@@ -4664,16 +4660,13 @@ impl rules_library::InlineAssistDelegate for PromptLibraryInlineAssist {
             let Some(panel) = workspace.read(cx).panel::<AgentPanel>(cx) else {
                 return;
             };
-            let Some(history) = panel
+            let history = panel
                 .read(cx)
                 .connection_store()
                 .read(cx)
                 .entry(&crate::Agent::NativeAgent)
                 .and_then(|s| s.read(cx).history())
-            else {
-                log::error!("No connection entry found for native agent");
-                return;
-            };
+                .map(|h| h.downgrade());
             let project = workspace.read(cx).project().downgrade();
             let panel = panel.read(cx);
             let thread_store = panel.thread_store().clone();
@@ -4683,7 +4676,7 @@ impl rules_library::InlineAssistDelegate for PromptLibraryInlineAssist {
                 project,
                 thread_store,
                 None,
-                history.downgrade(),
+                history,
                 initial_prompt,
                 window,
                 cx,

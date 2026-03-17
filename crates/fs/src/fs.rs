@@ -76,6 +76,7 @@ pub enum PathEventKind {
     Removed,
     Created,
     Changed,
+    Rescan,
 }
 
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
@@ -1735,6 +1736,10 @@ impl FakeFs {
 
     pub fn buffered_event_count(&self) -> usize {
         self.state.lock().buffered_events.len()
+    }
+
+    pub fn clear_buffered_events(&self) {
+        self.state.lock().buffered_events.clear();
     }
 
     pub fn flush_events(&self, count: usize) {

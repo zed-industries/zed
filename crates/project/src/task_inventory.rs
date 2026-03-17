@@ -985,6 +985,10 @@ impl ContextProvider for BasicContextProvider {
             task_variables.insert(VariableName::File, path.to_string_lossy().into_owned());
         }
 
+        if let Some(language) = buffer.language() {
+            task_variables.insert(VariableName::Language, language.name().to_string());
+        }
+
         Task::ready(Ok(task_variables))
     }
 }

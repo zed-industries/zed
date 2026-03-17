@@ -1429,15 +1429,16 @@ impl acp_thread::AgentConnection for NativeAgentConnection {
         session_id: &acp::SessionId,
         cx: &mut App,
     ) -> Task<Result<()>> {
-        self.0.update(cx, |agent, _cx| {
-            let project_id = agent.sessions.get(session_id).map(|s| s.project_id);
-            agent.sessions.remove(session_id);
+        self.0.update(cx, |agent, cx| {
+            let Some(session) = agent.sessions.remove(session_id) else {
+                return;
+            };
+            let project_id = session.project_id;
+            agent.save_thread(session.thread, cx);
 
-            if let Some(project_id) = project_id {
-                let has_remaining = agent.sessions.values().any(|s| s.project_id == project_id);
-                if !has_remaining {
-                    agent.projects.remove(&project_id);
-                }
+            let has_remaining = agent.sessions.values().any(|s| s.project_id == project_id);
+            if !has_remaining {
+                agent.projects.remove(&project_id);
             }
         });
         Task::ready(Ok(()))
