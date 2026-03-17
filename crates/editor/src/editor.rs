@@ -27513,7 +27513,7 @@ impl EditorSnapshot {
 
         is_foldable |= self.crease_for_buffer_row(buffer_row).is_some();
 
-        if folded || (is_foldable && (row_contains_cursor || always_show_fold_carets)) {
+        if folded || (is_foldable && (row_contains_cursor || self.gutter_hovered || always_show_fold_carets)) {
             Some(
                 Disclosure::new(("gutter_crease", buffer_row.0), !folded)
                     .toggle_state(folded)
