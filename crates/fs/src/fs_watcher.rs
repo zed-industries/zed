@@ -203,8 +203,7 @@ fn coalesce_pending_rescans(pending_paths: &mut Vec<PathEvent>, path_events: &mu
     }
 
     path_events.retain(|event| {
-        event.kind != Some(PathEventKind::Rescan)
-            || deduped_rescans.iter().any(|p| event.path == *p)
+        event.kind != Some(PathEventKind::Rescan) || deduped_rescans.contains(&event.path)
     });
 }
 
