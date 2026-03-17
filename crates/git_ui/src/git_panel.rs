@@ -6783,6 +6783,83 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_staged_added_file_in_tracked_section(cx: &mut TestAppContext) {
+        use GitListEntry::*;
+
+        init_test(cx);
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(
+            "/root",
+            json!({
+                "project": {
+                    ".git": {},
+                    "src": {
+                        "main.rs": "fn main() {}"
+                    },
+                    "new_staged.txt": "staged content",
+                    "new_untracked.txt": "untracked content"
+                }
+            }),
+        )
+        .await;
+
+        fs.set_status_for_repo(
+            Path::new(path!("/root/project/.git")),
+            &[
+                ("src/main.rs", StatusCode::Modified.worktree()),
+                ("new_staged.txt", StatusCode::Added.index()),
+                ("new_untracked.txt", FileStatus::Untracked),
+            ],
+        );
+
+        let project = Project::test(fs.clone(), [Path::new(path!("/root/project"))], cx).await;
+        let window_handle =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = window_handle
+            .read_with(cx, |mw, _| mw.workspace().clone())
+            .unwrap();
+        let cx = &mut VisualTestContext::from_window(window_handle.into(), cx);
+
+        cx.read(|cx| {
+            project
+                .read(cx)
+                .worktrees(cx)
+                .next()
+                .unwrap()
+                .read(cx)
+                .as_local()
+                .unwrap()
+                .scan_complete()
+        })
+        .await;
+
+        cx.executor().run_until_parked();
+
+        let panel = workspace.update_in(cx, GitPanel::new);
+
+        let handle = cx.update_window_entity(&panel, |panel, _, _| {
+            std::mem::replace(&mut panel.update_visible_entries_task, Task::ready(()))
+        });
+        cx.executor().advance_clock(2 * UPDATE_DEBOUNCE);
+        handle.await;
+
+        let entries = panel.read_with(cx, |panel, _| panel.entries.clone());
+        #[rustfmt::skip]
+        pretty_assertions::assert_matches!(
+            entries.as_slice(),
+            &[
+                // Staged-added file should be in Tracked, not New
+                Header(GitHeaderEntry { header: Section::Tracked }),
+                Status(GitStatusEntry { staging: StageStatus::Staged, .. }),
+                Status(GitStatusEntry { staging: StageStatus::Unstaged, .. }),
+                // Only truly untracked files in New
+                Header(GitHeaderEntry { header: Section::New }),
+                Status(GitStatusEntry { staging: StageStatus::Unstaged, .. }),
+            ],
+        );
+    }
+
+    #[gpui::test]
     async fn test_bulk_staging_with_sort_by_paths(cx: &mut TestAppContext) {
         use GitListEntry::*;
 
