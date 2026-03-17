@@ -478,6 +478,76 @@ async fn test_edit_prediction_preview_cleanup_on_toggle_off(cx: &mut gpui::TestA
     });
 }
 
+fn load_default_keymap(cx: &mut gpui::TestAppContext) {
+    cx.update(|cx| {
+        cx.bind_keys(
+            settings::KeymapFile::load_asset_allow_partial_failure(
+                settings::DEFAULT_KEYMAP_PATH,
+                cx,
+            )
+            .expect("failed to load default keymap"),
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_tab_is_preferred_accept_binding_over_alt_tab(cx: &mut gpui::TestAppContext) {
+    init_test(cx, |_| {});
+    load_default_keymap(cx);
+
+    let mut cx = EditorTestContext::new(cx).await;
+    let provider = cx.new(|_| FakeEditPredictionDelegate::default());
+    assign_editor_completion_provider(provider.clone(), &mut cx);
+    cx.set_state("let x = ˇ;");
+
+    propose_edits(&provider, vec![(8..8, "42")], &mut cx);
+    cx.update_editor(|editor, window, cx| editor.update_visible_edit_prediction(window, cx));
+
+    cx.update_editor(|editor, window, cx| {
+        assert!(editor.has_active_edit_prediction());
+        let binding = editor.accept_edit_prediction_keybind(
+            edit_prediction_types::EditPredictionGranularity::Full,
+            window,
+            cx,
+        );
+        let keystroke = binding.keystroke().expect("should have an accept binding");
+        assert!(
+            !keystroke.modifiers().modified(),
+            "preferred accept binding should be unmodified (tab), got modifiers: {:?}",
+            keystroke.modifiers()
+        );
+        assert_eq!(
+            keystroke.key(),
+            "tab",
+            "preferred accept binding should be tab"
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_tab_accepts_edit_prediction_over_completion(cx: &mut gpui::TestAppContext) {
+    init_test(cx, |_| {});
+    load_default_keymap(cx);
+
+    let mut cx = EditorTestContext::new(cx).await;
+    let provider = cx.new(|_| FakeEditPredictionDelegate::default());
+    assign_editor_completion_provider(provider.clone(), &mut cx);
+    cx.set_state("let x = ˇ;");
+
+    propose_edits(&provider, vec![(8..8, "42")], &mut cx);
+    cx.update_editor(|editor, window, cx| editor.update_visible_edit_prediction(window, cx));
+
+    assert_editor_active_edit_completion(&mut cx, |_, edits| {
+        assert_eq!(edits.len(), 1);
+        assert_eq!(edits[0].1.as_ref(), "42");
+    });
+
+    cx.simulate_keystroke("tab");
+    cx.run_until_parked();
+
+    cx.assert_editor_state("let x = 42ˇ;");
+}
+
 fn assert_editor_active_edit_completion(
     cx: &mut EditorTestContext,
     assert: impl FnOnce(MultiBufferSnapshot, &Vec<(Range<Anchor>, Arc<str>)>),
