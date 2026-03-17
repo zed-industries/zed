@@ -1867,13 +1867,11 @@ impl GitRepository for RealGitRepository {
     }
 
     fn delete_branch(&self, is_remote: bool, name: String) -> BoxFuture<'_, Result<()>> {
-        let git_binary_path = self.any_git_binary_path.clone();
-        let working_directory = self.working_directory();
-        let executor = self.executor.clone();
+        let git_binary = self.git_binary();
 
         self.executor
             .spawn(async move {
-                GitBinary::new(git_binary_path, working_directory?, executor)
+                git_binary?
                     .run(&["branch", if is_remote { "-dr" } else { "-d" }, &name])
                     .await?;
                 anyhow::Ok(())
