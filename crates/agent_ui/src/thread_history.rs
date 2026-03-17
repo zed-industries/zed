@@ -1,11 +1,12 @@
 use acp_thread::{AgentSessionInfo, AgentSessionList, AgentSessionListRequest, SessionListUpdate};
 use agent_client_protocol as acp;
 use gpui::{App, Task};
-use std::rc::Rc;
+use std::{path::PathBuf, rc::Rc};
 use ui::prelude::*;
 
 pub struct ThreadHistory {
     session_list: Rc<dyn AgentSessionList>,
+    cwd: Option<PathBuf>,
     sessions: Vec<AgentSessionInfo>,
     _refresh_task: Task<()>,
     _watch_task: Option<Task<()>>,
@@ -15,6 +16,7 @@ impl ThreadHistory {
     pub fn new(session_list: Rc<dyn AgentSessionList>, cx: &mut Context<Self>) -> Self {
         let mut this = Self {
             session_list,
+            cwd: None,
             sessions: Vec::new(),
             _refresh_task: Task::ready(()),
             _watch_task: None,
@@ -35,6 +37,16 @@ impl ThreadHistory {
         }
 
         self.session_list = session_list;
+        self.sessions.clear();
+        self._refresh_task = Task::ready(());
+        self.start_watching(cx);
+    }
+
+    pub fn set_cwd(&mut self, cwd: Option<PathBuf>, cx: &mut Context<Self>) {
+        if self.cwd == cwd {
+            return;
+        }
+        self.cwd = cwd;
         self.sessions.clear();
         self._refresh_task = Task::ready(());
         self.start_watching(cx);
@@ -122,6 +134,7 @@ impl ThreadHistory {
 
     fn refresh_sessions(&mut self, load_all_pages: bool, cx: &mut Context<Self>) {
         let session_list = self.session_list.clone();
+        let cwd = self.cwd.clone();
 
         self._refresh_task = cx.spawn(async move |this, cx| {
             let mut cursor: Option<String> = None;
@@ -129,6 +142,7 @@ impl ThreadHistory {
 
             loop {
                 let request = AgentSessionListRequest {
+                    cwd: cwd.clone(),
                     cursor: cursor.clone(),
                     ..Default::default()
                 };
@@ -239,6 +253,7 @@ mod tests {
     #[derive(Clone)]
     struct TestSessionList {
         sessions: Vec<AgentSessionInfo>,
+        captured_cwd: Arc<Mutex<Option<Option<PathBuf>>>>,
         updates_tx: smol::channel::Sender<SessionListUpdate>,
         updates_rx: smol::channel::Receiver<SessionListUpdate>,
     }
@@ -248,9 +263,14 @@ mod tests {
             let (tx, rx) = smol::channel::unbounded();
             Self {
                 sessions,
+                captured_cwd: Arc::new(Mutex::new(None)),
                 updates_tx: tx,
                 updates_rx: rx,
             }
+        }
+
+        fn captured_cwd(&self) -> Option<Option<PathBuf>> {
+            self.captured_cwd.lock().unwrap().clone()
         }
 
         fn send_update(&self, update: SessionListUpdate) {
@@ -261,9 +281,10 @@ mod tests {
     impl AgentSessionList for TestSessionList {
         fn list_sessions(
             &self,
-            _request: AgentSessionListRequest,
+            request: AgentSessionListRequest,
             _cx: &mut App,
         ) -> Task<anyhow::Result<AgentSessionListResponse>> {
+            *self.captured_cwd.lock().unwrap() = Some(request.cwd);
             Task::ready(Ok(AgentSessionListResponse::new(self.sessions.clone())))
         }
 
@@ -768,5 +789,23 @@ mod tests {
                 Some("Original")
             );
         });
+    }
+
+    #[gpui::test]
+    async fn test_refresh_passes_cwd_in_list_request(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let session_list = Rc::new(TestSessionList::new(vec![test_session("s-1", "First")]));
+
+        let history = cx.new(|cx| ThreadHistory::new(session_list.clone(), cx));
+        cx.run_until_parked();
+
+        let cwd = PathBuf::from("/projects/my-project");
+        history.update(cx, |history, cx| {
+            history.set_cwd(Some(cwd.clone()), cx);
+        });
+        cx.run_until_parked();
+
+        assert_eq!(session_list.captured_cwd(), Some(Some(cwd)));
     }
 }

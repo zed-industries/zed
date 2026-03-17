@@ -647,6 +647,7 @@ impl ConversationView {
                 PathList::new(&worktree_roots)
             }
         });
+        let session_cwd = session_work_dirs.ordered_paths().next().cloned();
 
         let connection_entry = connection_store.update(cx, |store, cx| {
             store.request_connection(connection_key, agent.clone(), cx)
@@ -775,6 +776,11 @@ impl ConversationView {
                         }
 
                         let id = current.read(cx).thread.read(cx).session_id().clone();
+                        if let Some(history) = history.as_ref() {
+                            history.update(cx, move |history, cx| {
+                                history.set_cwd(session_cwd, cx);
+                            });
+                        }
                         this.set_server_state(
                             ServerState::Connected(ConnectedServerState {
                                 connection,
