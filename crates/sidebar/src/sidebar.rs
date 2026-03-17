@@ -1773,7 +1773,6 @@ impl Sidebar {
                             let session_id = session_id_for_delete.clone();
                             cx.listener(move |this, _, _window, cx| {
                                 this.delete_thread(&session_id, cx);
-                                cx.stop_propagation();
                             })
                         }),
                 )
