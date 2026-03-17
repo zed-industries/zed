@@ -1225,7 +1225,7 @@
       "alt-right": ["terminal::SendText", "\u001bf"],
       "alt-b": ["terminal::SendText", "\u001bb"],
       "alt-f": ["terminal::SendText", "\u001bf"],
-      "ctrl-delete": ["terminal::SendText", "\u001bd"],
+      "ctrl-delete": ["terminal::SendText", "\u001b[3;5~"],
       // There are conflicting bindings for these keys in the global context.
       // these bindings override them, remove at your own risk:
       "up": ["terminal::SendKeystroke", "up"],
