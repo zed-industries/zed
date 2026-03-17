@@ -39,6 +39,7 @@ pub struct ThreadItem {
     worktree_highlight_positions: Vec<usize>,
     on_click: Option<Box<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>>,
     on_hover: Box<dyn Fn(&bool, &mut Window, &mut App) + 'static>,
+    title_label_color: Option<Color>,
     action_slot: Option<AnyElement>,
     tooltip: Option<Box<dyn Fn(&mut Window, &mut App) -> AnyView + 'static>>,
 }
@@ -65,6 +66,7 @@ impl ThreadItem {
             worktree_highlight_positions: Vec::new(),
             on_click: None,
             on_hover: Box::new(|_, _, _| {}),
+            title_label_color: None,
             action_slot: None,
             tooltip: None,
         }
@@ -158,6 +160,11 @@ impl ThreadItem {
         self
     }
 
+    pub fn title_label_color(mut self, color: Color) -> Self {
+        self.title_label_color = Some(color);
+        self
+    }
+
     pub fn action_slot(mut self, element: impl IntoElement) -> Self {
         self.action_slot = Some(element.into_any_element());
         self
@@ -244,9 +251,21 @@ impl RenderOnce for ThreadItem {
                 )
                 .into_any_element()
         } else if highlight_positions.is_empty() {
-            Label::new(title).into_any_element()
+            let label = Label::new(title);
+            let label = if let Some(color) = self.title_label_color {
+                label.color(color)
+            } else {
+                label
+            };
+            label.into_any_element()
         } else {
-            HighlightedLabel::new(title, highlight_positions).into_any_element()
+            let label = HighlightedLabel::new(title, highlight_positions);
+            let label = if let Some(color) = self.title_label_color {
+                label.color(color)
+            } else {
+                label
+            };
+            label.into_any_element()
         };
 
         let b_bg = color
