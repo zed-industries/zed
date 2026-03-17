@@ -568,6 +568,10 @@ actions!(
         GoToParentModule,
         /// Goes to the previous change in the file.
         GoToPreviousChange,
+        /// Goes to the next symbol.
+        GoToNextSymbol,
+        /// Goes to the previous symbol.
+        GoToPreviousSymbol,
         /// Goes to the next reference to the symbol under the cursor.
         GoToNextReference,
         /// Goes to the previous reference to the symbol under the cursor.

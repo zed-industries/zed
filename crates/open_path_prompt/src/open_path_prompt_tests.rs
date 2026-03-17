@@ -6,7 +6,7 @@ use project::Project;
 use serde_json::json;
 use ui::rems;
 use util::path;
-use workspace::{AppState, Workspace};
+use workspace::{AppState, MultiWorkspace};
 
 use crate::OpenPathDelegate;
 
@@ -426,7 +426,9 @@ fn build_open_path_prompt(
     let (tx, _) = futures::channel::oneshot::channel();
     let lister = project::DirectoryLister::Project(project.clone());
 
-    let (workspace, cx) = cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
+    let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
     (
         workspace.update_in(cx, |_, window, cx| {
             let delegate = OpenPathDelegate::new(tx, lister.clone(), creating_path, cx);

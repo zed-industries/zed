@@ -6,6 +6,9 @@ pub mod pending_op;
 use crate::{
     ProjectEnvironment, ProjectItem, ProjectPath,
     buffer_store::{BufferStore, BufferStoreEvent},
+    trusted_worktrees::{
+        PathTrust, TrustedWorktrees, TrustedWorktreesEvent, TrustedWorktreesStore,
+    },
     worktree_store::{WorktreeStore, WorktreeStoreEvent},
 };
 use anyhow::{Context as _, Result, anyhow, bail};
@@ -21,7 +24,7 @@ use futures::{
         mpsc,
         oneshot::{self, Canceled},
     },
-    future::{self, Shared},
+    future::{self, BoxFuture, Shared},
     stream::FuturesOrdered,
 };
 use git::{
@@ -36,8 +39,8 @@ use git::{
     },
     stash::{GitStash, StashEntry},
     status::{
-        DiffTreeType, FileStatus, GitSummary, StatusCode, TrackedStatus, TreeDiff, TreeDiffStatus,
-        UnmergedStatus, UnmergedStatusCode,
+        self, DiffStat, DiffTreeType, FileStatus, GitSummary, StatusCode, TrackedStatus, TreeDiff,
+        TreeDiffStatus, UnmergedStatus, UnmergedStatusCode,
     },
 };
 use gpui::{
@@ -60,7 +63,7 @@ use settings::WorktreeId;
 use smol::future::yield_now;
 use std::{
     cmp::Ordering,
-    collections::{BTreeSet, HashSet, VecDeque},
+    collections::{BTreeSet, HashSet, VecDeque, hash_map::Entry},
     future::Future,
     mem,
     ops::Range,
@@ -72,7 +75,7 @@ use std::{
     },
     time::Instant,
 };
-use sum_tree::{Edit, SumTree, TreeSet};
+use sum_tree::{Edit, SumTree, TreeMap};
 use task::Shell;
 use text::{Bias, BufferId};
 use util::{
@@ -192,6 +195,7 @@ pub struct GitStoreCheckpoint {
 pub struct StatusEntry {
     pub repo_path: RepoPath,
     pub status: FileStatus,
+    pub diff_stat: Option<DiffStat>,
 }
 
 impl StatusEntry {
@@ -213,6 +217,8 @@ impl StatusEntry {
             repo_path: self.repo_path.to_proto(),
             simple_status,
             status: Some(status_to_proto(self.status)),
+            diff_stat_added: self.diff_stat.map(|ds| ds.added),
+            diff_stat_deleted: self.diff_stat.map(|ds| ds.deleted),
         }
     }
 }
@@ -223,7 +229,15 @@ impl TryFrom<proto::StatusEntry> for StatusEntry {
     fn try_from(value: proto::StatusEntry) -> Result<Self, Self::Error> {
         let repo_path = RepoPath::from_proto(&value.repo_path).context("invalid repo path")?;
         let status = status_from_proto(value.simple_status, value.status)?;
-        Ok(Self { repo_path, status })
+        let diff_stat = match (value.diff_stat_added, value.diff_stat_deleted) {
+            (Some(added), Some(deleted)) => Some(DiffStat { added, deleted }),
+            _ => None,
+        };
+        Ok(Self {
+            repo_path,
+            status,
+            diff_stat,
+        })
     }
 }
 
@@ -251,9 +265,8 @@ pub struct RepositoryId(pub u64);
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct MergeDetails {
-    pub conflicted_paths: TreeSet<RepoPath>,
+    pub merge_heads_by_conflicted_path: TreeMap<RepoPath, Vec<Option<SharedString>>>,
     pub message: Option<SharedString>,
-    pub heads: Vec<Option<SharedString>>,
 }
 
 #[derive(Clone)]
@@ -267,6 +280,11 @@ pub struct RepositorySnapshot {
     pub id: RepositoryId,
     pub statuses_by_path: SumTree<StatusEntry>,
     pub work_directory_abs_path: Arc<Path>,
+    /// The working directory of the original repository. For a normal
+    /// checkout this equals `work_directory_abs_path`. For a git worktree
+    /// checkout, this is the original repo's working directory — used to
+    /// anchor new worktree creation so they don't nest.
+    pub original_repo_abs_path: Arc<Path>,
     pub path_style: PathStyle,
     pub branch: Option<Branch>,
     pub head_commit: Option<CommitDetails>,
@@ -275,6 +293,7 @@ pub struct RepositorySnapshot {
     pub remote_origin_url: Option<String>,
     pub remote_upstream_url: Option<String>,
     pub stash_entries: GitStash,
+    pub linked_worktrees: Arc<[GitWorktree]>,
 }
 
 type JobId = u64;
@@ -296,6 +315,19 @@ enum GraphCommitHandlerState {
     Closed,
 }
 
+pub struct InitialGitGraphData {
+    fetch_task: Task<()>,
+    pub error: Option<SharedString>,
+    pub commit_data: Vec<Arc<InitialGraphCommitData>>,
+    pub commit_oid_to_index: HashMap<Oid, usize>,
+}
+
+pub struct GraphDataResponse<'a> {
+    pub commits: &'a [Arc<InitialGraphCommitData>],
+    pub is_loading: bool,
+    pub error: Option<SharedString>,
+}
+
 pub struct Repository {
     this: WeakEntity<Self>,
     snapshot: RepositorySnapshot,
@@ -303,7 +335,7 @@ pub struct Repository {
     git_store: WeakEntity<GitStore>,
     // For a local repository, holds paths that have had worktree events since the last status scan completed,
     // and that should be examined during the next status scan.
-    paths_needing_status_update: BTreeSet<RepoPath>,
+    paths_needing_status_update: Vec<Vec<RepoPath>>,
     job_sender: mpsc::UnboundedSender<GitJob>,
     active_jobs: HashMap<JobId, JobInfo>,
     pending_ops: SumTree<PendingOps>,
@@ -311,13 +343,7 @@ pub struct Repository {
     askpass_delegates: Arc<Mutex<HashMap<u64, AskPassDelegate>>>,
     latest_askpass_id: u64,
     repository_state: Shared<Task<Result<RepositoryState, String>>>,
-    pub initial_graph_data: HashMap<
-        (LogOrder, LogSource),
-        (
-            Task<Result<(), SharedString>>,
-            Vec<Arc<InitialGraphCommitData>>,
-        ),
-    >,
+    initial_graph_data: HashMap<(LogSource, LogOrder), InitialGitGraphData>,
     graph_commit_data_handler: GraphCommitHandlerState,
     commit_data: HashMap<Oid, CommitDataState>,
 }
@@ -343,6 +369,7 @@ impl LocalRepositoryState {
         dot_git_abs_path: Arc<Path>,
         project_environment: WeakEntity<ProjectEnvironment>,
         fs: Arc<dyn Fs>,
+        is_trusted: bool,
         cx: &mut AsyncApp,
     ) -> anyhow::Result<Self> {
         let environment = project_environment
@@ -370,6 +397,7 @@ impl LocalRepositoryState {
                 }
             })
             .await?;
+        backend.set_trusted(is_trusted);
         Ok(LocalRepositoryState {
             backend,
             environment: Arc::new(environment),
@@ -391,13 +419,20 @@ pub enum RepositoryState {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+pub enum GitGraphEvent {
+    CountUpdated(usize),
+    FullyLoaded,
+    LoadingError,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum RepositoryEvent {
     StatusesChanged,
-    MergeHeadsChanged,
     BranchChanged,
     StashEntriesChanged,
+    GitWorktreeListChanged,
     PendingOpsChanged { pending_ops: SumTree<PendingOps> },
-    GitGraphCountUpdated((LogOrder, LogSource), usize),
+    GraphEvent((LogSource, LogOrder), GitGraphEvent),
 }
 
 #[derive(Clone, Debug)]
@@ -478,10 +513,14 @@ impl GitStore {
         state: GitStoreState,
         cx: &mut Context<Self>,
     ) -> Self {
-        let _subscriptions = vec![
+        let mut _subscriptions = vec![
             cx.subscribe(&worktree_store, Self::on_worktree_store_event),
             cx.subscribe(&buffer_store, Self::on_buffer_store_event),
         ];
+
+        if let Some(trusted_worktrees) = TrustedWorktrees::try_get_global(cx) {
+            _subscriptions.push(cx.subscribe(&trusted_worktrees, Self::on_trusted_worktrees_event));
+        }
 
         GitStore {
             state,
@@ -541,6 +580,8 @@ impl GitStore {
         client.add_entity_request_handler(Self::handle_git_clone);
         client.add_entity_request_handler(Self::handle_get_worktrees);
         client.add_entity_request_handler(Self::handle_create_worktree);
+        client.add_entity_request_handler(Self::handle_remove_worktree);
+        client.add_entity_request_handler(Self::handle_rename_worktree);
     }
 
     pub fn is_local(&self) -> bool {
@@ -1209,7 +1250,7 @@ impl GitStore {
             if buffer
                 .read(cx)
                 .language()
-                .is_none_or(|lang| lang.name() != "Rust".into())
+                .is_none_or(|lang| lang.name() != "Rust")
             {
                 return Task::ready(Err(anyhow!("no permalink available")));
             }
@@ -1492,19 +1533,30 @@ impl GitStore {
                 new_work_directory_abs_path: Some(work_directory_abs_path),
                 dot_git_abs_path: Some(dot_git_abs_path),
                 repository_dir_abs_path: Some(_repository_dir_abs_path),
-                common_dir_abs_path: Some(_common_dir_abs_path),
+                common_dir_abs_path: Some(common_dir_abs_path),
                 ..
             } = update
             {
+                let original_repo_abs_path: Arc<Path> =
+                    git::repository::original_repo_path_from_common_dir(common_dir_abs_path).into();
                 let id = RepositoryId(next_repository_id.fetch_add(1, atomic::Ordering::Release));
+                let is_trusted = TrustedWorktrees::try_get_global(cx)
+                    .map(|trusted_worktrees| {
+                        trusted_worktrees.update(cx, |trusted_worktrees, cx| {
+                            trusted_worktrees.can_trust(&self.worktree_store, worktree_id, cx)
+                        })
+                    })
+                    .unwrap_or(false);
                 let git_store = cx.weak_entity();
                 let repo = cx.new(|cx| {
                     let mut repo = Repository::local(
                         id,
                         work_directory_abs_path.clone(),
+                        original_repo_abs_path.clone(),
                         dot_git_abs_path.clone(),
                         project_environment.downgrade(),
                         fs.clone(),
+                        is_trusted,
                         git_store,
                         cx,
                     );
@@ -1541,6 +1593,39 @@ impl GitStore {
                 updates_tx
                     .unbounded_send(DownstreamUpdate::RemoveRepository(id))
                     .ok();
+            }
+        }
+    }
+
+    fn on_trusted_worktrees_event(
+        &mut self,
+        _: Entity<TrustedWorktreesStore>,
+        event: &TrustedWorktreesEvent,
+        cx: &mut Context<Self>,
+    ) {
+        if !matches!(self.state, GitStoreState::Local { .. }) {
+            return;
+        }
+
+        let (is_trusted, event_paths) = match event {
+            TrustedWorktreesEvent::Trusted(_, trusted_paths) => (true, trusted_paths),
+            TrustedWorktreesEvent::Restricted(_, restricted_paths) => (false, restricted_paths),
+        };
+
+        for (repo_id, worktree_ids) in &self.worktree_ids {
+            if worktree_ids
+                .iter()
+                .any(|worktree_id| event_paths.contains(&PathTrust::Worktree(*worktree_id)))
+            {
+                if let Some(repo) = self.repositories.get(repo_id) {
+                    let repository_state = repo.read(cx).repository_state.clone();
+                    cx.background_spawn(async move {
+                        if let Ok(RepositoryState::Local(state)) = repository_state.await {
+                            state.backend.set_trusted(is_trusted);
+                        }
+                    })
+                    .detach();
+                }
             }
         }
     }
@@ -1615,7 +1700,6 @@ impl GitStore {
                     .detach();
                 }
             }
-            _ => {}
         }
     }
 
@@ -1828,6 +1912,11 @@ impl GitStore {
             let id = RepositoryId::from_proto(update.id);
             let client = this.upstream_client().context("no upstream client")?;
 
+            let original_repo_abs_path: Option<Arc<Path>> = update
+                .original_repo_abs_path
+                .as_deref()
+                .map(|p| Path::new(p).into());
+
             let mut repo_subscription = None;
             let repo = this.repositories.entry(id).or_insert_with(|| {
                 let git_store = cx.weak_entity();
@@ -1835,6 +1924,7 @@ impl GitStore {
                     Repository::remote(
                         id,
                         Path::new(&update.abs_path).into(),
+                        original_repo_abs_path.clone(),
                         path_style,
                         ProjectId(update.project_id),
                         client,
@@ -2298,6 +2388,44 @@ impl GitStore {
         Ok(proto::Ack {})
     }
 
+    async fn handle_remove_worktree(
+        this: Entity<Self>,
+        envelope: TypedEnvelope<proto::GitRemoveWorktree>,
+        mut cx: AsyncApp,
+    ) -> Result<proto::Ack> {
+        let repository_id = RepositoryId::from_proto(envelope.payload.repository_id);
+        let repository_handle = Self::repository_for_request(&this, repository_id, &mut cx)?;
+        let path = PathBuf::from(envelope.payload.path);
+        let force = envelope.payload.force;
+
+        repository_handle
+            .update(&mut cx, |repository_handle, _| {
+                repository_handle.remove_worktree(path, force)
+            })
+            .await??;
+
+        Ok(proto::Ack {})
+    }
+
+    async fn handle_rename_worktree(
+        this: Entity<Self>,
+        envelope: TypedEnvelope<proto::GitRenameWorktree>,
+        mut cx: AsyncApp,
+    ) -> Result<proto::Ack> {
+        let repository_id = RepositoryId::from_proto(envelope.payload.repository_id);
+        let repository_handle = Self::repository_for_request(&this, repository_id, &mut cx)?;
+        let old_path = PathBuf::from(envelope.payload.old_path);
+        let new_path = PathBuf::from(envelope.payload.new_path);
+
+        repository_handle
+            .update(&mut cx, |repository_handle, _| {
+                repository_handle.rename_worktree(old_path, new_path)
+            })
+            .await??;
+
+        Ok(proto::Ack {})
+    }
+
     async fn handle_get_branches(
         this: Entity<Self>,
         envelope: TypedEnvelope<proto::GitGetBranches>,
@@ -2661,6 +2789,15 @@ impl GitStore {
         let diff_type = match envelope.payload.diff_type() {
             proto::git_diff::DiffType::HeadToIndex => DiffType::HeadToIndex,
             proto::git_diff::DiffType::HeadToWorktree => DiffType::HeadToWorktree,
+            proto::git_diff::DiffType::MergeBase => {
+                let base_ref = envelope
+                    .payload
+                    .merge_base_ref
+                    .ok_or_else(|| anyhow!("merge_base_ref is required for MergeBase diff type"))?;
+                DiffType::MergeBase {
+                    base_ref: base_ref.into(),
+                }
+            }
         };
 
         let mut diff = repository_handle
@@ -3421,10 +3558,17 @@ impl RepositoryId {
 }
 
 impl RepositorySnapshot {
-    fn empty(id: RepositoryId, work_directory_abs_path: Arc<Path>, path_style: PathStyle) -> Self {
+    fn empty(
+        id: RepositoryId,
+        work_directory_abs_path: Arc<Path>,
+        original_repo_abs_path: Option<Arc<Path>>,
+        path_style: PathStyle,
+    ) -> Self {
         Self {
             id,
             statuses_by_path: Default::default(),
+            original_repo_abs_path: original_repo_abs_path
+                .unwrap_or_else(|| work_directory_abs_path.clone()),
             work_directory_abs_path,
             branch: None,
             head_commit: None,
@@ -3433,6 +3577,7 @@ impl RepositorySnapshot {
             remote_origin_url: None,
             remote_upstream_url: None,
             stash_entries: Default::default(),
+            linked_worktrees: Arc::from([]),
             path_style,
         }
     }
@@ -3449,9 +3594,9 @@ impl RepositorySnapshot {
             removed_statuses: Default::default(),
             current_merge_conflicts: self
                 .merge
-                .conflicted_paths
+                .merge_heads_by_conflicted_path
                 .iter()
-                .map(|repo_path| repo_path.to_proto())
+                .map(|(repo_path, _)| repo_path.to_proto())
                 .collect(),
             merge_message: self.merge.message.as_ref().map(|msg| msg.to_string()),
             project_id,
@@ -3468,6 +3613,14 @@ impl RepositorySnapshot {
                 .collect(),
             remote_upstream_url: self.remote_upstream_url.clone(),
             remote_origin_url: self.remote_origin_url.clone(),
+            original_repo_abs_path: Some(
+                self.original_repo_abs_path.to_string_lossy().into_owned(),
+            ),
+            linked_worktrees: self
+                .linked_worktrees
+                .iter()
+                .map(worktree_to_proto)
+                .collect(),
         }
     }
 
@@ -3489,7 +3642,9 @@ impl RepositorySnapshot {
                             current_new_entry = new_statuses.next();
                         }
                         Ordering::Equal => {
-                            if new_entry.status != old_entry.status {
+                            if new_entry.status != old_entry.status
+                                || new_entry.diff_stat != old_entry.diff_stat
+                            {
                                 updated_statuses.push(new_entry.to_proto());
                             }
                             current_old_entry = old_statuses.next();
@@ -3520,9 +3675,9 @@ impl RepositorySnapshot {
             removed_statuses,
             current_merge_conflicts: self
                 .merge
-                .conflicted_paths
+                .merge_heads_by_conflicted_path
                 .iter()
-                .map(|path| path.to_proto())
+                .map(|(path, _)| path.to_proto())
                 .collect(),
             merge_message: self.merge.message.as_ref().map(|msg| msg.to_string()),
             project_id,
@@ -3539,7 +3694,19 @@ impl RepositorySnapshot {
                 .collect(),
             remote_upstream_url: self.remote_upstream_url.clone(),
             remote_origin_url: self.remote_origin_url.clone(),
+            original_repo_abs_path: Some(
+                self.original_repo_abs_path.to_string_lossy().into_owned(),
+            ),
+            linked_worktrees: self
+                .linked_worktrees
+                .iter()
+                .map(worktree_to_proto)
+                .collect(),
         }
+    }
+
+    pub fn linked_worktrees(&self) -> &[GitWorktree] {
+        &self.linked_worktrees
     }
 
     pub fn status(&self) -> impl Iterator<Item = StatusEntry> + '_ {
@@ -3554,6 +3721,12 @@ impl RepositorySnapshot {
         self.statuses_by_path
             .get(&PathKey(path.as_ref().clone()), ())
             .cloned()
+    }
+
+    pub fn diff_stat_for_path(&self, path: &RepoPath) -> Option<DiffStat> {
+        self.statuses_by_path
+            .get(&PathKey(path.as_ref().clone()), ())
+            .and_then(|entry| entry.diff_stat)
     }
 
     pub fn abs_path_to_repo_path(&self, abs_path: &Path) -> Option<RepoPath> {
@@ -3578,12 +3751,16 @@ impl RepositorySnapshot {
     }
 
     pub fn had_conflict_on_last_merge_head_change(&self, repo_path: &RepoPath) -> bool {
-        self.merge.conflicted_paths.contains(repo_path)
+        self.merge
+            .merge_heads_by_conflicted_path
+            .contains_key(repo_path)
     }
 
     pub fn has_conflict(&self, repo_path: &RepoPath) -> bool {
-        let had_conflict_on_last_merge_head_change =
-            self.merge.conflicted_paths.contains(repo_path);
+        let had_conflict_on_last_merge_head_change = self
+            .merge
+            .merge_heads_by_conflicted_path
+            .contains_key(repo_path);
         let has_conflict_currently = self
             .status_for_path(repo_path)
             .is_some_and(|entry| entry.status.is_conflicted());
@@ -3622,13 +3799,13 @@ pub fn proto_to_stash(entry: &proto::StashEntry) -> Result<StashEntry> {
 }
 
 impl MergeDetails {
-    async fn load(
+    async fn update(
+        &mut self,
         backend: &Arc<dyn GitRepository>,
-        status: &SumTree<StatusEntry>,
-        prev_snapshot: &RepositorySnapshot,
-    ) -> Result<(MergeDetails, bool)> {
+        current_conflicted_paths: Vec<RepoPath>,
+    ) -> Result<bool> {
         log::debug!("load merge details");
-        let message = backend.merge_message().await;
+        self.message = backend.merge_message().await.map(SharedString::from);
         let heads = backend
             .revparse_batch(vec![
                 "MERGE_HEAD".into(),
@@ -3643,48 +3820,42 @@ impl MergeDetails {
             .into_iter()
             .map(|opt| opt.map(SharedString::from))
             .collect::<Vec<_>>();
-        let merge_heads_changed = heads != prev_snapshot.merge.heads;
-        let conflicted_paths = if merge_heads_changed {
-            let current_conflicted_paths = TreeSet::from_ordered_entries(
-                status
-                    .iter()
-                    .filter(|entry| entry.status.is_conflicted())
-                    .map(|entry| entry.repo_path.clone()),
-            );
 
-            // It can happen that we run a scan while a lengthy merge is in progress
-            // that will eventually result in conflicts, but before those conflicts
-            // are reported by `git status`. Since for the moment we only care about
-            // the merge heads state for the purposes of tracking conflicts, don't update
-            // this state until we see some conflicts.
-            if heads.iter().any(Option::is_some)
-                && !prev_snapshot.merge.heads.iter().any(Option::is_some)
-                && current_conflicted_paths.is_empty()
-            {
-                log::debug!("not updating merge heads because no conflicts found");
-                return Ok((
-                    MergeDetails {
-                        message: message.map(SharedString::from),
-                        ..prev_snapshot.merge.clone()
-                    },
-                    false,
-                ));
+        let mut conflicts_changed = false;
+
+        // Record the merge state for newly conflicted paths
+        for path in &current_conflicted_paths {
+            if self.merge_heads_by_conflicted_path.get(&path).is_none() {
+                conflicts_changed = true;
+                self.merge_heads_by_conflicted_path
+                    .insert(path.clone(), heads.clone());
             }
+        }
 
-            current_conflicted_paths
-        } else {
-            prev_snapshot.merge.conflicted_paths.clone()
-        };
-        let details = MergeDetails {
-            conflicted_paths,
-            message: message.map(SharedString::from),
-            heads,
-        };
-        Ok((details, merge_heads_changed))
+        // Clear state for paths that are no longer conflicted and for which the merge heads have changed
+        self.merge_heads_by_conflicted_path
+            .retain(|path, old_merge_heads| {
+                let keep = current_conflicted_paths.contains(path)
+                    || (old_merge_heads == &heads
+                        && old_merge_heads.iter().any(|head| head.is_some()));
+                if !keep {
+                    conflicts_changed = true;
+                }
+                keep
+            });
+
+        Ok(conflicts_changed)
     }
 }
 
 impl Repository {
+    pub fn is_trusted(&self) -> bool {
+        match self.repository_state.peek() {
+            Some(Ok(RepositoryState::Local(state))) => state.backend.is_trusted(),
+            _ => false,
+        }
+    }
+
     pub fn snapshot(&self) -> RepositorySnapshot {
         self.snapshot.clone()
     }
@@ -3706,14 +3877,20 @@ impl Repository {
     fn local(
         id: RepositoryId,
         work_directory_abs_path: Arc<Path>,
+        original_repo_abs_path: Arc<Path>,
         dot_git_abs_path: Arc<Path>,
         project_environment: WeakEntity<ProjectEnvironment>,
         fs: Arc<dyn Fs>,
+        is_trusted: bool,
         git_store: WeakEntity<GitStore>,
         cx: &mut Context<Self>,
     ) -> Self {
-        let snapshot =
-            RepositorySnapshot::empty(id, work_directory_abs_path.clone(), PathStyle::local());
+        let snapshot = RepositorySnapshot::empty(
+            id,
+            work_directory_abs_path.clone(),
+            Some(original_repo_abs_path),
+            PathStyle::local(),
+        );
         let state = cx
             .spawn(async move |_, cx| {
                 LocalRepositoryState::new(
@@ -3721,6 +3898,7 @@ impl Repository {
                     dot_git_abs_path,
                     project_environment,
                     fs,
+                    is_trusted,
                     cx,
                 )
                 .await
@@ -3735,9 +3913,11 @@ impl Repository {
             })
             .shared();
 
-        cx.subscribe_self(|this, event: &RepositoryEvent, _| match event {
-            RepositoryEvent::BranchChanged | RepositoryEvent::MergeHeadsChanged => {
-                this.initial_graph_data.clear();
+        cx.subscribe_self(move |this, event: &RepositoryEvent, _| match event {
+            RepositoryEvent::BranchChanged => {
+                if this.scan_id > 1 {
+                    this.initial_graph_data.clear();
+                }
             }
             _ => {}
         })
@@ -3765,13 +3945,19 @@ impl Repository {
     fn remote(
         id: RepositoryId,
         work_directory_abs_path: Arc<Path>,
+        original_repo_abs_path: Option<Arc<Path>>,
         path_style: PathStyle,
         project_id: ProjectId,
         client: AnyProtoClient,
         git_store: WeakEntity<GitStore>,
         cx: &mut Context<Self>,
     ) -> Self {
-        let snapshot = RepositorySnapshot::empty(id, work_directory_abs_path, path_style);
+        let snapshot = RepositorySnapshot::empty(
+            id,
+            work_directory_abs_path,
+            original_repo_abs_path,
+            path_style,
+        );
         let repository_state = RemoteRepositoryState { project_id, client };
         let job_sender = Self::spawn_remote_git_worker(repository_state.clone(), cx);
         let repository_state = Task::ready(Ok(RepositoryState::Remote(repository_state))).shared();
@@ -4041,6 +4227,10 @@ impl Repository {
 
     pub fn cached_status(&self) -> impl '_ + Iterator<Item = StatusEntry> {
         self.snapshot.status()
+    }
+
+    pub fn diff_stat_for_path(&self, path: &RepoPath) -> Option<DiffStat> {
+        self.snapshot.diff_stat_for_path(path)
     }
 
     pub fn cached_stash(&self) -> GitStash {
@@ -4354,47 +4544,82 @@ impl Repository {
         })
     }
 
+    pub fn get_graph_data(
+        &self,
+        log_source: LogSource,
+        log_order: LogOrder,
+    ) -> Option<&InitialGitGraphData> {
+        self.initial_graph_data.get(&(log_source, log_order))
+    }
+
     pub fn graph_data(
         &mut self,
         log_source: LogSource,
         log_order: LogOrder,
         range: Range<usize>,
         cx: &mut Context<Self>,
-    ) -> (&[Arc<InitialGraphCommitData>], bool) {
-        let (loading_task, initial_commit_data) = self
+    ) -> GraphDataResponse<'_> {
+        let initial_commit_data = self
             .initial_graph_data
-            .entry((log_order, log_source.clone()))
+            .entry((log_source.clone(), log_order))
             .or_insert_with(|| {
                 let state = self.repository_state.clone();
                 let log_source = log_source.clone();
-                (
-                    cx.spawn(async move |repository, cx| {
-                        let state = state.await;
-                        match state {
-                            Ok(RepositoryState::Local(LocalRepositoryState {
-                                backend, ..
-                            })) => {
-                                Self::local_git_graph_data(
-                                    repository, backend, log_source, log_order, cx,
-                                )
-                                .await
-                            }
-                            Ok(RepositoryState::Remote(_)) => {
-                                Err("Git graph is not supported for collab yet".into())
-                            }
-                            Err(e) => Err(SharedString::from(e)),
+
+                let fetch_task = cx.spawn(async move |repository, cx| {
+                    let state = state.await;
+                    let result = match state {
+                        Ok(RepositoryState::Local(LocalRepositoryState { backend, .. })) => {
+                            Self::local_git_graph_data(
+                                repository.clone(),
+                                backend,
+                                log_source.clone(),
+                                log_order,
+                                cx,
+                            )
+                            .await
                         }
-                    }),
-                    vec![],
-                )
+                        Ok(RepositoryState::Remote(_)) => {
+                            Err("Git graph is not supported for collab yet".into())
+                        }
+                        Err(e) => Err(SharedString::from(e)),
+                    };
+
+                    if let Err(fetch_task_error) = result {
+                        repository
+                            .update(cx, |repository, _| {
+                                if let Some(data) = repository
+                                    .initial_graph_data
+                                    .get_mut(&(log_source, log_order))
+                                {
+                                    data.error = Some(fetch_task_error);
+                                } else {
+                                    debug_panic!(
+                                        "This task would be dropped if this entry doesn't exist"
+                                    );
+                                }
+                            })
+                            .ok();
+                    }
+                });
+
+                InitialGitGraphData {
+                    fetch_task,
+                    error: None,
+                    commit_data: Vec::new(),
+                    commit_oid_to_index: HashMap::default(),
+                }
             });
 
-        let max_start = initial_commit_data.len().saturating_sub(1);
-        let max_end = initial_commit_data.len();
-        (
-            &initial_commit_data[range.start.min(max_start)..range.end.min(max_end)],
-            !loading_task.is_ready(),
-        )
+        let max_start = initial_commit_data.commit_data.len().saturating_sub(1);
+        let max_end = initial_commit_data.commit_data.len();
+
+        GraphDataResponse {
+            commits: &initial_commit_data.commit_data
+                [range.start.min(max_start)..range.end.min(max_end)],
+            is_loading: !initial_commit_data.fetch_task.is_ready(),
+            error: initial_commit_data.error.clone(),
+        }
     }
 
     async fn local_git_graph_data(
@@ -4417,32 +4642,38 @@ impl Repository {
             }
         });
 
-        let graph_data_key = (log_order, log_source.clone());
+        let graph_data_key = (log_source, log_order);
 
         while let Ok(initial_graph_commit_data) = request_rx.recv().await {
             this.update(cx, |repository, cx| {
                 let graph_data = repository
                     .initial_graph_data
-                    .get_mut(&graph_data_key)
-                    .map(|(_, graph_data)| graph_data);
-                debug_assert!(
-                    graph_data.is_some(),
-                    "This task should be dropped if data doesn't exist"
-                );
+                    .entry(graph_data_key.clone())
+                    .and_modify(|graph_data| {
+                        for commit_data in initial_graph_commit_data {
+                            graph_data
+                                .commit_oid_to_index
+                                .insert(commit_data.sha, graph_data.commit_data.len());
+                            graph_data.commit_data.push(commit_data);
 
-                if let Some(graph_data) = graph_data {
-                    graph_data.extend(initial_graph_commit_data);
-                    cx.emit(RepositoryEvent::GitGraphCountUpdated(
-                        graph_data_key.clone(),
-                        graph_data.len(),
-                    ));
+                            cx.emit(RepositoryEvent::GraphEvent(
+                                graph_data_key.clone(),
+                                GitGraphEvent::CountUpdated(graph_data.commit_data.len()),
+                            ));
+                        }
+                    });
+
+                match &graph_data {
+                    Entry::Occupied(_) => {}
+                    Entry::Vacant(_) => {
+                        debug_panic!("This task should be dropped if data doesn't exist");
+                    }
                 }
             })
             .ok();
         }
 
         task.await?;
-
         Ok(())
     }
 
@@ -4862,8 +5093,7 @@ impl Repository {
                                         .map(|repo_path| repo_path.to_proto())
                                         .collect(),
                                 })
-                                .await
-                                .context("sending stash request")?;
+                                .await?;
                             Ok(())
                         }
                     }
@@ -5072,8 +5302,7 @@ impl Repository {
                             }),
                             askpass_id,
                         })
-                        .await
-                        .context("sending commit request")?;
+                        .await?;
 
                     Ok(())
                 }
@@ -5112,8 +5341,7 @@ impl Repository {
                             askpass_id,
                             remote: fetch_options.to_proto(),
                         })
-                        .await
-                        .context("sending fetch request")?;
+                        .await?;
 
                     Ok(RemoteCommandOutput {
                         stdout: response.stdout,
@@ -5214,8 +5442,7 @@ impl Repository {
                                 }
                                     as i32),
                             })
-                            .await
-                            .context("sending push request")?;
+                            .await?;
 
                         Ok(RemoteCommandOutput {
                             stdout: response.stdout,
@@ -5281,8 +5508,7 @@ impl Repository {
                             branch_name: branch.as_ref().map(|b| b.to_string()),
                             remote_name: remote.to_string(),
                         })
-                        .await
-                        .context("sending pull request")?;
+                        .await?;
 
                     Ok(RemoteCommandOutput {
                         stdout: response.stdout,
@@ -5532,7 +5758,7 @@ impl Repository {
     pub fn create_worktree(
         &mut self,
         name: String,
-        path: PathBuf,
+        directory: PathBuf,
         commit: Option<String>,
     ) -> oneshot::Receiver<Result<()>> {
         let id = self.id;
@@ -5541,7 +5767,7 @@ impl Repository {
             move |repo, _cx| async move {
                 match repo {
                     RepositoryState::Local(LocalRepositoryState { backend, .. }) => {
-                        backend.create_worktree(name, path, commit).await
+                        backend.create_worktree(name, directory, commit).await
                     }
                     RepositoryState::Remote(RemoteRepositoryState { project_id, client }) => {
                         client
@@ -5549,8 +5775,64 @@ impl Repository {
                                 project_id: project_id.0,
                                 repository_id: id.to_proto(),
                                 name,
-                                directory: path.to_string_lossy().to_string(),
+                                directory: directory.to_string_lossy().to_string(),
                                 commit,
+                            })
+                            .await?;
+
+                        Ok(())
+                    }
+                }
+            },
+        )
+    }
+
+    pub fn remove_worktree(&mut self, path: PathBuf, force: bool) -> oneshot::Receiver<Result<()>> {
+        let id = self.id;
+        self.send_job(
+            Some(format!("git worktree remove: {}", path.display()).into()),
+            move |repo, _cx| async move {
+                match repo {
+                    RepositoryState::Local(LocalRepositoryState { backend, .. }) => {
+                        backend.remove_worktree(path, force).await
+                    }
+                    RepositoryState::Remote(RemoteRepositoryState { project_id, client }) => {
+                        client
+                            .request(proto::GitRemoveWorktree {
+                                project_id: project_id.0,
+                                repository_id: id.to_proto(),
+                                path: path.to_string_lossy().to_string(),
+                                force,
+                            })
+                            .await?;
+
+                        Ok(())
+                    }
+                }
+            },
+        )
+    }
+
+    pub fn rename_worktree(
+        &mut self,
+        old_path: PathBuf,
+        new_path: PathBuf,
+    ) -> oneshot::Receiver<Result<()>> {
+        let id = self.id;
+        self.send_job(
+            Some(format!("git worktree move: {}", old_path.display()).into()),
+            move |repo, _cx| async move {
+                match repo {
+                    RepositoryState::Local(LocalRepositoryState { backend, .. }) => {
+                        backend.rename_worktree(old_path, new_path).await
+                    }
+                    RepositoryState::Remote(RemoteRepositoryState { project_id, client }) => {
+                        client
+                            .request(proto::GitRenameWorktree {
+                                project_id: project_id.0,
+                                repository_id: id.to_proto(),
+                                old_path: old_path.to_string_lossy().to_string(),
+                                new_path: new_path.to_string_lossy().to_string(),
                             })
                             .await?;
 
@@ -5653,18 +5935,24 @@ impl Repository {
                     backend.diff(diff_type).await
                 }
                 RepositoryState::Remote(RemoteRepositoryState { project_id, client }) => {
+                    let (proto_diff_type, merge_base_ref) = match &diff_type {
+                        DiffType::HeadToIndex => {
+                            (proto::git_diff::DiffType::HeadToIndex.into(), None)
+                        }
+                        DiffType::HeadToWorktree => {
+                            (proto::git_diff::DiffType::HeadToWorktree.into(), None)
+                        }
+                        DiffType::MergeBase { base_ref } => (
+                            proto::git_diff::DiffType::MergeBase.into(),
+                            Some(base_ref.to_string()),
+                        ),
+                    };
                     let response = client
                         .request(proto::GitDiff {
                             project_id: project_id.0,
                             repository_id: id.to_proto(),
-                            diff_type: match diff_type {
-                                DiffType::HeadToIndex => {
-                                    proto::git_diff::DiffType::HeadToIndex.into()
-                                }
-                                DiffType::HeadToWorktree => {
-                                    proto::git_diff::DiffType::HeadToWorktree.into()
-                                }
-                            },
+                            diff_type: proto_diff_type,
+                            merge_base_ref,
                         })
                         .await?;
 
@@ -5836,12 +6124,10 @@ impl Repository {
         update: proto::UpdateRepository,
         cx: &mut Context<Self>,
     ) -> Result<()> {
-        let conflicted_paths = TreeSet::from_ordered_entries(
-            update
-                .current_merge_conflicts
-                .into_iter()
-                .filter_map(|path| RepoPath::from_proto(&path).log_err()),
-        );
+        if let Some(main_path) = &update.original_repo_abs_path {
+            self.snapshot.original_repo_abs_path = Path::new(main_path.as_str()).into();
+        }
+
         let new_branch = update.branch_summary.as_ref().map(proto_to_branch);
         let new_head_commit = update
             .head_commit_details
@@ -5853,7 +6139,17 @@ impl Repository {
         self.snapshot.branch = new_branch;
         self.snapshot.head_commit = new_head_commit;
 
-        self.snapshot.merge.conflicted_paths = conflicted_paths;
+        // We don't store any merge head state for downstream projects; the upstream
+        // will track it and we will just get the updated conflicts
+        let new_merge_heads = TreeMap::from_ordered_entries(
+            update
+                .current_merge_conflicts
+                .into_iter()
+                .filter_map(|path| Some((RepoPath::from_proto(&path).ok()?, vec![]))),
+        );
+        let conflicts_changed =
+            self.snapshot.merge.merge_heads_by_conflicted_path != new_merge_heads;
+        self.snapshot.merge.merge_heads_by_conflicted_path = new_merge_heads;
         self.snapshot.merge.message = update.merge_message.map(SharedString::from);
         let new_stash_entries = GitStash {
             entries: update
@@ -5866,6 +6162,15 @@ impl Repository {
             cx.emit(RepositoryEvent::StashEntriesChanged)
         }
         self.snapshot.stash_entries = new_stash_entries;
+        let new_linked_worktrees: Arc<[GitWorktree]> = update
+            .linked_worktrees
+            .iter()
+            .map(proto_to_worktree)
+            .collect();
+        if *self.snapshot.linked_worktrees != *new_linked_worktrees {
+            cx.emit(RepositoryEvent::GitWorktreeListChanged);
+        }
+        self.snapshot.linked_worktrees = new_linked_worktrees;
         self.snapshot.remote_upstream_url = update.remote_upstream_url;
         self.snapshot.remote_origin_url = update.remote_origin_url;
 
@@ -5886,10 +6191,11 @@ impl Repository {
                     }),
             )
             .collect::<Vec<_>>();
-        if !edits.is_empty() {
+        if conflicts_changed || !edits.is_empty() {
             cx.emit(RepositoryEvent::StatusesChanged);
         }
         self.snapshot.statuses_by_path.edit(edits, ());
+
         if update.is_last_update {
             self.snapshot.scan_id = update.scan_id;
         }
@@ -5973,17 +6279,16 @@ impl Repository {
                 let RepositoryState::Local(LocalRepositoryState { backend, .. }) = state else {
                     bail!("not a local repository")
                 };
-                let (snapshot, events) = this
-                    .update(&mut cx, |this, _| {
-                        this.paths_needing_status_update.clear();
-                        compute_snapshot(
-                            this.id,
-                            this.work_directory_abs_path.clone(),
-                            this.snapshot.clone(),
-                            backend.clone(),
-                        )
-                    })
-                    .await?;
+                let compute_snapshot = this.update(&mut cx, |this, _| {
+                    this.paths_needing_status_update.clear();
+                    compute_snapshot(
+                        this.id,
+                        this.work_directory_abs_path.clone(),
+                        this.snapshot.clone(),
+                        backend.clone(),
+                    )
+                });
+                let (snapshot, events) = cx.background_spawn(compute_snapshot).await?;
                 this.update(&mut cx, |this, cx| {
                     this.snapshot = snapshot.clone();
                     this.clear_pending_ops(cx);
@@ -6182,14 +6487,16 @@ impl Repository {
         updates_tx: Option<mpsc::UnboundedSender<DownstreamUpdate>>,
         cx: &mut Context<Self>,
     ) {
-        self.paths_needing_status_update.extend(paths);
+        if !paths.is_empty() {
+            self.paths_needing_status_update.push(paths);
+        }
 
         let this = cx.weak_entity();
         let _ = self.send_keyed_job(
             Some(GitJobKey::RefreshStatuses),
             None,
             |state, mut cx| async move {
-                let (prev_snapshot, mut changed_paths) = this.update(&mut cx, |this, _| {
+                let (prev_snapshot, changed_paths) = this.update(&mut cx, |this, _| {
                     (
                         this.snapshot.clone(),
                         mem::take(&mut this.paths_needing_status_update),
@@ -6199,23 +6506,47 @@ impl Repository {
                     bail!("not a local repository")
                 };
 
-                let paths = changed_paths.iter().cloned().collect::<Vec<_>>();
-                if paths.is_empty() {
+                if changed_paths.is_empty() {
                     return Ok(());
                 }
-                let statuses = backend.status(&paths).await?;
-                let stash_entries = backend.stash_entries().await?;
 
+                let has_head = prev_snapshot.head_commit.is_some();
+
+                let stash_entries = backend.stash_entries().await?;
                 let changed_path_statuses = cx
                     .background_spawn(async move {
+                        let mut changed_paths =
+                            changed_paths.into_iter().flatten().collect::<BTreeSet<_>>();
+                        let changed_paths_vec = changed_paths.iter().cloned().collect::<Vec<_>>();
+
+                        let status_task = backend.status(&changed_paths_vec);
+                        let diff_stat_future = if has_head {
+                            backend.diff_stat(&changed_paths_vec)
+                        } else {
+                            future::ready(Ok(status::GitDiffStat {
+                                entries: Arc::default(),
+                            }))
+                            .boxed()
+                        };
+
+                        let (statuses, diff_stats) =
+                            futures::future::try_join(status_task, diff_stat_future).await?;
+
+                        let diff_stats: HashMap<RepoPath, DiffStat> =
+                            HashMap::from_iter(diff_stats.entries.into_iter().cloned());
+
                         let mut changed_path_statuses = Vec::new();
                         let prev_statuses = prev_snapshot.statuses_by_path.clone();
                         let mut cursor = prev_statuses.cursor::<PathProgress>(());
 
                         for (repo_path, status) in &*statuses.entries {
+                            let current_diff_stat = diff_stats.get(repo_path).copied();
+
                             changed_paths.remove(repo_path);
                             if cursor.seek_forward(&PathTarget::Path(repo_path), Bias::Left)
-                                && cursor.item().is_some_and(|entry| entry.status == *status)
+                                && cursor.item().is_some_and(|entry| {
+                                    entry.status == *status && entry.diff_stat == current_diff_stat
+                                })
                             {
                                 continue;
                             }
@@ -6223,6 +6554,7 @@ impl Repository {
                             changed_path_statuses.push(Edit::Insert(StatusEntry {
                                 repo_path: repo_path.clone(),
                                 status: *status,
+                                diff_stat: current_diff_stat,
                             }));
                         }
                         let mut cursor = prev_statuses.cursor::<PathProgress>(());
@@ -6232,9 +6564,9 @@ impl Repository {
                                     .push(Edit::Remove(PathKey(path.as_ref().clone())));
                             }
                         }
-                        changed_path_statuses
+                        anyhow::Ok(changed_path_statuses)
                     })
-                    .await;
+                    .await?;
 
                 this.update(&mut cx, |this, cx| {
                     if this.snapshot.stash_entries != stash_entries {
@@ -6580,33 +6912,6 @@ async fn compute_snapshot(
     let mut events = Vec::new();
     let branches = backend.branches().await?;
     let branch = branches.into_iter().find(|branch| branch.is_head);
-    let statuses = backend
-        .status(&[RepoPath::from_rel_path(
-            &RelPath::new(".".as_ref(), PathStyle::local()).unwrap(),
-        )])
-        .await?;
-    let stash_entries = backend.stash_entries().await?;
-    let statuses_by_path = SumTree::from_iter(
-        statuses
-            .entries
-            .iter()
-            .map(|(repo_path, status)| StatusEntry {
-                repo_path: repo_path.clone(),
-                status: *status,
-            }),
-        (),
-    );
-    let (merge_details, merge_heads_changed) =
-        MergeDetails::load(&backend, &statuses_by_path, &prev_snapshot).await?;
-    log::debug!("new merge details (changed={merge_heads_changed:?}): {merge_details:?}");
-
-    if merge_heads_changed {
-        events.push(RepositoryEvent::MergeHeadsChanged);
-    }
-
-    if statuses_by_path != prev_snapshot.statuses_by_path {
-        events.push(RepositoryEvent::StatusesChanged)
-    }
 
     // Useful when branch is None in detached head state
     let head_commit = match backend.head_sha().await {
@@ -6614,8 +6919,59 @@ async fn compute_snapshot(
         None => None,
     };
 
+    let diff_stat_future: BoxFuture<'_, Result<status::GitDiffStat>> = if head_commit.is_some() {
+        backend.diff_stat(&[])
+    } else {
+        future::ready(Ok(status::GitDiffStat {
+            entries: Arc::default(),
+        }))
+        .boxed()
+    };
+    let (statuses, diff_stats, all_worktrees) = futures::future::try_join3(
+        backend.status(&[RepoPath::from_rel_path(
+            &RelPath::new(".".as_ref(), PathStyle::local()).unwrap(),
+        )]),
+        diff_stat_future,
+        backend.worktrees(),
+    )
+    .await?;
+
+    let linked_worktrees: Arc<[GitWorktree]> = all_worktrees
+        .into_iter()
+        .filter(|wt| wt.path != *work_directory_abs_path)
+        .collect();
+
+    let diff_stat_map: HashMap<&RepoPath, DiffStat> =
+        diff_stats.entries.iter().map(|(p, s)| (p, *s)).collect();
+    let stash_entries = backend.stash_entries().await?;
+    let mut conflicted_paths = Vec::new();
+    let statuses_by_path = SumTree::from_iter(
+        statuses.entries.iter().map(|(repo_path, status)| {
+            if status.is_conflicted() {
+                conflicted_paths.push(repo_path.clone());
+            }
+            StatusEntry {
+                repo_path: repo_path.clone(),
+                status: *status,
+                diff_stat: diff_stat_map.get(repo_path).copied(),
+            }
+        }),
+        (),
+    );
+    let mut merge_details = prev_snapshot.merge;
+    let conflicts_changed = merge_details.update(&backend, conflicted_paths).await?;
+    log::debug!("new merge details: {merge_details:?}");
+
+    if conflicts_changed || statuses_by_path != prev_snapshot.statuses_by_path {
+        events.push(RepositoryEvent::StatusesChanged)
+    }
+
     if branch != prev_snapshot.branch || head_commit != prev_snapshot.head_commit {
         events.push(RepositoryEvent::BranchChanged);
+    }
+
+    if *linked_worktrees != *prev_snapshot.linked_worktrees {
+        events.push(RepositoryEvent::GitWorktreeListChanged);
     }
 
     let remote_origin_url = backend.remote_url("origin").await;
@@ -6625,6 +6981,7 @@ async fn compute_snapshot(
         id,
         statuses_by_path,
         work_directory_abs_path,
+        original_repo_abs_path: prev_snapshot.original_repo_abs_path,
         path_style: prev_snapshot.path_style,
         scan_id: prev_snapshot.scan_id + 1,
         branch,
@@ -6633,6 +6990,7 @@ async fn compute_snapshot(
         remote_origin_url,
         remote_upstream_url,
         stash_entries,
+        linked_worktrees,
     };
 
     Ok((snapshot, events))

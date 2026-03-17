@@ -3,7 +3,10 @@ use std::sync::{Arc, LazyLock};
 use anyhow::{Context as _, Result};
 use collections::HashMap;
 use gpui::{App, AsyncApp, BorrowAppContext as _, Entity, Task, WeakEntity};
-use language::{LanguageRegistry, LspAdapterDelegate, language_settings::AllLanguageSettings};
+use language::{
+    LanguageRegistry, LanguageServerName, LspAdapterDelegate,
+    language_settings::AllLanguageSettings,
+};
 use parking_lot::RwLock;
 use project::{LspStore, lsp_store::LocalLspAdapterDelegate};
 use settings::{LSP_SETTINGS_SCHEMA_URL_PREFIX, Settings as _, SettingsLocation};
@@ -64,25 +67,22 @@ pub fn init(cx: &mut App) {
     .detach();
 
     if let Some(extension_events) = extension::ExtensionEvents::try_global(cx) {
-        cx.subscribe(&extension_events, move |_, evt, cx| {
-            match evt {
-                extension::Event::ExtensionInstalled(_)
-                | extension::Event::ExtensionUninstalled(_)
-                | extension::Event::ConfigureExtensionRequested(_) => return,
-                extension::Event::ExtensionsInstalledChanged => {}
+        cx.subscribe(&extension_events, move |_, evt, cx| match evt {
+            extension::Event::ExtensionsInstalledChanged => {
+                cx.update_global::<SchemaStore, _>(|schema_store, cx| {
+                    schema_store.notify_schema_changed(ChangedSchemas::Settings, cx);
+                });
             }
-            cx.update_global::<SchemaStore, _>(|schema_store, cx| {
-                schema_store.notify_schema_changed(&format!("{SCHEMA_URI_PREFIX}settings"), cx);
-                schema_store
-                    .notify_schema_changed(&format!("{SCHEMA_URI_PREFIX}project_settings"), cx);
-            });
+            extension::Event::ExtensionUninstalled(_)
+            | extension::Event::ExtensionInstalled(_)
+            | extension::Event::ConfigureExtensionRequested(_) => {}
         })
         .detach();
     }
 
     cx.observe_global::<dap::DapRegistry>(move |cx| {
         cx.update_global::<SchemaStore, _>(|schema_store, cx| {
-            schema_store.notify_schema_changed(&format!("{SCHEMA_URI_PREFIX}debug_tasks"), cx);
+            schema_store.notify_schema_changed(ChangedSchemas::DebugTasks, cx);
         });
     })
     .detach();
@@ -95,18 +95,42 @@ pub struct SchemaStore {
 
 impl gpui::Global for SchemaStore {}
 
-impl SchemaStore {
-    fn notify_schema_changed(&mut self, uri: &str, cx: &mut App) {
-        DYNAMIC_SCHEMA_CACHE.write().remove(uri);
+enum ChangedSchemas {
+    Settings,
+    DebugTasks,
+}
 
-        let uri = uri.to_string();
+impl SchemaStore {
+    fn notify_schema_changed(&mut self, changed_schemas: ChangedSchemas, cx: &mut App) {
+        let uris_to_invalidate = match changed_schemas {
+            ChangedSchemas::Settings => {
+                let settings_uri_prefix = &format!("{SCHEMA_URI_PREFIX}settings");
+                let project_settings_uri = &format!("{SCHEMA_URI_PREFIX}project_settings");
+                DYNAMIC_SCHEMA_CACHE
+                    .write()
+                    .extract_if(|uri, _| {
+                        uri == project_settings_uri || uri.starts_with(settings_uri_prefix)
+                    })
+                    .map(|(url, _)| url)
+                    .collect()
+            }
+            ChangedSchemas::DebugTasks => DYNAMIC_SCHEMA_CACHE
+                .write()
+                .remove_entry(&format!("{SCHEMA_URI_PREFIX}debug_tasks"))
+                .map_or_else(Vec::new, |(uri, _)| vec![uri]),
+        };
+
+        if uris_to_invalidate.is_empty() {
+            return;
+        }
+
         self.lsp_stores.retain(|lsp_store| {
             let Some(lsp_store) = lsp_store.upgrade() else {
                 return false;
             };
-            project::lsp_store::json_language_server_ext::notify_schema_changed(
+            project::lsp_store::json_language_server_ext::notify_schemas_changed(
                 lsp_store,
-                uri.clone(),
+                &uris_to_invalidate,
                 cx,
             );
             true
@@ -235,7 +259,8 @@ async fn resolve_dynamic_schema(
                 (adapter_name, LspSchemaKind::Settings)
             } else {
                 anyhow::bail!(
-                    "Invalid LSP schema path: expected '{{adapter}}/initialization_options' or '{{adapter}}/settings', got '{}'",
+                    "Invalid LSP schema path: \
+                    Expected '{{adapter}}/initialization_options' or '{{adapter}}/settings', got '{}'",
                     lsp_path
                 );
             };
@@ -244,6 +269,9 @@ async fn resolve_dynamic_schema(
                 .all_lsp_adapters()
                 .into_iter()
                 .find(|adapter| adapter.name().as_ref() as &str == lsp_name)
+                .or_else(|| {
+                    languages.load_available_lsp_adapter(&LanguageServerName::from(lsp_name))
+                })
                 .with_context(|| format!("LSP adapter not found: {}", lsp_name))?;
 
             let delegate: Arc<dyn LspAdapterDelegate> = cx
@@ -281,11 +309,26 @@ async fn resolve_dynamic_schema(
             })
         }
         "settings" => {
-            let lsp_adapter_names = languages
+            let mut lsp_adapter_names: Vec<String> = languages
                 .all_lsp_adapters()
                 .into_iter()
-                .map(|adapter| adapter.name().to_string())
-                .collect::<Vec<_>>();
+                .map(|adapter| adapter.name())
+                .chain(languages.available_lsp_adapter_names().into_iter())
+                .map(|name| name.to_string())
+                .collect();
+
+            let mut i = 0;
+            while i < lsp_adapter_names.len() {
+                let mut j = i + 1;
+                while j < lsp_adapter_names.len() {
+                    if lsp_adapter_names[i] == lsp_adapter_names[j] {
+                        lsp_adapter_names.swap_remove(j);
+                    } else {
+                        j += 1;
+                    }
+                }
+                i += 1;
+            }
 
             cx.update(|cx| {
                 let font_names = &cx.text_system().all_font_names();
@@ -309,15 +352,13 @@ async fn resolve_dynamic_schema(
                 let icon_theme_names = icon_theme_names.as_slice();
                 let theme_names = theme_names.as_slice();
 
-                cx.global::<settings::SettingsStore>().json_schema(
-                    &settings::SettingsJsonSchemaParams {
-                        language_names,
-                        font_names,
-                        theme_names,
-                        icon_theme_names,
-                        lsp_adapter_names: &lsp_adapter_names,
-                    },
-                )
+                settings::SettingsStore::json_schema(&settings::SettingsJsonSchemaParams {
+                    language_names,
+                    font_names,
+                    theme_names,
+                    icon_theme_names,
+                    lsp_adapter_names: &lsp_adapter_names,
+                })
             })
         }
         "project_settings" => {
@@ -327,25 +368,21 @@ async fn resolve_dynamic_schema(
                 .map(|adapter| adapter.name().to_string())
                 .collect::<Vec<_>>();
 
-            cx.update(|cx| {
-                let language_names = &languages
-                    .language_names()
-                    .into_iter()
-                    .map(|name| name.to_string())
-                    .collect::<Vec<_>>();
+            let language_names = &languages
+                .language_names()
+                .into_iter()
+                .map(|name| name.to_string())
+                .collect::<Vec<_>>();
 
-                cx.global::<settings::SettingsStore>().project_json_schema(
-                    &settings::SettingsJsonSchemaParams {
-                        language_names,
-                        lsp_adapter_names: &lsp_adapter_names,
-                        // These are not allowed in project-specific settings but
-                        // they're still fields required by the
-                        // `SettingsJsonSchemaParams` struct.
-                        font_names: &[],
-                        theme_names: &[],
-                        icon_theme_names: &[],
-                    },
-                )
+            settings::SettingsStore::project_json_schema(&settings::SettingsJsonSchemaParams {
+                language_names,
+                lsp_adapter_names: &lsp_adapter_names,
+                // These are not allowed in project-specific settings but
+                // they're still fields required by the
+                // `SettingsJsonSchemaParams` struct.
+                font_names: &[],
+                theme_names: &[],
+                icon_theme_names: &[],
             })
         }
         "debug_tasks" => {
@@ -469,7 +506,7 @@ pub fn all_schema_file_associations(
             let file_name = normalized_action_name_to_file_name(normalized_name.clone());
             serde_json::json!({
                 "fileMatch": [file_name],
-                "url": format!("{}action/{normalized_name}", SCHEMA_URI_PREFIX)
+                "url": format!("{SCHEMA_URI_PREFIX}action/{normalized_name}")
             })
         }));
 

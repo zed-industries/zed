@@ -36,8 +36,11 @@ jobs:
         app-id: ${{ secrets.ZED_ZIPPY_APP_ID }}
         private-key: ${{ secrets.ZED_ZIPPY_APP_PRIVATE_KEY }}
     - name: cherry_pick::run_cherry_pick::cherry_pick
-      run: ./script/cherry-pick ${{ inputs.branch }} ${{ inputs.commit }} ${{ inputs.channel }}
+      run: ./script/cherry-pick "$BRANCH" "$COMMIT" "$CHANNEL"
       env:
+        BRANCH: ${{ inputs.branch }}
+        COMMIT: ${{ inputs.commit }}
+        CHANNEL: ${{ inputs.channel }}
         GIT_COMMITTER_NAME: Zed Zippy
         GIT_COMMITTER_EMAIL: hi@zed.dev
         GITHUB_TOKEN: ${{ steps.get-app-token.outputs.token }}

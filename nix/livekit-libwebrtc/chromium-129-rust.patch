@@ -1,0 +1,21 @@
+diff --git a/build/config/compiler/BUILD.gn b/build/config/compiler/BUILD.gn
+index 45086d6838cac..81132ad8ecb31 100644
+--- a/build/config/compiler/BUILD.gn
++++ b/build/config/compiler/BUILD.gn
+@@ -1727,16 +1727,6 @@ config("runtime_library") {
+     configs += [ "//build/config/c++:runtime_library" ]
+   }
+ 
+-  # Rust and C++ both provide intrinsics for LLVM to call for math operations. We
+-  # want to use the C++ intrinsics, not the ones in the Rust compiler_builtins
+-  # library. The Rust symbols are marked as weak, so that they can be replaced by
+-  # the C++ symbols. This config ensures the C++ symbols exist and are strong in
+-  # order to cause that replacement to occur by explicitly linking in clang's
+-  # compiler-rt library.
+-  if (is_clang && !is_nacl && !is_cronet_build) {
+-    configs += [ "//build/config/clang:compiler_builtins" ]
+-  }
+-
+   # TODO(crbug.com/40570904): Come up with a better name for is POSIX + Fuchsia
+   # configuration.
+   if (is_posix || is_fuchsia) {

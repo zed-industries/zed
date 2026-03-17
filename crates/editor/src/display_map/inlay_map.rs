@@ -17,7 +17,7 @@ use multi_buffer::{
 };
 use project::InlayId;
 use std::{
-    cmp,
+    cmp, iter,
     ops::{Add, AddAssign, Range, Sub, SubAssign},
     sync::Arc,
 };
@@ -296,9 +296,11 @@ impl<'a> Iterator for InlayChunks<'a> {
                 let mask = 1u128.unbounded_shl(split_index as u32).wrapping_sub(1);
                 let chars = chunk.chars & mask;
                 let tabs = chunk.tabs & mask;
+                let newlines = chunk.newlines & mask;
 
                 chunk.chars = chunk.chars.unbounded_shr(split_index as u32);
                 chunk.tabs = chunk.tabs.unbounded_shr(split_index as u32);
+                chunk.newlines = chunk.newlines.unbounded_shr(split_index as u32);
                 chunk.text = suffix;
 
                 InlayChunk {
@@ -306,6 +308,7 @@ impl<'a> Iterator for InlayChunks<'a> {
                         text: prefix,
                         chars,
                         tabs,
+                        newlines,
                         ..chunk.clone()
                     },
                     renderer: None,
@@ -422,6 +425,7 @@ impl<'a> Iterator for InlayChunks<'a> {
                     text: inlay_chunk,
                     chars,
                     tabs,
+                    newlines,
                 } = self
                     .inlay_chunk
                     .get_or_insert_with(|| inlay_chunks.next().unwrap());
@@ -446,9 +450,11 @@ impl<'a> Iterator for InlayChunks<'a> {
                 let mask = 1u128.unbounded_shl(split_index as u32).wrapping_sub(1);
                 let new_chars = *chars & mask;
                 let new_tabs = *tabs & mask;
+                let new_newlines = *newlines & mask;
 
                 *chars = chars.unbounded_shr(split_index as u32);
                 *tabs = tabs.unbounded_shr(split_index as u32);
+                *newlines = newlines.unbounded_shr(split_index as u32);
 
                 if inlay_chunk.is_empty() {
                     self.inlay_chunk = None;
@@ -461,6 +467,7 @@ impl<'a> Iterator for InlayChunks<'a> {
                         text: chunk,
                         chars: new_chars,
                         tabs: new_tabs,
+                        newlines: new_newlines,
                         highlight_style,
                         is_inlay: true,
                         ..Chunk::default()
@@ -539,8 +546,11 @@ impl InlayMap {
     pub fn new(buffer: MultiBufferSnapshot) -> (Self, InlaySnapshot) {
         let version = 0;
         let snapshot = InlaySnapshot {
-            buffer: buffer.clone(),
-            transforms: SumTree::from_iter(Some(Transform::Isomorphic(buffer.text_summary())), ()),
+            transforms: SumTree::from_iter(
+                iter::once(Transform::Isomorphic(buffer.text_summary())),
+                (),
+            ),
+            buffer,
             version,
         };
 
@@ -738,7 +748,7 @@ impl InlayMap {
     }
 
     #[ztracing::instrument(skip_all)]
-    pub fn current_inlays(&self) -> impl Iterator<Item = &Inlay> {
+    pub fn current_inlays(&self) -> impl Iterator<Item = &Inlay> + Default {
         self.inlays.iter()
     }
 
@@ -935,7 +945,52 @@ impl InlaySnapshot {
 
     #[ztracing::instrument(skip_all)]
     pub fn to_inlay_point(&self, point: Point) -> InlayPoint {
-        self.inlay_point_cursor().map(point)
+        self.inlay_point_cursor().map(point, Bias::Left)
+    }
+
+    /// Converts a buffer offset range into one or more `InlayOffset` ranges that
+    /// cover only the actual buffer text, skipping any inlay hint text that falls
+    /// within the range. When there are no inlays the returned vec contains a
+    /// single element identical to the input mapped into inlay-offset space.
+    pub fn buffer_offset_to_inlay_ranges(
+        &self,
+        range: Range<MultiBufferOffset>,
+    ) -> impl Iterator<Item = Range<InlayOffset>> {
+        let mut cursor = self
+            .transforms
+            .cursor::<Dimensions<MultiBufferOffset, InlayOffset>>(());
+        cursor.seek(&range.start, Bias::Right);
+
+        std::iter::from_fn(move || {
+            loop {
+                match cursor.item()? {
+                    Transform::Isomorphic(_) => {
+                        let seg_buffer_start = cursor.start().0;
+                        let seg_buffer_end = cursor.end().0;
+                        let seg_inlay_start = cursor.start().1;
+
+                        let overlap_start = cmp::max(range.start, seg_buffer_start);
+                        let overlap_end = cmp::min(range.end, seg_buffer_end);
+
+                        let past_end = seg_buffer_end >= range.end;
+                        cursor.next();
+
+                        if overlap_start < overlap_end {
+                            let inlay_start =
+                                InlayOffset(seg_inlay_start.0 + (overlap_start - seg_buffer_start));
+                            let inlay_end =
+                                InlayOffset(seg_inlay_start.0 + (overlap_end - seg_buffer_start));
+                            return Some(inlay_start..inlay_end);
+                        }
+
+                        if past_end {
+                            return None;
+                        }
+                    }
+                    Transform::Inlay(_) => cursor.next(),
+                }
+            }
+        })
     }
 
     #[ztracing::instrument(skip_all)]
@@ -1212,7 +1267,7 @@ pub struct InlayPointCursor<'transforms> {
 
 impl InlayPointCursor<'_> {
     #[ztracing::instrument(skip_all)]
-    pub fn map(&mut self, point: Point) -> InlayPoint {
+    pub fn map(&mut self, point: Point, bias: Bias) -> InlayPoint {
         let cursor = &mut self.cursor;
         if cursor.did_seek() {
             cursor.seek_forward(&point, Bias::Left);
@@ -1224,7 +1279,7 @@ impl InlayPointCursor<'_> {
                 Some(Transform::Isomorphic(_)) => {
                     if point == cursor.end().0 {
                         while let Some(Transform::Inlay(inlay)) = cursor.next_item() {
-                            if inlay.position.bias() == Bias::Right {
+                            if bias == Bias::Left && inlay.position.bias() == Bias::Right {
                                 break;
                             } else {
                                 cursor.next();
@@ -1237,7 +1292,7 @@ impl InlayPointCursor<'_> {
                     }
                 }
                 Some(Transform::Inlay(inlay)) => {
-                    if inlay.position.bias() == Bias::Left {
+                    if inlay.position.bias() == Bias::Left || bias == Bias::Right {
                         cursor.next();
                     } else {
                         return cursor.start().1;
@@ -1276,9 +1331,10 @@ mod tests {
     use super::*;
     use crate::{
         MultiBuffer,
-        display_map::{HighlightKey, InlayHighlights, TextHighlights},
+        display_map::{HighlightKey, InlayHighlights},
         hover_links::InlayHighlight,
     };
+    use collections::HashMap;
     use gpui::{App, HighlightStyle};
     use multi_buffer::Anchor;
     use project::{InlayHint, InlayHintLabel, ResolveState};
@@ -1845,7 +1901,7 @@ mod tests {
                 );
             }
 
-            let mut text_highlights = TextHighlights::default();
+            let mut text_highlights = HashMap::default();
             let text_highlight_count = rng.random_range(0_usize..10);
             let mut text_highlight_ranges = (0..text_highlight_count)
                 .map(|_| buffer_snapshot.random_byte_range(MultiBufferOffset(0), &mut rng))
@@ -1865,6 +1921,7 @@ mod tests {
                         .collect(),
                 )),
             );
+            let text_highlights = Arc::new(text_highlights);
 
             let mut inlay_highlights = InlayHighlights::default();
             if !inlays.is_empty() {

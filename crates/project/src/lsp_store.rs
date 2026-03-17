@@ -12,6 +12,7 @@
 pub mod clangd_ext;
 mod code_lens;
 mod document_colors;
+mod document_symbols;
 mod folding_ranges;
 mod inlay_hints;
 pub mod json_language_server_ext;
@@ -23,6 +24,7 @@ pub mod vue_language_server_ext;
 
 use self::code_lens::CodeLensData;
 use self::document_colors::DocumentColorData;
+use self::document_symbols::DocumentSymbolsData;
 use self::inlay_hints::BufferInlayHints;
 use crate::{
     CodeAction, Completion, CompletionDisplayOptions, CompletionResponse, CompletionSource,
@@ -546,6 +548,7 @@ impl LocalLspStore {
                     let mut initialization_options = Self::initialization_options_for_adapter(
                         adapter.adapter.clone(),
                         &delegate,
+                        cx,
                     )
                     .await?;
 
@@ -711,7 +714,7 @@ impl LocalLspStore {
                 env.extend(settings.env.unwrap_or_default());
 
                 Ok(LanguageServerBinary {
-                    path: delegate.resolve_executable_path(path),
+                    path: delegate.resolve_relative_path(path),
                     env: Some(env),
                     arguments: settings
                         .arguments
@@ -1700,6 +1703,10 @@ impl LocalLspStore {
                 formatter
             };
             match formatter {
+                Formatter::None => {
+                    zlog::trace!(logger => "skipping formatter 'none'");
+                    continue;
+                }
                 Formatter::Auto => unreachable!("Auto resolved above"),
                 Formatter::Prettier => {
                     let logger = zlog::scoped!(logger => "prettier");
@@ -1775,9 +1782,10 @@ impl LocalLspStore {
                                 }
                             })
                         }
-                        settings::LanguageServerFormatterSpecifier::Current => {
-                            adapters_and_servers.first().map(|e| e.1.clone())
-                        }
+                        settings::LanguageServerFormatterSpecifier::Current => adapters_and_servers
+                            .iter()
+                            .find(|(_, server)| Self::server_supports_formatting(server))
+                            .map(|(_, server)| server.clone()),
                     };
 
                     let Some(language_server) = language_server else {
@@ -2282,6 +2290,14 @@ impl LocalLspStore {
         }
     }
 
+    fn server_supports_formatting(server: &Arc<LanguageServer>) -> bool {
+        let capabilities = server.capabilities();
+        let formatting = capabilities.document_formatting_provider.as_ref();
+        let range_formatting = capabilities.document_range_formatting_provider.as_ref();
+        matches!(formatting, Some(p) if *p != OneOf::Left(false))
+            || matches!(range_formatting, Some(p) if *p != OneOf::Left(false))
+    }
+
     async fn format_via_lsp(
         this: &WeakEntity<LspStore>,
         buffer: &Entity<Buffer>,
@@ -2371,7 +2387,8 @@ impl LocalLspStore {
             Some(worktree_path)
         });
 
-        let mut child = util::command::new_smol_command(command);
+        use util::command::Stdio;
+        let mut child = util::command::new_command(command);
 
         if let Some(buffer_env) = buffer.env.as_ref() {
             child.envs(buffer_env);
@@ -2392,9 +2409,9 @@ impl LocalLspStore {
         }
 
         let mut child = child
-            .stdin(smol::process::Stdio::piped())
-            .stdout(smol::process::Stdio::piped())
-            .stderr(smol::process::Stdio::piped())
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
             .spawn()?;
 
         let stdin = child.stdin.as_mut().context("failed to acquire stdin")?;
@@ -3154,7 +3171,7 @@ impl LocalLspStore {
                 .map(|edit| (range_from_lsp(edit.range), edit.new_text))
                 .collect::<Vec<_>>();
 
-            lsp_edits.sort_by_key(|(range, _)| (range.start, range.end));
+            lsp_edits.sort_unstable_by_key(|(range, _)| (range.start, range.end));
 
             let mut lsp_edits = lsp_edits.into_iter().peekable();
             let mut edits = Vec::new();
@@ -3768,9 +3785,10 @@ impl LocalLspStore {
     async fn initialization_options_for_adapter(
         adapter: Arc<dyn LspAdapter>,
         delegate: &Arc<dyn LspAdapterDelegate>,
+        cx: &mut AsyncApp,
     ) -> Result<Option<serde_json::Value>> {
         let Some(mut initialization_config) =
-            adapter.clone().initialization_options(delegate).await?
+            adapter.clone().initialization_options(delegate, cx).await?
         else {
             return Ok(None);
         };
@@ -3910,6 +3928,7 @@ pub struct BufferLspData {
     code_lens: Option<CodeLensData>,
     semantic_tokens: Option<SemanticTokensData>,
     folding_ranges: Option<FoldingRangeData>,
+    document_symbols: Option<DocumentSymbolsData>,
     inlay_hints: BufferInlayHints,
     lsp_requests: HashMap<LspKey, HashMap<LspRequestId, Task<()>>>,
     chunk_lsp_requests: HashMap<LspKey, HashMap<RowChunk, LspRequestId>>,
@@ -3929,6 +3948,7 @@ impl BufferLspData {
             code_lens: None,
             semantic_tokens: None,
             folding_ranges: None,
+            document_symbols: None,
             inlay_hints: BufferInlayHints::new(buffer, cx),
             lsp_requests: HashMap::default(),
             chunk_lsp_requests: HashMap::default(),
@@ -3947,14 +3967,15 @@ impl BufferLspData {
         self.inlay_hints.remove_server_data(for_server);
 
         if let Some(semantic_tokens) = &mut self.semantic_tokens {
-            semantic_tokens.raw_tokens.servers.remove(&for_server);
-            semantic_tokens
-                .latest_invalidation_requests
-                .remove(&for_server);
+            semantic_tokens.remove_server_data(for_server);
         }
 
         if let Some(folding_ranges) = &mut self.folding_ranges {
             folding_ranges.ranges.remove(&for_server);
+        }
+
+        if let Some(document_symbols) = &mut self.document_symbols {
+            document_symbols.remove_server_data(for_server);
         }
     }
 
@@ -4011,6 +4032,7 @@ pub enum LspStoreEvent {
 pub struct LanguageServerStatus {
     pub name: LanguageServerName,
     pub server_version: Option<SharedString>,
+    pub server_readable_version: Option<SharedString>,
     pub pending_work: BTreeMap<ProgressToken, LanguageServerProgress>,
     pub has_pending_diagnostic_updates: bool,
     pub progress_tokens: HashSet<ProgressToken>,
@@ -4409,7 +4431,7 @@ impl LspStore {
         cx: &mut Context<Self>,
     ) {
         match event {
-            language::BufferEvent::Edited => {
+            language::BufferEvent::Edited { .. } => {
                 self.on_buffer_edited(buffer, cx);
             }
 
@@ -4884,7 +4906,7 @@ impl LspStore {
         buffer: &Entity<Buffer>,
         mut check: F,
         cx: &App,
-    ) -> Vec<lsp::LanguageServerId>
+    ) -> Vec<(lsp::LanguageServerId, lsp::LanguageServerName)>
     where
         F: FnMut(&lsp::LanguageServerName, &lsp::ServerCapabilities) -> bool,
     {
@@ -4914,7 +4936,7 @@ impl LspStore {
                     .map(|c| (server_id, server_name, c))
             })
             .filter(|(_, server_name, capabilities)| check(server_name, capabilities))
-            .map(|(server_id, _, _)| *server_id)
+            .map(|(server_id, server_name, _)| (*server_id, server_name.clone()))
             .collect()
     }
 
@@ -4990,10 +5012,6 @@ impl LspStore {
         };
 
         let status = request.status();
-        if !request.check_capabilities(language_server.adapter_server_capabilities()) {
-            return Task::ready(Ok(Default::default()));
-        }
-
         let request_timeout = ProjectSettings::get_global(cx)
             .global_lsp_settings
             .get_request_timeout();
@@ -5095,6 +5113,10 @@ impl LspStore {
             .clone();
         self.semantic_token_config
             .update_rules(new_semantic_token_rules);
+        // Always clear cached stylizers so that changes to language-specific
+        // semantic token rules (e.g. from extension install/uninstall) are
+        // picked up. Stylizers are recreated lazily, so this is cheap.
+        self.semantic_token_config.clear_stylizers();
 
         let new_global_semantic_tokens_mode =
             all_language_settings(None, cx).defaults.semantic_tokens;
@@ -5589,7 +5611,7 @@ impl LspStore {
 
                 buffer
                     .update(cx, |buffer, _| {
-                        buffer.wait_for_edits(Some(position.timestamp))
+                        buffer.wait_for_edits(Some(position.timestamp()))
                     })
                     .await?;
                 this.update(cx, |this, cx| {
@@ -6112,23 +6134,13 @@ impl LspStore {
 
             let language = buffer.read(cx).language().cloned();
 
-            // In the future, we should provide project guests with the names of LSP adapters,
-            // so that they can use the correct LSP adapter when computing labels. For now,
-            // guests just use the first LSP adapter associated with the buffer's language.
-            let lsp_adapter = language.as_ref().and_then(|language| {
-                language_registry
-                    .lsp_adapters(&language.name())
-                    .first()
-                    .cloned()
-            });
-
             let buffer = buffer.clone();
 
             cx.spawn(async move |this, cx| {
                 let requests = join_all(
                     capable_lsps
                         .into_iter()
-                        .map(|id| {
+                        .map(|(id, server_name)| {
                             let request = GetCompletions {
                                 position,
                                 context: context.clone(),
@@ -6136,7 +6148,14 @@ impl LspStore {
                             };
                             let buffer = buffer.clone();
                             let language = language.clone();
-                            let lsp_adapter = lsp_adapter.clone();
+                            let lsp_adapter = language.as_ref().and_then(|language| {
+                                let adapters = language_registry.lsp_adapters(&language.name());
+                                adapters
+                                    .iter()
+                                    .find(|adapter| adapter.name() == server_name)
+                                    .or_else(|| adapters.first())
+                                    .cloned()
+                            });
                             let upstream_client = upstream_client.clone();
                             let response = this
                                 .update(cx, |this, cx| {
@@ -6629,6 +6648,7 @@ impl LspStore {
         completions: Rc<RefCell<Box<[Completion]>>>,
         completion_index: usize,
         push_to_history: bool,
+        all_commit_ranges: Vec<Range<language::Anchor>>,
         cx: &mut Context<Self>,
     ) -> Task<Result<Option<Transaction>>> {
         if let Some((client, project_id)) = self.upstream_client() {
@@ -6645,6 +6665,11 @@ impl LspStore {
                             new_text: completion.new_text,
                             source: completion.source,
                         })),
+                        all_commit_ranges: all_commit_ranges
+                            .iter()
+                            .cloned()
+                            .map(language::proto::serialize_anchor_range)
+                            .collect(),
                     }
                 };
 
@@ -6738,12 +6763,15 @@ impl LspStore {
                             let has_overlap = if is_file_start_auto_import {
                                 false
                             } else {
-                                let start_within = primary.start.cmp(&range.start, buffer).is_le()
-                                    && primary.end.cmp(&range.start, buffer).is_ge();
-                                let end_within = range.start.cmp(&primary.end, buffer).is_le()
-                                    && range.end.cmp(&primary.end, buffer).is_ge();
-                                let result = start_within || end_within;
-                                result
+                                all_commit_ranges.iter().any(|commit_range| {
+                                    let start_within =
+                                        commit_range.start.cmp(&range.start, buffer).is_le()
+                                            && commit_range.end.cmp(&range.start, buffer).is_ge();
+                                    let end_within =
+                                        range.start.cmp(&commit_range.end, buffer).is_le()
+                                            && range.end.cmp(&commit_range.end, buffer).is_ge();
+                                    start_within || end_within
+                                })
                             };
 
                             //Skip additional edits which overlap with the primary completion edit
@@ -7021,6 +7049,21 @@ impl LspStore {
                 .collect()
         } else {
             for (chunk, range_to_query) in ranges_to_query.into_iter().flatten() {
+                // When a server refresh was requested, other servers' cached hints
+                // are unaffected by the refresh and must be included in the result.
+                // Otherwise apply_fetched_hints (with should_invalidate()=true)
+                // removes all visible hints but only adds back the requesting
+                // server's new hints, permanently losing other servers' hints.
+                let other_servers_cached: CacheInlayHints = if lsp_refresh_requested {
+                    lsp_data
+                        .inlay_hints
+                        .cached_hints(&chunk)
+                        .cloned()
+                        .unwrap_or_default()
+                } else {
+                    HashMap::default()
+                };
+
                 let next_hint_id = next_hint_id.clone();
                 let buffer = buffer.clone();
                 let query_version = query_version.clone();
@@ -7039,33 +7082,32 @@ impl LspStore {
                                         if update_cache {
                                             lsp_data.inlay_hints.invalidate_for_chunk(chunk);
                                         }
-                                        HashMap::default()
+                                        other_servers_cached
                                     } else {
-                                        new_hints_by_server
-                                            .into_iter()
-                                            .map(|(server_id, new_hints)| {
-                                                let new_hints = new_hints
-                                                    .into_iter()
-                                                    .map(|new_hint| {
-                                                        (
-                                                            InlayId::Hint(next_hint_id.fetch_add(
-                                                                1,
-                                                                atomic::Ordering::AcqRel,
-                                                            )),
-                                                            new_hint,
-                                                        )
-                                                    })
-                                                    .collect::<Vec<_>>();
-                                                if update_cache {
-                                                    lsp_data.inlay_hints.insert_new_hints(
-                                                        chunk,
-                                                        server_id,
-                                                        new_hints.clone(),
-                                                    );
-                                                }
-                                                (server_id, new_hints)
-                                            })
-                                            .collect()
+                                        let mut result = other_servers_cached;
+                                        for (server_id, new_hints) in new_hints_by_server {
+                                            let new_hints = new_hints
+                                                .into_iter()
+                                                .map(|new_hint| {
+                                                    (
+                                                        InlayId::Hint(next_hint_id.fetch_add(
+                                                            1,
+                                                            atomic::Ordering::AcqRel,
+                                                        )),
+                                                        new_hint,
+                                                    )
+                                                })
+                                                .collect::<Vec<_>>();
+                                            if update_cache {
+                                                lsp_data.inlay_hints.insert_new_hints(
+                                                    chunk,
+                                                    server_id,
+                                                    new_hints.clone(),
+                                                );
+                                            }
+                                            result.insert(server_id, new_hints);
+                                        }
+                                        result
                                     }
                                 })
                             })
@@ -7660,9 +7702,10 @@ impl LspStore {
                                         source_worktree_id,
                                         path,
                                         kind: symbol_kind,
-                                        name: symbol_name,
+                                        name: collapse_newlines(&symbol_name, "↵ "),
                                         range: range_from_lsp(symbol_location.range),
-                                        container_name,
+                                        container_name: container_name
+                                            .map(|c| collapse_newlines(&c, "↵ ")),
                                     })
                                 },
                             )
@@ -8163,6 +8206,7 @@ impl LspStore {
                     LanguageServerStatus {
                         name,
                         server_version: None,
+                        server_readable_version: None,
                         pending_work: Default::default(),
                         has_pending_diagnostic_updates: false,
                         progress_tokens: Default::default(),
@@ -8804,6 +8848,18 @@ impl LspStore {
                 )
                 .await?;
             }
+            Request::GetDocumentSymbols(get_document_symbols) => {
+                Self::query_lsp_locally::<GetDocumentSymbols>(
+                    lsp_store,
+                    server_id,
+                    sender_id,
+                    lsp_request_id,
+                    get_document_symbols,
+                    None,
+                    &mut cx,
+                )
+                .await?;
+            }
             Request::GetHover(get_hover) => {
                 let position = get_hover.position.clone().and_then(deserialize_anchor);
                 Self::query_lsp_locally::<GetHover>(
@@ -9341,6 +9397,7 @@ impl LspStore {
                 LanguageServerStatus {
                     name: server_name.clone(),
                     server_version: None,
+                    server_readable_version: None,
                     pending_work: Default::default(),
                     has_pending_diagnostic_updates: false,
                     progress_tokens: Default::default(),
@@ -10377,13 +10434,19 @@ impl LspStore {
         envelope: TypedEnvelope<proto::ApplyCompletionAdditionalEdits>,
         mut cx: AsyncApp,
     ) -> Result<proto::ApplyCompletionAdditionalEditsResponse> {
-        let (buffer, completion) = this.update(&mut cx, |this, cx| {
+        let (buffer, completion, all_commit_ranges) = this.update(&mut cx, |this, cx| {
             let buffer_id = BufferId::new(envelope.payload.buffer_id)?;
             let buffer = this.buffer_store.read(cx).get_existing(buffer_id)?;
             let completion = Self::deserialize_completion(
                 envelope.payload.completion.context("invalid completion")?,
             )?;
-            anyhow::Ok((buffer, completion))
+            let all_commit_ranges = envelope
+                .payload
+                .all_commit_ranges
+                .into_iter()
+                .map(language::proto::deserialize_anchor_range)
+                .collect::<Result<Vec<_>, _>>()?;
+            anyhow::Ok((buffer, completion, all_commit_ranges))
         })?;
 
         let apply_additional_edits = this.update(&mut cx, |this, cx| {
@@ -10403,6 +10466,7 @@ impl LspStore {
                 }]))),
                 0,
                 false,
+                all_commit_ranges,
                 cx,
             )
         });
@@ -11297,6 +11361,7 @@ impl LspStore {
             LanguageServerStatus {
                 name: language_server.name(),
                 server_version: language_server.version(),
+                server_readable_version: language_server.readable_version(),
                 pending_work: Default::default(),
                 has_pending_diagnostic_updates: false,
                 progress_tokens: Default::default(),
@@ -11384,6 +11449,15 @@ impl LspStore {
 
                 let buffer_id = buffer.remote_id();
                 if local.registered_buffers.contains_key(&buffer_id) {
+                    let abs_path = file.abs_path(cx);
+                    let uri = match lsp::Uri::from_file_path(&abs_path) {
+                        Ok(uri) => uri,
+                        Err(()) => {
+                            log::error!("failed to convert path to URI: {:?}", abs_path);
+                            continue;
+                        }
+                    };
+
                     let versions = local
                         .buffer_snapshots
                         .entry(buffer_id)
@@ -11405,14 +11479,13 @@ impl LspStore {
                     let snapshot = versions.last().unwrap();
                     let version = snapshot.version;
                     let initial_snapshot = &snapshot.snapshot;
-                    let uri = lsp::Uri::from_file_path(file.abs_path(cx)).unwrap();
                     language_server.register_buffer(
                         uri,
                         adapter.language_id(&language.name()),
                         version,
                         initial_snapshot.text(),
                     );
-                    buffer_paths_registered.push((buffer_id, file.abs_path(cx)));
+                    buffer_paths_registered.push((buffer_id, abs_path));
                     local
                         .buffers_opened_in_servers
                         .entry(buffer_id)
@@ -13942,6 +14015,7 @@ impl LspAdapter for SshLspAdapter {
     async fn initialization_options(
         self: Arc<Self>,
         _: &Arc<dyn LspAdapterDelegate>,
+        _: &mut AsyncApp,
     ) -> Result<Option<serde_json::Value>> {
         let Some(options) = &self.initialization_options else {
             return Ok(None);
@@ -14049,8 +14123,8 @@ impl LspAdapterDelegate for LocalLspAdapterDelegate {
         self.worktree.abs_path().as_ref()
     }
 
-    fn resolve_executable_path(&self, path: PathBuf) -> PathBuf {
-        self.worktree.resolve_executable_path(path)
+    fn resolve_relative_path(&self, path: PathBuf) -> PathBuf {
+        self.worktree.resolve_relative_path(path)
     }
 
     async fn shell_env(&self) -> HashMap<String, String> {
@@ -14079,7 +14153,7 @@ impl LspAdapterDelegate for LocalLspAdapterDelegate {
         };
 
         let env = self.shell_env().await;
-        let output = util::command::new_smol_command(&npm)
+        let output = util::command::new_command(&npm)
             .args(["root", "-g"])
             .envs(env)
             .current_dir(local_package_directory)
@@ -14114,7 +14188,7 @@ impl LspAdapterDelegate for LocalLspAdapterDelegate {
         if self.fs.is_file(&working_dir).await {
             working_dir.pop();
         }
-        let output = util::command::new_smol_command(&command.path)
+        let output = util::command::new_command(&command.path)
             .args(command.arguments)
             .envs(command.env.clone().unwrap_or_default())
             .current_dir(working_dir)
@@ -14253,6 +14327,13 @@ async fn populate_labels_for_symbols(
             });
         }
     }
+}
+
+pub(crate) fn collapse_newlines(text: &str, separator: &str) -> String {
+    text.lines()
+        .map(|line| line.trim())
+        .filter(|line| !line.is_empty())
+        .join(separator)
 }
 
 fn include_text(server: &lsp::LanguageServer) -> Option<bool> {

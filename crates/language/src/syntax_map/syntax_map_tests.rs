@@ -181,6 +181,87 @@ fn test_syntax_map_layers_for_range(cx: &mut App) {
 }
 
 #[gpui::test]
+fn test_syntax_map_languages_match_layers_for_range(cx: &mut App) {
+    let registry = Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
+    let markdown = markdown_lang();
+    let markdown_inline = Arc::new(markdown_inline_lang());
+    registry.add(markdown.clone());
+    registry.add(markdown_inline);
+    registry.add(rust_lang());
+
+    let buffer = Buffer::new(
+        ReplicaId::LOCAL,
+        BufferId::new(1).unwrap(),
+        r#"
+            This is `inline`.
+
+            ```rs
+            fn a() {}
+            ```
+        "#
+        .unindent(),
+    );
+
+    let mut syntax_map = SyntaxMap::new(&buffer);
+    syntax_map.set_language_registry(registry);
+    syntax_map.reparse(markdown, &buffer);
+
+    let all_language_names = syntax_map
+        .languages(&buffer, true)
+        .map(|language| language.name().to_string())
+        .collect::<Vec<_>>();
+    let all_layer_language_names = syntax_map
+        .layers_for_range(0..buffer.len(), &buffer, true)
+        .map(|layer| layer.language.name().to_string())
+        .collect::<Vec<_>>();
+
+    assert_eq!(all_language_names, all_layer_language_names);
+    assert!(
+        all_language_names
+            .iter()
+            .any(|language_name| language_name == "Markdown-Inline"),
+        "expected hidden languages to be included when include_hidden is true"
+    );
+    assert!(
+        all_language_names
+            .iter()
+            .any(|language_name| language_name == "Markdown")
+    );
+    assert!(
+        all_language_names
+            .iter()
+            .any(|language_name| language_name == "Rust")
+    );
+
+    let visible_language_names = syntax_map
+        .languages(&buffer, false)
+        .map(|language| language.name().to_string())
+        .collect::<Vec<_>>();
+    let visible_layer_language_names = syntax_map
+        .layers_for_range(0..buffer.len(), &buffer, false)
+        .map(|layer| layer.language.name().to_string())
+        .collect::<Vec<_>>();
+
+    assert_eq!(visible_language_names, visible_layer_language_names);
+    assert!(
+        !visible_language_names
+            .iter()
+            .any(|language_name| language_name == "Markdown-Inline"),
+        "expected hidden languages to be excluded when include_hidden is false"
+    );
+    assert!(
+        visible_language_names
+            .iter()
+            .any(|language_name| language_name == "Markdown")
+    );
+    assert!(
+        visible_language_names
+            .iter()
+            .any(|language_name| language_name == "Rust")
+    );
+}
+
+#[gpui::test]
 fn test_dynamic_language_injection(cx: &mut App) {
     let registry = Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
     let markdown = markdown_lang();

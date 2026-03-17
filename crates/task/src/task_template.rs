@@ -114,6 +114,7 @@ pub enum HideStrategy {
 pub struct TaskTemplates(pub Vec<TaskTemplate>);
 
 impl TaskTemplates {
+    pub const FILE_NAME: &str = "tasks.json";
     /// Generates JSON schema of Tasks JSON template format.
     pub fn generate_json_schema() -> serde_json::Value {
         let schema = schemars::generate::SchemaSettings::draft2019_09()

@@ -36,7 +36,7 @@ use ui::{
 use util::ResultExt;
 use util::rel_path::RelPath;
 use workspace::searchable::Direction;
-use workspace::{Workspace, WorkspaceDb, WorkspaceId};
+use workspace::{MultiWorkspace, Workspace, WorkspaceDb, WorkspaceId};
 
 #[derive(Clone, Copy, Default, Debug, PartialEq, Serialize, Deserialize)]
 pub enum Mode {
@@ -72,6 +72,10 @@ impl Mode {
             Self::Visual | Self::VisualLine | Self::VisualBlock | Self::HelixSelect => true,
             Self::Normal | Self::Insert | Self::Replace | Self::HelixNormal => false,
         }
+    }
+
+    pub fn is_helix(&self) -> bool {
+        matches!(self, Self::HelixNormal | Self::HelixSelect)
     }
 }
 
@@ -228,7 +232,15 @@ pub struct VimGlobals {
     pub recorded_actions: Vec<ReplayableAction>,
     pub recorded_selection: RecordedSelection,
 
+    /// The register being written to by the active `q{register}` macro
+    /// recording.
     pub recording_register: Option<char>,
+    /// The register that was selected at the start of the current
+    /// dot-recording, for example, `"ap`.
+    pub recording_register_for_dot: Option<char>,
+    /// The register from the last completed dot-recording. Used when replaying
+    /// with `.`.
+    pub recorded_register_for_dot: Option<char>,
     pub last_recorded_register: Option<char>,
     pub last_replayed_register: Option<char>,
     pub replayer: Option<Replayer>,
@@ -515,7 +527,7 @@ impl MarksState {
         cx: &mut Context<Self>,
     ) {
         let on_change = cx.subscribe(buffer_handle, move |this, buffer, event, cx| match event {
-            BufferEvent::Edited => {
+            BufferEvent::Edited { .. } => {
                 if let Some(path) = this.path_for_buffer(&buffer, cx) {
                     this.serialize_buffer_marks(path, &buffer, cx);
                 }
@@ -612,9 +624,7 @@ impl MarksState {
                 return Some(Mark::Local(anchors.get(name)?.clone()));
             }
 
-            let singleton = multi_buffer.read(cx).as_singleton()?;
-            let excerpt_id = *multi_buffer.read(cx).excerpt_ids().first()?;
-            let buffer_id = singleton.read(cx).remote_id();
+            let (excerpt_id, buffer_id, _) = multi_buffer.read(cx).read(cx).as_singleton()?;
             if let Some(anchors) = self.buffer_marks.get(&buffer_id) {
                 let text_anchors = anchors.get(name)?;
                 let anchors = text_anchors
@@ -731,12 +741,16 @@ impl VimGlobals {
                 });
                 GlobalCommandPaletteInterceptor::set(cx, command_interceptor);
                 for window in cx.windows() {
-                    if let Some(workspace) = window.downcast::<Workspace>() {
-                        workspace
-                            .update(cx, |workspace, _, cx| {
-                                Vim::update_globals(cx, |globals, cx| {
-                                    globals.register_workspace(workspace, cx)
-                                });
+                    if let Some(multi_workspace) = window.downcast::<MultiWorkspace>() {
+                        multi_workspace
+                            .update(cx, |multi_workspace, _, cx| {
+                                for workspace in multi_workspace.workspaces() {
+                                    workspace.update(cx, |workspace, cx| {
+                                        Vim::update_globals(cx, |globals, cx| {
+                                            globals.register_workspace(workspace, cx)
+                                        });
+                                    });
+                                }
                             })
                             .ok();
                     }
@@ -913,6 +927,7 @@ impl VimGlobals {
                 self.dot_recording = false;
                 self.recorded_actions = std::mem::take(&mut self.recording_actions);
                 self.recorded_count = self.recording_count.take();
+                self.recorded_register_for_dot = self.recording_register_for_dot.take();
                 self.stop_recording_after_next_action = false;
             }
         }
@@ -940,6 +955,7 @@ impl VimGlobals {
                 self.dot_recording = false;
                 self.recorded_actions = std::mem::take(&mut self.recording_actions);
                 self.recorded_count = self.recording_count.take();
+                self.recorded_register_for_dot = self.recording_register_for_dot.take();
                 self.stop_recording_after_next_action = false;
             }
         }

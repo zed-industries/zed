@@ -181,7 +181,7 @@ impl Project {
                                     let to_run = format_to_run();
 
                                     let arg = format!("{activation_script}{separator} {to_run}");
-                                    let args = shell_kind.args_for_shell(false, arg);
+                                    let args = shell_kind.args_for_shell(true, arg);
                                     let shell = remote_client
                                         .read(cx)
                                         .shell()
@@ -214,7 +214,7 @@ impl Project {
                                     let to_run = format_to_run();
 
                                     let arg = format!("{activation_script}{separator} {to_run}");
-                                    let args = shell_kind.args_for_shell(false, arg);
+                                    let args = shell_kind.args_for_shell(true, arg);
 
                                     (
                                         Shell::WithArguments {

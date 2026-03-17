@@ -21,8 +21,8 @@ test-support = [
 ]
 
 [dependencies]
+anthropic.workspace = true
 anyhow.workspace = true
-chrono.workspace = true
 collections.workspace = true
 dirs.workspace = true
 fs.workspace = true

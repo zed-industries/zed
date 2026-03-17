@@ -26,7 +26,7 @@ use std::{
     sync::Arc,
     time::{Duration, SystemTime},
 };
-use util::command::new_smol_command;
+use util::command::new_command;
 use workspace::Workspace;
 
 const SHOULD_SHOW_UPDATE_NOTIFICATION_KEY: &str = "auto-updater-should-show-updated-notification";
@@ -108,6 +108,7 @@ pub struct AutoUpdater {
     client: Arc<Client>,
     pending_poll: Option<Task<Option<()>>>,
     quit_subscription: Option<gpui::Subscription>,
+    update_check_type: UpdateCheckType,
 }
 
 #[derive(Deserialize, Serialize, Clone, Debug)]
@@ -126,7 +127,7 @@ impl Drop for MacOsUnmounter<'_> {
         let mount_path = mem::take(&mut self.mount_path);
         self.background_executor
             .spawn(async move {
-                let unmount_output = new_smol_command("hdiutil")
+                let unmount_output = new_command("hdiutil")
                     .args(["detach", "-force"])
                     .arg(&mount_path)
                     .output()
@@ -211,18 +212,10 @@ pub fn init(client: Arc<Client>, cx: &mut App) {
 }
 
 pub fn check(_: &Check, window: &mut Window, cx: &mut App) {
-    if let Some(message) = option_env!("ZED_UPDATE_EXPLANATION") {
-        drop(window.prompt(
-            gpui::PromptLevel::Info,
-            "Zed was installed via a package manager.",
-            Some(message),
-            &["Ok"],
-            cx,
-        ));
-        return;
-    }
-
-    if let Ok(message) = env::var("ZED_UPDATE_EXPLANATION") {
+    if let Some(message) = option_env!("ZED_UPDATE_EXPLANATION")
+        .map(ToOwned::to_owned)
+        .or_else(|| env::var("ZED_UPDATE_EXPLANATION").ok())
+    {
         drop(window.prompt(
             gpui::PromptLevel::Info,
             "Zed was installed via a package manager.",
@@ -318,9 +311,16 @@ impl InstallerDir {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub enum UpdateCheckType {
     Automatic,
     Manual,
+}
+
+impl UpdateCheckType {
+    pub fn is_manual(self) -> bool {
+        self == Self::Manual
+    }
 }
 
 impl AutoUpdater {
@@ -352,6 +352,7 @@ impl AutoUpdater {
             client,
             pending_poll: None,
             quit_subscription,
+            update_check_type: UpdateCheckType::Automatic,
         }
     }
 
@@ -373,10 +374,19 @@ impl AutoUpdater {
         })
     }
 
+    pub fn update_check_type(&self) -> UpdateCheckType {
+        self.update_check_type
+    }
+
     pub fn poll(&mut self, check_type: UpdateCheckType, cx: &mut Context<Self>) {
         if self.pending_poll.is_some() {
+            if self.update_check_type == UpdateCheckType::Automatic {
+                self.update_check_type = check_type;
+                cx.notify();
+            }
             return;
         }
+        self.update_check_type = check_type;
 
         cx.notify();
 
@@ -543,7 +553,7 @@ impl AutoUpdater {
                 asset,
                 metrics_id: metrics_id.as_deref(),
                 system_id: system_id.as_deref(),
-                is_staff: is_staff,
+                is_staff,
             },
         )?;
 
@@ -888,7 +898,7 @@ async fn install_release_linux(
         .await
         .context("failed to create directory into which to extract update")?;
 
-    let output = new_smol_command("tar")
+    let output = new_command("tar")
         .arg("-xzf")
         .arg(&downloaded_tar_gz)
         .arg("-C")
@@ -923,7 +933,7 @@ async fn install_release_linux(
         to = PathBuf::from(prefix);
     }
 
-    let output = new_smol_command("rsync")
+    let output = new_command("rsync")
         .args(["-av", "--delete"])
         .arg(&from)
         .arg(&to)
@@ -955,7 +965,7 @@ async fn install_release_macos(
     let mut mounted_app_path: OsString = mount_path.join(running_app_filename).into();
 
     mounted_app_path.push("/");
-    let output = new_smol_command("hdiutil")
+    let output = new_command("hdiutil")
         .args(["attach", "-nobrowse"])
         .arg(&downloaded_dmg)
         .arg("-mountroot")
@@ -975,8 +985,8 @@ async fn install_release_macos(
         background_executor: cx.background_executor(),
     };
 
-    let output = new_smol_command("rsync")
-        .args(["-av", "--delete"])
+    let output = new_command("rsync")
+        .args(["-av", "--delete", "--exclude", "Icon?"])
         .arg(&mounted_app_path)
         .arg(&running_app_path)
         .output()
@@ -1006,7 +1016,7 @@ async fn cleanup_windows() -> Result<()> {
 }
 
 async fn install_release_windows(downloaded_installer: PathBuf) -> Result<Option<PathBuf>> {
-    let output = new_smol_command(downloaded_installer)
+    let output = new_command(downloaded_installer)
         .arg("/verysilent")
         .arg("/update=true")
         .arg("!desktopicon")
@@ -1044,7 +1054,7 @@ pub async fn finalize_auto_update_on_quit() {
             .parent()
             .map(|p| p.join("tools").join("auto_update_helper.exe"))
     {
-        let mut command = util::command::new_smol_command(helper);
+        let mut command = util::command::new_command(helper);
         command.arg("--launch");
         command.arg("false");
         if let Ok(mut cmd) = command.spawn() {

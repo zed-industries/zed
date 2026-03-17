@@ -8,16 +8,14 @@ use gpui::{AnyElement, IntoElement, ParentElement, Styled};
 ///
 /// ```
 /// use ui::prelude::*;
-/// use ui::{Banner, Button, IconName, IconPosition, IconSize, Label, Severity};
+/// use ui::{Banner, Button, Icon, IconName, IconSize, Label, Severity};
 ///
 /// Banner::new()
 ///     .severity(Severity::Success)
 ///     .children([Label::new("This is a success message")])
 ///     .action_slot(
 ///         Button::new("learn-more", "Learn More")
-///             .icon(IconName::ArrowUpRight)
-///             .icon_size(IconSize::Small)
-///             .icon_position(IconPosition::End)
+///             .end_icon(Icon::new(IconName::ArrowUpRight).size(IconSize::Small)),
 ///     );
 /// ```
 #[derive(IntoElement, RegisterComponent)]
@@ -67,6 +65,7 @@ impl ParentElement for Banner {
 impl RenderOnce for Banner {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let banner = h_flex()
+            .min_w_0()
             .py_0p5()
             .gap_1p5()
             .when(self.wrap_content, |this| this.flex_wrap())
@@ -150,9 +149,7 @@ impl Component for Banner {
                     .child(Label::new("This is an informational message"))
                     .action_slot(
                         Button::new("learn-more", "Learn More")
-                            .icon(IconName::ArrowUpRight)
-                            .icon_size(IconSize::Small)
-                            .icon_position(IconPosition::End),
+                            .end_icon(Icon::new(IconName::ArrowUpRight).size(IconSize::Small)),
                     )
                     .into_any_element(),
             ),

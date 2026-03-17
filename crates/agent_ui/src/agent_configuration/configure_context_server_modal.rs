@@ -693,9 +693,11 @@ impl ConfigureContextServerModal {
                 {
                     Some(
                         Button::new("open-repository", "Open Repository")
-                            .icon(IconName::ArrowUpRight)
-                            .icon_color(Color::Muted)
-                            .icon_size(IconSize::Small)
+                            .end_icon(
+                                Icon::new(IconName::ArrowUpRight)
+                                    .size(IconSize::Small)
+                                    .color(Color::Muted),
+                            )
                             .tooltip({
                                 let repository_url = repository_url.clone();
                                 move |_window, cx| {
@@ -877,9 +879,14 @@ fn wait_for_context_server(
     context_server_id: ContextServerId,
     cx: &mut App,
 ) -> Task<Result<(), Arc<str>>> {
+    use std::time::Duration;
+
+    const WAIT_TIMEOUT: Duration = Duration::from_secs(120);
+
     let (tx, rx) = futures::channel::oneshot::channel();
     let tx = Arc::new(Mutex::new(Some(tx)));
 
+    let context_server_id_for_timeout = context_server_id.clone();
     let subscription = cx.subscribe(context_server_store, move |_, event, _cx| {
         let project::context_server_store::ServerStatusChangedEvent { server_id, status } = event;
 
@@ -909,12 +916,20 @@ fn wait_for_context_server(
         }
     });
 
-    cx.spawn(async move |_cx| {
-        let result = rx
-            .await
-            .map_err(|_| Arc::from("Context server store was dropped"))?;
+    cx.spawn(async move |cx| {
+        let timeout = cx.background_executor().timer(WAIT_TIMEOUT);
+        let result = futures::future::select(rx, timeout).await;
         drop(subscription);
-        result
+        match result {
+            futures::future::Either::Left((Ok(inner), _)) => inner,
+            futures::future::Either::Left((Err(_), _)) => {
+                Err(Arc::from("Context server store was dropped"))
+            }
+            futures::future::Either::Right(_) => Err(Arc::from(format!(
+                "Timed out waiting for context server `{}` to start. Check the Zed log for details.",
+                context_server_id_for_timeout
+            ))),
+        }
     })
 }
 

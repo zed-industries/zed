@@ -9,7 +9,6 @@ use crate::{
 use gpui::prelude::FluentBuilder;
 use gpui::{Context, DismissEvent, Entity, Focusable as _, Pixels, Point, Subscription, Window};
 use project::DisableAiSettings;
-use settings::Settings;
 use std::ops::Range;
 use text::PointUtf16;
 use workspace::OpenInTerminal;
@@ -219,7 +218,10 @@ pub fn deploy_context_menu(
 
         let evaluate_selection = window.is_action_available(&EvaluateSelectedText, cx);
         let run_to_cursor = window.is_action_available(&RunToCursor, cx);
-        let disable_ai = DisableAiSettings::get_global(cx).disable_ai;
+        let disable_ai = DisableAiSettings::is_ai_disabled_for_buffer(
+            editor.buffer.read(cx).as_singleton().as_ref(),
+            cx,
+        );
 
         let is_markdown = editor
             .buffer()

@@ -1,4 +1,4 @@
-use crate::acp::AcpThreadHistory;
+use crate::ThreadHistory;
 use agent::ThreadStore;
 use agent_settings::AgentSettings;
 use collections::{HashMap, VecDeque};
@@ -64,7 +64,7 @@ pub struct PromptEditor<T> {
     pub editor: Entity<Editor>,
     mode: PromptEditorMode,
     mention_set: Entity<MentionSet>,
-    history: WeakEntity<AcpThreadHistory>,
+    history: WeakEntity<ThreadHistory>,
     prompt_store: Option<Entity<PromptStore>>,
     workspace: WeakEntity<Workspace>,
     model_selector: Entity<AgentModelSelector>,
@@ -417,8 +417,13 @@ impl<T: 'static> PromptEditor<T> {
 
     fn paste(&mut self, _: &Paste, window: &mut Window, cx: &mut Context<Self>) {
         if inline_assistant_model_supports_images(cx)
-            && let Some(task) =
-                paste_images_as_context(self.editor.clone(), self.mention_set.clone(), window, cx)
+            && let Some(task) = paste_images_as_context(
+                self.editor.clone(),
+                self.mention_set.clone(),
+                self.workspace.clone(),
+                window,
+                cx,
+            )
         {
             task.detach();
         }
@@ -438,7 +443,7 @@ impl<T: 'static> PromptEditor<T> {
                 self.mention_set
                     .update(cx, |mention_set, _cx| mention_set.remove_invalid(&snapshot));
 
-                if let Some(workspace) = window.root::<Workspace>().flatten() {
+                if let Some(workspace) = Workspace::for_window(window, cx) {
                     workspace.update(cx, |workspace, cx| {
                         let is_via_ssh = workspace.project().read(cx).is_via_remote_server();
 
@@ -791,9 +796,11 @@ impl<T: 'static> PromptEditor<T> {
                 vec![
                     Button::new("start", mode.start_label())
                         .label_size(LabelSize::Small)
-                        .icon(IconName::Return)
-                        .icon_size(IconSize::XSmall)
-                        .icon_color(Color::Muted)
+                        .end_icon(
+                            Icon::new(IconName::Return)
+                                .size(IconSize::XSmall)
+                                .color(Color::Muted),
+                        )
                         .on_click(
                             cx.listener(|_, _, _, cx| cx.emit(PromptEditorEvent::StartRequested)),
                         )
@@ -1220,7 +1227,7 @@ impl PromptEditor<BufferCodegen> {
         fs: Arc<dyn Fs>,
         thread_store: Entity<ThreadStore>,
         prompt_store: Option<Entity<PromptStore>>,
-        history: WeakEntity<AcpThreadHistory>,
+        history: WeakEntity<ThreadHistory>,
         project: WeakEntity<Project>,
         workspace: WeakEntity<Workspace>,
         window: &mut Window,
@@ -1379,7 +1386,7 @@ impl PromptEditor<TerminalCodegen> {
         fs: Arc<dyn Fs>,
         thread_store: Entity<ThreadStore>,
         prompt_store: Option<Entity<PromptStore>>,
-        history: WeakEntity<AcpThreadHistory>,
+        history: WeakEntity<ThreadHistory>,
         project: WeakEntity<Project>,
         workspace: WeakEntity<Workspace>,
         window: &mut Window,
@@ -1627,6 +1634,7 @@ fn insert_message_creases(
             crease_for_mention(
                 crease.label.clone(),
                 crease.icon_path.clone(),
+                None,
                 start..end,
                 cx.weak_entity(),
             )

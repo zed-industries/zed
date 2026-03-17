@@ -15,7 +15,7 @@ use workspace::{ModalView, Workspace, pane};
 use crate::branch_picker::{self, BranchList, DeleteBranch, FilterRemotes};
 use crate::stash_picker::{self, DropStashItem, ShowStashItem, StashList};
 use crate::worktree_picker::{
-    self, WorktreeFromDefault, WorktreeFromDefaultOnWindow, WorktreeList,
+    self, DeleteWorktree, WorktreeFromDefault, WorktreeFromDefaultOnWindow, WorktreeList,
 };
 
 actions!(
@@ -408,6 +408,19 @@ impl GitPicker {
         }
     }
 
+    fn handle_worktree_delete(
+        &mut self,
+        _: &DeleteWorktree,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(worktree_list) = &self.worktree_list {
+            worktree_list.update(cx, |list, cx| {
+                list.handle_delete(&DeleteWorktree, window, cx);
+            });
+        }
+    }
+
     fn handle_drop_stash(
         &mut self,
         _: &DropStashItem,
@@ -524,6 +537,7 @@ impl Render for GitPicker {
             .when(self.tab == GitPickerTab::Worktrees, |el| {
                 el.on_action(cx.listener(Self::handle_worktree_from_default))
                     .on_action(cx.listener(Self::handle_worktree_from_default_on_window))
+                    .on_action(cx.listener(Self::handle_worktree_delete))
             })
             .when(self.tab == GitPickerTab::Stash, |el| {
                 el.on_action(cx.listener(Self::handle_drop_stash))

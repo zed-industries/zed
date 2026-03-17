@@ -1,9 +1,12 @@
+#![cfg_attr(target_family = "wasm", no_main)]
+
 use gpui::{
-    App, Application, Bounds, Context, CursorStyle, Decorations, HitboxBehavior, Hsla, MouseButton,
-    Pixels, Point, ResizeEdge, Size, Window, WindowBackgroundAppearance, WindowBounds,
-    WindowDecorations, WindowOptions, black, canvas, div, green, point, prelude::*, px, rgb, size,
-    transparent_black, white,
+    App, Bounds, Context, CursorStyle, Decorations, HitboxBehavior, Hsla, MouseButton, Pixels,
+    Point, ResizeEdge, Size, Window, WindowBackgroundAppearance, WindowBounds, WindowDecorations,
+    WindowOptions, black, canvas, div, green, point, prelude::*, px, rgb, size, transparent_black,
+    white,
 };
+use gpui_platform::application;
 
 struct WindowShadow {}
 
@@ -202,8 +205,8 @@ fn resize_edge(pos: Point<Pixels>, shadow_size: Pixels, size: Size<Pixels>) -> O
     Some(edge)
 }
 
-fn main() {
-    Application::new().run(|cx: &mut App| {
+fn run_example() {
+    application().run(|cx: &mut App| {
         let bounds = Bounds::centered(None, size(px(600.0), px(600.0)), cx);
         cx.open_window(
             WindowOptions {
@@ -224,4 +227,16 @@ fn main() {
         )
         .unwrap();
     });
+}
+
+#[cfg(not(target_family = "wasm"))]
+fn main() {
+    run_example();
+}
+
+#[cfg(target_family = "wasm")]
+#[wasm_bindgen::prelude::wasm_bindgen(start)]
+pub fn start() {
+    gpui_platform::web_init();
+    run_example();
 }

@@ -67,9 +67,9 @@ impl RenderOnce for ProgressBar {
         div()
             .id(self.id.clone())
             .w_full()
-            .h(px(8.0))
+            .h_2()
+            .p_0p5()
             .rounded_full()
-            .p(px(2.0))
             .bg(self.bg_color)
             .shadow(vec![gpui::BoxShadow {
                 color: gpui::black().opacity(0.08),
@@ -99,58 +99,47 @@ impl Component for ProgressBar {
 
     fn preview(_window: &mut Window, cx: &mut App) -> Option<AnyElement> {
         let max_value = 180.0;
+        let container = || v_flex().w_full().gap_1();
 
         Some(
-            div()
-                .flex()
-                .flex_col()
-                .gap_4()
-                .p_4()
-                .w(px(240.0))
-                .child(div().child("Progress Bar"))
-                .child(
-                    div()
-                        .flex()
-                        .flex_col()
-                        .gap_2()
-                        .child(
-                            div()
-                                .flex()
-                                .justify_between()
-                                .child(Label::new("0%"))
-                                .child(Label::new("Empty")),
-                        )
-                        .child(ProgressBar::new("empty", 0.0, max_value, cx)),
-                )
-                .child(
-                    div()
-                        .flex()
-                        .flex_col()
-                        .gap_2()
-                        .child(
-                            div()
-                                .flex()
-                                .justify_between()
-                                .child(Label::new("38%"))
-                                .child(Label::new("Partial")),
-                        )
-                        .child(ProgressBar::new("partial", max_value * 0.35, max_value, cx)),
-                )
-                .child(
-                    div()
-                        .flex()
-                        .flex_col()
-                        .gap_2()
-                        .child(
-                            div()
-                                .flex()
-                                .justify_between()
-                                .child(Label::new("100%"))
-                                .child(Label::new("Complete")),
-                        )
-                        .child(ProgressBar::new("filled", max_value, max_value, cx)),
-                )
-                .into_any_element(),
+            example_group(vec![single_example(
+                "Examples",
+                v_flex()
+                    .w_full()
+                    .gap_2()
+                    .child(
+                        container()
+                            .child(
+                                h_flex()
+                                    .justify_between()
+                                    .child(Label::new("0%"))
+                                    .child(Label::new("Empty")),
+                            )
+                            .child(ProgressBar::new("empty", 0.0, max_value, cx)),
+                    )
+                    .child(
+                        container()
+                            .child(
+                                h_flex()
+                                    .justify_between()
+                                    .child(Label::new("38%"))
+                                    .child(Label::new("Partial")),
+                            )
+                            .child(ProgressBar::new("partial", max_value * 0.35, max_value, cx)),
+                    )
+                    .child(
+                        container()
+                            .child(
+                                h_flex()
+                                    .justify_between()
+                                    .child(Label::new("100%"))
+                                    .child(Label::new("Complete")),
+                            )
+                            .child(ProgressBar::new("filled", max_value, max_value, cx)),
+                    )
+                    .into_any_element(),
+            )])
+            .into_any_element(),
         )
     }
 }

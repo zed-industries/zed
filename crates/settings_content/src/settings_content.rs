@@ -197,11 +197,6 @@ pub struct SettingsContent {
     // Settings related to calls in Zed
     pub calls: Option<CallSettingsContent>,
 
-    /// Whether to disable all AI features in Zed.
-    ///
-    /// Default: false
-    pub disable_ai: Option<SaturatingBool>,
-
     /// Settings for the which-key popup.
     pub which_key: Option<WhichKeySettingsContent>,
 
@@ -400,6 +395,48 @@ pub struct AudioSettingsContent {
     /// You need to rejoin a call for this setting to apply
     #[serde(rename = "experimental.legacy_audio_compatible")]
     pub legacy_audio_compatible: Option<bool>,
+    /// Requires 'rodio_audio: true'
+    ///
+    /// Select specific output audio device.
+    #[serde(rename = "experimental.output_audio_device")]
+    pub output_audio_device: Option<AudioOutputDeviceName>,
+    /// Requires 'rodio_audio: true'
+    ///
+    /// Select specific input audio device.
+    #[serde(rename = "experimental.input_audio_device")]
+    pub input_audio_device: Option<AudioInputDeviceName>,
+}
+
+#[derive(Clone, Default, Debug, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq, Eq)]
+#[serde(transparent)]
+pub struct AudioOutputDeviceName(pub Option<String>);
+
+impl AsRef<Option<String>> for AudioInputDeviceName {
+    fn as_ref(&self) -> &Option<String> {
+        &self.0
+    }
+}
+
+impl From<Option<String>> for AudioInputDeviceName {
+    fn from(value: Option<String>) -> Self {
+        Self(value)
+    }
+}
+
+#[derive(Clone, Default, Debug, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq, Eq)]
+#[serde(transparent)]
+pub struct AudioInputDeviceName(pub Option<String>);
+
+impl AsRef<Option<String>> for AudioOutputDeviceName {
+    fn as_ref(&self) -> &Option<String> {
+        &self.0
+    }
+}
+
+impl From<Option<String>> for AudioOutputDeviceName {
+    fn from(value: Option<String>) -> Self {
+        Self(value)
+    }
 }
 
 /// Control what info is collected by Zed.
@@ -556,6 +593,17 @@ pub struct GitPanelSettingsContent {
     ///
     /// Default: icon
     pub status_style: Option<StatusStyle>,
+
+    /// Whether to show file icons in the git panel.
+    ///
+    /// Default: false
+    pub file_icons: Option<bool>,
+
+    /// Whether to show folder icons or chevrons for directories in the git panel.
+    ///
+    /// Default: true
+    pub folder_icons: Option<bool>,
+
     /// How and when the scrollbar should be displayed.
     ///
     /// Default: inherits editor scrollbar settings
@@ -582,6 +630,16 @@ pub struct GitPanelSettingsContent {
     ///
     /// Default: false
     pub tree_view: Option<bool>,
+
+    /// Whether to show the addition/deletion change count next to each file in the Git panel.
+    ///
+    /// Default: true
+    pub diff_stats: Option<bool>,
+
+    /// Whether to show a badge on the git panel icon with the count of uncommitted changes.
+    ///
+    /// Default: false
+    pub show_count_badge: Option<bool>,
 }
 
 #[derive(
@@ -629,6 +687,10 @@ pub struct NotificationPanelSettingsContent {
     /// Default: 300
     #[serde(serialize_with = "crate::serialize_optional_f32_with_two_decimal_places")]
     pub default_width: Option<f32>,
+    /// Whether to show a badge on the notification panel icon with the count of unread notifications.
+    ///
+    /// Default: false
+    pub show_count_badge: Option<bool>,
 }
 
 #[with_fallible_options]
@@ -674,15 +736,15 @@ pub struct FileFinderSettingsContent {
     ///
     /// Default: true
     pub skip_focus_for_active_in_search: Option<bool>,
-    /// Determines whether to show the git status in the file finder
-    ///
-    /// Default: true
-    pub git_status: Option<bool>,
     /// Whether to use gitignored files when searching.
     /// Only the file Zed had indexed will be used, not necessary all the gitignored files.
     ///
     /// Default: Smart
     pub include_ignored: Option<IncludeIgnoredContent>,
+    /// Whether to include text channels in file finder results.
+    ///
+    /// Default: false
+    pub include_channels: Option<bool>,
 }
 
 #[derive(
@@ -1110,11 +1172,6 @@ pub struct ReplSettingsContent {
     ///
     /// Default: 0
     pub output_max_height_lines: Option<usize>,
-    /// Maximum number of columns of output to display before scaling images.
-    /// Set to 0 to disable output width limits.
-    ///
-    /// Default: 0
-    pub output_max_width_columns: Option<usize>,
 }
 
 /// Settings for configuring the which-key popup behaviour.
