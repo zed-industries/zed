@@ -78,6 +78,7 @@ impl From<&str> for ExtensionSnippets {
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Serialize, Deserialize)]
+#[serde(try_from = "RawExtensionManifest")]
 pub struct ExtensionManifest {
     pub id: Arc<str>,
     pub name: String,
@@ -119,9 +120,121 @@ pub struct ExtensionManifest {
     pub debug_locators: BTreeMap<Arc<str>, DebugLocatorManifestEntry>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub language_model_providers: BTreeMap<Arc<str>, LanguageModelProviderManifestEntry>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dev: Option<DevManifestEntry>,
+}
+
+#[derive(Deserialize)]
+struct RawExtensionManifest {
+    id: Arc<str>,
+    name: String,
+    version: Arc<str>,
+    schema_version: SchemaVersion,
+    #[serde(default)]
+    description: Option<String>,
+    #[serde(default)]
+    repository: Option<String>,
+    #[serde(default)]
+    authors: Vec<String>,
+    #[serde(default)]
+    lib: LibManifestEntry,
+    #[serde(default)]
+    themes: Vec<PathBuf>,
+    #[serde(default)]
+    icon_themes: Vec<PathBuf>,
+    #[serde(default)]
+    languages: Vec<PathBuf>,
+    #[serde(default)]
+    grammars: BTreeMap<Arc<str>, GrammarManifestEntry>,
+    #[serde(default)]
+    language_servers: BTreeMap<LanguageServerName, LanguageServerManifestEntry>,
+    #[serde(default)]
+    context_servers: BTreeMap<Arc<str>, ContextServerManifestEntry>,
+    #[serde(default)]
+    agent_servers: BTreeMap<Arc<str>, AgentServerManifestEntry>,
+    #[serde(default)]
+    slash_commands: BTreeMap<Arc<str>, SlashCommandManifestEntry>,
+    #[serde(default)]
+    snippets: Option<ExtensionSnippets>,
+    #[serde(default)]
+    capabilities: Vec<ExtensionCapability>,
+    #[serde(default)]
+    debug_adapters: BTreeMap<Arc<str>, DebugAdapterManifestEntry>,
+    #[serde(default)]
+    debug_locators: BTreeMap<Arc<str>, DebugLocatorManifestEntry>,
+    #[serde(default)]
+    language_model_providers: BTreeMap<Arc<str>, LanguageModelProviderManifestEntry>,
+    #[serde(default)]
+    dev: Option<DevManifestEntry>,
+}
+
+impl TryFrom<RawExtensionManifest> for ExtensionManifest {
+    type Error = String;
+
+    fn try_from(raw: RawExtensionManifest) -> std::result::Result<Self, Self::Error> {
+        if !raw.grammars.is_empty() && raw.dev.as_ref().is_some_and(|d| !d.grammars.is_empty()) {
+            return Err(
+                "manifest cannot specify both [grammars] and [dev.grammars]; \
+                 use [grammars] for published extensions or [dev.grammars] for dev extensions"
+                    .to_string(),
+            );
+        }
+
+        Ok(ExtensionManifest {
+            id: raw.id,
+            name: raw.name,
+            version: raw.version,
+            schema_version: raw.schema_version,
+            description: raw.description,
+            repository: raw.repository,
+            authors: raw.authors,
+            lib: raw.lib,
+            themes: raw.themes,
+            icon_themes: raw.icon_themes,
+            languages: raw.languages,
+            grammars: raw.grammars,
+            language_servers: raw.language_servers,
+            context_servers: raw.context_servers,
+            agent_servers: raw.agent_servers,
+            slash_commands: raw.slash_commands,
+            snippets: raw.snippets,
+            capabilities: raw.capabilities,
+            debug_adapters: raw.debug_adapters,
+            debug_locators: raw.debug_locators,
+            language_model_providers: raw.language_model_providers,
+            dev: raw.dev,
+        })
+    }
 }
 
 impl ExtensionManifest {
+    pub fn is_dev(&self) -> bool {
+        self.dev.is_some()
+    }
+
+    pub fn get_dev(&self) -> &DevManifestEntry {
+        let dev = self
+            .dev
+            .as_ref()
+            .expect("extension manifest does not contain a [dev] section");
+
+        assert!(
+            self.grammars.is_empty() || dev.grammars.is_empty(),
+            "extension manifest cannot contain both grammars and dev.grammars"
+        );
+
+        dev
+    }
+
+    pub fn grammar_names(&self) -> Box<dyn Iterator<Item = &Arc<str>> + '_> {
+        if self.is_dev() {
+            let dev = self.get_dev();
+            return Box::new(dev.grammars.keys());
+        }
+
+        Box::new(self.grammars.keys())
+    }
+
     /// Returns the set of features provided by the extension.
     pub fn provides(&self) -> BTreeSet<ExtensionProvides> {
         let mut provides = BTreeSet::default();
@@ -137,7 +250,7 @@ impl ExtensionManifest {
             provides.insert(ExtensionProvides::Languages);
         }
 
-        if !self.grammars.is_empty() {
+        if self.grammar_names().next().is_some() {
             provides.insert(ExtensionProvides::Grammars);
         }
 
@@ -307,6 +420,17 @@ pub struct GrammarManifestEntry {
     pub path: Option<String>,
 }
 
+#[derive(Clone, PartialEq, Eq, Debug, Deserialize, Serialize)]
+pub struct DevGrammarManifestEntry {
+    pub path: String,
+}
+
+#[derive(Clone, Default, PartialEq, Eq, Debug, Deserialize, Serialize)]
+pub struct DevManifestEntry {
+    #[serde(default)]
+    pub grammars: BTreeMap<Arc<str>, DevGrammarManifestEntry>,
+}
+
 #[derive(Clone, Default, PartialEq, Eq, Debug, Deserialize, Serialize)]
 pub struct LanguageServerManifestEntry {
     /// Deprecated in favor of `languages`.
@@ -437,11 +561,13 @@ fn manifest_from_old_manifest(
         debug_adapters: Default::default(),
         debug_locators: Default::default(),
         language_model_providers: Default::default(),
+        dev: None,
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use indoc::indoc;
     use pretty_assertions::assert_eq;
 
     use crate::ProcessExecCapability;
@@ -471,6 +597,7 @@ mod tests {
             debug_adapters: Default::default(),
             debug_locators: Default::default(),
             language_model_providers: BTreeMap::default(),
+            dev: None,
         }
     }
 
@@ -574,20 +701,20 @@ mod tests {
     }
     #[test]
     fn parse_manifest_with_agent_server_archive_launcher() {
-        let toml_src = r#"
-id = "example.agent-server-ext"
-name = "Agent Server Example"
-version = "1.0.0"
-schema_version = 0
+        let toml_src = indoc! {r#"
+            id = "example.agent-server-ext"
+            name = "Agent Server Example"
+            version = "1.0.0"
+            schema_version = 0
 
-[agent_servers.foo]
-name = "Foo Agent"
+            [agent_servers.foo]
+            name = "Foo Agent"
 
-[agent_servers.foo.targets.linux-x86_64]
-archive = "https://example.com/agent-linux-x64.tar.gz"
-cmd = "./agent"
-args = ["--serve"]
-"#;
+            [agent_servers.foo.targets.linux-x86_64]
+            archive = "https://example.com/agent-linux-x64.tar.gz"
+            cmd = "./agent"
+            args = ["--serve"]
+        "#};
 
         let manifest: ExtensionManifest = toml::from_str(toml_src).expect("manifest should parse");
         assert_eq!(manifest.id.as_ref(), "example.agent-server-ext");
@@ -598,5 +725,146 @@ args = ["--serve"]
         assert_eq!(target.archive, "https://example.com/agent-linux-x64.tar.gz");
         assert_eq!(target.cmd, "./agent");
         assert_eq!(target.args, vec!["--serve"]);
+    }
+
+    #[test]
+    fn parse_manifest_with_dev_grammars() {
+        let toml_src = indoc! {r#"
+            id = "example.dev-extension"
+            name = "Dev Extension Example"
+            version = "1.0.0"
+            schema_version = 0
+
+            [dev.grammars.example]
+            path = "../tree-sitter-example"
+        "#};
+
+        let manifest: ExtensionManifest = toml::from_str(toml_src).expect("manifest should parse");
+        assert_eq!(manifest.id.as_ref(), "example.dev-extension");
+        assert!(manifest.grammars.is_empty());
+
+        let dev = manifest
+            .dev
+            .as_ref()
+            .expect("dev section should be present");
+        assert!(dev.grammars.contains_key("example"));
+        let entry = dev
+            .grammars
+            .get("example")
+            .expect("grammar entry should exist");
+        assert_eq!(entry.path, "../tree-sitter-example");
+
+        let grammar_names: Vec<&str> = manifest.grammar_names().map(|n| n.as_ref()).collect();
+        assert_eq!(grammar_names, vec!["example"]);
+    }
+
+    #[test]
+    fn parse_manifest_rejects_both_grammars_and_dev_grammars() {
+        let toml_src = indoc! {r#"
+            id = "example.invalid"
+            name = "Invalid Extension"
+            version = "1.0.0"
+            schema_version = 0
+
+            [grammars.html]
+            repository = "https://github.com/tree-sitter/tree-sitter-html"
+            commit = "abc123"
+
+            [dev.grammars.html]
+            path = "../tree-sitter-html"
+        "#};
+
+        let result: std::result::Result<ExtensionManifest, _> = toml::from_str(toml_src);
+        assert!(result.is_err());
+        let error_message = result.unwrap_err().to_string();
+        assert!(
+            error_message.contains("cannot specify both"),
+            "unexpected error message: {error_message}"
+        );
+    }
+
+    #[test]
+    fn parse_manifest_with_standard_grammars() {
+        let toml_src = indoc! {r#"
+            id = "example.published"
+            name = "Published Extension"
+            version = "1.0.0"
+            schema_version = 0
+
+            [grammars.html]
+            repository = "https://github.com/tree-sitter/tree-sitter-html"
+            commit = "abc123"
+        "#};
+
+        let manifest: ExtensionManifest = toml::from_str(toml_src).expect("manifest should parse");
+        assert!(manifest.dev.is_none());
+        assert!(manifest.grammars.contains_key("html"));
+
+        let entry = manifest
+            .grammars
+            .get("html")
+            .expect("grammar entry should exist");
+        assert_eq!(
+            entry.repository,
+            "https://github.com/tree-sitter/tree-sitter-html"
+        );
+        assert_eq!(entry.rev, "abc123");
+
+        let grammar_names: Vec<&str> = manifest.grammar_names().map(|n| n.as_ref()).collect();
+        assert_eq!(grammar_names, vec!["html"]);
+    }
+
+    #[test]
+    fn get_dev_returns_dev_section_for_dev_manifest() {
+        let manifest: ExtensionManifest = toml::from_str(indoc! {r#"
+            id = "example.dev-extension"
+            name = "Dev Extension Example"
+            version = "1.0.0"
+            schema_version = 0
+
+            [dev.grammars.example]
+            path = "../tree-sitter-example"
+        "#})
+        .expect("manifest should parse");
+
+        assert!(manifest.is_dev());
+        let dev = manifest.get_dev();
+        assert!(dev.grammars.contains_key("example"));
+    }
+
+    #[test]
+    #[should_panic(expected = "extension manifest does not contain a [dev] section")]
+    fn get_dev_panics_without_dev_section() {
+        let manifest = extension_manifest();
+
+        let _ = manifest.get_dev();
+    }
+
+    #[test]
+    fn grammar_names_are_empty_for_empty_dev_grammars() {
+        let manifest = ExtensionManifest {
+            dev: Some(DevManifestEntry {
+                grammars: BTreeMap::default(),
+            }),
+            grammars: [(
+                "html".into(),
+                GrammarManifestEntry {
+                    repository: "https://github.com/tree-sitter/tree-sitter-html".into(),
+                    rev: "abc123".into(),
+                    path: None,
+                },
+            )]
+            .into_iter()
+            .collect(),
+            ..extension_manifest()
+        };
+
+        assert!(manifest.grammar_names().next().is_none());
+    }
+
+    #[test]
+    fn grammar_names_empty_when_no_grammars() {
+        let manifest = extension_manifest();
+        assert!(manifest.grammar_names().next().is_none());
     }
 }
