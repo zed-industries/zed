@@ -3796,14 +3796,16 @@ mod tests {
         );
 
         // User presses Escape — filter clears, full list is restored.
+        // The selection index (1) now points at the NewThread entry that was
+        // re-inserted when the filter was removed.
         cx.dispatch_action(Cancel);
         cx.run_until_parked();
         assert_eq!(
             visible_entries_as_strings(&sidebar, cx),
             vec![
                 "v [my-project]",
-                "  [+ New Thread]",
-                "  Alpha thread  <== selected",
+                "  [+ New Thread]  <== selected",
+                "  Alpha thread",
                 "  Beta thread",
             ]
         );
@@ -4907,7 +4909,7 @@ mod tests {
         // Focus the sidebar and select the worktree thread.
         open_and_focus_sidebar(&sidebar, cx);
         sidebar.update_in(cx, |sidebar, _window, _cx| {
-            sidebar.selection = Some(1); // index 0 is header, 1 is the thread
+            sidebar.selection = Some(2); // index 0 is header, 1 is NewThread, 2 is the thread
         });
 
         // Confirm to open the worktree thread.
