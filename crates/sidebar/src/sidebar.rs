@@ -1959,7 +1959,7 @@ impl Sidebar {
             )
             .child(
                 h_flex()
-                    .h(Tab::container_height(cx) - px(1.))
+                    .h(Tab::container_height(cx))
                     .gap_1p5()
                     .px_1p5()
                     .border_b_1()
