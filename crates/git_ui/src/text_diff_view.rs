@@ -84,11 +84,19 @@ impl TextDiffView {
         let workspace = workspace.weak_handle();
         let task = window.spawn(cx, async move |cx| {
             let project = workspace.update(cx, |workspace, _| workspace.project().clone())?;
-            // the next one to change
-            update_diff_buffer(&diff_buffer, &source_buffer, &clipboard_buffer, cx).await?;
+
+            update_diff_buffer(
+                &diff_buffer,
+                &source_buffer,
+                &selection_buffer,
+                &clipboard_buffer,
+                cx,
+            )
+            .await?;
 
             workspace.update_in(cx, |workspace, window, cx| {
                 let diff_view = cx.new(|cx| {
+                    // The next to change
                     TextDiffView::new(
                         clipboard_buffer,
                         source_editor,
@@ -222,6 +230,7 @@ fn build_buffer_from_text(
 async fn update_diff_buffer(
     diff: &Entity<BufferDiff>,
     source_buffer: &Entity<Buffer>,
+    selection_buffer: &Entity<Buffer>,
     clipboard_buffer: &Entity<Buffer>,
     cx: &mut AsyncApp,
 ) -> Result<()> {
@@ -229,13 +238,14 @@ async fn update_diff_buffer(
     let language = source_buffer_snapshot.language().cloned();
     let language_registry = source_buffer.read_with(cx, |buffer, _| buffer.language_registry());
 
+    let selection_buffer_snapshot = selection_buffer.read_with(cx, |buffer, _| buffer.snapshot());
     let base_buffer_snapshot = clipboard_buffer.read_with(cx, |buffer, _| buffer.snapshot());
     let base_text = base_buffer_snapshot.text();
 
     let update = diff
         .update(cx, |diff, cx| {
             diff.update_diff(
-                source_buffer_snapshot.text.clone(),
+                selection_buffer_snapshot.text.clone(),
                 Some(Arc::from(base_text.as_str())),
                 Some(true),
                 language.clone(),
@@ -246,7 +256,7 @@ async fn update_diff_buffer(
 
     diff.update(cx, |diff, cx| {
         diff.language_changed(language, language_registry, cx);
-        diff.set_snapshot(update, &source_buffer_snapshot.text, cx)
+        diff.set_snapshot(update, &selection_buffer_snapshot.text, cx)
     })
     .await;
     Ok(())
