@@ -852,9 +852,9 @@ const CALLBACK_TIMEOUT: Duration = Duration::from_secs(5 * 60);
 /// which still works with DCR and with RFC 8252-compliant servers that ignore
 /// the port for loopback redirects.
 ///
-/// A fixed port is safe here because PKCE (which we always use) prevents an
-/// attacker who binds to this port from exchanging an intercepted authorization
-/// code — they don't have the code verifier. See RFC 8252 Section 8.1.
+/// A fixed port is safe here because PKCE prevents an attacker who binds to
+/// this port from exchanging an intercepted authorization code — they don't
+/// have the code verifier. See RFC 8252 Section 8.1.
 const PREFERRED_CALLBACK_PORT: u16 = 27523;
 
 /// Start a loopback HTTP server to receive the OAuth authorization callback.
