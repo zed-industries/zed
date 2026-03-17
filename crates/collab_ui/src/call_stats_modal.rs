@@ -1,14 +1,13 @@
 use call::{ActiveCall, Room, room};
 use gpui::{
     DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, FontWeight, Render, Subscription,
-    Task, Window, actions,
+    Task, Window,
 };
 use livekit_client::ConnectionQuality;
 use std::time::Duration;
 use ui::prelude::*;
 use workspace::{ModalView, Workspace};
-
-actions!(collab, [ShowCallStats]);
+use zed_actions::ShowCallStats;
 
 pub fn init(cx: &mut App) {
     cx.observe_new(|workspace: &mut Workspace, _, _cx| {

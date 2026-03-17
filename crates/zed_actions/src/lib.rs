@@ -110,6 +110,12 @@ pub struct Extensions {
 #[serde(deny_unknown_fields)]
 pub struct AcpRegistry;
 
+/// Shows call diagnostics/stats modal.
+#[derive(PartialEq, Clone, Default, Debug, Deserialize, JsonSchema, Action)]
+#[action(namespace = collab)]
+#[serde(deny_unknown_fields)]
+pub struct ShowCallStats;
+
 /// Decreases the font size in the editor buffer.
 #[derive(PartialEq, Clone, Default, Debug, Deserialize, JsonSchema, Action)]
 #[action(namespace = zed)]

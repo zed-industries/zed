@@ -1,5 +1,6 @@
 use std::rc::Rc;
 use std::sync::Arc;
+use std::time::Duration;
 
 use call::{ActiveCall, Room};
 use channel::ChannelStore;
@@ -9,6 +10,8 @@ use gpui::{
     canvas, point,
 };
 use gpui::{App, Task, Window};
+use icons::IconName;
+use livekit_client::ConnectionQuality;
 use project::WorktreeSettings;
 use rpc::proto::{self};
 use settings::{Settings as _, SettingsLocation};
@@ -19,8 +22,184 @@ use ui::{
 };
 use util::rel_path::RelPath;
 use workspace::{ParticipantLocation, notifications::DetachAndPromptErr};
+use zed_actions::ShowCallStats;
 
 use crate::TitleBar;
+
+#[derive(Clone, Default)]
+pub struct CallStats {
+    pub latency_ms: Option<f64>,
+    pub jitter_ms: Option<f64>,
+    pub packet_loss_pct: Option<f64>,
+    pub input_lag: Option<Duration>,
+}
+
+impl TitleBar {
+    pub(crate) fn start_call_stats_polling(&mut self, cx: &mut gpui::Context<Self>) {
+        self.call_stats_poll_task = Some(cx.spawn(async move |this, cx| {
+            loop {
+                if this
+                    .update(cx, |this, cx| this.poll_call_stats(cx))
+                    .is_err()
+                {
+                    break;
+                }
+                cx.background_executor().timer(Duration::from_secs(1)).await;
+            }
+        }));
+    }
+
+    pub(crate) fn stop_call_stats_polling(&mut self) {
+        self.call_stats_poll_task.take();
+        self.call_stats = CallStats::default();
+    }
+
+    fn poll_call_stats(&mut self, cx: &mut gpui::Context<Self>) {
+        let Some(room) = ActiveCall::global(cx).read(cx).room().cloned() else {
+            return;
+        };
+
+        self.call_stats.input_lag = room.read(cx).input_lag();
+        let stats_future = room.read(cx).get_stats();
+
+        let background_task = cx.background_executor().spawn(async move {
+            let session_stats = stats_future.await;
+            session_stats.map(|stats| compute_network_stats(&stats))
+        });
+
+        cx.spawn(async move |this, cx| {
+            let result = background_task.await;
+            this.update(cx, |this, cx| {
+                if let Some(computed) = result {
+                    this.call_stats.latency_ms = computed.latency_ms;
+                    this.call_stats.jitter_ms = computed.jitter_ms;
+                    this.call_stats.packet_loss_pct = computed.packet_loss_pct;
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+    }
+}
+
+struct ComputedNetworkStats {
+    latency_ms: Option<f64>,
+    jitter_ms: Option<f64>,
+    packet_loss_pct: Option<f64>,
+}
+
+fn compute_network_stats(stats: &livekit_client::SessionStats) -> ComputedNetworkStats {
+    let mut best_rtt: Option<f64> = None;
+    let mut best_jitter: Option<f64> = None;
+    let mut total_packets_received: u64 = 0;
+    let mut total_packets_lost: i64 = 0;
+
+    let all_stats = stats
+        .publisher_stats
+        .iter()
+        .chain(stats.subscriber_stats.iter());
+
+    for stat in all_stats {
+        extract_metrics(
+            stat,
+            &mut best_rtt,
+            &mut best_jitter,
+            &mut total_packets_received,
+            &mut total_packets_lost,
+        );
+    }
+
+    let total_expected = total_packets_received as i64 + total_packets_lost;
+    let packet_loss_pct = if total_expected > 0 {
+        Some((total_packets_lost as f64 / total_expected as f64) * 100.0)
+    } else {
+        None
+    };
+
+    ComputedNetworkStats {
+        latency_ms: best_rtt.map(|rtt| rtt * 1000.0),
+        jitter_ms: best_jitter.map(|j| j * 1000.0),
+        packet_loss_pct,
+    }
+}
+
+#[cfg(all(
+    not(rust_analyzer),
+    any(
+        test,
+        feature = "test-support",
+        all(target_os = "windows", target_env = "gnu"),
+        target_os = "freebsd"
+    )
+))]
+fn extract_metrics(
+    _stat: &livekit_client::RtcStats,
+    _best_rtt: &mut Option<f64>,
+    _best_jitter: &mut Option<f64>,
+    _total_packets_received: &mut u64,
+    _total_packets_lost: &mut i64,
+) {
+}
+
+#[cfg(any(
+    rust_analyzer,
+    not(any(
+        test,
+        feature = "test-support",
+        all(target_os = "windows", target_env = "gnu"),
+        target_os = "freebsd"
+    ))
+))]
+fn extract_metrics(
+    stat: &livekit_client::RtcStats,
+    best_rtt: &mut Option<f64>,
+    best_jitter: &mut Option<f64>,
+    total_packets_received: &mut u64,
+    total_packets_lost: &mut i64,
+) {
+    use livekit_client::RtcStats;
+
+    match stat {
+        RtcStats::CandidatePair(pair) => {
+            let rtt = pair.candidate_pair.current_round_trip_time;
+            if rtt > 0.0 {
+                *best_rtt = Some(match *best_rtt {
+                    Some(current) => current.min(rtt),
+                    None => rtt,
+                });
+            }
+        }
+        RtcStats::InboundRtp(inbound) => {
+            let jitter = inbound.received.jitter;
+            if jitter > 0.0 {
+                *best_jitter = Some(match *best_jitter {
+                    Some(current) => current.max(jitter),
+                    None => jitter,
+                });
+            }
+            *total_packets_received += inbound.received.packets_received;
+            *total_packets_lost += inbound.received.packets_lost;
+        }
+        RtcStats::RemoteInboundRtp(remote_inbound) => {
+            let rtt = remote_inbound.remote_inbound.round_trip_time;
+            if rtt > 0.0 {
+                *best_rtt = Some(match *best_rtt {
+                    Some(current) => current.min(rtt),
+                    None => rtt,
+                });
+            }
+        }
+        _ => {}
+    }
+}
+
+fn format_stat(value: Option<f64>, format: impl Fn(f64) -> String) -> String {
+    match value {
+        Some(v) => format(v),
+        None => "—".to_string(),
+    }
+}
 
 pub fn toggle_screen_sharing(
     screen: anyhow::Result<Option<Rc<dyn ScreenCaptureSource>>>,
@@ -346,6 +525,7 @@ impl TitleBar {
         let can_use_microphone = room.can_use_microphone();
         let can_share_projects = room.can_share_projects();
         let screen_sharing_supported = cx.is_screen_capture_supported();
+        let connection_quality = room.connection_quality();
 
         let channel_store = ChannelStore::global(cx);
         let channel = room
@@ -354,6 +534,45 @@ impl TitleBar {
 
         let mut children = Vec::new();
 
+        let (signal_icon, signal_color, quality_label) = match connection_quality {
+            ConnectionQuality::Excellent => (IconName::Signal, None, "Excellent"),
+            ConnectionQuality::Good => (IconName::SignalHigh, None, "Good"),
+            ConnectionQuality::Poor => (IconName::SignalMedium, Some(Color::Warning), "Poor"),
+            ConnectionQuality::Lost => (IconName::SignalLow, Some(Color::Error), "Lost"),
+        };
+
+        let stats = self.call_stats.clone();
+        let quality_label: SharedString = quality_label.into();
+        children.push(
+            IconButton::new("call-quality", signal_icon)
+                .style(ButtonStyle::Subtle)
+                .icon_size(IconSize::Small)
+                .when_some(signal_color, |button, color| button.icon_color(color))
+                .tooltip(move |_window, cx| {
+                    let quality_label = quality_label.clone();
+                    let latency = format_stat(stats.latency_ms, |v| format!("{:.0}ms", v));
+                    let jitter = format_stat(stats.jitter_ms, |v| format!("{:.0}ms", v));
+                    let packet_loss = format_stat(stats.packet_loss_pct, |v| format!("{:.1}%", v));
+                    let input_lag =
+                        format_stat(stats.input_lag.map(|d| d.as_secs_f64() * 1000.0), |v| {
+                            format!("{:.1}ms", v)
+                        });
+
+                    Tooltip::with_meta(
+                        format!("Connection: {quality_label}"),
+                        Some(&ShowCallStats),
+                        format!(
+                            "Latency: {} · Jitter: {} · Loss: {} · Input lag: {}",
+                            latency, jitter, packet_loss, input_lag
+                        ),
+                        cx,
+                    )
+                })
+                .on_click(move |_, window, cx| {
+                    window.dispatch_action(Box::new(ShowCallStats), cx);
+                })
+                .into_any_element(),
+        );
         children.push(
             h_flex()
                 .gap_1()
