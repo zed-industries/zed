@@ -96,9 +96,9 @@ impl TextDiffView {
 
             workspace.update_in(cx, |workspace, window, cx| {
                 let diff_view = cx.new(|cx| {
-                    // The next to change
                     TextDiffView::new(
                         clipboard_buffer,
+                        selection_buffer,
                         source_editor,
                         source_buffer,
                         selection_range,
@@ -123,6 +123,7 @@ impl TextDiffView {
 
     pub fn new(
         clipboard_buffer: Entity<Buffer>,
+        selection_buffer: Entity<Buffer>,
         source_editor: Entity<Editor>,
         source_buffer: Entity<Buffer>,
         source_range: Range<Point>,
@@ -133,9 +134,14 @@ impl TextDiffView {
     ) -> Self {
         let multibuffer = cx.new(|cx| {
             let mut multibuffer = MultiBuffer::new(language::Capability::ReadWrite);
-
-            multibuffer.set_excerpts_for_buffer(source_buffer.clone(), [source_range], 0, cx);
-
+            let selection_snapshot = selection_buffer.read(cx).snapshot();
+            let full_range_in_selection_buffer = Point::new(0, 0)..selection_snapshot.max_point();
+            multibuffer.set_excerpts_for_buffer(
+                selection_buffer.clone(),
+                [full_range_in_selection_buffer],
+                0,
+                cx,
+            );
             multibuffer.add_diff(diff_buffer.clone(), cx);
             multibuffer
         });
@@ -206,7 +212,22 @@ impl TextDiffView {
                     }
 
                     log::trace!("start recalculating");
-                    update_diff_buffer(&diff_buffer, &source_buffer, &clipboard_buffer, cx).await?;
+
+                    let latest_text = source_buffer.read_with(cx, |buffer, _| {
+                        buffer
+                            .text_for_range(source_range.clone())
+                            .collect::<String>()
+                    });
+                    selection_buffer.update(cx, |buffer, cx| buffer.set_text(latest_text, cx));
+
+                    update_diff_buffer(
+                        &diff_buffer,
+                        &source_buffer,
+                        &selection_buffer,
+                        &clipboard_buffer,
+                        cx,
+                    )
+                    .await?;
                     log::trace!("finish recalculating");
                 }
                 Ok(())
