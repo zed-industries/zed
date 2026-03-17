@@ -41,6 +41,8 @@ actions!(
         CollapseSelectedEntry,
         /// Expands the selected entry in the workspace sidebar.
         ExpandSelectedEntry,
+        /// Creates a new thread in the currently selected or active project group.
+        NewThreadInGroup,
     ]
 );
 
@@ -1848,6 +1850,39 @@ impl Sidebar {
             .into_any_element()
     }
 
+    fn new_thread_in_group(
+        &mut self,
+        _: &NewThreadInGroup,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        // If there is a keyboard selection, walk backwards through
+        // `project_header_indices` to find the header that owns the selected
+        // row. Otherwise fall back to the active workspace.
+        let workspace = if let Some(selected_ix) = self.selection {
+            self.contents
+                .project_header_indices
+                .iter()
+                .rev()
+                .find(|&&header_ix| header_ix <= selected_ix)
+                .and_then(|&header_ix| match &self.contents.entries[header_ix] {
+                    ListEntry::ProjectHeader { workspace, .. } => Some(workspace.clone()),
+                    _ => None,
+                })
+        } else {
+            // Use the currently active workspace.
+            self.multi_workspace
+                .upgrade()
+                .map(|mw| mw.read(cx).workspace().clone())
+        };
+
+        let Some(workspace) = workspace else {
+            return;
+        };
+
+        self.create_new_thread(&workspace, window, cx);
+    }
+
     fn create_new_thread(
         &mut self,
         workspace: &Entity<Workspace>,
@@ -2090,6 +2125,7 @@ impl Render for Sidebar {
             .on_action(cx.listener(Self::collapse_selected_entry))
             .on_action(cx.listener(Self::cancel))
             .on_action(cx.listener(Self::remove_selected_thread))
+            .on_action(cx.listener(Self::new_thread_in_group))
             .font(ui_font)
             .h_full()
             .w(self.width)
