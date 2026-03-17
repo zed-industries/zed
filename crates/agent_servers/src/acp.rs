@@ -9,7 +9,7 @@ use anyhow::anyhow;
 use collections::HashMap;
 use futures::AsyncBufReadExt as _;
 use futures::io::BufReader;
-use project::agent_server_store::{AgentServerCommand, GEMINI_ID};
+use project::agent_server_store::AgentServerCommand;
 use project::{AgentId, Project};
 use serde::Deserialize;
 use settings::Settings as _;
@@ -30,6 +30,8 @@ use gpui::{App, AppContext as _, AsyncApp, Entity, SharedString, Task, WeakEntit
 use acp_thread::{AcpThread, AuthRequired, LoadError, TerminalProviderEvent};
 use terminal::TerminalBuilder;
 use terminal::terminal_settings::{AlternateScroll, CursorShape, TerminalSettings};
+
+use crate::GEMINI_ID;
 
 #[derive(Debug, Error)]
 #[error("Unsupported version")]

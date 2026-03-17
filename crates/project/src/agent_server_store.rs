@@ -1446,10 +1446,6 @@ impl ExternalAgentServer for LocalCustomAgent {
     }
 }
 
-pub const GEMINI_ID: &str = "gemini";
-pub const CLAUDE_AGENT_ID: &str = "claude-acp";
-pub const CODEX_ID: &str = "codex-acp";
-
 #[derive(Default, Clone, JsonSchema, Debug, PartialEq, RegisterSetting)]
 pub struct AllAgentServersSettings(pub HashMap<String, CustomAgentServerSettings>);
 
