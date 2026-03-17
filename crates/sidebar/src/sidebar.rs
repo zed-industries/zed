@@ -2002,14 +2002,6 @@ impl Sidebar {
                                         })),
                                 )
                             })
-                            .child(
-                                IconButton::new("archive", IconName::Archive)
-                                    .icon_size(IconSize::Small)
-                                    .tooltip(Tooltip::text("Archive"))
-                                    .on_click(cx.listener(|this, _, window, cx| {
-                                        this.show_archive(window, cx);
-                                    })),
-                            )
                             .when(has_open_projects, |this| {
                                 this.child(
                                     IconButton::new(
@@ -2022,7 +2014,15 @@ impl Sidebar {
                                         this.close_all_projects(window, cx);
                                     })),
                                 )
-                            }),
+                            })
+                            .child(
+                                IconButton::new("archive", IconName::Archive)
+                                    .icon_size(IconSize::Small)
+                                    .tooltip(Tooltip::text("Archive"))
+                                    .on_click(cx.listener(|this, _, window, cx| {
+                                        this.show_archive(window, cx);
+                                    })),
+                            ),
                     ),
             )
     }
