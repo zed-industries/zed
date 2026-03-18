@@ -3493,6 +3493,7 @@ impl GitPanel {
                     .as_ref()
                     != Some(&buffer)
                 {
+                    let was_focused = git_panel.commit_editor.read(cx).is_focused(window);
                     git_panel.commit_editor = cx.new(|cx| {
                         commit_message_editor(
                             buffer,
@@ -3503,6 +3504,10 @@ impl GitPanel {
                             cx,
                         )
                     });
+                    if was_focused {
+                        let focus_handle = git_panel.commit_editor.focus_handle(cx);
+                        window.focus(&focus_handle, cx);
+                    }
                 }
             })
         })
