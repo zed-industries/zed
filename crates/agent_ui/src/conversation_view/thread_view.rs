@@ -999,7 +999,10 @@ impl ThreadView {
                 let text: String = contents
                     .iter()
                     .filter_map(|block| match block {
-                        acp::ContentBlock::Text(text_content) => Some(text_content.text.as_str()),
+                        acp::ContentBlock::Text(text_content) => Some(text_content.text.clone()),
+                        acp::ContentBlock::ResourceLink(resource_link) => {
+                            Some(format!("@{}", resource_link.name))
+                        }
                         _ => None,
                     })
                     .collect::<Vec<_>>()
