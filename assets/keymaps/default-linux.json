@@ -890,6 +890,8 @@
       "ctrl-alt-c": "project_panel::CopyPath",
       "alt-shift-copy": "workspace::CopyRelativePath",
       "alt-ctrl-shift-c": "workspace::CopyRelativePath",
+      "undo": "project_panel::Undo",
+      "ctrl-z": "project_panel::Undo",
       "enter": "project_panel::Rename",
       "f2": "project_panel::Rename",
       "backspace": ["project_panel::Trash", { "skip_prompt": false }],

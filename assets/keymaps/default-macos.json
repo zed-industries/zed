@@ -951,6 +951,7 @@
       "cmd-v": "project_panel::Paste",
       "cmd-alt-c": "workspace::CopyPath",
       "alt-cmd-shift-c": "workspace::CopyRelativePath",
+      "cmd-z": "project_panel::Undo",
       "enter": "project_panel::Rename",
       "f2": "project_panel::Rename",
       "backspace": ["project_panel::Trash", { "skip_prompt": false }],
