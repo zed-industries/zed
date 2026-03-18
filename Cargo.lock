@@ -2193,7 +2193,7 @@ version = "3.8.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "89ec27229c38ed0eb3c0feee3d2c1d6a4379ae44f418a29a658890e062d8f365"
 dependencies = [
- "darling 0.20.11",
+ "darling 0.21.3",
  "ident_case",
  "prettyplease",
  "proc-macro2",
@@ -3319,6 +3319,7 @@ dependencies = [
  "futures 0.3.31",
  "fuzzy",
  "gpui",
+ "livekit_client",
  "log",
  "menu",
  "notifications",
@@ -3338,6 +3339,7 @@ dependencies = [
  "ui",
  "util",
  "workspace",
+ "zed_actions",
 ]
 
 [[package]]
@@ -4616,6 +4618,7 @@ dependencies = [
  "anyhow",
  "gpui",
  "indoc",
+ "inventory",
  "log",
  "paths",
  "release_channel",
@@ -4624,6 +4627,7 @@ dependencies = [
  "sqlez_macros",
  "tempfile",
  "util",
+ "uuid",
  "zed_env_vars",
 ]
 
@@ -6176,6 +6180,17 @@ name = "fancy-regex"
 version = "0.16.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "998b056554fbe42e03ae0e152895cd1a7e1002aec800fdc6635d20270260c46f"
+dependencies = [
+ "bit-set",
+ "regex-automata",
+ "regex-syntax",
+]
+
+[[package]]
+name = "fancy-regex"
+version = "0.17.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "72cf461f865c862bb7dc573f643dd6a2b6842f7c30b07882b56bd148cc2761b8"
 dependencies = [
  "bit-set",
  "regex-automata",
@@ -9152,7 +9167,7 @@ dependencies = [
  "bytecount",
  "data-encoding",
  "email_address",
- "fancy-regex",
+ "fancy-regex 0.16.2",
  "fraction",
  "getrandom 0.3.4",
  "idna",
@@ -9759,7 +9774,7 @@ dependencies = [
 [[package]]
 name = "libwebrtc"
 version = "0.3.26"
-source = "git+https://github.com/zed-industries/livekit-rust-sdks?rev=cf4375b244ebb51702968df7fc36e192d0f45ad5#cf4375b244ebb51702968df7fc36e192d0f45ad5"
+source = "git+https://github.com/zed-industries/livekit-rust-sdks?rev=c1209aa155cbf4543383774f884a46ae7e53ee2e#c1209aa155cbf4543383774f884a46ae7e53ee2e"
 dependencies = [
  "cxx",
  "glib",
@@ -9857,7 +9872,7 @@ checksum = "11d3d7f243d5c5a8b9bb5d6dd2b1602c0cb0b9db1621bafc7ed66e35ff9fe092"
 [[package]]
 name = "livekit"
 version = "0.7.32"
-source = "git+https://github.com/zed-industries/livekit-rust-sdks?rev=cf4375b244ebb51702968df7fc36e192d0f45ad5#cf4375b244ebb51702968df7fc36e192d0f45ad5"
+source = "git+https://github.com/zed-industries/livekit-rust-sdks?rev=c1209aa155cbf4543383774f884a46ae7e53ee2e#c1209aa155cbf4543383774f884a46ae7e53ee2e"
 dependencies = [
  "base64 0.22.1",
  "bmrng",
@@ -9883,7 +9898,7 @@ dependencies = [
 [[package]]
 name = "livekit-api"
 version = "0.4.14"
-source = "git+https://github.com/zed-industries/livekit-rust-sdks?rev=cf4375b244ebb51702968df7fc36e192d0f45ad5#cf4375b244ebb51702968df7fc36e192d0f45ad5"
+source = "git+https://github.com/zed-industries/livekit-rust-sdks?rev=c1209aa155cbf4543383774f884a46ae7e53ee2e#c1209aa155cbf4543383774f884a46ae7e53ee2e"
 dependencies = [
  "base64 0.21.7",
  "futures-util",
@@ -9910,7 +9925,7 @@ dependencies = [
 [[package]]
 name = "livekit-protocol"
 version = "0.7.1"
-source = "git+https://github.com/zed-industries/livekit-rust-sdks?rev=cf4375b244ebb51702968df7fc36e192d0f45ad5#cf4375b244ebb51702968df7fc36e192d0f45ad5"
+source = "git+https://github.com/zed-industries/livekit-rust-sdks?rev=c1209aa155cbf4543383774f884a46ae7e53ee2e#c1209aa155cbf4543383774f884a46ae7e53ee2e"
 dependencies = [
  "futures-util",
  "livekit-runtime",
@@ -9926,7 +9941,7 @@ dependencies = [
 [[package]]
 name = "livekit-runtime"
 version = "0.4.0"
-source = "git+https://github.com/zed-industries/livekit-rust-sdks?rev=cf4375b244ebb51702968df7fc36e192d0f45ad5#cf4375b244ebb51702968df7fc36e192d0f45ad5"
+source = "git+https://github.com/zed-industries/livekit-rust-sdks?rev=c1209aa155cbf4543383774f884a46ae7e53ee2e#c1209aa155cbf4543383774f884a46ae7e53ee2e"
 dependencies = [
  "tokio",
  "tokio-stream",
@@ -12119,7 +12134,7 @@ dependencies = [
 [[package]]
 name = "pet"
 version = "0.1.0"
-source = "git+https://github.com/microsoft/python-environment-tools.git?rev=d5b5bb0c4558a51d8cc76b514bc870fd1c042f16#d5b5bb0c4558a51d8cc76b514bc870fd1c042f16"
+source = "git+https://github.com/microsoft/python-environment-tools.git?rev=9e61a22af989fe54937bf07c9f9cff1bc53d9056#9e61a22af989fe54937bf07c9f9cff1bc53d9056"
 dependencies = [
  "clap",
  "env_logger 0.10.2",
@@ -12150,14 +12165,18 @@ dependencies = [
  "pet-virtualenvwrapper",
  "pet-windows-registry",
  "pet-windows-store",
+ "pet-winpython",
  "serde",
  "serde_json",
+ "tracing",
+ "tracing-subscriber",
+ "winresource",
 ]
 
 [[package]]
 name = "pet-conda"
 version = "0.1.0"
-source = "git+https://github.com/microsoft/python-environment-tools.git?rev=d5b5bb0c4558a51d8cc76b514bc870fd1c042f16#d5b5bb0c4558a51d8cc76b514bc870fd1c042f16"
+source = "git+https://github.com/microsoft/python-environment-tools.git?rev=9e61a22af989fe54937bf07c9f9cff1bc53d9056#9e61a22af989fe54937bf07c9f9cff1bc53d9056"
 dependencies = [
  "env_logger 0.10.2",
  "lazy_static",
@@ -12167,6 +12186,7 @@ dependencies = [
  "pet-fs",
  "pet-python-utils",
  "pet-reporter",
+ "rayon",
  "regex",
  "serde",
  "serde_json",
@@ -12176,7 +12196,7 @@ dependencies = [
 [[package]]
 name = "pet-core"
 version = "0.1.0"
-source = "git+https://github.com/microsoft/python-environment-tools.git?rev=d5b5bb0c4558a51d8cc76b514bc870fd1c042f16#d5b5bb0c4558a51d8cc76b514bc870fd1c042f16"
+source = "git+https://github.com/microsoft/python-environment-tools.git?rev=9e61a22af989fe54937bf07c9f9cff1bc53d9056#9e61a22af989fe54937bf07c9f9cff1bc53d9056"
 dependencies = [
  "clap",
  "lazy_static",
@@ -12191,7 +12211,7 @@ dependencies = [
 [[package]]
 name = "pet-env-var-path"
 version = "0.1.0"
-source = "git+https://github.com/microsoft/python-environment-tools.git?rev=d5b5bb0c4558a51d8cc76b514bc870fd1c042f16#d5b5bb0c4558a51d8cc76b514bc870fd1c042f16"
+source = "git+https://github.com/microsoft/python-environment-tools.git?rev=9e61a22af989fe54937bf07c9f9cff1bc53d9056#9e61a22af989fe54937bf07c9f9cff1bc53d9056"
 dependencies = [
  "lazy_static",
  "log",
@@ -12207,8 +12227,9 @@ dependencies = [
 [[package]]
 name = "pet-fs"
 version = "0.1.0"
-source = "git+https://github.com/microsoft/python-environment-tools.git?rev=d5b5bb0c4558a51d8cc76b514bc870fd1c042f16#d5b5bb0c4558a51d8cc76b514bc870fd1c042f16"
+source = "git+https://github.com/microsoft/python-environment-tools.git?rev=9e61a22af989fe54937bf07c9f9cff1bc53d9056#9e61a22af989fe54937bf07c9f9cff1bc53d9056"
 dependencies = [
+ "glob",
  "log",
  "msvc_spectre_libs",
  "windows-sys 0.59.0",
@@ -12217,7 +12238,7 @@ dependencies = [
 [[package]]
 name = "pet-global-virtualenvs"
 version = "0.1.0"
-source = "git+https://github.com/microsoft/python-environment-tools.git?rev=d5b5bb0c4558a51d8cc76b514bc870fd1c042f16#d5b5bb0c4558a51d8cc76b514bc870fd1c042f16"
+source = "git+https://github.com/microsoft/python-environment-tools.git?rev=9e61a22af989fe54937bf07c9f9cff1bc53d9056#9e61a22af989fe54937bf07c9f9cff1bc53d9056"
 dependencies = [
  "log",
  "msvc_spectre_libs",
@@ -12230,7 +12251,7 @@ dependencies = [
 [[package]]
 name = "pet-homebrew"
 version = "0.1.0"
-source = "git+https://github.com/microsoft/python-environment-tools.git?rev=d5b5bb0c4558a51d8cc76b514bc870fd1c042f16#d5b5bb0c4558a51d8cc76b514bc870fd1c042f16"
+source = "git+https://github.com/microsoft/python-environment-tools.git?rev=9e61a22af989fe54937bf07c9f9cff1bc53d9056#9e61a22af989fe54937bf07c9f9cff1bc53d9056"
 dependencies = [
  "lazy_static",
  "log",
@@ -12240,6 +12261,7 @@ dependencies = [
  "pet-fs",
  "pet-python-utils",
  "pet-virtualenv",
+ "rayon",
  "regex",
  "serde",
  "serde_json",
@@ -12248,7 +12270,7 @@ dependencies = [
 [[package]]
 name = "pet-jsonrpc"
 version = "0.1.0"
-source = "git+https://github.com/microsoft/python-environment-tools.git?rev=d5b5bb0c4558a51d8cc76b514bc870fd1c042f16#d5b5bb0c4558a51d8cc76b514bc870fd1c042f16"
+source = "git+https://github.com/microsoft/python-environment-tools.git?rev=9e61a22af989fe54937bf07c9f9cff1bc53d9056#9e61a22af989fe54937bf07c9f9cff1bc53d9056"
 dependencies = [
  "env_logger 0.10.2",
  "log",
@@ -12261,7 +12283,7 @@ dependencies = [
 [[package]]
 name = "pet-linux-global-python"
 version = "0.1.0"
-source = "git+https://github.com/microsoft/python-environment-tools.git?rev=d5b5bb0c4558a51d8cc76b514bc870fd1c042f16#d5b5bb0c4558a51d8cc76b514bc870fd1c042f16"
+source = "git+https://github.com/microsoft/python-environment-tools.git?rev=9e61a22af989fe54937bf07c9f9cff1bc53d9056#9e61a22af989fe54937bf07c9f9cff1bc53d9056"
 dependencies = [
  "log",
  "msvc_spectre_libs",
@@ -12274,7 +12296,7 @@ dependencies = [
 [[package]]
 name = "pet-mac-commandlinetools"
 version = "0.1.0"
-source = "git+https://github.com/microsoft/python-environment-tools.git?rev=d5b5bb0c4558a51d8cc76b514bc870fd1c042f16#d5b5bb0c4558a51d8cc76b514bc870fd1c042f16"
+source = "git+https://github.com/microsoft/python-environment-tools.git?rev=9e61a22af989fe54937bf07c9f9cff1bc53d9056#9e61a22af989fe54937bf07c9f9cff1bc53d9056"
 dependencies = [
  "log",
  "msvc_spectre_libs",
@@ -12287,7 +12309,7 @@ dependencies = [
 [[package]]
 name = "pet-mac-python-org"
 version = "0.1.0"
-source = "git+https://github.com/microsoft/python-environment-tools.git?rev=d5b5bb0c4558a51d8cc76b514bc870fd1c042f16#d5b5bb0c4558a51d8cc76b514bc870fd1c042f16"
+source = "git+https://github.com/microsoft/python-environment-tools.git?rev=9e61a22af989fe54937bf07c9f9cff1bc53d9056#9e61a22af989fe54937bf07c9f9cff1bc53d9056"
 dependencies = [
  "log",
  "msvc_spectre_libs",
@@ -12300,7 +12322,7 @@ dependencies = [
 [[package]]
 name = "pet-mac-xcode"
 version = "0.1.0"
-source = "git+https://github.com/microsoft/python-environment-tools.git?rev=d5b5bb0c4558a51d8cc76b514bc870fd1c042f16#d5b5bb0c4558a51d8cc76b514bc870fd1c042f16"
+source = "git+https://github.com/microsoft/python-environment-tools.git?rev=9e61a22af989fe54937bf07c9f9cff1bc53d9056#9e61a22af989fe54937bf07c9f9cff1bc53d9056"
 dependencies = [
  "log",
  "msvc_spectre_libs",
@@ -12313,20 +12335,22 @@ dependencies = [
 [[package]]
 name = "pet-pipenv"
 version = "0.1.0"
-source = "git+https://github.com/microsoft/python-environment-tools.git?rev=d5b5bb0c4558a51d8cc76b514bc870fd1c042f16#d5b5bb0c4558a51d8cc76b514bc870fd1c042f16"
+source = "git+https://github.com/microsoft/python-environment-tools.git?rev=9e61a22af989fe54937bf07c9f9cff1bc53d9056#9e61a22af989fe54937bf07c9f9cff1bc53d9056"
 dependencies = [
+ "lazy_static",
  "log",
  "msvc_spectre_libs",
  "pet-core",
  "pet-fs",
  "pet-python-utils",
  "pet-virtualenv",
+ "regex",
 ]
 
 [[package]]
 name = "pet-pixi"
 version = "0.1.0"
-source = "git+https://github.com/microsoft/python-environment-tools.git?rev=d5b5bb0c4558a51d8cc76b514bc870fd1c042f16#d5b5bb0c4558a51d8cc76b514bc870fd1c042f16"
+source = "git+https://github.com/microsoft/python-environment-tools.git?rev=9e61a22af989fe54937bf07c9f9cff1bc53d9056#9e61a22af989fe54937bf07c9f9cff1bc53d9056"
 dependencies = [
  "log",
  "msvc_spectre_libs",
@@ -12338,7 +12362,7 @@ dependencies = [
 [[package]]
 name = "pet-poetry"
 version = "0.1.0"
-source = "git+https://github.com/microsoft/python-environment-tools.git?rev=d5b5bb0c4558a51d8cc76b514bc870fd1c042f16#d5b5bb0c4558a51d8cc76b514bc870fd1c042f16"
+source = "git+https://github.com/microsoft/python-environment-tools.git?rev=9e61a22af989fe54937bf07c9f9cff1bc53d9056#9e61a22af989fe54937bf07c9f9cff1bc53d9056"
 dependencies = [
  "base64 0.22.1",
  "lazy_static",
@@ -12359,7 +12383,7 @@ dependencies = [
 [[package]]
 name = "pet-pyenv"
 version = "0.1.0"
-source = "git+https://github.com/microsoft/python-environment-tools.git?rev=d5b5bb0c4558a51d8cc76b514bc870fd1c042f16#d5b5bb0c4558a51d8cc76b514bc870fd1c042f16"
+source = "git+https://github.com/microsoft/python-environment-tools.git?rev=9e61a22af989fe54937bf07c9f9cff1bc53d9056#9e61a22af989fe54937bf07c9f9cff1bc53d9056"
 dependencies = [
  "lazy_static",
  "log",
@@ -12377,7 +12401,7 @@ dependencies = [
 [[package]]
 name = "pet-python-utils"
 version = "0.1.0"
-source = "git+https://github.com/microsoft/python-environment-tools.git?rev=d5b5bb0c4558a51d8cc76b514bc870fd1c042f16#d5b5bb0c4558a51d8cc76b514bc870fd1c042f16"
+source = "git+https://github.com/microsoft/python-environment-tools.git?rev=9e61a22af989fe54937bf07c9f9cff1bc53d9056#9e61a22af989fe54937bf07c9f9cff1bc53d9056"
 dependencies = [
  "env_logger 0.10.2",
  "lazy_static",
@@ -12394,7 +12418,7 @@ dependencies = [
 [[package]]
 name = "pet-reporter"
 version = "0.1.0"
-source = "git+https://github.com/microsoft/python-environment-tools.git?rev=d5b5bb0c4558a51d8cc76b514bc870fd1c042f16#d5b5bb0c4558a51d8cc76b514bc870fd1c042f16"
+source = "git+https://github.com/microsoft/python-environment-tools.git?rev=9e61a22af989fe54937bf07c9f9cff1bc53d9056#9e61a22af989fe54937bf07c9f9cff1bc53d9056"
 dependencies = [
  "env_logger 0.10.2",
  "log",
@@ -12408,7 +12432,7 @@ dependencies = [
 [[package]]
 name = "pet-telemetry"
 version = "0.1.0"
-source = "git+https://github.com/microsoft/python-environment-tools.git?rev=d5b5bb0c4558a51d8cc76b514bc870fd1c042f16#d5b5bb0c4558a51d8cc76b514bc870fd1c042f16"
+source = "git+https://github.com/microsoft/python-environment-tools.git?rev=9e61a22af989fe54937bf07c9f9cff1bc53d9056#9e61a22af989fe54937bf07c9f9cff1bc53d9056"
 dependencies = [
  "env_logger 0.10.2",
  "lazy_static",
@@ -12423,7 +12447,7 @@ dependencies = [
 [[package]]
 name = "pet-uv"
 version = "0.1.0"
-source = "git+https://github.com/microsoft/python-environment-tools.git?rev=d5b5bb0c4558a51d8cc76b514bc870fd1c042f16#d5b5bb0c4558a51d8cc76b514bc870fd1c042f16"
+source = "git+https://github.com/microsoft/python-environment-tools.git?rev=9e61a22af989fe54937bf07c9f9cff1bc53d9056#9e61a22af989fe54937bf07c9f9cff1bc53d9056"
 dependencies = [
  "log",
  "pet-core",
@@ -12435,7 +12459,7 @@ dependencies = [
 [[package]]
 name = "pet-venv"
 version = "0.1.0"
-source = "git+https://github.com/microsoft/python-environment-tools.git?rev=d5b5bb0c4558a51d8cc76b514bc870fd1c042f16#d5b5bb0c4558a51d8cc76b514bc870fd1c042f16"
+source = "git+https://github.com/microsoft/python-environment-tools.git?rev=9e61a22af989fe54937bf07c9f9cff1bc53d9056#9e61a22af989fe54937bf07c9f9cff1bc53d9056"
 dependencies = [
  "log",
  "msvc_spectre_libs",
@@ -12447,7 +12471,7 @@ dependencies = [
 [[package]]
 name = "pet-virtualenv"
 version = "0.1.0"
-source = "git+https://github.com/microsoft/python-environment-tools.git?rev=d5b5bb0c4558a51d8cc76b514bc870fd1c042f16#d5b5bb0c4558a51d8cc76b514bc870fd1c042f16"
+source = "git+https://github.com/microsoft/python-environment-tools.git?rev=9e61a22af989fe54937bf07c9f9cff1bc53d9056#9e61a22af989fe54937bf07c9f9cff1bc53d9056"
 dependencies = [
  "log",
  "msvc_spectre_libs",
@@ -12459,7 +12483,7 @@ dependencies = [
 [[package]]
 name = "pet-virtualenvwrapper"
 version = "0.1.0"
-source = "git+https://github.com/microsoft/python-environment-tools.git?rev=d5b5bb0c4558a51d8cc76b514bc870fd1c042f16#d5b5bb0c4558a51d8cc76b514bc870fd1c042f16"
+source = "git+https://github.com/microsoft/python-environment-tools.git?rev=9e61a22af989fe54937bf07c9f9cff1bc53d9056#9e61a22af989fe54937bf07c9f9cff1bc53d9056"
 dependencies = [
  "log",
  "msvc_spectre_libs",
@@ -12472,7 +12496,7 @@ dependencies = [
 [[package]]
 name = "pet-windows-registry"
 version = "0.1.0"
-source = "git+https://github.com/microsoft/python-environment-tools.git?rev=d5b5bb0c4558a51d8cc76b514bc870fd1c042f16#d5b5bb0c4558a51d8cc76b514bc870fd1c042f16"
+source = "git+https://github.com/microsoft/python-environment-tools.git?rev=9e61a22af989fe54937bf07c9f9cff1bc53d9056#9e61a22af989fe54937bf07c9f9cff1bc53d9056"
 dependencies = [
  "lazy_static",
  "log",
@@ -12490,7 +12514,7 @@ dependencies = [
 [[package]]
 name = "pet-windows-store"
 version = "0.1.0"
-source = "git+https://github.com/microsoft/python-environment-tools.git?rev=d5b5bb0c4558a51d8cc76b514bc870fd1c042f16#d5b5bb0c4558a51d8cc76b514bc870fd1c042f16"
+source = "git+https://github.com/microsoft/python-environment-tools.git?rev=9e61a22af989fe54937bf07c9f9cff1bc53d9056#9e61a22af989fe54937bf07c9f9cff1bc53d9056"
 dependencies = [
  "lazy_static",
  "log",
@@ -12501,6 +12525,20 @@ dependencies = [
  "pet-virtualenv",
  "regex",
  "winreg 0.55.0",
+]
+
+[[package]]
+name = "pet-winpython"
+version = "0.1.0"
+source = "git+https://github.com/microsoft/python-environment-tools.git?rev=9e61a22af989fe54937bf07c9f9cff1bc53d9056#9e61a22af989fe54937bf07c9f9cff1bc53d9056"
+dependencies = [
+ "lazy_static",
+ "log",
+ "pet-core",
+ "pet-fs",
+ "pet-python-utils",
+ "pet-virtualenv",
+ "regex",
 ]
 
 [[package]]
@@ -13118,7 +13156,7 @@ dependencies = [
  "dap",
  "encoding_rs",
  "extension",
- "fancy-regex",
+ "fancy-regex 0.17.0",
  "fs",
  "futures 0.3.31",
  "fuzzy",
@@ -15869,11 +15907,13 @@ dependencies = [
  "pretty_assertions",
  "project",
  "prompt_store",
+ "recent_projects",
  "serde_json",
  "settings",
  "theme",
  "ui",
  "util",
+ "vim_mode_setting",
  "workspace",
  "zed_actions",
 ]
@@ -17580,7 +17620,7 @@ dependencies = [
  "anyhow",
  "base64 0.22.1",
  "bstr",
- "fancy-regex",
+ "fancy-regex 0.16.2",
  "lazy_static",
  "regex",
  "rustc-hash 1.1.0",
@@ -17728,12 +17768,15 @@ dependencies = [
  "feature_flags",
  "git_ui",
  "gpui",
+ "icons",
+ "livekit_client",
  "notifications",
  "platform_title_bar",
  "project",
  "recent_projects",
  "release_channel",
  "remote",
+ "remote_connection",
  "rpc",
  "schemars",
  "semver",
@@ -19985,7 +20028,7 @@ dependencies = [
 [[package]]
 name = "webrtc-sys"
 version = "0.3.23"
-source = "git+https://github.com/zed-industries/livekit-rust-sdks?rev=cf4375b244ebb51702968df7fc36e192d0f45ad5#cf4375b244ebb51702968df7fc36e192d0f45ad5"
+source = "git+https://github.com/zed-industries/livekit-rust-sdks?rev=c1209aa155cbf4543383774f884a46ae7e53ee2e#c1209aa155cbf4543383774f884a46ae7e53ee2e"
 dependencies = [
  "cc",
  "cxx",
@@ -19999,7 +20042,7 @@ dependencies = [
 [[package]]
 name = "webrtc-sys-build"
 version = "0.3.13"
-source = "git+https://github.com/zed-industries/livekit-rust-sdks?rev=cf4375b244ebb51702968df7fc36e192d0f45ad5#cf4375b244ebb51702968df7fc36e192d0f45ad5"
+source = "git+https://github.com/zed-industries/livekit-rust-sdks?rev=c1209aa155cbf4543383774f884a46ae7e53ee2e#c1209aa155cbf4543383774f884a46ae7e53ee2e"
 dependencies = [
  "anyhow",
  "fs2",
@@ -21828,7 +21871,7 @@ dependencies = [
 
 [[package]]
 name = "zed"
-version = "0.229.0"
+version = "0.230.0"
 dependencies = [
  "acp_thread",
  "acp_tools",

@@ -367,6 +367,56 @@ impl Vim {
         }
     }
 
+    /// When `reversed` is true (used with `helix_find_range_backward`), the
+    /// `left` and `right` characters are yielded in reverse text order, so the
+    /// camelCase transition check must be flipped accordingly.
+    fn subword_boundary_start(
+        ignore_punctuation: bool,
+        reversed: bool,
+    ) -> impl FnMut(char, char, &CharClassifier) -> bool {
+        move |left, right, classifier| {
+            let left_kind = classifier.kind_with(left, ignore_punctuation);
+            let right_kind = classifier.kind_with(right, ignore_punctuation);
+            let at_newline = (left == '\n') ^ (right == '\n');
+            let is_separator = |c: char| "_$=".contains(c);
+
+            let is_word = left_kind != right_kind && right_kind != CharKind::Whitespace;
+            let is_subword = (is_separator(left) && !is_separator(right))
+                || if reversed {
+                    right.is_lowercase() && left.is_uppercase()
+                } else {
+                    left.is_lowercase() && right.is_uppercase()
+                };
+
+            is_word || (is_subword && !right.is_whitespace()) || at_newline
+        }
+    }
+
+    /// When `reversed` is true (used with `helix_find_range_backward`), the
+    /// `left` and `right` characters are yielded in reverse text order, so the
+    /// camelCase transition check must be flipped accordingly.
+    fn subword_boundary_end(
+        ignore_punctuation: bool,
+        reversed: bool,
+    ) -> impl FnMut(char, char, &CharClassifier) -> bool {
+        move |left, right, classifier| {
+            let left_kind = classifier.kind_with(left, ignore_punctuation);
+            let right_kind = classifier.kind_with(right, ignore_punctuation);
+            let at_newline = (left == '\n') ^ (right == '\n');
+            let is_separator = |c: char| "_$=".contains(c);
+
+            let is_word = left_kind != right_kind && left_kind != CharKind::Whitespace;
+            let is_subword = (!is_separator(left) && is_separator(right))
+                || if reversed {
+                    right.is_lowercase() && left.is_uppercase()
+                } else {
+                    left.is_lowercase() && right.is_uppercase()
+                };
+
+            is_word || (is_subword && !left.is_whitespace()) || at_newline
+        }
+    }
+
     pub fn helix_move_cursor(
         &mut self,
         motion: Motion,
@@ -389,6 +439,29 @@ impl Vim {
             }
             Motion::PreviousWordEnd { ignore_punctuation } => {
                 let mut is_boundary = Self::is_boundary_right(ignore_punctuation);
+                self.helix_find_range_backward(times, window, cx, &mut is_boundary)
+            }
+            // The subword motions implementation is based off of the same
+            // commands present in Helix itself, namely:
+            //
+            // * `move_next_sub_word_start`
+            // * `move_next_sub_word_end`
+            // * `move_prev_sub_word_start`
+            // * `move_prev_sub_word_end`
+            Motion::NextSubwordStart { ignore_punctuation } => {
+                let mut is_boundary = Self::subword_boundary_start(ignore_punctuation, false);
+                self.helix_find_range_forward(times, window, cx, &mut is_boundary)
+            }
+            Motion::NextSubwordEnd { ignore_punctuation } => {
+                let mut is_boundary = Self::subword_boundary_end(ignore_punctuation, false);
+                self.helix_find_range_forward(times, window, cx, &mut is_boundary)
+            }
+            Motion::PreviousSubwordStart { ignore_punctuation } => {
+                let mut is_boundary = Self::subword_boundary_end(ignore_punctuation, true);
+                self.helix_find_range_backward(times, window, cx, &mut is_boundary)
+            }
+            Motion::PreviousSubwordEnd { ignore_punctuation } => {
+                let mut is_boundary = Self::subword_boundary_start(ignore_punctuation, true);
                 self.helix_find_range_backward(times, window, cx, &mut is_boundary)
             }
             Motion::EndOfLine { .. } => {
@@ -902,7 +975,7 @@ impl Vim {
 
 #[cfg(test)]
 mod test {
-    use gpui::{UpdateGlobal, VisualTestContext};
+    use gpui::{KeyBinding, UpdateGlobal, VisualTestContext};
     use indoc::indoc;
     use project::FakeFs;
     use search::{ProjectSearchView, project_search};
@@ -973,6 +1046,310 @@ mod test {
         cx.simulate_keystroke("b");
 
         cx.assert_state("aa\n«ˇ  »bb", Mode::HelixNormal);
+    }
+
+    #[gpui::test]
+    async fn test_next_subword_start(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+        cx.enable_helix();
+
+        // Setup custom keybindings for subword motions so we can use the bindings
+        // in `simulate_keystroke`.
+        cx.update(|_window, cx| {
+            cx.bind_keys([KeyBinding::new(
+                "w",
+                crate::motion::NextSubwordStart {
+                    ignore_punctuation: false,
+                },
+                None,
+            )]);
+        });
+
+        cx.set_state("ˇfoo.bar", Mode::HelixNormal);
+        cx.simulate_keystroke("w");
+        cx.assert_state("«fooˇ».bar", Mode::HelixNormal);
+        cx.simulate_keystroke("w");
+        cx.assert_state("foo«.ˇ»bar", Mode::HelixNormal);
+        cx.simulate_keystroke("w");
+        cx.assert_state("foo.«barˇ»", Mode::HelixNormal);
+
+        cx.set_state("ˇfoo(bar)", Mode::HelixNormal);
+        cx.simulate_keystroke("w");
+        cx.assert_state("«fooˇ»(bar)", Mode::HelixNormal);
+        cx.simulate_keystroke("w");
+        cx.assert_state("foo«(ˇ»bar)", Mode::HelixNormal);
+        cx.simulate_keystroke("w");
+        cx.assert_state("foo(«barˇ»)", Mode::HelixNormal);
+
+        cx.set_state("ˇfoo_bar_baz", Mode::HelixNormal);
+        cx.simulate_keystroke("w");
+        cx.assert_state("«foo_ˇ»bar_baz", Mode::HelixNormal);
+        cx.simulate_keystroke("w");
+        cx.assert_state("foo_«bar_ˇ»baz", Mode::HelixNormal);
+
+        cx.set_state("ˇfooBarBaz", Mode::HelixNormal);
+        cx.simulate_keystroke("w");
+        cx.assert_state("«fooˇ»BarBaz", Mode::HelixNormal);
+        cx.simulate_keystroke("w");
+        cx.assert_state("foo«Barˇ»Baz", Mode::HelixNormal);
+
+        cx.set_state("ˇfoo;bar", Mode::HelixNormal);
+        cx.simulate_keystroke("w");
+        cx.assert_state("«fooˇ»;bar", Mode::HelixNormal);
+        cx.simulate_keystroke("w");
+        cx.assert_state("foo«;ˇ»bar", Mode::HelixNormal);
+        cx.simulate_keystroke("w");
+        cx.assert_state("foo;«barˇ»", Mode::HelixNormal);
+
+        cx.set_state("ˇ<?php\n\n$someVariable = 2;", Mode::HelixNormal);
+        cx.simulate_keystroke("w");
+        cx.assert_state("«<?ˇ»php\n\n$someVariable = 2;", Mode::HelixNormal);
+        cx.simulate_keystroke("w");
+        cx.assert_state("<?«phpˇ»\n\n$someVariable = 2;", Mode::HelixNormal);
+        cx.simulate_keystroke("w");
+        cx.assert_state("<?php\n\n«$ˇ»someVariable = 2;", Mode::HelixNormal);
+        cx.simulate_keystroke("w");
+        cx.assert_state("<?php\n\n$«someˇ»Variable = 2;", Mode::HelixNormal);
+        cx.simulate_keystroke("w");
+        cx.assert_state("<?php\n\n$some«Variable ˇ»= 2;", Mode::HelixNormal);
+        cx.simulate_keystroke("w");
+        cx.assert_state("<?php\n\n$someVariable «= ˇ»2;", Mode::HelixNormal);
+        cx.simulate_keystroke("w");
+        cx.assert_state("<?php\n\n$someVariable = «2ˇ»;", Mode::HelixNormal);
+        cx.simulate_keystroke("w");
+        cx.assert_state("<?php\n\n$someVariable = 2«;ˇ»", Mode::HelixNormal);
+    }
+
+    #[gpui::test]
+    async fn test_next_subword_end(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+        cx.enable_helix();
+
+        // Setup custom keybindings for subword motions so we can use the bindings
+        // in `simulate_keystroke`.
+        cx.update(|_window, cx| {
+            cx.bind_keys([KeyBinding::new(
+                "e",
+                crate::motion::NextSubwordEnd {
+                    ignore_punctuation: false,
+                },
+                None,
+            )]);
+        });
+
+        cx.set_state("ˇfoo.bar", Mode::HelixNormal);
+        cx.simulate_keystroke("e");
+        cx.assert_state("«fooˇ».bar", Mode::HelixNormal);
+        cx.simulate_keystroke("e");
+        cx.assert_state("foo«.ˇ»bar", Mode::HelixNormal);
+        cx.simulate_keystroke("e");
+        cx.assert_state("foo.«barˇ»", Mode::HelixNormal);
+
+        cx.set_state("ˇfoo(bar)", Mode::HelixNormal);
+        cx.simulate_keystroke("e");
+        cx.assert_state("«fooˇ»(bar)", Mode::HelixNormal);
+        cx.simulate_keystroke("e");
+        cx.assert_state("foo«(ˇ»bar)", Mode::HelixNormal);
+        cx.simulate_keystroke("e");
+        cx.assert_state("foo(«barˇ»)", Mode::HelixNormal);
+
+        cx.set_state("ˇfoo_bar_baz", Mode::HelixNormal);
+        cx.simulate_keystroke("e");
+        cx.assert_state("«fooˇ»_bar_baz", Mode::HelixNormal);
+        cx.simulate_keystroke("e");
+        cx.assert_state("foo«_barˇ»_baz", Mode::HelixNormal);
+        cx.simulate_keystroke("e");
+        cx.assert_state("foo_bar«_bazˇ»", Mode::HelixNormal);
+
+        cx.set_state("ˇfooBarBaz", Mode::HelixNormal);
+        cx.simulate_keystroke("e");
+        cx.assert_state("«fooˇ»BarBaz", Mode::HelixNormal);
+        cx.simulate_keystroke("e");
+        cx.assert_state("foo«Barˇ»Baz", Mode::HelixNormal);
+        cx.simulate_keystroke("e");
+        cx.assert_state("fooBar«Bazˇ»", Mode::HelixNormal);
+
+        cx.set_state("ˇfoo;bar", Mode::HelixNormal);
+        cx.simulate_keystroke("e");
+        cx.assert_state("«fooˇ»;bar", Mode::HelixNormal);
+        cx.simulate_keystroke("e");
+        cx.assert_state("foo«;ˇ»bar", Mode::HelixNormal);
+        cx.simulate_keystroke("e");
+        cx.assert_state("foo;«barˇ»", Mode::HelixNormal);
+
+        cx.set_state("ˇ<?php\n\n$someVariable = 2;", Mode::HelixNormal);
+        cx.simulate_keystroke("e");
+        cx.assert_state("«<?ˇ»php\n\n$someVariable = 2;", Mode::HelixNormal);
+        cx.simulate_keystroke("e");
+        cx.assert_state("<?«phpˇ»\n\n$someVariable = 2;", Mode::HelixNormal);
+        cx.simulate_keystroke("e");
+        cx.assert_state("<?php\n\n«$ˇ»someVariable = 2;", Mode::HelixNormal);
+        cx.simulate_keystroke("e");
+        cx.assert_state("<?php\n\n$«someˇ»Variable = 2;", Mode::HelixNormal);
+        cx.simulate_keystroke("e");
+        cx.assert_state("<?php\n\n$some«Variableˇ» = 2;", Mode::HelixNormal);
+        cx.simulate_keystroke("e");
+        cx.assert_state("<?php\n\n$someVariable« =ˇ» 2;", Mode::HelixNormal);
+        cx.simulate_keystroke("e");
+        cx.assert_state("<?php\n\n$someVariable =« 2ˇ»;", Mode::HelixNormal);
+        cx.simulate_keystroke("e");
+        cx.assert_state("<?php\n\n$someVariable = 2«;ˇ»", Mode::HelixNormal);
+    }
+
+    #[gpui::test]
+    async fn test_previous_subword_start(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+        cx.enable_helix();
+
+        // Setup custom keybindings for subword motions so we can use the bindings
+        // in `simulate_keystroke`.
+        cx.update(|_window, cx| {
+            cx.bind_keys([KeyBinding::new(
+                "b",
+                crate::motion::PreviousSubwordStart {
+                    ignore_punctuation: false,
+                },
+                None,
+            )]);
+        });
+
+        cx.set_state("foo.barˇ", Mode::HelixNormal);
+        cx.simulate_keystroke("b");
+        cx.assert_state("foo.«ˇbar»", Mode::HelixNormal);
+        cx.simulate_keystroke("b");
+        cx.assert_state("foo«ˇ.»bar", Mode::HelixNormal);
+        cx.simulate_keystroke("b");
+        cx.assert_state("«ˇfoo».bar", Mode::HelixNormal);
+
+        cx.set_state("foo(bar)ˇ", Mode::HelixNormal);
+        cx.simulate_keystroke("b");
+        cx.assert_state("foo(bar«ˇ)»", Mode::HelixNormal);
+        cx.simulate_keystroke("b");
+        cx.assert_state("foo(«ˇbar»)", Mode::HelixNormal);
+        cx.simulate_keystroke("b");
+        cx.assert_state("foo«ˇ(»bar)", Mode::HelixNormal);
+        cx.simulate_keystroke("b");
+        cx.assert_state("«ˇfoo»(bar)", Mode::HelixNormal);
+
+        cx.set_state("foo_bar_bazˇ", Mode::HelixNormal);
+        cx.simulate_keystroke("b");
+        cx.assert_state("foo_bar_«ˇbaz»", Mode::HelixNormal);
+        cx.simulate_keystroke("b");
+        cx.assert_state("foo_«ˇbar_»baz", Mode::HelixNormal);
+        cx.simulate_keystroke("b");
+        cx.assert_state("«ˇfoo_»bar_baz", Mode::HelixNormal);
+
+        cx.set_state("foo;barˇ", Mode::HelixNormal);
+        cx.simulate_keystroke("b");
+        cx.assert_state("foo;«ˇbar»", Mode::HelixNormal);
+        cx.simulate_keystroke("b");
+        cx.assert_state("foo«ˇ;»bar", Mode::HelixNormal);
+        cx.simulate_keystroke("b");
+        cx.assert_state("«ˇfoo»;bar", Mode::HelixNormal);
+
+        cx.set_state("<?php\n\n$someVariable = 2;ˇ", Mode::HelixNormal);
+        cx.simulate_keystroke("b");
+        cx.assert_state("<?php\n\n$someVariable = 2«ˇ;»", Mode::HelixNormal);
+        cx.simulate_keystroke("b");
+        cx.assert_state("<?php\n\n$someVariable = «ˇ2»;", Mode::HelixNormal);
+        cx.simulate_keystroke("b");
+        cx.assert_state("<?php\n\n$someVariable «ˇ= »2;", Mode::HelixNormal);
+        cx.simulate_keystroke("b");
+        cx.assert_state("<?php\n\n$some«ˇVariable »= 2;", Mode::HelixNormal);
+        cx.simulate_keystroke("b");
+        cx.assert_state("<?php\n\n$«ˇsome»Variable = 2;", Mode::HelixNormal);
+        cx.simulate_keystroke("b");
+        cx.assert_state("<?php\n\n«ˇ$»someVariable = 2;", Mode::HelixNormal);
+        cx.simulate_keystroke("b");
+        cx.assert_state("<?«ˇphp»\n\n$someVariable = 2;", Mode::HelixNormal);
+        cx.simulate_keystroke("b");
+        cx.assert_state("«ˇ<?»php\n\n$someVariable = 2;", Mode::HelixNormal);
+
+        cx.set_state("fooBarBazˇ", Mode::HelixNormal);
+        cx.simulate_keystroke("b");
+        cx.assert_state("fooBar«ˇBaz»", Mode::HelixNormal);
+        cx.simulate_keystroke("b");
+        cx.assert_state("foo«ˇBar»Baz", Mode::HelixNormal);
+        cx.simulate_keystroke("b");
+        cx.assert_state("«ˇfoo»BarBaz", Mode::HelixNormal);
+    }
+
+    #[gpui::test]
+    async fn test_previous_subword_end(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+        cx.enable_helix();
+
+        // Setup custom keybindings for subword motions so we can use the bindings
+        // in `simulate_keystrokes`.
+        cx.update(|_window, cx| {
+            cx.bind_keys([KeyBinding::new(
+                "g e",
+                crate::motion::PreviousSubwordEnd {
+                    ignore_punctuation: false,
+                },
+                None,
+            )]);
+        });
+
+        cx.set_state("foo.barˇ", Mode::HelixNormal);
+        cx.simulate_keystrokes("g e");
+        cx.assert_state("foo.«ˇbar»", Mode::HelixNormal);
+        cx.simulate_keystrokes("g e");
+        cx.assert_state("foo«ˇ.»bar", Mode::HelixNormal);
+        cx.simulate_keystrokes("g e");
+        cx.assert_state("«ˇfoo».bar", Mode::HelixNormal);
+
+        cx.set_state("foo(bar)ˇ", Mode::HelixNormal);
+        cx.simulate_keystrokes("g e");
+        cx.assert_state("foo(bar«ˇ)»", Mode::HelixNormal);
+        cx.simulate_keystrokes("g e");
+        cx.assert_state("foo(«ˇbar»)", Mode::HelixNormal);
+        cx.simulate_keystrokes("g e");
+        cx.assert_state("foo«ˇ(»bar)", Mode::HelixNormal);
+        cx.simulate_keystrokes("g e");
+        cx.assert_state("«ˇfoo»(bar)", Mode::HelixNormal);
+
+        cx.set_state("foo_bar_bazˇ", Mode::HelixNormal);
+        cx.simulate_keystrokes("g e");
+        cx.assert_state("foo_bar«ˇ_baz»", Mode::HelixNormal);
+        cx.simulate_keystrokes("g e");
+        cx.assert_state("foo«ˇ_bar»_baz", Mode::HelixNormal);
+        cx.simulate_keystrokes("g e");
+        cx.assert_state("«ˇfoo»_bar_baz", Mode::HelixNormal);
+
+        cx.set_state("foo;barˇ", Mode::HelixNormal);
+        cx.simulate_keystrokes("g e");
+        cx.assert_state("foo;«ˇbar»", Mode::HelixNormal);
+        cx.simulate_keystrokes("g e");
+        cx.assert_state("foo«ˇ;»bar", Mode::HelixNormal);
+        cx.simulate_keystrokes("g e");
+        cx.assert_state("«ˇfoo»;bar", Mode::HelixNormal);
+
+        cx.set_state("<?php\n\n$someVariable = 2;ˇ", Mode::HelixNormal);
+        cx.simulate_keystrokes("g e");
+        cx.assert_state("<?php\n\n$someVariable = 2«ˇ;»", Mode::HelixNormal);
+        cx.simulate_keystrokes("g e");
+        cx.assert_state("<?php\n\n$someVariable =«ˇ 2»;", Mode::HelixNormal);
+        cx.simulate_keystrokes("g e");
+        cx.assert_state("<?php\n\n$someVariable«ˇ =» 2;", Mode::HelixNormal);
+        cx.simulate_keystrokes("g e");
+        cx.assert_state("<?php\n\n$some«ˇVariable» = 2;", Mode::HelixNormal);
+        cx.simulate_keystrokes("g e");
+        cx.assert_state("<?php\n\n$«ˇsome»Variable = 2;", Mode::HelixNormal);
+        cx.simulate_keystrokes("g e");
+        cx.assert_state("<?php\n\n«ˇ$»someVariable = 2;", Mode::HelixNormal);
+        cx.simulate_keystrokes("g e");
+        cx.assert_state("<?«ˇphp»\n\n$someVariable = 2;", Mode::HelixNormal);
+        cx.simulate_keystrokes("g e");
+        cx.assert_state("«ˇ<?»php\n\n$someVariable = 2;", Mode::HelixNormal);
+
+        cx.set_state("fooBarBazˇ", Mode::HelixNormal);
+        cx.simulate_keystrokes("g e");
+        cx.assert_state("fooBar«ˇBaz»", Mode::HelixNormal);
+        cx.simulate_keystrokes("g e");
+        cx.assert_state("foo«ˇBar»Baz", Mode::HelixNormal);
+        cx.simulate_keystrokes("g e");
+        cx.assert_state("«ˇfoo»BarBaz", Mode::HelixNormal);
     }
 
     #[gpui::test]

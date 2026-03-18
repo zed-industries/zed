@@ -584,7 +584,7 @@ impl Editor {
         project: Entity<Project>,
         snapshot: MultiBufferSnapshot,
         prefer_lsp: bool,
-        runnable_ranges: Vec<(Range<MultiBufferOffset>, language::RunnableRange)>,
+        runnable_ranges: Vec<(Range<Anchor>, language::RunnableRange)>,
         cx: AsyncWindowContext,
     ) -> Task<Vec<((BufferId, BufferRow), RunnableTasks)>> {
         cx.spawn(async move |cx| {
@@ -621,7 +621,7 @@ impl Editor {
                     (runnable.buffer_id, row),
                     RunnableTasks {
                         templates: tasks,
-                        offset: snapshot.anchor_before(run_range.start),
+                        offset: run_range.start,
                         context_range,
                         column: point.column,
                         extra_variables: runnable.extra_captures,

@@ -433,9 +433,9 @@ fn release_action(
     generated_token: &StepOutput,
 ) -> (Step<Use>, StepOutput) {
     let step = named::uses(
-        "zed-extensions",
-        "update-action",
-        "72da482880c2f32ec8aa6e0a0427ab92d52ae32d",
+        "huacnlee",
+        "zed-extension-action",
+        "82920ff0876879f65ffbcfa3403589114a8919c6",
     )
     .id("extension-update")
     .add_with(("extension-name", extension_id.to_string()))
@@ -483,12 +483,22 @@ fn enable_automerge_if_staff(
                     return;
                 }
 
+                // Assign staff member responsible for the bump
+                const pullNumber = parseInt(prNumber);
+
+                await github.rest.issues.addAssignees({
+                    owner: 'zed-industries',
+                    repo: 'extensions',
+                    issue_number: pullNumber,
+                    assignees: [author]
+                });
+                console.log(`Assigned ${author} to PR #${prNumber} in zed-industries/extensions`);
 
                 // Get the GraphQL node ID
                 const { data: pr } = await github.rest.pulls.get({
                     owner: 'zed-industries',
                     repo: 'extensions',
-                    pull_number: parseInt(prNumber)
+                    pull_number: pullNumber
                 });
 
                 await github.graphql(`

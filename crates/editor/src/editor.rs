@@ -105,7 +105,7 @@ use edit_prediction_types::{
     EditPredictionGranularity, SuggestionDisplayType,
 };
 use editor_settings::{GoToDefinitionFallback, Minimap as MinimapSettings};
-use element::{AcceptEditPredictionBinding, LineWithInvisibles, PositionMap, layout_line};
+use element::{LineWithInvisibles, PositionMap, layout_line};
 use futures::{
     FutureExt,
     future::{self, Shared, join},
@@ -153,7 +153,7 @@ use multi_buffer::{
     ExcerptInfo, ExpandExcerptDirection, MultiBufferDiffHunk, MultiBufferPoint, MultiBufferRow,
 };
 use parking_lot::Mutex;
-use persistence::DB;
+use persistence::EditorDb;
 use project::{
     BreakpointWithPosition, CodeAction, Completion, CompletionDisplayOptions, CompletionIntent,
     CompletionResponse, CompletionSource, DisableAiSettings, DocumentHighlight, InlayHint, InlayId,
@@ -221,6 +221,7 @@ use workspace::{
     notifications::{DetachAndPromptErr, NotificationId, NotifyTaskExt},
     searchable::SearchEvent,
 };
+pub use zed_actions::editor::RevealInFileManager;
 use zed_actions::editor::{MoveDown, MoveUp};
 
 use crate::{
@@ -256,7 +257,6 @@ pub(crate) const SCROLL_CENTER_TOP_BOTTOM_DEBOUNCE_TIMEOUT: Duration = Duration:
 pub const LSP_REQUEST_DEBOUNCE_TIMEOUT: Duration = Duration::from_millis(50);
 
 pub(crate) const EDIT_PREDICTION_KEY_CONTEXT: &str = "edit_prediction";
-pub(crate) const EDIT_PREDICTION_CONFLICT_KEY_CONTEXT: &str = "edit_prediction_conflict";
 pub(crate) const MINIMAP_FONT_SIZE: AbsoluteLength = AbsoluteLength::Pixels(px(2.));
 
 pub type RenderDiffHunkControlsFn = Arc<
@@ -699,6 +699,30 @@ pub enum EditPredictionPreview {
         since: Instant,
         previous_scroll_position: Option<SharedScrollAnchor>,
     },
+}
+
+#[derive(Copy, Clone, Eq, PartialEq)]
+enum EditPredictionKeybindSurface {
+    Inline,
+    CursorPopoverCompact,
+    CursorPopoverExpanded,
+}
+
+#[derive(Copy, Clone, Eq, PartialEq, Debug)]
+enum EditPredictionKeybindAction {
+    Accept,
+    Preview,
+}
+
+struct EditPredictionKeybindDisplay {
+    #[cfg(test)]
+    accept_keystroke: Option<gpui::KeybindingKeystroke>,
+    #[cfg(test)]
+    preview_keystroke: Option<gpui::KeybindingKeystroke>,
+    displayed_keystroke: Option<gpui::KeybindingKeystroke>,
+    action: EditPredictionKeybindAction,
+    missing_accept_keystroke: bool,
+    show_hold_label: bool,
 }
 
 impl EditPredictionPreview {
@@ -1225,8 +1249,7 @@ pub struct Editor {
     show_completions_on_input_override: Option<bool>,
     menu_edit_predictions_policy: MenuEditPredictionsPolicy,
     edit_prediction_preview: EditPredictionPreview,
-    edit_prediction_indent_conflict: bool,
-    edit_prediction_requires_modifier_in_indent_conflict: bool,
+    in_leading_whitespace: bool,
     next_inlay_id: usize,
     next_color_inlay_id: usize,
     _subscriptions: Vec<Subscription>,
@@ -2473,8 +2496,7 @@ impl Editor {
             show_completions_on_input_override: None,
             menu_edit_predictions_policy: MenuEditPredictionsPolicy::ByProvider,
             edit_prediction_settings: EditPredictionSettings::Disabled,
-            edit_prediction_indent_conflict: false,
-            edit_prediction_requires_modifier_in_indent_conflict: true,
+            in_leading_whitespace: false,
             custom_context_menu: None,
             show_git_blame_gutter: false,
             show_git_blame_inline: false,
@@ -2856,12 +2878,12 @@ impl Editor {
         }
 
         if has_active_edit_prediction {
-            if self.edit_prediction_in_conflict() {
-                key_context.add(EDIT_PREDICTION_CONFLICT_KEY_CONTEXT);
-            } else {
-                key_context.add(EDIT_PREDICTION_KEY_CONTEXT);
-                key_context.add("copilot_suggestion");
-            }
+            key_context.add(EDIT_PREDICTION_KEY_CONTEXT);
+            key_context.add("copilot_suggestion");
+        }
+
+        if self.in_leading_whitespace {
+            key_context.add("in_leading_whitespace");
         }
 
         if self.selection_mark_mode {
@@ -2915,32 +2937,13 @@ impl Editor {
         }
     }
 
-    pub fn edit_prediction_in_conflict(&self) -> bool {
-        if !self.show_edit_predictions_in_menu() {
-            return false;
-        }
-
-        let showing_completions = self
-            .context_menu
-            .borrow()
-            .as_ref()
-            .is_some_and(|context| matches!(context, CodeContextMenu::Completions(_)));
-
-        showing_completions
-            || self.edit_prediction_requires_modifier()
-            // Require modifier key when the cursor is on leading whitespace, to allow `tab`
-            // bindings to insert tab characters.
-            || (self.edit_prediction_requires_modifier_in_indent_conflict && self.edit_prediction_indent_conflict)
-    }
-
-    pub fn accept_edit_prediction_keybind(
+    fn accept_edit_prediction_keystroke(
         &self,
         granularity: EditPredictionGranularity,
         window: &mut Window,
         cx: &mut App,
-    ) -> AcceptEditPredictionBinding {
-        let key_context = self.key_context_internal(true, window, cx);
-        let in_conflict = self.edit_prediction_in_conflict();
+    ) -> Option<gpui::KeybindingKeystroke> {
+        let key_context = self.key_context_internal(self.has_active_edit_prediction(), window, cx);
 
         let bindings =
             match granularity {
@@ -2953,13 +2956,131 @@ impl Editor {
                 }
             };
 
-        AcceptEditPredictionBinding(bindings.into_iter().rev().find(|binding| {
-            !in_conflict
-                || binding
-                    .keystrokes()
-                    .first()
-                    .is_some_and(|keystroke| keystroke.modifiers().modified())
-        }))
+        bindings
+            .into_iter()
+            .rev()
+            .find_map(|binding| match binding.keystrokes() {
+                [keystroke, ..] => Some(keystroke.clone()),
+                _ => None,
+            })
+    }
+
+    fn preview_edit_prediction_keystroke(
+        &self,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Option<gpui::KeybindingKeystroke> {
+        let key_context = self.key_context_internal(self.has_active_edit_prediction(), window, cx);
+        let bindings = window.bindings_for_action_in_context(&AcceptEditPrediction, key_context);
+        bindings
+            .into_iter()
+            .rev()
+            .find_map(|binding| match binding.keystrokes() {
+                [keystroke, ..] if keystroke.modifiers().modified() => Some(keystroke.clone()),
+                _ => None,
+            })
+    }
+
+    fn edit_prediction_cursor_popover_prefers_preview(
+        &self,
+        completion: &EditPredictionState,
+    ) -> bool {
+        match &completion.completion {
+            EditPrediction::Edit {
+                edits, snapshot, ..
+            } => {
+                let mut start_row: Option<u32> = None;
+                let mut end_row: Option<u32> = None;
+
+                for (range, text) in edits {
+                    let edit_start_row = range.start.text_anchor.to_point(snapshot).row;
+                    let old_end_row = range.end.text_anchor.to_point(snapshot).row;
+                    let inserted_newline_count = text
+                        .as_ref()
+                        .chars()
+                        .filter(|character| *character == '\n')
+                        .count() as u32;
+                    let deleted_newline_count = old_end_row - edit_start_row;
+                    let preview_end_row = edit_start_row + inserted_newline_count;
+
+                    start_row =
+                        Some(start_row.map_or(edit_start_row, |row| row.min(edit_start_row)));
+                    end_row = Some(end_row.map_or(preview_end_row, |row| row.max(preview_end_row)));
+
+                    if deleted_newline_count > 1 {
+                        end_row = Some(end_row.map_or(old_end_row, |row| row.max(old_end_row)));
+                    }
+                }
+
+                start_row
+                    .zip(end_row)
+                    .is_some_and(|(start_row, end_row)| end_row > start_row)
+            }
+            EditPrediction::MoveWithin { .. } | EditPrediction::MoveOutside { .. } => false,
+        }
+    }
+
+    fn edit_prediction_keybind_display(
+        &self,
+        surface: EditPredictionKeybindSurface,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> EditPredictionKeybindDisplay {
+        let accept_keystroke =
+            self.accept_edit_prediction_keystroke(EditPredictionGranularity::Full, window, cx);
+        let preview_keystroke = self.preview_edit_prediction_keystroke(window, cx);
+
+        let action = match surface {
+            EditPredictionKeybindSurface::Inline
+            | EditPredictionKeybindSurface::CursorPopoverCompact => {
+                if self.edit_prediction_requires_modifier() {
+                    EditPredictionKeybindAction::Preview
+                } else {
+                    EditPredictionKeybindAction::Accept
+                }
+            }
+            EditPredictionKeybindSurface::CursorPopoverExpanded => self
+                .active_edit_prediction
+                .as_ref()
+                .filter(|completion| {
+                    self.edit_prediction_cursor_popover_prefers_preview(completion)
+                })
+                .map_or(EditPredictionKeybindAction::Accept, |_| {
+                    EditPredictionKeybindAction::Preview
+                }),
+        };
+        #[cfg(test)]
+        let preview_copy = preview_keystroke.clone();
+        #[cfg(test)]
+        let accept_copy = accept_keystroke.clone();
+
+        let displayed_keystroke = match surface {
+            EditPredictionKeybindSurface::Inline => match action {
+                EditPredictionKeybindAction::Accept => accept_keystroke,
+                EditPredictionKeybindAction::Preview => preview_keystroke,
+            },
+            EditPredictionKeybindSurface::CursorPopoverCompact
+            | EditPredictionKeybindSurface::CursorPopoverExpanded => match action {
+                EditPredictionKeybindAction::Accept => accept_keystroke,
+                EditPredictionKeybindAction::Preview => {
+                    preview_keystroke.or_else(|| accept_keystroke.clone())
+                }
+            },
+        };
+
+        let missing_accept_keystroke = displayed_keystroke.is_none();
+
+        EditPredictionKeybindDisplay {
+            #[cfg(test)]
+            accept_keystroke: accept_copy,
+            #[cfg(test)]
+            preview_keystroke: preview_copy,
+            displayed_keystroke,
+            action,
+            missing_accept_keystroke,
+            show_hold_label: matches!(surface, EditPredictionKeybindSurface::CursorPopoverCompact)
+                && self.edit_prediction_preview.released_too_fast(),
+        }
     }
 
     pub fn new_file(
@@ -3596,7 +3717,6 @@ impl Editor {
             self.refresh_matching_bracket_highlights(&display_map, cx);
             self.refresh_outline_symbols_at_cursor(cx);
             self.update_visible_edit_prediction(window, cx);
-            self.edit_prediction_requires_modifier_in_indent_conflict = true;
             self.inline_blame_popover.take();
             if self.git_blame_inline_enabled {
                 self.start_inline_blame_timer(window, cx);
@@ -3638,6 +3758,7 @@ impl Editor {
                 let selections = selections.clone();
                 let background_executor = cx.background_executor().clone();
                 let editor_id = cx.entity().entity_id().as_u64() as ItemId;
+                let db = EditorDb::global(cx);
                 self.serialize_selections = cx.background_spawn(async move {
                     background_executor.timer(SERIALIZATION_THROTTLE_TIME).await;
                     let db_selections = selections
@@ -3650,7 +3771,7 @@ impl Editor {
                         })
                         .collect();
 
-                    DB.save_editor_selections(editor_id, workspace_id, db_selections)
+                    db.save_editor_selections(editor_id, workspace_id, db_selections)
                         .await
                         .with_context(|| {
                             format!(
@@ -3735,16 +3856,17 @@ impl Editor {
                 (start, end, start_fp, end_fp)
             })
             .collect::<Vec<_>>();
+        let db = EditorDb::global(cx);
         self.serialize_folds = cx.background_spawn(async move {
             background_executor.timer(SERIALIZATION_THROTTLE_TIME).await;
             if db_folds.is_empty() {
                 // No folds - delete any persisted folds for this file
-                DB.delete_file_folds(workspace_id, file_path)
+                db.delete_file_folds(workspace_id, file_path)
                     .await
                     .with_context(|| format!("deleting file folds for workspace {workspace_id:?}"))
                     .log_err();
             } else {
-                DB.save_file_folds(workspace_id, file_path, db_folds)
+                db.save_file_folds(workspace_id, file_path, db_folds)
                     .await
                     .with_context(|| {
                         format!("persisting file folds for workspace {workspace_id:?}")
@@ -8216,8 +8338,6 @@ impl Editor {
                 }
             }
         }
-
-        self.edit_prediction_requires_modifier_in_indent_conflict = false;
     }
 
     pub fn accept_next_word_edit_prediction(
@@ -8466,21 +8586,20 @@ impl Editor {
     ) {
         let mut modifiers_held = false;
 
-        // Check bindings for all granularities.
-        // If the user holds the key for Word, Line, or Full, we want to show the preview.
-        let granularities = [
-            EditPredictionGranularity::Full,
-            EditPredictionGranularity::Line,
-            EditPredictionGranularity::Word,
+        let key_context = self.key_context_internal(self.has_active_edit_prediction(), window, cx);
+        let actions: [&dyn Action; 3] = [
+            &AcceptEditPrediction,
+            &AcceptNextWordEditPrediction,
+            &AcceptNextLineEditPrediction,
         ];
 
-        for granularity in granularities {
-            if let Some(keystroke) = self
-                .accept_edit_prediction_keybind(granularity, window, cx)
-                .keystroke()
-            {
-                modifiers_held = modifiers_held
-                    || (keystroke.modifiers() == modifiers && keystroke.modifiers().modified());
+        for action in actions {
+            let bindings = window.bindings_for_action_in_context(action, key_context.clone());
+            for binding in bindings {
+                if let Some(keystroke) = binding.keystrokes().first() {
+                    modifiers_held = modifiers_held
+                        || (keystroke.modifiers() == modifiers && keystroke.modifiers().modified());
+                }
             }
         }
 
@@ -8580,9 +8699,9 @@ impl Editor {
         self.edit_prediction_settings =
             self.edit_prediction_settings_at_position(&buffer, cursor_buffer_position, cx);
 
-        self.edit_prediction_indent_conflict = multibuffer.is_line_whitespace_upto(cursor);
+        self.in_leading_whitespace = multibuffer.is_line_whitespace_upto(cursor);
 
-        if self.edit_prediction_indent_conflict {
+        if self.in_leading_whitespace {
             let cursor_point = cursor.to_point(&multibuffer);
             let mut suggested_indent = None;
             multibuffer.suggested_indents_callback(
@@ -8597,7 +8716,7 @@ impl Editor {
             if let Some(indent) = suggested_indent
                 && indent.len == cursor_point.column
             {
-                self.edit_prediction_indent_conflict = false;
+                self.in_leading_whitespace = false;
             }
         }
 
@@ -9610,7 +9729,7 @@ impl Editor {
 
         const BORDER_WIDTH: Pixels = px(1.);
 
-        let keybind = self.render_edit_prediction_accept_keybind(window, cx);
+        let keybind = self.render_edit_prediction_keybind(window, cx);
         let has_keybind = keybind.is_some();
 
         let mut element = h_flex()
@@ -9766,22 +9885,13 @@ impl Editor {
         }
     }
 
-    fn render_edit_prediction_accept_keybind(
+    fn render_edit_prediction_inline_keystroke(
         &self,
-        window: &mut Window,
-        cx: &mut App,
-    ) -> Option<AnyElement> {
-        let accept_binding =
-            self.accept_edit_prediction_keybind(EditPredictionGranularity::Full, window, cx);
-        let accept_keystroke = accept_binding.keystroke()?;
-
+        keystroke: &gpui::KeybindingKeystroke,
+        modifiers_color: Color,
+        cx: &App,
+    ) -> AnyElement {
         let is_platform_style_mac = PlatformStyle::platform() == PlatformStyle::Mac;
-
-        let modifiers_color = if *accept_keystroke.modifiers() == window.modifiers() {
-            Color::Accent
-        } else {
-            Color::Muted
-        };
 
         h_flex()
             .px_0p5()
@@ -9789,26 +9899,67 @@ impl Editor {
             .font(theme::ThemeSettings::get_global(cx).buffer_font.clone())
             .text_size(TextSize::XSmall.rems(cx))
             .child(h_flex().children(ui::render_modifiers(
-                accept_keystroke.modifiers(),
+                keystroke.modifiers(),
                 PlatformStyle::platform(),
                 Some(modifiers_color),
                 Some(IconSize::XSmall.rems().into()),
                 true,
             )))
             .when(is_platform_style_mac, |parent| {
-                parent.child(accept_keystroke.key().to_string())
+                parent.child(keystroke.key().to_string())
             })
             .when(!is_platform_style_mac, |parent| {
                 parent.child(
-                    Key::new(
-                        util::capitalize(accept_keystroke.key()),
-                        Some(Color::Default),
-                    )
-                    .size(Some(IconSize::XSmall.rems().into())),
+                    Key::new(util::capitalize(keystroke.key()), Some(Color::Default))
+                        .size(Some(IconSize::XSmall.rems().into())),
                 )
             })
             .into_any()
-            .into()
+    }
+
+    fn render_edit_prediction_popover_keystroke(
+        &self,
+        keystroke: &gpui::KeybindingKeystroke,
+        color: Color,
+        cx: &App,
+    ) -> AnyElement {
+        let is_platform_style_mac = PlatformStyle::platform() == PlatformStyle::Mac;
+
+        if keystroke.modifiers().modified() {
+            h_flex()
+                .font(theme::ThemeSettings::get_global(cx).buffer_font.clone())
+                .when(is_platform_style_mac, |parent| parent.gap_1())
+                .child(h_flex().children(ui::render_modifiers(
+                    keystroke.modifiers(),
+                    PlatformStyle::platform(),
+                    Some(color),
+                    None,
+                    false,
+                )))
+                .into_any()
+        } else {
+            Key::new(util::capitalize(keystroke.key()), Some(color))
+                .size(Some(IconSize::XSmall.rems().into()))
+                .into_any_element()
+        }
+    }
+
+    fn render_edit_prediction_keybind(
+        &self,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Option<AnyElement> {
+        let keybind_display =
+            self.edit_prediction_keybind_display(EditPredictionKeybindSurface::Inline, window, cx);
+        let keystroke = keybind_display.displayed_keystroke.as_ref()?;
+
+        let modifiers_color = if *keystroke.modifiers() == window.modifiers() {
+            Color::Accent
+        } else {
+            Color::Muted
+        };
+
+        Some(self.render_edit_prediction_inline_keystroke(keystroke, modifiers_color, cx))
     }
 
     fn render_edit_prediction_line_popover(
@@ -9820,7 +9971,7 @@ impl Editor {
     ) -> Stateful<Div> {
         let padding_right = if icon.is_some() { px(4.) } else { px(8.) };
 
-        let keybind = self.render_edit_prediction_accept_keybind(window, cx);
+        let keybind = self.render_edit_prediction_keybind(window, cx);
         let has_keybind = keybind.is_some();
         let icons = Self::get_prediction_provider_icons(&self.edit_prediction_provider, cx);
 
@@ -9879,7 +10030,7 @@ impl Editor {
         window: &mut Window,
         cx: &mut App,
     ) -> Stateful<Div> {
-        let keybind = self.render_edit_prediction_accept_keybind(window, cx);
+        let keybind = self.render_edit_prediction_keybind(window, cx);
         let has_keybind = keybind.is_some();
         let icons = Self::get_prediction_provider_icons(&self.edit_prediction_provider, cx);
 
@@ -9962,8 +10113,7 @@ impl Editor {
         max_width: Pixels,
         cursor_point: Point,
         style: &EditorStyle,
-        accept_keystroke: Option<&gpui::KeybindingKeystroke>,
-        _window: &Window,
+        window: &mut Window,
         cx: &mut Context<Editor>,
     ) -> Option<AnyElement> {
         let provider = self.edit_prediction_provider.as_ref()?;
@@ -9980,13 +10130,18 @@ impl Editor {
                 if !self.has_visible_completions_menu() {
                     const RADIUS: Pixels = px(6.);
                     const BORDER_WIDTH: Pixels = px(1.);
+                    let keybind_display = self.edit_prediction_keybind_display(
+                        EditPredictionKeybindSurface::CursorPopoverCompact,
+                        window,
+                        cx,
+                    );
 
                     return Some(
                         h_flex()
                             .elevation_2(cx)
                             .border(BORDER_WIDTH)
                             .border_color(cx.theme().colors().border)
-                            .when(accept_keystroke.is_none(), |el| {
+                            .when(keybind_display.missing_accept_keystroke, |el| {
                                 el.border_color(cx.theme().status().error)
                             })
                             .rounded(RADIUS)
@@ -10017,18 +10172,19 @@ impl Editor {
                                     .border_l_1()
                                     .border_color(cx.theme().colors().border)
                                     .bg(Self::edit_prediction_line_popover_bg_color(cx))
-                                    .when(self.edit_prediction_preview.released_too_fast(), |el| {
+                                    .when(keybind_display.show_hold_label, |el| {
                                         el.child(
                                             Label::new("Hold")
                                                 .size(LabelSize::Small)
-                                                .when(accept_keystroke.is_none(), |el| {
-                                                    el.strikethrough()
-                                                })
+                                                .when(
+                                                    keybind_display.missing_accept_keystroke,
+                                                    |el| el.strikethrough(),
+                                                )
                                                 .line_height_style(LineHeightStyle::UiLabel),
                                         )
                                     })
                                     .id("edit_prediction_cursor_popover_keybind")
-                                    .when(accept_keystroke.is_none(), |el| {
+                                    .when(keybind_display.missing_accept_keystroke, |el| {
                                         let status_colors = cx.theme().status();
 
                                         el.bg(status_colors.error_background)
@@ -10041,15 +10197,13 @@ impl Editor {
                                             })
                                     })
                                     .when_some(
-                                        accept_keystroke.as_ref(),
-                                        |el, accept_keystroke| {
-                                            el.child(h_flex().children(ui::render_modifiers(
-                                                accept_keystroke.modifiers(),
-                                                PlatformStyle::platform(),
-                                                Some(Color::Default),
-                                                Some(IconSize::XSmall.rems().into()),
-                                                false,
-                                            )))
+                                        keybind_display.displayed_keystroke.as_ref(),
+                                        |el, compact_keystroke| {
+                                            el.child(self.render_edit_prediction_popover_keystroke(
+                                                compact_keystroke,
+                                                Color::Default,
+                                                cx,
+                                            ))
                                         },
                                     ),
                             )
@@ -10096,8 +10250,12 @@ impl Editor {
         };
 
         let has_completion = self.active_edit_prediction.is_some();
+        let keybind_display = self.edit_prediction_keybind_display(
+            EditPredictionKeybindSurface::CursorPopoverExpanded,
+            window,
+            cx,
+        );
 
-        let is_platform_style_mac = PlatformStyle::platform() == PlatformStyle::Mac;
         Some(
             h_flex()
                 .min_w(min_width)
@@ -10113,41 +10271,51 @@ impl Editor {
                         .overflow_hidden()
                         .child(completion),
                 )
-                .when_some(accept_keystroke, |el, accept_keystroke| {
-                    if !accept_keystroke.modifiers().modified() {
-                        return el;
-                    }
+                .when_some(
+                    keybind_display.displayed_keystroke.as_ref(),
+                    |el, keystroke| {
+                        let key_color = if !has_completion {
+                            Color::Muted
+                        } else {
+                            Color::Default
+                        };
 
-                    el.child(
-                        h_flex()
-                            .h_full()
-                            .border_l_1()
-                            .rounded_r_lg()
-                            .border_color(cx.theme().colors().border)
-                            .bg(Self::edit_prediction_line_popover_bg_color(cx))
-                            .gap_1()
-                            .py_1()
-                            .px_2()
-                            .child(
+                        if keybind_display.action == EditPredictionKeybindAction::Preview {
+                            el.child(
                                 h_flex()
-                                    .font(theme::ThemeSettings::get_global(cx).buffer_font.clone())
-                                    .when(is_platform_style_mac, |parent| parent.gap_1())
-                                    .child(h_flex().children(ui::render_modifiers(
-                                        accept_keystroke.modifiers(),
-                                        PlatformStyle::platform(),
-                                        Some(if !has_completion {
-                                            Color::Muted
-                                        } else {
-                                            Color::Default
-                                        }),
-                                        None,
-                                        false,
-                                    ))),
+                                    .h_full()
+                                    .border_l_1()
+                                    .rounded_r_lg()
+                                    .border_color(cx.theme().colors().border)
+                                    .bg(Self::edit_prediction_line_popover_bg_color(cx))
+                                    .gap_1()
+                                    .py_1()
+                                    .px_2()
+                                    .child(self.render_edit_prediction_popover_keystroke(
+                                        keystroke, key_color, cx,
+                                    ))
+                                    .child(Label::new("Preview").into_any_element())
+                                    .opacity(if has_completion { 1.0 } else { 0.4 }),
                             )
-                            .child(Label::new("Preview").into_any_element())
-                            .opacity(if has_completion { 1.0 } else { 0.4 }),
-                    )
-                })
+                        } else {
+                            el.child(
+                                h_flex()
+                                    .h_full()
+                                    .border_l_1()
+                                    .rounded_r_lg()
+                                    .border_color(cx.theme().colors().border)
+                                    .bg(Self::edit_prediction_line_popover_bg_color(cx))
+                                    .gap_1()
+                                    .py_1()
+                                    .px_2()
+                                    .child(self.render_edit_prediction_popover_keystroke(
+                                        keystroke, key_color, cx,
+                                    ))
+                                    .opacity(if has_completion { 1.0 } else { 0.4 }),
+                            )
+                        }
+                    },
+                )
                 .into_any(),
         )
     }
@@ -11836,6 +12004,98 @@ impl Editor {
                 BreakpointEditAction::InvertState,
                 cx,
             );
+        }
+    }
+
+    pub fn align_selections(
+        &mut self,
+        _: &crate::actions::AlignSelections,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.hide_mouse_cursor(HideMouseCursorOrigin::TypingAction, cx);
+
+        let display_snapshot = self.display_snapshot(cx);
+
+        struct CursorData {
+            anchor: Anchor,
+            point: Point,
+        }
+        let cursor_data: Vec<CursorData> = self
+            .selections
+            .disjoint_anchors()
+            .iter()
+            .map(|selection| {
+                let anchor = if selection.reversed {
+                    selection.head()
+                } else {
+                    selection.tail()
+                };
+                CursorData {
+                    anchor: anchor,
+                    point: anchor.to_point(&display_snapshot.buffer_snapshot()),
+                }
+            })
+            .collect();
+
+        let rows_anchors_count: Vec<usize> = cursor_data
+            .iter()
+            .map(|cursor| cursor.point.row)
+            .chunk_by(|&row| row)
+            .into_iter()
+            .map(|(_, group)| group.count())
+            .collect();
+        let max_columns = rows_anchors_count.iter().max().copied().unwrap_or(0);
+        let mut rows_column_offset = vec![0; rows_anchors_count.len()];
+        let mut edits = Vec::new();
+
+        for column_idx in 0..max_columns {
+            let mut cursor_index = 0;
+
+            // Calculate target_column => position that the selections will go
+            let mut target_column = 0;
+            for (row_idx, cursor_count) in rows_anchors_count.iter().enumerate() {
+                // Skip rows that don't have this column
+                if column_idx >= *cursor_count {
+                    cursor_index += cursor_count;
+                    continue;
+                }
+
+                let point = &cursor_data[cursor_index + column_idx].point;
+                let adjusted_column = point.column + rows_column_offset[row_idx];
+                if adjusted_column > target_column {
+                    target_column = adjusted_column;
+                }
+                cursor_index += cursor_count;
+            }
+
+            // Collect edits for this column
+            cursor_index = 0;
+            for (row_idx, cursor_count) in rows_anchors_count.iter().enumerate() {
+                // Skip rows that don't have this column
+                if column_idx >= *cursor_count {
+                    cursor_index += *cursor_count;
+                    continue;
+                }
+
+                let point = &cursor_data[cursor_index + column_idx].point;
+                let spaces_needed = target_column - point.column - rows_column_offset[row_idx];
+                if spaces_needed > 0 {
+                    let anchor = cursor_data[cursor_index + column_idx]
+                        .anchor
+                        .bias_left(&display_snapshot);
+                    edits.push((anchor..anchor, " ".repeat(spaces_needed as usize)));
+                }
+                rows_column_offset[row_idx] += spaces_needed;
+
+                cursor_index += *cursor_count;
+            }
+        }
+
+        if !edits.is_empty() {
+            self.transact(window, cx, |editor, _window, cx| {
+                editor.edit(edits, cx);
+            });
         }
     }
 
@@ -16509,12 +16769,12 @@ impl Editor {
             .zip(new_selections.last().cloned())
             .expect("old_selections isn't empty");
 
-        // revert selection
-        let is_selection_reversed = {
-            let should_newest_selection_be_reversed = last_old.start != last_new.start;
-            new_selections.last_mut().expect("checked above").reversed =
-                should_newest_selection_be_reversed;
-            should_newest_selection_be_reversed
+        let is_selection_reversed = if new_selections.len() == 1 {
+            let should_be_reversed = last_old.start != last_new.start;
+            new_selections.last_mut().expect("checked above").reversed = should_be_reversed;
+            should_be_reversed
+        } else {
+            last_new.reversed
         };
 
         if selected_larger_node {
@@ -25100,12 +25360,13 @@ impl Editor {
                 });
 
             // Try file_folds (path-based) first, fallback to editor_folds (migration)
+            let db = EditorDb::global(cx);
             let (folds, needs_migration) = if let Some(ref path) = file_path {
-                if let Some(folds) = DB.get_file_folds(workspace_id, path).log_err()
+                if let Some(folds) = db.get_file_folds(workspace_id, path).log_err()
                     && !folds.is_empty()
                 {
                     (Some(folds), false)
-                } else if let Some(folds) = DB.get_editor_folds(item_id, workspace_id).log_err()
+                } else if let Some(folds) = db.get_editor_folds(item_id, workspace_id).log_err()
                     && !folds.is_empty()
                 {
                     // Found old editor_folds data, will migrate to file_folds
@@ -25115,7 +25376,7 @@ impl Editor {
                 }
             } else {
                 // No file path, try editor_folds as fallback
-                let folds = DB.get_editor_folds(item_id, workspace_id).log_err();
+                let folds = db.get_editor_folds(item_id, workspace_id).log_err();
                 (folds.filter(|f| !f.is_empty()), false)
             };
 
@@ -25214,8 +25475,9 @@ impl Editor {
                     if needs_migration {
                         if let Some(ref path) = file_path {
                             let path = path.clone();
+                            let db = EditorDb::global(cx);
                             cx.spawn(async move |_, _| {
-                                DB.save_file_folds(workspace_id, path, db_folds_for_migration)
+                                db.save_file_folds(workspace_id, path, db_folds_for_migration)
                                     .await
                                     .log_err();
                             })
@@ -25225,7 +25487,7 @@ impl Editor {
                 }
             }
 
-            if let Some(selections) = DB.get_editor_selections(item_id, workspace_id).log_err()
+            if let Some(selections) = db.get_editor_selections(item_id, workspace_id).log_err()
                 && !selections.is_empty()
             {
                 let snapshot = buffer_snapshot.get_or_init(|| self.buffer.read(cx).snapshot(cx));
@@ -25260,7 +25522,10 @@ impl Editor {
             return;
         }
 
-        let Some(folds) = DB.get_file_folds(workspace_id, &file_path).log_err() else {
+        let Some(folds) = EditorDb::global(cx)
+            .get_file_folds(workspace_id, &file_path)
+            .log_err()
+        else {
             return;
         };
         if folds.is_empty() {

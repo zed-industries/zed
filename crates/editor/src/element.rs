@@ -43,13 +43,12 @@ use gpui::{
     Bounds, ClickEvent, ClipboardItem, ContentMask, Context, Corner, Corners, CursorStyle,
     DispatchPhase, Edges, Element, ElementInputHandler, Entity, Focusable as _, Font, FontId,
     FontWeight, GlobalElementId, Hitbox, HitboxBehavior, Hsla, InteractiveElement, IntoElement,
-    IsZero, KeybindingKeystroke, Length, Modifiers, ModifiersChangedEvent, MouseButton,
-    MouseClickEvent, MouseDownEvent, MouseMoveEvent, MousePressureEvent, MouseUpEvent, PaintQuad,
-    ParentElement, Pixels, PressureStage, ScrollDelta, ScrollHandle, ScrollWheelEvent, ShapedLine,
-    SharedString, Size, StatefulInteractiveElement, Style, Styled, StyledText, TextAlign, TextRun,
-    TextStyleRefinement, WeakEntity, Window, anchored, deferred, div, fill, linear_color_stop,
-    linear_gradient, outline, pattern_slash, point, px, quad, relative, size, solid_background,
-    transparent_black,
+    IsZero, Length, Modifiers, ModifiersChangedEvent, MouseButton, MouseClickEvent, MouseDownEvent,
+    MouseMoveEvent, MousePressureEvent, MouseUpEvent, PaintQuad, ParentElement, Pixels,
+    PressureStage, ScrollDelta, ScrollHandle, ScrollWheelEvent, ShapedLine, SharedString, Size,
+    StatefulInteractiveElement, Style, Styled, StyledText, TextAlign, TextRun, TextStyleRefinement,
+    WeakEntity, Window, anchored, deferred, div, fill, linear_color_stop, linear_gradient, outline,
+    pattern_slash, point, px, quad, relative, size, solid_background, transparent_black,
 };
 use itertools::Itertools;
 use language::{HighlightedText, IndentGuideSettings, language_settings::ShowWhitespaceSetting};
@@ -58,8 +57,6 @@ use multi_buffer::{
     Anchor, ExcerptId, ExcerptInfo, ExpandExcerptDirection, ExpandInfo, MultiBufferPoint,
     MultiBufferRow, RowInfo,
 };
-
-use edit_prediction_types::EditPredictionGranularity;
 
 use project::{
     DisableAiSettings, Entry, ProjectPath,
@@ -653,6 +650,7 @@ impl EditorElement {
         register_action(editor, window, Editor::enable_breakpoint);
         register_action(editor, window, Editor::disable_breakpoint);
         register_action(editor, window, Editor::toggle_read_only);
+        register_action(editor, window, Editor::align_selections);
         if editor.read(cx).enable_wrap_selections_in_tag(cx) {
             register_action(editor, window, Editor::wrap_selections_in_tag);
         }
@@ -4837,17 +4835,11 @@ impl EditorElement {
 
                 let edit_prediction = if edit_prediction_popover_visible {
                     self.editor.update(cx, move |editor, cx| {
-                        let accept_binding = editor.accept_edit_prediction_keybind(
-                            EditPredictionGranularity::Full,
-                            window,
-                            cx,
-                        );
                         let mut element = editor.render_edit_prediction_cursor_popover(
                             min_width,
                             max_width,
                             cursor_point,
                             style,
-                            accept_binding.keystroke(),
                             window,
                             cx,
                         )?;
@@ -8615,21 +8607,6 @@ pub(crate) fn render_buffer_header(
                 menu.context(menu_context)
             })
         })
-}
-
-pub struct AcceptEditPredictionBinding(pub(crate) Option<gpui::KeyBinding>);
-
-impl AcceptEditPredictionBinding {
-    pub fn keystroke(&self) -> Option<&KeybindingKeystroke> {
-        if let Some(binding) = self.0.as_ref() {
-            match &binding.keystrokes() {
-                [keystroke, ..] => Some(keystroke),
-                _ => None,
-            }
-        } else {
-            None
-        }
-    }
 }
 
 fn prepaint_gutter_button(

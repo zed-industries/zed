@@ -5,7 +5,10 @@ use futures::StreamExt;
 use gpui::{App, AsyncApp, Task};
 use http_client::github::latest_github_release;
 pub use language::*;
-use language::{LanguageToolchainStore, LspAdapterDelegate, LspInstaller};
+use language::{
+    LanguageName, LanguageToolchainStore, LspAdapterDelegate, LspInstaller,
+    language_settings::language_settings,
+};
 use lsp::{LanguageServerBinary, LanguageServerName};
 
 use project::lsp_store::language_server_settings;
@@ -207,6 +210,12 @@ impl LspAdapter for GoLspAdapter {
         delegate: &Arc<dyn LspAdapterDelegate>,
         cx: &mut AsyncApp,
     ) -> Result<Option<serde_json::Value>> {
+        let semantic_tokens_enabled = cx.update(|cx| {
+            language_settings(Some(LanguageName::new("Go")), None, cx)
+                .semantic_tokens
+                .enabled()
+        });
+
         let mut default_config = json!({
             "usePlaceholders": false,
             "hints": {
@@ -217,7 +226,8 @@ impl LspAdapter for GoLspAdapter {
                 "functionTypeParameters": true,
                 "parameterNames": true,
                 "rangeVariableTypes": true
-            }
+            },
+            "semanticTokens": semantic_tokens_enabled
         });
 
         let project_initialization_options = cx.update(|cx| {

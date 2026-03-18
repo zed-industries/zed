@@ -1,8 +1,8 @@
+use agent_servers::GEMINI_ID;
 use gpui::{
     ClickEvent, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, MouseDownEvent, Render,
     linear_color_stop, linear_gradient,
 };
-use project::agent_server_store::GEMINI_ID;
 use ui::{TintColor, Vector, VectorName, prelude::*};
 use workspace::{ModalView, Workspace};
 

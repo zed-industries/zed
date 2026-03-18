@@ -1,5 +1,6 @@
 use std::{path::Path, sync::Arc};
 
+use acp_thread::AgentSessionInfo;
 use agent::{ThreadStore, ZED_AGENT_ID};
 use agent_client_protocol as acp;
 use anyhow::Result;
@@ -83,6 +84,62 @@ pub struct ThreadMetadata {
     pub folder_paths: PathList,
 }
 
+impl ThreadMetadata {
+    pub fn from_session_info(agent_id: AgentId, session: &AgentSessionInfo) -> Self {
+        let session_id = session.session_id.clone();
+        let title = session.title.clone().unwrap_or_default();
+        let updated_at = session.updated_at.unwrap_or_else(|| Utc::now());
+        let created_at = session.created_at.unwrap_or(updated_at);
+        let folder_paths = session.work_dirs.clone().unwrap_or_default();
+        let agent_id = if agent_id.as_ref() == ZED_AGENT_ID.as_ref() {
+            None
+        } else {
+            Some(agent_id)
+        };
+        Self {
+            session_id,
+            agent_id,
+            title,
+            updated_at,
+            created_at: Some(created_at),
+            folder_paths,
+        }
+    }
+
+    pub fn from_thread(thread: &Entity<acp_thread::AcpThread>, cx: &App) -> Self {
+        let thread_ref = thread.read(cx);
+        let session_id = thread_ref.session_id().clone();
+        let title = thread_ref.title();
+        let updated_at = Utc::now();
+
+        let agent_id = thread_ref.connection().agent_id();
+
+        let agent_id = if agent_id.as_ref() == ZED_AGENT_ID.as_ref() {
+            None
+        } else {
+            Some(agent_id)
+        };
+
+        let folder_paths = {
+            let project = thread_ref.project().read(cx);
+            let paths: Vec<Arc<Path>> = project
+                .visible_worktrees(cx)
+                .map(|worktree| worktree.read(cx).abs_path())
+                .collect();
+            PathList::new(&paths)
+        };
+
+        Self {
+            session_id,
+            agent_id,
+            title,
+            created_at: Some(updated_at), // handled by db `ON CONFLICT`
+            updated_at,
+            folder_paths,
+        }
+    }
+}
+
 pub struct ThreadMetadataStore {
     db: ThreadMetadataDb,
     session_subscriptions: HashMap<acp::SessionId, Subscription>,
@@ -95,7 +152,7 @@ impl ThreadMetadataStore {
             return;
         }
 
-        let db = THREAD_METADATA_DB.clone();
+        let db = ThreadMetadataDb::global(cx);
         let thread_store = cx.new(|cx| Self::new(db, cx));
         cx.set_global(GlobalThreadMetadataStore(thread_store));
     }
@@ -117,6 +174,14 @@ impl ThreadMetadataStore {
 
     pub fn global(cx: &App) -> Entity<Self> {
         cx.global::<GlobalThreadMetadataStore>().0.clone()
+    }
+
+    pub fn list_ids(&self, cx: &App) -> Task<Result<Vec<acp::SessionId>>> {
+        let db = self.db.clone();
+        cx.background_spawn(async move {
+            let s = db.list_ids()?;
+            Ok(s)
+        })
     }
 
     pub fn list(&self, cx: &App) -> Task<Result<Vec<ThreadMetadata>>> {
@@ -159,6 +224,11 @@ impl ThreadMetadataStore {
         let weak_store = cx.weak_entity();
 
         cx.observe_new::<acp_thread::AcpThread>(move |thread, _window, cx| {
+            // Don't track subagent threads in the sidebar.
+            if thread.parent_session_id().is_some() {
+                return;
+            }
+
             let thread_entity = cx.entity();
 
             cx.on_release({
@@ -195,53 +265,25 @@ impl ThreadMetadataStore {
         event: &acp_thread::AcpThreadEvent,
         cx: &mut Context<Self>,
     ) {
+        // Don't track subagent threads in the sidebar.
+        if thread.read(cx).parent_session_id().is_some() {
+            return;
+        }
+
         match event {
             acp_thread::AcpThreadEvent::NewEntry
             | acp_thread::AcpThreadEvent::EntryUpdated(_)
             | acp_thread::AcpThreadEvent::TitleUpdated => {
-                let metadata = Self::metadata_for_acp_thread(thread.read(cx), cx);
+                let metadata = ThreadMetadata::from_thread(&thread, cx);
                 self.save(metadata, cx).detach_and_log_err(cx);
             }
             _ => {}
-        }
-    }
-
-    fn metadata_for_acp_thread(thread: &acp_thread::AcpThread, cx: &App) -> ThreadMetadata {
-        let session_id = thread.session_id().clone();
-        let title = thread.title();
-        let updated_at = Utc::now();
-
-        let agent_id = thread.connection().agent_id();
-
-        let agent_id = if agent_id.as_ref() == ZED_AGENT_ID.as_ref() {
-            None
-        } else {
-            Some(agent_id)
-        };
-
-        let folder_paths = {
-            let project = thread.project().read(cx);
-            let paths: Vec<Arc<Path>> = project
-                .visible_worktrees(cx)
-                .map(|worktree| worktree.read(cx).abs_path())
-                .collect();
-            PathList::new(&paths)
-        };
-
-        ThreadMetadata {
-            session_id,
-            agent_id,
-            title,
-            created_at: Some(updated_at), // handled by db `ON CONFLICT`
-            updated_at,
-            folder_paths,
         }
     }
 }
 
 impl Global for ThreadMetadataStore {}
 
-#[derive(Clone)]
 struct ThreadMetadataDb(ThreadSafeConnection);
 
 impl Domain for ThreadMetadataDb {
@@ -260,9 +302,15 @@ impl Domain for ThreadMetadataDb {
     )];
 }
 
-db::static_connection!(THREAD_METADATA_DB, ThreadMetadataDb, []);
+db::static_connection!(ThreadMetadataDb, []);
 
 impl ThreadMetadataDb {
+    /// List allsidebar thread session IDs
+    pub fn list_ids(&self) -> anyhow::Result<Vec<acp::SessionId>> {
+        self.select::<Arc<str>>("SELECT session_id FROM sidebar_threads")?()
+            .map(|ids| ids.into_iter().map(|id| acp::SessionId::new(id)).collect())
+    }
+
     /// List all sidebar thread metadata, ordered by updated_at descending.
     pub fn list(&self) -> anyhow::Result<Vec<ThreadMetadata>> {
         self.select::<ThreadMetadata>(
@@ -365,8 +413,17 @@ impl Column for ThreadMetadata {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use acp_thread::{AgentConnection, StubAgentConnection};
+    use action_log::ActionLog;
     use agent::DbThread;
+    use agent_client_protocol as acp;
+    use feature_flags::FeatureFlagAppExt;
     use gpui::TestAppContext;
+    use project::FakeFs;
+    use project::Project;
+    use std::path::Path;
+    use std::rc::Rc;
+    use util::path_list::PathList;
 
     fn make_db_thread(title: &str, updated_at: DateTime<Utc>) -> DbThread {
         DbThread {
@@ -524,5 +581,89 @@ mod tests {
         let list = metadata_list.await.unwrap();
         assert_eq!(list.len(), 1);
         assert_eq!(list[0].session_id.0.as_ref(), "existing-session");
+    }
+
+    #[gpui::test]
+    async fn test_subagent_threads_excluded_from_sidebar_metadata(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            let settings_store = settings::SettingsStore::test(cx);
+            cx.set_global(settings_store);
+            cx.update_flags(true, vec!["agent-v2".to_string()]);
+            ThreadStore::init_global(cx);
+            ThreadMetadataStore::init_global(cx);
+        });
+
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, None::<&Path>, cx).await;
+        let connection = Rc::new(StubAgentConnection::new());
+
+        // Create a regular (non-subagent) AcpThread.
+        let regular_thread = cx
+            .update(|cx| {
+                connection
+                    .clone()
+                    .new_session(project.clone(), PathList::default(), cx)
+            })
+            .await
+            .unwrap();
+
+        let regular_session_id = cx.read(|cx| regular_thread.read(cx).session_id().clone());
+
+        // Set a title on the regular thread to trigger a save via handle_thread_update.
+        cx.update(|cx| {
+            regular_thread.update(cx, |thread, cx| {
+                thread.set_title("Regular Thread".into(), cx).detach();
+            });
+        });
+        cx.run_until_parked();
+
+        // Create a subagent AcpThread
+        let subagent_session_id = acp::SessionId::new("subagent-session");
+        let subagent_thread = cx.update(|cx| {
+            let action_log = cx.new(|_| ActionLog::new(project.clone()));
+            cx.new(|cx| {
+                acp_thread::AcpThread::new(
+                    Some(regular_session_id.clone()),
+                    "Subagent Thread",
+                    None,
+                    connection.clone(),
+                    project.clone(),
+                    action_log,
+                    subagent_session_id.clone(),
+                    watch::Receiver::constant(acp::PromptCapabilities::new()),
+                    cx,
+                )
+            })
+        });
+
+        // Set a title on the subagent thread to trigger handle_thread_update.
+        cx.update(|cx| {
+            subagent_thread.update(cx, |thread, cx| {
+                thread
+                    .set_title("Subagent Thread Title".into(), cx)
+                    .detach();
+            });
+        });
+        cx.run_until_parked();
+
+        // List all metadata from the store.
+        let metadata_list = cx.update(|cx| {
+            let store = ThreadMetadataStore::global(cx);
+            store.read(cx).list(cx)
+        });
+
+        let list = metadata_list.await.unwrap();
+
+        // The subagent thread should NOT appear in the sidebar metadata.
+        // Only the regular thread should be listed.
+        assert_eq!(
+            list.len(),
+            1,
+            "Expected only the regular thread in sidebar metadata, \
+             but found {} entries (subagent threads are leaking into the sidebar)",
+            list.len(),
+        );
+        assert_eq!(list[0].session_id, regular_session_id);
+        assert_eq!(list[0].title.as_ref(), "Regular Thread");
     }
 }

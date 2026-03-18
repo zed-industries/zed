@@ -379,7 +379,7 @@ impl Render for EditPredictionButton {
                     }
                 };
 
-                if edit_prediction::should_show_upsell_modal() {
+                if edit_prediction::should_show_upsell_modal(cx) {
                     let tooltip_meta = if self.user_store.read(cx).current_user().is_some() {
                         "Choose a Plan"
                     } else {

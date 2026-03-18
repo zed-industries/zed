@@ -14,7 +14,7 @@ use agent::{ContextServerRegistry, SharedThread, ThreadStore};
 use agent_client_protocol as acp;
 use agent_servers::AgentServer;
 use collections::HashSet;
-use db::kvp::{Dismissable, KEY_VALUE_STORE};
+use db::kvp::{Dismissable, KeyValueStore};
 use itertools::Itertools;
 use project::AgentId;
 use serde::{Deserialize, Serialize};
@@ -81,7 +81,7 @@ use ui::{
 use util::{ResultExt as _, debug_panic};
 use workspace::{
     CollaboratorId, DraggedSelection, DraggedTab, OpenResult, PathList, SerializedPathList,
-    ToggleZoom, ToolbarItemView, Workspace, WorkspaceId,
+    ToggleWorkspaceSidebar, ToggleZoom, ToolbarItemView, Workspace, WorkspaceId,
     dock::{DockPosition, Panel, PanelEvent},
 };
 use zed_actions::{
@@ -94,8 +94,11 @@ const AGENT_PANEL_KEY: &str = "agent_panel";
 const RECENTLY_UPDATED_MENU_LIMIT: usize = 6;
 const DEFAULT_THREAD_TITLE: &str = "New Thread";
 
-fn read_serialized_panel(workspace_id: workspace::WorkspaceId) -> Option<SerializedAgentPanel> {
-    let scope = KEY_VALUE_STORE.scoped(AGENT_PANEL_KEY);
+fn read_serialized_panel(
+    workspace_id: workspace::WorkspaceId,
+    kvp: &KeyValueStore,
+) -> Option<SerializedAgentPanel> {
+    let scope = kvp.scoped(AGENT_PANEL_KEY);
     let key = i64::from(workspace_id).to_string();
     scope
         .read(&key)
@@ -107,8 +110,9 @@ fn read_serialized_panel(workspace_id: workspace::WorkspaceId) -> Option<Seriali
 async fn save_serialized_panel(
     workspace_id: workspace::WorkspaceId,
     panel: SerializedAgentPanel,
+    kvp: KeyValueStore,
 ) -> Result<()> {
-    let scope = KEY_VALUE_STORE.scoped(AGENT_PANEL_KEY);
+    let scope = kvp.scoped(AGENT_PANEL_KEY);
     let key = i64::from(workspace_id).to_string();
     scope.write(key, serde_json::to_string(&panel)?).await?;
     Ok(())
@@ -116,9 +120,8 @@ async fn save_serialized_panel(
 
 /// Migration: reads the original single-panel format stored under the
 /// `"agent_panel"` KVP key before per-workspace keying was introduced.
-fn read_legacy_serialized_panel() -> Option<SerializedAgentPanel> {
-    KEY_VALUE_STORE
-        .read_kvp(AGENT_PANEL_KEY)
+fn read_legacy_serialized_panel(kvp: &KeyValueStore) -> Option<SerializedAgentPanel> {
+    kvp.read_kvp(AGENT_PANEL_KEY)
         .log_err()
         .flatten()
         .and_then(|json| serde_json::from_str::<SerializedAgentPanel>(&json).log_err())
@@ -600,8 +603,8 @@ impl From<Agent> for AgentType {
 impl StartThreadIn {
     fn label(&self) -> SharedString {
         match self {
-            Self::LocalProject => "Current Project".into(),
-            Self::NewWorktree => "New Worktree".into(),
+            Self::LocalProject => "Current Worktree".into(),
+            Self::NewWorktree => "New Git Worktree".into(),
         }
     }
 }
@@ -781,6 +784,7 @@ impl AgentPanel {
             }
         });
 
+        let kvp = KeyValueStore::global(cx);
         self.pending_serialization = Some(cx.background_spawn(async move {
             save_serialized_panel(
                 workspace_id,
@@ -790,6 +794,7 @@ impl AgentPanel {
                     last_active_thread,
                     start_thread_in,
                 },
+                kvp,
             )
             .await?;
             anyhow::Ok(())
@@ -802,6 +807,7 @@ impl AgentPanel {
         mut cx: AsyncWindowContext,
     ) -> Task<Result<Entity<Self>>> {
         let prompt_store = cx.update(|_window, cx| PromptStore::global(cx));
+        let kvp = cx.update(|_window, cx| KeyValueStore::global(cx)).ok();
         cx.spawn(async move |cx| {
             let prompt_store = match prompt_store {
                 Ok(prompt_store) => prompt_store.await.ok(),
@@ -814,9 +820,11 @@ impl AgentPanel {
 
             let serialized_panel = cx
                 .background_spawn(async move {
-                    workspace_id
-                        .and_then(read_serialized_panel)
-                        .or_else(read_legacy_serialized_panel)
+                    kvp.and_then(|kvp| {
+                        workspace_id
+                            .and_then(|id| read_serialized_panel(id, &kvp))
+                            .or_else(|| read_legacy_serialized_panel(&kvp))
+                    })
                 })
                 .await;
 
@@ -1088,7 +1096,7 @@ impl AgentPanel {
             _worktree_creation_task: None,
             show_trust_workspace_message: false,
             last_configuration_error_telemetry: None,
-            on_boarding_upsell_dismissed: AtomicBool::new(OnboardingUpsell::dismissed()),
+            on_boarding_upsell_dismissed: AtomicBool::new(OnboardingUpsell::dismissed(cx)),
             _active_view_observation: None,
         };
 
@@ -1307,16 +1315,17 @@ impl AgentPanel {
         }
 
         let thread_store = self.thread_store.clone();
+        let kvp = KeyValueStore::global(cx);
 
         if let Some(agent) = agent_choice {
             cx.background_spawn({
                 let agent = agent.clone();
+                let kvp = kvp;
                 async move {
                     if let Some(serialized) =
                         serde_json::to_string(&LastUsedExternalAgent { agent }).log_err()
                     {
-                        KEY_VALUE_STORE
-                            .write_kvp(LAST_USED_EXTERNAL_AGENT_KEY.to_string(), serialized)
+                        kvp.write_kvp(LAST_USED_EXTERNAL_AGENT_KEY.to_string(), serialized)
                             .await
                             .log_err();
                     }
@@ -1343,17 +1352,15 @@ impl AgentPanel {
                 let ext_agent = if is_via_collab {
                     Agent::NativeAgent
                 } else {
-                    cx.background_spawn(async move {
-                        KEY_VALUE_STORE.read_kvp(LAST_USED_EXTERNAL_AGENT_KEY)
-                    })
-                    .await
-                    .log_err()
-                    .flatten()
-                    .and_then(|value| {
-                        serde_json::from_str::<LastUsedExternalAgent>(&value).log_err()
-                    })
-                    .map(|agent| agent.agent)
-                    .unwrap_or(Agent::NativeAgent)
+                    cx.background_spawn(async move { kvp.read_kvp(LAST_USED_EXTERNAL_AGENT_KEY) })
+                        .await
+                        .log_err()
+                        .flatten()
+                        .and_then(|value| {
+                            serde_json::from_str::<LastUsedExternalAgent>(&value).log_err()
+                        })
+                        .map(|agent| agent.agent)
+                        .unwrap_or(Agent::NativeAgent)
                 };
 
                 let server = ext_agent.server(fs, thread_store);
@@ -1460,13 +1467,9 @@ impl AgentPanel {
                     .read(cx)
                     .history()?
                     .clone();
-                if history.read(cx).has_session_list() {
-                    Some(History::AgentThreads {
-                        view: self.create_thread_history_view(agent, history, window, cx),
-                    })
-                } else {
-                    None
-                }
+                Some(History::AgentThreads {
+                    view: self.create_thread_history_view(agent, history, window, cx),
+                })
             }
         }
     }
@@ -1952,6 +1955,21 @@ impl AgentPanel {
     /// Returns the primary thread views for all retained connections: the
     pub fn is_background_thread(&self, session_id: &acp::SessionId) -> bool {
         self.background_threads.contains_key(session_id)
+    }
+
+    pub fn cancel_thread(&self, session_id: &acp::SessionId, cx: &mut Context<Self>) -> bool {
+        let conversation_views = self
+            .active_conversation_view()
+            .into_iter()
+            .chain(self.background_threads.values());
+
+        for conversation_view in conversation_views {
+            if let Some(thread_view) = conversation_view.read(cx).thread_view(session_id) {
+                thread_view.update(cx, |view, cx| view.cancel_generation(cx));
+                return true;
+            }
+        }
+        false
     }
 
     /// active thread plus any background threads that are still running or
@@ -3008,8 +3026,17 @@ impl AgentPanel {
             multi_workspace.activate(new_workspace.clone(), cx);
         })?;
 
-        this.update_in(cx, |this, _window, cx| {
+        this.update_in(cx, |this, window, cx| {
             this.worktree_creation_status = None;
+
+            if let Some(thread_view) = this.active_thread_view(cx) {
+                thread_view.update(cx, |thread_view, cx| {
+                    thread_view
+                        .message_editor
+                        .update(cx, |editor, cx| editor.clear(window, cx));
+                });
+            }
+
             cx.notify();
         })?;
 
@@ -3422,6 +3449,7 @@ impl AgentPanel {
                             .action("Profiles", Box::new(ManageProfiles::default()))
                             .action("Settings", Box::new(OpenSettings))
                             .separator()
+                            .action("Toggle Threads Sidebar", Box::new(ToggleWorkspaceSidebar))
                             .action(full_screen_label, Box::new(ToggleZoom));
 
                         if has_auth_methods {
@@ -3553,7 +3581,7 @@ impl AgentPanel {
 
                     menu.header("Start Thread In…")
                         .item(
-                            ContextMenuEntry::new("Current Project")
+                            ContextMenuEntry::new("Current Worktree")
                                 .toggleable(IconPosition::End, is_local_selected)
                                 .documentation_aside(documentation_side, move |_| {
                                     HoldForDefault::new(is_local_default)
@@ -3581,7 +3609,7 @@ impl AgentPanel {
                                 }),
                         )
                         .item({
-                            let entry = ContextMenuEntry::new("New Worktree")
+                            let entry = ContextMenuEntry::new("New Git Worktree")
                                 .toggleable(IconPosition::End, is_new_worktree_selected)
                                 .disabled(new_worktree_disabled)
                                 .handler({
@@ -4116,7 +4144,7 @@ impl AgentPanel {
     }
 
     fn should_render_trial_end_upsell(&self, cx: &mut Context<Self>) -> bool {
-        if TrialEndUpsell::dismissed() {
+        if TrialEndUpsell::dismissed(cx) {
             return false;
         }
 
@@ -4648,16 +4676,13 @@ impl rules_library::InlineAssistDelegate for PromptLibraryInlineAssist {
             let Some(panel) = workspace.read(cx).panel::<AgentPanel>(cx) else {
                 return;
             };
-            let Some(history) = panel
+            let history = panel
                 .read(cx)
                 .connection_store()
                 .read(cx)
                 .entry(&crate::Agent::NativeAgent)
                 .and_then(|s| s.read(cx).history())
-            else {
-                log::error!("No connection entry found for native agent");
-                return;
-            };
+                .map(|h| h.downgrade());
             let project = workspace.read(cx).project().downgrade();
             let panel = panel.read(cx);
             let thread_store = panel.thread_store().clone();
@@ -4667,7 +4692,7 @@ impl rules_library::InlineAssistDelegate for PromptLibraryInlineAssist {
                 project,
                 thread_store,
                 None,
-                history.downgrade(),
+                history,
                 initial_prompt,
                 window,
                 cx,
@@ -4913,12 +4938,12 @@ mod tests {
     use crate::conversation_view::tests::{StubAgentServer, init_test};
     use crate::test_support::{active_session_id, open_thread_with_connection, send_message};
     use acp_thread::{StubAgentConnection, ThreadStatus};
+    use agent_servers::CODEX_ID;
     use assistant_text_thread::TextThreadStore;
     use feature_flags::FeatureFlagAppExt;
     use fs::FakeFs;
     use gpui::{TestAppContext, VisualTestContext};
     use project::Project;
-    use project::agent_server_store::CODEX_ID;
     use serde_json::json;
     use workspace::MultiWorkspace;
 

@@ -556,7 +556,7 @@ emojis = "0.6.1"
 env_logger = "0.11"
 encoding_rs = "0.8"
 exec = "0.3.1"
-fancy-regex = "0.16.0"
+fancy-regex = "0.17.0"
 fork = "0.4.0"
 futures = "0.3"
 futures-concurrency = "7.7.1"
@@ -636,13 +636,13 @@ parse_int = "0.9"
 pciid-parser = "0.8.0"
 pathdiff = "0.2"
 percent-encoding = "2.3.2"
-pet = { git = "https://github.com/microsoft/python-environment-tools.git", rev = "d5b5bb0c4558a51d8cc76b514bc870fd1c042f16" }
-pet-conda = { git = "https://github.com/microsoft/python-environment-tools.git", rev = "d5b5bb0c4558a51d8cc76b514bc870fd1c042f16" }
-pet-core = { git = "https://github.com/microsoft/python-environment-tools.git", rev = "d5b5bb0c4558a51d8cc76b514bc870fd1c042f16" }
-pet-fs = { git = "https://github.com/microsoft/python-environment-tools.git", rev = "d5b5bb0c4558a51d8cc76b514bc870fd1c042f16" }
-pet-poetry = { git = "https://github.com/microsoft/python-environment-tools.git", rev = "d5b5bb0c4558a51d8cc76b514bc870fd1c042f16" }
-pet-reporter = { git = "https://github.com/microsoft/python-environment-tools.git", rev = "d5b5bb0c4558a51d8cc76b514bc870fd1c042f16" }
-pet-virtualenv = { git = "https://github.com/microsoft/python-environment-tools.git", rev = "d5b5bb0c4558a51d8cc76b514bc870fd1c042f16" }
+pet = { git = "https://github.com/microsoft/python-environment-tools.git", rev = "9e61a22af989fe54937bf07c9f9cff1bc53d9056" }
+pet-conda = { git = "https://github.com/microsoft/python-environment-tools.git", rev = "9e61a22af989fe54937bf07c9f9cff1bc53d9056" }
+pet-core = { git = "https://github.com/microsoft/python-environment-tools.git", rev = "9e61a22af989fe54937bf07c9f9cff1bc53d9056" }
+pet-fs = { git = "https://github.com/microsoft/python-environment-tools.git", rev = "9e61a22af989fe54937bf07c9f9cff1bc53d9056" }
+pet-poetry = { git = "https://github.com/microsoft/python-environment-tools.git", rev = "9e61a22af989fe54937bf07c9f9cff1bc53d9056" }
+pet-reporter = { git = "https://github.com/microsoft/python-environment-tools.git", rev = "9e61a22af989fe54937bf07c9f9cff1bc53d9056" }
+pet-virtualenv = { git = "https://github.com/microsoft/python-environment-tools.git", rev = "9e61a22af989fe54937bf07c9f9cff1bc53d9056" }
 portable-pty = "0.9.0"
 postage = { version = "0.5", features = ["futures-traits"] }
 pretty_assertions = { version = "1.3.0", features = ["unstable"] }
@@ -847,8 +847,8 @@ notify = { git = "https://github.com/zed-industries/notify.git", rev = "ce58c24c
 notify-types = { git = "https://github.com/zed-industries/notify.git", rev = "ce58c24cad542c28e04ced02e20325a4ec28a31d" }
 windows-capture = { git = "https://github.com/zed-industries/windows-capture.git", rev = "f0d6c1b6691db75461b732f6d5ff56eed002eeb9" }
 calloop = { git = "https://github.com/zed-industries/calloop" }
-livekit = { git = "https://github.com/zed-industries/livekit-rust-sdks", rev = "cf4375b244ebb51702968df7fc36e192d0f45ad5" }
-libwebrtc = { git = "https://github.com/zed-industries/livekit-rust-sdks", rev = "cf4375b244ebb51702968df7fc36e192d0f45ad5" }
+livekit = { git = "https://github.com/zed-industries/livekit-rust-sdks", rev = "c1209aa155cbf4543383774f884a46ae7e53ee2e" }
+libwebrtc = { git = "https://github.com/zed-industries/livekit-rust-sdks", rev = "c1209aa155cbf4543383774f884a46ae7e53ee2e" }
 
 [profile.dev]
 split-debuginfo = "unpacked"

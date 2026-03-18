@@ -600,6 +600,7 @@ impl WaylandWindowStatePtr {
                     state.tiling = configure.tiling;
                     // Limit interactive resizes to once per vblank
                     if configure.resizing && state.resize_throttle {
+                        state.surface_state.ack_configure(serial);
                         return;
                     } else if configure.resizing {
                         state.resize_throttle = true;

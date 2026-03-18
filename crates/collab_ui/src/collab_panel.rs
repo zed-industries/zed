@@ -9,7 +9,7 @@ use channel::{Channel, ChannelEvent, ChannelStore};
 use client::{ChannelId, Client, Contact, User, UserStore};
 use collections::{HashMap, HashSet};
 use contact_finder::ContactFinder;
-use db::kvp::KEY_VALUE_STORE;
+use db::kvp::KeyValueStore;
 use editor::{Editor, EditorElement, EditorStyle};
 use fuzzy::{StringMatch, StringMatchCandidate, match_strings};
 use gpui::{
@@ -429,16 +429,17 @@ impl CollabPanel {
             .ok()
             .flatten()
         {
-            Some(serialization_key) => cx
-                .background_spawn(async move { KEY_VALUE_STORE.read_kvp(&serialization_key) })
-                .await
-                .context("reading collaboration panel from key value store")
-                .log_err()
-                .flatten()
-                .map(|panel| serde_json::from_str::<SerializedCollabPanel>(&panel))
-                .transpose()
-                .log_err()
-                .flatten(),
+            Some(serialization_key) => {
+                let kvp = cx.update(|_, cx| KeyValueStore::global(cx))?;
+                kvp.read_kvp(&serialization_key)
+                    .context("reading collaboration panel from key value store")
+                    .log_err()
+                    .flatten()
+                    .map(|panel| serde_json::from_str::<SerializedCollabPanel>(&panel))
+                    .transpose()
+                    .log_err()
+                    .flatten()
+            }
             None => None,
         };
 
@@ -479,19 +480,19 @@ impl CollabPanel {
         };
         let width = self.width;
         let collapsed_channels = self.collapsed_channels.clone();
+        let kvp = KeyValueStore::global(cx);
         self.pending_serialization = cx.background_spawn(
             async move {
-                KEY_VALUE_STORE
-                    .write_kvp(
-                        serialization_key,
-                        serde_json::to_string(&SerializedCollabPanel {
-                            width,
-                            collapsed_channels: Some(
-                                collapsed_channels.iter().map(|cid| cid.0).collect(),
-                            ),
-                        })?,
-                    )
-                    .await?;
+                kvp.write_kvp(
+                    serialization_key,
+                    serde_json::to_string(&SerializedCollabPanel {
+                        width,
+                        collapsed_channels: Some(
+                            collapsed_channels.iter().map(|cid| cid.0).collect(),
+                        ),
+                    })?,
+                )
+                .await?;
                 anyhow::Ok(())
             }
             .log_err(),

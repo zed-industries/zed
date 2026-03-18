@@ -1,6 +1,6 @@
 use anyhow::{Context as _, Result};
 use client::Client;
-use db::kvp::KEY_VALUE_STORE;
+use db::kvp::KeyValueStore;
 use futures_lite::StreamExt;
 use gpui::{
     App, AppContext as _, AsyncApp, BackgroundExecutor, Context, Entity, Global, Task, Window,
@@ -252,7 +252,9 @@ pub fn release_notes_url(cx: &mut App) -> Option<String> {
         ReleaseChannel::Stable | ReleaseChannel::Preview => {
             let auto_updater = AutoUpdater::get(cx)?;
             let auto_updater = auto_updater.read(cx);
-            let current_version = &auto_updater.current_version;
+            let mut current_version = auto_updater.current_version.clone();
+            current_version.pre = semver::Prerelease::EMPTY;
+            current_version.build = semver::BuildMetadata::EMPTY;
             let release_channel = release_channel.dev_name();
             let path = format!("/releases/{release_channel}/{current_version}");
             auto_updater.client.http_client().build_url(&path)
@@ -627,9 +629,13 @@ impl AutoUpdater {
             cx.notify();
         });
 
-        let installer_dir = InstallerDir::new().await?;
+        let installer_dir = InstallerDir::new()
+            .await
+            .context("Failed to create installer dir")?;
         let target_path = Self::target_path(&installer_dir).await?;
-        download_release(&target_path, fetched_release_data, client).await?;
+        download_release(&target_path, fetched_release_data, client)
+            .await
+            .with_context(|| format!("Failed to download update to {}", target_path.display()))?;
 
         this.update(cx, |this, cx| {
             this.status = AutoUpdateStatus::Installing {
@@ -638,7 +644,9 @@ impl AutoUpdater {
             cx.notify();
         });
 
-        let new_binary_path = Self::install_release(installer_dir, target_path, cx).await?;
+        let new_binary_path = Self::install_release(installer_dir, &target_path, cx)
+            .await
+            .with_context(|| format!("Failed to install update at: {}", target_path.display()))?;
         if let Some(new_binary_path) = new_binary_path {
             cx.update(|cx| cx.set_restart_path(new_binary_path));
         }
@@ -728,7 +736,7 @@ impl AutoUpdater {
 
     async fn install_release(
         installer_dir: InstallerDir,
-        target_path: PathBuf,
+        target_path: &Path,
         cx: &AsyncApp,
     ) -> Result<Option<PathBuf>> {
         #[cfg(test)]
@@ -750,8 +758,8 @@ impl AutoUpdater {
         fetched_version: Version,
     ) -> Result<Option<VersionCheckType>> {
         // For non-nightly releases, ignore build and pre-release fields as they're not provided by our endpoints right now.
-        installed_version.build = semver::BuildMetadata::EMPTY;
         installed_version.pre = semver::Prerelease::EMPTY;
+        installed_version.build = semver::BuildMetadata::EMPTY;
         let should_download = fetched_version > installed_version;
         let newer_version = should_download.then(|| VersionCheckType::Semantic(fetched_version));
         Ok(newer_version)
@@ -762,17 +770,16 @@ impl AutoUpdater {
         should_show: bool,
         cx: &App,
     ) -> Task<Result<()>> {
+        let kvp = KeyValueStore::global(cx);
         cx.background_spawn(async move {
             if should_show {
-                KEY_VALUE_STORE
-                    .write_kvp(
-                        SHOULD_SHOW_UPDATE_NOTIFICATION_KEY.to_string(),
-                        "".to_string(),
-                    )
-                    .await?;
+                kvp.write_kvp(
+                    SHOULD_SHOW_UPDATE_NOTIFICATION_KEY.to_string(),
+                    "".to_string(),
+                )
+                .await?;
             } else {
-                KEY_VALUE_STORE
-                    .delete_kvp(SHOULD_SHOW_UPDATE_NOTIFICATION_KEY.to_string())
+                kvp.delete_kvp(SHOULD_SHOW_UPDATE_NOTIFICATION_KEY.to_string())
                     .await?;
             }
             Ok(())
@@ -780,10 +787,9 @@ impl AutoUpdater {
     }
 
     pub fn should_show_update_notification(&self, cx: &App) -> Task<Result<bool>> {
+        let kvp = KeyValueStore::global(cx);
         cx.background_spawn(async move {
-            Ok(KEY_VALUE_STORE
-                .read_kvp(SHOULD_SHOW_UPDATE_NOTIFICATION_KEY)?
-                .is_some())
+            Ok(kvp.read_kvp(SHOULD_SHOW_UPDATE_NOTIFICATION_KEY)?.is_some())
         })
     }
 }
@@ -886,7 +892,7 @@ async fn download_release(
 
 async fn install_release_linux(
     temp_dir: &InstallerDir,
-    downloaded_tar_gz: PathBuf,
+    downloaded_tar_gz: &Path,
     cx: &AsyncApp,
 ) -> Result<Option<PathBuf>> {
     let channel = cx.update(|cx| ReleaseChannel::global(cx).dev_name());
@@ -898,13 +904,15 @@ async fn install_release_linux(
         .await
         .context("failed to create directory into which to extract update")?;
 
-    let output = new_command("tar")
-        .arg("-xzf")
+    let mut cmd = new_command("tar");
+    cmd.arg("-xzf")
         .arg(&downloaded_tar_gz)
         .arg("-C")
-        .arg(&extracted)
+        .arg(&extracted);
+    let output = cmd
         .output()
-        .await?;
+        .await
+        .with_context(|| "failed to extract: {cmd}")?;
 
     anyhow::ensure!(
         output.status.success(),
@@ -933,12 +941,12 @@ async fn install_release_linux(
         to = PathBuf::from(prefix);
     }
 
-    let output = new_command("rsync")
-        .args(["-av", "--delete"])
-        .arg(&from)
-        .arg(&to)
+    let mut cmd = new_command("rsync");
+    cmd.args(["-av", "--delete"]).arg(&from).arg(&to);
+    let output = cmd
         .output()
-        .await?;
+        .await
+        .with_context(|| "failed to rsync: {cmd}")?;
 
     anyhow::ensure!(
         output.status.success(),
@@ -953,7 +961,7 @@ async fn install_release_linux(
 
 async fn install_release_macos(
     temp_dir: &InstallerDir,
-    downloaded_dmg: PathBuf,
+    downloaded_dmg: &Path,
     cx: &AsyncApp,
 ) -> Result<Option<PathBuf>> {
     let running_app_path = cx.update(|cx| cx.app_path())?;
@@ -965,13 +973,15 @@ async fn install_release_macos(
     let mut mounted_app_path: OsString = mount_path.join(running_app_filename).into();
 
     mounted_app_path.push("/");
-    let output = new_command("hdiutil")
-        .args(["attach", "-nobrowse"])
+    let mut cmd = new_command("hdiutil");
+    cmd.args(["attach", "-nobrowse"])
         .arg(&downloaded_dmg)
         .arg("-mountroot")
-        .arg(temp_dir.path())
+        .arg(temp_dir.path());
+    let output = cmd
         .output()
-        .await?;
+        .await
+        .with_context(|| "failed to mount: {cmd}")?;
 
     anyhow::ensure!(
         output.status.success(),
@@ -985,12 +995,14 @@ async fn install_release_macos(
         background_executor: cx.background_executor(),
     };
 
-    let output = new_command("rsync")
-        .args(["-av", "--delete", "--exclude", "Icon?"])
+    let mut cmd = new_command("rsync");
+    cmd.args(["-av", "--delete", "--exclude", "Icon?"])
         .arg(&mounted_app_path)
-        .arg(&running_app_path)
+        .arg(&running_app_path);
+    let output = cmd
         .output()
-        .await?;
+        .await
+        .with_context(|| "failed to rsync: {cmd}")?;
 
     anyhow::ensure!(
         output.status.success(),
@@ -1015,14 +1027,13 @@ async fn cleanup_windows() -> Result<()> {
     Ok(())
 }
 
-async fn install_release_windows(downloaded_installer: PathBuf) -> Result<Option<PathBuf>> {
-    let output = new_command(downloaded_installer)
-        .arg("/verysilent")
+async fn install_release_windows(downloaded_installer: &Path) -> Result<Option<PathBuf>> {
+    let mut cmd = new_command(downloaded_installer);
+    cmd.arg("/verysilent")
         .arg("/update=true")
         .arg("!desktopicon")
-        .arg("!quicklaunchicon")
-        .output()
-        .await?;
+        .arg("!quicklaunchicon");
+    let output = cmd.output().await?;
     anyhow::ensure!(
         output.status.success(),
         "failed to start installer: {:?}",
@@ -1087,9 +1098,7 @@ mod tests {
 
     use super::*;
 
-    pub(super) struct InstallOverride(
-        pub Rc<dyn Fn(PathBuf, &AsyncApp) -> Result<Option<PathBuf>>>,
-    );
+    pub(super) struct InstallOverride(pub Rc<dyn Fn(&Path, &AsyncApp) -> Result<Option<PathBuf>>>);
     impl Global for InstallOverride {}
 
     #[gpui::test]

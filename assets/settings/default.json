@@ -922,6 +922,10 @@
     ///
     /// Default: false
     "tree_view": false,
+    // Whether the git panel should open on startup.
+    //
+    // Default: false
+    "starts_open": false,
     // Whether to show a badge on the git panel icon with the count of uncommitted changes.
     //
     // Default: false

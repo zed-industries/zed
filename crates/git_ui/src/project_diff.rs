@@ -1219,8 +1219,9 @@ impl SerializableItem for ProjectDiff {
         window: &mut Window,
         cx: &mut App,
     ) -> Task<Result<Entity<Self>>> {
+        let db = persistence::ProjectDiffDb::global(cx);
         window.spawn(cx, async move |cx| {
-            let diff_base = persistence::PROJECT_DIFF_DB.get_diff_base(item_id, workspace_id)?;
+            let diff_base = db.get_diff_base(item_id, workspace_id)?;
 
             let diff = cx.update(|window, cx| {
                 let branch_diff = cx
@@ -1246,10 +1247,10 @@ impl SerializableItem for ProjectDiff {
         let workspace_id = workspace.database_id()?;
         let diff_base = self.diff_base(cx).clone();
 
+        let db = persistence::ProjectDiffDb::global(cx);
         Some(cx.background_spawn({
             async move {
-                persistence::PROJECT_DIFF_DB
-                    .save_diff_base(item_id, workspace_id, diff_base.clone())
+                db.save_diff_base(item_id, workspace_id, diff_base.clone())
                     .await
             }
         }))
@@ -1289,7 +1290,7 @@ mod persistence {
         )];
     }
 
-    db::static_connection!(PROJECT_DIFF_DB, ProjectDiffDb, [WorkspaceDb]);
+    db::static_connection!(ProjectDiffDb, [WorkspaceDb]);
 
     impl ProjectDiffDb {
         pub async fn save_diff_base(

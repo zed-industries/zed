@@ -421,7 +421,7 @@ pub struct ConnectedServerState {
     active_id: Option<acp::SessionId>,
     threads: HashMap<acp::SessionId, Entity<ThreadView>>,
     connection: Rc<dyn AgentConnection>,
-    history: Entity<ThreadHistory>,
+    history: Option<Entity<ThreadHistory>>,
     conversation: Entity<Conversation>,
     _connection_entry_subscription: Subscription,
 }
@@ -816,7 +816,7 @@ impl ConversationView {
         conversation: Entity<Conversation>,
         resumed_without_history: bool,
         initial_content: Option<AgentInitialContent>,
-        history: Entity<ThreadHistory>,
+        history: Option<Entity<ThreadHistory>>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Entity<ThreadView> {
@@ -833,7 +833,7 @@ impl ConversationView {
                 self.workspace.clone(),
                 self.project.downgrade(),
                 self.thread_store.clone(),
-                history.downgrade(),
+                history.as_ref().map(|h| h.downgrade()),
                 self.prompt_store.clone(),
                 prompt_capabilities.clone(),
                 available_commands.clone(),
@@ -1082,7 +1082,7 @@ impl ConversationView {
                         threads: HashMap::default(),
                         connection,
                         conversation: cx.new(|_cx| Conversation::default()),
-                        history: cx.new(|cx| ThreadHistory::new(None, cx)),
+                        history: None,
                         _connection_entry_subscription: Subscription::new(|| {}),
                     }),
                     cx,
@@ -2213,7 +2213,7 @@ impl ConversationView {
         let Some(connected) = self.as_connected() else {
             return;
         };
-        let history = connected.history.downgrade();
+        let history = connected.history.as_ref().map(|h| h.downgrade());
         let Some(thread) = connected.active_view() else {
             return;
         };
@@ -2601,7 +2601,7 @@ impl ConversationView {
     }
 
     pub fn history(&self) -> Option<&Entity<ThreadHistory>> {
-        self.as_connected().map(|c| &c.history)
+        self.as_connected().and_then(|c| c.history.as_ref())
     }
 
     pub fn delete_history_entry(&mut self, session_id: &acp::SessionId, cx: &mut Context<Self>) {
@@ -2609,9 +2609,10 @@ impl ConversationView {
             return;
         };
 
-        let task = connected
-            .history
-            .update(cx, |history, cx| history.delete_session(&session_id, cx));
+        let Some(history) = &connected.history else {
+            return;
+        };
+        let task = history.update(cx, |history, cx| history.delete_session(&session_id, cx));
         task.detach_and_log_err(cx);
 
         if let Some(store) = ThreadMetadataStore::try_global(cx) {
@@ -2902,60 +2903,14 @@ pub(crate) mod tests {
         let session_a = AgentSessionInfo::new(SessionId::new("session-a"));
         let session_b = AgentSessionInfo::new(SessionId::new("session-b"));
 
-        let fs = FakeFs::new(cx.executor());
-        let project = Project::test(fs, [], cx).await;
-        let (multi_workspace, cx) =
-            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
-        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
+        // Use a connection that provides a session list so ThreadHistory is created
+        let (conversation_view, history, cx) = setup_thread_view_with_history(
+            StubAgentServer::new(SessionHistoryConnection::new(vec![session_a.clone()])),
+            cx,
+        )
+        .await;
 
-        let thread_store = cx.update(|_window, cx| cx.new(|cx| ThreadStore::new(cx)));
-        let connection_store =
-            cx.update(|_window, cx| cx.new(|cx| AgentConnectionStore::new(project.clone(), cx)));
-
-        let conversation_view = cx.update(|window, cx| {
-            cx.new(|cx| {
-                ConversationView::new(
-                    Rc::new(StubAgentServer::default_response()),
-                    connection_store,
-                    Agent::Custom { id: "Test".into() },
-                    None,
-                    None,
-                    None,
-                    None,
-                    workspace.downgrade(),
-                    project,
-                    Some(thread_store),
-                    None,
-                    window,
-                    cx,
-                )
-            })
-        });
-
-        // Wait for connection to establish
-        cx.run_until_parked();
-
-        let history = cx.update(|_window, cx| {
-            conversation_view
-                .read(cx)
-                .history()
-                .expect("Missing history")
-                .clone()
-        });
-
-        // Initially empty because StubAgentConnection.session_list() returns None
-        active_thread(&conversation_view, cx).read_with(cx, |view, _cx| {
-            assert_eq!(view.recent_history_entries.len(), 0);
-        });
-
-        // Now set the session list - this simulates external agents providing their history
-        let list_a: Rc<dyn AgentSessionList> =
-            Rc::new(StubSessionList::new(vec![session_a.clone()]));
-        history.update(cx, |history, cx| {
-            history.set_session_list(Some(list_a), cx);
-        });
-        cx.run_until_parked();
-
+        // Initially has session_a from the connection's session list
         active_thread(&conversation_view, cx).read_with(cx, |view, _cx| {
             assert_eq!(view.recent_history_entries.len(), 1);
             assert_eq!(
@@ -2964,11 +2919,11 @@ pub(crate) mod tests {
             );
         });
 
-        // Update to a different session list
+        // Swap to a different session list
         let list_b: Rc<dyn AgentSessionList> =
             Rc::new(StubSessionList::new(vec![session_b.clone()]));
         history.update(cx, |history, cx| {
-            history.set_session_list(Some(list_b), cx);
+            history.set_session_list(list_b, cx);
         });
         cx.run_until_parked();
 
@@ -2986,18 +2941,11 @@ pub(crate) mod tests {
         init_test(cx);
 
         let session = AgentSessionInfo::new(SessionId::new("history-session"));
-        let (conversation_view, history, cx) = setup_thread_view_with_history(
+        let (conversation_view, _history, cx) = setup_thread_view_with_history(
             StubAgentServer::new(SessionHistoryConnection::new(vec![session.clone()])),
             cx,
         )
         .await;
-
-        history.read_with(cx, |history, _cx| {
-            assert!(
-                history.has_session_list(),
-                "session list should be attached after thread creation"
-            );
-        });
 
         active_thread(&conversation_view, cx).read_with(cx, |view, _cx| {
             assert_eq!(view.recent_history_entries.len(), 1);

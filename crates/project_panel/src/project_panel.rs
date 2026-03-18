@@ -5,7 +5,7 @@ use anyhow::{Context as _, Result};
 use client::{ErrorCode, ErrorExt};
 use collections::{BTreeSet, HashMap, hash_map};
 use command_palette_hooks::CommandPaletteFilter;
-use db::kvp::KEY_VALUE_STORE;
+use db::kvp::KeyValueStore;
 use editor::{
     Editor, EditorEvent, MultiBufferOffset,
     items::{
@@ -19,14 +19,14 @@ use git::status::GitSummary;
 use git_ui;
 use git_ui::file_diff_view::FileDiffView;
 use gpui::{
-    Action, AnyElement, App, AsyncWindowContext, Bounds, ClipboardItem, Context, CursorStyle,
-    DismissEvent, Div, DragMoveEvent, Entity, EventEmitter, ExternalPaths, FocusHandle, Focusable,
-    FontWeight, Hsla, InteractiveElement, KeyContext, ListHorizontalSizingBehavior,
-    ListSizingBehavior, Modifiers, ModifiersChangedEvent, MouseButton, MouseDownEvent,
-    ParentElement, PathPromptOptions, Pixels, Point, PromptLevel, Render, ScrollStrategy, Stateful,
-    Styled, Subscription, Task, UniformListScrollHandle, WeakEntity, Window, actions, anchored,
-    deferred, div, hsla, linear_color_stop, linear_gradient, point, px, size, transparent_white,
-    uniform_list,
+    Action, AnyElement, App, AsyncWindowContext, Bounds, ClipboardEntry as GpuiClipboardEntry,
+    ClipboardItem, Context, CursorStyle, DismissEvent, Div, DragMoveEvent, Entity, EventEmitter,
+    ExternalPaths, FocusHandle, Focusable, FontWeight, Hsla, InteractiveElement, KeyContext,
+    ListHorizontalSizingBehavior, ListSizingBehavior, Modifiers, ModifiersChangedEvent,
+    MouseButton, MouseDownEvent, ParentElement, PathPromptOptions, Pixels, Point, PromptLevel,
+    Render, ScrollStrategy, Stateful, Styled, Subscription, Task, UniformListScrollHandle,
+    WeakEntity, Window, actions, anchored, deferred, div, hsla, linear_color_stop, linear_gradient,
+    point, px, size, transparent_white, uniform_list,
 };
 use language::DiagnosticSeverity;
 use menu::{Confirm, SelectFirst, SelectLast, SelectNext, SelectPrevious};
@@ -999,16 +999,18 @@ impl ProjectPanel {
             .ok()
             .flatten()
         {
-            Some(serialization_key) => cx
-                .background_spawn(async move { KEY_VALUE_STORE.read_kvp(&serialization_key) })
-                .await
-                .context("loading project panel")
-                .log_err()
-                .flatten()
-                .map(|panel| serde_json::from_str::<SerializedProjectPanel>(&panel))
-                .transpose()
-                .log_err()
-                .flatten(),
+            Some(serialization_key) => {
+                let kvp = cx.update(|_, cx| KeyValueStore::global(cx))?;
+                cx.background_spawn(async move { kvp.read_kvp(&serialization_key) })
+                    .await
+                    .context("loading project panel")
+                    .log_err()
+                    .flatten()
+                    .map(|panel| serde_json::from_str::<SerializedProjectPanel>(&panel))
+                    .transpose()
+                    .log_err()
+                    .flatten()
+            }
             None => None,
         };
 
@@ -1114,14 +1116,14 @@ impl ProjectPanel {
             return;
         };
         let width = self.width;
+        let kvp = KeyValueStore::global(cx);
         self.pending_serialization = cx.background_spawn(
             async move {
-                KEY_VALUE_STORE
-                    .write_kvp(
-                        serialization_key,
-                        serde_json::to_string(&SerializedProjectPanel { width })?,
-                    )
-                    .await?;
+                kvp.write_kvp(
+                    serialization_key,
+                    serde_json::to_string(&SerializedProjectPanel { width })?,
+                )
+                .await?;
                 anyhow::Ok(())
             }
             .log_err(),
@@ -1185,6 +1187,7 @@ impl ProjectPanel {
                     .is_some()
             };
 
+            let has_pasteable_content = self.has_pasteable_content(cx);
             let entity = cx.entity();
             let context_menu = ContextMenu::build(window, cx, |menu, _, _| {
                 menu.context(self.focus_handle.clone()).map(|menu| {
@@ -1198,13 +1201,7 @@ impl ProjectPanel {
                             .separator()
                             .when(is_local, |menu| {
                                 menu.action(
-                                    if cfg!(target_os = "macos") && !is_remote {
-                                        "Reveal in Finder"
-                                    } else if cfg!(target_os = "windows") && !is_remote {
-                                        "Reveal in File Explorer"
-                                    } else {
-                                        "Reveal in File Manager"
-                                    },
+                                    ui::utils::reveal_in_file_manager_label(is_remote),
                                     Box::new(RevealInFileManager),
                                 )
                             })
@@ -1231,11 +1228,7 @@ impl ProjectPanel {
                             .action("Copy", Box::new(Copy))
                             .action("Duplicate", Box::new(Duplicate))
                             // TODO: Paste should always be visible, cbut disabled when clipboard is empty
-                            .action_disabled_when(
-                                self.clipboard.as_ref().is_none(),
-                                "Paste",
-                                Box::new(Paste),
-                            )
+                            .action_disabled_when(!has_pasteable_content, "Paste", Box::new(Paste))
                             .when(is_remote, |menu| {
                                 menu.separator()
                                     .action("Download...", Box::new(DownloadFromRemote))
@@ -2998,6 +2991,7 @@ impl ProjectPanel {
     fn cut(&mut self, _: &Cut, _: &mut Window, cx: &mut Context<Self>) {
         let entries = self.disjoint_effective_entries(cx);
         if !entries.is_empty() {
+            self.write_entries_to_system_clipboard(&entries, cx);
             self.clipboard = Some(ClipboardEntry::Cut(entries));
             cx.notify();
         }
@@ -3006,6 +3000,7 @@ impl ProjectPanel {
     fn copy(&mut self, _: &Copy, _: &mut Window, cx: &mut Context<Self>) {
         let entries = self.disjoint_effective_entries(cx);
         if !entries.is_empty() {
+            self.write_entries_to_system_clipboard(&entries, cx);
             self.clipboard = Some(ClipboardEntry::Copied(entries));
             cx.notify();
         }
@@ -3067,6 +3062,17 @@ impl ProjectPanel {
     }
 
     fn paste(&mut self, _: &Paste, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(external_paths) = self.external_paths_from_system_clipboard(cx) {
+            let target_entry_id = self
+                .selection
+                .map(|s| s.entry_id)
+                .or(self.state.last_worktree_root_id);
+            if let Some(entry_id) = target_entry_id {
+                self.drop_external_files(external_paths.paths(), entry_id, window, cx);
+            }
+            return;
+        }
+
         maybe!({
             let (worktree, entry) = self.selected_entry_handle(cx)?;
             let entry = entry.clone();
@@ -3785,6 +3791,51 @@ impl ProjectPanel {
         Some(worktree.absolutize(&root_entry.path))
     }
 
+    fn write_entries_to_system_clipboard(&self, entries: &BTreeSet<SelectedEntry>, cx: &mut App) {
+        let project = self.project.read(cx);
+        let paths: Vec<String> = entries
+            .iter()
+            .filter_map(|entry| {
+                let worktree = project.worktree_for_id(entry.worktree_id, cx)?;
+                let worktree = worktree.read(cx);
+                let worktree_entry = worktree.entry_for_id(entry.entry_id)?;
+                Some(
+                    worktree
+                        .abs_path()
+                        .join(worktree_entry.path.as_std_path())
+                        .to_string_lossy()
+                        .to_string(),
+                )
+            })
+            .collect();
+        if !paths.is_empty() {
+            cx.write_to_clipboard(ClipboardItem::new_string(paths.join("\n")));
+        }
+    }
+
+    fn external_paths_from_system_clipboard(&self, cx: &App) -> Option<ExternalPaths> {
+        let clipboard_item = cx.read_from_clipboard()?;
+        for entry in clipboard_item.entries() {
+            if let GpuiClipboardEntry::ExternalPaths(paths) = entry {
+                if !paths.paths().is_empty() {
+                    return Some(paths.clone());
+                }
+            }
+        }
+        None
+    }
+
+    fn has_pasteable_content(&self, cx: &App) -> bool {
+        if self
+            .clipboard
+            .as_ref()
+            .is_some_and(|c| !c.items().is_empty())
+        {
+            return true;
+        }
+        self.external_paths_from_system_clipboard(cx).is_some()
+    }
+
     fn selected_entry_handle<'a>(
         &self,
         cx: &'a App,
@@ -4271,19 +4322,35 @@ impl ProjectPanel {
                     return Ok(());
                 }
 
-                let task = worktree.update(cx, |worktree, cx| {
-                    worktree.copy_external_entries(target_directory, paths, fs, cx)
+                let (worktree_id, task) = worktree.update(cx, |worktree, cx| {
+                    (
+                        worktree.id(),
+                        worktree.copy_external_entries(target_directory, paths, fs, cx),
+                    )
                 });
 
                 let opened_entries: Vec<_> = task
                     .await
                     .with_context(|| "failed to copy external paths")?;
-                this.update(cx, |this, cx| {
+                this.update_in(cx, |this, window, cx| {
+                    let mut did_open = false;
                     if open_file_after_drop && !opened_entries.is_empty() {
                         let settings = ProjectPanelSettings::get_global(cx);
                         if settings.auto_open.should_open_on_drop() {
                             this.open_entry(opened_entries[0], true, false, cx);
+                            did_open = true;
                         }
+                    }
+
+                    if !did_open {
+                        let new_selection = opened_entries
+                            .last()
+                            .map(|&entry_id| (worktree_id, entry_id));
+                        for &entry_id in &opened_entries {
+                            this.expand_entry(worktree_id, entry_id, cx);
+                        }
+                        this.marked_entries.clear();
+                        this.update_visible_entries(new_selection, false, false, window, cx);
                     }
                 })
             }

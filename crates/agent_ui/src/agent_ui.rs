@@ -228,6 +228,13 @@ pub enum Agent {
 }
 
 impl Agent {
+    pub fn id(&self) -> AgentId {
+        match self {
+            Self::NativeAgent => agent::ZED_AGENT_ID.clone(),
+            Self::Custom { id } => id.clone(),
+        }
+    }
+
     pub fn server(
         &self,
         fs: Arc<dyn fs::Fs>,

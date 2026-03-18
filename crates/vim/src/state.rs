@@ -322,10 +322,11 @@ impl MarksState {
             let Some(workspace_id) = this.update(cx, |this, cx| this.workspace_id(cx)).ok()? else {
                 return None;
             };
+            let db = cx.update(|cx| VimDb::global(cx));
             let (marks, paths) = cx
                 .background_spawn(async move {
-                    let marks = DB.get_marks(workspace_id)?;
-                    let paths = DB.get_global_marks_paths(workspace_id)?;
+                    let marks = db.get_marks(workspace_id)?;
+                    let paths = db.get_global_marks_paths(workspace_id)?;
                     anyhow::Ok((marks, paths))
                 })
                 .await
@@ -444,8 +445,9 @@ impl MarksState {
                 if let Some(workspace_id) = self.workspace_id(cx) {
                     let path = path.clone();
                     let key = key.clone();
+                    let db = VimDb::global(cx);
                     cx.background_spawn(async move {
-                        DB.set_global_mark_path(workspace_id, key, path).await
+                        db.set_global_mark_path(workspace_id, key, path).await
                     })
                     .detach_and_log_err(cx);
                 }
@@ -461,8 +463,9 @@ impl MarksState {
         self.serialized_marks.insert(path.clone(), new_points);
 
         if let Some(workspace_id) = self.workspace_id(cx) {
+            let db = VimDb::global(cx);
             cx.background_spawn(async move {
-                DB.set_marks(workspace_id, path.clone(), to_write).await?;
+                db.set_marks(workspace_id, path.clone(), to_write).await?;
                 anyhow::Ok(())
             })
             .detach_and_log_err(cx);
@@ -655,8 +658,9 @@ impl MarksState {
         let path = if let Some(target) = self.global_marks.get(&mark_name.clone()) {
             let name = mark_name.clone();
             if let Some(workspace_id) = self.workspace_id(cx) {
+                let db = VimDb::global(cx);
                 cx.background_spawn(async move {
-                    DB.delete_global_marks_path(workspace_id, name).await
+                    db.delete_global_marks_path(workspace_id, name).await
                 })
                 .detach_and_log_err(cx);
             }
@@ -696,7 +700,8 @@ impl MarksState {
             .get_mut(&path)
             .map(|m| m.remove(&mark_name.clone()));
         if let Some(workspace_id) = self.workspace_id(cx) {
-            cx.background_spawn(async move { DB.delete_mark(workspace_id, path, mark_name).await })
+            let db = VimDb::global(cx);
+            cx.background_spawn(async move { db.delete_mark(workspace_id, path, mark_name).await })
                 .detach_and_log_err(cx);
         }
     }
@@ -1764,7 +1769,7 @@ impl Domain for VimDb {
     ];
 }
 
-db::static_connection!(DB, VimDb, [WorkspaceDb]);
+db::static_connection!(VimDb, [WorkspaceDb]);
 
 struct SerializedMark {
     path: Arc<Path>,

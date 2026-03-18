@@ -27,10 +27,15 @@ use serde::{Deserialize, Serialize};
 use settings::Settings;
 use std::cell::RefCell;
 use std::sync::Weak;
-use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
-use std::time::Duration;
+use std::sync::atomic::{AtomicBool, AtomicI32, AtomicU64, Ordering};
+use std::time::{Duration, Instant};
 use std::{borrow::Cow, collections::VecDeque, sync::Arc};
 use util::{ResultExt as _, maybe};
+
+struct TimestampedFrame {
+    frame: AudioFrame<'static>,
+    captured_at: Instant,
+}
 
 mod source;
 
@@ -162,7 +167,7 @@ impl AudioStack {
         user_name: String,
         is_staff: bool,
         cx: &AsyncApp,
-    ) -> Result<(crate::LocalAudioTrack, AudioStream)> {
+    ) -> Result<(crate::LocalAudioTrack, AudioStream, Arc<AtomicU64>)> {
         let legacy_audio_compatible =
             AudioSettings::try_read_global(cx, |setting| setting.legacy_audio_compatible)
                 .unwrap_or(true);
@@ -202,11 +207,15 @@ impl AudioStack {
 
         let apm = self.apm.clone();
 
-        let (frame_tx, mut frame_rx) = futures::channel::mpsc::channel(1);
+        let input_lag_us = Arc::new(AtomicU64::new(0));
+        let (frame_tx, mut frame_rx) = futures::channel::mpsc::channel::<TimestampedFrame>(1);
         let transmit_task = self.executor.spawn_with_priority(Priority::RealtimeAudio, {
+            let input_lag_us = input_lag_us.clone();
             async move {
-                while let Some(frame) = frame_rx.next().await {
-                    source.capture_frame(&frame).await.log_err();
+                while let Some(timestamped) = frame_rx.next().await {
+                    let lag = timestamped.captured_at.elapsed();
+                    input_lag_us.store(lag.as_micros() as u64, Ordering::Relaxed);
+                    source.capture_frame(&timestamped.frame).await.log_err();
                 }
             }
         });
@@ -251,6 +260,7 @@ impl AudioStack {
             AudioStream::Output {
                 _drop: Box::new(on_drop),
             },
+            input_lag_us,
         ))
     }
 
@@ -345,7 +355,7 @@ impl AudioStack {
     async fn capture_input(
         executor: BackgroundExecutor,
         apm: Arc<Mutex<apm::AudioProcessingModule>>,
-        frame_tx: Sender<AudioFrame<'static>>,
+        frame_tx: Sender<TimestampedFrame>,
         sample_rate: u32,
         num_channels: u32,
         input_audio_device: Option<DeviceId>,
@@ -376,6 +386,7 @@ impl AudioStack {
                                 &config.config(),
                                 config.sample_format(),
                                 move |data, _: &_| {
+                                    let captured_at = Instant::now();
                                     let data = crate::get_sample_data(config.sample_format(), data)
                                         .log_err();
                                     let Some(data) = data else {
@@ -409,11 +420,14 @@ impl AudioStack {
                                                 .log_err();
                                             buf.clear();
                                             frame_tx
-                                                .try_send(AudioFrame {
-                                                    data: Cow::Owned(sampled),
-                                                    sample_rate,
-                                                    num_channels,
-                                                    samples_per_channel: sample_rate / 100,
+                                                .try_send(TimestampedFrame {
+                                                    frame: AudioFrame {
+                                                        data: Cow::Owned(sampled),
+                                                        sample_rate,
+                                                        num_channels,
+                                                        samples_per_channel: sample_rate / 100,
+                                                    },
+                                                    captured_at,
                                                 })
                                                 .ok();
                                         }
@@ -446,7 +460,7 @@ pub struct Speaker {
     pub sends_legacy_audio: bool,
 }
 
-fn send_to_livekit(mut frame_tx: Sender<AudioFrame<'static>>, mut microphone: impl Source) {
+fn send_to_livekit(mut frame_tx: Sender<TimestampedFrame>, mut microphone: impl Source) {
     use cpal::Sample;
     let sample_rate = microphone.sample_rate().get();
     let num_channels = microphone.channels().get() as u32;
@@ -459,11 +473,14 @@ fn send_to_livekit(mut frame_tx: Sender<AudioFrame<'static>>, mut microphone: im
             .map(|s| s.to_sample())
             .collect();
 
-        match frame_tx.try_send(AudioFrame {
-            sample_rate,
-            num_channels,
-            samples_per_channel: sampled.len() as u32 / num_channels,
-            data: Cow::Owned(sampled),
+        match frame_tx.try_send(TimestampedFrame {
+            frame: AudioFrame {
+                sample_rate,
+                num_channels,
+                samples_per_channel: sampled.len() as u32 / num_channels,
+                data: Cow::Owned(sampled),
+            },
+            captured_at: Instant::now(),
         }) {
             Ok(_) => {}
             Err(err) => {
