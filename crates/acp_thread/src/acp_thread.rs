@@ -19,6 +19,7 @@ use project::lsp_store::{FormatTrigger, LspFormatTarget};
 use project::{AgentLocation, Project, git_store::GitStoreCheckpoint};
 use serde::{Deserialize, Serialize};
 use serde_json::to_string_pretty;
+use std::cell::RefCell;
 use std::collections::HashMap;
 use std::error::Error;
 use std::fmt::{Formatter, Write};
@@ -950,6 +951,93 @@ pub struct RetryStatus {
 struct RunningTurn {
     id: u32,
     send_task: Task<()>,
+}
+
+/// Represents a file write that has been applied to a buffer but not yet saved
+/// to disk. The write is waiting for the user to accept or reject the diff
+/// before the response is sent back to the ACP agent.
+pub struct PendingFileWrite {
+    buffer: Entity<Buffer>,
+    project: Entity<Project>,
+    action_log: Entity<ActionLog>,
+}
+
+impl PendingFileWrite {
+    /// Waits for the user to review the edits in this buffer. Once the buffer
+    /// is no longer in the action log's changed buffers (meaning the user has
+    /// either accepted or rejected the edits), saves the buffer and returns.
+    ///
+    /// If the buffer's edits were rejected (reverted by the action log), an
+    /// error is returned so the agent knows the write was rejected.
+    pub fn wait_for_review(self, cx: &mut AsyncApp) -> Task<Result<()>> {
+        let buffer = self.buffer;
+        let project = self.project;
+        let action_log = self.action_log;
+
+        // Check immediately in case the buffer already has no unreviewed
+        // edits (e.g. a no-op write or content that matches what's already there).
+        let already_reviewed = cx.update(|cx| {
+            let changed = action_log.read(cx).changed_buffers(cx);
+            !changed.contains_key(&buffer)
+        });
+
+        if already_reviewed {
+            let save = project.update(cx, |project, cx| project.save_buffer(buffer, cx));
+            return cx.foreground_executor().spawn(async move {
+                save.await?;
+                Ok(())
+            });
+        }
+
+        let (tx, rx) = oneshot::channel::<bool>();
+        let tx = Rc::new(RefCell::new(Some(tx)));
+
+        // Observe the action log. Each time it changes, check whether the
+        // buffer still has unreviewed edits. When it no longer does, the user
+        // has either accepted or rejected.
+        //
+        // To determine which: after acceptance (keep_edits_in_range) the
+        // buffer retains the edits and is NOT saved by the action log, so it
+        // will have unsaved edits. After rejection (reject_edits_in_ranges)
+        // the buffer is reverted AND saved by the action log, so it will have
+        // no unsaved edits.
+        let subscription = cx.update(|cx| {
+            let buffer_clone = buffer.clone();
+            let tx = tx.clone();
+            cx.observe(&action_log, move |action_log, cx| {
+                let changed = action_log.read(cx).changed_buffers(cx);
+                if !changed.contains_key(&buffer_clone) {
+                    if let Some(tx) = tx.borrow_mut().take() {
+                        let accepted = buffer_clone.read(cx).has_unsaved_edits();
+                        tx.send(accepted).ok();
+                    }
+                }
+            })
+        });
+
+        let executor = cx.foreground_executor().clone();
+        let mut cx = cx.clone();
+        executor.spawn(async move {
+            // Keep the subscription alive for the duration of this task so the
+            // observer continues to fire while we wait.
+            let _subscription = subscription;
+
+            // Wait for the user to review.
+            let accepted = rx.await.unwrap_or(false);
+
+            if accepted {
+                // The user accepted the edits. Save the buffer to disk.
+                project
+                    .update(&mut cx, |project, cx| project.save_buffer(buffer, cx))
+                    .await?;
+                Ok(())
+            } else {
+                // The user rejected the edits. The action log already reverted
+                // and saved the buffer.
+                Err(anyhow::anyhow!("file write was rejected by the user"))
+            }
+        })
+    }
 }
 
 pub struct AcpThread {
@@ -2412,6 +2500,18 @@ impl AcpThread {
 
             let buffer = load.await?;
 
+            // If the buffer has no unsaved user edits, reload it from disk to
+            // ensure we return fresh content. This avoids returning stale data
+            // when an ACP agent modifies files via terminal before reading them
+            // back, as the file watcher may not have picked up the change yet.
+            let needs_reload = buffer.update(cx, |buffer, _| {
+                !buffer.has_unsaved_edits() && buffer.file().is_some()
+            });
+            if needs_reload {
+                let reload_rx = buffer.update(cx, |buffer, cx| buffer.reload(cx));
+                reload_rx.await.ok();
+            }
+
             let snapshot = if reuse_shared_snapshot {
                 this.read_with(cx, |this, _| {
                     this.shared_buffers.get(&buffer.clone()).cloned()
@@ -2471,7 +2571,7 @@ impl AcpThread {
         path: PathBuf,
         content: String,
         cx: &mut Context<Self>,
-    ) -> Task<Result<()>> {
+    ) -> Task<Result<PendingFileWrite>> {
         let project = self.project.clone();
         let action_log = self.action_log.clone();
         let should_update_agent_location = self.parent_session_id.is_none();
@@ -2556,9 +2656,11 @@ impl AcpThread {
                 });
             }
 
-            project
-                .update(cx, |project, cx| project.save_buffer(buffer, cx))
-                .await
+            Ok(PendingFileWrite {
+                buffer,
+                project,
+                action_log,
+            })
         })
     }
 
@@ -3368,9 +3470,11 @@ mod tests {
             buffer.read_with(cx, |buffer, _| buffer.text()),
             "zero\none\ntwo\nthree\nfour\nfive\n"
         );
+        // The file on disk should NOT be saved yet because write_text_file
+        // now defers saving until the user reviews the diff.
         assert_eq!(
             String::from_utf8(fs.read_file_sync(path!("/tmp/foo")).unwrap()).unwrap(),
-            "zero\none\ntwo\nthree\nfour\nfive\n"
+            "one\ntwo\nthree\n"
         );
         request.await.unwrap();
     }

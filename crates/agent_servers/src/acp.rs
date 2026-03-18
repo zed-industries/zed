@@ -1247,7 +1247,8 @@ impl acp::Client for ClientDelegate {
                 thread.write_text_file(arguments.path, arguments.content, cx)
             })?;
 
-        task.await?;
+        let pending_write = task.await?;
+        pending_write.wait_for_review(cx).await?;
 
         Ok(Default::default())
     }
