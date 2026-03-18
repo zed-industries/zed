@@ -2402,6 +2402,14 @@ mod tests {
     use serde_json::json;
     use std::{thread, time::Duration};
 
+    /// Creates a unique directory in a FakeFs, returning the path.
+    /// Uses a UUID suffix to avoid collisions with other tests sharing the global DB.
+    async fn unique_test_dir(fs: &fs::FakeFs, prefix: &str) -> PathBuf {
+        let dir = PathBuf::from(format!("/test-dirs/{}-{}", prefix, uuid::Uuid::new_v4()));
+        fs.insert_tree(&dir, json!({})).await;
+        dir
+    }
+
     #[gpui::test]
     async fn test_multi_workspace_serializes_on_add_and_remove(cx: &mut gpui::TestAppContext) {
         use crate::multi_workspace::MultiWorkspace;
@@ -4007,9 +4015,7 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_create_workspace_serializes_active_workspace_id_after_db_id_assigned(
-        cx: &mut gpui::TestAppContext,
-    ) {
+    async fn test_create_workspace_serialization(cx: &mut gpui::TestAppContext) {
         use crate::multi_workspace::MultiWorkspace;
         use crate::persistence::read_multi_workspace_state;
         use feature_flags::FeatureFlagAppExt;
@@ -4039,72 +4045,30 @@ mod tests {
 
         // Create a new workspace via the MultiWorkspace API (triggers next_id()).
         multi_workspace.update_in(cx, |mw, window, cx| {
-            mw.create_workspace(window, cx);
+            mw.create_test_workspace(window, cx).detach();
         });
 
         // Let the async next_id() and re-serialization tasks complete.
         cx.run_until_parked();
 
-        // Read back the multi-workspace state.
-        let state = cx.update(|_, cx| read_multi_workspace_state(window_id, cx));
-
-        // The new workspace should now have a database_id, and the multi-workspace
-        // state should record it as the active workspace.
+        // The new workspace should now have a database_id.
         let new_workspace_db_id =
             multi_workspace.read_with(cx, |mw, cx| mw.workspace().read(cx).database_id());
         assert!(
             new_workspace_db_id.is_some(),
             "New workspace should have a database_id after run_until_parked"
         );
+
+        // The multi-workspace state should record it as the active workspace.
+        let state = cx.update(|_, cx| read_multi_workspace_state(window_id, cx));
         assert_eq!(
             state.active_workspace_id, new_workspace_db_id,
             "Serialized active_workspace_id should match the new workspace's database_id"
         );
-    }
 
-    #[gpui::test]
-    async fn test_create_workspace_individual_serialization(cx: &mut gpui::TestAppContext) {
-        use crate::multi_workspace::MultiWorkspace;
-        use feature_flags::FeatureFlagAppExt;
-
-        use project::Project;
-
-        crate::tests::init_test(cx);
-
-        cx.update(|cx| {
-            cx.set_staff(true);
-            cx.update_flags(true, vec!["agent-v2".to_string()]);
-        });
-
-        let fs = fs::FakeFs::new(cx.executor());
-        let project = Project::test(fs.clone(), [], cx).await;
-
-        let (multi_workspace, cx) =
-            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
-
-        multi_workspace.update_in(cx, |mw, _, cx| {
-            mw.set_random_database_id(cx);
-        });
-
-        // Create a new workspace.
-        multi_workspace.update_in(cx, |mw, window, cx| {
-            mw.create_workspace(window, cx);
-        });
-
-        cx.run_until_parked();
-
-        // Get the new workspace's database_id.
-        let new_db_id =
-            multi_workspace.read_with(cx, |mw, cx| mw.workspace().read(cx).database_id());
-        assert!(
-            new_db_id.is_some(),
-            "New workspace should have a database_id"
-        );
-
-        let workspace_id = new_db_id.unwrap();
-
-        // The workspace should have been serialized to the DB with real data
+        // The individual workspace row should exist with real data
         // (not just the bare DEFAULT VALUES row from next_id).
+        let workspace_id = new_workspace_db_id.unwrap();
         let db = cx.update(|_, cx| WorkspaceDb::global(cx));
         let serialized = db.workspace_for_id(workspace_id);
         assert!(
@@ -4128,6 +4092,7 @@ mod tests {
         });
 
         let fs = fs::FakeFs::new(cx.executor());
+        let dir = unique_test_dir(&fs, "remove").await;
         let project1 = Project::test(fs.clone(), [], cx).await;
         let project2 = Project::test(fs.clone(), [], cx).await;
 
@@ -4152,16 +4117,17 @@ mod tests {
         });
 
         // Save a full workspace row to the DB directly.
+        let session_id = format!("remove-test-session-{}", Uuid::new_v4());
         db.save_workspace(SerializedWorkspace {
             id: workspace2_db_id,
-            paths: PathList::new(&["/tmp/remove_test"]),
+            paths: PathList::new(&[&dir]),
             location: SerializedWorkspaceLocation::Local,
             center_group: Default::default(),
             window_bounds: Default::default(),
             display: Default::default(),
             docks: Default::default(),
             centered_layout: false,
-            session_id: Some("remove-test-session".to_owned()),
+            session_id: Some(session_id.clone()),
             breakpoints: Default::default(),
             window_id: Some(99),
             user_toolchains: Default::default(),
@@ -4323,6 +4289,7 @@ mod tests {
         });
 
         let fs = fs::FakeFs::new(cx.executor());
+        let dir = unique_test_dir(&fs, "pending-removal").await;
         let project1 = Project::test(fs.clone(), [], cx).await;
         let project2 = Project::test(fs.clone(), [], cx).await;
 
@@ -4347,16 +4314,17 @@ mod tests {
         });
 
         // Save a full workspace row to the DB directly and let it settle.
+        let session_id = format!("pending-removal-session-{}", Uuid::new_v4());
         db.save_workspace(SerializedWorkspace {
             id: workspace2_db_id,
-            paths: PathList::new(&["/tmp/pending_removal_test"]),
+            paths: PathList::new(&[&dir]),
             location: SerializedWorkspaceLocation::Local,
             center_group: Default::default(),
             window_bounds: Default::default(),
             display: Default::default(),
             docks: Default::default(),
             centered_layout: false,
-            session_id: Some("pending-removal-session".to_owned()),
+            session_id: Some(session_id.clone()),
             breakpoints: Default::default(),
             window_id: Some(88),
             user_toolchains: Default::default(),
@@ -4434,11 +4402,9 @@ mod tests {
             mw.set_random_database_id(cx);
         });
 
-        multi_workspace.update_in(cx, |mw, window, cx| {
-            mw.create_workspace(window, cx);
-        });
-
-        cx.run_until_parked();
+        let task =
+            multi_workspace.update_in(cx, |mw, window, cx| mw.create_test_workspace(window, cx));
+        task.await;
 
         let new_workspace_db_id =
             multi_workspace.read_with(cx, |mw, cx| mw.workspace().read(cx).database_id());

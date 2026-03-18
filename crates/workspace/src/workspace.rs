@@ -27,9 +27,8 @@ mod workspace_settings;
 pub use crate::notifications::NotificationFrame;
 pub use dock::Panel;
 pub use multi_workspace::{
-    DraggedSidebar, FocusWorkspaceSidebar, MultiWorkspace, MultiWorkspaceEvent,
-    NewWorkspaceInWindow, NextWorkspaceInWindow, PreviousWorkspaceInWindow, Sidebar, SidebarHandle,
-    ToggleWorkspaceSidebar,
+    DraggedSidebar, FocusWorkspaceSidebar, MultiWorkspace, MultiWorkspaceEvent, Sidebar,
+    SidebarHandle, ToggleWorkspaceSidebar,
 };
 pub use path_list::{PathList, SerializedPathList};
 pub use toast_layer::{ToastAction, ToastLayer, ToastView};
@@ -5981,6 +5980,7 @@ impl Workspace {
         self.database_id
     }
 
+    #[cfg(any(test, feature = "test-support"))]
     pub(crate) fn set_database_id(&mut self, id: WorkspaceId) {
         self.database_id = Some(id);
     }
@@ -8274,7 +8274,7 @@ pub async fn restore_multiworkspace(
                     Some(window_handle),
                     None,
                     None,
-                    true,
+                    false,
                     cx,
                 )
             })
