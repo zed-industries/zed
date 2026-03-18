@@ -1703,6 +1703,10 @@ impl LocalLspStore {
                 formatter
             };
             match formatter {
+                Formatter::None => {
+                    zlog::trace!(logger => "skipping formatter 'none'");
+                    continue;
+                }
                 Formatter::Auto => unreachable!("Auto resolved above"),
                 Formatter::Prettier => {
                     let logger = zlog::scoped!(logger => "prettier");
@@ -4028,6 +4032,7 @@ pub enum LspStoreEvent {
 pub struct LanguageServerStatus {
     pub name: LanguageServerName,
     pub server_version: Option<SharedString>,
+    pub server_readable_version: Option<SharedString>,
     pub pending_work: BTreeMap<ProgressToken, LanguageServerProgress>,
     pub has_pending_diagnostic_updates: bool,
     pub progress_tokens: HashSet<ProgressToken>,
@@ -8201,6 +8206,7 @@ impl LspStore {
                     LanguageServerStatus {
                         name,
                         server_version: None,
+                        server_readable_version: None,
                         pending_work: Default::default(),
                         has_pending_diagnostic_updates: false,
                         progress_tokens: Default::default(),
@@ -9391,6 +9397,7 @@ impl LspStore {
                 LanguageServerStatus {
                     name: server_name.clone(),
                     server_version: None,
+                    server_readable_version: None,
                     pending_work: Default::default(),
                     has_pending_diagnostic_updates: false,
                     progress_tokens: Default::default(),
@@ -9833,7 +9840,9 @@ impl LspStore {
                     let typ = match event.kind? {
                         PathEventKind::Created => lsp::FileChangeType::CREATED,
                         PathEventKind::Removed => lsp::FileChangeType::DELETED,
-                        PathEventKind::Changed => lsp::FileChangeType::CHANGED,
+                        PathEventKind::Changed | PathEventKind::Rescan => {
+                            lsp::FileChangeType::CHANGED
+                        }
                     };
                     Some(lsp::FileEvent {
                         uri: file_path_to_lsp_url(&event.path).log_err()?,
@@ -11354,6 +11363,7 @@ impl LspStore {
             LanguageServerStatus {
                 name: language_server.name(),
                 server_version: language_server.version(),
+                server_readable_version: language_server.readable_version(),
                 pending_work: Default::default(),
                 has_pending_diagnostic_updates: false,
                 progress_tokens: Default::default(),

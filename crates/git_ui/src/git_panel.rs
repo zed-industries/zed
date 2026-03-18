@@ -1133,7 +1133,22 @@ impl GitPanel {
         }
 
         if matches!(self.entries.get(new_index), Some(GitListEntry::Header(..))) {
-            self.selected_entry = Some(new_index.saturating_sub(1));
+            self.selected_entry = match &self.view_mode {
+                GitPanelViewMode::Flat => Some(new_index.saturating_sub(1)),
+                GitPanelViewMode::Tree(tree_view_state) => {
+                    maybe!({
+                        let current_logical_index = tree_view_state
+                            .logical_indices
+                            .iter()
+                            .position(|&i| i == new_index)?;
+
+                        tree_view_state
+                            .logical_indices
+                            .get(current_logical_index.saturating_sub(1))
+                            .copied()
+                    })
+                }
+            };
         } else {
             self.selected_entry = Some(new_index);
         }

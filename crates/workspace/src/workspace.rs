@@ -27,9 +27,8 @@ mod workspace_settings;
 pub use crate::notifications::NotificationFrame;
 pub use dock::Panel;
 pub use multi_workspace::{
-    DraggedSidebar, FocusWorkspaceSidebar, MultiWorkspace, MultiWorkspaceEvent,
-    NewWorkspaceInWindow, NextWorkspaceInWindow, PreviousWorkspaceInWindow, Sidebar, SidebarHandle,
-    ToggleWorkspaceSidebar,
+    DraggedSidebar, FocusWorkspaceSidebar, MultiWorkspace, MultiWorkspaceEvent, Sidebar,
+    SidebarHandle, ToggleWorkspaceSidebar,
 };
 pub use path_list::{PathList, SerializedPathList};
 pub use toast_layer::{ToastAction, ToastLayer, ToastView};
@@ -400,7 +399,12 @@ pub struct Save {
     pub save_intent: Option<SaveIntent>,
 }
 
-/// Closes all items and panes in the workspace.
+/// Moves Focus to the central panes in the workspace.
+#[derive(Clone, Debug, PartialEq, Eq, Action)]
+#[action(namespace = workspace)]
+pub struct FocusCenterPane;
+
+///  Closes all items and panes in the workspace.
 #[derive(Clone, PartialEq, Debug, Deserialize, Default, JsonSchema, Action)]
 #[action(namespace = workspace)]
 #[serde(deny_unknown_fields)]
@@ -3825,6 +3829,14 @@ impl Workspace {
         did_focus_panel
     }
 
+    pub fn focus_center_pane(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(item) = self.active_item(cx) {
+            item.item_focus_handle(cx).focus(window, cx);
+        } else {
+            log::error!("Could not find a focus target when switching focus to the center panes",);
+        }
+    }
+
     pub fn activate_panel_for_proto_id(
         &mut self,
         panel_id: PanelId,
@@ -5979,6 +5991,7 @@ impl Workspace {
         self.database_id
     }
 
+    #[cfg(any(test, feature = "test-support"))]
     pub(crate) fn set_database_id(&mut self, id: WorkspaceId) {
         self.database_id = Some(id);
     }
@@ -6852,6 +6865,9 @@ impl Workspace {
                     }
                 }),
             )
+            .on_action(cx.listener(|workspace, _: &FocusCenterPane, window, cx| {
+                workspace.focus_center_pane(window, cx);
+            }))
             .on_action(cx.listener(Workspace::cancel))
     }
 
@@ -8260,7 +8276,7 @@ pub async fn restore_multiworkspace(
                     Some(window_handle),
                     None,
                     None,
-                    true,
+                    false,
                     cx,
                 )
             })

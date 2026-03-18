@@ -41,6 +41,7 @@ use std::{
 use text::{BufferId, BufferSnapshot, Selection};
 use ui::{IconDecorationKind, prelude::*};
 use util::{ResultExt, TryFutureExt, paths::PathExt};
+use workspace::item::{Dedup, ItemSettings, SerializableItem, TabContentParams};
 use workspace::{
     CollaboratorId, ItemId, ItemNavHistory, ToolbarItemLocation, ViewId, Workspace, WorkspaceId,
     invalid_item_view::InvalidItemView,
@@ -51,11 +52,7 @@ use workspace::{
     },
 };
 use workspace::{
-    OpenOptions,
-    item::{Dedup, ItemSettings, SerializableItem, TabContentParams},
-};
-use workspace::{
-    OpenVisible, Pane, WorkspaceSettings,
+    Pane, WorkspaceSettings,
     item::{FollowEvent, ProjectItemKind},
     searchable::SearchOptions,
 };
@@ -1143,7 +1140,7 @@ impl SerializableItem for Editor {
 
     fn deserialize(
         project: Entity<Project>,
-        workspace: WeakEntity<Workspace>,
+        _workspace: WeakEntity<Workspace>,
         workspace_id: workspace::WorkspaceId,
         item_id: ItemId,
         window: &mut Window,
@@ -1267,42 +1264,33 @@ impl SerializableItem for Editor {
                         })
                     }),
                     None => {
-                        // File is not in any worktree (e.g., opened as a standalone file)
-                        // We need to open it via workspace and then restore dirty contents
+                        // File is not in any worktree (e.g., opened as a standalone file).
+                        // Open the buffer directly via the project rather than through
+                        // workspace.open_abs_path(), which has the side effect of adding
+                        // the item to a pane. The caller (deserialize_to) will add the
+                        // returned item to the correct pane.
                         window.spawn(cx, async move |cx| {
-                            let open_by_abs_path =
-                                workspace.update_in(cx, |workspace, window, cx| {
-                                    workspace.open_abs_path(
-                                        abs_path.clone(),
-                                        OpenOptions {
-                                            visible: Some(OpenVisible::None),
-                                            ..Default::default()
-                                        },
-                                        window,
-                                        cx,
-                                    )
+                            let buffer = project
+                                .update(cx, |project, cx| project.open_local_buffer(&abs_path, cx))
+                                .await
+                                .with_context(|| {
+                                    format!("Failed to open buffer for {abs_path:?}")
                                 })?;
-                            let editor =
-                                open_by_abs_path.await?.downcast::<Editor>().with_context(
-                                    || format!("path {abs_path:?} cannot be opened as an Editor"),
-                                )?;
 
                             if let Some(contents) = contents {
-                                editor.update_in(cx, |editor, _window, cx| {
-                                    if let Some(buffer) = editor.buffer().read(cx).as_singleton() {
-                                        buffer.update(cx, |buffer, cx| {
-                                            restore_serialized_buffer_contents(
-                                                buffer, contents, mtime, cx,
-                                            );
-                                        });
-                                    }
-                                })?;
+                                buffer.update(cx, |buffer, cx| {
+                                    restore_serialized_buffer_contents(buffer, contents, mtime, cx);
+                                });
                             }
 
-                            editor.update_in(cx, |editor, window, cx| {
-                                editor.read_metadata_from_db(item_id, workspace_id, window, cx);
-                            })?;
-                            Ok(editor)
+                            cx.update(|window, cx| {
+                                cx.new(|cx| {
+                                    let mut editor =
+                                        Editor::for_buffer(buffer, Some(project), window, cx);
+                                    editor.read_metadata_from_db(item_id, workspace_id, window, cx);
+                                    editor
+                                })
+                            })
                         })
                     }
                 }
@@ -1972,6 +1960,8 @@ pub fn entry_git_aware_label_color(git_status: GitSummary, ignored: bool, select
     let tracked = git_status.index + git_status.worktree;
     if git_status.conflict > 0 {
         Color::Conflict
+    } else if tracked.deleted > 0 {
+        Color::Deleted
     } else if tracked.modified > 0 {
         Color::Modified
     } else if tracked.added > 0 || git_status.untracked > 0 {
@@ -2067,6 +2057,7 @@ mod tests {
     use gpui::{App, VisualTestContext};
     use language::TestFile;
     use project::FakeFs;
+    use serde_json::json;
     use std::path::{Path, PathBuf};
     use util::{path, rel_path::RelPath};
 
@@ -2346,5 +2337,73 @@ mod tests {
                 assert!(buffer.file().is_some());
             });
         }
+    }
+
+    // Regression test for https://github.com/zed-industries/zed/issues/35947
+    // Verifies that deserializing a non-worktree editor does not add the item
+    // to any pane as a side effect.
+    #[gpui::test]
+    async fn test_deserialize_non_worktree_file_does_not_add_to_pane(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        init_test(cx, |_| {});
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(path!("/outside"), json!({ "settings.json": "{}" }))
+            .await;
+
+        // Project with a different root — settings.json is NOT in any worktree
+        let project = Project::test(fs.clone(), [], cx).await;
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
+
+        let workspace_id = workspace::WORKSPACE_DB.next_id().await.unwrap();
+        let item_id = 99999 as ItemId;
+
+        let serialized_editor = SerializedEditor {
+            abs_path: Some(PathBuf::from(path!("/outside/settings.json"))),
+            contents: None,
+            language: None,
+            mtime: None,
+        };
+
+        DB.save_serialized_editor(item_id, workspace_id, serialized_editor)
+            .await
+            .unwrap();
+
+        // Count items in all panes before deserialization
+        let pane_items_before = workspace.read_with(cx, |workspace, cx| {
+            workspace
+                .panes()
+                .iter()
+                .map(|pane| pane.read(cx).items_len())
+                .sum::<usize>()
+        });
+
+        let deserialized =
+            deserialize_editor(item_id, workspace_id, workspace.clone(), project, cx).await;
+
+        cx.run_until_parked();
+
+        // The editor should exist and have the file
+        deserialized.update(cx, |editor, cx| {
+            let buffer = editor.buffer().read(cx).as_singleton().unwrap().read(cx);
+            assert!(buffer.file().is_some());
+        });
+
+        // No items should have been added to any pane as a side effect
+        let pane_items_after = workspace.read_with(cx, |workspace, cx| {
+            workspace
+                .panes()
+                .iter()
+                .map(|pane| pane.read(cx).items_len())
+                .sum::<usize>()
+        });
+
+        assert_eq!(
+            pane_items_before, pane_items_after,
+            "Editor::deserialize should not add items to panes as a side effect"
+        );
     }
 }

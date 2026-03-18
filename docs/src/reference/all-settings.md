@@ -1908,6 +1908,14 @@ WARNING: `{buffer_path}` should not be used to direct your formatter to read fro
 Here `rust-analyzer` will be used first to format the code, followed by a call of sed.
 If any of the formatters fails, the subsequent ones will still be executed.
 
+6. To disable the formatter, use `"none"`. This setting disables the configured formatter, but any actions in `code_actions_on_format` will still be executed:
+
+```json [settings]
+{
+  "formatter": "none"
+}
+```
+
 ## Auto close
 
 - Description: Whether to automatically add matching closing characters when typing opening parenthesis, bracket, brace, single or double quote characters.

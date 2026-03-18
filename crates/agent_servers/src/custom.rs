@@ -7,12 +7,14 @@ use credentials_provider::CredentialsProvider;
 use fs::Fs;
 use gpui::{App, AppContext as _, Task};
 use language_model::{ApiKey, EnvVar};
-use project::agent_server_store::{
-    AgentId, AllAgentServersSettings, CLAUDE_AGENT_ID, CODEX_ID, GEMINI_ID,
-};
+use project::agent_server_store::{AgentId, AllAgentServersSettings};
 use settings::{SettingsStore, update_settings_file};
 use std::{rc::Rc, sync::Arc};
 use ui::IconName;
+
+pub const GEMINI_ID: &str = "gemini";
+pub const CLAUDE_AGENT_ID: &str = "claude-acp";
+pub const CODEX_ID: &str = "codex-acp";
 
 /// A generic agent server implementation for custom user-defined agents
 pub struct CustomAgentServer {

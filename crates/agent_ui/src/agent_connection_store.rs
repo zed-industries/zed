@@ -24,7 +24,7 @@ pub enum AgentConnectionEntry {
 #[derive(Clone)]
 pub struct AgentConnectedState {
     pub connection: Rc<dyn AgentConnection>,
-    pub history: Entity<ThreadHistory>,
+    pub history: Option<Entity<ThreadHistory>>,
 }
 
 impl AgentConnectionEntry {
@@ -38,7 +38,7 @@ impl AgentConnectionEntry {
 
     pub fn history(&self) -> Option<&Entity<ThreadHistory>> {
         match self {
-            AgentConnectionEntry::Connected(state) => Some(&state.history),
+            AgentConnectionEntry::Connected(state) => state.history.as_ref(),
             _ => None,
         }
     }
@@ -163,7 +163,9 @@ impl AgentConnectionStore {
         let connect_task = server.connect(delegate, cx);
         let connect_task = cx.spawn(async move |_this, cx| match connect_task.await {
             Ok(connection) => cx.update(|cx| {
-                let history = cx.new(|cx| ThreadHistory::new(connection.session_list(cx), cx));
+                let history = connection
+                    .session_list(cx)
+                    .map(|session_list| cx.new(|cx| ThreadHistory::new(session_list, cx)));
                 Ok(AgentConnectedState {
                     connection,
                     history,

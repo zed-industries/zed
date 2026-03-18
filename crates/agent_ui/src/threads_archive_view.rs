@@ -21,6 +21,7 @@ use theme::ActiveTheme;
 use ui::{
     ButtonLike, CommonAnimationExt, ContextMenu, ContextMenuEntry, HighlightedLabel, ListItem,
     PopoverMenu, PopoverMenuHandle, Tab, TintColor, Tooltip, WithScrollbar, prelude::*,
+    utils::platform_title_bar_height,
 };
 use util::ResultExt as _;
 use zed_actions::editor::{MoveDown, MoveUp};
@@ -88,6 +89,22 @@ fn fuzzy_match_positions(query: &str, text: &str) -> Option<Vec<usize>> {
         Some(positions)
     } else {
         None
+    }
+}
+
+fn archive_empty_state_message(
+    has_history: bool,
+    is_empty: bool,
+    has_query: bool,
+) -> Option<&'static str> {
+    if !is_empty {
+        None
+    } else if !has_history {
+        Some("This agent does not support viewing archived threads.")
+    } else if has_query {
+        Some("No threads match your search.")
+    } else {
+        Some("No archived threads yet.")
     }
 }
 
@@ -171,6 +188,7 @@ impl ThreadsArchiveView {
     fn set_selected_agent(&mut self, agent: Agent, window: &mut Window, cx: &mut Context<Self>) {
         self.selected_agent = agent.clone();
         self.is_loading = true;
+        self.reset_history_subscription();
         self.history = None;
         self.items.clear();
         self.selection = None;
@@ -193,25 +211,33 @@ impl ThreadsArchiveView {
         cx.notify();
     }
 
-    fn set_history(&mut self, history: Entity<ThreadHistory>, cx: &mut Context<Self>) {
-        self._history_subscription = cx.observe(&history, |this, _, cx| {
-            this.update_items(cx);
-        });
-        history.update(cx, |history, cx| {
-            history.refresh_full_history(cx);
-        });
-        self.history = Some(history);
+    fn reset_history_subscription(&mut self) {
+        self._history_subscription = Subscription::new(|| {});
+    }
+
+    fn set_history(&mut self, history: Option<Entity<ThreadHistory>>, cx: &mut Context<Self>) {
+        self.reset_history_subscription();
+
+        if let Some(history) = &history {
+            self._history_subscription = cx.observe(history, |this, _, cx| {
+                this.update_items(cx);
+            });
+            history.update(cx, |history, cx| {
+                history.refresh_full_history(cx);
+            });
+        }
+        self.history = history;
         self.is_loading = false;
         self.update_items(cx);
         cx.notify();
     }
 
     fn update_items(&mut self, cx: &mut Context<Self>) {
-        let Some(history) = self.history.as_ref() else {
-            return;
-        };
-
-        let sessions = history.read(cx).sessions().to_vec();
+        let sessions = self
+            .history
+            .as_ref()
+            .map(|h| h.read(cx).sessions().to_vec())
+            .unwrap_or_default();
         let query = self.filter_editor.read(cx).text(cx).to_lowercase();
         let today = Local::now().naive_local().date();
 
@@ -651,32 +677,56 @@ impl ThreadsArchiveView {
             })
     }
 
-    fn render_header(&self, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render_header(&self, window: &Window, cx: &mut Context<Self>) -> impl IntoElement {
         let has_query = !self.filter_editor.read(cx).text(cx).is_empty();
+        let traffic_lights = cfg!(target_os = "macos") && !window.is_fullscreen();
+        let header_height = platform_title_bar_height(window);
 
-        h_flex()
-            .h(Tab::container_height(cx))
-            .px_1()
-            .justify_between()
-            .border_b_1()
-            .border_color(cx.theme().colors().border)
+        v_flex()
             .child(
                 h_flex()
-                    .flex_1()
-                    .w_full()
-                    .gap_1p5()
+                    .h(header_height)
+                    .mt_px()
+                    .pb_px()
+                    .when(traffic_lights, |this| {
+                        this.pl(px(ui::utils::TRAFFIC_LIGHT_PADDING))
+                    })
+                    .pr_1p5()
+                    .border_b_1()
+                    .border_color(cx.theme().colors().border)
+                    .justify_between()
                     .child(
-                        IconButton::new("back", IconName::ArrowLeft)
-                            .icon_size(IconSize::Small)
-                            .tooltip(Tooltip::text("Back to Sidebar"))
-                            .on_click(cx.listener(|this, _, window, cx| {
-                                this.go_back(window, cx);
-                            })),
+                        h_flex()
+                            .gap_1p5()
+                            .child(
+                                IconButton::new("back", IconName::ArrowLeft)
+                                    .icon_size(IconSize::Small)
+                                    .tooltip(Tooltip::text("Back to Sidebar"))
+                                    .on_click(cx.listener(|this, _, window, cx| {
+                                        this.go_back(window, cx);
+                                    })),
+                            )
+                            .child(Label::new("Threads Archive").size(LabelSize::Small).mb_px()),
+                    )
+                    .child(self.render_agent_picker(cx)),
+            )
+            .child(
+                h_flex()
+                    .h(Tab::container_height(cx))
+                    .p_2()
+                    .pr_1p5()
+                    .gap_1p5()
+                    .border_b_1()
+                    .border_color(cx.theme().colors().border)
+                    .child(
+                        Icon::new(IconName::MagnifyingGlass)
+                            .size(IconSize::Small)
+                            .color(Color::Muted),
                     )
                     .child(self.filter_editor.clone())
                     .when(has_query, |this| {
-                        this.border_r_1().child(
-                            IconButton::new("clear_archive_filter", IconName::Close)
+                        this.child(
+                            IconButton::new("clear_filter", IconName::Close)
                                 .icon_size(IconSize::Small)
                                 .tooltip(Tooltip::text("Clear Search"))
                                 .on_click(cx.listener(|this, _, window, cx| {
@@ -686,13 +736,18 @@ impl ThreadsArchiveView {
                         )
                     }),
             )
-            .child(self.render_agent_picker(cx))
     }
 }
 
 impl Focusable for ThreadsArchiveView {
     fn focus_handle(&self, _cx: &App) -> FocusHandle {
         self.focus_handle.clone()
+    }
+}
+
+impl ThreadsArchiveView {
+    fn empty_state_message(&self, is_empty: bool, has_query: bool) -> Option<&'static str> {
+        archive_empty_state_message(self.history.is_some(), is_empty, has_query)
     }
 }
 
@@ -713,24 +768,13 @@ impl Render for ThreadsArchiveView {
                         .with_rotate_animation(2),
                 )
                 .into_any_element()
-        } else if is_empty && has_query {
+        } else if let Some(message) = self.empty_state_message(is_empty, has_query) {
             v_flex()
                 .flex_1()
                 .justify_center()
                 .items_center()
                 .child(
-                    Label::new("No threads match your search.")
-                        .size(LabelSize::Small)
-                        .color(Color::Muted),
-                )
-                .into_any_element()
-        } else if is_empty {
-            v_flex()
-                .flex_1()
-                .justify_center()
-                .items_center()
-                .child(
-                    Label::new("No archived threads yet.")
+                    Label::new(message)
                         .size(LabelSize::Small)
                         .color(Color::Muted),
                 )
@@ -763,8 +807,42 @@ impl Render for ThreadsArchiveView {
             .on_action(cx.listener(Self::confirm))
             .on_action(cx.listener(Self::remove_selected_thread))
             .size_full()
-            .bg(cx.theme().colors().surface_background)
-            .child(self.render_header(cx))
+            .child(self.render_header(window, cx))
             .child(content)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::archive_empty_state_message;
+
+    #[test]
+    fn empty_state_message_returns_none_when_archive_has_items() {
+        assert_eq!(archive_empty_state_message(false, false, false), None);
+        assert_eq!(archive_empty_state_message(true, false, true), None);
+    }
+
+    #[test]
+    fn empty_state_message_distinguishes_unsupported_history() {
+        assert_eq!(
+            archive_empty_state_message(false, true, false),
+            Some("This agent does not support viewing archived threads.")
+        );
+        assert_eq!(
+            archive_empty_state_message(false, true, true),
+            Some("This agent does not support viewing archived threads.")
+        );
+    }
+
+    #[test]
+    fn empty_state_message_distinguishes_empty_history_and_search_results() {
+        assert_eq!(
+            archive_empty_state_message(true, true, false),
+            Some("No archived threads yet.")
+        );
+        assert_eq!(
+            archive_empty_state_message(true, true, true),
+            Some("No threads match your search.")
+        );
     }
 }

@@ -1100,6 +1100,8 @@
       "ctrl-d": "markdown::ScrollPageDown",
       "ctrl-y": "markdown::ScrollUp",
       "ctrl-e": "markdown::ScrollDown",
+      "g g": "markdown::ScrollToTop",
+      "shift-g": "markdown::ScrollToBottom",
     },
   },
   {

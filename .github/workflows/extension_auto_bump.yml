@@ -7,6 +7,8 @@ on:
     - main
     paths:
     - extensions/**
+    - '!extensions/slash-commands-example/**'
+    - '!extensions/test-extension/**'
     - '!extensions/workflows/**'
     - '!extensions/*.md'
 jobs:

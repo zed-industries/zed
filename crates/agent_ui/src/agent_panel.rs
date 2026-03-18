@@ -82,7 +82,7 @@ use ui::{
 use util::{ResultExt as _, debug_panic};
 use workspace::{
     CollaboratorId, DraggedSelection, DraggedTab, OpenResult, PathList, SerializedPathList,
-    ToggleZoom, ToolbarItemView, Workspace, WorkspaceId,
+    ToggleWorkspaceSidebar, ToggleZoom, ToolbarItemView, Workspace, WorkspaceId,
     dock::{DockPosition, Panel, PanelEvent},
 };
 use zed_actions::{
@@ -601,8 +601,8 @@ impl From<Agent> for AgentType {
 impl StartThreadIn {
     fn label(&self) -> SharedString {
         match self {
-            Self::LocalProject => "Current Project".into(),
-            Self::NewWorktree => "New Worktree".into(),
+            Self::LocalProject => "Current Worktree".into(),
+            Self::NewWorktree => "New Git Worktree".into(),
         }
     }
 }
@@ -1461,13 +1461,9 @@ impl AgentPanel {
                     .read(cx)
                     .history()?
                     .clone();
-                if history.read(cx).has_session_list() {
-                    Some(History::AgentThreads {
-                        view: self.create_thread_history_view(agent, history, window, cx),
-                    })
-                } else {
-                    None
-                }
+                Some(History::AgentThreads {
+                    view: self.create_thread_history_view(agent, history, window, cx),
+                })
             }
         }
     }
@@ -1953,6 +1949,21 @@ impl AgentPanel {
     /// Returns the primary thread views for all retained connections: the
     pub fn is_background_thread(&self, session_id: &acp::SessionId) -> bool {
         self.background_threads.contains_key(session_id)
+    }
+
+    pub fn cancel_thread(&self, session_id: &acp::SessionId, cx: &mut Context<Self>) -> bool {
+        let conversation_views = self
+            .active_conversation_view()
+            .into_iter()
+            .chain(self.background_threads.values());
+
+        for conversation_view in conversation_views {
+            if let Some(thread_view) = conversation_view.read(cx).thread_view(session_id) {
+                thread_view.update(cx, |view, cx| view.cancel_generation(cx));
+                return true;
+            }
+        }
+        false
     }
 
     /// active thread plus any background threads that are still running or
@@ -3424,6 +3435,7 @@ impl AgentPanel {
                             .action("Profiles", Box::new(ManageProfiles::default()))
                             .action("Settings", Box::new(OpenSettings))
                             .separator()
+                            .action("Toggle Threads Sidebar", Box::new(ToggleWorkspaceSidebar))
                             .action(full_screen_label, Box::new(ToggleZoom));
 
                         if has_auth_methods {
@@ -3555,7 +3567,7 @@ impl AgentPanel {
 
                     menu.header("Start Thread In…")
                         .item(
-                            ContextMenuEntry::new("Current Project")
+                            ContextMenuEntry::new("Current Worktree")
                                 .toggleable(IconPosition::End, is_local_selected)
                                 .documentation_aside(documentation_side, move |_| {
                                     HoldForDefault::new(is_local_default)
@@ -3583,7 +3595,7 @@ impl AgentPanel {
                                 }),
                         )
                         .item({
-                            let entry = ContextMenuEntry::new("New Worktree")
+                            let entry = ContextMenuEntry::new("New Git Worktree")
                                 .toggleable(IconPosition::End, is_new_worktree_selected)
                                 .disabled(new_worktree_disabled)
                                 .handler({
@@ -4650,16 +4662,13 @@ impl rules_library::InlineAssistDelegate for PromptLibraryInlineAssist {
             let Some(panel) = workspace.read(cx).panel::<AgentPanel>(cx) else {
                 return;
             };
-            let Some(history) = panel
+            let history = panel
                 .read(cx)
                 .connection_store()
                 .read(cx)
                 .entry(&crate::Agent::NativeAgent)
                 .and_then(|s| s.read(cx).history())
-            else {
-                log::error!("No connection entry found for native agent");
-                return;
-            };
+                .map(|h| h.downgrade());
             let project = workspace.read(cx).project().downgrade();
             let panel = panel.read(cx);
             let thread_store = panel.thread_store().clone();
@@ -4669,7 +4678,7 @@ impl rules_library::InlineAssistDelegate for PromptLibraryInlineAssist {
                 project,
                 thread_store,
                 None,
-                history.downgrade(),
+                history,
                 initial_prompt,
                 window,
                 cx,
@@ -4915,12 +4924,12 @@ mod tests {
     use crate::conversation_view::tests::{StubAgentServer, init_test};
     use crate::test_support::{active_session_id, open_thread_with_connection, send_message};
     use acp_thread::{StubAgentConnection, ThreadStatus};
+    use agent_servers::CODEX_ID;
     use assistant_text_thread::TextThreadStore;
     use feature_flags::FeatureFlagAppExt;
     use fs::FakeFs;
     use gpui::{TestAppContext, VisualTestContext};
     use project::Project;
-    use project::agent_server_store::CODEX_ID;
     use serde_json::json;
     use workspace::MultiWorkspace;
 

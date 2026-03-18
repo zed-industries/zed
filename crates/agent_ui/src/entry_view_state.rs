@@ -26,7 +26,7 @@ pub struct EntryViewState {
     workspace: WeakEntity<Workspace>,
     project: WeakEntity<Project>,
     thread_store: Option<Entity<ThreadStore>>,
-    history: WeakEntity<ThreadHistory>,
+    history: Option<WeakEntity<ThreadHistory>>,
     prompt_store: Option<Entity<PromptStore>>,
     entries: Vec<Entry>,
     prompt_capabilities: Rc<RefCell<acp::PromptCapabilities>>,
@@ -39,7 +39,7 @@ impl EntryViewState {
         workspace: WeakEntity<Workspace>,
         project: WeakEntity<Project>,
         thread_store: Option<Entity<ThreadStore>>,
-        history: WeakEntity<ThreadHistory>,
+        history: Option<WeakEntity<ThreadHistory>>,
         prompt_store: Option<Entity<PromptStore>>,
         prompt_capabilities: Rc<RefCell<acp::PromptCapabilities>>,
         available_commands: Rc<RefCell<Vec<acp::AvailableCommand>>>,
@@ -227,7 +227,10 @@ impl EntryViewState {
                 } else {
                     self.set_entry(
                         index,
-                        Entry::AssistantMessage(AssistantMessageEntry::default()),
+                        Entry::AssistantMessage(AssistantMessageEntry {
+                            scroll_handles_by_chunk_index: HashMap::default(),
+                            focus_handle: cx.focus_handle(),
+                        }),
                     );
                     let Some(Entry::AssistantMessage(entry)) = self.entries.get_mut(index) else {
                         unreachable!()
@@ -291,9 +294,10 @@ pub enum ViewEvent {
     },
 }
 
-#[derive(Default, Debug)]
+#[derive(Debug)]
 pub struct AssistantMessageEntry {
     scroll_handles_by_chunk_index: HashMap<usize, ScrollHandle>,
+    focus_handle: FocusHandle,
 }
 
 impl AssistantMessageEntry {
@@ -326,7 +330,8 @@ impl Entry {
     pub fn focus_handle(&self, cx: &App) -> Option<FocusHandle> {
         match self {
             Self::UserMessage(editor) => Some(editor.read(cx).focus_handle(cx)),
-            Self::AssistantMessage(_) | Self::ToolCall(_) => None,
+            Self::AssistantMessage(message) => Some(message.focus_handle.clone()),
+            Self::ToolCall(_) => None,
         }
     }
 
@@ -510,14 +515,14 @@ mod tests {
         });
 
         let thread_store = None;
-        let history = cx.update(|_window, cx| cx.new(|cx| crate::ThreadHistory::new(None, cx)));
+        let history: Option<gpui::WeakEntity<crate::ThreadHistory>> = None;
 
         let view_state = cx.new(|_cx| {
             EntryViewState::new(
                 workspace.downgrade(),
                 project.downgrade(),
                 thread_store,
-                history.downgrade(),
+                history,
                 None,
                 Default::default(),
                 Default::default(),

@@ -6478,3 +6478,110 @@ async fn test_streaming_tool_error_waits_for_prior_tools_to_complete(cx: &mut Te
         ]
     );
 }
+
+#[gpui::test]
+async fn test_mid_turn_model_and_settings_refresh(cx: &mut TestAppContext) {
+    let ThreadTest {
+        model, thread, fs, ..
+    } = setup(cx, TestModel::Fake).await;
+    let fake_model_a = model.as_fake();
+
+    thread.update(cx, |thread, _cx| {
+        thread.add_tool(EchoTool);
+        thread.add_tool(DelayTool);
+    });
+
+    // Set up two profiles: profile-a has both tools, profile-b has only DelayTool.
+    fs.insert_file(
+        paths::settings_file(),
+        json!({
+            "agent": {
+                "profiles": {
+                    "profile-a": {
+                        "name": "Profile A",
+                        "tools": {
+                            EchoTool::NAME: true,
+                            DelayTool::NAME: true,
+                        }
+                    },
+                    "profile-b": {
+                        "name": "Profile B",
+                        "tools": {
+                            DelayTool::NAME: true,
+                        }
+                    }
+                }
+            }
+        })
+        .to_string()
+        .into_bytes(),
+    )
+    .await;
+    cx.run_until_parked();
+
+    thread.update(cx, |thread, cx| {
+        thread.set_profile(AgentProfileId("profile-a".into()), cx);
+        thread.set_thinking_enabled(false, cx);
+    });
+
+    // Send a message — first iteration starts with model A, profile-a, thinking off.
+    thread
+        .update(cx, |thread, cx| {
+            thread.send(UserMessageId::new(), ["test mid-turn refresh"], cx)
+        })
+        .unwrap();
+    cx.run_until_parked();
+
+    // Verify first request has both tools and thinking disabled.
+    let completions = fake_model_a.pending_completions();
+    assert_eq!(completions.len(), 1);
+    let first_tools = tool_names_for_completion(&completions[0]);
+    assert_eq!(first_tools, vec![DelayTool::NAME, EchoTool::NAME]);
+    assert!(!completions[0].thinking_allowed);
+
+    // Model A responds with an echo tool call.
+    fake_model_a.send_last_completion_stream_event(LanguageModelCompletionEvent::ToolUse(
+        LanguageModelToolUse {
+            id: "tool_1".into(),
+            name: "echo".into(),
+            raw_input: r#"{"text":"hello"}"#.into(),
+            input: json!({"text": "hello"}),
+            is_input_complete: true,
+            thought_signature: None,
+        },
+    ));
+    fake_model_a.end_last_completion_stream();
+
+    // Before the next iteration runs, switch to profile-b (only DelayTool),
+    // swap in a new model, and enable thinking.
+    let fake_model_b = Arc::new(FakeLanguageModel::with_id_and_thinking(
+        "test-provider",
+        "model-b",
+        "Model B",
+        true,
+    ));
+    thread.update(cx, |thread, cx| {
+        thread.set_profile(AgentProfileId("profile-b".into()), cx);
+        thread.set_model(fake_model_b.clone() as Arc<dyn LanguageModel>, cx);
+        thread.set_thinking_enabled(true, cx);
+    });
+
+    // Run until parked — processes the echo tool call, loops back, picks up
+    // the new model/profile/thinking, and makes a second request to model B.
+    cx.run_until_parked();
+
+    // The second request should have gone to model B.
+    let model_b_completions = fake_model_b.pending_completions();
+    assert_eq!(
+        model_b_completions.len(),
+        1,
+        "second request should go to model B"
+    );
+
+    // Profile-b only has DelayTool, so echo should be gone.
+    let second_tools = tool_names_for_completion(&model_b_completions[0]);
+    assert_eq!(second_tools, vec![DelayTool::NAME]);
+
+    // Thinking should now be enabled.
+    assert!(model_b_completions[0].thinking_allowed);
+}

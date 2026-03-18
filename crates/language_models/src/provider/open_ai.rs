@@ -9,9 +9,8 @@ use language_model::{
     LanguageModelCompletionEvent, LanguageModelId, LanguageModelImage, LanguageModelName,
     LanguageModelProvider, LanguageModelProviderId, LanguageModelProviderName,
     LanguageModelProviderState, LanguageModelRequest, LanguageModelRequestMessage,
-    LanguageModelToolChoice, LanguageModelToolResult, LanguageModelToolResultContent,
-    LanguageModelToolUse, LanguageModelToolUseId, MessageContent, RateLimiter, Role, StopReason,
-    TokenUsage, env_var,
+    LanguageModelToolChoice, LanguageModelToolResultContent, LanguageModelToolUse,
+    LanguageModelToolUseId, MessageContent, RateLimiter, Role, StopReason, TokenUsage, env_var,
 };
 use menu;
 use open_ai::responses::{
@@ -506,6 +505,11 @@ pub fn into_open_ai(
         model: model_id.into(),
         messages,
         stream,
+        stream_options: if stream {
+            Some(open_ai::StreamOptions::default())
+        } else {
+            None
+        },
         stop: request.stop,
         temperature: request.temperature.or(Some(1.0)),
         max_completion_tokens: max_output_tokens,
@@ -642,7 +646,10 @@ fn append_message_to_response_items(
                 input_items.push(ResponseInputItem::FunctionCallOutput(
                     ResponseFunctionCallOutputItem {
                         call_id: tool_result.tool_use_id.to_string(),
-                        output: tool_result_output(&tool_result),
+                        output: match tool_result.content {
+                            LanguageModelToolResultContent::Text(text) => text.to_string(),
+                            LanguageModelToolResultContent::Image(image) => image.to_base64_url(),
+                        },
                     },
                 ));
             }
@@ -708,21 +715,6 @@ fn flush_response_parts(
 
     input_items.push(item);
     parts.clear();
-}
-
-fn tool_result_output(result: &LanguageModelToolResult) -> String {
-    if let Some(output) = &result.output {
-        match output {
-            serde_json::Value::String(text) => text.clone(),
-            serde_json::Value::Null => String::new(),
-            _ => output.to_string(),
-        }
-    } else {
-        match &result.content {
-            LanguageModelToolResultContent::Text(text) => text.to_string(),
-            LanguageModelToolResultContent::Image(image) => image.to_base64_url(),
-        }
-    }
 }
 
 fn add_message_content_part(
@@ -1441,7 +1433,9 @@ impl Render for ConfigurationView {
 mod tests {
     use futures::{StreamExt, executor::block_on};
     use gpui::TestAppContext;
-    use language_model::{LanguageModelRequestMessage, LanguageModelRequestTool};
+    use language_model::{
+        LanguageModelRequestMessage, LanguageModelRequestTool, LanguageModelToolResult,
+    };
     use open_ai::responses::{
         ReasoningSummaryPart, ResponseFunctionToolCall, ResponseOutputItem, ResponseOutputMessage,
         ResponseReasoningItem, ResponseStatusDetails, ResponseSummary, ResponseUsage,
@@ -1687,7 +1681,7 @@ mod tests {
                 {
                     "type": "function_call_output",
                     "call_id": "call-42",
-                    "output": "{\"forecast\":\"Sunny\"}"
+                    "output": "Sunny"
                 }
             ],
             "stream": true,
