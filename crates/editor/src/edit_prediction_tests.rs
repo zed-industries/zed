@@ -485,6 +485,57 @@ async fn test_edit_prediction_preview_cleanup_on_toggle_off(cx: &mut gpui::TestA
     });
 }
 
+#[gpui::test]
+async fn test_edit_prediction_preview_activates_when_prediction_arrives_with_modifier_held(
+    cx: &mut gpui::TestAppContext,
+) {
+    init_test(cx, |_| {});
+    load_default_keymap(cx);
+    update_test_language_settings(cx, &|settings| {
+        settings.edit_predictions.get_or_insert_default().mode = Some(EditPredictionsMode::Subtle);
+    });
+
+    let mut cx = EditorTestContext::new(cx).await;
+    let provider = cx.new(|_| FakeEditPredictionDelegate::default());
+    assign_editor_completion_provider(provider.clone(), &mut cx);
+    cx.set_state("let x = ˇ;");
+
+    cx.editor(|editor, _, _| {
+        assert!(!editor.has_active_edit_prediction());
+        assert!(!editor.edit_prediction_preview_is_active());
+    });
+
+    let preview_modifiers = cx.update_editor(|editor, window, cx| {
+        let key_context = editor.key_context_internal(true, window, cx);
+        *editor
+            .preview_edit_prediction_keystroke(window, cx)
+            .unwrap()
+            .modifiers()
+    });
+
+    cx.simulate_modifiers_change(preview_modifiers);
+    cx.run_until_parked();
+
+    cx.editor(|editor, _, _| {
+        assert!(!editor.has_active_edit_prediction());
+        assert!(editor.edit_prediction_preview_is_active());
+    });
+
+    propose_edits(&provider, vec![(8..8, "42")], &mut cx);
+    cx.update_editor(|editor, window, cx| {
+        editor.set_menu_edit_predictions_policy(MenuEditPredictionsPolicy::ByProvider);
+        editor.update_visible_edit_prediction(window, cx)
+    });
+
+    cx.editor(|editor, _, _| {
+        assert!(editor.has_active_edit_prediction());
+        assert!(
+            editor.edit_prediction_preview_is_active(),
+            "prediction preview should activate immediately when the prediction arrives while the preview modifier is still held",
+        );
+    });
+}
+
 fn load_default_keymap(cx: &mut gpui::TestAppContext) {
     cx.update(|cx| {
         cx.bind_keys(
