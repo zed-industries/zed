@@ -4616,6 +4616,7 @@ dependencies = [
  "anyhow",
  "gpui",
  "indoc",
+ "inventory",
  "log",
  "paths",
  "release_channel",
@@ -4624,6 +4625,7 @@ dependencies = [
  "sqlez_macros",
  "tempfile",
  "util",
+ "uuid",
  "zed_env_vars",
 ]
 
