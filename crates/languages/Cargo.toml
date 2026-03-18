@@ -103,6 +103,7 @@ pretty_assertions.workspace = true
 theme = { workspace = true, features = ["test-support"] }
 tree-sitter-bash.workspace = true
 tree-sitter-zsh.workspace = true
+tree-sitter-rust.workspace = true
 tree-sitter-c.workspace = true
 tree-sitter-cpp.workspace = true
 tree-sitter-css.workspace = true
