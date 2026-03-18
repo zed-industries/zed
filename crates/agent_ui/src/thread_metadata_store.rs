@@ -88,7 +88,8 @@ impl ThreadMetadata {
     pub fn from_session_info(agent_id: AgentId, session: &AgentSessionInfo) -> Self {
         let session_id = session.session_id.clone();
         let title = session.title.clone().unwrap_or_default();
-        let updated_at = Utc::now();
+        let updated_at = session.updated_at.unwrap_or_else(|| Utc::now());
+        let created_at = session.created_at.unwrap_or(updated_at);
         let folder_paths = session.work_dirs.clone().unwrap_or_default();
         let agent_id = if agent_id.as_ref() == ZED_AGENT_ID.as_ref() {
             None
@@ -100,7 +101,7 @@ impl ThreadMetadata {
             agent_id,
             title,
             updated_at,
-            created_at: Some(Utc::now()), // handled by db `ON CONFLICT`
+            created_at: Some(created_at),
             folder_paths,
         }
     }
