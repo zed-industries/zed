@@ -113,7 +113,6 @@ pub struct NotebookEditor {
     cell_map: HashMap<CellId, Cell>,
     kernel: Kernel,
     kernel_specification: Option<KernelSpecification>,
-    kernel_explicitly_chosen: bool,
     execution_requests: HashMap<String, CellId>,
     kernel_picker_handle: PopoverMenuHandle<Picker<KernelPickerDelegate>>,
 }
@@ -246,7 +245,6 @@ impl NotebookEditor {
             cell_map: cell_map.clone(),
             kernel: Kernel::Shutdown,
             kernel_specification: None,
-            kernel_explicitly_chosen: false,
             execution_requests: HashMap::default(),
             kernel_picker_handle: PopoverMenuHandle::default(),
         };
@@ -516,7 +514,6 @@ impl NotebookEditor {
         }
 
         self.execution_requests.clear();
-        self.kernel_explicitly_chosen = true;
 
         self.launch_kernel_with_spec(spec, window, cx);
     }
