@@ -736,8 +736,7 @@ impl ThreadsArchiveView {
             .child(
                 h_flex()
                     .h(Tab::container_height(cx))
-                    .p_2()
-                    .pr_1p5()
+                    .px_1p5()
                     .gap_1p5()
                     .border_b_1()
                     .border_color(cx.theme().colors().border)
