@@ -1610,8 +1610,8 @@ impl SearchableItem for Editor {
                 let text: String = buffer_snapshot
                     .text_for_range(selection.start..selection.end)
                     .collect();
-                let text = text.trim_end_matches(&['\n', '\r'][..]);
-                if text.contains('\n') || text.contains('\r') || text.is_empty() {
+                let text = text.trim();
+                if text.is_empty() || text.contains('\n') || text.contains('\r') {
                     String::new()
                 } else {
                     text.to_string()
