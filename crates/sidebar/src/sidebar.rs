@@ -242,6 +242,7 @@ pub struct Sidebar {
     hovered_thread_index: Option<usize>,
     collapsed_groups: HashSet<PathList>,
     expanded_groups: HashMap<PathList, usize>,
+    promoted_threads: HashSet<acp::SessionId>,
     view: SidebarView,
     archive_view: Option<Entity<ThreadsArchiveView>>,
     recent_projects_popover_handle: PopoverMenuHandle<RecentProjects>,
@@ -365,6 +366,7 @@ impl Sidebar {
             hovered_thread_index: None,
             collapsed_groups: HashSet::new(),
             expanded_groups: HashMap::new(),
+            promoted_threads: HashSet::new(),
             view: SidebarView::default(),
             archive_view: None,
             recent_projects_popover_handle: PopoverMenuHandle::default(),
@@ -994,12 +996,34 @@ impl Sidebar {
                 let threads_to_show =
                     DEFAULT_THREADS_SHOWN + (extra_batches * DEFAULT_THREADS_SHOWN);
                 let count = threads_to_show.min(total);
-                let is_fully_expanded = count >= total;
 
-                // Track session IDs and compute active_entry_index as we add
-                // thread entries.
-                for thread in threads.into_iter().take(count) {
-                    current_session_ids.insert(thread.session_info.session_id.clone());
+                self.promoted_threads.clear();
+
+                // Build visible entries in a single pass. Threads within
+                // the cutoff are always shown. Threads beyond it are shown
+                // only if they should be promoted (running, waiting, or
+                // focused)
+                for (index, thread) in threads.into_iter().enumerate() {
+                    let is_hidden = index >= count;
+
+                    let session_id = &thread.session_info.session_id;
+                    if is_hidden {
+                        let is_promoted = thread.status == AgentThreadStatus::Running
+                            || thread.status == AgentThreadStatus::WaitingForConfirmation
+                            || notified_threads.contains(session_id)
+                            || self
+                                .focused_thread
+                                .as_ref()
+                                .is_some_and(|id| id == session_id);
+                        if is_promoted {
+                            self.promoted_threads.insert(session_id.clone());
+                        }
+                        if !self.promoted_threads.contains(session_id) {
+                            continue;
+                        }
+                    }
+
+                    current_session_ids.insert(session_id.clone());
                     if active_entry_index.is_none() {
                         if let Some(focused) = &self.focused_thread {
                             if &thread.session_info.session_id == focused {
@@ -1010,10 +1034,13 @@ impl Sidebar {
                     entries.push(thread.into());
                 }
 
+                let visible = count + self.promoted_threads.len();
+                let is_fully_expanded = visible >= total;
+
                 if total > DEFAULT_THREADS_SHOWN {
                     entries.push(ListEntry::ViewMore {
                         path_list: path_list.clone(),
-                        remaining_count: total.saturating_sub(count),
+                        remaining_count: total.saturating_sub(visible),
                         is_fully_expanded,
                     });
                 }
