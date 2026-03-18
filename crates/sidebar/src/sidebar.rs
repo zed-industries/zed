@@ -2577,7 +2577,7 @@ impl Sidebar {
                 ThreadsArchiveViewEvent::Close => {
                     this.show_thread_list(window, cx);
                 }
-                ThreadsArchiveViewEvent::OpenThread {
+                ThreadsArchiveViewEvent::Unarchive {
                     agent,
                     session_info,
                 } => {

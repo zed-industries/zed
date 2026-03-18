@@ -19,8 +19,8 @@ use menu::{Confirm, SelectFirst, SelectLast, SelectNext, SelectPrevious};
 use project::{AgentId, AgentServerStore};
 use theme::ActiveTheme;
 use ui::{
-    ButtonLike, CommonAnimationExt, ContextMenu, ContextMenuEntry, HighlightedLabel, ListItem,
-    PopoverMenu, PopoverMenuHandle, Tab, TintColor, Tooltip, WithScrollbar, prelude::*,
+    ButtonLike, CommonAnimationExt, ContextMenu, ContextMenuEntry, HighlightedLabel, KeyBinding,
+    ListItem, PopoverMenu, PopoverMenuHandle, Tab, TintColor, Tooltip, WithScrollbar, prelude::*,
     utils::platform_title_bar_height,
 };
 use util::ResultExt as _;
@@ -110,7 +110,7 @@ fn archive_empty_state_message(
 
 pub enum ThreadsArchiveViewEvent {
     Close,
-    OpenThread {
+    Unarchive {
         agent: Agent,
         session_info: AgentSessionInfo,
     },
@@ -289,6 +289,8 @@ impl ThreadsArchiveView {
             this.update(cx, |this, cx| {
                 this.list_state.reset(items.len());
                 this.items = items;
+                this.selection = None;
+                this.hovered_index = None;
                 cx.notify();
             })
             .ok();
@@ -306,7 +308,7 @@ impl ThreadsArchiveView {
         cx.emit(ThreadsArchiveViewEvent::Close);
     }
 
-    fn open_thread(
+    fn unarchive_thread(
         &mut self,
         session_info: AgentSessionInfo,
         window: &mut Window,
@@ -314,7 +316,7 @@ impl ThreadsArchiveView {
     ) {
         self.selection = None;
         self.reset_filter_editor_text(window, cx);
-        cx.emit(ThreadsArchiveViewEvent::OpenThread {
+        cx.emit(ThreadsArchiveViewEvent::Unarchive {
             agent: self.selected_agent.clone(),
             session_info,
         });
@@ -426,7 +428,7 @@ impl ThreadsArchiveView {
         let Some(ArchiveListItem::Entry { session, .. }) = self.items.get(ix) else {
             return;
         };
-        self.open_thread(session.clone(), window, cx);
+        self.unarchive_thread(session.clone(), window, cx);
     }
 
     fn render_list_entry(
@@ -455,7 +457,7 @@ impl ThreadsArchiveView {
                 session,
                 highlight_positions,
             } => {
-                let is_selected = self.selection == Some(ix);
+                let is_focused = self.selection == Some(ix);
                 let hovered = self.hovered_index == Some(ix);
                 let supports_delete = self
                     .history
@@ -489,25 +491,7 @@ impl ThreadsArchiveView {
                 };
 
                 ListItem::new(id)
-                    .toggle_state(is_selected)
-                    .child(
-                        h_flex()
-                            .min_w_0()
-                            .w_full()
-                            .py_1()
-                            .pl_0p5()
-                            .pr_1p5()
-                            .gap_2()
-                            .justify_between()
-                            .child(title_label)
-                            .when(!(hovered && supports_delete), |this| {
-                                this.when_some(timestamp, |this, ts| {
-                                    this.child(
-                                        Label::new(ts).size(LabelSize::Small).color(Color::Muted),
-                                    )
-                                })
-                            }),
-                    )
+                    .focused(is_focused)
                     .on_hover(cx.listener(move |this, is_hovered, _window, cx| {
                         if *is_hovered {
                             this.hovered_index = Some(ix);
@@ -516,31 +500,70 @@ impl ThreadsArchiveView {
                         }
                         cx.notify();
                     }))
-                    .end_slot::<IconButton>(if hovered && supports_delete {
-                        Some(
-                            IconButton::new("delete-thread", IconName::Trash)
-                                .icon_size(IconSize::Small)
-                                .icon_color(Color::Muted)
-                                .tooltip({
-                                    move |_window, cx| {
-                                        Tooltip::for_action_in(
-                                            "Delete Thread",
-                                            &RemoveSelectedThread,
-                                            &focus_handle,
-                                            cx,
+                    .child(
+                        h_flex()
+                            .min_w_0()
+                            .w_full()
+                            .h_7()
+                            .pl_0p5()
+                            .child(title_label),
+                    )
+                    .end_slot(h_flex().pr_2p5().map(|this| {
+                        if hovered || is_focused {
+                            this.child(
+                                h_flex()
+                                    .gap_0p5()
+                                    .child(
+                                        Button::new("unarchive-thread", "Unarchive")
+                                            .style(ButtonStyle::OutlinedGhost)
+                                            .label_size(LabelSize::Small)
+                                            .when(is_focused, |this| {
+                                                this.key_binding(
+                                                    KeyBinding::for_action_in(
+                                                        &menu::Confirm,
+                                                        &focus_handle,
+                                                        cx,
+                                                    )
+                                                    .map(|kb| kb.size(rems_from_px(12.))),
+                                                )
+                                            })
+                                            .on_click(cx.listener(move |this, _, window, cx| {
+                                                this.unarchive_thread(
+                                                    session_info.clone(),
+                                                    window,
+                                                    cx,
+                                                );
+                                            })),
+                                    )
+                                    .when(supports_delete, |this| {
+                                        this.child(
+                                            IconButton::new("delete-thread", IconName::Trash)
+                                                .icon_size(IconSize::Small)
+                                                .icon_color(Color::Muted)
+                                                .tooltip({
+                                                    move |_window, cx| {
+                                                        Tooltip::for_action_in(
+                                                            "Delete Thread",
+                                                            &RemoveSelectedThread,
+                                                            &focus_handle,
+                                                            cx,
+                                                        )
+                                                    }
+                                                })
+                                                .on_click(cx.listener(move |this, _, _, cx| {
+                                                    this.delete_thread(&session_id_for_delete, cx);
+                                                    cx.stop_propagation();
+                                                })),
                                         )
-                                    }
-                                })
-                                .on_click(cx.listener(move |this, _, _, cx| {
-                                    this.delete_thread(&session_id_for_delete, cx);
-                                    cx.stop_propagation();
-                                })),
-                        )
-                    } else {
-                        None
-                    })
-                    .on_click(cx.listener(move |this, _, window, cx| {
-                        this.open_thread(session_info.clone(), window, cx);
+                                    }),
+                            )
+                        } else {
+                            this.when_some(timestamp, |this, ts| {
+                                this.child(
+                                    Label::new(ts).size(LabelSize::Small).color(Color::Muted),
+                                )
+                            })
+                        }
                     }))
                     .into_any_element()
             }
