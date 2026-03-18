@@ -1056,6 +1056,29 @@
     },
   },
   {
+    "context": "CommitEditor > Editor && showing_completions",
+    "use_key_equivalents": true,
+    "bindings": {
+      "enter": "editor::ConfirmCompletion",
+      "shift-enter": "editor::ConfirmCompletionReplace",
+      "tab": "editor::ComposeCompletion",
+    },
+  },
+  {
+    "context": "CommitEditor > Editor && in_snippet && has_next_tabstop && !showing_completions",
+    "use_key_equivalents": true,
+    "bindings": {
+      "tab": "editor::NextSnippetTabstop",
+    },
+  },
+  {
+    "context": "CommitEditor > Editor && in_snippet && has_previous_tabstop && !showing_completions",
+    "use_key_equivalents": true,
+    "bindings": {
+      "shift-tab": "editor::PreviousSnippetTabstop",
+    },
+  },
+  {
     "context": "GitPanel",
     "use_key_equivalents": true,
     "bindings": {

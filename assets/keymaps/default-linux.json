@@ -1010,6 +1010,26 @@
     },
   },
   {
+    "context": "CommitEditor > Editor && showing_completions",
+    "bindings": {
+      "enter": "editor::ConfirmCompletion",
+      "shift-enter": "editor::ConfirmCompletionReplace",
+      "tab": "editor::ComposeCompletion",
+    },
+  },
+  {
+    "context": "CommitEditor > Editor && in_snippet && has_next_tabstop && !showing_completions",
+    "bindings": {
+      "tab": "editor::NextSnippetTabstop",
+    },
+  },
+  {
+    "context": "CommitEditor > Editor && in_snippet && has_previous_tabstop && !showing_completions",
+    "bindings": {
+      "shift-tab": "editor::PreviousSnippetTabstop",
+    },
+  },
+  {
     "context": "DebugPanel",
     "bindings": {
       "ctrl-t": "debugger::ToggleThreadPicker",

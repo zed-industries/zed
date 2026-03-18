@@ -219,6 +219,8 @@ impl PickerDelegate for ScopeSelectorDelegate {
                         _ => Cow::Owned(language.await?.lsp_id()),
                     });
 
+                    fs::create_dir_all(snippets_dir())?;
+
                     workspace.update_in(cx, |workspace, window, cx| {
                         workspace
                             .with_local_workspace(window, cx, |workspace, window, cx| {
