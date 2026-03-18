@@ -1,8 +1,9 @@
 use acp_thread::{
     AcpThread, AcpThreadEvent, AgentSessionInfo, AgentThreadEntry, AssistantMessage,
     AssistantMessageChunk, AuthRequired, LoadError, MentionUri, PermissionOptionChoice,
-    PermissionOptions, PermissionPattern, RetryStatus, ThreadStatus, ToolCall, ToolCallContent,
-    ToolCallStatus, UserMessageId,
+    PermissionOptions, PermissionPattern, RetryStatus, SelectedPermissionOutcome,
+    SelectedPermissionParams, ThreadStatus, ToolCall, ToolCallContent, ToolCallStatus,
+    UserMessageId,
 };
 use acp_thread::{AgentConnection, Plan};
 use action_log::{ActionLog, ActionLogTelemetry};
@@ -235,7 +236,7 @@ impl Conversation {
         self.authorize_tool_call(
             session_id.clone(),
             tool_call_id,
-            option.option_id.clone(),
+            option.option_id.clone().into(),
             option.kind,
             cx,
         );
@@ -246,7 +247,7 @@ impl Conversation {
         &mut self,
         session_id: acp::SessionId,
         tool_call_id: acp::ToolCallId,
-        option_id: acp::PermissionOptionId,
+        outcome: SelectedPermissionOutcome,
         option_kind: acp::PermissionOptionKind,
         cx: &mut Context<Self>,
     ) {
@@ -263,7 +264,7 @@ impl Conversation {
         );
 
         thread.update(cx, |thread, cx| {
-            thread.authorize_tool_call(tool_call_id, option_id, option_kind, cx);
+            thread.authorize_tool_call(tool_call_id, outcome, option_kind, cx);
         });
         cx.notify();
     }
@@ -5839,17 +5840,11 @@ pub(crate) mod tests {
 
         cx.run_until_parked();
 
-        // Find the pattern option ID
+        // Find the pattern option ID (the choice with non-empty sub_patterns)
         let pattern_option = match &permission_options {
             PermissionOptions::Dropdown(choices) => choices
                 .iter()
-                .find(|choice| {
-                    choice
-                        .allow
-                        .option_id
-                        .0
-                        .starts_with("always_allow_pattern:")
-                })
+                .find(|choice| !choice.sub_patterns.is_empty())
                 .map(|choice| &choice.allow)
                 .expect("Should have a pattern option for npm command"),
             _ => panic!("Expected dropdown permission options"),
@@ -5988,8 +5983,9 @@ pub(crate) mod tests {
                 .allow
                 .option_id
                 .0
-                .contains("always_allow_pattern:terminal")
+                .contains("always_allow:terminal")
         );
+        assert!(!choices[1].sub_patterns.is_empty());
         assert_eq!(choices[2].allow.option_id.0.as_ref(), "allow");
 
         let connection =
@@ -6131,13 +6127,14 @@ pub(crate) mod tests {
             .map(|choice| choice.allow.option_id.0.to_string())
             .collect();
 
-        assert!(allow_ids.contains(&"always_allow:terminal".to_string()));
         assert!(allow_ids.contains(&"allow".to_string()));
-        assert!(
+        assert_eq!(
             allow_ids
                 .iter()
-                .any(|id| id.starts_with("always_allow_pattern:terminal\n")),
-            "Missing allow pattern option"
+                .filter(|id| *id == "always_allow:terminal")
+                .count(),
+            2,
+            "Expected two always_allow:terminal IDs (one whole-tool, one pattern with sub_patterns)"
         );
     }
 
@@ -6158,13 +6155,14 @@ pub(crate) mod tests {
             .map(|choice| choice.deny.option_id.0.to_string())
             .collect();
 
-        assert!(deny_ids.contains(&"always_deny:terminal".to_string()));
         assert!(deny_ids.contains(&"deny".to_string()));
-        assert!(
+        assert_eq!(
             deny_ids
                 .iter()
-                .any(|id| id.starts_with("always_deny_pattern:terminal\n")),
-            "Missing deny pattern option"
+                .filter(|id| *id == "always_deny:terminal")
+                .count(),
+            2,
+            "Expected two always_deny:terminal IDs (one whole-tool, one pattern with sub_patterns)"
         );
     }
 
@@ -6352,7 +6350,7 @@ pub(crate) mod tests {
                 conversation.authorize_tool_call(
                     acp::SessionId::new("session-1"),
                     acp::ToolCallId::new("tc-1"),
-                    acp::PermissionOptionId::new("allow-1"),
+                    acp::PermissionOptionId::new("allow-1").into(),
                     acp::PermissionOptionKind::AllowOnce,
                     cx,
                 );
@@ -6375,7 +6373,7 @@ pub(crate) mod tests {
                 conversation.authorize_tool_call(
                     acp::SessionId::new("session-1"),
                     acp::ToolCallId::new("tc-2"),
-                    acp::PermissionOptionId::new("allow-2"),
+                    acp::PermissionOptionId::new("allow-2").into(),
                     acp::PermissionOptionKind::AllowOnce,
                     cx,
                 );

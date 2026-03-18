@@ -1175,32 +1175,28 @@ fn test_permission_option_ids_for_terminal() {
         panic!("Expected dropdown permission options");
     };
 
-    let allow_ids: Vec<String> = choices
-        .iter()
-        .map(|choice| choice.allow.option_id.0.to_string())
-        .collect();
-    let deny_ids: Vec<String> = choices
-        .iter()
-        .map(|choice| choice.deny.option_id.0.to_string())
-        .collect();
+    // Expect 3 choices: always-tool, always-pattern, once
+    assert_eq!(choices.len(), 3);
 
-    assert!(allow_ids.contains(&"always_allow:terminal".to_string()));
-    assert!(allow_ids.contains(&"allow".to_string()));
-    assert!(
-        allow_ids
-            .iter()
-            .any(|id| id.starts_with("always_allow_pattern:terminal\n")),
-        "Missing allow pattern option"
+    // First two choices both use the tool-level option IDs
+    assert_eq!(
+        choices[0].allow.option_id.0.as_ref(),
+        "always_allow:terminal"
     );
+    assert_eq!(choices[0].deny.option_id.0.as_ref(), "always_deny:terminal");
+    assert!(choices[0].sub_patterns.is_empty());
 
-    assert!(deny_ids.contains(&"always_deny:terminal".to_string()));
-    assert!(deny_ids.contains(&"deny".to_string()));
-    assert!(
-        deny_ids
-            .iter()
-            .any(|id| id.starts_with("always_deny_pattern:terminal\n")),
-        "Missing deny pattern option"
+    assert_eq!(
+        choices[1].allow.option_id.0.as_ref(),
+        "always_allow:terminal"
     );
+    assert_eq!(choices[1].deny.option_id.0.as_ref(), "always_deny:terminal");
+    assert_eq!(choices[1].sub_patterns, vec!["^cargo\\s+build(\\s|$)"]);
+
+    // Third choice is the one-time allow/deny
+    assert_eq!(choices[2].allow.option_id.0.as_ref(), "allow");
+    assert_eq!(choices[2].deny.option_id.0.as_ref(), "deny");
+    assert!(choices[2].sub_patterns.is_empty());
 }
 
 #[test]

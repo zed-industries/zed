@@ -437,6 +437,7 @@ impl AgentModelList {
 pub struct PermissionOptionChoice {
     pub allow: acp::PermissionOption,
     pub deny: acp::PermissionOption,
+    pub sub_patterns: Vec<String>,
 }
 
 impl PermissionOptionChoice {

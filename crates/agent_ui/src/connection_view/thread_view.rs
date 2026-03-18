@@ -1568,13 +1568,13 @@ impl ThreadView {
         &mut self,
         session_id: acp::SessionId,
         tool_call_id: acp::ToolCallId,
-        option_id: acp::PermissionOptionId,
+        outcome: SelectedPermissionOutcome,
         option_kind: acp::PermissionOptionKind,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         self.conversation.update(cx, |conversation, cx| {
-            conversation.authorize_tool_call(session_id, tool_call_id, option_id, option_kind, cx);
+            conversation.authorize_tool_call(session_id, tool_call_id, outcome, option_kind, cx);
         });
         if self.should_be_following {
             self.workspace
@@ -1637,7 +1637,7 @@ impl ThreadView {
         self.authorize_tool_call(
             self.id.clone(),
             tool_call_id,
-            option_id,
+            option_id.into(),
             option_kind,
             window,
             cx,
@@ -1755,35 +1755,31 @@ impl ThreadView {
         if let Some(PermissionSelection::SelectedPatterns(checked)) = selection
             && let Some((patterns, tool_name)) = dropdown_with_patterns
         {
-            let checked_patterns: Vec<&str> = patterns
+            let checked_patterns: Vec<_> = patterns
                 .iter()
                 .enumerate()
                 .filter(|(index, _)| checked.contains(index))
-                .map(|(_, cp)| cp.pattern.as_str())
+                .map(|(_, cp)| cp.pattern.clone())
                 .collect();
 
             if !checked_patterns.is_empty() {
-                let (prefix, kind) = if is_allow {
+                let (option_id_str, kind) = if is_allow {
                     (
-                        "always_allow_patterns",
+                        format!("always_allow:{}", tool_name),
                         acp::PermissionOptionKind::AllowAlways,
                     )
                 } else {
                     (
-                        "always_deny_patterns",
+                        format!("always_deny:{}", tool_name),
                         acp::PermissionOptionKind::RejectAlways,
                     )
                 };
-                let option_id =
-                    format!("{}:{}\n{}", prefix, tool_name, checked_patterns.join("\n"));
-                self.authorize_tool_call(
-                    session_id,
-                    tool_call_id,
-                    acp::PermissionOptionId::new(option_id),
-                    kind,
-                    window,
-                    cx,
-                );
+                let outcome =
+                    SelectedPermissionOutcome::new(acp::PermissionOptionId::new(option_id_str))
+                        .params(Some(SelectedPermissionParams::Terminal {
+                            patterns: checked_patterns,
+                        }));
+                self.authorize_tool_call(session_id, tool_call_id, outcome, kind, window, cx);
                 return Some(());
             }
         }
@@ -1801,10 +1797,21 @@ impl ThreadView {
             &selected_choice.deny
         };
 
+        let params = if !selected_choice.sub_patterns.is_empty() {
+            Some(SelectedPermissionParams::Terminal {
+                patterns: selected_choice.sub_patterns.clone(),
+            })
+        } else {
+            None
+        };
+
+        let outcome =
+            SelectedPermissionOutcome::new(selected_option.option_id.clone()).params(params);
+
         self.authorize_tool_call(
             session_id,
             tool_call_id,
-            selected_option.option_id.clone(),
+            outcome,
             selected_option.kind,
             window,
             cx,
@@ -6330,7 +6337,7 @@ impl ThreadView {
                             this.authorize_tool_call(
                                 session_id.clone(),
                                 tool_call_id.clone(),
-                                option_id.clone(),
+                                option_id.clone().into(),
                                 option_kind,
                                 window,
                                 cx,
