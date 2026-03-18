@@ -3248,7 +3248,7 @@ impl Pane {
                                         menu.separator()
                                             .entry(
                                                 ui::utils::reveal_in_file_manager_label(is_remote),
-                                                None::<Box<dyn Action>>,
+                                                Some(Box::new(zed_actions::editor::RevealInFileManager)),
                                                 window.handler_for(&pane, move |pane, _, cx| {
                                                     if let Some(project) = pane.project.upgrade() {
                                                         project.update(cx, |project, cx| {
