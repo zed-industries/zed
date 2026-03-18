@@ -4258,6 +4258,10 @@ mod tests {
         format_prompt_with_budget_for_format(input, ZetaFormat::V0114180EditableRegion, max_tokens)
     }
 
+    fn budget_with_margin(requested_tokens: usize) -> usize {
+        ((requested_tokens as f64) / 0.9).ceil() as usize
+    }
+
     #[test]
     fn test_no_truncation_when_within_budget() {
         let input = make_input(
@@ -4328,7 +4332,7 @@ mod tests {
         );
 
         assert_eq!(
-            format_with_budget(&input, 55),
+            format_with_budget(&input, budget_with_margin(55)),
             Some(
                 indoc! {r#"
                 <|file_sep|>edit history
@@ -4399,7 +4403,7 @@ mod tests {
         );
 
         assert_eq!(
-            format_with_budget(&input, 50).unwrap(),
+            format_with_budget(&input, budget_with_margin(50)).unwrap(),
             indoc! {r#"
                 <|file_sep|>big.rs
                 first excerpt
@@ -4471,7 +4475,7 @@ mod tests {
         // file_b header (7) + excerpt (7) = 14 tokens, which fits.
         // file_a would need another 14 tokens, which doesn't fit.
         assert_eq!(
-            format_with_budget(&input, 52).unwrap(),
+            format_with_budget(&input, budget_with_margin(52)).unwrap(),
             indoc! {r#"
                 <|file_sep|>file_b.rs
                 high priority content
@@ -4544,7 +4548,7 @@ mod tests {
 
         // With tight budget, only order<=1 excerpts included (header + important fn).
         assert_eq!(
-            format_with_budget(&input, 55).unwrap(),
+            format_with_budget(&input, budget_with_margin(55)).unwrap(),
             indoc! {r#"
                 <|file_sep|>mod.rs
                 mod header
@@ -4666,6 +4670,34 @@ mod tests {
                 =======
                 <[fim-middle]>"#}
         );
+    }
+
+    #[test]
+    fn test_v0317_formats_prompt_with_many_related_files() {
+        let related_files = (0..900)
+            .map(|index| {
+                make_related_file(
+                    &format!("related_{index}.rs"),
+                    "fn helper() {\n    let value = 1;\n}\n",
+                )
+            })
+            .collect();
+
+        let input = make_input(
+            "code",
+            0..4,
+            2,
+            vec![make_event("a.rs", "-x\n+y\n")],
+            related_files,
+        );
+
+        let prompt =
+            format_prompt_with_budget_for_format(&input, ZetaFormat::V0317SeedMultiRegions, 4096);
+
+        assert!(prompt.is_some());
+        let prompt = prompt.expect("v0317 should produce a prompt under high related-file count");
+        assert!(prompt.contains("test.rs"));
+        assert!(prompt.contains(CURSOR_MARKER));
     }
 
     #[test]
