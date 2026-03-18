@@ -2381,42 +2381,41 @@ pub async fn resolve_worktree_workspaces(
     fs: &dyn Fs,
 ) -> Vec<WorkspaceEntry> {
     // First pass: resolve worktree paths to main repo paths concurrently.
-    let resolved: Vec<WorkspaceEntry> =
-        futures::future::join_all(workspaces.into_iter().map(|entry| async move {
-            let paths = entry.2.paths();
-            if paths.is_empty() {
-                return entry;
-            }
+    let resolved = futures::future::join_all(workspaces.into_iter().map(|entry| async move {
+        let paths = entry.2.paths();
+        if paths.is_empty() {
+            return entry;
+        }
 
-            // Resolve each path concurrently
-            let resolved_paths: Vec<Option<PathBuf>> = futures::future::join_all(
-                paths
-                    .iter()
-                    .map(|path| fs::resolve_git_worktree_to_main_repo(fs, path)),
-            )
-            .await;
-
-            // If no paths were resolved, this entry is not a worktree — keep as-is
-            if resolved_paths.iter().all(|r| r.is_none()) {
-                return entry;
-            }
-
-            // Build new path list, substituting resolved paths
-            let new_paths: Vec<PathBuf> = paths
+        // Resolve each path concurrently
+        let resolved_paths = futures::future::join_all(
+            paths
                 .iter()
-                .zip(resolved_paths.iter())
-                .map(|(original, resolved)| {
-                    resolved
-                        .as_ref()
-                        .cloned()
-                        .unwrap_or_else(|| original.clone())
-                })
-                .collect();
-
-            let new_path_refs: Vec<&Path> = new_paths.iter().map(|p| p.as_path()).collect();
-            (entry.0, entry.1, PathList::new(&new_path_refs), entry.3)
-        }))
+                .map(|path| project::git_store::resolve_git_worktree_to_main_repo(fs, path)),
+        )
         .await;
+
+        // If no paths were resolved, this entry is not a worktree — keep as-is
+        if resolved_paths.iter().all(|r| r.is_none()) {
+            return entry;
+        }
+
+        // Build new path list, substituting resolved paths
+        let new_paths: Vec<PathBuf> = paths
+            .iter()
+            .zip(resolved_paths.iter())
+            .map(|(original, resolved)| {
+                resolved
+                    .as_ref()
+                    .cloned()
+                    .unwrap_or_else(|| original.clone())
+            })
+            .collect();
+
+        let new_path_refs: Vec<&Path> = new_paths.iter().map(|p| p.as_path()).collect();
+        (entry.0, entry.1, PathList::new(&new_path_refs), entry.3)
+    }))
+    .await;
 
     // Second pass: deduplicate by PathList.
     // When two entries resolve to the same paths, keep the one with the
