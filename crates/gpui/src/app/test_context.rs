@@ -801,6 +801,21 @@ impl VisualTestContext {
         });
     }
 
+    /// Simulate a magnify (pinch-to-zoom) event at the given position
+    pub fn simulate_magnify(
+        &mut self,
+        position: Point<Pixels>,
+        magnification: f32,
+        modifiers: Modifiers,
+    ) {
+        self.simulate_event(crate::MagnifyEvent {
+            position,
+            magnification,
+            touch_phase: crate::TouchPhase::Moved,
+            modifiers,
+        })
+    }
+
     /// Simulate a modifiers changed event
     pub fn simulate_modifiers_change(&mut self, modifiers: Modifiers) {
         self.simulate_event(ModifiersChangedEvent {

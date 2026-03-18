@@ -681,7 +681,7 @@ mod test {
 
     use crate::{
         self as gpui, AppContext as _, Context, FocusHandle, InteractiveElement, IntoElement,
-        KeyBinding, Keystroke, ParentElement, Render, TestAppContext, Window, div,
+        KeyBinding, Keystroke, ParentElement, Render, Styled, TestAppContext, Window, div,
     };
 
     struct TestView {
@@ -712,6 +712,120 @@ mod test {
                     ),
             )
         }
+    }
+
+    use std::cell::Cell;
+    use std::rc::Rc;
+
+    struct MagnifyCapture {
+        magnification: Rc<Cell<f32>>,
+        count: Rc<Cell<u32>>,
+    }
+
+    impl Render for MagnifyCapture {
+        fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+            div()
+                .id("magnify-target")
+                .w(crate::px(500.))
+                .h(crate::px(500.))
+                .on_magnify(cx.listener(|this, event: &crate::MagnifyEvent, _, _| {
+                    this.magnification.set(this.magnification.get() + event.magnification);
+                    this.count.set(this.count.get() + 1);
+                }))
+        }
+    }
+
+    #[gpui::test]
+    fn test_magnify_event_dispatched_to_handler(cx: &mut TestAppContext) {
+        let magnification = Rc::new(Cell::new(0.0f32));
+        let count = Rc::new(Cell::new(0u32));
+
+        let window = cx.update(|cx| {
+            let mag = magnification.clone();
+            let cnt = count.clone();
+            cx.open_window(Default::default(), |_, cx| {
+                cx.new(|_| MagnifyCapture {
+                    magnification: mag,
+                    count: cnt,
+                })
+            })
+            .unwrap()
+        });
+
+        let mut cx = crate::VisualTestContext::from_window(*window, cx);
+
+        // Move mouse into the element to populate the hit test
+        let center = crate::point(crate::px(100.), crate::px(100.));
+        cx.simulate_mouse_move(center, None, crate::Modifiers::default());
+
+        cx.simulate_event(crate::MagnifyEvent {
+            position: center,
+            magnification: 0.5,
+            touch_phase: crate::TouchPhase::Moved,
+            modifiers: crate::Modifiers::default(),
+        });
+
+        assert_eq!(count.get(), 1);
+        assert!((magnification.get() - 0.5).abs() < 0.001);
+    }
+
+    #[gpui::test]
+    fn test_magnify_accumulates_multiple_gestures(cx: &mut TestAppContext) {
+        let magnification = Rc::new(Cell::new(0.0f32));
+        let count = Rc::new(Cell::new(0u32));
+
+        let window = cx.update(|cx| {
+            let mag = magnification.clone();
+            let cnt = count.clone();
+            cx.open_window(Default::default(), |_, cx| {
+                cx.new(|_| MagnifyCapture {
+                    magnification: mag,
+                    count: cnt,
+                })
+            })
+            .unwrap()
+        });
+
+        let mut cx = crate::VisualTestContext::from_window(*window, cx);
+
+        let center = crate::point(crate::px(50.), crate::px(50.));
+        cx.simulate_mouse_move(center, None, crate::Modifiers::default());
+
+        cx.simulate_magnify(center, 0.3, crate::Modifiers::default());
+        cx.simulate_magnify(center, -0.2, crate::Modifiers::default());
+
+        assert_eq!(count.get(), 2);
+        assert!((magnification.get() - 0.1).abs() < 0.001);
+    }
+
+    #[gpui::test]
+    fn test_magnify_event_default() {
+        let event = crate::MagnifyEvent::default();
+        assert_eq!(event.magnification, 0.0);
+        assert_eq!(event.position, crate::Point::default());
+    }
+
+    #[gpui::test]
+    fn test_magnify_platform_input_classification(cx: &mut TestAppContext) {
+        cx.update(|_| {
+            let event = crate::MagnifyEvent {
+                position: crate::point(crate::px(10.), crate::px(20.)),
+                magnification: 0.75,
+                touch_phase: crate::TouchPhase::Started,
+                modifiers: crate::Modifiers::default(),
+            };
+
+            let platform_input = crate::InputEvent::to_platform_input(event);
+            match &platform_input {
+                crate::PlatformInput::Magnify(magnify) => {
+                    assert_eq!(magnify.magnification, 0.75);
+                }
+                other => panic!("Expected PlatformInput::Magnify, got {:?}", other),
+            }
+
+            assert!(platform_input.mouse_event().is_some());
+            assert!(platform_input.keyboard_event().is_none());
+        });
     }
 
     #[gpui::test]
