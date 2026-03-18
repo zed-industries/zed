@@ -2538,10 +2538,12 @@ impl Sidebar {
             .selected(is_active)
             .focused(is_selected)
             .title_label_color(Color::Custom(cx.theme().colors().text.opacity(0.85)))
-            .on_click(cx.listener(move |this, _, window, cx| {
-                this.selection = None;
-                this.create_new_thread(&workspace, window, cx);
-            }))
+            .when(!is_active, |this| {
+                this.on_click(cx.listener(move |this, _, window, cx| {
+                    this.selection = None;
+                    this.create_new_thread(&workspace, window, cx);
+                }))
+            })
             .into_any_element()
     }
 
