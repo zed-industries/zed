@@ -26,21 +26,21 @@ permissions: {}
 jobs:
   assign-reviewers:
     if: >-
-      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.base.repo.full_name == github.repository &&
       github.event.pull_request.draft == false &&
-      contains(fromJSON('["MEMBER", "OWNER"]'), github.event.pull_request.author_association)
+      contains(fromJSON('["MEMBER", "COLLABORATOR", "OWNER"]'), github.event.pull_request.author_association)
     runs-on: ubuntu-latest
     steps:
       - name: Generate app token
         id: app-token
-        uses: actions/create-github-app-token@29824e69f54612133e76f7eaac726eef6c875baf  # v2.2.1
+        uses: actions/create-github-app-token@29824e69f54612133e76f7eaac726eef6c875baf # v2.2.1
         with:
           app-id: ${{ vars.COORDINATOR_APP_ID }}
           private-key: ${{ secrets.COORDINATOR_APP_PRIVATE_KEY }}
           repositories: codeowner-coordinator,zed
 
       - name: Checkout coordinator repo
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4.3.1
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
           repository: zed-industries/codeowner-coordinator
           ref: main
@@ -49,7 +49,7 @@ jobs:
           persist-credentials: false
 
       - name: Setup Python
-        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065  # v5.6.0
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: "3.11"
 
@@ -74,7 +74,7 @@ jobs:
 
       - name: Upload output
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: assign-reviewers-output
           path: /tmp/assign-reviewers-output.txt
