@@ -21,6 +21,7 @@ mod bash;
 mod c;
 mod cpp;
 mod css;
+mod diff;
 mod eslint;
 mod go;
 mod json;
