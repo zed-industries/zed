@@ -9749,18 +9749,41 @@ impl Editor {
         }
     }
 
+    fn in_code_edit_prediction_keybind(
+        &self,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> AcceptEditPredictionBinding {
+        if self.edit_prediction_requires_modifier() {
+            self.preview_edit_prediction_keybind(window, cx)
+        } else {
+            self.accept_edit_prediction_keybind(EditPredictionGranularity::Full, window, cx)
+        }
+    }
+
+    fn compact_edit_prediction_cursor_popover_keystroke<'a>(
+        &self,
+        accept_keystroke: Option<&'a gpui::KeybindingKeystroke>,
+        preview_keystroke: Option<&'a gpui::KeybindingKeystroke>,
+    ) -> Option<&'a gpui::KeybindingKeystroke> {
+        if self.edit_prediction_requires_modifier() {
+            preview_keystroke.or(accept_keystroke)
+        } else {
+            accept_keystroke
+        }
+    }
+
     fn render_edit_prediction_accept_keybind(
         &self,
         window: &mut Window,
         cx: &mut App,
     ) -> Option<AnyElement> {
-        let accept_binding =
-            self.accept_edit_prediction_keybind(EditPredictionGranularity::Full, window, cx);
-        let accept_keystroke = accept_binding.keystroke()?;
+        let keybind = self.in_code_edit_prediction_keybind(window, cx);
+        let keystroke = keybind.keystroke()?;
 
         let is_platform_style_mac = PlatformStyle::platform() == PlatformStyle::Mac;
 
-        let modifiers_color = if *accept_keystroke.modifiers() == window.modifiers() {
+        let modifiers_color = if *keystroke.modifiers() == window.modifiers() {
             Color::Accent
         } else {
             Color::Muted
@@ -9772,22 +9795,19 @@ impl Editor {
             .font(theme::ThemeSettings::get_global(cx).buffer_font.clone())
             .text_size(TextSize::XSmall.rems(cx))
             .child(h_flex().children(ui::render_modifiers(
-                accept_keystroke.modifiers(),
+                keystroke.modifiers(),
                 PlatformStyle::platform(),
                 Some(modifiers_color),
                 Some(IconSize::XSmall.rems().into()),
                 true,
             )))
             .when(is_platform_style_mac, |parent| {
-                parent.child(accept_keystroke.key().to_string())
+                parent.child(keystroke.key().to_string())
             })
             .when(!is_platform_style_mac, |parent| {
                 parent.child(
-                    Key::new(
-                        util::capitalize(accept_keystroke.key()),
-                        Some(Color::Default),
-                    )
-                    .size(Some(IconSize::XSmall.rems().into())),
+                    Key::new(util::capitalize(keystroke.key()), Some(Color::Default))
+                        .size(Some(IconSize::XSmall.rems().into())),
                 )
             })
             .into_any()
@@ -9964,6 +9984,10 @@ impl Editor {
                 if !self.has_visible_completions_menu() {
                     const RADIUS: Pixels = px(6.);
                     const BORDER_WIDTH: Pixels = px(1.);
+                    let compact_keystroke = self.compact_edit_prediction_cursor_popover_keystroke(
+                        accept_keystroke,
+                        preview_keystroke,
+                    );
 
                     return Some(
                         h_flex()
@@ -10024,28 +10048,25 @@ impl Editor {
                                                     .into()
                                             })
                                     })
-                                    .when_some(
-                                        accept_keystroke.as_ref(),
-                                        |el, accept_keystroke| {
-                                            if accept_keystroke.modifiers().modified() {
-                                                el.child(h_flex().children(ui::render_modifiers(
-                                                    accept_keystroke.modifiers(),
-                                                    PlatformStyle::platform(),
+                                    .when_some(compact_keystroke, |el, compact_keystroke| {
+                                        if compact_keystroke.modifiers().modified() {
+                                            el.child(h_flex().children(ui::render_modifiers(
+                                                compact_keystroke.modifiers(),
+                                                PlatformStyle::platform(),
+                                                Some(Color::Default),
+                                                Some(IconSize::XSmall.rems().into()),
+                                                false,
+                                            )))
+                                        } else {
+                                            el.child(
+                                                Key::new(
+                                                    util::capitalize(compact_keystroke.key()),
                                                     Some(Color::Default),
-                                                    Some(IconSize::XSmall.rems().into()),
-                                                    false,
-                                                )))
-                                            } else {
-                                                el.child(
-                                                    Key::new(
-                                                        util::capitalize(accept_keystroke.key()),
-                                                        Some(Color::Default),
-                                                    )
-                                                    .size(Some(IconSize::XSmall.rems().into())),
                                                 )
-                                            }
-                                        },
-                                    ),
+                                                .size(Some(IconSize::XSmall.rems().into())),
+                                            )
+                                        }
+                                    }),
                             )
                             .into_any(),
                     );

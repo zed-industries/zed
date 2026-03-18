@@ -4,6 +4,7 @@ use edit_prediction_types::{
 use gpui::{Entity, KeyBinding, Modifiers, prelude::*};
 use indoc::indoc;
 use language::Buffer;
+use language::EditPredictionsMode;
 use multi_buffer::{Anchor, MultiBufferSnapshot, ToPoint};
 use std::{
     ops::Range,
@@ -16,7 +17,8 @@ use text::{Point, ToOffset};
 use ui::prelude::*;
 
 use crate::{
-    AcceptEditPrediction, EditPrediction, MenuEditPredictionsPolicy, editor_tests::init_test,
+    AcceptEditPrediction, EditPrediction, MenuEditPredictionsPolicy,
+    editor_tests::{init_test, update_test_language_settings},
     test::editor_test_context::EditorTestContext,
 };
 use rpc::proto::PeerId;
@@ -521,6 +523,85 @@ async fn test_tab_is_preferred_accept_binding_over_alt_tab(cx: &mut gpui::TestAp
             keystroke.key(),
             "tab",
             "preferred accept binding should be tab"
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_subtle_in_code_indicator_prefers_preview_binding(cx: &mut gpui::TestAppContext) {
+    init_test(cx, |_| {});
+    load_default_keymap(cx);
+    update_test_language_settings(cx, &|settings| {
+        settings.edit_predictions.get_or_insert_default().mode = Some(EditPredictionsMode::Subtle);
+    });
+
+    let mut cx = EditorTestContext::new(cx).await;
+    let provider = cx.new(|_| FakeEditPredictionDelegate::default());
+    assign_editor_completion_provider(provider.clone(), &mut cx);
+    cx.set_state("let x = ˇ;");
+
+    propose_edits(&provider, vec![(8..8, "42")], &mut cx);
+    cx.update_editor(|editor, window, cx| editor.update_visible_edit_prediction(window, cx));
+
+    cx.update_editor(|editor, window, cx| {
+        assert!(editor.has_active_edit_prediction());
+        assert!(
+            editor.edit_prediction_requires_modifier(),
+            "subtle mode should require a modifier"
+        );
+
+        let accept_binding = editor.accept_edit_prediction_keybind(
+            edit_prediction_types::EditPredictionGranularity::Full,
+            window,
+            cx,
+        );
+        let preview_binding = editor.preview_edit_prediction_keybind(window, cx);
+        let in_code_binding = editor.in_code_edit_prediction_keybind(window, cx);
+
+        let accept_keystroke = accept_binding
+            .keystroke()
+            .expect("should have an accept binding");
+        let preview_keystroke = preview_binding
+            .keystroke()
+            .expect("should have a preview binding");
+        let in_code_keystroke = in_code_binding
+            .keystroke()
+            .expect("should have an in-code binding");
+        let compact_cursor_popover_keystroke = editor
+            .compact_edit_prediction_cursor_popover_keystroke(
+                Some(accept_keystroke),
+                Some(preview_keystroke),
+            )
+            .expect("should have a compact cursor popover binding");
+
+        assert_eq!(accept_keystroke.key(), "tab");
+        assert!(
+            !editor.has_visible_completions_menu(),
+            "compact cursor-popover branch should be used without a completions menu"
+        );
+        assert!(
+            preview_keystroke.modifiers().modified(),
+            "preview binding should use modifiers in subtle mode"
+        );
+        assert_eq!(
+            compact_cursor_popover_keystroke.key(),
+            preview_keystroke.key(),
+            "subtle compact cursor popover should prefer the preview binding"
+        );
+        assert_eq!(
+            compact_cursor_popover_keystroke.modifiers(),
+            preview_keystroke.modifiers(),
+            "subtle compact cursor popover should use the preview binding modifiers"
+        );
+        assert_eq!(
+            in_code_keystroke.key(),
+            preview_keystroke.key(),
+            "subtle in-code indicator should prefer the preview binding"
+        );
+        assert_eq!(
+            in_code_keystroke.modifiers(),
+            preview_keystroke.modifiers(),
+            "subtle in-code indicator should use the preview binding modifiers"
         );
     });
 }
