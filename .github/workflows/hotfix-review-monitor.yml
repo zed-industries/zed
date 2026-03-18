@@ -40,16 +40,16 @@ jobs:
           # Overlap on weekdays is harmless — reviewed PRs are filtered out below.
           SINCE=$(date -u -v-80H +%Y-%m-%dT%H:%M:%SZ 2>/dev/null \
             || date -u -d '80 hours ago' +%Y-%m-%dT%H:%M:%SZ)
+          SINCE_DATE=$(echo "$SINCE" | cut -dT -f1)
 
-          # Get merged PRs with hotfix label from the lookback window
+          # Use the Search API to find hotfix PRs merged in the lookback window.
+          # The Pulls API with state=closed paginates through all closed PRs in
+          # the repo, which times out on large repos. The Search API supports
+          # merged:>DATE natively so GitHub does the filtering server-side.
           gh api --paginate \
-            "repos/${REPO}/pulls?state=closed&sort=updated&direction=desc&per_page=50" \
-            --jq "[
-              .[] |
-              select(.merged_at != null) |
-              select(.merged_at > \"$SINCE\") |
-              select(.labels | map(.name) | index(\"hotfix\"))
-            ]" > /tmp/hotfix_prs.json
+            "search/issues?q=repo:${REPO}+is:pr+is:merged+label:hotfix+merged:>${SINCE_DATE}&per_page=100" \
+            --jq '[.items[] | {number, title, merged_at: .pull_request.merged_at}]' \
+            > /tmp/hotfix_prs.json
 
           # Check each hotfix PR for a post-merge approving review
           jq -r '.[].number' /tmp/hotfix_prs.json | while read -r PR_NUMBER; do
@@ -58,8 +58,7 @@ jobs:
               --jq "[.[] | select(.state == \"APPROVED\")] | length")
 
             if [ "$APPROVALS" -eq 0 ]; then
-              jq ".[] | select(.number == ${PR_NUMBER}) | {number, title, merged_at}" \
-                /tmp/hotfix_prs.json
+              jq ".[] | select(.number == ${PR_NUMBER})" /tmp/hotfix_prs.json
             fi
           done | jq -s '.' > /tmp/unreviewed.json
 
