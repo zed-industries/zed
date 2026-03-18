@@ -3034,3 +3034,60 @@ fn atomic_replace<P: AsRef<Path>>(
         )
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[gpui::test]
+    async fn test_is_git_worktree_checkout_normal_repo(cx: &mut gpui::TestAppContext) {
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            "/repo",
+            json!({
+                ".git": {},
+                "src": { "main.rs": "" }
+            }),
+        )
+        .await;
+
+        assert!(!is_git_worktree_checkout(fs.as_ref(), Path::new("/repo")).await);
+    }
+
+    #[gpui::test]
+    async fn test_is_git_worktree_checkout_worktree(cx: &mut gpui::TestAppContext) {
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            "/worktree",
+            json!({
+                ".git": "gitdir: /main-repo/.git/worktrees/worktree\n",
+                "src": { "main.rs": "" }
+            }),
+        )
+        .await;
+
+        assert!(is_git_worktree_checkout(fs.as_ref(), Path::new("/worktree")).await);
+    }
+
+    #[gpui::test]
+    async fn test_is_git_worktree_checkout_no_git(cx: &mut gpui::TestAppContext) {
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            "/plain",
+            json!({
+                "src": { "main.rs": "" }
+            }),
+        )
+        .await;
+
+        assert!(!is_git_worktree_checkout(fs.as_ref(), Path::new("/plain")).await);
+    }
+
+    #[gpui::test]
+    async fn test_is_git_worktree_checkout_nonexistent_path(cx: &mut gpui::TestAppContext) {
+        let fs = FakeFs::new(cx.executor());
+
+        assert!(!is_git_worktree_checkout(fs.as_ref(), Path::new("/does-not-exist")).await);
+    }
+}

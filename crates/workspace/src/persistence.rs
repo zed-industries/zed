@@ -4517,4 +4517,164 @@ mod tests {
              before the process exits."
         );
     }
+
+    #[gpui::test]
+    async fn test_filter_worktree_workspaces_keeps_normal_repos(cx: &mut gpui::TestAppContext) {
+        let fs = fs::FakeFs::new(cx.executor());
+        fs.insert_tree(
+            "/repo",
+            json!({
+                ".git": {},
+                "src": { "main.rs": "" }
+            }),
+        )
+        .await;
+
+        let workspaces = vec![(
+            WorkspaceId(1),
+            SerializedWorkspaceLocation::Local,
+            PathList::new(&["/repo"]),
+            Utc::now(),
+        )];
+
+        let result = filter_worktree_workspaces(workspaces, fs.as_ref()).await;
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].0, WorkspaceId(1));
+    }
+
+    #[gpui::test]
+    async fn test_filter_worktree_workspaces_removes_worktree_checkouts(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let fs = fs::FakeFs::new(cx.executor());
+        fs.insert_tree(
+            "/worktree",
+            json!({
+                ".git": "gitdir: /main-repo/.git/worktrees/worktree\n",
+                "src": { "main.rs": "" }
+            }),
+        )
+        .await;
+
+        let workspaces = vec![(
+            WorkspaceId(1),
+            SerializedWorkspaceLocation::Local,
+            PathList::new(&["/worktree"]),
+            Utc::now(),
+        )];
+
+        let result = filter_worktree_workspaces(workspaces, fs.as_ref()).await;
+        assert_eq!(result.len(), 0);
+    }
+
+    #[gpui::test]
+    async fn test_filter_worktree_workspaces_keeps_non_git_projects(cx: &mut gpui::TestAppContext) {
+        let fs = fs::FakeFs::new(cx.executor());
+        fs.insert_tree(
+            "/plain",
+            json!({
+                "src": { "main.rs": "" }
+            }),
+        )
+        .await;
+
+        let workspaces = vec![(
+            WorkspaceId(1),
+            SerializedWorkspaceLocation::Local,
+            PathList::new(&["/plain"]),
+            Utc::now(),
+        )];
+
+        let result = filter_worktree_workspaces(workspaces, fs.as_ref()).await;
+        assert_eq!(result.len(), 1);
+    }
+
+    #[gpui::test]
+    async fn test_filter_worktree_workspaces_filters_if_any_path_is_worktree(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let fs = fs::FakeFs::new(cx.executor());
+        fs.insert_tree(
+            "/repo",
+            json!({
+                ".git": {},
+                "src": { "main.rs": "" }
+            }),
+        )
+        .await;
+        fs.insert_tree(
+            "/worktree",
+            json!({
+                ".git": "gitdir: /repo/.git/worktrees/worktree\n",
+                "src": { "lib.rs": "" }
+            }),
+        )
+        .await;
+
+        let workspaces = vec![(
+            WorkspaceId(1),
+            SerializedWorkspaceLocation::Local,
+            PathList::new(&["/repo", "/worktree"]),
+            Utc::now(),
+        )];
+
+        let result = filter_worktree_workspaces(workspaces, fs.as_ref()).await;
+        assert_eq!(result.len(), 0);
+    }
+
+    #[gpui::test]
+    async fn test_filter_worktree_workspaces_mixed_entries(cx: &mut gpui::TestAppContext) {
+        let fs = fs::FakeFs::new(cx.executor());
+        fs.insert_tree(
+            "/repo",
+            json!({
+                ".git": {},
+                "src": { "main.rs": "" }
+            }),
+        )
+        .await;
+        fs.insert_tree(
+            "/worktree",
+            json!({
+                ".git": "gitdir: /repo/.git/worktrees/worktree\n",
+                "src": { "lib.rs": "" }
+            }),
+        )
+        .await;
+
+        let workspaces = vec![
+            (
+                WorkspaceId(1),
+                SerializedWorkspaceLocation::Local,
+                PathList::new(&["/repo"]),
+                Utc::now(),
+            ),
+            (
+                WorkspaceId(2),
+                SerializedWorkspaceLocation::Local,
+                PathList::new(&["/worktree"]),
+                Utc::now(),
+            ),
+        ];
+
+        let result = filter_worktree_workspaces(workspaces, fs.as_ref()).await;
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].0, WorkspaceId(1));
+    }
+
+    #[gpui::test]
+    async fn test_filter_worktree_workspaces_empty_input(cx: &mut gpui::TestAppContext) {
+        let fs = fs::FakeFs::new(cx.executor());
+        let result = filter_worktree_workspaces(
+            Vec::<(
+                WorkspaceId,
+                SerializedWorkspaceLocation,
+                PathList,
+                DateTime<Utc>,
+            )>::new(),
+            fs.as_ref(),
+        )
+        .await;
+        assert_eq!(result.len(), 0);
+    }
 }
