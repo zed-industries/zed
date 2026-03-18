@@ -268,10 +268,6 @@ impl Sidebar {
             window,
             |this, _multi_workspace, event: &MultiWorkspaceEvent, window, cx| match event {
                 MultiWorkspaceEvent::ActiveWorkspaceChanged => {
-                    // Don't clear focused_thread when the active workspace
-                    // changed because a workspace was removed — the focused
-                    // thread may still be valid in the new active workspace.
-                    // Only clear it for explicit user-initiated switches.
                     if mem::take(&mut this.pending_workspace_removal) {
                         // If the removed workspace had no focused thread, seed
                         // from the new active panel so its current thread gets
@@ -288,7 +284,21 @@ impl Sidebar {
                             }
                         }
                     } else {
-                        this.focused_thread = None;
+                        // Seed focused_thread from the new active panel so
+                        // the sidebar highlights the correct thread.
+                        this.focused_thread = this
+                            .multi_workspace
+                            .upgrade()
+                            .and_then(|mw| {
+                                let ws = mw.read(cx).workspace();
+                                ws.read(cx).panel::<AgentPanel>(cx)
+                            })
+                            .and_then(|panel| {
+                                panel
+                                    .read(cx)
+                                    .active_conversation()
+                                    .and_then(|cv| cv.read(cx).parent_id(cx))
+                            });
                     }
                     this.observe_draft_editor(cx);
                     this.update_entries(false, cx);
@@ -1604,6 +1614,11 @@ impl Sidebar {
         let Some(multi_workspace) = self.multi_workspace.upgrade() else {
             return;
         };
+
+        // Set focused_thread eagerly so the sidebar highlight updates
+        // immediately, rather than waiting for a deferred AgentPanel
+        // event which can race with ActiveWorkspaceChanged clearing it.
+        self.focused_thread = Some(session_info.session_id.clone());
 
         multi_workspace.update(cx, |multi_workspace, cx| {
             multi_workspace.activate(workspace.clone(), cx);
