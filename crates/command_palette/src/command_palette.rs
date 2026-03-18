@@ -775,11 +775,9 @@ mod tests {
 
     #[gpui::test]
     async fn test_command_palette(cx: &mut TestAppContext) {
-        persistence::COMMAND_PALETTE_HISTORY
-            .clear_all()
-            .await
-            .unwrap();
         let app_state = init_test(cx);
+        let db = cx.update(|cx| persistence::CommandPaletteDB::global(cx));
+        db.clear_all().await.unwrap();
         let project = Project::test(app_state.fs.clone(), [], cx).await;
         let (multi_workspace, cx) =
             cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));

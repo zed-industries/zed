@@ -1321,7 +1321,7 @@ impl AgentPanel {
         if let Some(agent) = agent_choice {
             cx.background_spawn({
                 let agent = agent.clone();
-                let kvp = kvp.clone();
+                let kvp = kvp;
                 async move {
                     if let Some(serialized) =
                         serde_json::to_string(&LastUsedExternalAgent { agent }).log_err()
