@@ -37,6 +37,7 @@ use project::{
 use remote::RemoteConnectionOptions;
 use settings::Settings;
 use settings::WorktreeId;
+use std::collections::HashSet;
 use std::sync::Arc;
 use theme::ActiveTheme;
 use title_bar_settings::TitleBarSettings;
@@ -47,7 +48,7 @@ use ui::{
 use update_version::UpdateVersion;
 use util::ResultExt;
 use workspace::{
-    MultiWorkspace, ToggleWorkspaceSidebar, ToggleWorktreeSecurity, Workspace,
+    MultiWorkspace, ToggleWorkspaceSidebar, ToggleWorktreeSecurity, Workspace, WorkspaceId,
     notifications::NotifyResultExt,
 };
 use zed_actions::OpenRemote;
@@ -761,10 +762,24 @@ impl TitleBar {
             .map(|w| w.read(cx).focus_handle(cx))
             .unwrap_or_else(|| cx.focus_handle());
 
+        let excluded_workspace_ids: HashSet<WorkspaceId> = self
+            .multi_workspace
+            .as_ref()
+            .and_then(|mw| mw.upgrade())
+            .map(|mw| {
+                mw.read(cx)
+                    .workspaces()
+                    .iter()
+                    .filter_map(|ws| ws.read(cx).database_id())
+                    .collect()
+            })
+            .unwrap_or_default();
+
         PopoverMenu::new("recent-projects-menu")
             .menu(move |window, cx| {
                 Some(recent_projects::RecentProjects::popover(
                     workspace.clone(),
+                    excluded_workspace_ids.clone(),
                     false,
                     focus_handle.clone(),
                     window,

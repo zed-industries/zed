@@ -4106,7 +4106,7 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_remove_workspace_deletes_db_row(cx: &mut gpui::TestAppContext) {
+    async fn test_remove_workspace_clears_session_binding(cx: &mut gpui::TestAppContext) {
         use crate::multi_workspace::MultiWorkspace;
         use feature_flags::FeatureFlagAppExt;
         use gpui::AppContext as _;
@@ -4170,10 +4170,25 @@ mod tests {
 
         cx.run_until_parked();
 
-        // The row should be deleted, not just have session_id cleared.
+        // The row should still exist so it continues to appear in recent
+        // projects, but the session binding should be cleared so it is not
+        // restored as part of any future session.
         assert!(
-            DB.workspace_for_id(workspace2_db_id).is_none(),
-            "Removed workspace's DB row should be deleted entirely"
+            DB.workspace_for_id(workspace2_db_id).is_some(),
+            "Removed workspace's DB row should be preserved for recent projects"
+        );
+
+        let session_workspaces = DB
+            .last_session_workspace_locations("remove-test-session", None, fs.as_ref())
+            .await
+            .unwrap();
+        let restored_ids: Vec<WorkspaceId> = session_workspaces
+            .iter()
+            .map(|sw| sw.workspace_id)
+            .collect();
+        assert!(
+            !restored_ids.contains(&workspace2_db_id),
+            "Removed workspace should not appear in session restoration"
         );
     }
 
@@ -4361,10 +4376,24 @@ mod tests {
         });
         futures::future::join_all(all_tasks).await;
 
-        // After awaiting, the DB row should be deleted.
+        // The row should still exist (for recent projects), but the session
+        // binding should have been cleared by the pending removal task.
         assert!(
-            DB.workspace_for_id(workspace2_db_id).is_none(),
-            "Pending removal task should have deleted the workspace row when awaited"
+            DB.workspace_for_id(workspace2_db_id).is_some(),
+            "Workspace row should be preserved for recent projects"
+        );
+
+        let session_workspaces = DB
+            .last_session_workspace_locations("pending-removal-session", None, fs.as_ref())
+            .await
+            .unwrap();
+        let restored_ids: Vec<WorkspaceId> = session_workspaces
+            .iter()
+            .map(|sw| sw.workspace_id)
+            .collect();
+        assert!(
+            !restored_ids.contains(&workspace2_db_id),
+            "Pending removal task should have cleared the session binding"
         );
     }
 

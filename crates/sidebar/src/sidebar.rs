@@ -30,7 +30,7 @@ use util::ResultExt as _;
 use util::path_list::PathList;
 use workspace::{
     FocusWorkspaceSidebar, MultiWorkspace, MultiWorkspaceEvent, Sidebar as WorkspaceSidebar,
-    ToggleWorkspaceSidebar, Workspace,
+    ToggleWorkspaceSidebar, Workspace, WorkspaceId,
 };
 
 use zed_actions::OpenRecent;
@@ -2089,9 +2089,10 @@ impl Sidebar {
     }
 
     fn render_recent_projects_button(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let workspace = self
-            .multi_workspace
-            .upgrade()
+        let multi_workspace = self.multi_workspace.upgrade();
+
+        let workspace = multi_workspace
+            .as_ref()
             .map(|mw| mw.read(cx).workspace().downgrade());
 
         let focus_handle = workspace
@@ -2100,13 +2101,31 @@ impl Sidebar {
             .map(|w| w.read(cx).focus_handle(cx))
             .unwrap_or_else(|| cx.focus_handle());
 
+        let excluded_workspace_ids: HashSet<WorkspaceId> = multi_workspace
+            .as_ref()
+            .map(|mw| {
+                mw.read(cx)
+                    .workspaces()
+                    .iter()
+                    .filter_map(|ws| ws.read(cx).database_id())
+                    .collect()
+            })
+            .unwrap_or_default();
+
         let popover_handle = self.recent_projects_popover_handle.clone();
 
         PopoverMenu::new("sidebar-recent-projects-menu")
             .with_handle(popover_handle)
             .menu(move |window, cx| {
                 workspace.as_ref().map(|ws| {
-                    RecentProjects::popover(ws.clone(), false, focus_handle.clone(), window, cx)
+                    RecentProjects::popover(
+                        ws.clone(),
+                        excluded_workspace_ids.clone(),
+                        false,
+                        focus_handle.clone(),
+                        window,
+                        cx,
+                    )
                 })
             })
             .trigger_with_tooltip(

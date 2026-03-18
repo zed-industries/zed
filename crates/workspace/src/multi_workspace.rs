@@ -654,8 +654,10 @@ impl MultiWorkspace {
             self.pending_removal_tasks.retain(|task| !task.is_ready());
             self.pending_removal_tasks
                 .push(cx.background_spawn(async move {
+                    // Clear the session binding instead of deleting the row so
+                    // the workspace still appears in the recent-projects list.
                     crate::persistence::DB
-                        .delete_workspace_by_id(workspace_id)
+                        .set_session_binding(workspace_id, None, None)
                         .await
                         .log_err();
                 }));
