@@ -206,8 +206,8 @@ through the remote protocol.
 
 **Key directories for this port:**
 - `ios/` — Xcode project, Swift host app, entitlements
-- `crates/zed-ios/` — Rust staticlib entry point, Keychain bridge, network monitor
-- `crates/gpui/src/platform/ios/` — GPUI iOS platform layer (Metal + UIKit + CoreText)
+- `crates/zed-ios/` — Rust staticlib entry point, app init, Keychain bridge, network monitor
+- `crates/gpui_ios/` — GPUI iOS platform layer (Metal renderer, CoreText text system, UIKit window, GCD dispatcher) — ~4900 lines
 
 **For the full architecture, phase plan, and technical details:**
 Read `docs/ios-port-plan.md` when working on iOS-related code. It covers the SSH
@@ -217,6 +217,11 @@ sync from remote host, Metal renderer porting, and all four development phases.
 **Build the iOS target:**
 ```bash
 rustup target add aarch64-apple-ios aarch64-apple-ios-sim
-cargo build -p zed-ios --target aarch64-apple-ios --release --no-default-features --features ios
-xcodebuild -project ios/ZedApp.xcodeproj -scheme ZedApp -destination 'platform=iOS Simulator,name=iPad Pro 13-inch (M4)' build
+# Simulator:
+cargo build -p zed-ios --target aarch64-apple-ios-sim --release --no-default-features
+xcodebuild -project ios/Zed.xcodeproj -scheme Zed -destination 'platform=iOS Simulator,name=iPad Pro 13-inch (M5)' build
+# Device:
+cargo build -p zed-ios --target aarch64-apple-ios --release --no-default-features
 ```
+Note: do not pass `--features ios` — there is no such feature flag; iOS-specific code
+is gated by `cfg(target_os = "ios")` automatically when targeting `aarch64-apple-ios*`.

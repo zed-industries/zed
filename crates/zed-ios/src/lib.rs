@@ -7,7 +7,11 @@
 //! See: docs/ios-port-plan.md for full architecture details.
 
 #[cfg(target_os = "ios")]
+mod connection_landing;
+
+#[cfg(target_os = "ios")]
 mod ios {
+    #[allow(unused_imports)]
     use gpui::{
         AnyElement, App, AppContext as _, Application, ApplicationKeepAlive, Bounds, Context,
         Element, ElementId, ElementInputHandler, EntityInputHandler, FocusHandle, GlobalElementId,
@@ -28,6 +32,7 @@ mod ios {
 
     // ── Text input smoke-test view ────────────────────────────────────────────
 
+    #[allow(dead_code)]
     /// A minimal text-input view for exercising the UITextInput pipeline.
     /// Type on the software keyboard — characters appear on screen.
     struct TextSmokeView {
@@ -37,6 +42,7 @@ mod ios {
         focus_handle: FocusHandle,
     }
 
+    #[allow(dead_code)]
     impl TextSmokeView {
         fn new(cx: &mut Context<Self>) -> Self {
             Self {
@@ -143,6 +149,7 @@ mod ios {
 
     // ── Element that paints the text and installs the input handler ───────────
 
+    #[allow(dead_code)]
     struct TextSmokeElement {
         view: gpui::Entity<TextSmokeView>,
         focus_handle: FocusHandle,
@@ -350,6 +357,7 @@ mod ios {
                 });
 
                 workspace::init(app_state.clone(), cx);
+                recent_projects::init(cx);
 
                 // Register no-op path prompts. The thin client doesn't open local
                 // projects — all file access goes through the remote host. Without
@@ -362,26 +370,13 @@ mod ios {
                 })
                 .detach();
 
-                APP_STATE.with(|cell| *cell.borrow_mut() = Some(app_state.clone()));
+                APP_STATE.with(|cell| *cell.borrow_mut() = Some(app_state));
                 log::info!("[zed-ios] Zed initialized successfully");
 
-                // Open the workspace window now that init is complete.
-                let task = workspace::Workspace::new_local(
-                    vec![],
-                    app_state,
-                    None,
-                    None,
-                    None,
-                    true,
-                    cx,
-                );
-                cx.spawn(async move |_cx| {
-                    match task.await {
-                        Ok(_) => log::info!("[zed-ios] Workspace opened"),
-                        Err(err) => log::error!("[zed-ios] Failed to open workspace: {err:?}"),
-                    }
-                })
-                .detach();
+                // Show the connection landing screen.
+                if let Err(err) = crate::connection_landing::ConnectionLanding::open(cx) {
+                    log::error!("[zed-ios] Failed to open connection landing: {err:?}");
+                }
             });
         })
         .detach();
