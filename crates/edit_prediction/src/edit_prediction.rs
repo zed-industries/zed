@@ -2151,11 +2151,12 @@ impl EditPredictionStore {
                     let project_state = this.get_or_init_project(&project, cx);
                     let throttle = *select_throttle(project_state, request_trigger);
 
+                    let now = cx.background_executor().now();
                     throttle.and_then(|(last_entity, last_timestamp)| {
                         if throttle_entity != last_entity {
                             return None;
                         }
-                        (last_timestamp + throttle_timeout).checked_duration_since(Instant::now())
+                        (last_timestamp + throttle_timeout).checked_duration_since(now)
                     })
                 })
                 .ok()
@@ -2183,7 +2184,7 @@ impl EditPredictionStore {
                     return;
                 }
 
-                let new_refresh = (throttle_entity, Instant::now());
+                let new_refresh = (throttle_entity, cx.background_executor().now());
                 *select_throttle(project_state, request_trigger) = Some(new_refresh);
                 is_cancelled = false;
             })
