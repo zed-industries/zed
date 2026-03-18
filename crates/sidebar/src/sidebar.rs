@@ -4609,12 +4609,16 @@ mod tests {
 
         sidebar.read_with(cx, |sidebar, _cx| {
             assert_eq!(
-                sidebar.focused_thread, None,
-                "External workspace switch should clear focused_thread"
+                sidebar.focused_thread.as_ref(),
+                Some(&session_id_a),
+                "Switching workspace should seed focused_thread from the new active panel"
             );
-            assert_eq!(
-                sidebar.active_entry_index, None,
-                "No active entry when no thread is focused"
+            let active_entry = sidebar
+                .active_entry_index
+                .and_then(|ix| sidebar.contents.entries.get(ix));
+            assert!(
+                matches!(active_entry, Some(ListEntry::Thread(thread)) if thread.session_info.session_id == session_id_a),
+                "Active entry should be the seeded thread"
             );
         });
 
@@ -4634,8 +4638,9 @@ mod tests {
         // the selection highlight to jump around.
         sidebar.read_with(cx, |sidebar, _cx| {
             assert_eq!(
-                sidebar.focused_thread, None,
-                "Opening a thread in a non-active panel should not set focused_thread"
+                sidebar.focused_thread.as_ref(),
+                Some(&session_id_a),
+                "Opening a thread in a non-active panel should not change focused_thread"
             );
         });
 
@@ -4646,8 +4651,9 @@ mod tests {
 
         sidebar.read_with(cx, |sidebar, _cx| {
             assert_eq!(
-                sidebar.focused_thread, None,
-                "Defocusing the sidebar should not set focused_thread"
+                sidebar.focused_thread.as_ref(),
+                Some(&session_id_a),
+                "Defocusing the sidebar should not change focused_thread"
             );
         });
 
@@ -4662,19 +4668,23 @@ mod tests {
 
         sidebar.read_with(cx, |sidebar, _cx| {
             assert_eq!(
-                sidebar.focused_thread, None,
-                "Switching workspace should clear focused_thread"
+                sidebar.focused_thread.as_ref(),
+                Some(&session_id_b2),
+                "Switching workspace should seed focused_thread from the new active panel"
             );
-            assert_eq!(
-                sidebar.active_entry_index, None,
-                "No active entry when no thread is focused"
+            let active_entry = sidebar
+                .active_entry_index
+                .and_then(|ix| sidebar.contents.entries.get(ix));
+            assert!(
+                matches!(active_entry, Some(ListEntry::Thread(thread)) if thread.session_info.session_id == session_id_b2),
+                "Active entry should be the seeded thread"
             );
         });
 
-        // ── 8. Focusing the agent panel thread restores focused_thread ────
+        // ── 8. Focusing the agent panel thread keeps focused_thread ────
         // Workspace B still has session_id_b2 loaded in the agent panel.
         // Clicking into the thread (simulated by focusing its view) should
-        // set focused_thread via the ThreadFocused event.
+        // keep focused_thread since it was already seeded on workspace switch.
         panel_b.update_in(cx, |panel, window, cx| {
             if let Some(thread_view) = panel.active_conversation_view() {
                 thread_view.read(cx).focus_handle(cx).focus(window, cx);
