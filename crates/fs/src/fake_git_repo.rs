@@ -392,6 +392,8 @@ impl GitRepository for FakeGitRepository {
                 .map(|branch_name| {
                     let ref_name = if branch_name.starts_with("refs/") {
                         branch_name.into()
+                    } else if branch_name.contains('/') {
+                        format!("refs/remotes/{branch_name}").into()
                     } else {
                         format!("refs/heads/{branch_name}").into()
                     };

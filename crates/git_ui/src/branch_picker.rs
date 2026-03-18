@@ -1509,6 +1509,30 @@ mod tests {
         });
         cx.run_until_parked();
 
+        let expected_branches = ["main", "feature-auth", "feature-ui", "develop"]
+            .into_iter()
+            .filter(|name| name != &branch_to_delete)
+            .collect::<HashSet<_>>();
+        let repo_branches = branch_list
+            .update(cx, |branch_list, cx| {
+                branch_list.picker.update(cx, |picker, cx| {
+                    picker
+                        .delegate
+                        .repo
+                        .as_ref()
+                        .unwrap()
+                        .update(cx, |repo, _cx| repo.branches())
+                })
+            })
+            .await
+            .unwrap()
+            .unwrap();
+        let repo_branches = repo_branches
+            .iter()
+            .map(|b| b.name())
+            .collect::<HashSet<_>>();
+        assert_eq!(&repo_branches, &expected_branches);
+
         branch_list.update(cx, move |branch_list, cx| {
             branch_list.picker.update(cx, move |picker, _cx| {
                 assert_eq!(picker.delegate.matches.len(), 3);
@@ -1518,13 +1542,7 @@ mod tests {
                     .iter()
                     .map(|be| be.name())
                     .collect::<HashSet<_>>();
-                assert_eq!(
-                    branches,
-                    ["main", "feature-auth", "feature-ui", "develop"]
-                        .into_iter()
-                        .filter(|name| name != &branch_to_delete)
-                        .collect::<HashSet<_>>()
-                );
+                assert_eq!(branches, expected_branches);
             })
         });
     }
@@ -1577,6 +1595,35 @@ mod tests {
         });
         cx.run_until_parked();
 
+        let expected_branches = [
+            "origin/main",
+            "origin/feature-auth",
+            "fork/feature-ui",
+            "private/develop",
+        ]
+        .into_iter()
+        .filter(|name| name != &branch_to_delete)
+        .collect::<HashSet<_>>();
+        let repo_branches = branch_list
+            .update(cx, |branch_list, cx| {
+                branch_list.picker.update(cx, |picker, cx| {
+                    picker
+                        .delegate
+                        .repo
+                        .as_ref()
+                        .unwrap()
+                        .update(cx, |repo, _cx| repo.branches())
+                })
+            })
+            .await
+            .unwrap()
+            .unwrap();
+        let repo_branches = repo_branches
+            .iter()
+            .map(|b| b.name())
+            .collect::<HashSet<_>>();
+        assert_eq!(&repo_branches, &expected_branches);
+
         // Check matches, it should match one less branch than before
         branch_list.update(cx, move |branch_list, cx| {
             branch_list.picker.update(cx, move |picker, _cx| {
@@ -1587,18 +1634,7 @@ mod tests {
                     .iter()
                     .map(|be| be.name())
                     .collect::<HashSet<_>>();
-                assert_eq!(
-                    branches,
-                    [
-                        "origin/main",
-                        "origin/feature-auth",
-                        "fork/feature-ui",
-                        "private/develop"
-                    ]
-                    .into_iter()
-                    .filter(|name| name != &branch_to_delete)
-                    .collect::<HashSet<_>>()
-                );
+                assert_eq!(branches, expected_branches);
             })
         });
     }
