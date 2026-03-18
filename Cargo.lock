@@ -17759,6 +17759,7 @@ dependencies = [
  "recent_projects",
  "release_channel",
  "remote",
+ "remote_connection",
  "rpc",
  "schemars",
  "semver",

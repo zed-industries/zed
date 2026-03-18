@@ -10,6 +10,7 @@ use gpui::{
 };
 use gpui::{App, Task, Window};
 use project::WorktreeSettings;
+use recent_projects::RemoteConnectionModal;
 use rpc::proto::{self};
 use settings::{Settings as _, SettingsLocation};
 use theme::ActiveTheme;
@@ -332,7 +333,11 @@ impl TitleBar {
 
         let is_connecting_to_project = self
             .workspace
-            .update(cx, |workspace, cx| workspace.has_active_modal(window, cx))
+            .update(cx, |workspace, cx| {
+                workspace
+                    .active_modal::<RemoteConnectionModal>(cx)
+                    .is_some()
+            })
             .unwrap_or(false);
 
         let room = room.read(cx);
