@@ -10091,6 +10091,13 @@ impl Editor {
 
         let has_completion = self.active_edit_prediction.is_some();
 
+        let show_preview_hint = self
+            .active_edit_prediction
+            .as_ref()
+            .is_some_and(|completion| {
+                self.edit_prediction_cursor_popover_shows_preview(completion, cx)
+            });
+
         let is_platform_style_mac = PlatformStyle::platform() == PlatformStyle::Mac;
         Some(
             h_flex()
@@ -10108,61 +10115,142 @@ impl Editor {
                         .child(completion),
                 )
                 .when_some(accept_keystroke, |el, accept_keystroke| {
-                    let preview_key = if accept_keystroke.modifiers().modified() {
-                        accept_keystroke
-                    } else if let Some(pk) = preview_keystroke {
-                        pk
-                    } else {
-                        accept_keystroke
-                    };
+                    if show_preview_hint {
+                        let preview_key = preview_keystroke.unwrap_or(accept_keystroke);
 
-                    el.child(
-                        h_flex()
-                            .h_full()
-                            .border_l_1()
-                            .rounded_r_lg()
-                            .border_color(cx.theme().colors().border)
-                            .bg(Self::edit_prediction_line_popover_bg_color(cx))
-                            .gap_1()
-                            .py_1()
-                            .px_2()
-                            .when(!accept_keystroke.modifiers().modified(), |el| {
-                                el.child(
-                                    Key::new(
-                                        util::capitalize(accept_keystroke.key()),
-                                        Some(Color::Default),
+                        el.child(
+                            h_flex()
+                                .h_full()
+                                .border_l_1()
+                                .rounded_r_lg()
+                                .border_color(cx.theme().colors().border)
+                                .bg(Self::edit_prediction_line_popover_bg_color(cx))
+                                .gap_1()
+                                .py_1()
+                                .px_2()
+                                .when(preview_key.modifiers().modified(), |el| {
+                                    el.child(
+                                        h_flex()
+                                            .font(
+                                                theme::ThemeSettings::get_global(cx)
+                                                    .buffer_font
+                                                    .clone(),
+                                            )
+                                            .when(is_platform_style_mac, |parent| parent.gap_1())
+                                            .child(h_flex().children(ui::render_modifiers(
+                                                preview_key.modifiers(),
+                                                PlatformStyle::platform(),
+                                                Some(if !has_completion {
+                                                    Color::Muted
+                                                } else {
+                                                    Color::Default
+                                                }),
+                                                None,
+                                                false,
+                                            ))),
                                     )
-                                    .size(Some(IconSize::XSmall.rems().into())),
-                                )
-                            })
-                            .when(preview_key.modifiers().modified(), |el| {
-                                el.child(
-                                    h_flex()
-                                        .font(
-                                            theme::ThemeSettings::get_global(cx)
-                                                .buffer_font
-                                                .clone(),
-                                        )
-                                        .when(is_platform_style_mac, |parent| parent.gap_1())
-                                        .child(h_flex().children(ui::render_modifiers(
-                                            preview_key.modifiers(),
-                                            PlatformStyle::platform(),
+                                })
+                                .when(!preview_key.modifiers().modified(), |el| {
+                                    el.child(
+                                        Key::new(
+                                            util::capitalize(preview_key.key()),
                                             Some(if !has_completion {
                                                 Color::Muted
                                             } else {
                                                 Color::Default
                                             }),
-                                            None,
-                                            false,
-                                        ))),
-                                )
+                                        )
+                                        .size(Some(IconSize::XSmall.rems().into())),
+                                    )
+                                })
                                 .child(Label::new("Preview").into_any_element())
-                                .opacity(if has_completion { 1.0 } else { 0.4 })
-                            }),
-                    )
+                                .opacity(if has_completion { 1.0 } else { 0.4 }),
+                        )
+                    } else {
+                        el.child(
+                            h_flex()
+                                .h_full()
+                                .border_l_1()
+                                .rounded_r_lg()
+                                .border_color(cx.theme().colors().border)
+                                .bg(Self::edit_prediction_line_popover_bg_color(cx))
+                                .gap_1()
+                                .py_1()
+                                .px_2()
+                                .when(!accept_keystroke.modifiers().modified(), |el| {
+                                    el.child(
+                                        Key::new(
+                                            util::capitalize(accept_keystroke.key()),
+                                            Some(Color::Default),
+                                        )
+                                        .size(Some(IconSize::XSmall.rems().into())),
+                                    )
+                                })
+                                .when(accept_keystroke.modifiers().modified(), |el| {
+                                    el.child(
+                                        h_flex()
+                                            .font(
+                                                theme::ThemeSettings::get_global(cx)
+                                                    .buffer_font
+                                                    .clone(),
+                                            )
+                                            .when(is_platform_style_mac, |parent| parent.gap_1())
+                                            .child(h_flex().children(ui::render_modifiers(
+                                                accept_keystroke.modifiers(),
+                                                PlatformStyle::platform(),
+                                                Some(if !has_completion {
+                                                    Color::Muted
+                                                } else {
+                                                    Color::Default
+                                                }),
+                                                None,
+                                                false,
+                                            ))),
+                                    )
+                                })
+                                .opacity(if has_completion { 1.0 } else { 0.4 }),
+                        )
+                    }
                 })
                 .into_any(),
         )
+    }
+
+    fn edit_prediction_cursor_popover_shows_preview(
+        &self,
+        completion: &EditPredictionState,
+        _cx: &App,
+    ) -> bool {
+        match &completion.completion {
+            EditPrediction::Edit {
+                edits, snapshot, ..
+            } => {
+                let mut start_row: Option<u32> = None;
+                let mut end_row: Option<u32> = None;
+
+                for (range, text) in edits {
+                    let edit_start_row = range.start.text_anchor.to_point(snapshot).row;
+                    let old_end_row = range.end.text_anchor.to_point(snapshot).row;
+                    let inserted_newline_count =
+                        text.as_ref().chars().filter(|c| *c == '\n').count() as u32;
+                    let deleted_newline_count = old_end_row - edit_start_row;
+                    let preview_end_row = edit_start_row + inserted_newline_count;
+
+                    start_row =
+                        Some(start_row.map_or(edit_start_row, |row| row.min(edit_start_row)));
+                    end_row = Some(end_row.map_or(preview_end_row, |row| row.max(preview_end_row)));
+
+                    if deleted_newline_count > 1 {
+                        end_row = Some(end_row.map_or(old_end_row, |row| row.max(old_end_row)));
+                    }
+                }
+
+                start_row
+                    .zip(end_row)
+                    .is_some_and(|(start_row, end_row)| end_row > start_row)
+            }
+            EditPrediction::MoveWithin { .. } | EditPrediction::MoveOutside { .. } => false,
+        }
     }
 
     fn render_edit_prediction_cursor_popover_preview(

@@ -3,6 +3,7 @@ use edit_prediction_types::{
 };
 use gpui::{Entity, KeyBinding, Modifiers, prelude::*};
 use indoc::indoc;
+use language::Buffer;
 use multi_buffer::{Anchor, MultiBufferSnapshot, ToPoint};
 use std::{
     ops::Range,
@@ -548,6 +549,295 @@ async fn test_tab_accepts_edit_prediction_over_completion(cx: &mut gpui::TestApp
     cx.assert_editor_state("let x = 42ˇ;");
 }
 
+#[gpui::test]
+async fn test_single_line_prediction_uses_accept_cursor_popover_action(
+    cx: &mut gpui::TestAppContext,
+) {
+    init_test(cx, |_| {});
+    load_default_keymap(cx);
+
+    let mut cx = EditorTestContext::new(cx).await;
+    let provider = cx.new(|_| FakeEditPredictionDelegate::default());
+    assign_editor_completion_provider(provider.clone(), &mut cx);
+    cx.set_state("let x = ˇ;");
+
+    propose_edits(&provider, vec![(8..8, "42")], &mut cx);
+    cx.update_editor(|editor, window, cx| editor.update_visible_edit_prediction(window, cx));
+
+    cx.update_editor(|editor, window, cx| {
+        assert!(editor.has_active_edit_prediction());
+
+        let accept_binding = editor.accept_edit_prediction_keybind(
+            edit_prediction_types::EditPredictionGranularity::Full,
+            window,
+            cx,
+        );
+        let preview_binding = editor.preview_edit_prediction_keybind(window, cx);
+
+        let accept_keystroke = accept_binding
+            .keystroke()
+            .expect("should have an accept binding");
+        let preview_keystroke = preview_binding
+            .keystroke()
+            .expect("should have a preview binding");
+
+        let should_show_preview =
+            editor
+                .active_edit_prediction
+                .as_ref()
+                .is_some_and(|prediction| {
+                    editor.edit_prediction_cursor_popover_shows_preview(prediction, cx)
+                });
+
+        assert!(
+            !should_show_preview,
+            "single-line prediction should show the accept action"
+        );
+        assert_eq!(accept_keystroke.key(), "tab");
+        assert!(preview_keystroke.modifiers().modified());
+    });
+}
+
+#[gpui::test]
+async fn test_multi_line_prediction_uses_preview_cursor_popover_action(
+    cx: &mut gpui::TestAppContext,
+) {
+    init_test(cx, |_| {});
+    load_default_keymap(cx);
+
+    let mut cx = EditorTestContext::new(cx).await;
+    let provider = cx.new(|_| FakeEditPredictionDelegate::default());
+    assign_editor_completion_provider(provider.clone(), &mut cx);
+    cx.set_state("let x = ˇ;");
+
+    propose_edits(&provider, vec![(8..8, "42\n43")], &mut cx);
+    cx.update_editor(|editor, window, cx| editor.update_visible_edit_prediction(window, cx));
+
+    cx.update_editor(|editor, window, cx| {
+        assert!(editor.has_active_edit_prediction());
+
+        let preview_binding = editor.preview_edit_prediction_keybind(window, cx);
+        let preview_keystroke = preview_binding
+            .keystroke()
+            .expect("should have a preview binding");
+
+        let should_show_preview =
+            editor
+                .active_edit_prediction
+                .as_ref()
+                .is_some_and(|prediction| {
+                    editor.edit_prediction_cursor_popover_shows_preview(prediction, cx)
+                });
+
+        assert!(
+            should_show_preview,
+            "multi-line prediction should show the preview action"
+        );
+        assert!(preview_keystroke.modifiers().modified());
+    });
+}
+
+#[gpui::test]
+async fn test_single_line_prediction_with_preview_uses_accept_cursor_popover_action(
+    cx: &mut gpui::TestAppContext,
+) {
+    init_test(cx, |_| {});
+    load_default_keymap(cx);
+
+    let mut cx = EditorTestContext::new(cx).await;
+    let provider = cx.new(|_| FakeEditPredictionDelegate::default());
+    assign_editor_completion_provider(provider.clone(), &mut cx);
+    cx.set_state("let x = ˇ;");
+
+    propose_edits_with_preview(&provider, vec![(8..8, "42")], &mut cx).await;
+    cx.update_editor(|editor, window, cx| editor.update_visible_edit_prediction(window, cx));
+
+    cx.update_editor(|editor, window, cx| {
+        assert!(editor.has_active_edit_prediction());
+
+        let accept_binding = editor.accept_edit_prediction_keybind(
+            edit_prediction_types::EditPredictionGranularity::Full,
+            window,
+            cx,
+        );
+        let preview_binding = editor.preview_edit_prediction_keybind(window, cx);
+
+        let accept_keystroke = accept_binding
+            .keystroke()
+            .expect("should have an accept binding");
+        let preview_keystroke = preview_binding
+            .keystroke()
+            .expect("should have a preview binding");
+
+        let should_show_preview =
+            editor
+                .active_edit_prediction
+                .as_ref()
+                .is_some_and(|prediction| {
+                    editor.edit_prediction_cursor_popover_shows_preview(prediction, cx)
+                });
+
+        assert!(
+            !should_show_preview,
+            "single-line prediction should show the accept action even with edit_preview"
+        );
+        assert_eq!(accept_keystroke.key(), "tab");
+        assert!(preview_keystroke.modifiers().modified());
+    });
+}
+
+#[gpui::test]
+async fn test_multi_line_prediction_with_preview_uses_preview_cursor_popover_action(
+    cx: &mut gpui::TestAppContext,
+) {
+    init_test(cx, |_| {});
+    load_default_keymap(cx);
+
+    let mut cx = EditorTestContext::new(cx).await;
+    let provider = cx.new(|_| FakeEditPredictionDelegate::default());
+    assign_editor_completion_provider(provider.clone(), &mut cx);
+    cx.set_state("let x = ˇ;");
+
+    propose_edits_with_preview(&provider, vec![(8..8, "42\n43")], &mut cx).await;
+    cx.update_editor(|editor, window, cx| editor.update_visible_edit_prediction(window, cx));
+    cx.update_editor(|editor, window, cx| {
+        assert!(editor.has_active_edit_prediction());
+
+        let preview_binding = editor.preview_edit_prediction_keybind(window, cx);
+        let preview_keystroke = preview_binding
+            .keystroke()
+            .expect("should have a preview binding");
+
+        let should_show_preview =
+            editor
+                .active_edit_prediction
+                .as_ref()
+                .is_some_and(|prediction| {
+                    editor.edit_prediction_cursor_popover_shows_preview(prediction, cx)
+                });
+
+        assert!(
+            should_show_preview,
+            "multi-line prediction should show the preview action with edit_preview"
+        );
+        assert!(preview_keystroke.modifiers().modified());
+    });
+}
+
+#[gpui::test]
+async fn test_single_line_deletion_of_newline_uses_accept_cursor_popover_action(
+    cx: &mut gpui::TestAppContext,
+) {
+    init_test(cx, |_| {});
+    load_default_keymap(cx);
+
+    let mut cx = EditorTestContext::new(cx).await;
+    let provider = cx.new(|_| FakeEditPredictionDelegate::default());
+    assign_editor_completion_provider(provider.clone(), &mut cx);
+    cx.set_state(indoc! {"
+        fn main() {
+            let value = 1;
+            ˇprintln!(\"done\");
+        }
+    "});
+
+    propose_edits(
+        &provider,
+        vec![(Point::new(1, 18)..Point::new(2, 17), "")],
+        &mut cx,
+    );
+    cx.update_editor(|editor, window, cx| editor.update_visible_edit_prediction(window, cx));
+
+    cx.update_editor(|editor, window, cx| {
+        assert!(editor.has_active_edit_prediction());
+
+        let accept_binding = editor.accept_edit_prediction_keybind(
+            edit_prediction_types::EditPredictionGranularity::Full,
+            window,
+            cx,
+        );
+        let preview_binding = editor.preview_edit_prediction_keybind(window, cx);
+
+        let accept_keystroke = accept_binding
+            .keystroke()
+            .expect("should have an accept binding");
+        let preview_keystroke = preview_binding
+            .keystroke()
+            .expect("should have a preview binding");
+
+        let should_show_preview =
+            editor
+                .active_edit_prediction
+                .as_ref()
+                .is_some_and(|prediction| {
+                    editor.edit_prediction_cursor_popover_shows_preview(prediction, cx)
+                });
+
+        assert!(
+            !should_show_preview,
+            "deleting one newline plus adjacent text should show the accept action"
+        );
+        assert_eq!(accept_keystroke.key(), "tab");
+        assert!(preview_keystroke.modifiers().modified());
+    });
+}
+
+#[gpui::test]
+async fn test_stale_single_line_prediction_does_not_force_preview_cursor_popover_action(
+    cx: &mut gpui::TestAppContext,
+) {
+    init_test(cx, |_| {});
+    load_default_keymap(cx);
+
+    let mut cx = EditorTestContext::new(cx).await;
+    let provider = cx.new(|_| FakeEditPredictionDelegate::default());
+    assign_editor_completion_provider(provider.clone(), &mut cx);
+    cx.set_state("let x = ˇ;");
+
+    propose_edits(&provider, vec![(8..8, "42\n43")], &mut cx);
+    cx.update_editor(|editor, window, cx| editor.update_visible_edit_prediction(window, cx));
+    cx.update_editor(|editor, _window, cx| {
+        assert!(editor.active_edit_prediction.is_some());
+        assert!(editor.stale_edit_prediction_in_menu.is_none());
+        editor.take_active_edit_prediction(cx);
+        assert!(editor.active_edit_prediction.is_none());
+        assert!(editor.stale_edit_prediction_in_menu.is_some());
+    });
+
+    propose_edits(&provider, vec![(8..8, "42")], &mut cx);
+    cx.update_editor(|editor, window, cx| editor.update_visible_edit_prediction(window, cx));
+
+    cx.update_editor(|editor, window, cx| {
+        assert!(editor.has_active_edit_prediction());
+
+        let accept_binding = editor.accept_edit_prediction_keybind(
+            edit_prediction_types::EditPredictionGranularity::Full,
+            window,
+            cx,
+        );
+        let accept_keystroke = accept_binding
+            .keystroke()
+            .expect("should have an accept binding");
+
+        let active_should_show_preview =
+            editor
+                .active_edit_prediction
+                .as_ref()
+                .is_some_and(|prediction| {
+                    editor.edit_prediction_cursor_popover_shows_preview(prediction, cx)
+                });
+        assert!(
+            !active_should_show_preview,
+            "single-line active prediction should show the accept action"
+        );
+        assert!(
+            editor.stale_edit_prediction_in_menu.is_none(),
+            "refreshing the visible prediction should clear stale menu state"
+        );
+        assert_eq!(accept_keystroke.key(), "tab");
+    });
+}
+
 fn assert_editor_active_edit_completion(
     cx: &mut EditorTestContext,
     assert: impl FnOnce(MultiBufferSnapshot, &Vec<(Range<Anchor>, Arc<str>)>),
@@ -596,6 +886,44 @@ fn propose_edits<T: ToOffset>(
     cx: &mut EditorTestContext,
 ) {
     propose_edits_with_cursor_position(provider, edits, None, cx);
+}
+
+async fn propose_edits_with_preview<T: ToOffset + Clone>(
+    provider: &Entity<FakeEditPredictionDelegate>,
+    edits: Vec<(Range<T>, &str)>,
+    cx: &mut EditorTestContext,
+) {
+    let snapshot = cx.buffer_snapshot();
+    let edits = edits
+        .into_iter()
+        .map(|(range, text)| {
+            let anchor_range = snapshot.anchor_after(range.start.clone())
+                ..snapshot.anchor_before(range.end.clone());
+            (anchor_range, Arc::<str>::from(text))
+        })
+        .collect::<Vec<_>>();
+
+    let preview_edits = edits
+        .iter()
+        .map(|(range, text)| (range.clone(), text.clone()))
+        .collect::<Arc<[_]>>();
+
+    let edit_preview = cx
+        .buffer(|buffer: &Buffer, app| buffer.preview_edits(preview_edits, app))
+        .await;
+
+    let provider_edits = edits.into_iter().collect();
+
+    cx.update(|_, cx| {
+        provider.update(cx, |provider, _| {
+            provider.set_edit_prediction(Some(edit_prediction_types::EditPrediction::Local {
+                id: None,
+                edits: provider_edits,
+                cursor_position: None,
+                edit_preview: Some(edit_preview),
+            }))
+        })
+    });
 }
 
 fn propose_edits_with_cursor_position<T: ToOffset>(
