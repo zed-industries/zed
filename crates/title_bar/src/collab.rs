@@ -67,7 +67,7 @@ impl TitleBar {
             session_stats.map(|stats| compute_network_stats(&stats))
         });
 
-        cx.spawn(async move |this, cx| {
+        self.call_stats_update_task = Some(cx.spawn(async move |this, cx| {
             let result = background_task.await;
             this.update(cx, |this, cx| {
                 if let Some(computed) = result {
@@ -78,8 +78,7 @@ impl TitleBar {
                 cx.notify();
             })
             .ok();
-        })
-        .detach();
+        }));
     }
 }
 
@@ -90,8 +89,8 @@ struct ComputedNetworkStats {
 }
 
 fn compute_network_stats(stats: &livekit_client::SessionStats) -> ComputedNetworkStats {
-    let mut best_rtt: Option<f64> = None;
-    let mut best_jitter: Option<f64> = None;
+    let mut min_rtt: Option<f64> = None;
+    let mut max_jitter: Option<f64> = None;
     let mut total_packets_received: u64 = 0;
     let mut total_packets_lost: i64 = 0;
 
@@ -103,8 +102,8 @@ fn compute_network_stats(stats: &livekit_client::SessionStats) -> ComputedNetwor
     for stat in all_stats {
         extract_metrics(
             stat,
-            &mut best_rtt,
-            &mut best_jitter,
+            &mut min_rtt,
+            &mut max_jitter,
             &mut total_packets_received,
             &mut total_packets_lost,
         );
@@ -118,8 +117,8 @@ fn compute_network_stats(stats: &livekit_client::SessionStats) -> ComputedNetwor
     };
 
     ComputedNetworkStats {
-        latency_ms: best_rtt.map(|rtt| rtt * 1000.0),
-        jitter_ms: best_jitter.map(|j| j * 1000.0),
+        latency_ms: min_rtt.map(|rtt| rtt * 1000.0),
+        jitter_ms: max_jitter.map(|j| j * 1000.0),
         packet_loss_pct,
     }
 }
@@ -135,8 +134,8 @@ fn compute_network_stats(stats: &livekit_client::SessionStats) -> ComputedNetwor
 ))]
 fn extract_metrics(
     _stat: &livekit_client::RtcStats,
-    _best_rtt: &mut Option<f64>,
-    _best_jitter: &mut Option<f64>,
+    _min_rtt: &mut Option<f64>,
+    _max_jitter: &mut Option<f64>,
     _total_packets_received: &mut u64,
     _total_packets_lost: &mut i64,
 ) {
@@ -153,8 +152,8 @@ fn extract_metrics(
 ))]
 fn extract_metrics(
     stat: &livekit_client::RtcStats,
-    best_rtt: &mut Option<f64>,
-    best_jitter: &mut Option<f64>,
+    min_rtt: &mut Option<f64>,
+    max_jitter: &mut Option<f64>,
     total_packets_received: &mut u64,
     total_packets_lost: &mut i64,
 ) {
@@ -164,7 +163,7 @@ fn extract_metrics(
         RtcStats::CandidatePair(pair) => {
             let rtt = pair.candidate_pair.current_round_trip_time;
             if rtt > 0.0 {
-                *best_rtt = Some(match *best_rtt {
+                *min_rtt = Some(match *min_rtt {
                     Some(current) => current.min(rtt),
                     None => rtt,
                 });
@@ -173,7 +172,7 @@ fn extract_metrics(
         RtcStats::InboundRtp(inbound) => {
             let jitter = inbound.received.jitter;
             if jitter > 0.0 {
-                *best_jitter = Some(match *best_jitter {
+                *max_jitter = Some(match *max_jitter {
                     Some(current) => current.max(jitter),
                     None => jitter,
                 });
@@ -184,7 +183,7 @@ fn extract_metrics(
         RtcStats::RemoteInboundRtp(remote_inbound) => {
             let rtt = remote_inbound.remote_inbound.round_trip_time;
             if rtt > 0.0 {
-                *best_rtt = Some(match *best_rtt {
+                *min_rtt = Some(match *min_rtt {
                     Some(current) => current.min(rtt),
                     None => rtt,
                 });

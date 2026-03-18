@@ -110,7 +110,7 @@ pub struct Extensions {
 #[serde(deny_unknown_fields)]
 pub struct AcpRegistry;
 
-/// Shows call diagnostics/stats modal.
+/// Show call diagnostics and connection quality statistics.
 #[derive(PartialEq, Clone, Default, Debug, Deserialize, JsonSchema, Action)]
 #[action(namespace = collab)]
 #[serde(deny_unknown_fields)]

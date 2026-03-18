@@ -160,6 +160,7 @@ pub struct TitleBar {
     screen_share_popover_handle: PopoverMenuHandle<ContextMenu>,
     call_stats: collab::CallStats,
     call_stats_poll_task: Option<gpui::Task<()>>,
+    call_stats_update_task: Option<gpui::Task<()>>,
 }
 
 impl Render for TitleBar {
@@ -416,6 +417,7 @@ impl TitleBar {
             screen_share_popover_handle: PopoverMenuHandle::default(),
             call_stats: collab::CallStats::default(),
             call_stats_poll_task: None,
+            call_stats_update_task: None,
         };
 
         // Start polling if already in a call.
