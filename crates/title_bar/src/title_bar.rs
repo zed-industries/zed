@@ -787,8 +787,20 @@ impl TitleBar {
         let repository = self.get_repository_for_worktree(&effective_worktree, cx)?;
         let workspace = self.workspace.upgrade()?;
 
-        let (branch_name, icon_info) = {
+        let (branch_name, icon_info, worktree_name) = {
             let repo = repository.read(cx);
+
+            let worktree_name = if repo.work_directory_abs_path != repo.original_repo_abs_path {
+                let main_repo_name = repo.original_repo_abs_path.file_name();
+                repo.work_directory_abs_path
+                    .ancestors()
+                    .filter_map(|p| p.file_name())
+                    .find(|component| Some(*component) != main_repo_name)
+                    .map(|name| name.to_string_lossy().to_string())
+            } else {
+                None
+            };
+
             let branch_name = repo
                 .branch
                 .as_ref()
@@ -818,7 +830,14 @@ impl TitleBar {
                 (IconName::GitBranch, Color::Muted)
             };
 
-            (branch_name, icon_info)
+            (branch_name, icon_info, worktree_name)
+        };
+
+        let branch_name = branch_name?;
+        let button_text = if let Some(worktree_name) = worktree_name {
+            format!("{}/{}", worktree_name, branch_name)
+        } else {
+            branch_name
         };
 
         let settings = TitleBarSettings::get_global(cx);
@@ -838,7 +857,7 @@ impl TitleBar {
                     ))
                 })
                 .trigger_with_tooltip(
-                    Button::new("project_branch_trigger", branch_name?)
+                    Button::new("project_branch_trigger", button_text)
                         .selected_style(ButtonStyle::Tinted(TintColor::Accent))
                         .label_size(LabelSize::Small)
                         .color(Color::Muted)
