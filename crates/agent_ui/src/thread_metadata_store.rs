@@ -109,7 +109,7 @@ impl ThreadMetadata {
     pub fn from_thread(thread: &Entity<acp_thread::AcpThread>, cx: &App) -> Self {
         let thread_ref = thread.read(cx);
         let session_id = thread_ref.session_id().clone();
-        let title = thread_ref.title().clone();
+        let title = thread_ref.title();
         let updated_at = Utc::now();
 
         let agent_id = thread_ref.connection().agent_id();
