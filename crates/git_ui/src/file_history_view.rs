@@ -1,36 +1,28 @@
 use anyhow::Result;
-use futures::Future;
+
 use git::repository::{FileHistory, FileHistoryEntry, RepoPath};
 use git::{GitHostingProviderRegistry, GitRemote, parse_git_remote_url};
 use gpui::{
-    AnyElement, AnyEntity, App, Asset, Context, Entity, EventEmitter, FocusHandle, Focusable,
-    IntoElement, Render, Task, UniformListScrollHandle, WeakEntity, Window, actions, uniform_list,
+    AnyElement, AnyEntity, App, Context, Entity, EventEmitter, FocusHandle, Focusable, IntoElement,
+    Render, ScrollStrategy, Task, UniformListScrollHandle, WeakEntity, Window, uniform_list,
 };
 use project::{
     Project, ProjectPath,
     git_store::{GitStore, Repository},
 };
 use std::any::{Any, TypeId};
+use std::sync::Arc;
 
 use time::OffsetDateTime;
-use ui::{Avatar, Chip, Divider, ListItem, WithScrollbar, prelude::*};
+use ui::{Chip, Divider, ListItem, WithScrollbar, prelude::*};
 use util::ResultExt;
 use workspace::{
     Item, Workspace,
     item::{ItemEvent, SaveOptions},
 };
 
+use crate::commit_tooltip::CommitAvatar;
 use crate::commit_view::CommitView;
-
-actions!(git, [ViewCommitFromHistory, LoadMoreHistory]);
-
-pub fn init(cx: &mut App) {
-    cx.observe_new(|workspace: &mut Workspace, _window, _cx| {
-        workspace.register_action(|_workspace, _: &ViewCommitFromHistory, _window, _cx| {});
-        workspace.register_action(|_workspace, _: &LoadMoreHistory, _window, _cx| {});
-    })
-    .detach();
-}
 
 const PAGE_SIZE: usize = 50;
 
@@ -191,25 +183,103 @@ impl FileHistoryView {
         task.detach();
     }
 
+    fn select_next(&mut self, _: &menu::SelectNext, _: &mut Window, cx: &mut Context<Self>) {
+        let entry_count = self.history.entries.len();
+        let ix = match self.selected_entry {
+            _ if entry_count == 0 => None,
+            None => Some(0),
+            Some(ix) => {
+                if ix == entry_count - 1 {
+                    Some(0)
+                } else {
+                    Some(ix + 1)
+                }
+            }
+        };
+        self.select_ix(ix, cx);
+    }
+
+    fn select_previous(
+        &mut self,
+        _: &menu::SelectPrevious,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let entry_count = self.history.entries.len();
+        let ix = match self.selected_entry {
+            _ if entry_count == 0 => None,
+            None => Some(entry_count - 1),
+            Some(ix) => {
+                if ix == 0 {
+                    Some(entry_count - 1)
+                } else {
+                    Some(ix - 1)
+                }
+            }
+        };
+        self.select_ix(ix, cx);
+    }
+
+    fn select_first(&mut self, _: &menu::SelectFirst, _: &mut Window, cx: &mut Context<Self>) {
+        let entry_count = self.history.entries.len();
+        let ix = if entry_count != 0 { Some(0) } else { None };
+        self.select_ix(ix, cx);
+    }
+
+    fn select_last(&mut self, _: &menu::SelectLast, _: &mut Window, cx: &mut Context<Self>) {
+        let entry_count = self.history.entries.len();
+        let ix = if entry_count != 0 {
+            Some(entry_count - 1)
+        } else {
+            None
+        };
+        self.select_ix(ix, cx);
+    }
+
+    fn select_ix(&mut self, ix: Option<usize>, cx: &mut Context<Self>) {
+        self.selected_entry = ix;
+        if let Some(ix) = ix {
+            self.scroll_handle.scroll_to_item(ix, ScrollStrategy::Top);
+        }
+        cx.notify();
+    }
+
+    fn confirm(&mut self, _: &menu::Confirm, window: &mut Window, cx: &mut Context<Self>) {
+        self.open_commit_view(window, cx);
+    }
+
+    fn open_commit_view(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(entry) = self
+            .selected_entry
+            .and_then(|ix| self.history.entries.get(ix))
+        else {
+            return;
+        };
+
+        if let Some(repo) = self.repository.upgrade() {
+            let sha_str = entry.sha.to_string();
+            CommitView::open(
+                sha_str,
+                repo.downgrade(),
+                self.workspace.clone(),
+                None,
+                Some(self.history.path.clone()),
+                window,
+                cx,
+            );
+        }
+    }
+
     fn render_commit_avatar(
         &self,
         sha: &SharedString,
+        author_email: Option<SharedString>,
         window: &mut Window,
         cx: &mut App,
-    ) -> impl IntoElement {
-        let remote = self.remote.as_ref().filter(|r| r.host_supports_avatars());
-        let size = rems_from_px(20.);
-
-        if let Some(remote) = remote {
-            let avatar_asset = CommitAvatarAsset::new(remote.clone(), sha.clone());
-            if let Some(Some(url)) = window.use_asset::<CommitAvatarAsset>(&avatar_asset, cx) {
-                Avatar::new(url.to_string()).size(size)
-            } else {
-                Avatar::new("").size(size)
-            }
-        } else {
-            Avatar::new("").size(size)
-        }
+    ) -> AnyElement {
+        CommitAvatar::new(sha, author_email, self.remote.as_ref())
+            .size(rems_from_px(20.))
+            .render(window, cx)
     }
 
     fn render_commit_entry(
@@ -245,12 +315,8 @@ impl FileHistoryView {
             time_format::TimestampFormat::Relative,
         );
 
-        let sha = entry.sha.clone();
-        let repo = self.repository.clone();
-        let workspace = self.workspace.clone();
-        let file_path = self.history.path.clone();
-
         ListItem::new(("commit", ix))
+            .toggle_state(Some(ix) == self.selected_entry)
             .child(
                 h_flex()
                     .h_8()
@@ -264,7 +330,12 @@ impl FileHistoryView {
                             .flex_none()
                             .child(Chip::new(pr_number)),
                     )
-                    .child(self.render_commit_avatar(&entry.sha, window, cx))
+                    .child(self.render_commit_avatar(
+                        &entry.sha,
+                        Some(entry.author_email.clone()),
+                        window,
+                        cx,
+                    ))
                     .child(
                         h_flex()
                             .min_w_0()
@@ -301,68 +372,9 @@ impl FileHistoryView {
                 this.selected_entry = Some(ix);
                 cx.notify();
 
-                if let Some(repo) = repo.upgrade() {
-                    let sha_str = sha.to_string();
-                    CommitView::open(
-                        sha_str,
-                        repo.downgrade(),
-                        workspace.clone(),
-                        None,
-                        Some(file_path.clone()),
-                        window,
-                        cx,
-                    );
-                }
+                this.open_commit_view(window, cx);
             }))
             .into_any_element()
-    }
-}
-
-#[derive(Clone, Debug)]
-struct CommitAvatarAsset {
-    sha: SharedString,
-    remote: GitRemote,
-}
-
-impl std::hash::Hash for CommitAvatarAsset {
-    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        self.sha.hash(state);
-        self.remote.host.name().hash(state);
-    }
-}
-
-impl CommitAvatarAsset {
-    fn new(remote: GitRemote, sha: SharedString) -> Self {
-        Self { remote, sha }
-    }
-}
-
-impl Asset for CommitAvatarAsset {
-    type Source = Self;
-    type Output = Option<SharedString>;
-
-    fn load(
-        source: Self::Source,
-        cx: &mut App,
-    ) -> impl Future<Output = Self::Output> + Send + 'static {
-        let client = cx.http_client();
-        async move {
-            match source
-                .remote
-                .host
-                .commit_author_avatar_url(
-                    &source.remote.owner,
-                    &source.remote.repo,
-                    source.sha.clone(),
-                    client,
-                )
-                .await
-            {
-                Ok(Some(url)) => Some(SharedString::from(url.to_string())),
-                Ok(None) => None,
-                Err(_) => None,
-            }
-        }
     }
 }
 
@@ -380,6 +392,14 @@ impl Render for FileHistoryView {
         let entry_count = self.history.entries.len();
 
         v_flex()
+            .id("file_history_view")
+            .key_context("FileHistoryView")
+            .track_focus(&self.focus_handle)
+            .on_action(cx.listener(Self::select_next))
+            .on_action(cx.listener(Self::select_previous))
+            .on_action(cx.listener(Self::select_first))
+            .on_action(cx.listener(Self::select_last))
+            .on_action(cx.listener(Self::confirm))
             .size_full()
             .bg(cx.theme().colors().editor_background)
             .child(
@@ -409,10 +429,11 @@ impl Render for FileHistoryView {
                                     Button::new("load-more", "Load More")
                                         .disabled(self.loading_more)
                                         .label_size(LabelSize::Small)
-                                        .icon(IconName::ArrowCircle)
-                                        .icon_size(IconSize::Small)
-                                        .icon_color(Color::Muted)
-                                        .icon_position(IconPosition::Start)
+                                        .start_icon(
+                                            Icon::new(IconName::ArrowCircle)
+                                                .size(IconSize::Small)
+                                                .color(Color::Muted),
+                                        )
                                         .on_click(cx.listener(|this, _, window, cx| {
                                             this.load_more(window, cx);
                                         })),
@@ -458,7 +479,7 @@ impl Render for FileHistoryView {
 impl Item for FileHistoryView {
     type Event = ItemEvent;
 
-    fn to_item_events(event: &Self::Event, mut f: impl FnMut(ItemEvent)) {
+    fn to_item_events(event: &Self::Event, f: &mut dyn FnMut(ItemEvent)) {
         f(*event)
     }
 
@@ -493,7 +514,12 @@ impl Item for FileHistoryView {
         Task::ready(None)
     }
 
-    fn navigate(&mut self, _: Box<dyn Any>, _window: &mut Window, _: &mut Context<Self>) -> bool {
+    fn navigate(
+        &mut self,
+        _: Arc<dyn Any + Send>,
+        _window: &mut Window,
+        _: &mut Context<Self>,
+    ) -> bool {
         false
     }
 
@@ -542,9 +568,8 @@ impl Item for FileHistoryView {
 
     fn breadcrumbs(
         &self,
-        _theme: &theme::Theme,
         _cx: &App,
-    ) -> Option<Vec<workspace::item::BreadcrumbText>> {
+    ) -> Option<(Vec<workspace::item::HighlightedText>, Option<gpui::Font>)> {
         None
     }
 
@@ -552,9 +577,9 @@ impl Item for FileHistoryView {
         &mut self,
         _workspace: &mut Workspace,
         window: &mut Window,
-        _cx: &mut Context<Self>,
+        cx: &mut Context<Self>,
     ) {
-        window.focus(&self.focus_handle);
+        window.focus(&self.focus_handle, cx);
     }
 
     fn show_toolbar(&self) -> bool {

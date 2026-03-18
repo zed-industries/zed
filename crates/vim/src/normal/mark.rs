@@ -81,7 +81,7 @@ impl Vim {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some(workspace) = self.workspace(window) else {
+        let Some(workspace) = self.workspace(window, cx) else {
             return;
         };
         workspace.update(cx, |workspace, cx| {
@@ -133,7 +133,7 @@ impl Vim {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some(workspace) = self.workspace(window) else {
+        let Some(workspace) = self.workspace(window, cx) else {
             return;
         };
         let task = workspace.update(cx, |workspace, cx| {
@@ -272,7 +272,7 @@ impl Vim {
         window: &mut Window,
         cx: &mut App,
     ) {
-        let Some(workspace) = self.workspace(window) else {
+        let Some(workspace) = self.workspace(window, cx) else {
             return;
         };
         if name == "`" {
@@ -324,7 +324,7 @@ impl Vim {
             return Some(Mark::Local(anchors));
         }
         VimGlobals::update_global(cx, |globals, cx| {
-            let workspace_id = self.workspace(window)?.entity_id();
+            let workspace_id = self.workspace(window, cx)?.entity_id();
             globals
                 .marks
                 .get_mut(&workspace_id)?
@@ -339,7 +339,7 @@ impl Vim {
         window: &mut Window,
         cx: &mut App,
     ) {
-        let Some(workspace) = self.workspace(window) else {
+        let Some(workspace) = self.workspace(window, cx) else {
             return;
         };
         if name == "`" || name == "'" {
@@ -372,9 +372,12 @@ pub fn jump_motion(
 
 #[cfg(test)]
 mod test {
+    use crate::test::{NeovimBackedTestContext, VimTestContext};
+    use editor::Editor;
     use gpui::TestAppContext;
-
-    use crate::test::NeovimBackedTestContext;
+    use std::path::Path;
+    use util::path;
+    use workspace::{CloseActiveItem, OpenOptions};
 
     #[gpui::test]
     async fn test_quote_mark(cx: &mut TestAppContext) {
@@ -393,5 +396,70 @@ mod test {
         cx.shared_state().await.assert_eq("Hello, worldˇ!");
         cx.simulate_shared_keystrokes("^ ` `").await;
         cx.shared_state().await.assert_eq("Hello, worldˇ!");
+    }
+
+    #[gpui::test]
+    async fn test_global_mark_overwrite(cx: &mut TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+
+        let path = Path::new(path!("/first.rs"));
+        let fs = cx.workspace(|workspace, _, cx| workspace.project().read(cx).fs().clone());
+        fs.as_fake().insert_file(path, "one".into()).await;
+        let path = Path::new(path!("/second.rs"));
+        fs.as_fake().insert_file(path, "two".into()).await;
+
+        let _ = cx
+            .workspace(|workspace, window, cx| {
+                workspace.open_abs_path(
+                    path!("/first.rs").into(),
+                    OpenOptions::default(),
+                    window,
+                    cx,
+                )
+            })
+            .await;
+
+        cx.simulate_keystrokes("m A");
+
+        let _ = cx
+            .workspace(|workspace, window, cx| {
+                workspace.open_abs_path(
+                    path!("/second.rs").into(),
+                    OpenOptions::default(),
+                    window,
+                    cx,
+                )
+            })
+            .await;
+
+        cx.simulate_keystrokes("m A");
+
+        let _ = cx
+            .workspace(|workspace, window, cx| {
+                workspace.active_pane().update(cx, |pane, cx| {
+                    pane.close_active_item(&CloseActiveItem::default(), window, cx)
+                })
+            })
+            .await;
+
+        cx.simulate_keystrokes("m B");
+
+        cx.simulate_keystrokes("' A");
+
+        cx.workspace(|workspace, _, cx| {
+            let active_editor = workspace.active_item_as::<Editor>(cx).unwrap();
+
+            let buffer = active_editor
+                .read(cx)
+                .buffer()
+                .read(cx)
+                .as_singleton()
+                .unwrap();
+
+            let file = buffer.read(cx).file().unwrap();
+            let file_path = file.as_local().unwrap().abs_path(cx);
+
+            assert_eq!(file_path.to_str().unwrap(), path!("/second.rs"));
+        })
     }
 }

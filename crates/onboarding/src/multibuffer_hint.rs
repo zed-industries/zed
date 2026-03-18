@@ -80,7 +80,7 @@ impl MultibufferHint {
         };
 
         if active_pane_item.buffer_kind(cx) == ItemBufferKind::Singleton
-            || active_pane_item.breadcrumbs(cx.theme(), cx).is_none()
+            || active_pane_item.breadcrumbs(cx).is_none()
             || !active_pane_item.can_save(cx)
         {
             return ToolbarItemLocation::Hidden;
@@ -158,10 +158,11 @@ impl Render for MultibufferHint {
                     )
                     .child(
                         Button::new("open_docs", "Learn More")
-                            .icon(IconName::ArrowUpRight)
-                            .icon_size(IconSize::Small)
-                            .icon_color(Color::Muted)
-                            .icon_position(IconPosition::End)
+                            .end_icon(
+                                Icon::new(IconName::ArrowUpRight)
+                                    .size(IconSize::Small)
+                                    .color(Color::Muted),
+                            )
                             .on_click(move |_event, _, cx| {
                                 cx.open_url("https://zed.dev/docs/multibuffers")
                             }),

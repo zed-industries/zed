@@ -124,7 +124,7 @@ impl TasksModalDelegate {
 
 pub struct TasksModal {
     pub picker: Entity<Picker<TasksModalDelegate>>,
-    _subscription: [Subscription; 2],
+    _subscriptions: [Subscription; 2],
 }
 
 impl TasksModal {
@@ -139,13 +139,18 @@ impl TasksModal {
     ) -> Self {
         let picker = cx.new(|cx| {
             Picker::uniform_list(
-                TasksModalDelegate::new(task_store, task_contexts, task_overrides, workspace),
+                TasksModalDelegate::new(
+                    task_store.clone(),
+                    task_contexts,
+                    task_overrides,
+                    workspace.clone(),
+                ),
                 window,
                 cx,
             )
             .modal(is_modal)
         });
-        let _subscription = [
+        let mut _subscriptions = [
             cx.subscribe(&picker, |_, _, _: &DismissEvent, cx| {
                 cx.emit(DismissEvent);
             }),
@@ -155,9 +160,10 @@ impl TasksModal {
                 });
             }),
         ];
+
         Self {
             picker,
-            _subscription,
+            _subscriptions,
         }
     }
 
@@ -748,7 +754,7 @@ mod tests {
     use serde_json::json;
     use task::TaskTemplates;
     use util::path;
-    use workspace::{CloseInactiveTabsAndPanes, OpenOptions, OpenVisible};
+    use workspace::{CloseInactiveTabsAndPanes, MultiWorkspace, OpenOptions, OpenVisible};
 
     use crate::{modal::Spawn, tests::init_test};
 
@@ -781,8 +787,9 @@ mod tests {
         .await;
 
         let project = Project::test(fs, [path!("/dir").as_ref()], cx).await;
-        let (workspace, cx) =
-            cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
+        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
 
         let tasks_picker = open_spawn_tasks(&workspace, cx);
         assert_eq!(
@@ -954,8 +961,9 @@ mod tests {
         .await;
 
         let project = Project::test(fs, [path!("/dir").as_ref()], cx).await;
-        let (workspace, cx) =
-            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
+        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
 
         let tasks_picker = open_spawn_tasks(&workspace, cx);
         assert_eq!(
@@ -1109,8 +1117,9 @@ mod tests {
                 ))),
             ));
         });
-        let (workspace, cx) =
-            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
 
         let _ts_file_1 = workspace
             .update_in(cx, |workspace, window, cx| {
