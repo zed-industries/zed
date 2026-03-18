@@ -1228,9 +1228,9 @@ impl SerializableItem for Editor {
                         }
                         if !restored {
                             buffer.set_text(contents, cx);
-                        }
-                        if let Some(entry) = buffer.peek_undo_stack() {
-                            buffer.forget_transaction(entry.transaction_id());
+                            if let Some(entry) = buffer.peek_undo_stack() {
+                                buffer.forget_transaction(entry.transaction_id());
+                            }
                         }
                     });
 
@@ -2579,9 +2579,9 @@ mod tests {
             deserialized.update(cx, |editor, cx| {
                 assert_eq!(editor.text(cx), "ABC");
 
-                // Perform an undo and verify text changed (even if we don't know exactly what was undone)
+                // Perform an undo and verify text changed
                 editor.undo(&Default::default(), window, cx);
-                assert_ne!(editor.text(cx), "ABC");
+                assert_eq!(editor.text(cx), "AB");
             });
         });
     }
