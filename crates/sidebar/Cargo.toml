@@ -25,6 +25,7 @@ chrono.workspace = true
 editor.workspace = true
 feature_flags.workspace = true
 fs.workspace = true
+git.workspace = true
 gpui.workspace = true
 menu.workspace = true
 project.workspace = true

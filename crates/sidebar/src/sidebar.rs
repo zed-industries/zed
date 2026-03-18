@@ -27,14 +27,13 @@ use std::path::Path;
 use std::sync::Arc;
 use theme::ActiveTheme;
 use ui::{
-    AgentThreadStatus, ButtonStyle, CommonAnimationExt as _, HighlightedLabel, KeyBinding,
-    ListItem, PopoverMenu, PopoverMenuHandle, Tab, ThreadItem, TintColor, Tooltip, WithScrollbar,
-    prelude::*,
+    AgentThreadStatus, CommonAnimationExt, Divider, HighlightedLabel, KeyBinding, ListItem,
+    PopoverMenu, PopoverMenuHandle, Tab, ThreadItem, TintColor, Tooltip, WithScrollbar, prelude::*,
 };
 use util::ResultExt as _;
 use util::path_list::PathList;
 use workspace::{
-    FocusWorkspaceSidebar, MultiWorkspace, MultiWorkspaceEvent, Sidebar as WorkspaceSidebar,
+    FocusWorkspaceSidebar, MultiWorkspace, MultiWorkspaceEvent, Open, Sidebar as WorkspaceSidebar,
     ToggleWorkspaceSidebar, Workspace, WorkspaceId,
 };
 
@@ -718,6 +717,10 @@ impl Sidebar {
             }
 
             let path_list = workspace_path_list(workspace, cx);
+            if path_list.paths().is_empty() {
+                continue;
+            }
+
             let label = workspace_label_from_path_list(&path_list);
 
             let is_collapsed = self.collapsed_groups.contains(&path_list);
@@ -1257,9 +1260,11 @@ impl Sidebar {
                     .py_1()
                     .gap_1p5()
                     .child(
-                        Icon::new(disclosure_icon)
-                            .size(IconSize::Small)
-                            .color(Color::Custom(cx.theme().colors().icon_muted.opacity(0.6))),
+                        h_flex().size_4().flex_none().justify_center().child(
+                            Icon::new(disclosure_icon)
+                                .size(IconSize::Small)
+                                .color(Color::Custom(cx.theme().colors().icon_muted.opacity(0.6))),
+                        ),
                     )
                     .child(label)
                     .when(is_collapsed && has_running_threads, |this| {
@@ -2540,7 +2545,52 @@ impl Sidebar {
             .into_any_element()
     }
 
-    fn render_sidebar_header(&self, window: &Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render_empty_state(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        v_flex()
+            .id("sidebar-empty-state")
+            .p_4()
+            .size_full()
+            .items_center()
+            .justify_center()
+            .gap_1()
+            .track_focus(&self.focus_handle(cx))
+            .child(
+                Button::new("open_project", "Open Project")
+                    .full_width()
+                    .key_binding(KeyBinding::for_action(&workspace::Open::default(), cx))
+                    .on_click(|_, window, cx| {
+                        window.dispatch_action(
+                            Open {
+                                create_new_window: false,
+                            }
+                            .boxed_clone(),
+                            cx,
+                        );
+                    }),
+            )
+            .child(
+                h_flex()
+                    .w_1_2()
+                    .gap_2()
+                    .child(Divider::horizontal())
+                    .child(Label::new("or").size(LabelSize::XSmall).color(Color::Muted))
+                    .child(Divider::horizontal()),
+            )
+            .child(
+                Button::new("clone_repo", "Clone Repository")
+                    .full_width()
+                    .on_click(|_, window, cx| {
+                        window.dispatch_action(git::Clone.boxed_clone(), cx);
+                    }),
+            )
+    }
+
+    fn render_sidebar_header(
+        &self,
+        empty_state: bool,
+        window: &Window,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
         let has_query = self.has_filter_query(cx);
         let traffic_lights = cfg!(target_os = "macos") && !window.is_fullscreen();
         let header_height = platform_title_bar_height(window);
@@ -2573,42 +2623,46 @@ impl Sidebar {
                             .child(self.render_recent_projects_button(cx)),
                     ),
             )
-            .child(
-                h_flex()
-                    .h(Tab::container_height(cx))
-                    .px_1p5()
-                    .gap_1p5()
-                    .border_b_1()
-                    .border_color(cx.theme().colors().border)
-                    .child(
-                        h_flex().size_4().flex_none().justify_center().child(
-                            Icon::new(IconName::MagnifyingGlass)
-                                .size(IconSize::Small)
-                                .color(Color::Muted),
-                        ),
-                    )
-                    .child(self.render_filter_input(cx))
-                    .child(
-                        h_flex()
-                            .gap_1()
-                            .when(
-                                self.selection.is_some()
-                                    && !self.filter_editor.focus_handle(cx).is_focused(window),
-                                |this| this.child(KeyBinding::for_action(&FocusSidebarFilter, cx)),
-                            )
-                            .when(has_query, |this| {
-                                this.child(
-                                    IconButton::new("clear_filter", IconName::Close)
-                                        .icon_size(IconSize::Small)
-                                        .tooltip(Tooltip::text("Clear Search"))
-                                        .on_click(cx.listener(|this, _, window, cx| {
-                                            this.reset_filter_editor_text(window, cx);
-                                            this.update_entries(false, cx);
-                                        })),
+            .when(!empty_state, |this| {
+                this.child(
+                    h_flex()
+                        .h(Tab::container_height(cx))
+                        .px_1p5()
+                        .gap_1p5()
+                        .border_b_1()
+                        .border_color(cx.theme().colors().border)
+                        .child(
+                            h_flex().size_4().flex_none().justify_center().child(
+                                Icon::new(IconName::MagnifyingGlass)
+                                    .size(IconSize::Small)
+                                    .color(Color::Muted),
+                            ),
+                        )
+                        .child(self.render_filter_input(cx))
+                        .child(
+                            h_flex()
+                                .gap_1()
+                                .when(
+                                    self.selection.is_some()
+                                        && !self.filter_editor.focus_handle(cx).is_focused(window),
+                                    |this| {
+                                        this.child(KeyBinding::for_action(&FocusSidebarFilter, cx))
+                                    },
                                 )
-                            }),
-                    ),
-            )
+                                .when(has_query, |this| {
+                                    this.child(
+                                        IconButton::new("clear_filter", IconName::Close)
+                                            .icon_size(IconSize::Small)
+                                            .tooltip(Tooltip::text("Clear Search"))
+                                            .on_click(cx.listener(|this, _, window, cx| {
+                                                this.reset_filter_editor_text(window, cx);
+                                                this.update_entries(false, cx);
+                                            })),
+                                    )
+                                }),
+                        ),
+                )
+            })
     }
 
     fn render_sidebar_toggle_button(&self, _cx: &mut Context<Self>) -> impl IntoElement {
@@ -2669,12 +2723,15 @@ impl Sidebar {
             .agent_server_store()
             .clone();
 
+        let has_open_project = !workspace_path_list(&active_workspace, cx).is_empty();
+
         let archive_view = cx.new(|cx| {
             ThreadsArchiveView::new(
                 agent_connection_store,
                 agent_server_store,
                 thread_store,
                 fs,
+                has_open_project,
                 window,
                 cx,
             )
@@ -2756,6 +2813,8 @@ impl Render for Sidebar {
             .title_bar_background
             .blend(cx.theme().colors().panel_background.opacity(0.8));
 
+        let empty_state = self.contents.entries.is_empty();
+
         v_flex()
             .id("workspace-sidebar")
             .key_context("ThreadsSidebar")
@@ -2783,24 +2842,30 @@ impl Render for Sidebar {
             .border_r_1()
             .border_color(cx.theme().colors().border)
             .map(|this| match self.view {
-                SidebarView::ThreadList => {
-                    this.child(self.render_sidebar_header(window, cx)).child(
-                        v_flex()
-                            .relative()
-                            .flex_1()
-                            .overflow_hidden()
-                            .child(
-                                list(
-                                    self.list_state.clone(),
-                                    cx.processor(Self::render_list_entry),
-                                )
-                                .flex_1()
-                                .size_full(),
+                SidebarView::ThreadList => this
+                    .child(self.render_sidebar_header(empty_state, window, cx))
+                    .map(|this| {
+                        if empty_state {
+                            this.child(self.render_empty_state(cx))
+                        } else {
+                            this.child(
+                                v_flex()
+                                    .relative()
+                                    .flex_1()
+                                    .overflow_hidden()
+                                    .child(
+                                        list(
+                                            self.list_state.clone(),
+                                            cx.processor(Self::render_list_entry),
+                                        )
+                                        .flex_1()
+                                        .size_full(),
+                                    )
+                                    .when_some(sticky_header, |this, header| this.child(header))
+                                    .vertical_scrollbar_for(&self.list_state, window, cx),
                             )
-                            .when_some(sticky_header, |this, header| this.child(header))
-                            .vertical_scrollbar_for(&self.list_state, window, cx),
-                    )
-                }
+                        }
+                    }),
                 SidebarView::Archive => {
                     if let Some(archive_view) = &self.archive_view {
                         this.child(archive_view.clone())
@@ -3166,13 +3231,7 @@ mod tests {
 
         assert_eq!(
             visible_entries_as_strings(&sidebar, cx),
-            vec![
-                "v [project-a]",
-                "  [+ New Thread]",
-                "  Thread A1",
-                "v [Empty Workspace]",
-                "  [+ New Thread]"
-            ]
+            vec!["v [project-a]", "  [+ New Thread]", "  Thread A1",]
         );
 
         // Remove the second workspace
@@ -4021,13 +4080,7 @@ mod tests {
         // Thread A is still running; no notification yet.
         assert_eq!(
             visible_entries_as_strings(&sidebar, cx),
-            vec![
-                "v [project-a]",
-                "  [+ New Thread]",
-                "  Hello * (running)",
-                "v [Empty Workspace]",
-                "  [+ New Thread]",
-            ]
+            vec!["v [project-a]", "  [+ New Thread]", "  Hello * (running)",]
         );
 
         // Complete thread A's turn (transition Running → Completed).
@@ -4037,13 +4090,7 @@ mod tests {
         // The completed background thread shows a notification indicator.
         assert_eq!(
             visible_entries_as_strings(&sidebar, cx),
-            vec![
-                "v [project-a]",
-                "  [+ New Thread]",
-                "  Hello * (!)",
-                "v [Empty Workspace]",
-                "  [+ New Thread]",
-            ]
+            vec!["v [project-a]", "  [+ New Thread]", "  Hello * (!)",]
         );
     }
 
@@ -4262,10 +4309,6 @@ mod tests {
                 "  [+ New Thread]",
                 "  Fix bug in sidebar",
                 "  Add tests for editor",
-                "v [Empty Workspace]",
-                "  [+ New Thread]",
-                "  Refactor sidebar layout",
-                "  Fix typo in README",
             ]
         );
 
@@ -4273,19 +4316,14 @@ mod tests {
         type_in_search(&sidebar, "sidebar", cx);
         assert_eq!(
             visible_entries_as_strings(&sidebar, cx),
-            vec![
-                "v [project-a]",
-                "  Fix bug in sidebar  <== selected",
-                "v [Empty Workspace]",
-                "  Refactor sidebar layout",
-            ]
+            vec!["v [project-a]", "  Fix bug in sidebar  <== selected",]
         );
 
         // "typo" only matches in the second workspace — the first header disappears.
         type_in_search(&sidebar, "typo", cx);
         assert_eq!(
             visible_entries_as_strings(&sidebar, cx),
-            vec!["v [Empty Workspace]", "  Fix typo in README  <== selected",]
+            Vec::<String>::new()
         );
 
         // "project-a" matches the first workspace name — the header appears
@@ -4364,12 +4402,7 @@ mod tests {
         type_in_search(&sidebar, "sidebar", cx);
         assert_eq!(
             visible_entries_as_strings(&sidebar, cx),
-            vec![
-                "v [alpha-project]",
-                "  Fix bug in sidebar  <== selected",
-                "v [Empty Workspace]",
-                "  Refactor sidebar layout",
-            ]
+            vec!["v [alpha-project]", "  Fix bug in sidebar  <== selected",]
         );
 
         // "alpha sidebar" matches the workspace name "alpha-project" (fuzzy: a-l-p-h-a-s-i-d-e-b-a-r
@@ -4379,12 +4412,7 @@ mod tests {
         type_in_search(&sidebar, "fix", cx);
         assert_eq!(
             visible_entries_as_strings(&sidebar, cx),
-            vec![
-                "v [alpha-project]",
-                "  Fix bug in sidebar  <== selected",
-                "v [Empty Workspace]",
-                "  Fix typo in README",
-            ]
+            vec!["v [alpha-project]", "  Fix bug in sidebar  <== selected",]
         );
 
         // A query that matches a workspace name AND a thread in that same workspace.
@@ -4596,13 +4624,7 @@ mod tests {
 
         assert_eq!(
             visible_entries_as_strings(&sidebar, cx),
-            vec![
-                "v [my-project]",
-                "  [+ New Thread]",
-                "  Historical Thread",
-                "v [Empty Workspace]",
-                "  [+ New Thread]",
-            ]
+            vec!["v [my-project]", "  [+ New Thread]", "  Historical Thread",]
         );
 
         // Switch to workspace 1 so we can verify the confirm switches back.

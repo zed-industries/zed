@@ -455,7 +455,7 @@ impl ThreadsArchiveView {
         match item {
             ArchiveListItem::BucketSeparator(bucket) => div()
                 .w_full()
-                .px_2()
+                .px_2p5()
                 .pt_3()
                 .pb_1()
                 .child(
