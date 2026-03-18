@@ -41,6 +41,10 @@ pub trait Sidebar: Focusable + Render + Sized {
     fn width(&self, cx: &App) -> Pixels;
     fn set_width(&mut self, width: Option<Pixels>, cx: &mut Context<Self>);
     fn has_notifications(&self, cx: &App) -> bool;
+    fn toggle_recent_projects_popover(&self, window: &mut Window, cx: &mut App);
+    fn is_recent_projects_popover_deployed(&self) -> bool;
+    /// Makes focus reset bac to the search editor upon toggling the sidebar from outside
+    fn prepare_for_focus(&mut self, _window: &mut Window, _cx: &mut Context<Self>) {}
 }
 
 pub trait SidebarHandle: 'static + Send + Sync {
@@ -48,9 +52,12 @@ pub trait SidebarHandle: 'static + Send + Sync {
     fn set_width(&self, width: Option<Pixels>, cx: &mut App);
     fn focus_handle(&self, cx: &App) -> FocusHandle;
     fn focus(&self, window: &mut Window, cx: &mut App);
+    fn prepare_for_focus(&self, window: &mut Window, cx: &mut App);
     fn has_notifications(&self, cx: &App) -> bool;
     fn to_any(&self) -> AnyView;
     fn entity_id(&self) -> EntityId;
+    fn toggle_recent_projects_popover(&self, window: &mut Window, cx: &mut App);
+    fn is_recent_projects_popover_deployed(&self, cx: &App) -> bool;
 }
 
 #[derive(Clone)]
@@ -80,6 +87,10 @@ impl<T: Sidebar> SidebarHandle for Entity<T> {
         window.focus(&handle, cx);
     }
 
+    fn prepare_for_focus(&self, window: &mut Window, cx: &mut App) {
+        self.update(cx, |this, cx| this.prepare_for_focus(window, cx));
+    }
+
     fn has_notifications(&self, cx: &App) -> bool {
         self.read(cx).has_notifications(cx)
     }
@@ -90,6 +101,16 @@ impl<T: Sidebar> SidebarHandle for Entity<T> {
 
     fn entity_id(&self) -> EntityId {
         Entity::entity_id(self)
+    }
+
+    fn toggle_recent_projects_popover(&self, window: &mut Window, cx: &mut App) {
+        self.update(cx, |this, cx| {
+            this.toggle_recent_projects_popover(window, cx);
+        });
+    }
+
+    fn is_recent_projects_popover_deployed(&self, cx: &App) -> bool {
+        self.read(cx).is_recent_projects_popover_deployed()
     }
 }
 
@@ -158,6 +179,18 @@ impl MultiWorkspace {
             .map_or(false, |s| s.has_notifications(cx))
     }
 
+    pub fn toggle_recent_projects_popover(&self, window: &mut Window, cx: &mut App) {
+        if let Some(sidebar) = &self.sidebar {
+            sidebar.toggle_recent_projects_popover(window, cx);
+        }
+    }
+
+    pub fn is_recent_projects_popover_deployed(&self, cx: &App) -> bool {
+        self.sidebar
+            .as_ref()
+            .map_or(false, |s| s.is_recent_projects_popover_deployed(cx))
+    }
+
     pub fn multi_workspace_enabled(&self, cx: &App) -> bool {
         cx.has_flag::<AgentV2FeatureFlag>() && !DisableAiSettings::get_global(cx).disable_ai
     }
@@ -172,6 +205,7 @@ impl MultiWorkspace {
         } else {
             self.open_sidebar(cx);
             if let Some(sidebar) = &self.sidebar {
+                sidebar.prepare_for_focus(window, cx);
                 sidebar.focus(window, cx);
             }
         }
@@ -193,11 +227,13 @@ impl MultiWorkspace {
                 let pane_focus = pane.read(cx).focus_handle(cx);
                 window.focus(&pane_focus, cx);
             } else if let Some(sidebar) = &self.sidebar {
+                sidebar.prepare_for_focus(window, cx);
                 sidebar.focus(window, cx);
             }
         } else {
             self.open_sidebar(cx);
             if let Some(sidebar) = &self.sidebar {
+                sidebar.prepare_for_focus(window, cx);
                 sidebar.focus(window, cx);
             }
         }

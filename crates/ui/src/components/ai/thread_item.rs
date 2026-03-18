@@ -3,7 +3,10 @@ use crate::{
     IconDecorationKind, prelude::*,
 };
 
-use gpui::{Animation, AnimationExt, AnyView, ClickEvent, Hsla, SharedString, pulsating_between};
+use gpui::{
+    Animation, AnimationExt, AnyView, ClickEvent, Hsla, MouseButton, SharedString,
+    pulsating_between,
+};
 use std::time::Duration;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -36,6 +39,7 @@ pub struct ThreadItem {
     worktree_highlight_positions: Vec<usize>,
     on_click: Option<Box<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>>,
     on_hover: Box<dyn Fn(&bool, &mut Window, &mut App) + 'static>,
+    title_label_color: Option<Color>,
     action_slot: Option<AnyElement>,
     tooltip: Option<Box<dyn Fn(&mut Window, &mut App) -> AnyView + 'static>>,
 }
@@ -62,6 +66,7 @@ impl ThreadItem {
             worktree_highlight_positions: Vec::new(),
             on_click: None,
             on_hover: Box::new(|_, _, _| {}),
+            title_label_color: None,
             action_slot: None,
             tooltip: None,
         }
@@ -155,6 +160,11 @@ impl ThreadItem {
         self
     }
 
+    pub fn title_label_color(mut self, color: Color) -> Self {
+        self.title_label_color = Some(color);
+        self
+    }
+
     pub fn action_slot(mut self, element: impl IntoElement) -> Self {
         self.action_slot = Some(element.into_any_element());
         self
@@ -230,7 +240,7 @@ impl RenderOnce for ThreadItem {
         let title = self.title;
         let highlight_positions = self.highlight_positions;
         let title_label = if self.generating_title {
-            Label::new("New Thread…")
+            Label::new(title)
                 .color(Color::Muted)
                 .with_animation(
                     "generating-title",
@@ -241,15 +251,31 @@ impl RenderOnce for ThreadItem {
                 )
                 .into_any_element()
         } else if highlight_positions.is_empty() {
-            Label::new(title).into_any_element()
+            let label = Label::new(title);
+            let label = if let Some(color) = self.title_label_color {
+                label.color(color)
+            } else {
+                label
+            };
+            label.into_any_element()
         } else {
-            HighlightedLabel::new(title, highlight_positions).into_any_element()
+            let label = HighlightedLabel::new(title, highlight_positions);
+            let label = if let Some(color) = self.title_label_color {
+                label.color(color)
+            } else {
+                label
+            };
+            label.into_any_element()
         };
+
+        let b_bg = color
+            .title_bar_background
+            .blend(color.panel_background.opacity(0.8));
 
         let base_bg = if self.selected {
             color.element_active
         } else {
-            color.panel_background
+            b_bg
         };
 
         let gradient_overlay =
@@ -314,7 +340,15 @@ impl RenderOnce for ThreadItem {
                             .gradient_stop(0.75)
                             .group_name("thread-item");
 
-                            this.child(h_flex().relative().child(overlay).child(slot))
+                            this.child(
+                                h_flex()
+                                    .relative()
+                                    .on_mouse_down(MouseButton::Left, |_, _, cx| {
+                                        cx.stop_propagation()
+                                    })
+                                    .child(overlay)
+                                    .child(slot),
+                            )
                         })
                     }),
             )

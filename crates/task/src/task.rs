@@ -172,6 +172,8 @@ pub enum VariableName {
     Column,
     /// Text from the latest selection.
     SelectedText,
+    /// The language of the currently opened buffer (e.g., "Rust", "Python").
+    Language,
     /// The symbol selected by the symbol tagging system, specifically the @run capture in a runnables.scm
     RunnableSymbol,
     /// Open a Picker to select a process ID to use in place
@@ -209,6 +211,7 @@ impl FromStr for VariableName {
             "SYMBOL" => Self::Symbol,
             "RUNNABLE_SYMBOL" => Self::RunnableSymbol,
             "SELECTED_TEXT" => Self::SelectedText,
+            "LANGUAGE" => Self::Language,
             "ROW" => Self::Row,
             "COLUMN" => Self::Column,
             _ => {
@@ -243,6 +246,7 @@ impl std::fmt::Display for VariableName {
             Self::Row => write!(f, "{ZED_VARIABLE_NAME_PREFIX}ROW"),
             Self::Column => write!(f, "{ZED_VARIABLE_NAME_PREFIX}COLUMN"),
             Self::SelectedText => write!(f, "{ZED_VARIABLE_NAME_PREFIX}SELECTED_TEXT"),
+            Self::Language => write!(f, "{ZED_VARIABLE_NAME_PREFIX}LANGUAGE"),
             Self::RunnableSymbol => write!(f, "{ZED_VARIABLE_NAME_PREFIX}RUNNABLE_SYMBOL"),
             Self::PickProcessId => write!(f, "{ZED_VARIABLE_NAME_PREFIX}PICK_PID"),
             Self::Custom(s) => write!(

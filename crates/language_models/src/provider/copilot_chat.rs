@@ -1111,38 +1111,26 @@ fn into_copilot_responses(
             Role::User => {
                 for content in &message.content {
                     if let MessageContent::ToolResult(tool_result) = content {
-                        let output = if let Some(out) = &tool_result.output {
-                            match out {
-                                serde_json::Value::String(s) => {
-                                    responses::ResponseFunctionOutput::Text(s.clone())
-                                }
-                                serde_json::Value::Null => {
-                                    responses::ResponseFunctionOutput::Text(String::new())
-                                }
-                                other => responses::ResponseFunctionOutput::Text(other.to_string()),
+                        let output = match &tool_result.content {
+                            LanguageModelToolResultContent::Text(text) => {
+                                responses::ResponseFunctionOutput::Text(text.to_string())
                             }
-                        } else {
-                            match &tool_result.content {
-                                LanguageModelToolResultContent::Text(text) => {
-                                    responses::ResponseFunctionOutput::Text(text.to_string())
-                                }
-                                LanguageModelToolResultContent::Image(image) => {
-                                    if model.supports_vision() {
-                                        responses::ResponseFunctionOutput::Content(vec![
-                                            responses::ResponseInputContent::InputImage {
-                                                image_url: Some(image.to_base64_url()),
-                                                detail: Default::default(),
-                                            },
-                                        ])
-                                    } else {
-                                        debug_panic!(
-                                            "This should be caught at {} level",
-                                            tool_result.tool_name
-                                        );
-                                        responses::ResponseFunctionOutput::Text(
+                            LanguageModelToolResultContent::Image(image) => {
+                                if model.supports_vision() {
+                                    responses::ResponseFunctionOutput::Content(vec![
+                                        responses::ResponseInputContent::InputImage {
+                                            image_url: Some(image.to_base64_url()),
+                                            detail: Default::default(),
+                                        },
+                                    ])
+                                } else {
+                                    debug_panic!(
+                                        "This should be caught at {} level",
+                                        tool_result.tool_name
+                                    );
+                                    responses::ResponseFunctionOutput::Text(
                                             "[Tool responded with an image, but this model does not support vision]".into(),
                                         )
-                                    }
                                 }
                             }
                         };

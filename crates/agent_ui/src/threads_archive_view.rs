@@ -21,6 +21,7 @@ use theme::ActiveTheme;
 use ui::{
     ButtonLike, CommonAnimationExt, ContextMenu, ContextMenuEntry, HighlightedLabel, ListItem,
     PopoverMenu, PopoverMenuHandle, Tab, TintColor, Tooltip, WithScrollbar, prelude::*,
+    utils::platform_title_bar_height,
 };
 use util::ResultExt as _;
 use zed_actions::editor::{MoveDown, MoveUp};
@@ -676,32 +677,56 @@ impl ThreadsArchiveView {
             })
     }
 
-    fn render_header(&self, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render_header(&self, window: &Window, cx: &mut Context<Self>) -> impl IntoElement {
         let has_query = !self.filter_editor.read(cx).text(cx).is_empty();
+        let traffic_lights = cfg!(target_os = "macos") && !window.is_fullscreen();
+        let header_height = platform_title_bar_height(window);
 
-        h_flex()
-            .h(Tab::container_height(cx))
-            .px_1()
-            .justify_between()
-            .border_b_1()
-            .border_color(cx.theme().colors().border)
+        v_flex()
             .child(
                 h_flex()
-                    .flex_1()
-                    .w_full()
-                    .gap_1p5()
+                    .h(header_height)
+                    .mt_px()
+                    .pb_px()
+                    .when(traffic_lights, |this| {
+                        this.pl(px(ui::utils::TRAFFIC_LIGHT_PADDING))
+                    })
+                    .pr_1p5()
+                    .border_b_1()
+                    .border_color(cx.theme().colors().border)
+                    .justify_between()
                     .child(
-                        IconButton::new("back", IconName::ArrowLeft)
-                            .icon_size(IconSize::Small)
-                            .tooltip(Tooltip::text("Back to Sidebar"))
-                            .on_click(cx.listener(|this, _, window, cx| {
-                                this.go_back(window, cx);
-                            })),
+                        h_flex()
+                            .gap_1p5()
+                            .child(
+                                IconButton::new("back", IconName::ArrowLeft)
+                                    .icon_size(IconSize::Small)
+                                    .tooltip(Tooltip::text("Back to Sidebar"))
+                                    .on_click(cx.listener(|this, _, window, cx| {
+                                        this.go_back(window, cx);
+                                    })),
+                            )
+                            .child(Label::new("Threads Archive").size(LabelSize::Small).mb_px()),
+                    )
+                    .child(self.render_agent_picker(cx)),
+            )
+            .child(
+                h_flex()
+                    .h(Tab::container_height(cx))
+                    .p_2()
+                    .pr_1p5()
+                    .gap_1p5()
+                    .border_b_1()
+                    .border_color(cx.theme().colors().border)
+                    .child(
+                        Icon::new(IconName::MagnifyingGlass)
+                            .size(IconSize::Small)
+                            .color(Color::Muted),
                     )
                     .child(self.filter_editor.clone())
                     .when(has_query, |this| {
-                        this.border_r_1().child(
-                            IconButton::new("clear_archive_filter", IconName::Close)
+                        this.child(
+                            IconButton::new("clear_filter", IconName::Close)
                                 .icon_size(IconSize::Small)
                                 .tooltip(Tooltip::text("Clear Search"))
                                 .on_click(cx.listener(|this, _, window, cx| {
@@ -711,7 +736,6 @@ impl ThreadsArchiveView {
                         )
                     }),
             )
-            .child(self.render_agent_picker(cx))
     }
 }
 
@@ -783,8 +807,7 @@ impl Render for ThreadsArchiveView {
             .on_action(cx.listener(Self::confirm))
             .on_action(cx.listener(Self::remove_selected_thread))
             .size_full()
-            .bg(cx.theme().colors().surface_background)
-            .child(self.render_header(cx))
+            .child(self.render_header(window, cx))
             .child(content)
     }
 }

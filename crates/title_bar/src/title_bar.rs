@@ -41,8 +41,8 @@ use std::sync::Arc;
 use theme::ActiveTheme;
 use title_bar_settings::TitleBarSettings;
 use ui::{
-    Avatar, ButtonLike, ContextMenu, IconWithIndicator, Indicator, PopoverMenu, PopoverMenuHandle,
-    TintColor, Tooltip, prelude::*, utils::platform_title_bar_height,
+    Avatar, ButtonLike, ContextMenu, Divider, IconWithIndicator, Indicator, PopoverMenu,
+    PopoverMenuHandle, TintColor, Tooltip, prelude::*, utils::platform_title_bar_height,
 };
 use update_version::UpdateVersion;
 use util::ResultExt;
@@ -169,6 +169,7 @@ impl Render for TitleBar {
 
         children.push(
             h_flex()
+                .h_full()
                 .gap_0p5()
                 .map(|title_bar| {
                     let mut render_project_items = title_bar_settings.show_branch_name
@@ -705,23 +706,29 @@ impl TitleBar {
         let has_notifications = self.platform_titlebar.read(cx).sidebar_has_notifications();
 
         Some(
-            IconButton::new(
-                "toggle-workspace-sidebar",
-                IconName::ThreadsSidebarLeftClosed,
-            )
-            .icon_size(IconSize::Small)
-            .when(has_notifications, |button| {
-                button
-                    .indicator(Indicator::dot().color(Color::Accent))
-                    .indicator_border_color(Some(cx.theme().colors().title_bar_background))
-            })
-            .tooltip(move |_, cx| {
-                Tooltip::for_action("Open Threads Sidebar", &ToggleWorkspaceSidebar, cx)
-            })
-            .on_click(|_, window, cx| {
-                window.dispatch_action(ToggleWorkspaceSidebar.boxed_clone(), cx);
-            })
-            .into_any_element(),
+            h_flex()
+                .h_full()
+                .gap_0p5()
+                .child(
+                    IconButton::new(
+                        "toggle-workspace-sidebar",
+                        IconName::ThreadsSidebarLeftClosed,
+                    )
+                    .icon_size(IconSize::Small)
+                    .when(has_notifications, |button| {
+                        button
+                            .indicator(Indicator::dot().color(Color::Accent))
+                            .indicator_border_color(Some(cx.theme().colors().title_bar_background))
+                    })
+                    .tooltip(move |_, cx| {
+                        Tooltip::for_action("Open Threads Sidebar", &ToggleWorkspaceSidebar, cx)
+                    })
+                    .on_click(|_, window, cx| {
+                        window.dispatch_action(ToggleWorkspaceSidebar.boxed_clone(), cx);
+                    }),
+                )
+                .child(Divider::vertical().color(ui::DividerColor::Border))
+                .into_any_element(),
         )
     }
 
@@ -740,6 +747,14 @@ impl TitleBar {
         } else {
             "Open Recent Project".to_string()
         };
+
+        let is_sidebar_open = self.platform_titlebar.read(cx).is_workspace_sidebar_open();
+
+        if is_sidebar_open {
+            return self
+                .render_project_name_with_sidebar_popover(display_name, is_project_selected, cx)
+                .into_any_element();
+        }
 
         let focus_handle = workspace
             .upgrade()
@@ -780,6 +795,53 @@ impl TitleBar {
             )
             .anchor(gpui::Corner::TopLeft)
             .into_any_element()
+    }
+
+    /// When the sidebar is open, the title bar's project name button becomes a
+    /// plain button that toggles the sidebar's popover (so the popover is always
+    /// anchored to the sidebar). Both buttons show their selected state together.
+    fn render_project_name_with_sidebar_popover(
+        &self,
+        display_name: String,
+        is_project_selected: bool,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let multi_workspace = self.multi_workspace.clone();
+
+        let is_popover_deployed = multi_workspace
+            .as_ref()
+            .and_then(|mw| mw.upgrade())
+            .map(|mw| mw.read(cx).is_recent_projects_popover_deployed(cx))
+            .unwrap_or(false);
+
+        Button::new("project_name_trigger", display_name)
+            .label_size(LabelSize::Small)
+            .when(self.worktree_count(cx) > 1, |this| {
+                this.end_icon(
+                    Icon::new(IconName::ChevronDown)
+                        .size(IconSize::XSmall)
+                        .color(Color::Muted),
+                )
+            })
+            .toggle_state(is_popover_deployed)
+            .selected_style(ButtonStyle::Tinted(TintColor::Accent))
+            .when(!is_project_selected, |s| s.color(Color::Muted))
+            .tooltip(move |_window, cx| {
+                Tooltip::for_action(
+                    "Recent Projects",
+                    &zed_actions::OpenRecent {
+                        create_new_window: false,
+                    },
+                    cx,
+                )
+            })
+            .on_click(move |_, window, cx| {
+                if let Some(mw) = multi_workspace.as_ref().and_then(|mw| mw.upgrade()) {
+                    mw.update(cx, |mw, cx| {
+                        mw.toggle_recent_projects_popover(window, cx);
+                    });
+                }
+            })
     }
 
     pub fn render_project_branch(&self, cx: &mut Context<Self>) -> Option<impl IntoElement> {
