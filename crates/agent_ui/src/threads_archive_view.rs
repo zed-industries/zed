@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use crate::{
     Agent, RemoveSelectedThread, agent_connection_store::AgentConnectionStore,
-    thread_history::ThreadHistory,
+    thread_history::ThreadHistory, thread_metadata_store::ThreadMetadataStore,
 };
 use acp_thread::AgentSessionInfo;
 use agent::ThreadStore;
@@ -135,6 +135,7 @@ pub struct ThreadsArchiveView {
     _subscriptions: Vec<gpui::Subscription>,
     selected_agent_menu: PopoverMenuHandle<ContextMenu>,
     _refresh_history_task: Task<()>,
+    _update_items_task: Option<Task<()>>,
     is_loading: bool,
 }
 
@@ -179,6 +180,7 @@ impl ThreadsArchiveView {
             _subscriptions: vec![filter_editor_subscription],
             selected_agent_menu: PopoverMenuHandle::default(),
             _refresh_history_task: Task::ready(()),
+            _update_items_task: None,
             is_loading: true,
         };
         this.set_selected_agent(Agent::NativeAgent, window, cx);
@@ -241,42 +243,56 @@ impl ThreadsArchiveView {
         let query = self.filter_editor.read(cx).text(cx).to_lowercase();
         let today = Local::now().naive_local().date();
 
-        let mut items = Vec::with_capacity(sessions.len() + 5);
-        let mut current_bucket: Option<TimeBucket> = None;
+        self._update_items_task.take();
+        let unarchived_ids_task = ThreadMetadataStore::global(cx).read(cx).list_ids(cx);
+        self._update_items_task = Some(cx.spawn(async move |this, cx| {
+            let unarchived_session_ids = unarchived_ids_task.await.unwrap_or_default();
 
-        for session in sessions {
-            let highlight_positions = if !query.is_empty() {
-                let title = session.title.as_ref().map(|t| t.as_ref()).unwrap_or("");
-                match fuzzy_match_positions(&query, title) {
-                    Some(positions) => positions,
-                    None => continue,
+            let mut items = Vec::with_capacity(sessions.len() + 5);
+            let mut current_bucket: Option<TimeBucket> = None;
+
+            for session in sessions {
+                // Skip sessions that are shown in the sidebar
+                if unarchived_session_ids.contains(&session.session_id) {
+                    continue;
                 }
-            } else {
-                Vec::new()
-            };
 
-            let entry_bucket = session
-                .updated_at
-                .map(|timestamp| {
-                    let entry_date = timestamp.with_timezone(&Local).naive_local().date();
-                    TimeBucket::from_dates(today, entry_date)
-                })
-                .unwrap_or(TimeBucket::Older);
+                let highlight_positions = if !query.is_empty() {
+                    let title = session.title.as_ref().map(|t| t.as_ref()).unwrap_or("");
+                    match fuzzy_match_positions(&query, title) {
+                        Some(positions) => positions,
+                        None => continue,
+                    }
+                } else {
+                    Vec::new()
+                };
 
-            if Some(entry_bucket) != current_bucket {
-                current_bucket = Some(entry_bucket);
-                items.push(ArchiveListItem::BucketSeparator(entry_bucket));
+                let entry_bucket = session
+                    .updated_at
+                    .map(|timestamp| {
+                        let entry_date = timestamp.with_timezone(&Local).naive_local().date();
+                        TimeBucket::from_dates(today, entry_date)
+                    })
+                    .unwrap_or(TimeBucket::Older);
+
+                if Some(entry_bucket) != current_bucket {
+                    current_bucket = Some(entry_bucket);
+                    items.push(ArchiveListItem::BucketSeparator(entry_bucket));
+                }
+
+                items.push(ArchiveListItem::Entry {
+                    session,
+                    highlight_positions,
+                });
             }
 
-            items.push(ArchiveListItem::Entry {
-                session,
-                highlight_positions,
-            });
-        }
-
-        self.list_state.reset(items.len());
-        self.items = items;
-        cx.notify();
+            this.update(cx, |this, cx| {
+                this.list_state.reset(items.len());
+                this.items = items;
+                cx.notify();
+            })
+            .ok();
+        }));
     }
 
     fn reset_filter_editor_text(&mut self, window: &mut Window, cx: &mut Context<Self>) {

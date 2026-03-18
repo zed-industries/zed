@@ -119,6 +119,14 @@ impl ThreadMetadataStore {
         cx.global::<GlobalThreadMetadataStore>().0.clone()
     }
 
+    pub fn list_ids(&self, cx: &App) -> Task<Result<Vec<acp::SessionId>>> {
+        let db = self.db.clone();
+        cx.background_spawn(async move {
+            let s = db.list_ids()?;
+            Ok(s)
+        })
+    }
+
     pub fn list(&self, cx: &App) -> Task<Result<Vec<ThreadMetadata>>> {
         let db = self.db.clone();
         cx.background_spawn(async move {
@@ -273,6 +281,12 @@ impl Domain for ThreadMetadataDb {
 db::static_connection!(THREAD_METADATA_DB, ThreadMetadataDb, []);
 
 impl ThreadMetadataDb {
+    /// List allsidebar thread session IDs
+    pub fn list_ids(&self) -> anyhow::Result<Vec<acp::SessionId>> {
+        self.select::<Arc<str>>("SELECT session_id FROM sidebar_threads")?()
+            .map(|ids| ids.into_iter().map(|id| acp::SessionId::new(id)).collect())
+    }
+
     /// List all sidebar thread metadata, ordered by updated_at descending.
     pub fn list(&self) -> anyhow::Result<Vec<ThreadMetadata>> {
         self.select::<ThreadMetadata>(
