@@ -1432,6 +1432,18 @@
     },
   },
   {
+    "context": "PdfViewer",
+    "bindings": {
+      "ctrl-=": "pdf_viewer::ZoomIn",
+      "ctrl-+": "pdf_viewer::ZoomIn",
+      "ctrl--": "pdf_viewer::ZoomOut",
+      "ctrl-0": "pdf_viewer::ResetZoom",
+      "ctrl-shift-0": "pdf_viewer::FitToView",
+      "ctrl-shift-c": "pdf_viewer::CopyPageText",
+      "ctrl-shift-m": "pdf_viewer::ToggleViewMode"
+    }
+  },
+  {
     "context": "RunModal",
     "bindings": {
       "alt-1": "new_process_modal::ActivateTaskTab",

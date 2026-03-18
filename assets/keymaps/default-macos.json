@@ -1510,6 +1510,19 @@
     },
   },
   {
+    "context": "PdfViewer",
+    "use_key_equivalents": true,
+    "bindings": {
+      "cmd-=": "pdf_viewer::ZoomIn",
+      "cmd-+": "pdf_viewer::ZoomIn",
+      "cmd--": "pdf_viewer::ZoomOut",
+      "cmd-0": "pdf_viewer::ResetZoom",
+      "cmd-shift-0": "pdf_viewer::FitToView",
+      "cmd-shift-c": "pdf_viewer::CopyPageText",
+      "cmd-shift-m": "pdf_viewer::ToggleViewMode"
+    }
+  },
+  {
     "context": "RunModal",
     "bindings": {
       "cmd-1": "new_process_modal::ActivateTaskTab",

@@ -8,6 +8,7 @@ pub mod debounced_delay;
 pub mod debugger;
 pub mod git_store;
 pub mod image_store;
+pub mod pdf_store;
 pub mod lsp_command;
 pub mod lsp_store;
 pub mod manifest_tree;
@@ -78,6 +79,8 @@ use futures::{
 };
 pub use image_store::{ImageItem, ImageStore};
 use image_store::{ImageItemEvent, ImageStoreEvent};
+pub use pdf_store::{PdfItem, PdfStore};
+use pdf_store::{PdfItemEvent, PdfStoreEvent};
 
 use ::git::{blame::Blame, status::FileStatus};
 use gpui::{
@@ -224,6 +227,7 @@ pub struct Project {
     buffer_store: Entity<BufferStore>,
     context_server_store: Entity<ContextServerStore>,
     image_store: Entity<ImageStore>,
+    pdf_store: Entity<PdfStore>,
     lsp_store: Entity<LspStore>,
     _subscriptions: Vec<gpui::Subscription>,
     buffers_needing_diff: HashSet<WeakEntity<Buffer>>,
@@ -1214,6 +1218,10 @@ impl Project {
             cx.subscribe(&image_store, Self::on_image_store_event)
                 .detach();
 
+            let pdf_store = cx.new(|cx| PdfStore::local(worktree_store.clone(), cx));
+            cx.subscribe(&pdf_store, Self::on_pdf_store_event)
+                .detach();
+
             let prettier_store = cx.new(|cx| {
                 PrettierStore::new(
                     node.clone(),
@@ -1293,6 +1301,7 @@ impl Project {
                 worktree_store,
                 buffer_store,
                 image_store,
+                pdf_store,
                 lsp_store,
                 context_server_store,
                 join_project_response_message_id: 0,
@@ -1398,6 +1407,9 @@ impl Project {
                     cx,
                 )
             });
+            let pdf_store = cx.new(|cx| PdfStore::local(worktree_store.clone(), cx));
+            cx.subscribe(&pdf_store, Self::on_pdf_store_event)
+                .detach();
             cx.subscribe(&buffer_store, Self::on_buffer_store_event)
                 .detach();
             let toolchain_store = cx.new(|cx| {
@@ -1508,6 +1520,7 @@ impl Project {
                 worktree_store,
                 buffer_store,
                 image_store,
+                pdf_store,
                 lsp_store,
                 context_server_store,
                 breakpoint_store,
@@ -1684,6 +1697,7 @@ impl Project {
         let image_store = cx.new(|cx| {
             ImageStore::remote(worktree_store.clone(), client.clone().into(), remote_id, cx)
         });
+        let pdf_store = cx.new(|cx| PdfStore::local(worktree_store.clone(), cx));
 
         let environment =
             cx.new(|cx| ProjectEnvironment::new(None, worktree_store.downgrade(), None, true, cx));
@@ -1793,10 +1807,14 @@ impl Project {
 
             cx.subscribe(&dap_store, Self::on_dap_store_event).detach();
 
+            cx.subscribe(&pdf_store, Self::on_pdf_store_event)
+                .detach();
+
             let mut project = Self {
                 buffer_ordered_messages_tx: tx,
                 buffer_store: buffer_store.clone(),
                 image_store,
+                pdf_store,
                 worktree_store: worktree_store.clone(),
                 lsp_store: lsp_store.clone(),
                 context_server_store,
@@ -3179,6 +3197,16 @@ impl Project {
         })
     }
 
+    pub fn open_pdf(
+        &mut self,
+        path: impl Into<ProjectPath>,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<Entity<PdfItem>>> {
+        self.pdf_store.update(cx, |pdf_store, cx| {
+            pdf_store.open_pdf(path.into(), cx)
+        })
+    }
+
     async fn send_buffer_ordered_messages(
         project: WeakEntity<Self>,
         rx: UnboundedReceiver<BufferOrderedMessage>,
@@ -3327,6 +3355,22 @@ impl Project {
             ImageStoreEvent::ImageAdded(image) => {
                 cx.subscribe(image, |this, image, event, cx| {
                     this.on_image_event(image, event, cx);
+                })
+                .detach();
+            }
+        }
+    }
+
+    fn on_pdf_store_event(
+        &mut self,
+        _: Entity<PdfStore>,
+        event: &PdfStoreEvent,
+        cx: &mut Context<Self>,
+    ) {
+        match event {
+            PdfStoreEvent::PdfAdded(pdf) => {
+                cx.subscribe(pdf, |this, pdf, event, cx| {
+                    this.on_pdf_event(pdf, event, cx);
                 })
                 .detach();
             }
@@ -3696,6 +3740,19 @@ impl Project {
         }
 
         None
+    }
+
+    fn on_pdf_event(
+        &mut self,
+        pdf: Entity<PdfItem>,
+        event: &PdfItemEvent,
+        cx: &mut Context<Self>,
+    ) {
+        if let PdfItemEvent::FileHandleChanged = event {
+            pdf.update(cx, |pdf, cx| {
+                pdf.reload(cx);
+            });
+        }
     }
 
     fn request_buffer_diff_recalculation(
