@@ -300,3 +300,19 @@ impl Settings for EditorSettings {
         }
     }
 }
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq, RegisterSetting)]
+pub struct PersistHistorySettings {
+    pub enabled: bool,
+    pub max_entries: u32,
+}
+
+impl Settings for PersistHistorySettings {
+    fn from_settings(content: &settings::SettingsContent) -> Self {
+        let persist_history = content.persist_history.unwrap();
+        Self {
+            enabled: persist_history.enabled.unwrap(),
+            max_entries: persist_history.max_entries.unwrap(),
+        }
+    }
+}

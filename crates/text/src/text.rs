@@ -1,4 +1,5 @@
 mod anchor;
+pub mod history_serde;
 pub mod locator;
 #[cfg(any(test, feature = "test-support"))]
 pub mod network;
@@ -147,6 +148,14 @@ impl Transaction {
 impl HistoryEntry {
     pub fn transaction_id(&self) -> TransactionId {
         self.transaction.id
+    }
+
+    pub fn transaction(&self) -> &Transaction {
+        &self.transaction
+    }
+
+    pub fn suppress_grouping(&self) -> bool {
+        self.suppress_grouping
     }
 }
 
@@ -1491,12 +1500,77 @@ impl Buffer {
         !self.deferred_ops.is_empty()
     }
 
+    pub fn undo_stack(&self) -> &[HistoryEntry] {
+        &self.history.undo_stack
+    }
+
+    pub fn redo_stack(&self) -> &[HistoryEntry] {
+        &self.history.redo_stack
+    }
+
     pub fn peek_undo_stack(&self) -> Option<&HistoryEntry> {
         self.history.undo_stack.last()
     }
 
     pub fn peek_redo_stack(&self) -> Option<&HistoryEntry> {
         self.history.redo_stack.last()
+    }
+
+    pub fn restore_history(
+        &mut self,
+        base_text: String,
+        undo_stack: Vec<Transaction>,
+        redo_stack: Vec<Transaction>,
+        operations: Vec<Operation>,
+    ) {
+        // Rebuild the buffer from the base text and replay all operations.
+        // This reconstructs the CRDT fragment tree so that undo/redo can
+        // properly toggle fragment visibility.
+        let mut rebuilt = Buffer::new(self.replica_id, self.remote_id, base_text);
+
+        // Sort operations by timestamp to ensure correct replay order
+        let mut sorted_ops = operations;
+        sorted_ops.sort_by_key(|op| op.timestamp());
+
+        rebuilt.apply_ops(sorted_ops);
+
+        // Verify the rebuilt text matches the current buffer text
+        let rebuilt_text = rebuilt.text();
+        let current_text = self.text();
+        if rebuilt_text != current_text {
+            log::warn!(
+                "Restored history text mismatch (rebuilt len={}, current len={}), skipping restore",
+                rebuilt_text.len(),
+                current_text.len()
+            );
+            return;
+        }
+
+        // Replace internal state with the rebuilt buffer's state
+        self.snapshot = rebuilt.snapshot;
+        self.history = rebuilt.history;
+        self.lamport_clock = rebuilt.lamport_clock;
+
+        // Set up the undo/redo stacks from the persisted data
+        let now = Instant::now();
+        self.history.undo_stack = undo_stack
+            .into_iter()
+            .map(|transaction| HistoryEntry {
+                transaction,
+                first_edit_at: now,
+                last_edit_at: now,
+                suppress_grouping: true,
+            })
+            .collect();
+        self.history.redo_stack = redo_stack
+            .into_iter()
+            .map(|transaction| HistoryEntry {
+                transaction,
+                first_edit_at: now,
+                last_edit_at: now,
+                suppress_grouping: true,
+            })
+            .collect();
     }
 
     pub fn start_transaction(&mut self) -> Option<TransactionId> {

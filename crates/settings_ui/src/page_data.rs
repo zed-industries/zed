@@ -1437,6 +1437,58 @@ fn editor_page() -> SettingsPage {
         ]
     }
 
+    fn persist_history_section() -> [SettingsPageItem; 3] {
+        [
+            SettingsPageItem::SectionHeader("Persist History"),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Persist History",
+                description:
+                    "Whether to persist undo/redo history to disk. When enabled, closing a tab or restarting Zed preserves your undo history for each file.",
+                field: Box::new(SettingField {
+                    json_path: Some("persist_history.enabled"),
+                    pick: |settings_content| {
+                        settings_content
+                            .persist_history
+                            .as_ref()?
+                            .enabled
+                            .as_ref()
+                    },
+                    write: |settings_content, value| {
+                        settings_content
+                            .persist_history
+                            .get_or_insert_default()
+                            .enabled = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Max Entries",
+                description:
+                    "Maximum number of undo/redo entries to persist per file. Entries beyond this limit are not persisted.",
+                field: Box::new(SettingField {
+                    json_path: Some("persist_history.max_entries"),
+                    pick: |settings_content| {
+                        settings_content
+                            .persist_history
+                            .as_ref()?
+                            .max_entries
+                            .as_ref()
+                    },
+                    write: |settings_content, value| {
+                        settings_content
+                            .persist_history
+                            .get_or_insert_default()
+                            .max_entries = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+        ]
+    }
+
     fn which_key_section() -> [SettingsPageItem; 3] {
         [
             SettingsPageItem::SectionHeader("Which-key Menu"),
@@ -2673,6 +2725,7 @@ fn editor_page() -> SettingsPage {
 
     let items = concat_sections!(
         auto_save_section(),
+        persist_history_section(),
         which_key_section(),
         multibuffer_section(),
         scrolling_section(),

@@ -1041,3 +1041,22 @@ impl schemars::JsonSchema for CenteredPaddingSettings {
         })
     }
 }
+
+#[with_fallible_options]
+#[derive(Default, Copy, Clone, PartialEq, Eq, Debug, Serialize, Deserialize, JsonSchema, MergeFrom)]
+pub struct PersistHistorySettingsContent {
+    /// Whether to persist undo/redo history to disk.
+    ///
+    /// When enabled, closing a tab or restarting Zed preserves your undo history
+    /// for each file, restored when the file is reopened.
+    ///
+    /// Default: false
+    pub enabled: Option<bool>,
+
+    /// Maximum number of undo/redo entries to persist per file.
+    ///
+    /// Entries beyond this limit are not persisted. The limit applies per file.
+    ///
+    /// Default: 10000
+    pub max_entries: Option<u32>,
+}
