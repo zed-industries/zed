@@ -38,16 +38,20 @@ impl RenderOnce for DiffStat {
         h_flex()
             .id(self.id)
             .gap_1()
-            .child(
-                Label::new(format!("+\u{2009}{}", self.added))
-                    .color(Color::Success)
-                    .size(self.label_size),
-            )
-            .child(
-                Label::new(format!("\u{2012}\u{2009}{}", self.removed))
-                    .color(Color::Error)
-                    .size(self.label_size),
-            )
+            .when(self.added > 0, |this| {
+                this.child(
+                    Label::new(format!("+\u{2009}{}", self.added))
+                        .color(Color::Success)
+                        .size(self.label_size),
+                )
+            })
+            .when(self.removed > 0, |this| {
+                this.child(
+                    Label::new(format!("\u{2012}\u{2009}{}", self.removed))
+                        .color(Color::Error)
+                        .size(self.label_size),
+                )
+            })
             .when_some(tooltip, |this, tooltip| {
                 this.tooltip(Tooltip::text(tooltip))
             })
