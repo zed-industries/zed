@@ -712,32 +712,14 @@ impl PickerDelegate for RecentProjectsDelegate {
         window: &mut Window,
         cx: &mut Context<Picker<Self>>,
     ) -> Div {
-        let focus_handle = self.focus_handle.clone();
-
         h_flex()
             .flex_none()
             .h_9()
-            .pl_2p5()
-            .pr_1p5()
+            .px_2p5()
             .justify_between()
             .border_b_1()
             .border_color(cx.theme().colors().border_variant)
             .child(editor.render(window, cx))
-            .child(
-                IconButton::new("add_folder", IconName::Plus)
-                    .icon_size(IconSize::Small)
-                    .tooltip(move |_, cx| {
-                        Tooltip::for_action_in(
-                            "Add Project to Workspace",
-                            &workspace::AddFolderToProject,
-                            &focus_handle,
-                            cx,
-                        )
-                    })
-                    .on_click(|_, window, cx| {
-                        window.dispatch_action(workspace::AddFolderToProject.boxed_clone(), cx)
-                    }),
-            )
     }
 
     fn match_count(&self) -> usize {
@@ -1169,9 +1151,9 @@ impl PickerDelegate for RecentProjectsDelegate {
                     .gap_px()
                     .when(is_local, |this| {
                         this.child(
-                            IconButton::new("add_to_workspace", IconName::Plus)
+                            IconButton::new("add_to_workspace", IconName::FolderPlus)
                                 .icon_size(IconSize::Small)
-                                .tooltip(Tooltip::text("Add Project to Workspace"))
+                                .tooltip(Tooltip::text("Add Project to this Workspace"))
                                 .on_click({
                                     let paths_to_add = paths_to_add.clone();
                                     cx.listener(move |picker, _event, window, cx| {

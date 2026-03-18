@@ -134,6 +134,7 @@ pub enum IconName {
     Flame,
     Folder,
     FolderOpen,
+    FolderPlus,
     FolderSearch,
     Font,
     FontSize,
