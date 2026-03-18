@@ -2364,12 +2364,14 @@ VALUES {placeholders};"#
 /// worktree checkouts (i.e., their `.git` is a file, not a directory).
 /// Multi-root workspaces where at least one path is a normal repo are kept.
 pub async fn filter_worktree_workspaces(
-    workspaces: Vec<(
-        WorkspaceId,
-        SerializedWorkspaceLocation,
-        PathList,
-        DateTime<Utc>,
-    )>,
+    workspaces: impl IntoIterator<
+        Item = (
+            WorkspaceId,
+            SerializedWorkspaceLocation,
+            PathList,
+            DateTime<Utc>,
+        ),
+    >,
     fs: &dyn Fs,
 ) -> Vec<(
     WorkspaceId,
@@ -2377,7 +2379,8 @@ pub async fn filter_worktree_workspaces(
     PathList,
     DateTime<Utc>,
 )> {
-    let mut result = Vec::with_capacity(workspaces.len());
+    let workspaces = workspaces.into_iter();
+    let mut result = Vec::with_capacity(workspaces.size_hint().0);
     for entry in workspaces {
         let all_worktrees = !entry.2.paths().is_empty()
             && futures::future::join_all(
