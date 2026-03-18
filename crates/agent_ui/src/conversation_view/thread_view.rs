@@ -4027,6 +4027,13 @@ impl ThreadView {
                         .w_full()
                         .text_ui(cx)
                         .child(self.render_message_context_menu(entry_ix, message_body, cx))
+                        .when_some(
+                            self.entry_view_state
+                                .read(cx)
+                                .entry(entry_ix)
+                                .and_then(|entry| entry.focus_handle(cx)),
+                            |this, handle| this.track_focus(&handle),
+                        )
                         .into_any()
                 }
             }
