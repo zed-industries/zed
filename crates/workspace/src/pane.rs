@@ -3259,7 +3259,6 @@ impl Pane {
                                                     }
                                                 }),
                                             )
-                                            .separator()
                                     })
                                 })
                                 .map(pin_tab_entries)
