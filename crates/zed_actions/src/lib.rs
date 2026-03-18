@@ -770,6 +770,18 @@ pub mod preview {
     }
 }
 
+pub mod agents_sidebar {
+    use gpui::actions;
+
+    actions!(
+        agents_sidebar,
+        [
+            /// Moves focus to the sidebar's search/filter editor.
+            FocusSidebarFilter,
+        ]
+    );
+}
+
 pub mod notebook {
     use gpui::actions;
 

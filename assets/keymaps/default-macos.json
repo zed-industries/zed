@@ -743,8 +743,8 @@
     "use_key_equivalents": true,
     "bindings": {
       "cmd-n": "agents_sidebar::NewThreadInGroup",
-      "left": "agents_sidebar::CollapseSelectedEntry",
-      "right": "agents_sidebar::ExpandSelectedEntry",
+      "left": "menu::SelectParent",
+      "right": "menu::SelectChild",
       "enter": "menu::Confirm",
       "space": "menu::Confirm",
       "cmd-f": "agents_sidebar::FocusSidebarFilter",

@@ -1121,4 +1121,31 @@
       "k": "notebook::NotebookMoveUp",
     },
   },
+  {
+    "context": "ThreadsSidebar && !Editor",
+    "bindings": {
+      "j": "menu::SelectNext",
+      "k": "menu::SelectPrevious",
+      "h": "menu::SelectParent",
+      "l": "menu::SelectChild",
+      "g g": "menu::SelectFirst",
+      "shift-g": "menu::SelectLast",
+      "/": "agents_sidebar::FocusSidebarFilter",
+      "z a": "editor::ToggleFold",
+      "z c": "menu::SelectParent",
+      "z o": "menu::SelectChild",
+      "z shift-m": "editor::FoldAll",
+      "z shift-r": "editor::UnfoldAll",
+    },
+  },
+  {
+    "context": "ThreadsSidebar > Editor && VimControl && vim_mode == normal",
+    "bindings": {
+      "j": "editor::MoveDown",
+      "k": "editor::MoveUp",
+      "/": "vim::SwitchToInsertMode",
+      "escape": "menu::Cancel",
+      "enter": "editor::Newline",
+    },
+  },
 ]

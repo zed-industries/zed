@@ -635,7 +635,7 @@ impl Vim {
     fn activate(editor: &mut Editor, window: &mut Window, cx: &mut Context<Editor>) {
         let vim = Vim::new(window, cx);
         let state = vim.update(cx, |vim, cx| {
-            if !editor.mode().is_full() {
+            if !editor.use_modal_editing() {
                 vim.mode = Mode::Insert;
             }
 
