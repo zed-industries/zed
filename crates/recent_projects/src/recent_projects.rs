@@ -5,6 +5,7 @@ mod remote_servers;
 mod ssh_config;
 
 use std::{
+    collections::HashSet,
     path::{Path, PathBuf},
     sync::Arc,
 };
@@ -549,6 +550,7 @@ impl RecentProjects {
                 create_new_window,
                 focus_handle,
                 open_folders,
+                HashSet::new(),
                 project_connection_options,
                 ProjectPickerStyle::Modal,
             );
@@ -559,6 +561,7 @@ impl RecentProjects {
 
     pub fn popover(
         workspace: WeakEntity<Workspace>,
+        excluded_workspace_ids: HashSet<WorkspaceId>,
         create_new_window: bool,
         focus_handle: FocusHandle,
         window: &mut Window,
@@ -582,6 +585,7 @@ impl RecentProjects {
                 create_new_window,
                 focus_handle,
                 open_folders,
+                excluded_workspace_ids,
                 project_connection_options,
                 ProjectPickerStyle::Popover,
             );
@@ -629,6 +633,7 @@ impl Render for RecentProjects {
 pub struct RecentProjectsDelegate {
     workspace: WeakEntity<Workspace>,
     open_folders: Vec<OpenFolderEntry>,
+    excluded_workspace_ids: HashSet<WorkspaceId>,
     workspaces: Vec<(
         WorkspaceId,
         SerializedWorkspaceLocation,
@@ -654,6 +659,7 @@ impl RecentProjectsDelegate {
         create_new_window: bool,
         focus_handle: FocusHandle,
         open_folders: Vec<OpenFolderEntry>,
+        excluded_workspace_ids: HashSet<WorkspaceId>,
         project_connection_options: Option<RemoteConnectionOptions>,
         style: ProjectPickerStyle,
     ) -> Self {
@@ -661,6 +667,7 @@ impl RecentProjectsDelegate {
         Self {
             workspace,
             open_folders,
+            excluded_workspace_ids,
             workspaces: Vec::new(),
             filtered_entries: Vec::new(),
             selected_index: 0,
@@ -1546,6 +1553,10 @@ impl RecentProjectsDelegate {
         workspace_id: WorkspaceId,
         cx: &mut Context<Picker<Self>>,
     ) -> bool {
+        if self.excluded_workspace_ids.contains(&workspace_id) {
+            return true;
+        }
+
         if let Some(workspace) = self.workspace.upgrade() {
             let workspace = workspace.read(cx);
             if Some(workspace_id) == workspace.database_id() {

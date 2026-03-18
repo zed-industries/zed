@@ -678,6 +678,8 @@
       "left": "agents_sidebar::CollapseSelectedEntry",
       "right": "agents_sidebar::ExpandSelectedEntry",
       "enter": "menu::Confirm",
+      "space": "menu::Confirm",
+      "ctrl-f": "agents_sidebar::FocusSidebarFilter",
       "shift-backspace": "agent::RemoveSelectedThread",
     },
   },

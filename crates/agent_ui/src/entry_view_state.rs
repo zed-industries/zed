@@ -227,7 +227,10 @@ impl EntryViewState {
                 } else {
                     self.set_entry(
                         index,
-                        Entry::AssistantMessage(AssistantMessageEntry::default()),
+                        Entry::AssistantMessage(AssistantMessageEntry {
+                            scroll_handles_by_chunk_index: HashMap::default(),
+                            focus_handle: cx.focus_handle(),
+                        }),
                     );
                     let Some(Entry::AssistantMessage(entry)) = self.entries.get_mut(index) else {
                         unreachable!()
@@ -291,9 +294,10 @@ pub enum ViewEvent {
     },
 }
 
-#[derive(Default, Debug)]
+#[derive(Debug)]
 pub struct AssistantMessageEntry {
     scroll_handles_by_chunk_index: HashMap<usize, ScrollHandle>,
+    focus_handle: FocusHandle,
 }
 
 impl AssistantMessageEntry {
@@ -326,7 +330,8 @@ impl Entry {
     pub fn focus_handle(&self, cx: &App) -> Option<FocusHandle> {
         match self {
             Self::UserMessage(editor) => Some(editor.read(cx).focus_handle(cx)),
-            Self::AssistantMessage(_) | Self::ToolCall(_) => None,
+            Self::AssistantMessage(message) => Some(message.focus_handle.clone()),
+            Self::ToolCall(_) => None,
         }
     }
 
