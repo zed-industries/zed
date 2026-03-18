@@ -10,7 +10,7 @@ use gpui::{
 };
 use gpui::{App, Task, Window};
 use project::WorktreeSettings;
-use recent_projects::RemoteConnectionModal;
+use remote_connection::RemoteConnectionModal;
 use rpc::proto::{self};
 use settings::{Settings as _, SettingsLocation};
 use theme::ActiveTheme;
