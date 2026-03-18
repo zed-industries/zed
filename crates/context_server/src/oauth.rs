@@ -35,6 +35,32 @@ use util::ResultExt as _;
 /// The CIMD URL where Zed's OAuth client metadata document is hosted.
 pub const CIMD_URL: &str = "https://zed.dev/oauth/client-metadata.json";
 
+/// Validate that a URL is safe to use as an OAuth endpoint.
+///
+/// OAuth endpoints carry sensitive material (authorization codes, PKCE
+/// verifiers, tokens) and must use TLS. Plain HTTP is only permitted for
+/// loopback addresses, per RFC 8252 Section 8.3.
+fn require_https_or_loopback(url: &Url) -> Result<()> {
+    if url.scheme() == "https" {
+        return Ok(());
+    }
+    if url.scheme() == "http" {
+        if let Some(host) = url.host() {
+            match host {
+                url::Host::Ipv4(ip) if ip.is_loopback() => return Ok(()),
+                url::Host::Ipv6(ip) if ip.is_loopback() => return Ok(()),
+                url::Host::Domain(d) if d.eq_ignore_ascii_case("localhost") => return Ok(()),
+                _ => {}
+            }
+        }
+    }
+    bail!(
+        "OAuth endpoint must use HTTPS (got {}://{})",
+        url.scheme(),
+        url.host_str().unwrap_or("?")
+    )
+}
+
 /// Parsed from the MCP server's WWW-Authenticate header or well-known endpoint
 /// per RFC 9728 (OAuth 2.0 Protected Resource Metadata).
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -692,6 +718,8 @@ pub async fn perform_dcr(
     registration_endpoint: &Url,
     redirect_uri: &str,
 ) -> Result<OAuthClientRegistration> {
+    require_https_or_loopback(registration_endpoint)?;
+
     let body = dcr_registration_body(redirect_uri);
     let body_bytes = serde_json::to_vec(&body)?;
 
@@ -763,6 +791,8 @@ async fn post_token_request(
     token_endpoint: &Url,
     params: &[(&str, String)],
 ) -> Result<OAuthTokens> {
+    require_https_or_loopback(token_endpoint)?;
+
     let body = url::form_urlencoded::Serializer::new(String::new())
         .extend_pairs(params.iter().map(|(k, v)| (*k, v.as_str())))
         .finish();
@@ -973,6 +1003,8 @@ async fn fetch_json<T: serde::de::DeserializeOwned>(
     http_client: &Arc<dyn HttpClient>,
     url: &Url,
 ) -> Result<T> {
+    require_https_or_loopback(url)?;
+
     let request = Request::builder()
         .method(http_client::http::Method::GET)
         .uri(url.as_str())
@@ -1136,6 +1168,58 @@ impl OAuthTokenProvider for McpOAuthTokenProvider {
 mod tests {
     use super::*;
     use http_client::Response;
+
+    // -- require_https_or_loopback tests ------------------------------------
+
+    #[test]
+    fn test_require_https_or_loopback_accepts_https() {
+        let url = Url::parse("https://auth.example.com/token").unwrap();
+        assert!(require_https_or_loopback(&url).is_ok());
+    }
+
+    #[test]
+    fn test_require_https_or_loopback_rejects_http_remote() {
+        let url = Url::parse("http://auth.example.com/token").unwrap();
+        assert!(require_https_or_loopback(&url).is_err());
+    }
+
+    #[test]
+    fn test_require_https_or_loopback_accepts_http_127_0_0_1() {
+        let url = Url::parse("http://127.0.0.1:8080/callback").unwrap();
+        assert!(require_https_or_loopback(&url).is_ok());
+    }
+
+    #[test]
+    fn test_require_https_or_loopback_accepts_http_ipv6_loopback() {
+        let url = Url::parse("http://[::1]:8080/callback").unwrap();
+        assert!(require_https_or_loopback(&url).is_ok());
+    }
+
+    #[test]
+    fn test_require_https_or_loopback_accepts_http_localhost() {
+        let url = Url::parse("http://localhost:8080/callback").unwrap();
+        assert!(require_https_or_loopback(&url).is_ok());
+    }
+
+    #[test]
+    fn test_require_https_or_loopback_accepts_http_localhost_case_insensitive() {
+        let url = Url::parse("http://LOCALHOST:8080/callback").unwrap();
+        assert!(require_https_or_loopback(&url).is_ok());
+    }
+
+    #[test]
+    fn test_require_https_or_loopback_rejects_http_non_loopback_ip() {
+        let url = Url::parse("http://192.168.1.1:8080/token").unwrap();
+        assert!(require_https_or_loopback(&url).is_err());
+    }
+
+    #[test]
+    fn test_require_https_or_loopback_rejects_ftp() {
+        let url = Url::parse("ftp://auth.example.com/token").unwrap();
+        assert!(require_https_or_loopback(&url).is_err());
+    }
+
+    // -- parse_www_authenticate tests ----------------------------------------
 
     #[test]
     fn test_parse_www_authenticate_with_resource_metadata_and_scope() {
