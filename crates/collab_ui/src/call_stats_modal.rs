@@ -1,10 +1,9 @@
 use call::{ActiveCall, Room, room};
 use gpui::{
     DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, FontWeight, Render, Subscription,
-    Task, Window,
+    Window,
 };
 use livekit_client::ConnectionQuality;
-use std::time::Duration;
 use ui::prelude::*;
 use workspace::{ModalView, Workspace};
 use zed_actions::ShowCallStats;
@@ -18,52 +17,37 @@ pub fn init(cx: &mut App) {
     .detach();
 }
 
-#[derive(Default)]
-struct NetworkStats {
-    connection_quality: Option<ConnectionQuality>,
-    latency_ms: Option<f64>,
-    jitter_ms: Option<f64>,
-    packet_loss_pct: Option<f64>,
-}
-
-/// Subset of `NetworkStats` that can be computed on a background thread.
-/// Excludes `connection_quality` which is read synchronously on the main thread.
-struct ComputedNetworkStats {
-    latency_ms: Option<f64>,
-    jitter_ms: Option<f64>,
-    packet_loss_pct: Option<f64>,
-}
-
 pub struct CallStatsModal {
     focus_handle: FocusHandle,
-    input_lag: Option<Duration>,
-    network_stats: NetworkStats,
-    poll_task: Option<Task<()>>,
-    stats_update_task: Option<Task<()>>,
     _active_call_subscription: Option<Subscription>,
+    _diagnostics_subscription: Option<Subscription>,
 }
 
 impl CallStatsModal {
     fn new(cx: &mut Context<Self>) -> Self {
         let mut this = Self {
             focus_handle: cx.focus_handle(),
-            network_stats: NetworkStats::default(),
-            input_lag: None,
-            poll_task: None,
-            stats_update_task: None,
             _active_call_subscription: None,
+            _diagnostics_subscription: None,
         };
 
         if let Some(active_call) = ActiveCall::try_global(cx) {
             this._active_call_subscription =
                 Some(cx.subscribe(&active_call, Self::handle_call_event));
-
-            if active_call.read(cx).room().is_some() {
-                this.start_polling(cx);
-            }
+            this.observe_diagnostics(cx);
         }
 
         this
+    }
+
+    fn observe_diagnostics(&mut self, cx: &mut Context<Self>) {
+        let diagnostics = active_room(cx).and_then(|room| room.read(cx).diagnostics().cloned());
+
+        if let Some(diagnostics) = diagnostics {
+            self._diagnostics_subscription = Some(cx.observe(&diagnostics, |_, _, cx| cx.notify()));
+        } else {
+            self._diagnostics_subscription = None;
+        }
     }
 
     fn handle_call_event(
@@ -74,163 +58,11 @@ impl CallStatsModal {
     ) {
         match event {
             room::Event::RoomJoined { .. } => {
-                self.start_polling(cx);
+                self.observe_diagnostics(cx);
             }
             room::Event::RoomLeft { .. } => {
-                self.stop_polling();
-                self.network_stats = NetworkStats::default();
+                self._diagnostics_subscription = None;
                 cx.notify();
-            }
-            _ => {}
-        }
-    }
-
-    fn start_polling(&mut self, cx: &mut Context<Self>) {
-        self.poll_task = Some(cx.spawn(async move |this, cx| {
-            loop {
-                if this.update(cx, |this, cx| this.poll_stats(cx)).is_err() {
-                    break;
-                }
-                cx.background_executor().timer(Duration::from_secs(1)).await;
-            }
-        }));
-    }
-
-    fn stop_polling(&mut self) {
-        self.poll_task.take();
-    }
-
-    fn poll_stats(&mut self, cx: &mut Context<Self>) {
-        let Some(room) = active_room(cx) else {
-            return;
-        };
-
-        let connection_quality = room.read(cx).connection_quality();
-        let stats_task = room.read(cx).get_stats(cx);
-        self.input_lag = room.read(cx).input_lag();
-
-        self.network_stats.connection_quality = Some(connection_quality);
-
-        let background_task = cx.background_executor().spawn(async move {
-            let session_stats = stats_task.await;
-            session_stats.map(|stats| Self::compute_network_stats(&stats))
-        });
-
-        self.stats_update_task = Some(cx.spawn(async move |this, cx| {
-            let result = background_task.await;
-            this.update(cx, |this, cx| {
-                if let Some(computed) = result {
-                    this.network_stats.latency_ms = computed.latency_ms;
-                    this.network_stats.jitter_ms = computed.jitter_ms;
-                    this.network_stats.packet_loss_pct = computed.packet_loss_pct;
-                }
-                cx.notify();
-            })
-            .ok();
-        }));
-    }
-
-    /// Pure computation over session stats — safe to call on any thread.
-    fn compute_network_stats(stats: &livekit_client::SessionStats) -> ComputedNetworkStats {
-        let mut min_rtt: Option<f64> = None;
-        let mut max_jitter: Option<f64> = None;
-        let mut total_packets_received: u64 = 0;
-        let mut total_packets_lost: i64 = 0;
-
-        let all_stats = stats
-            .publisher_stats
-            .iter()
-            .chain(stats.subscriber_stats.iter());
-
-        for stat in all_stats {
-            Self::extract_metrics(
-                stat,
-                &mut min_rtt,
-                &mut max_jitter,
-                &mut total_packets_received,
-                &mut total_packets_lost,
-            );
-        }
-
-        let total_expected = total_packets_received as i64 + total_packets_lost;
-        let packet_loss_pct = if total_expected > 0 {
-            Some((total_packets_lost as f64 / total_expected as f64) * 100.0)
-        } else {
-            None
-        };
-
-        ComputedNetworkStats {
-            latency_ms: min_rtt.map(|rtt| rtt * 1000.0),
-            jitter_ms: max_jitter.map(|j| j * 1000.0),
-            packet_loss_pct,
-        }
-    }
-
-    #[cfg(all(
-        not(rust_analyzer),
-        any(
-            test,
-            feature = "test-support",
-            all(target_os = "windows", target_env = "gnu"),
-            target_os = "freebsd"
-        )
-    ))]
-    fn extract_metrics(
-        _stat: &livekit_client::RtcStats,
-        _min_rtt: &mut Option<f64>,
-        _max_jitter: &mut Option<f64>,
-        _total_packets_received: &mut u64,
-        _total_packets_lost: &mut i64,
-    ) {
-    }
-
-    #[cfg(any(
-        rust_analyzer,
-        not(any(
-            test,
-            feature = "test-support",
-            all(target_os = "windows", target_env = "gnu"),
-            target_os = "freebsd"
-        ))
-    ))]
-    fn extract_metrics(
-        stat: &livekit_client::RtcStats,
-        min_rtt: &mut Option<f64>,
-        max_jitter: &mut Option<f64>,
-        total_packets_received: &mut u64,
-        total_packets_lost: &mut i64,
-    ) {
-        use livekit_client::RtcStats;
-
-        match stat {
-            RtcStats::CandidatePair(pair) => {
-                let rtt = pair.candidate_pair.current_round_trip_time;
-                if rtt > 0.0 {
-                    *min_rtt = Some(match *min_rtt {
-                        Some(current) => current.min(rtt),
-                        None => rtt,
-                    });
-                }
-            }
-            RtcStats::InboundRtp(inbound) => {
-                let jitter = inbound.received.jitter;
-                if jitter > 0.0 {
-                    *max_jitter = Some(match *max_jitter {
-                        Some(current) => current.max(jitter),
-                        None => jitter,
-                    });
-                }
-                *total_packets_received += inbound.received.packets_received;
-                *total_packets_lost += inbound.received.packets_lost;
-            }
-            RtcStats::RemoteInboundRtp(remote_inbound) => {
-                let rtt = remote_inbound.remote_inbound.round_trip_time;
-                if rtt > 0.0 {
-                    *min_rtt = Some(match *min_rtt {
-                        Some(current) => current.min(rtt),
-                        None => rtt,
-                    });
-                }
             }
             _ => {}
         }
@@ -310,9 +142,16 @@ impl Focusable for CallStatsModal {
 
 impl Render for CallStatsModal {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let is_connected = active_room(cx).is_some();
+        let room = active_room(cx);
+        let is_connected = room.is_some();
+        let stats = room
+            .and_then(|room| {
+                let diagnostics = room.read(cx).diagnostics()?;
+                Some(diagnostics.read(cx).stats().clone())
+            })
+            .unwrap_or_default();
 
-        let (quality_text, quality_color) = quality_label(self.network_stats.connection_quality);
+        let (quality_text, quality_color) = quality_label(stats.connection_quality);
 
         v_flex()
             .key_context("CallStatsModal")
@@ -352,28 +191,28 @@ impl Render for CallStatsModal {
                         .child(self.render_metric_row(
                             "Latency",
                             "Time for data to travel to the server",
-                            self.network_stats.latency_ms,
+                            stats.latency_ms,
                             |v| format!("{:.0}ms", v),
                             |v| metric_rating("Latency", v),
                         ))
                         .child(self.render_metric_row(
                             "Jitter",
                             "Variance or fluctuation in latency",
-                            self.network_stats.jitter_ms,
+                            stats.jitter_ms,
                             |v| format!("{:.0}ms", v),
                             |v| metric_rating("Jitter", v),
                         ))
                         .child(self.render_metric_row(
                             "Packet loss",
                             "Amount of data lost during transfer",
-                            self.network_stats.packet_loss_pct,
+                            stats.packet_loss_pct,
                             |v| format!("{:.1}%", v),
                             |v| packet_loss_rating(v),
                         ))
                         .child(self.render_metric_row(
                             "Input lag",
                             "Delay from audio capture to WebRTC",
-                            self.input_lag.map(|d| d.as_secs_f64() * 1000.0),
+                            stats.input_lag.map(|d| d.as_secs_f64() * 1000.0),
                             |v| format!("{:.1}ms", v),
                             |v| input_lag_rating(v),
                         )),

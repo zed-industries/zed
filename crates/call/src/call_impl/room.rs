@@ -25,6 +25,8 @@ use project::Project;
 use settings::Settings as _;
 use std::sync::atomic::AtomicU64;
 use std::{future::Future, mem, rc::Rc, sync::Arc, time::Duration, time::Instant};
+
+use super::diagnostics::CallDiagnostics;
 use util::{ResultExt, TryFutureExt, paths::PathStyle, post_inc};
 use workspace::ParticipantLocation;
 
@@ -70,6 +72,7 @@ pub struct Room {
     id: u64,
     channel_id: Option<ChannelId>,
     live_kit: Option<LiveKitRoom>,
+    diagnostics: Option<Entity<CallDiagnostics>>,
     status: RoomStatus,
     shared_projects: HashSet<WeakEntity<Project>>,
     joined_projects: HashSet<WeakEntity<Project>>,
@@ -137,6 +140,7 @@ impl Room {
             id,
             channel_id,
             live_kit: None,
+            diagnostics: None,
             status: RoomStatus::Online,
             shared_projects: Default::default(),
             joined_projects: Default::default(),
@@ -351,6 +355,7 @@ impl Room {
         self.participant_user_ids.clear();
         self.client_subscriptions.clear();
         self.live_kit.take();
+        self.diagnostics.take();
         self.pending_room_update.take();
         self.maintain_connection.take();
     }
@@ -564,6 +569,10 @@ impl Room {
         } else {
             None
         }
+    }
+
+    pub fn diagnostics(&self) -> Option<&Entity<CallDiagnostics>> {
+        self.diagnostics.as_ref()
     }
 
     pub fn connection_quality(&self) -> livekit::ConnectionQuality {
@@ -1657,6 +1666,7 @@ fn spawn_room_connection(
                 livekit::Room::connect(connection_info.server_url, connection_info.token, cx)
                     .await?;
 
+            let weak_room = this.clone();
             this.update(cx, |this, cx| {
                 let _handle_updates = cx.spawn(async move |this, cx| {
                     while let Some(event) = events.next().await {
@@ -1683,6 +1693,7 @@ fn spawn_room_connection(
                     speaking: false,
                     _handle_updates,
                 });
+                this.diagnostics = Some(cx.new(|cx| CallDiagnostics::new(weak_room, cx)));
 
                 if !muted_by_user && this.can_use_microphone() {
                     this.share_microphone(cx)
