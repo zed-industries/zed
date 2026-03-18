@@ -2193,7 +2193,7 @@ version = "3.8.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "89ec27229c38ed0eb3c0feee3d2c1d6a4379ae44f418a29a658890e062d8f365"
 dependencies = [
- "darling 0.20.11",
+ "darling 0.21.3",
  "ident_case",
  "prettyplease",
  "proc-macro2",
@@ -3319,6 +3319,7 @@ dependencies = [
  "futures 0.3.31",
  "fuzzy",
  "gpui",
+ "livekit_client",
  "log",
  "menu",
  "notifications",
@@ -3338,6 +3339,7 @@ dependencies = [
  "ui",
  "util",
  "workspace",
+ "zed_actions",
 ]
 
 [[package]]
@@ -17754,6 +17756,8 @@ dependencies = [
  "feature_flags",
  "git_ui",
  "gpui",
+ "icons",
+ "livekit_client",
  "notifications",
  "platform_title_bar",
  "project",
@@ -21854,7 +21858,7 @@ dependencies = [
 
 [[package]]
 name = "zed"
-version = "0.229.0"
+version = "0.230.0"
 dependencies = [
  "acp_thread",
  "acp_tools",

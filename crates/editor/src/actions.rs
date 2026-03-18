@@ -883,6 +883,8 @@ actions!(
         UnwrapSyntaxNode,
         /// Wraps selections in tag specified by language.
         WrapSelectionsInTag,
+        /// Aligns selections from different rows into the same column
+        AlignSelections,
     ]
 );
 

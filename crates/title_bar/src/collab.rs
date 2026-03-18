@@ -9,6 +9,8 @@ use gpui::{
     canvas, point,
 };
 use gpui::{App, Task, Window};
+use icons::IconName;
+use livekit_client::ConnectionQuality;
 use project::WorktreeSettings;
 use rpc::proto::{self};
 use settings::{Settings as _, SettingsLocation};
@@ -19,8 +21,16 @@ use ui::{
 };
 use util::rel_path::RelPath;
 use workspace::{ParticipantLocation, notifications::DetachAndPromptErr};
+use zed_actions::ShowCallStats;
 
 use crate::TitleBar;
+
+fn format_stat(value: Option<f64>, format: impl Fn(f64) -> String) -> String {
+    match value {
+        Some(v) => format(v),
+        None => "—".to_string(),
+    }
+}
 
 pub fn toggle_screen_sharing(
     screen: anyhow::Result<Option<Rc<dyn ScreenCaptureSource>>>,
@@ -347,6 +357,11 @@ impl TitleBar {
         let can_share_projects = room.can_share_projects();
         let screen_sharing_supported = cx.is_screen_capture_supported();
 
+        let stats = room
+            .diagnostics()
+            .map(|d| d.read(cx).stats().clone())
+            .unwrap_or_default();
+
         let channel_store = ChannelStore::global(cx);
         let channel = room
             .channel_id()
@@ -354,6 +369,45 @@ impl TitleBar {
 
         let mut children = Vec::new();
 
+        let effective_quality = stats.effective_quality.unwrap_or(ConnectionQuality::Lost);
+        let (signal_icon, signal_color, quality_label) = match effective_quality {
+            ConnectionQuality::Excellent => {
+                (IconName::SignalHigh, Some(Color::Success), "Excellent")
+            }
+            ConnectionQuality::Good => (IconName::SignalHigh, None, "Good"),
+            ConnectionQuality::Poor => (IconName::SignalMedium, Some(Color::Warning), "Poor"),
+            ConnectionQuality::Lost => (IconName::SignalLow, Some(Color::Error), "Lost"),
+        };
+        let quality_label: SharedString = quality_label.into();
+        children.push(
+            IconButton::new("call-quality", signal_icon)
+                .style(ButtonStyle::Subtle)
+                .icon_size(IconSize::Small)
+                .when_some(signal_color, |button, color| button.icon_color(color))
+                .tooltip(move |_window, cx| {
+                    let quality_label = quality_label.clone();
+                    let latency = format_stat(stats.latency_ms, |v| format!("{:.0}ms", v));
+                    let jitter = format_stat(stats.jitter_ms, |v| format!("{:.0}ms", v));
+                    let packet_loss = format_stat(stats.packet_loss_pct, |v| format!("{:.1}%", v));
+                    let input_lag =
+                        format_stat(stats.input_lag.map(|d| d.as_secs_f64() * 1000.0), |v| {
+                            format!("{:.1}ms", v)
+                        });
+
+                    Tooltip::with_meta(
+                        format!("Connection: {quality_label}"),
+                        Some(&ShowCallStats),
+                        format!(
+                            "Latency: {latency} · Jitter: {jitter} · Loss: {packet_loss} · Input lag: {input_lag}",
+                        ),
+                        cx,
+                    )
+                })
+                .on_click(move |_, window, cx| {
+                    window.dispatch_action(Box::new(ShowCallStats), cx);
+                })
+                .into_any_element(),
+        );
         children.push(
             h_flex()
                 .gap_1()
