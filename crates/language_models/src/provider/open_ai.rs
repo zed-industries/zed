@@ -14,8 +14,8 @@ use language_model::{
 };
 use menu;
 use open_ai::responses::{
-    ResponseFunctionCallItem, ResponseFunctionCallOutputItem, ResponseInputContent,
-    ResponseInputItem, ResponseMessageItem,
+    ResponseFunctionCallItem, ResponseFunctionCallOutputContent, ResponseFunctionCallOutputItem,
+    ResponseInputContent, ResponseInputItem, ResponseMessageItem,
 };
 use open_ai::{
     ImageUrl, Model, OPEN_AI_API_URL, ReasoningEffort, ResponseStreamEvent,
@@ -647,8 +647,16 @@ fn append_message_to_response_items(
                     ResponseFunctionCallOutputItem {
                         call_id: tool_result.tool_use_id.to_string(),
                         output: match tool_result.content {
-                            LanguageModelToolResultContent::Text(text) => text.to_string(),
-                            LanguageModelToolResultContent::Image(image) => image.to_base64_url(),
+                            LanguageModelToolResultContent::Text(text) => {
+                                ResponseFunctionCallOutputContent::Text(text.to_string())
+                            }
+                            LanguageModelToolResultContent::Image(image) => {
+                                ResponseFunctionCallOutputContent::List(vec![
+                                    ResponseInputContent::Image {
+                                        image_url: image.to_base64_url(),
+                                    },
+                                ])
+                            }
                         },
                     },
                 ));
