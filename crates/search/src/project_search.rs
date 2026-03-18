@@ -766,15 +766,15 @@ impl ProjectSearchView {
             self.select_match(Direction::Next, window, cx)
         }
     }
-    
+
     fn replace_all(&mut self, _: &ReplaceAll, window: &mut Window, cx: &mut Context<Self>) {
         if self.entity.read(cx).pending_search.is_some() {
             self.pending_replace_all = true;
             return;
         }
         let query_text = self.query_editor.read(cx).text(cx);
-        let query_is_stale = self.entity.read(cx).last_search_query_text.as_deref()
-            != Some(query_text.as_str());
+        let query_is_stale =
+            self.entity.read(cx).last_search_query_text.as_deref() != Some(query_text.as_str());
         if query_is_stale {
             self.pending_replace_all = true;
             self.search(cx);
@@ -783,11 +783,10 @@ impl ProjectSearchView {
             }
             return;
         }
+        self.pending_replace_all = false;
         if self.active_match_index.is_none() {
-            self.pending_replace_all = false;
             return;
         }
-        self.pending_replace_all = false;
         let Some(query) = self.entity.read(cx).active_query.as_ref() else {
             return;
         };
