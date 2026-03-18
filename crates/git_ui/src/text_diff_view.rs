@@ -77,7 +77,7 @@ impl TextDiffView {
                 .text_for_range(selection_range.clone())
                 .collect::<String>()
         });
-        let selection_buffer = build_buffer_from_text(selection_text, language.clone(), cx);
+        let selection_buffer = build_buffer_from_text(selection_text, language, cx);
         let selection_buffer_snapshot = selection_buffer.read(cx).snapshot();
         let diff_buffer = cx.new(|cx| BufferDiff::new(&selection_buffer_snapshot.text, cx));
 
