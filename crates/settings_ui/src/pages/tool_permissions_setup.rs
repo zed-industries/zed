@@ -249,10 +249,13 @@ fn render_tool_list_item(
 
     h_flex()
         .w_full()
+        .min_w_0()
         .py_3()
         .justify_between()
         .child(
             v_flex()
+                .w_full()
+                .min_w_0()
                 .child(h_flex().gap_1().child(Label::new(tool.name)).when_some(
                     rule_summary,
                     |this, summary| {
@@ -1072,9 +1075,12 @@ fn render_global_default_mode_section(current_mode: ToolPermissionMode) -> AnyEl
 
     h_flex()
         .my_4()
+        .min_w_0()
         .justify_between()
         .child(
             v_flex()
+                .w_full()
+                .min_w_0()
                 .child(Label::new("Default Permission"))
                 .child(
                     Label::new(
@@ -1125,13 +1131,18 @@ fn render_default_mode_section(
     let tool_id_owned = tool_id.to_string();
 
     h_flex()
+        .min_w_0()
         .justify_between()
         .child(
-            v_flex().child(Label::new("Default Action")).child(
-                Label::new("Action to take when no patterns match.")
-                    .size(LabelSize::Small)
-                    .color(Color::Muted),
-            ),
+            v_flex()
+                .w_full()
+                .min_w_0()
+                .child(Label::new("Default Action"))
+                .child(
+                    Label::new("Action to take when no patterns match.")
+                        .size(LabelSize::Small)
+                        .color(Color::Muted),
+                ),
         )
         .child(
             PopoverMenu::new(format!("default-mode-{}", tool_id))

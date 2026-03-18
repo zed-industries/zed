@@ -172,11 +172,13 @@ fn render_provider_dropdown(window: &mut Window, cx: &mut App) -> AnyElement {
             h_flex()
                 .pt_2p5()
                 .w_full()
+                .min_w_0()
                 .justify_between()
                 .child(
                     v_flex()
                         .w_full()
-                        .max_w_1_2()
+                        .min_w_0()
+                        .max_w_2_3()
                         .child(Label::new("Provider"))
                         .child(
                             Label::new("Select which provider to use for edit predictions.")
@@ -246,13 +248,15 @@ fn render_api_key_provider(
         .no_padding(true);
     let button_link_label = format!("{} dashboard", title);
     let description = match docs {
-        ApiKeyDocs::Custom { message } => h_flex().min_w_0().gap_0p5().child(
+        ApiKeyDocs::Custom { message } => div().min_w_0().w_full().child(
             Label::new(message)
                 .size(LabelSize::Small)
                 .color(Color::Muted),
         ),
         ApiKeyDocs::Link { dashboard_url } => h_flex()
+            .w_full()
             .min_w_0()
+            .flex_wrap()
             .gap_0p5()
             .child(
                 Label::new("Visit the")
@@ -300,11 +304,13 @@ fn render_api_key_provider(
             h_flex()
                 .pt_2p5()
                 .w_full()
+                .min_w_0()
                 .justify_between()
                 .child(
                     v_flex()
                         .w_full()
-                        .max_w_1_2()
+                        .min_w_0()
+                        .max_w_2_3()
                         .child(Label::new("API Key"))
                         .child(description)
                         .when_some(env_var_name, |this, env_var_name| {
