@@ -1530,7 +1530,7 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_delete_remote(cx: &mut TestAppContext) {
+    async fn test_delete_remote_branch(cx: &mut TestAppContext) {
         init_test(cx);
         let (_project, repository) = init_fake_repository(cx).await;
         let branches = vec![
@@ -1540,19 +1540,17 @@ mod tests {
             create_test_branch("develop", false, Some("private"), Some(700)),
         ];
 
-        let remote_names = branches
+        let branch_names = branches
             .iter()
-            .filter_map(|branch| branch.remote_name().map(|r| r.to_string()))
+            .map(|branch| branch.name().to_string())
             .collect::<Vec<String>>();
         let repo = repository.clone();
         cx.spawn(async move |mut cx| {
-            for branch in remote_names {
-                repo.update(&mut cx, |repo, _| {
-                    repo.create_remote(branch, String::from("test"))
-                })
-                .await
-                .unwrap()
-                .unwrap();
+            for branch in branch_names {
+                repo.update(&mut cx, |repo, _| repo.create_branch(branch, None))
+                    .await
+                    .unwrap()
+                    .unwrap();
             }
         })
         .await;

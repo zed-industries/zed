@@ -569,6 +569,11 @@ impl GitRepository for FakeGitRepository {
         _base_branch: Option<String>,
     ) -> BoxFuture<'_, Result<()>> {
         self.with_state_async(true, move |state| {
+            if let Some((remote, _)) = name.split_once('/')
+                && !state.remotes.contains_key(remote)
+            {
+                state.remotes.insert(remote.to_owned(), "".to_owned());
+            }
             state.branches.insert(name);
             Ok(())
         })
@@ -981,6 +986,11 @@ impl GitRepository for FakeGitRepository {
 
     fn remove_remote(&self, name: String) -> BoxFuture<'_, Result<()>> {
         self.with_state_async(true, move |state| {
+            state.branches.retain(|branch| {
+                branch
+                    .split_once('/')
+                    .is_none_or(|(remote, _)| remote != name)
+            });
             state.remotes.remove(&name);
             Ok(())
         })
