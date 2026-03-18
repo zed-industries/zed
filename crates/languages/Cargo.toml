@@ -31,6 +31,7 @@ load-grammars = [
     "tree-sitter-rust",
     "tree-sitter-typescript",
     "tree-sitter-yaml",
+    "tree-sitter-zsh"
 ]
 
 [dependencies]
@@ -93,6 +94,7 @@ tree-sitter-regex = { workspace = true, optional = true }
 tree-sitter-rust = { workspace = true, optional = true }
 tree-sitter-typescript = { workspace = true, optional = true }
 tree-sitter-yaml = { workspace = true, optional = true }
+tree-sitter-zsh = { workspace = true, optional = true }
 url.workspace = true
 util.workspace = true
 
@@ -100,6 +102,7 @@ util.workspace = true
 pretty_assertions.workspace = true
 theme = { workspace = true, features = ["test-support"] }
 tree-sitter-bash.workspace = true
+tree-sitter-zsh.workspace = true
 tree-sitter-c.workspace = true
 tree-sitter-cpp.workspace = true
 tree-sitter-css.workspace = true
