@@ -2959,6 +2959,25 @@ fn read_recursive<'a>(
     .boxed()
 }
 
+/// Returns `true` if `path` is a git worktree checkout (as opposed to a
+/// normal repository or not a git repo at all).
+///
+/// Git worktree checkouts are identified by having a `.git` **file** (not a
+/// directory) at their root. This file contains a `gitdir:` pointer back to
+/// the main repository's `.git/worktrees/<name>` directory. In contrast, a
+/// normal git repository has a `.git` **directory**. Non-git directories have
+/// no `.git` entry at all.
+///
+/// Returns false if we can't successfully read a .git file.
+///
+/// `git worktree` docs: https://git-scm.com/docs/git-worktree
+pub async fn is_git_worktree_checkout(fs: &dyn Fs, path: &Path) -> bool {
+    match fs.metadata(&path.join(".git")).await {
+        Ok(Some(metadata)) => !metadata.is_dir,
+        _ => false,
+    }
+}
+
 // todo(windows)
 // can we get file id not open the file twice?
 // https://github.com/rust-lang/rust/issues/63010
