@@ -41,6 +41,18 @@ pub enum Model {
         alias = "grok-4-1-fast"
     )]
     Grok41FastReasoning,
+    #[serde(rename = "grok-4.20-multi-agent-beta-0309")]
+    Grok420MultiAgentBeta0309,
+    #[serde(
+        rename = "grok-4.20-beta-0309-reasoning",
+        alias = "grok-4.20-beta-0309-reasoning-latest"
+    )]
+    Grok420Beta0309Reasoning,
+    #[serde(
+        rename = "grok-4.20-beta-0309-non-reasoning",
+        alias = "grok-4.20-beta-0309-non-reasoning-latest"
+    )]
+    Grok420Beta0309NonReasoning,
     #[serde(rename = "grok-code-fast-1", alias = "grok-code-fast-1-0825")]
     GrokCodeFast1,
     #[serde(rename = "custom")]
@@ -70,6 +82,9 @@ impl Model {
             "grok-4-1-fast-non-reasoning" => Ok(Self::Grok41FastNonReasoning),
             "grok-4-1-fast-reasoning" => Ok(Self::Grok41FastReasoning),
             "grok-4-1-fast" => Ok(Self::Grok41FastReasoning),
+            "grok-4.20-multi-agent-beta-0309" => Ok(Self::Grok420MultiAgentBeta0309),
+            "grok-4.20-beta-0309-reasoning" => Ok(Self::Grok420Beta0309Reasoning),
+            "grok-4.20-beta-0309-non-reasoning" => Ok(Self::Grok420Beta0309NonReasoning),
             "grok-2-vision" => Ok(Self::Grok2Vision),
             "grok-3" => Ok(Self::Grok3),
             "grok-3-mini" => Ok(Self::Grok3Mini),
@@ -92,6 +107,9 @@ impl Model {
             Self::Grok4FastNonReasoning => "grok-4-fast-non-reasoning",
             Self::Grok41FastNonReasoning => "grok-4-1-fast-non-reasoning",
             Self::Grok41FastReasoning => "grok-4-1-fast-reasoning",
+            Self::Grok420MultiAgentBeta0309 => "grok-4.20-multi-agent-beta-0309",
+            Self::Grok420Beta0309Reasoning => "grok-4.20-beta-0309-reasoning",
+            Self::Grok420Beta0309NonReasoning => "grok-4.20-beta-0309-non-reasoning",
             Self::GrokCodeFast1 => "grok-code-fast-1",
             Self::Custom { name, .. } => name,
         }
@@ -109,6 +127,9 @@ impl Model {
             Self::Grok4FastNonReasoning => "Grok 4 Fast (Non-Reasoning)",
             Self::Grok41FastNonReasoning => "Grok 4.1 Fast (Non-Reasoning)",
             Self::Grok41FastReasoning => "Grok 4.1 Fast",
+            Self::Grok420MultiAgentBeta0309 => "Grok 4.20 Multi-Agent",
+            Self::Grok420Beta0309Reasoning => "Grok 4.20 Reasoning",
+            Self::Grok420Beta0309NonReasoning => "Grok 4.20 Non-Reasoning",
             Self::GrokCodeFast1 => "Grok Code Fast 1",
             Self::Custom {
                 name, display_name, ..
@@ -123,7 +144,10 @@ impl Model {
             Self::Grok4FastReasoning
             | Self::Grok4FastNonReasoning
             | Self::Grok41FastNonReasoning
-            | Self::Grok41FastReasoning => 2_000_000,
+            | Self::Grok41FastReasoning
+            | Self::Grok420MultiAgentBeta0309
+            | Self::Grok420Beta0309Reasoning
+            | Self::Grok420Beta0309NonReasoning => 2_000_000,
             Self::Grok2Vision => 8_192,
             Self::Custom { max_tokens, .. } => *max_tokens,
         }
@@ -137,6 +161,9 @@ impl Model {
             | Self::Grok4FastNonReasoning
             | Self::Grok41FastNonReasoning
             | Self::Grok41FastReasoning
+            | Self::Grok420MultiAgentBeta0309
+            | Self::Grok420Beta0309Reasoning
+            | Self::Grok420Beta0309NonReasoning
             | Self::GrokCodeFast1 => Some(64_000),
             Self::Grok2Vision => Some(4_096),
             Self::Custom {
@@ -153,6 +180,9 @@ impl Model {
             | Self::Grok3Fast
             | Self::Grok3MiniFast
             | Self::Grok4
+            | Self::Grok420MultiAgentBeta0309
+            | Self::Grok420Beta0309Reasoning
+            | Self::Grok420Beta0309NonReasoning
             | Self::Grok4FastReasoning
             | Self::Grok4FastNonReasoning
             | Self::Grok41FastNonReasoning
@@ -168,6 +198,9 @@ impl Model {
     pub fn requires_json_schema_subset(&self) -> bool {
         match self {
             Self::Grok4
+            | Self::Grok420MultiAgentBeta0309
+            | Self::Grok420Beta0309Reasoning
+            | Self::Grok420Beta0309NonReasoning
             | Self::Grok4FastReasoning
             | Self::Grok4FastNonReasoning
             | Self::Grok41FastNonReasoning
@@ -189,6 +222,9 @@ impl Model {
             | Self::Grok3Fast
             | Self::Grok3MiniFast
             | Self::Grok4
+            | Self::Grok420MultiAgentBeta0309
+            | Self::Grok420Beta0309Reasoning
+            | Self::Grok420Beta0309NonReasoning
             | Self::Grok4FastReasoning
             | Self::Grok4FastNonReasoning
             | Self::Grok41FastNonReasoning
@@ -206,6 +242,9 @@ impl Model {
         match self {
             Self::Grok2Vision
             | Self::Grok4
+            | Self::Grok420MultiAgentBeta0309
+            | Self::Grok420Beta0309Reasoning
+            | Self::Grok420Beta0309NonReasoning
             | Self::Grok4FastReasoning
             | Self::Grok4FastNonReasoning
             | Self::Grok41FastNonReasoning
