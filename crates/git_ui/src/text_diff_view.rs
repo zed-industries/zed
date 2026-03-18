@@ -8,7 +8,7 @@ use gpui::{
     AnyElement, App, AppContext as _, AsyncApp, Context, Entity, EventEmitter, FocusHandle,
     Focusable, IntoElement, Render, Task, Window,
 };
-use language::{self, Buffer, Language, Point};
+use language::{self, Anchor, Buffer, Language, Point};
 use project::Project;
 use std::{
     any::{Any, TypeId},
@@ -96,12 +96,16 @@ impl TextDiffView {
 
             workspace.update_in(cx, |workspace, window, cx| {
                 let diff_view = cx.new(|cx| {
+                    let source_buffer_snapshot = source_buffer.read(cx).snapshot();
+                    let selection_range_anchor = source_buffer_snapshot
+                        .anchor_before(selection_range.start)
+                        ..source_buffer_snapshot.anchor_after(selection_range.end);
                     TextDiffView::new(
                         clipboard_buffer,
                         selection_buffer,
                         source_editor,
                         source_buffer,
-                        selection_range,
+                        selection_range_anchor,
                         diff_buffer,
                         project,
                         window,
@@ -126,7 +130,7 @@ impl TextDiffView {
         selection_buffer: Entity<Buffer>,
         source_editor: Entity<Editor>,
         source_buffer: Entity<Buffer>,
-        source_range: Range<Point>,
+        selection_range_anchor: Range<Anchor>,
         diff_buffer: Entity<BufferDiff>,
         project: Entity<Project>,
         window: &mut Window,
@@ -215,7 +219,7 @@ impl TextDiffView {
 
                     let latest_text = source_buffer.read_with(cx, |buffer, _| {
                         buffer
-                            .text_for_range(source_range.clone())
+                            .text_for_range(selection_range_anchor.clone())
                             .collect::<String>()
                     });
                     selection_buffer.update(cx, |buffer, cx| buffer.set_text(latest_text, cx));
