@@ -72,10 +72,7 @@ pub struct Picker<D: PickerDelegate> {
     ///
     /// Set this to `false` when rendering the `Picker` as part of a larger modal.
     is_modal: bool,
-    /// Whether the most recent navigation was via keyboard (true) or mouse (false).
-    /// Used to suppress CSS :hover highlights on list items during keyboard navigation,
-    /// preventing two items from appearing focused simultaneously.
-    keyboard_navigated: bool,
+
     /// Bounds tracking for the picker container (for aside positioning)
     picker_bounds: Rc<Cell<Option<Bounds<Pixels>>>>,
     /// Bounds tracking for items (for aside positioning) - maps item index to bounds
@@ -344,7 +341,7 @@ impl<D: PickerDelegate> Picker<D> {
             max_height: Some(rems(24.).into()),
             show_scrollbar: false,
             is_modal: true,
-            keyboard_navigated: false,
+
             picker_bounds: Rc::new(Cell::new(None)),
             item_bounds: Rc::new(RefCell::new(HashMap::default())),
         };
@@ -490,7 +487,6 @@ impl<D: PickerDelegate> Picker<D> {
         if count > 0 {
             let index = self.delegate.selected_index();
             let ix = if index == count - 1 { 0 } else { index + 1 };
-            self.keyboard_navigated = true;
             self.set_selected_index(ix, Some(Direction::Down), true, window, cx);
             cx.notify();
         }
@@ -518,7 +514,6 @@ impl<D: PickerDelegate> Picker<D> {
         if count > 0 {
             let index = self.delegate.selected_index();
             let ix = if index == 0 { count - 1 } else { index - 1 };
-            self.keyboard_navigated = true;
             self.set_selected_index(ix, Some(Direction::Up), true, window, cx);
             cx.notify();
         }
@@ -536,7 +531,6 @@ impl<D: PickerDelegate> Picker<D> {
     ) {
         let count = self.delegate.match_count();
         if count > 0 {
-            self.keyboard_navigated = true;
             self.set_selected_index(0, Some(Direction::Down), true, window, cx);
             cx.notify();
         }
@@ -545,7 +539,6 @@ impl<D: PickerDelegate> Picker<D> {
     fn select_last(&mut self, _: &menu::SelectLast, window: &mut Window, cx: &mut Context<Self>) {
         let count = self.delegate.match_count();
         if count > 0 {
-            self.keyboard_navigated = true;
             self.set_selected_index(count - 1, Some(Direction::Up), true, window, cx);
             cx.notify();
         }
@@ -555,7 +548,6 @@ impl<D: PickerDelegate> Picker<D> {
         let count = self.delegate.match_count();
         let index = self.delegate.selected_index();
         let new_index = if index + 1 == count { 0 } else { index + 1 };
-        self.keyboard_navigated = true;
         self.set_selected_index(new_index, Some(Direction::Down), true, window, cx);
         cx.notify();
     }
@@ -796,7 +788,6 @@ impl<D: PickerDelegate> Picker<D> {
             )
             .on_hover(cx.listener(move |this, hovered: &bool, window, cx| {
                 if *hovered {
-                    this.keyboard_navigated = false;
                     this.set_selected_index(ix, None, false, window, cx);
                     cx.notify();
                 }
@@ -807,26 +798,7 @@ impl<D: PickerDelegate> Picker<D> {
                 window,
                 cx,
             ))
-            // The hover-blocker must be the LAST child so it is painted on top
-            // of the ListItem and its hitbox takes priority in GPUI's hit-testing.
-            // When keyboard_navigated=true this prevents the ListItem's CSS :hover
-            // style from firing, eliminating the double-highlight bug.
-            .when(self.keyboard_navigated, |el| {
-                el.child(
-                    div()
-                        .id(("hover-blocker", ix))
-                        .absolute()
-                        .top_0()
-                        .left_0()
-                        .size_full()
-                        .block_mouse_except_scroll()
-                        .on_mouse_move(cx.listener(move |this, _event, window, cx| {
-                            this.keyboard_navigated = false;
-                            this.set_selected_index(ix, None, false, window, cx);
-                            cx.notify();
-                        })),
-                )
-            })
+
             .when(
                 self.delegate.separators_after_indices().contains(&ix),
                 |picker| {
