@@ -2300,11 +2300,9 @@ impl Sidebar {
                     .child(
                         h_flex()
                             .gap_1()
-                            .when(
-                                self.focus_handle.is_focused(window)
-                                    && !self.filter_editor.focus_handle(cx).is_focused(window),
-                                |this| this.child(KeyBinding::for_action(&FocusSidebarFilter, cx)),
-                            )
+                            .when(self.selection.is_some(), |this| {
+                                this.child(KeyBinding::for_action(&FocusSidebarFilter, cx))
+                            })
                             .when(has_query, |this| {
                                 this.child(
                                     IconButton::new("clear_filter", IconName::Close)
