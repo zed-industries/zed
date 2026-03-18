@@ -186,7 +186,14 @@ impl RenderOnce for ThreadItem {
                 .alpha(0.5)
         };
 
-        let icon_container = || h_flex().size_4().flex_none().justify_center();
+        let icon_id = format!("icon-{}", self.id);
+        let icon_container = || {
+            h_flex()
+                .id(icon_id.clone())
+                .size_4()
+                .flex_none()
+                .justify_center()
+        };
         let agent_icon = if let Some(custom_svg) = self.custom_icon_from_external_svg {
             Icon::from_external_svg(custom_svg)
                 .color(Color::Muted)
@@ -206,12 +213,26 @@ impl RenderOnce for ThreadItem {
                 })
         };
 
-        let decoration = if self.status == AgentThreadStatus::Error {
-            Some(decoration(IconDecorationKind::X, cx.theme().status().error))
+        let (decoration, icon_tooltip) = if self.status == AgentThreadStatus::Error {
+            (
+                Some(decoration(IconDecorationKind::X, cx.theme().status().error)),
+                Some("Thread has an Error"),
+            )
+        } else if self.status == AgentThreadStatus::WaitingForConfirmation {
+            (
+                Some(decoration(
+                    IconDecorationKind::Triangle,
+                    cx.theme().status().warning,
+                )),
+                Some("Thread is Waiting for Confirmation"),
+            )
         } else if self.notified {
-            Some(decoration(IconDecorationKind::Dot, color.text_accent))
+            (
+                Some(decoration(IconDecorationKind::Dot, color.text_accent)),
+                Some("Thread's Generation is Complete"),
+            )
         } else {
-            None
+            (None, None)
         };
 
         let icon = if self.status == AgentThreadStatus::Running {
@@ -223,19 +244,12 @@ impl RenderOnce for ThreadItem {
                         .with_rotate_animation(2),
                 )
                 .into_any_element()
-        } else if self.status == AgentThreadStatus::WaitingForConfirmation {
-            icon_container()
-                .id("waiting-for-confirmation")
-                .child(
-                    Icon::new(IconName::Warning)
-                        .size(IconSize::Small)
-                        .color(Color::Warning),
-                )
-                .tooltip(Tooltip::text("Waiting for confirmation"))
-                .into_any_element()
         } else if let Some(decoration) = decoration {
             icon_container()
                 .child(DecoratedIcon::new(agent_icon, Some(decoration)))
+                .when_some(icon_tooltip, |icon, tooltip| {
+                    icon.tooltip(Tooltip::text(tooltip))
+                })
                 .into_any_element()
         } else {
             icon_container().child(agent_icon).into_any_element()
