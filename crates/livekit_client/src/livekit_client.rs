@@ -7,8 +7,7 @@ use gpui_tokio::Tokio;
 use log::info;
 use playback::capture_local_video_track;
 use settings::Settings;
-use std::sync::Arc;
-use std::sync::atomic::AtomicU64;
+use std::sync::{Arc, atomic::AtomicU64};
 
 mod playback;
 

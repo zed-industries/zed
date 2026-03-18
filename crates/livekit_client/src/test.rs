@@ -10,7 +10,7 @@ use parking_lot::Mutex;
 use postage::{mpsc, sink::Sink};
 use std::sync::{
     Arc, Weak,
-    atomic::{AtomicBool, Ordering::SeqCst},
+    atomic::{AtomicBool, AtomicU64, Ordering::SeqCst},
 };
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq, PartialOrd, Ord)]
@@ -748,7 +748,7 @@ impl Room {
         _track_name: String,
         _is_staff: bool,
         cx: &mut AsyncApp,
-    ) -> Result<(LocalTrackPublication, AudioStream)> {
+    ) -> Result<(LocalTrackPublication, AudioStream, Arc<AtomicU64>)> {
         self.local_participant().publish_microphone_track(cx).await
     }
 

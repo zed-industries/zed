@@ -8,6 +8,7 @@ use collections::HashMap;
 use gpui::{
     AsyncApp, DevicePixels, ScreenCaptureSource, ScreenCaptureStream, SourceMetadata, size,
 };
+use std::sync::{Arc, atomic::AtomicU64};
 
 #[derive(Clone, Debug)]
 pub struct LocalParticipant {
@@ -63,7 +64,7 @@ impl LocalParticipant {
     pub(crate) async fn publish_microphone_track(
         &self,
         _cx: &AsyncApp,
-    ) -> Result<(LocalTrackPublication, AudioStream)> {
+    ) -> Result<(LocalTrackPublication, AudioStream, Arc<AtomicU64>)> {
         let this = self.clone();
         let server = this.room.test_server();
         let sid = server
@@ -76,6 +77,7 @@ impl LocalParticipant {
                 sid,
             },
             AudioStream {},
+            Arc::new(AtomicU64::new(0)),
         ))
     }
 
