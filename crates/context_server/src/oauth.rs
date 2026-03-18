@@ -926,6 +926,8 @@ impl OAuthCallback {
     pub fn parse_query(query: &str) -> Result<Self> {
         let mut code: Option<String> = None;
         let mut state: Option<String> = None;
+        let mut error: Option<String> = None;
+        let mut error_description: Option<String> = None;
 
         for (key, value) in url::form_urlencoded::parse(query.as_bytes()) {
             match key.as_ref() {
@@ -939,11 +941,28 @@ impl OAuthCallback {
                         state = Some(value.into_owned());
                     }
                 }
+                "error" => {
+                    if !value.is_empty() {
+                        error = Some(value.into_owned());
+                    }
+                }
+                "error_description" => {
+                    if !value.is_empty() {
+                        error_description = Some(value.into_owned());
+                    }
+                }
                 _ => {}
             }
-            if code.is_some() && state.is_some() {
-                break;
-            }
+        }
+
+        // Check for OAuth error response (RFC 6749 Section 4.1.2.1) before
+        // checking for missing code/state.
+        if let Some(error_code) = error {
+            bail!(
+                "OAuth authorization failed: {} ({})",
+                error_code,
+                error_description.as_deref().unwrap_or("no description")
+            );
         }
 
         let code = code.ok_or_else(|| anyhow!("missing 'code' parameter in OAuth callback"))?;
@@ -2517,6 +2536,42 @@ mod tests {
         let callback = OAuthCallback::parse_query("code=abc%20def&state=test%3Dstate").unwrap();
         assert_eq!(callback.code, "abc def");
         assert_eq!(callback.state, "test=state");
+    }
+
+    #[test]
+    fn test_oauth_callback_parse_query_error_response() {
+        let result = OAuthCallback::parse_query(
+            "error=access_denied&error_description=User%20denied%20access&state=abc",
+        );
+        assert!(result.is_err());
+        let err_msg = result.unwrap_err().to_string();
+        assert!(
+            err_msg.contains("access_denied"),
+            "unexpected error: {}",
+            err_msg
+        );
+        assert!(
+            err_msg.contains("User denied access"),
+            "unexpected error: {}",
+            err_msg
+        );
+    }
+
+    #[test]
+    fn test_oauth_callback_parse_query_error_without_description() {
+        let result = OAuthCallback::parse_query("error=server_error&state=abc");
+        assert!(result.is_err());
+        let err_msg = result.unwrap_err().to_string();
+        assert!(
+            err_msg.contains("server_error"),
+            "unexpected error: {}",
+            err_msg
+        );
+        assert!(
+            err_msg.contains("no description"),
+            "unexpected error: {}",
+            err_msg
+        );
     }
 
     // -- McpOAuthTokenProvider tests -----------------------------------------
