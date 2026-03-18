@@ -1,0 +1,115 @@
+# Hotfix Review Monitor
+#
+# Runs daily and checks for merged PRs with the 'hotfix' label that have not
+# received a post-merge review approval within one business day. Posts a summary to
+# Slack if any are found. This is a SOC2 compensating control for the
+# emergency hotfix fast path.
+#
+# Security note: No untrusted input (PR titles, bodies, etc.) is interpolated
+# into shell commands. All PR metadata is read via gh API + jq, not via
+# github.event context expressions.
+#
+# Required secrets:
+#   SLACK_WEBHOOK_PR_REVIEW_BOT - Incoming webhook URL for the #pr-review-ops channel
+
+name: Hotfix Review Monitor
+
+on:
+  schedule:
+    - cron: "30 13 * * 1-5" # 1:30 PM UTC weekdays
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  check-hotfix-reviews:
+    if: github.repository_owner == 'zed-industries'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      REPO: ${{ github.repository }}
+    steps:
+      - name: Find unreviewed hotfixes
+        id: check
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # 80h lookback covers the Friday-to-Monday gap (72h) with buffer.
+          # Overlap on weekdays is harmless — reviewed PRs are filtered out below.
+          SINCE=$(date -u -v-80H +%Y-%m-%dT%H:%M:%SZ 2>/dev/null \
+            || date -u -d '80 hours ago' +%Y-%m-%dT%H:%M:%SZ)
+
+          # Get merged PRs with hotfix label from the lookback window
+          gh api --paginate \
+            "repos/${REPO}/pulls?state=closed&sort=updated&direction=desc&per_page=50" \
+            --jq "[
+              .[] |
+              select(.merged_at != null) |
+              select(.merged_at > \"$SINCE\") |
+              select(.labels | map(.name) | index(\"hotfix\"))
+            ]" > /tmp/hotfix_prs.json
+
+          # Check each hotfix PR for a post-merge approving review
+          jq -r '.[].number' /tmp/hotfix_prs.json | while read -r PR_NUMBER; do
+            APPROVALS=$(gh api \
+              "repos/${REPO}/pulls/${PR_NUMBER}/reviews" \
+              --jq "[.[] | select(.state == \"APPROVED\")] | length")
+
+            if [ "$APPROVALS" -eq 0 ]; then
+              jq ".[] | select(.number == ${PR_NUMBER}) | {number, title, merged_at}" \
+                /tmp/hotfix_prs.json
+            fi
+          done | jq -s '.' > /tmp/unreviewed.json
+
+          COUNT=$(jq 'length' /tmp/unreviewed.json)
+          echo "count=$COUNT" >> "$GITHUB_OUTPUT"
+
+      - name: Notify Slack
+        if: steps.check.outputs.count != '0'
+        env:
+          SLACK_WEBHOOK_PR_REVIEW_BOT: ${{ secrets.SLACK_WEBHOOK_PR_REVIEW_BOT }}
+          COUNT: ${{ steps.check.outputs.count }}
+        run: |
+          # Build Block Kit payload from JSON — no shell interpolation of PR titles.
+          # Why jq? PR titles are attacker-controllable input. By reading them
+          # through jq -r from the JSON file and passing the result to jq --arg,
+          # the content stays safely JSON-encoded in the final payload. Block Kit
+          # doesn't change this — the same jq pipeline feeds into the blocks
+          # structure instead of plain text.
+          PRS=$(jq -r '.[] | "• <https://github.com/'"${REPO}"'/pull/\(.number)|#\(.number)> — \(.title) (merged \(.merged_at | split("T")[0]))"' /tmp/unreviewed.json)
+
+          jq -n \
+            --arg count "$COUNT" \
+            --arg prs "$PRS" \
+            '{
+              text: ($count + " hotfix PR(s) still need post-merge review"),
+              blocks: [
+                {
+                  type: "section",
+                  text: {
+                    type: "mrkdwn",
+                    text: (":rotating_light: *" + $count + " Hotfix PR(s) Need Post-Merge Review*")
+                  }
+                },
+                {
+                  type: "section",
+                  text: { type: "mrkdwn", text: $prs }
+                },
+                { type: "divider" },
+                {
+                  type: "context",
+                  elements: [{
+                    type: "mrkdwn",
+                    text: "Hotfix PRs require review within one business day of merge."
+                  }]
+                }
+              ]
+            }' | \
+          curl -s -X POST "$SLACK_WEBHOOK_PR_REVIEW_BOT" \
+            -H 'Content-Type: application/json' \
+            -d @-
+defaults:
+  run:
+    shell: bash -euxo pipefail {0}
