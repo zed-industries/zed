@@ -64,7 +64,7 @@ Add a Wayland-only screen-share path inside `livekit_client` that:
 - converts captured ARGB frames to WebRTC I420
 - initializes a `NativeVideoSource` when the first valid frame arrives
 - publishes a `LocalVideoTrack` with the same LiveKit publish options used by the current screen-share path
-- returns a `ScreenCaptureStreamHandle` that implements `ScreenCaptureStream`, so the rest of the call stack can keep storing a boxed stream handle without changing the `Room` data model
+- returns a `WaylandScreenCaptureStream` that implements `ScreenCaptureStream`, so the rest of the call stack can keep storing a boxed stream handle without changing the `Room` data model
 
 ### Important design choices
 
@@ -97,7 +97,7 @@ Reason:
 
 #### 3. Use a synthetic screen-share ID on Wayland
 
-`ScreenCaptureStreamHandle::metadata().id` should return a synthetic, stable-per-share `u64`, not a real platform screen ID.
+`WaylandScreenCaptureStream::metadata().id` should return a synthetic, stable-per-share `u64`, not a real platform screen ID.
 
 Reason:
 
@@ -105,7 +105,7 @@ Reason:
 - `shared_screen_id()` only needs a stable token for the active share
 - the Wayland UI will not compare active shares to a source list
 
-Use a monotonic counter or similar nonzero synthetic ID in `livekit_client`.
+Use a `static AtomicU64` counter in `livekit_client` to generate nonzero synthetic IDs. The ID must be nonzero because `shared_screen_id()` returns `Option<u64>` and a zero value could be confused with "no active share" by future callers.
 
 #### 4. Keep Wayland UX intentionally different
 
@@ -116,6 +116,16 @@ Reason:
 - there is no meaningful app-level list to show
 - the XDG Desktop Portal already provides the system picker
 - trying to mimic the X11 picker on Wayland would be misleading
+
+## Runtime dependencies
+
+Wayland screen sharing via XDG Desktop Portal routes frames through PipeWire. The following are hard runtime requirements:
+
+- `xdg-desktop-portal` (the D-Bus service that brokers the portal request)
+- a portal backend for the compositor, such as `xdg-desktop-portal-gnome`, `xdg-desktop-portal-kde`, or `xdg-desktop-portal-wlr`
+- `pipewire` (the multimedia framework that delivers frames)
+
+If any of these are missing, the portal capture path will fail. The implementation should detect this as early as possible and surface a clear, actionable error message to the user rather than falling through to a generic timeout. See the "Error messages" subsection below.
 
 ## Runtime and timeout model
 
@@ -159,7 +169,7 @@ The Wayland capture flow should work like this:
    - send a one-time “ready” signal back to the publishing task
 7. The publishing task waits for that first-frame signal with a timeout using the GPUI executor.
 8. Once the video source is ready, publish the LiveKit track using the same publish options as the current screen-share path.
-9. On success, return the publication and the `ScreenCaptureStreamHandle`.
+9. On success, return the publication and the `WaylandScreenCaptureStream`.
 10. On unshare or drop, the handle stops the capture loop.
 
 ### First-frame timeout
@@ -171,7 +181,7 @@ Use a bounded timeout while waiting for the first successful frame. A timeout ar
 If the timeout expires:
 
 - stop the capture loop
-- return a descriptive error
+- return a descriptive error (see "Error messages" below)
 - restore `Room` state back to no active screen share
 
 This timeout covers cases such as:
@@ -179,6 +189,17 @@ This timeout covers cases such as:
 - the portal dialog being dismissed
 - permissions being denied without a clean explicit error
 - no frames ever arriving because the portal session never became active
+
+### Error messages
+
+Setup-time failures must reach the user through the existing error-prompt path with an informative message. The following cases should produce distinct, actionable messages:
+
+- **Portal unavailable** (e.g., `xdg-desktop-portal` not running): explain that the XDG Desktop Portal service is required and name the likely missing package.
+- **PipeWire unavailable**: explain that PipeWire is required for Wayland screen sharing.
+- **Portal picker dismissed or permission denied**: explain that the user canceled or denied screen sharing, and that they can try again.
+- **First-frame timeout expired**: explain that no frames were received from the portal within the timeout period, suggest checking that `xdg-desktop-portal` and PipeWire are running, and that the portal backend matches the compositor.
+
+Avoid generic messages like "screen sharing failed." The user should be able to act on the error without searching online.
 
 ### Frame cadence
 
@@ -225,7 +246,7 @@ Preferred behavior, if the plumbing is straightforward:
 - have the capture path expose a one-shot terminal-failure signal
 - have `Room::share_screen_wayland()` spawn a small observer task that, if the same share is still active, resets the screen track state and unpublishes the track
 
-Setup-time failures must reach the user through the existing error-prompt path. Post-publish runtime failures should at least clean up local state, even if the first patch only logs the reason.
+Post-publish runtime failures should at least clean up local state, even if the first patch only logs the reason.
 
 ## File-by-file plan
 
@@ -242,19 +263,19 @@ This helper should:
 - initialize the `NativeVideoSource` on the first valid frame
 - handle resolution changes
 - enforce the first-frame timeout with GPUI executor timers
-- return the local video track plus the new `ScreenCaptureStreamHandle`
+- return the local video track plus the new `WaylandScreenCaptureStream`
 - optionally expose a one-shot runtime-failure signal for the caller to observe
 
 Keeping this in `playback.rs` is preferable to putting all capture logic in `livekit_client.rs`, because capture setup and frame conversion already live here today.
 
 ### 2. `crates/livekit_client/src/livekit_client.rs`
 
-Add the public `ScreenCaptureStreamHandle` type and the `LocalParticipant::publish_screenshare_track_wayland()` method.
+Add the public `WaylandScreenCaptureStream` type and the `LocalParticipant::publish_screenshare_track_wayland()` method.
 
-`ScreenCaptureStreamHandle` should:
+`WaylandScreenCaptureStream` should:
 
 - implement `ScreenCaptureStream`
-- hold the synthetic share ID
+- hold the synthetic share ID (from the `static AtomicU64` counter)
 - hold the stop flag
 - keep the background capture task alive for the lifetime of the share
 - stop capture in `Drop`
@@ -287,9 +308,9 @@ Add a matching mock `publish_screenshare_track_wayland()` method.
 The mock implementation only needs to:
 
 - publish a fake local video track through the test server
-- return a stub `ScreenCaptureStreamHandle`
+- return a stub `WaylandScreenCaptureStream`
 
-No mock source-list function is needed.
+This should be the bare minimum needed to smoke-test `Room::share_screen_wayland()` through the existing test infrastructure. No mock source-list function is needed.
 
 ### 5. `crates/call/src/call_impl/room.rs`
 
@@ -307,11 +328,17 @@ It should:
 
 If the Wayland handle exposes a terminal-failure receiver, this is the place to spawn the observer task before boxing the handle.
 
-Use `detach_and_log_err(cx)` rather than silently discarding unpublish errors in the new code path.
+Follow the existing `share_screen()` conventions: use `.detach()` for the canceled-unpublish task, matching what the X11/macOS path already does.
 
 ### 6. `crates/title_bar/src/collab.rs`
 
-Add a small helper used by the call controls, such as a local `use_portal_screen_share()` predicate based on `gpui::guess_compositor()`.
+Add a small helper used by the call controls, such as a local `use_portal_screen_share()` predicate. `gpui::guess_compositor()` returns `&'static str` (`"Wayland"`, `"X11"`, or `"Headless"`), so the predicate would look like:
+
+```rust
+fn use_portal_screen_share() -> bool {
+    gpui::guess_compositor() == "Wayland"
+}
+```
 
 Then update the render logic so that the screen-share control is shown when either:
 
@@ -331,6 +358,8 @@ Update the `ScreenShare` action handler to branch the same way as the title bar:
 
 - on Wayland, call `share_screen_wayland()` directly
 - on other platforms, keep the current source-enumeration path
+
+Note: the existing handler does not gate on `is_screen_capture_supported()` — it goes straight to `cx.screen_capture_sources()`. The Wayland branch must be inserted *before* that call, not alongside it, otherwise the handler will attempt source enumeration and fail silently on Wayland.
 
 This keeps keyboard and command-palette behavior aligned with the title bar.
 
@@ -354,32 +383,33 @@ The revised plan intentionally leaves these areas alone:
 
 ## Testing plan
 
-## Automated tests
+Wayland screen sharing is inherently difficult to test in automated CI because it requires a real portal session, a running PipeWire daemon, and a Wayland compositor. Manual testing on a real Wayland session is the primary validation method.
 
-Add or update tests for the new `call` and `livekit_client` behavior:
+The initial implementation should include the bare minimum of automated tests needed to exercise the new code paths through the mock client. Additional coverage can be added progressively as the feature matures.
 
-- successful `share_screen_wayland()` publish through the mock client
-- cancellation while publish is pending
-- first-frame timeout resets the room state
-- `shared_screen_id()` returns a synthetic ID while a Wayland share is active
-- unshare stops the active Wayland stream handle
-- Wayland UI branching selects the portal path instead of source enumeration
+### Automated tests (bare minimum)
 
-Use existing test infrastructure where possible. Do not add large new test-only abstractions unless necessary.
+Using the existing mock client infrastructure:
+
+- successful `share_screen_wayland()` publish through the mock client, confirming the room transitions to the sharing state and `shared_screen_id()` returns a nonzero synthetic ID
+- unshare stops the active Wayland stream handle and resets room state
+
+These two tests cover the basic happy path and cleanup. Further tests (cancellation while pending, timeout behavior, UI branching) can be added incrementally once the core path is stable.
 
 For tests that need timeouts or scheduler-driven waiting, prefer GPUI executor timers over unrelated timer implementations.
 
-## Manual validation
+### Manual validation
 
-Manual testing is required on a real Wayland compositor.
+Manual testing is required on a real Wayland compositor and is the primary acceptance gate.
 
 Primary validation:
 
 - start sharing from the title bar on Wayland
-- start sharing from the `ScreenShare` action
+- start sharing from the `ScreenShare` action (keyboard or command palette)
 - accept the portal picker and confirm the remote participant receives video
-- cancel the picker and confirm the UI returns to the non-sharing state with a useful error
-- deny permissions and confirm the UI returns to the non-sharing state with a useful error
+- cancel the picker and confirm the UI returns to the non-sharing state with a useful, actionable error message
+- deny permissions and confirm the UI returns to the non-sharing state with a useful, actionable error message
+- confirm the error message is informative when `xdg-desktop-portal` or PipeWire is not running
 
 Resolution and lifecycle validation:
 
