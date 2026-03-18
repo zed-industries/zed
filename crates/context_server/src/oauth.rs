@@ -633,10 +633,18 @@ pub async fn fetch_protected_resource_metadata(
     server_url: &Url,
     www_authenticate: &WwwAuthenticate,
 ) -> Result<ProtectedResourceMetadata> {
-    let candidate_urls = if let Some(ref url) = www_authenticate.resource_metadata {
-        vec![url.clone()]
-    } else {
-        protected_resource_metadata_urls(server_url)
+    let candidate_urls = match &www_authenticate.resource_metadata {
+        Some(url) if url.origin() == server_url.origin() => vec![url.clone()],
+        Some(url) => {
+            log::warn!(
+                "Ignoring cross-origin resource_metadata URL {} \
+                 (server origin: {})",
+                url,
+                server_url.origin().unicode_serialization()
+            );
+            protected_resource_metadata_urls(server_url)
+        }
+        None => protected_resource_metadata_urls(server_url),
     };
 
     for url in &candidate_urls {
@@ -1948,6 +1956,49 @@ mod tests {
                 .unwrap();
 
             assert_eq!(metadata.authorization_servers.len(), 1);
+        });
+    }
+
+    #[test]
+    fn test_fetch_protected_resource_metadata_rejects_cross_origin_url() {
+        smol::block_on(async {
+            let client = make_fake_http_client(|req| {
+                Box::pin(async move {
+                    let uri = req.uri().to_string();
+                    // The cross-origin URL should NOT be fetched; only the
+                    // well-known fallback at the server's own origin should be.
+                    if uri.contains("attacker.example.com") {
+                        panic!("should not fetch cross-origin resource_metadata URL");
+                    } else if uri.contains(".well-known/oauth-protected-resource") {
+                        json_response(
+                            200,
+                            r#"{
+                                "resource": "https://mcp.example.com",
+                                "authorization_servers": ["https://auth.example.com"]
+                            }"#,
+                        )
+                    } else {
+                        json_response(404, "{}")
+                    }
+                })
+            });
+
+            let server_url = Url::parse("https://mcp.example.com").unwrap();
+            let www_auth = WwwAuthenticate {
+                resource_metadata: Some(
+                    Url::parse("https://attacker.example.com/fake-metadata").unwrap(),
+                ),
+                scope: None,
+                error: None,
+                error_description: None,
+            };
+
+            let metadata = fetch_protected_resource_metadata(&client, &server_url, &www_auth)
+                .await
+                .unwrap();
+
+            // Should have used the fallback well-known URL, not the attacker's.
+            assert_eq!(metadata.resource.as_str(), "https://mcp.example.com/");
         });
     }
 
