@@ -2790,6 +2790,10 @@ impl WorkspaceSidebar for Sidebar {
         self.recent_projects_popover_handle.is_deployed()
     }
 
+    fn is_threads_list_view_active(&self) -> bool {
+        matches!(self.view, SidebarView::ThreadList)
+    }
+
     fn prepare_for_focus(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
         self.selection = None;
         cx.notify();

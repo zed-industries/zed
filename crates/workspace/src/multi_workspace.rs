@@ -43,6 +43,9 @@ pub trait Sidebar: Focusable + Render + Sized {
     fn has_notifications(&self, cx: &App) -> bool;
     fn toggle_recent_projects_popover(&self, window: &mut Window, cx: &mut App);
     fn is_recent_projects_popover_deployed(&self) -> bool;
+    fn is_threads_list_view_active(&self) -> bool {
+        true
+    }
     /// Makes focus reset bac to the search editor upon toggling the sidebar from outside
     fn prepare_for_focus(&mut self, _window: &mut Window, _cx: &mut Context<Self>) {}
 }
@@ -58,6 +61,7 @@ pub trait SidebarHandle: 'static + Send + Sync {
     fn entity_id(&self) -> EntityId;
     fn toggle_recent_projects_popover(&self, window: &mut Window, cx: &mut App);
     fn is_recent_projects_popover_deployed(&self, cx: &App) -> bool;
+    fn is_threads_list_view_active(&self, cx: &App) -> bool;
 }
 
 #[derive(Clone)]
@@ -111,6 +115,10 @@ impl<T: Sidebar> SidebarHandle for Entity<T> {
 
     fn is_recent_projects_popover_deployed(&self, cx: &App) -> bool {
         self.read(cx).is_recent_projects_popover_deployed()
+    }
+
+    fn is_threads_list_view_active(&self, cx: &App) -> bool {
+        self.read(cx).is_threads_list_view_active()
     }
 }
 
@@ -189,6 +197,12 @@ impl MultiWorkspace {
         self.sidebar
             .as_ref()
             .map_or(false, |s| s.is_recent_projects_popover_deployed(cx))
+    }
+
+    pub fn is_threads_list_view_active(&self, cx: &App) -> bool {
+        self.sidebar
+            .as_ref()
+            .map_or(false, |s| s.is_threads_list_view_active(cx))
     }
 
     pub fn multi_workspace_enabled(&self, cx: &App) -> bool {
