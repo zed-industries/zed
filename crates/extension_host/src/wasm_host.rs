@@ -6,10 +6,10 @@ use anyhow::{Context as _, Result, anyhow, bail};
 use async_trait::async_trait;
 use dap::{DebugRequest, StartDebuggingRequestArgumentsRequest};
 use extension::{
-    CodeLabel, Command, Completion, ContextServerConfiguration, DebugAdapterBinary,
-    DebugTaskDefinition, ExtensionCapability, ExtensionHostProxy, KeyValueStoreDelegate,
-    ProjectDelegate, SlashCommand, SlashCommandArgumentCompletion, SlashCommandOutput, Symbol,
-    WorktreeDelegate,
+    CodeLabel, Command, Completion, ContextServerConfiguration, DapCustomAction,
+    DebugAdapterBinary, DebugTaskDefinition, ExtensionCapability, ExtensionHostProxy,
+    KeyValueStoreDelegate, ProjectDelegate, SlashCommand, SlashCommandArgumentCompletion,
+    SlashCommandOutput, Symbol, WorktreeDelegate,
 };
 use fs::Fs;
 use futures::future::LocalBoxFuture;
@@ -522,6 +522,22 @@ impl extension::Extension for WasmExtension {
                     .call_run_dap_locator(store, locator_name, config)
                     .await?
                     .map_err(|err| store.data().extension_error(err))
+            }
+            .boxed()
+        })
+        .await?
+    }
+
+    async fn get_dap_custom_actions(
+        &self,
+        adapter_name: Arc<str>,
+    ) -> Result<Vec<DapCustomAction>> {
+        self.call(|extension, store| {
+            async move {
+                let actions = extension
+                    .call_get_dap_custom_actions(store, adapter_name)
+                    .await?;
+                Ok(actions)
             }
             .boxed()
         })
