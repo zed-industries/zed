@@ -465,6 +465,193 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_diffing_clipboard_against_empty_selection_uses_full_buffer_selection(
+        cx: &mut TestAppContext,
+    ) {
+        base_test(
+            path!("/test"),
+            path!("/test/text.txt"),
+            "def process_incoming_inventory(items, warehouse_id):\n    pass\n",
+            "def process_outgoing_inventory(items, warehouse_id):\n    passˇ\n",
+            &unindent(
+                "
+                - def process_incoming_inventory(items, warehouse_id):
+                + ˇdef process_outgoing_inventory(items, warehouse_id):
+                      pass
+                ",
+            ),
+            "Clipboard ↔ text.txt @ L1:1-L3:1",
+            &format!("Clipboard ↔ {} @ L1:1-L3:1", path!("test/text.txt")),
+            cx,
+        )
+        .await;
+    }
+
+    #[gpui::test]
+    async fn test_diffing_clipboard_against_multiline_selection_expands_to_full_lines(
+        cx: &mut TestAppContext,
+    ) {
+        base_test(
+            path!("/test"),
+            path!("/test/text.txt"),
+            "def process_incoming_inventory(items, warehouse_id):\n    pass\n",
+            "«def process_outgoing_inventory(items, warehouse_id):\n    passˇ»\n",
+            &unindent(
+                "
+                - def process_incoming_inventory(items, warehouse_id):
+                + ˇdef process_outgoing_inventory(items, warehouse_id):
+                      pass
+                ",
+            ),
+            "Clipboard ↔ text.txt @ L1:1-L3:1",
+            &format!("Clipboard ↔ {} @ L1:1-L3:1", path!("test/text.txt")),
+            cx,
+        )
+        .await;
+    }
+
+    #[gpui::test]
+    async fn test_diffing_clipboard_against_single_line_selection(cx: &mut TestAppContext) {
+        base_test(
+            path!("/test"),
+            path!("/test/text.txt"),
+            "a",
+            "«bbˇ»",
+            &unindent(
+                "
+                - a
+                + ˇbb",
+            ),
+            "Clipboard ↔ text.txt @ L1:1-3",
+            &format!("Clipboard ↔ {} @ L1:1-3", path!("test/text.txt")),
+            cx,
+        )
+        .await;
+    }
+
+    #[gpui::test]
+    async fn test_diffing_clipboard_with_leading_whitespace_against_line(cx: &mut TestAppContext) {
+        base_test(
+            path!("/test"),
+            path!("/test/text.txt"),
+            "    a",
+            "«bbˇ»",
+            &unindent(
+                "
+                -     a
+                + ˇbb",
+            ),
+            "Clipboard ↔ text.txt @ L1:1-3",
+            &format!("Clipboard ↔ {} @ L1:1-3", path!("test/text.txt")),
+            cx,
+        )
+        .await;
+    }
+
+    #[gpui::test]
+    async fn test_diffing_clipboard_against_line_with_leading_whitespace(cx: &mut TestAppContext) {
+        base_test(
+            path!("/test"),
+            path!("/test/text.txt"),
+            "a",
+            "    «bbˇ»",
+            &unindent(
+                "
+                - a
+                + ˇ    bb",
+            ),
+            "Clipboard ↔ text.txt @ L1:1-7",
+            &format!("Clipboard ↔ {} @ L1:1-7", path!("test/text.txt")),
+            cx,
+        )
+        .await;
+    }
+
+    #[gpui::test]
+    async fn test_diffing_clipboard_against_line_with_leading_whitespace_included_in_selection(
+        cx: &mut TestAppContext,
+    ) {
+        base_test(
+            path!("/test"),
+            path!("/test/text.txt"),
+            "a",
+            "«    bbˇ»",
+            &unindent(
+                "
+                - a
+                + ˇ    bb",
+            ),
+            "Clipboard ↔ text.txt @ L1:1-7",
+            &format!("Clipboard ↔ {} @ L1:1-7", path!("test/text.txt")),
+            cx,
+        )
+        .await;
+    }
+
+    #[gpui::test]
+    async fn test_diffing_clipboard_with_leading_whitespace_against_line_with_leading_whitespace(
+        cx: &mut TestAppContext,
+    ) {
+        base_test(
+            path!("/test"),
+            path!("/test/text.txt"),
+            "    a",
+            "    «bbˇ»",
+            &unindent(
+                "
+                -     a
+                + ˇ    bb",
+            ),
+            "Clipboard ↔ text.txt @ L1:1-7",
+            &format!("Clipboard ↔ {} @ L1:1-7", path!("test/text.txt")),
+            cx,
+        )
+        .await;
+    }
+
+    #[gpui::test]
+    async fn test_diffing_clipboard_with_leading_whitespace_against_line_with_leading_whitespace_included_in_selection(
+        cx: &mut TestAppContext,
+    ) {
+        base_test(
+            path!("/test"),
+            path!("/test/text.txt"),
+            "    a",
+            "«    bbˇ»",
+            &unindent(
+                "
+                -     a
+                + ˇ    bb",
+            ),
+            "Clipboard ↔ text.txt @ L1:1-7",
+            &format!("Clipboard ↔ {} @ L1:1-7", path!("test/text.txt")),
+            cx,
+        )
+        .await;
+    }
+
+    #[gpui::test]
+    async fn test_diffing_clipboard_against_partial_selection_expands_to_include_trailing_characters(
+        cx: &mut TestAppContext,
+    ) {
+        base_test(
+            path!("/test"),
+            path!("/test/text.txt"),
+            "a",
+            "«bˇ»b",
+            &unindent(
+                "
+                - a
+                + ˇbb",
+            ),
+            "Clipboard ↔ text.txt @ L1:1-3",
+            &format!("Clipboard ↔ {} @ L1:1-3", path!("test/text.txt")),
+            cx,
+        )
+        .await;
+    }
+
+    #[gpui::test]
     async fn test_diffing_clipboard_against_partial_multiline_selection(cx: &mut TestAppContext) {
         base_test(
             path!("/test"),
