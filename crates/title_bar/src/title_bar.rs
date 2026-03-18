@@ -790,16 +790,18 @@ impl TitleBar {
         let (branch_name, icon_info, worktree_name) = {
             let repo = repository.read(cx);
 
-            let worktree_name = if repo.work_directory_abs_path != repo.original_repo_abs_path {
-                let main_repo_name = repo.original_repo_abs_path.file_name();
-                repo.work_directory_abs_path
-                    .ancestors()
-                    .filter_map(|p| p.file_name())
-                    .find(|component| Some(*component) != main_repo_name)
-                    .map(|name| name.to_string_lossy().to_string())
-            } else {
-                None
-            };
+            let mut worktree_name = None;
+            if repo.work_directory_abs_path != repo.original_repo_abs_path {
+                if let Some(main_repo_name) = repo.original_repo_abs_path.file_name() {
+                    if repo.work_directory_abs_path.ends_with(&main_repo_name) {
+                        worktree_name = repo
+                            .work_directory_abs_path
+                            .parent()
+                            .and_then(|p| p.file_name())
+                            .and_then(|n| n.to_str());
+                    }
+                }
+            }
 
             let branch_name = repo
                 .branch
