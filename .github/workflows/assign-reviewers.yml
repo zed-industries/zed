@@ -26,7 +26,7 @@ permissions: {}
 jobs:
   assign-reviewers:
     if: >-
-      github.event.pull_request.base.repo.full_name == github.repository &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
       github.event.pull_request.draft == false &&
       contains(fromJSON('["MEMBER", "COLLABORATOR", "OWNER"]'), github.event.pull_request.author_association)
     runs-on: ubuntu-latest
