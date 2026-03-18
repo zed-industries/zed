@@ -1,7 +1,8 @@
 use crate::{
     AnyView, AnyWindowHandle, AppContext, AsyncApp, DispatchPhase, Effect, EntityId, EventEmitter,
-    FocusHandle, FocusOutEvent, Focusable, Global, KeystrokeObserver, Priority, Reservation,
-    SubscriberSet, Subscription, Task, WeakEntity, WeakFocusHandle, Window, WindowHandle,
+    FileDropEvent, FocusHandle, FocusOutEvent, Focusable, Global, KeystrokeObserver, Priority,
+    Reservation, SubscriberSet, Subscription, Task, WeakEntity, WeakFocusHandle, Window,
+    WindowHandle,
 };
 use anyhow::Result;
 use futures::FutureExt;
@@ -472,6 +473,24 @@ impl<'a, T: 'static> Context<'a, T> {
             (),
             Box::new(move |window, cx| {
                 view.update(cx, |view, cx| callback(view, window, cx))
+                    .is_ok()
+            }),
+        );
+        activate();
+        subscription
+    }
+
+    /// Register a callback to be invoked when the window receives a file drop event.
+    pub fn observe_window_file_drop(
+        &self,
+        window: &mut Window,
+        mut callback: impl FnMut(&mut T, &FileDropEvent, &mut Window, &mut Context<T>) + 'static,
+    ) -> Subscription {
+        let view = self.weak_entity();
+        let (subscription, activate) = window.file_drop_observers.insert(
+            (),
+            Box::new(move |event, window, cx| {
+                view.update(cx, |view, cx| callback(view, event, window, cx))
                     .is_ok()
             }),
         );

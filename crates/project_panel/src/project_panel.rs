@@ -20,13 +20,13 @@ use git_ui;
 use git_ui::file_diff_view::FileDiffView;
 use gpui::{
     Action, AnyElement, App, AsyncWindowContext, Bounds, ClipboardItem, Context, CursorStyle,
-    DismissEvent, Div, DragMoveEvent, Entity, EventEmitter, ExternalPaths, FocusHandle, Focusable,
-    FontWeight, Hsla, InteractiveElement, KeyContext, ListHorizontalSizingBehavior,
-    ListSizingBehavior, Modifiers, ModifiersChangedEvent, MouseButton, MouseDownEvent,
-    ParentElement, PathPromptOptions, Pixels, Point, PromptLevel, Render, ScrollStrategy, Stateful,
-    Styled, Subscription, Task, UniformListScrollHandle, WeakEntity, Window, actions, anchored,
-    deferred, div, hsla, linear_color_stop, linear_gradient, point, px, size, transparent_white,
-    uniform_list,
+    DismissEvent, Div, DragMoveEvent, Entity, EventEmitter, ExternalPaths, FileDropEvent,
+    FocusHandle, Focusable, FontWeight, Hsla, InteractiveElement, KeyContext,
+    ListHorizontalSizingBehavior, ListSizingBehavior, Modifiers, ModifiersChangedEvent,
+    MouseButton, MouseDownEvent, ParentElement, PathPromptOptions, Pixels, Point, PromptLevel,
+    Render, ScrollStrategy, Stateful, Styled, Subscription, Task, UniformListScrollHandle,
+    WeakEntity, Window, actions, anchored, deferred, div, hsla, linear_color_stop, linear_gradient,
+    point, px, size, transparent_white, uniform_list,
 };
 use language::DiagnosticSeverity;
 use menu::{Confirm, SelectFirst, SelectLast, SelectNext, SelectPrevious};
@@ -139,6 +139,7 @@ pub struct ProjectPanel {
     drag_target_entry: Option<DragTarget>,
     marked_entries: Vec<SelectedEntry>,
     selection: Option<SelectedEntry>,
+    _subscriptions: Vec<Subscription>,
     context_menu: Option<(Entity<ContextMenu>, Point<Pixels>, Subscription)>,
     filename_editor: Entity<Editor>,
     clipboard: Option<ClipboardEntry>,
@@ -856,6 +857,14 @@ impl ProjectPanel {
             .detach();
 
             let scroll_handle = UniformListScrollHandle::new();
+            let subscriptions =
+                vec![
+                    cx.observe_window_file_drop(window, |this, event, _window, cx| {
+                        if matches!(event, FileDropEvent::Exited) {
+                            this.clear_drag_state(cx);
+                        }
+                    }),
+                ];
             let mut this = Self {
                 project: project.clone(),
                 hover_scroll_task: None,
@@ -866,6 +875,7 @@ impl ProjectPanel {
                 drag_target_entry: None,
                 marked_entries: Default::default(),
                 selection: None,
+                _subscriptions: subscriptions,
                 context_menu: None,
                 filename_editor,
                 clipboard: None,
@@ -2036,8 +2046,7 @@ impl ProjectPanel {
 
     fn cancel(&mut self, _: &menu::Cancel, window: &mut Window, cx: &mut Context<Self>) {
         if cx.stop_active_drag(window) {
-            self.drag_target_entry.take();
-            self.hover_expand_task.take();
+            self.clear_drag_state(cx);
             return;
         }
         self.marked_entries.clear();
@@ -4311,6 +4320,17 @@ impl ProjectPanel {
         }
     }
 
+    fn clear_drag_state(&mut self, cx: &mut Context<Self>) {
+        let had_drag_state = self.drag_target_entry.take().is_some()
+            || self.folded_directory_drag_target.take().is_some()
+            || self.hover_scroll_task.take().is_some()
+            || self.hover_expand_task.take().is_some()
+            || self.previous_drag_position.take().is_some();
+        if had_drag_state {
+            cx.notify();
+        }
+    }
+
     fn is_copy_modifier_set(modifiers: &Modifiers) -> bool {
         cfg!(target_os = "macos") && modifiers.alt
             || cfg!(not(target_os = "macos")) && modifiers.control
@@ -5302,8 +5322,7 @@ impl ProjectPanel {
                     ))
                     .on_drop(cx.listener(
                         move |this, external_paths: &ExternalPaths, window, cx| {
-                            this.drag_target_entry = None;
-                            this.hover_scroll_task.take();
+                            this.clear_drag_state(cx);
                             this.drop_external_files(external_paths.paths(), entry_id, window, cx);
                             cx.stop_propagation();
                         },
@@ -5432,9 +5451,7 @@ impl ProjectPanel {
                     })
                     .on_drop(cx.listener(
                         move |this, selections: &DraggedSelection, window, cx| {
-                            this.drag_target_entry = None;
-                            this.hover_scroll_task.take();
-                            this.hover_expand_task.take();
+                            this.clear_drag_state(cx);
                             if folded_directory_drag_target.is_some() {
                                 return;
                             }
@@ -5811,9 +5828,7 @@ impl ProjectPanel {
                                     ))
                                     .on_drop(cx.listener(
                                         move |this, selections: &DraggedSelection, window, cx| {
-                                            this.hover_scroll_task.take();
-                                            this.drag_target_entry = None;
-                                            this.folded_directory_drag_target = None;
+                                            this.clear_drag_state(cx);
                                             if let Some(target_entry_id) = target_entry_id {
                                                 this.drag_onto(
                                                     selections,
@@ -5910,9 +5925,7 @@ impl ProjectPanel {
                 div.when(drag_and_drop_enabled, |div| {
                     div.on_drop(cx.listener(
                         move |this, selections: &DraggedSelection, window, cx| {
-                            this.hover_scroll_task.take();
-                            this.drag_target_entry = None;
-                            this.folded_directory_drag_target = None;
+                            this.clear_drag_state(cx);
                             if let Some(target_entry_id) = target_entry_id {
                                 this.drag_onto(selections, target_entry_id, is_file, window, cx);
                             }
@@ -6378,7 +6391,7 @@ impl Render for ProjectPanel {
                 this.previous_drag_position = Some(e.event.position);
 
                 if !e.bounds.contains(&e.event.position) {
-                    this.drag_target_entry = None;
+                    this.clear_drag_state(cx);
                     return;
                 }
                 this.hover_scroll_task.take();
@@ -6435,6 +6448,12 @@ impl Render for ProjectPanel {
                 .when(panel_settings.drag_and_drop, |this| {
                     this.on_drag_move(cx.listener(handle_drag_move::<ExternalPaths>))
                         .on_drag_move(cx.listener(handle_drag_move::<DraggedSelection>))
+                        .on_drop(
+                            cx.listener(|this, _: &ExternalPaths, _, cx| this.clear_drag_state(cx)),
+                        )
+                        .on_drop(cx.listener(|this, _: &DraggedSelection, _, cx| {
+                            this.clear_drag_state(cx)
+                        }))
                 })
                 .size_full()
                 .relative()
@@ -6804,8 +6823,7 @@ impl Render for ProjectPanel {
                                 ))
                                 .on_drop(cx.listener(
                                     move |this, external_paths: &ExternalPaths, window, cx| {
-                                        this.drag_target_entry = None;
-                                        this.hover_scroll_task.take();
+                                        this.clear_drag_state(cx);
                                         if let Some(entry_id) = this.state.last_worktree_root_id {
                                             this.drop_external_files(
                                                 external_paths.paths(),
@@ -6819,8 +6837,7 @@ impl Render for ProjectPanel {
                                 ))
                                 .on_drop(cx.listener(
                                     move |this, selections: &DraggedSelection, window, cx| {
-                                        this.drag_target_entry = None;
-                                        this.hover_scroll_task.take();
+                                        this.clear_drag_state(cx);
                                         if let Some(entry_id) = this.state.last_worktree_root_id {
                                             this.drag_onto(selections, entry_id, false, window, cx);
                                         }
@@ -6961,8 +6978,7 @@ impl Render for ProjectPanel {
                         })
                         .on_drop(cx.listener(
                             move |this, external_paths: &ExternalPaths, window, cx| {
-                                this.drag_target_entry = None;
-                                this.hover_scroll_task.take();
+                                this.clear_drag_state(cx);
                                 if let Some(task) = this
                                     .workspace
                                     .update(cx, |workspace, cx| {
