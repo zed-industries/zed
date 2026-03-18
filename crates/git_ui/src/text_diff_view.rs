@@ -2,13 +2,13 @@
 
 use anyhow::Result;
 use buffer_diff::BufferDiff;
-use editor::{Editor, EditorEvent, MultiBuffer, ToPoint, actions::DiffClipboardWithSelectionData};
+use editor::{Editor, EditorEvent, MultiBuffer, actions::DiffClipboardWithSelectionData};
 use futures::{FutureExt, select_biased};
 use gpui::{
     AnyElement, App, AppContext as _, AsyncApp, Context, Entity, EventEmitter, FocusHandle,
     Focusable, IntoElement, Render, Task, Window,
 };
-use language::{self, Anchor, Buffer, Language, Point};
+use language::{self, Anchor, Buffer, Language, Point, ToPoint};
 use project::Project;
 use std::{
     any::{Any, TypeId},
@@ -175,7 +175,10 @@ impl TextDiffView {
 
         let editor = source_editor.read(cx);
         let title = editor.buffer().read(cx).title(cx).to_string();
-        let selection_location_text = selection_location_text(editor, cx);
+
+        let source_buffer_snapshot = source_buffer.read(cx).snapshot();
+        let selection_location_text =
+            format_selection_range(&source_buffer_snapshot, selection_range_anchor.clone());
         let selection_location_title = selection_location_text
             .as_ref()
             .map(|text| format!("{} @ {}", title, text))
@@ -410,13 +413,12 @@ impl Item for TextDiffView {
     }
 }
 
-pub fn selection_location_text(editor: &Editor, cx: &App) -> Option<String> {
-    let buffer = editor.buffer().read(cx);
-    let buffer_snapshot = buffer.snapshot(cx);
-    let first_selection = editor.selections.disjoint_anchors().first()?;
-
-    let selection_start = first_selection.start.to_point(&buffer_snapshot);
-    let selection_end = first_selection.end.to_point(&buffer_snapshot);
+pub fn format_selection_range(
+    buffer_snapshot: &language::BufferSnapshot,
+    selection_range: Range<Anchor>,
+) -> Option<String> {
+    let selection_start = selection_range.start.to_point(buffer_snapshot);
+    let selection_end = selection_range.end.to_point(buffer_snapshot);
 
     let start_row = selection_start.row;
     let start_column = selection_start.column;
