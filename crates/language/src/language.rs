@@ -23,7 +23,7 @@ mod toolchain;
 pub mod buffer_tests;
 
 use crate::language_settings::SoftWrap;
-pub use crate::language_settings::{EditPredictionsMode, IndentGuideSettings};
+pub use crate::language_settings::{AutoIndentMode, EditPredictionsMode, IndentGuideSettings};
 use anyhow::{Context as _, Result};
 use async_trait::async_trait;
 use collections::{HashMap, HashSet, IndexSet};
@@ -959,6 +959,15 @@ pub struct LanguageConfig {
     #[serde(default, deserialize_with = "deserialize_regex")]
     #[schemars(schema_with = "regex_json_schema")]
     pub import_path_strip_regex: Option<Regex>,
+}
+
+impl LanguageConfig {
+    pub const FILE_NAME: &str = "config.toml";
+
+    pub fn load(config_path: impl AsRef<Path>) -> Result<Self> {
+        let config = std::fs::read_to_string(config_path.as_ref())?;
+        toml::from_str(&config).map_err(Into::into)
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, Default, JsonSchema)]

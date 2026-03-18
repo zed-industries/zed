@@ -593,33 +593,63 @@ impl WindowsWindowInner {
     }
 
     pub(crate) fn update_ime_position(&self, handle: HWND, caret_position: POINT) {
+        let Some(ctx) = ImeContext::get(handle) else {
+            return;
+        };
         unsafe {
-            let ctx = ImmGetContext(handle);
-            if ctx.is_invalid() {
-                return;
-            }
+            ImmSetCompositionWindow(
+                *ctx,
+                &COMPOSITIONFORM {
+                    dwStyle: CFS_POINT,
+                    ptCurrentPos: caret_position,
+                    ..Default::default()
+                },
+            )
+            .ok()
+            .log_err();
 
-            let config = COMPOSITIONFORM {
-                dwStyle: CFS_POINT,
-                ptCurrentPos: caret_position,
-                ..Default::default()
-            };
-            ImmSetCompositionWindow(ctx, &config).ok().log_err();
-            let config = CANDIDATEFORM {
-                dwStyle: CFS_CANDIDATEPOS,
-                ptCurrentPos: caret_position,
-                ..Default::default()
-            };
-            ImmSetCandidateWindow(ctx, &config).ok().log_err();
-            ImmReleaseContext(handle, ctx).ok().log_err();
+            ImmSetCandidateWindow(
+                *ctx,
+                &CANDIDATEFORM {
+                    dwStyle: CFS_CANDIDATEPOS,
+                    ptCurrentPos: caret_position,
+                    ..Default::default()
+                },
+            )
+            .ok()
+            .log_err();
+        }
+    }
+
+    fn update_ime_enabled(&self, handle: HWND) {
+        let ime_enabled = self
+            .with_input_handler(|input_handler| input_handler.query_accepts_text_input())
+            .unwrap_or(false);
+        if ime_enabled == self.state.ime_enabled.get() {
+            return;
+        }
+        self.state.ime_enabled.set(ime_enabled);
+        unsafe {
+            if ime_enabled {
+                ImmAssociateContextEx(handle, HIMC::default(), IACE_DEFAULT)
+                    .ok()
+                    .log_err();
+            } else {
+                if let Some(ctx) = ImeContext::get(handle) {
+                    ImmNotifyIME(*ctx, NI_COMPOSITIONSTR, CPS_COMPLETE, 0)
+                        .ok()
+                        .log_err();
+                }
+                ImmAssociateContextEx(handle, HIMC::default(), 0)
+                    .ok()
+                    .log_err();
+            }
         }
     }
 
     fn handle_ime_composition(&self, handle: HWND, lparam: LPARAM) -> Option<isize> {
-        let ctx = unsafe { ImmGetContext(handle) };
-        let result = self.handle_ime_composition_inner(ctx, lparam);
-        unsafe { ImmReleaseContext(handle, ctx).ok().log_err() };
-        result
+        let ctx = ImeContext::get(handle)?;
+        self.handle_ime_composition_inner(*ctx, lparam)
     }
 
     fn handle_ime_composition_inner(&self, ctx: HIMC, lparam: LPARAM) -> Option<isize> {
@@ -1123,6 +1153,7 @@ impl WindowsWindowInner {
         });
 
         self.state.callbacks.request_frame.set(Some(request_frame));
+        self.update_ime_enabled(handle);
         unsafe { ValidateRect(Some(handle), None).ok().log_err() };
 
         Some(0)
@@ -1202,6 +1233,36 @@ impl WindowsWindowInner {
         let result = f(&mut input_handler, scale_factor);
         self.state.input_handler.set(Some(input_handler));
         result
+    }
+}
+
+struct ImeContext {
+    hwnd: HWND,
+    himc: HIMC,
+}
+
+impl ImeContext {
+    fn get(hwnd: HWND) -> Option<Self> {
+        let himc = unsafe { ImmGetContext(hwnd) };
+        if himc.is_invalid() {
+            return None;
+        }
+        Some(Self { hwnd, himc })
+    }
+}
+
+impl std::ops::Deref for ImeContext {
+    type Target = HIMC;
+    fn deref(&self) -> &HIMC {
+        &self.himc
+    }
+}
+
+impl Drop for ImeContext {
+    fn drop(&mut self) {
+        unsafe {
+            ImmReleaseContext(self.hwnd, self.himc).ok().log_err();
+        }
     }
 }
 

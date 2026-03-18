@@ -288,16 +288,23 @@ async fn upload_minidump(
         form = form.text("minidump_error", minidump_error);
     }
 
-    if let Some(id) = client.telemetry().metrics_id() {
-        form = form.text("sentry[user][id]", id.to_string());
+    if let Some(is_staff) = &metadata
+        .user_info
+        .as_ref()
+        .and_then(|user_info| user_info.is_staff)
+    {
         form = form.text(
             "sentry[user][is_staff]",
-            if client.telemetry().is_staff().unwrap_or_default() {
-                "true"
-            } else {
-                "false"
-            },
+            if *is_staff { "true" } else { "false" },
         );
+    }
+
+    if let Some(metrics_id) = metadata
+        .user_info
+        .as_ref()
+        .and_then(|user_info| user_info.metrics_id.as_ref())
+    {
+        form = form.text("sentry[user][id]", metrics_id.clone());
     } else if let Some(id) = client.telemetry().installation_id() {
         form = form.text("sentry[user][id]", format!("installation-{}", id))
     }

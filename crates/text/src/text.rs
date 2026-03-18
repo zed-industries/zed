@@ -2254,6 +2254,37 @@ impl BufferSnapshot {
         (row_end_offset - row_start_offset) as u32
     }
 
+    /// A function to convert character offsets from e.g. user's `go.mod:22:33` input into byte-offset Point columns.
+    pub fn point_from_external_input(&self, row: u32, characters: u32) -> Point {
+        const MAX_BYTES_IN_UTF_8: u32 = 4;
+
+        let row = row.min(self.max_point().row);
+        let start = Point::new(row, 0);
+        let end = self.clip_point(
+            Point::new(
+                row,
+                characters
+                    .saturating_mul(MAX_BYTES_IN_UTF_8)
+                    .saturating_add(1),
+            ),
+            Bias::Right,
+        );
+        let range = start..end;
+        let mut point = range.start;
+        let mut remaining_columns = characters;
+
+        for chunk in self.text_for_range(range) {
+            for character in chunk.chars() {
+                if remaining_columns == 0 {
+                    return point;
+                }
+                remaining_columns -= 1;
+                point.column += character.len_utf8() as u32;
+            }
+        }
+        point
+    }
+
     pub fn line_indents_in_row_range(
         &self,
         row_range: Range<u32>,
@@ -2379,13 +2410,22 @@ impl BufferSnapshot {
                     anchor
                 );
             };
+            // TODO verbose debug because we are seeing is_max return false unexpectedly,
+            // remove this once that is understood and fixed
             assert_eq!(
                 insertion.timestamp,
                 anchor.timestamp(),
-                "invalid insertion for buffer {}@{:?} and anchor {:?}",
+                "invalid insertion for buffer {}@{:?}. anchor: {:?}, {:?}, {:?}, {:?}, {:?}. timestamp: {:?}, offset: {:?}, bias: {:?}",
                 self.remote_id(),
                 self.version,
-                anchor
+                anchor.timestamp_replica_id,
+                anchor.timestamp_value,
+                anchor.offset,
+                anchor.bias,
+                anchor.buffer_id,
+                anchor.timestamp() == clock::Lamport::MAX,
+                anchor.offset == u32::MAX,
+                anchor.bias == Bias::Right,
             );
 
             fragment_cursor.seek_forward(&Some(&insertion.fragment_id), Bias::Left);

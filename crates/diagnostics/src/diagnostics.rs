@@ -583,7 +583,7 @@ impl ProjectDiagnosticsEditor {
                         RetainExcerpts::All | RetainExcerpts::Dirty => multi_buffer
                             .excerpts_for_buffer(buffer_id, cx)
                             .into_iter()
-                            .map(|(_, range)| range)
+                            .map(|(_, _, range)| range)
                             .sorted_by(|a, b| cmp_excerpts(&buffer_snapshot, a, b))
                             .collect(),
                     }

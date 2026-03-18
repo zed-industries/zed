@@ -38,7 +38,7 @@ workspace.workspace = true
 zed_actions.workspace = true
 
 [dev-dependencies]
-client = { workspace = true, features = ["test-support"] }
+
 editor = { workspace = true, features = ["test-support"] }
 gpui = { workspace = true, features = ["test-support"] }
 language = { workspace = true, features = ["test-support"] }

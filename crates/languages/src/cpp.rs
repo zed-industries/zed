@@ -1,3 +1,15 @@
+use settings::SemanticTokenRules;
+
+use crate::LanguageDir;
+
+pub(crate) fn semantic_token_rules() -> SemanticTokenRules {
+    let content = LanguageDir::get("cpp/semantic_token_rules.json")
+        .expect("missing cpp/semantic_token_rules.json");
+    let json = std::str::from_utf8(&content.data).expect("invalid utf-8 in semantic_token_rules");
+    settings::parse_json_with_comments::<SemanticTokenRules>(json)
+        .expect("failed to parse cpp semantic_token_rules.json")
+}
+
 #[cfg(test)]
 mod tests {
     use gpui::{AppContext as _, BorrowAppContext, TestAppContext};

@@ -23,7 +23,10 @@ use livekit_client::{self as livekit, AudioStream, TrackSid};
 use postage::{sink::Sink, stream::Stream, watch};
 use project::Project;
 use settings::Settings as _;
+use std::sync::atomic::AtomicU64;
 use std::{future::Future, mem, rc::Rc, sync::Arc, time::Duration, time::Instant};
+
+use super::diagnostics::CallDiagnostics;
 use util::{ResultExt, TryFutureExt, paths::PathStyle, post_inc};
 use workspace::ParticipantLocation;
 
@@ -69,6 +72,7 @@ pub struct Room {
     id: u64,
     channel_id: Option<ChannelId>,
     live_kit: Option<LiveKitRoom>,
+    diagnostics: Option<Entity<CallDiagnostics>>,
     status: RoomStatus,
     shared_projects: HashSet<WeakEntity<Project>>,
     joined_projects: HashSet<WeakEntity<Project>>,
@@ -136,6 +140,7 @@ impl Room {
             id,
             channel_id,
             live_kit: None,
+            diagnostics: None,
             status: RoomStatus::Online,
             shared_projects: Default::default(),
             joined_projects: Default::default(),
@@ -350,6 +355,7 @@ impl Room {
         self.participant_user_ids.clear();
         self.client_subscriptions.clear();
         self.live_kit.take();
+        self.diagnostics.take();
         self.pending_room_update.take();
         self.maintain_connection.take();
     }
@@ -538,6 +544,42 @@ impl Room {
             let name = room.name();
             Some(format!("{} (sid: {sid})", name))
         }
+    }
+
+    pub fn get_stats(&self, cx: &App) -> Task<Option<livekit::SessionStats>> {
+        match self.live_kit.as_ref() {
+            Some(lk) => {
+                let task = lk.room.stats_task(cx);
+                cx.background_executor()
+                    .spawn(async move { task.await.ok() })
+            }
+            None => Task::ready(None),
+        }
+    }
+
+    pub fn input_lag(&self) -> Option<Duration> {
+        let us = self
+            .live_kit
+            .as_ref()?
+            .input_lag_us
+            .as_ref()?
+            .load(std::sync::atomic::Ordering::Relaxed);
+        if us > 0 {
+            Some(Duration::from_micros(us))
+        } else {
+            None
+        }
+    }
+
+    pub fn diagnostics(&self) -> Option<&Entity<CallDiagnostics>> {
+        self.diagnostics.as_ref()
+    }
+
+    pub fn connection_quality(&self) -> livekit::ConnectionQuality {
+        self.live_kit
+            .as_ref()
+            .map(|lk| lk.room.local_participant().connection_quality())
+            .unwrap_or(livekit::ConnectionQuality::Lost)
     }
 
     pub fn status(&self) -> RoomStatus {
@@ -1383,7 +1425,7 @@ impl Room {
                 };
 
                 match publication {
-                    Ok((publication, stream)) => {
+                    Ok((publication, stream, input_lag_us)) => {
                         if canceled {
                             cx.spawn(async move |_, cx| {
                                 room.unpublish_local_track(publication.sid(), cx).await
@@ -1393,6 +1435,7 @@ impl Room {
                             if live_kit.muted_by_user || live_kit.deafened {
                                 publication.mute(cx);
                             }
+                            live_kit.input_lag_us = Some(input_lag_us);
                             live_kit.microphone_track = LocalTrack::Published {
                                 track_publication: publication,
                                 _stream: Box::new(stream),
@@ -1623,6 +1666,7 @@ fn spawn_room_connection(
                 livekit::Room::connect(connection_info.server_url, connection_info.token, cx)
                     .await?;
 
+            let weak_room = this.clone();
             this.update(cx, |this, cx| {
                 let _handle_updates = cx.spawn(async move |this, cx| {
                     while let Some(event) = events.next().await {
@@ -1642,12 +1686,14 @@ fn spawn_room_connection(
                     room: Rc::new(room),
                     screen_track: LocalTrack::None,
                     microphone_track: LocalTrack::None,
+                    input_lag_us: None,
                     next_publish_id: 0,
                     muted_by_user,
                     deafened: false,
                     speaking: false,
                     _handle_updates,
                 });
+                this.diagnostics = Some(cx.new(|cx| CallDiagnostics::new(weak_room, cx)));
 
                 if !muted_by_user && this.can_use_microphone() {
                     this.share_microphone(cx)
@@ -1665,6 +1711,9 @@ struct LiveKitRoom {
     room: Rc<livekit::Room>,
     screen_track: LocalTrack<dyn ScreenCaptureStream>,
     microphone_track: LocalTrack<AudioStream>,
+    /// Shared atomic storing the most recent input lag measurement in microseconds.
+    /// Written by the audio capture/transmit pipeline, read here for diagnostics.
+    input_lag_us: Option<Arc<AtomicU64>>,
     /// Tracks whether we're currently in a muted state due to auto-mute from deafening or manual mute performed by user.
     muted_by_user: bool,
     deafened: bool,
@@ -1681,6 +1730,7 @@ impl LiveKitRoom {
         } = mem::replace(&mut self.microphone_track, LocalTrack::None)
         {
             tracks_to_unpublish.push(track_publication.sid());
+            self.input_lag_us = None;
             cx.notify();
         }
 

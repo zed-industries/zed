@@ -64,7 +64,7 @@ pub struct PromptEditor<T> {
     pub editor: Entity<Editor>,
     mode: PromptEditorMode,
     mention_set: Entity<MentionSet>,
-    history: WeakEntity<ThreadHistory>,
+    history: Option<WeakEntity<ThreadHistory>>,
     prompt_store: Option<Entity<PromptStore>>,
     workspace: WeakEntity<Workspace>,
     model_selector: Entity<AgentModelSelector>,
@@ -796,9 +796,11 @@ impl<T: 'static> PromptEditor<T> {
                 vec![
                     Button::new("start", mode.start_label())
                         .label_size(LabelSize::Small)
-                        .icon(IconName::Return)
-                        .icon_size(IconSize::XSmall)
-                        .icon_color(Color::Muted)
+                        .end_icon(
+                            Icon::new(IconName::Return)
+                                .size(IconSize::XSmall)
+                                .color(Color::Muted),
+                        )
                         .on_click(
                             cx.listener(|_, _, _, cx| cx.emit(PromptEditorEvent::StartRequested)),
                         )
@@ -1225,7 +1227,7 @@ impl PromptEditor<BufferCodegen> {
         fs: Arc<dyn Fs>,
         thread_store: Entity<ThreadStore>,
         prompt_store: Option<Entity<PromptStore>>,
-        history: WeakEntity<ThreadHistory>,
+        history: Option<WeakEntity<ThreadHistory>>,
         project: WeakEntity<Project>,
         workspace: WeakEntity<Workspace>,
         window: &mut Window,
@@ -1384,7 +1386,7 @@ impl PromptEditor<TerminalCodegen> {
         fs: Arc<dyn Fs>,
         thread_store: Entity<ThreadStore>,
         prompt_store: Option<Entity<PromptStore>>,
-        history: WeakEntity<ThreadHistory>,
+        history: Option<WeakEntity<ThreadHistory>>,
         project: WeakEntity<Project>,
         workspace: WeakEntity<Workspace>,
         window: &mut Window,
