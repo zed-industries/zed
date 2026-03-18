@@ -229,23 +229,22 @@ impl PdfView {
         total
     }
 
-    fn render_visible_pages(&mut self, cx: &mut Context<Self>) {
+    fn render_all_pages(&mut self, cx: &mut Context<Self>) {
         let Some(document) = self.document.clone() else {
             return;
         };
 
-        let visible_range = self.visible_page_range();
+        let page_count = document.page_count();
         let dpi = self.effective_dpi();
         let generation = self.cache_generation;
 
-        for page_index in visible_range.clone() {
+        for page_index in 0..page_count {
             if self.page_cache.contains_key(&page_index) {
                 continue;
             }
 
             let document = document.clone();
             cx.spawn({
-                let page_index = page_index;
                 async move |this, cx| {
                     let rendered = cx
                         .background_executor()
@@ -265,16 +264,6 @@ impl PdfView {
                 }
             })
             .detach();
-        }
-
-        let pages_to_evict: Vec<u32> = self
-            .page_cache
-            .keys()
-            .copied()
-            .filter(|page_index| !visible_range.contains(page_index))
-            .collect();
-        for page_index in pages_to_evict {
-            self.page_cache.remove(&page_index);
         }
     }
 
@@ -478,7 +467,7 @@ impl PdfView {
                 .into_any_element();
         }
 
-        self.render_visible_pages(cx);
+        self.render_all_pages(cx);
 
         match self.view_mode {
             ViewMode::ContinuousScroll => self.render_continuous_scroll(cx),
