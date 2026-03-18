@@ -14,45 +14,40 @@ const FILTERED_GIT_PROVIDER_HOSTNAMES: &[&str] = &[
     "git.sr.ht",
 ];
 
-#[derive(Default)]
-struct SshConfigEntry {
-    hosts: BTreeSet<String>,
+pub fn parse_ssh_config_hosts(config: &str) -> BTreeSet<String> {
+    parse_host_blocks(config)
+        .into_iter()
+        .flat_map(HostBlock::non_git_provider_hosts)
+        .collect()
+}
+
+struct HostBlock {
+    aliases: BTreeSet<String>,
     hostname: Option<String>,
 }
 
-impl SshConfigEntry {
-    fn extend_hosts(self, hosts: &mut BTreeSet<String>) {
-        if self.hosts.is_empty() {
-            return;
-        }
-
-        if self.hostname.as_deref().is_some_and(is_git_provider_domain) {
-            return;
-        }
-
-        if self.hostname.is_some() {
-            hosts.extend(self.hosts);
-            return;
-        }
-
-        hosts.extend(
-            self.hosts
-                .into_iter()
-                .filter(|host| !is_git_provider_domain(host)),
-        );
+impl HostBlock {
+    fn non_git_provider_hosts(self) -> impl Iterator<Item = String> {
+        let hostname = self.hostname;
+        let hostname_ref = hostname.as_deref().map(is_git_provider_domain);
+        self.aliases
+            .into_iter()
+            .filter(move |alias| !hostname_ref.unwrap_or_else(|| is_git_provider_domain(alias)))
     }
 }
 
-pub fn parse_ssh_config_hosts(config: &str) -> BTreeSet<String> {
-    let mut hosts = BTreeSet::new();
-    let mut current_entry = SshConfigEntry::default();
-    let mut needs_another_host_line = false;
+fn parse_host_blocks(config: &str) -> Vec<HostBlock> {
+    let mut blocks = Vec::new();
+    let mut aliases = BTreeSet::new();
+    let mut hostname = None;
+    let mut needs_continuation = false;
 
     for line in config.lines() {
         let line = line.trim_start();
-        if needs_another_host_line {
-            needs_another_host_line = line.trim_end().ends_with('\\');
-            parse_hosts_from(line, &mut current_entry.hosts);
+
+        if needs_continuation {
+            needs_continuation = line.trim_end().ends_with('\\');
+            parse_hosts(line, &mut aliases);
             continue;
         }
 
@@ -61,20 +56,26 @@ pub fn parse_ssh_config_hosts(config: &str) -> BTreeSet<String> {
         };
 
         if keyword.eq_ignore_ascii_case("host") {
-            current_entry.extend_hosts(&mut hosts);
-            current_entry = SshConfigEntry::default();
-            parse_hosts_from(value, &mut current_entry.hosts);
-            needs_another_host_line = line.trim_end().ends_with('\\');
+            if !aliases.is_empty() {
+                blocks.push(HostBlock { aliases, hostname });
+                aliases = BTreeSet::new();
+                hostname = None;
+            }
+            parse_hosts(value, &mut aliases);
+            needs_continuation = line.trim_end().ends_with('\\');
         } else if keyword.eq_ignore_ascii_case("hostname") {
-            current_entry.hostname = value.split_whitespace().next().map(ToOwned::to_owned);
+            hostname = value.split_whitespace().next().map(ToOwned::to_owned);
         }
     }
 
-    current_entry.extend_hosts(&mut hosts);
-    hosts
+    if !aliases.is_empty() {
+        blocks.push(HostBlock { aliases, hostname });
+    }
+
+    blocks
 }
 
-fn parse_hosts_from(line: &str, hosts: &mut BTreeSet<String>) {
+fn parse_hosts(line: &str, hosts: &mut BTreeSet<String>) {
     hosts.extend(
         line.split_whitespace()
             .map(|field| field.trim_end_matches('\\'))
