@@ -2392,7 +2392,7 @@ pub async fn filter_worktree_workspaces(
             )
             .await
             .into_iter()
-            .all(|is_worktree| is_worktree);
+            .any(|is_worktree| is_worktree);
         if !all_worktrees {
             result.push(entry);
         }
