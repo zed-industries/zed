@@ -2579,9 +2579,21 @@ mod tests {
             deserialized.update(cx, |editor, cx| {
                 assert_eq!(editor.text(cx), "ABC");
 
-                // Perform an undo and verify text changed
+                // Verify multiple undos
                 editor.undo(&Default::default(), window, cx);
                 assert_eq!(editor.text(cx), "AB");
+                editor.undo(&Default::default(), window, cx);
+                assert_eq!(editor.text(cx), "A");
+                editor.undo(&Default::default(), window, cx);
+                assert_eq!(editor.text(cx), "");
+
+                // Verify redo works
+                editor.redo(&Default::default(), window, cx);
+                assert_eq!(editor.text(cx), "A");
+                editor.redo(&Default::default(), window, cx);
+                assert_eq!(editor.text(cx), "AB");
+                editor.redo(&Default::default(), window, cx);
+                assert_eq!(editor.text(cx), "ABC");
             });
         });
     }
