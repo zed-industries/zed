@@ -5857,7 +5857,7 @@ pub(crate) mod tests {
 
         connection.set_next_prompt_updates(vec![acp::SessionUpdate::ToolCall(tool_call)]);
 
-        let (thread_view, cx) = setup_thread_view(StubAgentServer::new(connection), cx).await;
+        let (thread_view, cx) = setup_conversation_view(StubAgentServer::new(connection), cx).await;
         add_to_workspace(thread_view.clone(), cx);
 
         cx.update(|_window, cx| {
@@ -5958,7 +5958,7 @@ pub(crate) mod tests {
 
         connection.set_next_prompt_updates(vec![acp::SessionUpdate::ToolCall(tool_call)]);
 
-        let (thread_view, cx) = setup_thread_view(StubAgentServer::new(connection), cx).await;
+        let (thread_view, cx) = setup_conversation_view(StubAgentServer::new(connection), cx).await;
         add_to_workspace(thread_view.clone(), cx);
 
         cx.update(|_window, cx| {
@@ -6482,7 +6482,7 @@ pub(crate) mod tests {
                 conversation.authorize_tool_call(
                     acp::SessionId::new("thread-a"),
                     acp::ToolCallId::new("tc-a"),
-                    acp::PermissionOptionId::new("allow-a"),
+                    acp::PermissionOptionId::new("allow-a").into(),
                     acp::PermissionOptionKind::AllowOnce,
                     cx,
                 );
