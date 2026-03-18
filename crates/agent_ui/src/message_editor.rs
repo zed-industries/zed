@@ -16,10 +16,9 @@ use agent_client_protocol as acp;
 use anyhow::{Result, anyhow};
 use collections::HashSet;
 use editor::{
-    Addon, AnchorRangeExt, ContextMenuOptions, Editor, EditorElement,
-    EditorEvent, EditorMode, EditorStyle, Inlay, MultiBuffer, MultiBufferOffset,
-    MultiBufferSnapshot, ToOffset, actions::Paste, code_context_menus::CodeContextMenu,
-    scroll::Autoscroll,
+    Addon, AnchorRangeExt, ContextMenuOptions, Editor, EditorElement, EditorEvent, EditorMode,
+    EditorStyle, Inlay, MultiBuffer, MultiBufferOffset, MultiBufferSnapshot, ToOffset,
+    actions::Paste, code_context_menus::CodeContextMenu, scroll::Autoscroll,
 };
 use futures::{FutureExt as _, future::join_all};
 use gpui::{
