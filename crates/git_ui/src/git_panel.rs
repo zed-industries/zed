@@ -3596,11 +3596,10 @@ impl GitPanel {
             if staged_count == 1
                 && let Some(entry) = single_staged_entry.as_ref()
             {
-                if let Some(ops) = repo.pending_ops_for_path(&entry.repo_path)
-                    && ops.not_staged()
-                {
-                    // entry has been changed to other status
-                    self.single_staged_entry = None;
+                if let Some(ops) = repo.pending_ops_for_path(&entry.repo_path) {
+                    if ops.staged() {
+                        self.single_staged_entry = single_staged_entry;
+                    }
                 } else {
                     self.single_staged_entry = single_staged_entry;
                 }

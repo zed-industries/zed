@@ -121,16 +121,6 @@ impl PendingOps {
         false
     }
 
-    /// File is not staged if the last job is finished and has status other than Staged.
-    pub fn not_staged(&self) -> bool {
-        if let Some(last) = self.ops.last() {
-            if last.git_status != GitStatus::Staged && last.job_status == JobStatus::Finished {
-                return true;
-            }
-        }
-        false
-    }
-
     /// File is staging if the last job is running and has status Staged.
     pub fn staging(&self) -> bool {
         if let Some(last) = self.ops.last() {
