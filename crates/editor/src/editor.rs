@@ -194,7 +194,7 @@ use std::{
     iter::{self, Peekable},
     mem,
     num::NonZeroU32,
-    ops::{Deref, DerefMut, Not, Range, RangeInclusive},
+    ops::{ControlFlow, Deref, DerefMut, Not, Range, RangeInclusive},
     path::{Path, PathBuf},
     rc::Rc,
     sync::Arc,
@@ -1224,6 +1224,7 @@ pub struct Editor {
     show_completions_on_input_override: Option<bool>,
     menu_edit_predictions_policy: MenuEditPredictionsPolicy,
     edit_prediction_preview: EditPredictionPreview,
+    in_leading_whitespace: bool,
     next_inlay_id: usize,
     next_color_inlay_id: usize,
     _subscriptions: Vec<Subscription>,
@@ -2470,6 +2471,7 @@ impl Editor {
             show_completions_on_input_override: None,
             menu_edit_predictions_policy: MenuEditPredictionsPolicy::ByProvider,
             edit_prediction_settings: EditPredictionSettings::Disabled,
+            in_leading_whitespace: false,
             custom_context_menu: None,
             show_git_blame_gutter: false,
             show_git_blame_inline: false,
@@ -2853,6 +2855,10 @@ impl Editor {
         if has_active_edit_prediction {
             key_context.add(EDIT_PREDICTION_KEY_CONTEXT);
             key_context.add("copilot_suggestion");
+        }
+
+        if self.in_leading_whitespace {
+            key_context.add("in_leading_whitespace");
         }
 
         if self.selection_mark_mode {
@@ -8556,6 +8562,27 @@ impl Editor {
 
         self.edit_prediction_settings =
             self.edit_prediction_settings_at_position(&buffer, cursor_buffer_position, cx);
+
+        self.in_leading_whitespace = multibuffer.is_line_whitespace_upto(cursor);
+
+        if self.in_leading_whitespace {
+            let cursor_point = cursor.to_point(&multibuffer);
+            let mut suggested_indent = None;
+            multibuffer.suggested_indents_callback(
+                cursor_point.row..cursor_point.row + 1,
+                &mut |_, indent| {
+                    suggested_indent = Some(indent);
+                    ControlFlow::Break(())
+                },
+                cx,
+            );
+
+            if let Some(indent) = suggested_indent
+                && indent.len == cursor_point.column
+            {
+                self.in_leading_whitespace = false;
+            }
+        }
 
         let edit_prediction = provider.suggest(&buffer, cursor_buffer_position, cx)?;
 
