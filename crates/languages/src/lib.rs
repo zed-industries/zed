@@ -32,6 +32,7 @@ mod tailwindcss;
 mod typescript;
 mod vtsls;
 mod yaml;
+mod zsh;
 
 pub(crate) use package_json::{PackageJson, PackageJsonData};
 
@@ -63,6 +64,7 @@ pub fn init(languages: Arc<LanguageRegistry>, fs: Arc<dyn Fs>, node: NodeRuntime
     #[cfg(feature = "load-grammars")]
     languages.register_native_grammars([
         ("bash", tree_sitter_bash::LANGUAGE),
+        ("zsh", tree_sitter_zsh::LANGUAGE),
         ("c", tree_sitter_c::LANGUAGE),
         ("cpp", tree_sitter_cpp::LANGUAGE),
         ("css", tree_sitter_css::LANGUAGE),
@@ -115,6 +117,11 @@ pub fn init(languages: Arc<LanguageRegistry>, fs: Arc<dyn Fs>, node: NodeRuntime
         LanguageInfo {
             name: "bash",
             context: Some(Arc::new(bash::bash_task_context())),
+            ..Default::default()
+        },
+        LanguageInfo {
+            name: "zsh",
+            context: Some(Arc::new(zsh::zsh_task_context())),
             ..Default::default()
         },
         LanguageInfo {
