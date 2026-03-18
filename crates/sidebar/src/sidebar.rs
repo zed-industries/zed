@@ -1661,26 +1661,19 @@ impl Sidebar {
         cx: &App,
         predicate: impl Fn(&Entity<Workspace>, &App) -> bool,
     ) -> Option<(WindowHandle<MultiWorkspace>, Entity<Workspace>)> {
-        let mut seen_window_ids = HashSet::new();
-
-        let windows = cx
-            .window_stack()
+        cx.windows()
             .into_iter()
-            .flatten()
-            .chain(cx.windows())
             .filter_map(|window| window.downcast::<MultiWorkspace>())
-            .filter(|window| seen_window_ids.insert(window.window_id()));
-
-        windows.into_iter().find_map(|window| {
-            let workspace = window.read(cx).ok().and_then(|multi_workspace| {
-                multi_workspace
-                    .workspaces()
-                    .iter()
-                    .find(|workspace| predicate(workspace, cx))
-                    .cloned()
-            })?;
-            Some((window, workspace))
-        })
+            .find_map(|window| {
+                let workspace = window.read(cx).ok().and_then(|multi_workspace| {
+                    multi_workspace
+                        .workspaces()
+                        .iter()
+                        .find(|workspace| predicate(workspace, cx))
+                        .cloned()
+                })?;
+                Some((window, workspace))
+            })
     }
 
     fn find_workspace_in_current_window(
