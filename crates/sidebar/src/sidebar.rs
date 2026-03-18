@@ -30,7 +30,7 @@ use util::ResultExt as _;
 use util::path_list::PathList;
 use workspace::{
     FocusWorkspaceSidebar, MultiWorkspace, MultiWorkspaceEvent, Sidebar as WorkspaceSidebar,
-    ToggleWorkspaceSidebar, Workspace,
+    ToggleWorkspaceSidebar, Workspace, WorkspaceId,
 };
 
 use zed_actions::OpenRecent;
@@ -268,10 +268,6 @@ impl Sidebar {
             window,
             |this, _multi_workspace, event: &MultiWorkspaceEvent, window, cx| match event {
                 MultiWorkspaceEvent::ActiveWorkspaceChanged => {
-                    // Don't clear focused_thread when the active workspace
-                    // changed because a workspace was removed — the focused
-                    // thread may still be valid in the new active workspace.
-                    // Only clear it for explicit user-initiated switches.
                     if mem::take(&mut this.pending_workspace_removal) {
                         // If the removed workspace had no focused thread, seed
                         // from the new active panel so its current thread gets
@@ -288,7 +284,21 @@ impl Sidebar {
                             }
                         }
                     } else {
-                        this.focused_thread = None;
+                        // Seed focused_thread from the new active panel so
+                        // the sidebar highlights the correct thread.
+                        this.focused_thread = this
+                            .multi_workspace
+                            .upgrade()
+                            .and_then(|mw| {
+                                let ws = mw.read(cx).workspace();
+                                ws.read(cx).panel::<AgentPanel>(cx)
+                            })
+                            .and_then(|panel| {
+                                panel
+                                    .read(cx)
+                                    .active_conversation()
+                                    .and_then(|cv| cv.read(cx).parent_id(cx))
+                            });
                     }
                     this.observe_draft_editor(cx);
                     this.update_entries(false, cx);
@@ -1423,6 +1433,10 @@ impl Sidebar {
     }
 
     fn focus_in(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if matches!(self.view, SidebarView::Archive) {
+            return;
+        }
+
         if self.selection.is_none() {
             self.filter_editor.focus_handle(cx).focus(window, cx);
         }
@@ -1604,6 +1618,11 @@ impl Sidebar {
         let Some(multi_workspace) = self.multi_workspace.upgrade() else {
             return;
         };
+
+        // Set focused_thread eagerly so the sidebar highlight updates
+        // immediately, rather than waiting for a deferred AgentPanel
+        // event which can race with ActiveWorkspaceChanged clearing it.
+        self.focused_thread = Some(session_info.session_id.clone());
 
         multi_workspace.update(cx, |multi_workspace, cx| {
             multi_workspace.activate(workspace.clone(), cx);
@@ -2070,9 +2089,10 @@ impl Sidebar {
     }
 
     fn render_recent_projects_button(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let workspace = self
-            .multi_workspace
-            .upgrade()
+        let multi_workspace = self.multi_workspace.upgrade();
+
+        let workspace = multi_workspace
+            .as_ref()
             .map(|mw| mw.read(cx).workspace().downgrade());
 
         let focus_handle = workspace
@@ -2081,13 +2101,31 @@ impl Sidebar {
             .map(|w| w.read(cx).focus_handle(cx))
             .unwrap_or_else(|| cx.focus_handle());
 
+        let excluded_workspace_ids: HashSet<WorkspaceId> = multi_workspace
+            .as_ref()
+            .map(|mw| {
+                mw.read(cx)
+                    .workspaces()
+                    .iter()
+                    .filter_map(|ws| ws.read(cx).database_id())
+                    .collect()
+            })
+            .unwrap_or_default();
+
         let popover_handle = self.recent_projects_popover_handle.clone();
 
         PopoverMenu::new("sidebar-recent-projects-menu")
             .with_handle(popover_handle)
             .menu(move |window, cx| {
                 workspace.as_ref().map(|ws| {
-                    RecentProjects::popover(ws.clone(), false, focus_handle.clone(), window, cx)
+                    RecentProjects::popover(
+                        ws.clone(),
+                        excluded_workspace_ids.clone(),
+                        false,
+                        focus_handle.clone(),
+                        window,
+                        cx,
+                    )
                 })
             })
             .trigger_with_tooltip(
@@ -2300,9 +2338,11 @@ impl Sidebar {
                     .child(
                         h_flex()
                             .gap_1()
-                            .when(self.selection.is_some(), |this| {
-                                this.child(KeyBinding::for_action(&FocusSidebarFilter, cx))
-                            })
+                            .when(
+                                self.selection.is_some()
+                                    && !self.filter_editor.focus_handle(cx).is_focused(window),
+                                |this| this.child(KeyBinding::for_action(&FocusSidebarFilter, cx)),
+                            )
                             .when(has_query, |this| {
                                 this.child(
                                     IconButton::new("clear_filter", IconName::Close)
@@ -4594,12 +4634,16 @@ mod tests {
 
         sidebar.read_with(cx, |sidebar, _cx| {
             assert_eq!(
-                sidebar.focused_thread, None,
-                "External workspace switch should clear focused_thread"
+                sidebar.focused_thread.as_ref(),
+                Some(&session_id_a),
+                "Switching workspace should seed focused_thread from the new active panel"
             );
-            assert_eq!(
-                sidebar.active_entry_index, None,
-                "No active entry when no thread is focused"
+            let active_entry = sidebar
+                .active_entry_index
+                .and_then(|ix| sidebar.contents.entries.get(ix));
+            assert!(
+                matches!(active_entry, Some(ListEntry::Thread(thread)) if thread.session_info.session_id == session_id_a),
+                "Active entry should be the seeded thread"
             );
         });
 
@@ -4619,8 +4663,9 @@ mod tests {
         // the selection highlight to jump around.
         sidebar.read_with(cx, |sidebar, _cx| {
             assert_eq!(
-                sidebar.focused_thread, None,
-                "Opening a thread in a non-active panel should not set focused_thread"
+                sidebar.focused_thread.as_ref(),
+                Some(&session_id_a),
+                "Opening a thread in a non-active panel should not change focused_thread"
             );
         });
 
@@ -4631,8 +4676,9 @@ mod tests {
 
         sidebar.read_with(cx, |sidebar, _cx| {
             assert_eq!(
-                sidebar.focused_thread, None,
-                "Defocusing the sidebar should not set focused_thread"
+                sidebar.focused_thread.as_ref(),
+                Some(&session_id_a),
+                "Defocusing the sidebar should not change focused_thread"
             );
         });
 
@@ -4647,19 +4693,23 @@ mod tests {
 
         sidebar.read_with(cx, |sidebar, _cx| {
             assert_eq!(
-                sidebar.focused_thread, None,
-                "Switching workspace should clear focused_thread"
+                sidebar.focused_thread.as_ref(),
+                Some(&session_id_b2),
+                "Switching workspace should seed focused_thread from the new active panel"
             );
-            assert_eq!(
-                sidebar.active_entry_index, None,
-                "No active entry when no thread is focused"
+            let active_entry = sidebar
+                .active_entry_index
+                .and_then(|ix| sidebar.contents.entries.get(ix));
+            assert!(
+                matches!(active_entry, Some(ListEntry::Thread(thread)) if thread.session_info.session_id == session_id_b2),
+                "Active entry should be the seeded thread"
             );
         });
 
-        // ── 8. Focusing the agent panel thread restores focused_thread ────
+        // ── 8. Focusing the agent panel thread keeps focused_thread ────
         // Workspace B still has session_id_b2 loaded in the agent panel.
         // Clicking into the thread (simulated by focusing its view) should
-        // set focused_thread via the ThreadFocused event.
+        // keep focused_thread since it was already seeded on workspace switch.
         panel_b.update_in(cx, |panel, window, cx| {
             if let Some(thread_view) = panel.active_conversation_view() {
                 thread_view.read(cx).focus_handle(cx).focus(window, cx);

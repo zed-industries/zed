@@ -4008,7 +4008,69 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_remove_workspace_detaches_from_session(cx: &mut gpui::TestAppContext) {
+    async fn test_create_workspace_serialization(cx: &mut gpui::TestAppContext) {
+        use crate::multi_workspace::MultiWorkspace;
+        use crate::persistence::read_multi_workspace_state;
+        use feature_flags::FeatureFlagAppExt;
+
+        use project::Project;
+
+        crate::tests::init_test(cx);
+
+        cx.update(|cx| {
+            cx.set_staff(true);
+            cx.update_flags(true, vec!["agent-v2".to_string()]);
+        });
+
+        let fs = fs::FakeFs::new(cx.executor());
+        let project = Project::test(fs.clone(), [], cx).await;
+
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+
+        // Give the first workspace a database_id.
+        multi_workspace.update_in(cx, |mw, _, cx| {
+            mw.set_random_database_id(cx);
+        });
+
+        let window_id =
+            multi_workspace.update_in(cx, |_, window, _cx| window.window_handle().window_id());
+
+        // Create a new workspace via the MultiWorkspace API (triggers next_id()).
+        multi_workspace.update_in(cx, |mw, window, cx| {
+            mw.create_test_workspace(window, cx).detach();
+        });
+
+        // Let the async next_id() and re-serialization tasks complete.
+        cx.run_until_parked();
+
+        // The new workspace should now have a database_id.
+        let new_workspace_db_id =
+            multi_workspace.read_with(cx, |mw, cx| mw.workspace().read(cx).database_id());
+        assert!(
+            new_workspace_db_id.is_some(),
+            "New workspace should have a database_id after run_until_parked"
+        );
+
+        // The multi-workspace state should record it as the active workspace.
+        let state = read_multi_workspace_state(window_id);
+        assert_eq!(
+            state.active_workspace_id, new_workspace_db_id,
+            "Serialized active_workspace_id should match the new workspace's database_id"
+        );
+
+        // The individual workspace row should exist with real data
+        // (not just the bare DEFAULT VALUES row from next_id).
+        let workspace_id = new_workspace_db_id.unwrap();
+        let serialized = DB.workspace_for_id(workspace_id);
+        assert!(
+            serialized.is_some(),
+            "Newly created workspace should be fully serialized in the DB after database_id assignment"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_remove_workspace_clears_session_binding(cx: &mut gpui::TestAppContext) {
         use crate::multi_workspace::MultiWorkspace;
         use feature_flags::FeatureFlagAppExt;
         use gpui::AppContext as _;
@@ -4074,26 +4136,24 @@ mod tests {
 
         cx.run_until_parked();
 
-        // The row should be preserved (not deleted), but detached from the session.
+        // The row should still exist so it continues to appear in recent
+        // projects, but the session binding should be cleared so it is not
+        // restored as part of any future session.
         assert!(
             DB.workspace_for_id(workspace2_db_id).is_some(),
-            "Removed workspace's DB row should be preserved"
+            "Removed workspace's DB row should be preserved for recent projects"
         );
 
-        // It should still show up in recent workspaces (the project picker).
-        let recent = DB.recent_workspaces().unwrap();
-        let recent_ids: Vec<WorkspaceId> = recent.iter().map(|(id, _, _, _)| *id).collect();
+        let session_workspaces = DB
+            .last_session_workspace_locations("remove-test-session", None, fs.as_ref())
+            .await
+            .unwrap();
+        let restored_ids: Vec<WorkspaceId> = session_workspaces
+            .iter()
+            .map(|sw| sw.workspace_id)
+            .collect();
         assert!(
-            recent_ids.contains(&workspace2_db_id),
-            "Removed workspace should still appear in recent workspaces"
-        );
-
-        // But it should NOT show up in session restoration (what loads on restart).
-        let session_workspaces = DB.session_workspaces(session_id).unwrap();
-        let session_ids: Vec<WorkspaceId> =
-            session_workspaces.iter().map(|(id, _, _, _)| *id).collect();
-        assert!(
-            !session_ids.contains(&workspace2_db_id),
+            !restored_ids.contains(&workspace2_db_id),
             "Removed workspace should not appear in session restoration"
         );
     }
@@ -4284,20 +4344,24 @@ mod tests {
         });
         futures::future::join_all(all_tasks).await;
 
-        // After awaiting, the DB row should still exist (preserved for
-        // future re-opening) but detached from the session.
+        // The row should still exist (for recent projects), but the session
+        // binding should have been cleared by the pending removal task.
         assert!(
             DB.workspace_for_id(workspace2_db_id).is_some(),
-            "Workspace row should be preserved after removal (not deleted)"
+            "Workspace row should be preserved for recent projects"
         );
 
-        // Verify it's no longer part of the session.
-        let session_workspaces = DB.session_workspaces(session_id).unwrap();
-        let session_ids: Vec<WorkspaceId> =
-            session_workspaces.iter().map(|(id, _, _, _)| *id).collect();
+        let session_workspaces = DB
+            .last_session_workspace_locations("pending-removal-session", None, fs.as_ref())
+            .await
+            .unwrap();
+        let restored_ids: Vec<WorkspaceId> = session_workspaces
+            .iter()
+            .map(|sw| sw.workspace_id)
+            .collect();
         assert!(
-            !session_ids.contains(&workspace2_db_id),
-            "Removed workspace should not appear in session query"
+            !restored_ids.contains(&workspace2_db_id),
+            "Pending removal task should have cleared the session binding"
         );
     }
 

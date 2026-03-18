@@ -595,12 +595,10 @@ impl MultiWorkspace {
             self.pending_removal_tasks.retain(|task| !task.is_ready());
             self.pending_removal_tasks
                 .push(cx.background_spawn(async move {
-                    // Detach from the current session rather than deleting.
-                    // This preserves the workspace's serialized state (pane layout,
-                    // open files, etc.) so it can be restored if the user re-opens
-                    // the project later.
+                    // Clear the session binding instead of deleting the row so
+                    // the workspace still appears in the recent-projects list.
                     crate::persistence::DB
-                        .set_session_id(workspace_id, None)
+                        .set_session_binding(workspace_id, None, None)
                         .await
                         .log_err();
                 }));
