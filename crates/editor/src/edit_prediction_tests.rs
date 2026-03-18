@@ -959,8 +959,8 @@ async fn propose_edits_with_preview<T: ToOffset + Clone>(
     let edits = edits
         .into_iter()
         .map(|(range, text)| {
-            let anchor_range = snapshot.anchor_after(range.start.clone())
-                ..snapshot.anchor_before(range.end);
+            let anchor_range =
+                snapshot.anchor_after(range.start.clone())..snapshot.anchor_before(range.end);
             (anchor_range, Arc::<str>::from(text))
         })
         .collect::<Vec<_>>();
