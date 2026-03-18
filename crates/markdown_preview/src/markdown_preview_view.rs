@@ -8,9 +8,9 @@ use editor::scroll::Autoscroll;
 use editor::{Editor, EditorEvent, MultiBufferOffset, SelectionEffects};
 use fs::normalize_path;
 use gpui::{
-    App, Context, Entity, EventEmitter, FocusHandle, Focusable, InteractiveElement, IntoElement,
-    IsZero, Pixels, Render, ScrollHandle, SharedString, Subscription, Task, WeakEntity, Window,
-    point,
+    App, Context, Entity, EventEmitter, FocusHandle, Focusable, ImageSource, InteractiveElement,
+    IntoElement, IsZero, Pixels, Render, Resource, RetainAllImageCache, ScrollHandle, SharedString,
+    SharedUri, Subscription, Task, WeakEntity, Window, point,
 };
 use language::LanguageRegistry;
 use markdown::{CodeBlockRenderer, Markdown, MarkdownElement, MarkdownFont, MarkdownStyle};
@@ -35,6 +35,7 @@ pub struct MarkdownPreviewView {
     _markdown_subscription: Subscription,
     active_source_index: Option<usize>,
     scroll_handle: ScrollHandle,
+    image_cache: Entity<RetainAllImageCache>,
     base_directory: Option<PathBuf>,
     pending_update_task: Option<Task<Result<()>>>,
     mode: MarkdownPreviewMode,
@@ -217,6 +218,7 @@ impl MarkdownPreviewView {
                 markdown,
                 active_source_index: None,
                 scroll_handle: ScrollHandle::new(),
+                image_cache: RetainAllImageCache::new(cx),
                 base_directory: None,
                 pending_update_task: None,
                 mode,
@@ -572,6 +574,10 @@ impl MarkdownPreviewView {
         })
         .scroll_handle(self.scroll_handle.clone())
         .show_root_block_markers()
+        .image_resolver({
+            let base_directory = self.base_directory.clone();
+            move |dest_url| resolve_preview_image(dest_url, base_directory.as_deref())
+        })
         .on_url_click(move |url, window, cx| {
             open_preview_url(url, base_directory.clone(), &workspace, window, cx);
         });
@@ -644,6 +650,32 @@ fn resolve_preview_path(url: &str, base_directory: Option<&Path>) -> Option<Path
     }
 }
 
+fn resolve_preview_image(dest_url: &str, base_directory: Option<&Path>) -> Option<ImageSource> {
+    if dest_url.starts_with("data:") {
+        return None;
+    }
+
+    if dest_url.starts_with("http://") || dest_url.starts_with("https://") {
+        return Some(ImageSource::Resource(Resource::Uri(SharedUri::from(
+            dest_url.to_string(),
+        ))));
+    }
+
+    let decoded = urlencoding::decode(dest_url)
+        .map(|decoded| decoded.into_owned())
+        .unwrap_or_else(|_| dest_url.to_string());
+
+    let path = if Path::new(&decoded).is_absolute() {
+        PathBuf::from(decoded)
+    } else {
+        base_directory?.join(decoded)
+    };
+
+    Some(ImageSource::Resource(Resource::Path(Arc::from(
+        path.as_path(),
+    ))))
+}
+
 impl Focusable for MarkdownPreviewView {
     fn focus_handle(&self, _: &App) -> FocusHandle {
         self.focus_handle.clone()
@@ -680,6 +712,7 @@ impl Item for MarkdownPreviewView {
 impl Render for MarkdownPreviewView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         div()
+            .image_cache(self.image_cache.clone())
             .id("MarkdownPreview")
             .key_context("MarkdownPreview")
             .track_focus(&self.focus_handle(cx))

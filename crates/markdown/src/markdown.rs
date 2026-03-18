@@ -29,9 +29,10 @@ use collections::{HashMap, HashSet};
 use gpui::{
     AnyElement, App, BorderStyle, Bounds, ClipboardItem, CursorStyle, DispatchPhase, Edges, Entity,
     FocusHandle, Focusable, FontStyle, FontWeight, GlobalElementId, Hitbox, Hsla, Image,
-    ImageFormat, KeyContext, Length, MouseButton, MouseDownEvent, MouseEvent, MouseMoveEvent,
-    MouseUpEvent, Point, ScrollHandle, Stateful, StrikethroughStyle, StyleRefinement, StyledText,
-    Task, TextLayout, TextRun, TextStyle, TextStyleRefinement, actions, img, point, quad,
+    ImageFormat, ImageSource, KeyContext, Length, MouseButton, MouseDownEvent, MouseEvent,
+    MouseMoveEvent, MouseUpEvent, Point, ScrollHandle, Stateful, StrikethroughStyle,
+    StyleRefinement, StyledText, Task, TextLayout, TextRun, TextStyle, TextStyleRefinement,
+    actions, img, point, quad,
 };
 use language::{CharClassifier, Language, LanguageRegistry, Rope};
 use parser::CodeBlockMetadata;
@@ -775,6 +776,7 @@ pub struct MarkdownElement {
     code_block_renderer: CodeBlockRenderer,
     on_url_click: Option<Box<dyn Fn(SharedString, &mut Window, &mut App)>>,
     on_source_click: Option<SourceClickCallback>,
+    image_resolver: Option<Box<dyn Fn(&str) -> Option<ImageSource>>>,
     show_root_block_markers: bool,
     autoscroll: AutoscrollBehavior,
 }
@@ -791,6 +793,7 @@ impl MarkdownElement {
             },
             on_url_click: None,
             on_source_click: None,
+            image_resolver: None,
             show_root_block_markers: false,
             autoscroll: AutoscrollBehavior::Propagate,
         }
@@ -835,6 +838,14 @@ impl MarkdownElement {
         handler: impl Fn(usize, usize, &mut Window, &mut App) -> bool + 'static,
     ) -> Self {
         self.on_source_click = Some(Box::new(handler));
+        self
+    }
+
+    pub fn image_resolver(
+        mut self,
+        resolver: impl Fn(&str) -> Option<ImageSource> + 'static,
+    ) -> Self {
+        self.image_resolver = Some(Box::new(resolver));
         self
     }
 
@@ -1210,14 +1221,26 @@ impl Element for MarkdownElement {
                 }
                 MarkdownEvent::Start(tag) => {
                     match tag {
-                        MarkdownTag::Image { .. } => {
+                        MarkdownTag::Image { dest_url, .. } => {
                             if let Some(image) = images.get(&range.start) {
                                 current_img_block_range = Some(range.clone());
                                 builder.modify_current_div(|el| {
                                     el.items_center()
                                         .flex()
                                         .flex_row()
-                                        .child(img(image.clone()))
+                                        .child(img(image.clone()).max_w_full())
+                                });
+                            } else if let Some(source) = self
+                                .image_resolver
+                                .as_ref()
+                                .and_then(|resolve| resolve(dest_url.as_ref()))
+                            {
+                                current_img_block_range = Some(range.clone());
+                                builder.modify_current_div(|el| {
+                                    el.items_center()
+                                        .flex()
+                                        .flex_row()
+                                        .child(img(source).max_w_full())
                                 });
                             }
                         }
