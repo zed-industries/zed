@@ -78,7 +78,7 @@ pub use pane_group::{
 };
 use persistence::{DB, SerializedWindowBounds, model::SerializedWorkspace};
 pub use persistence::{
-    DB as WORKSPACE_DB, WorkspaceDb, delete_unloaded_items,
+    DB as WORKSPACE_DB, WorkspaceDb, delete_unloaded_items, filter_worktree_workspaces,
     model::{
         DockStructure, ItemId, SerializedMultiWorkspace, SerializedWorkspaceLocation,
         SessionWorkspace,

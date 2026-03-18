@@ -2358,6 +2358,45 @@ VALUES {placeholders};"#
     }
 }
 
+/// Filters out workspace entries whose paths are git worktree checkouts.
+///
+/// A workspace is considered a worktree checkout if ALL of its paths are
+/// worktree checkouts (i.e., their `.git` is a file, not a directory).
+/// Multi-root workspaces where at least one path is a normal repo are kept.
+pub async fn filter_worktree_workspaces(
+    workspaces: Vec<(
+        WorkspaceId,
+        SerializedWorkspaceLocation,
+        PathList,
+        DateTime<Utc>,
+    )>,
+    fs: &dyn Fs,
+) -> Vec<(
+    WorkspaceId,
+    SerializedWorkspaceLocation,
+    PathList,
+    DateTime<Utc>,
+)> {
+    let mut result = Vec::with_capacity(workspaces.len());
+    for entry in workspaces {
+        let all_worktrees = !entry.2.paths().is_empty()
+            && futures::future::join_all(
+                entry
+                    .2
+                    .paths()
+                    .iter()
+                    .map(|path| fs::is_git_worktree_checkout(fs, path)),
+            )
+            .await
+            .into_iter()
+            .all(|is_worktree| is_worktree);
+        if !all_worktrees {
+            result.push(entry);
+        }
+    }
+    result
+}
+
 pub fn delete_unloaded_items(
     alive_items: Vec<ItemId>,
     workspace_id: WorkspaceId,
