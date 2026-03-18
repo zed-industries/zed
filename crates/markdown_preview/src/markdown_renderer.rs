@@ -9,7 +9,6 @@ use crate::{
     markdown_preview_view::MarkdownPreviewView,
 };
 use collections::HashMap;
-use fs::normalize_path;
 use gpui::{
     AbsoluteLength, Animation, AnimationExt, AnyElement, App, AppContext as _, Context, Div,
     Element, ElementId, Entity, HighlightStyle, Hsla, ImageSource, InteractiveText, IntoElement,
@@ -25,6 +24,7 @@ use std::{
 };
 use theme::{ActiveTheme, SyntaxTheme, ThemeSettings};
 use ui::{CopyButton, LinkPreview, ToggleState, prelude::*, tooltip_container};
+use util::normalize_path;
 use workspace::{OpenOptions, OpenVisible, Workspace};
 
 pub struct CheckboxClickedEvent {

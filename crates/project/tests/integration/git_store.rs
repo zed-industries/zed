@@ -1176,14 +1176,13 @@ mod git_traversal {
 }
 
 mod git_worktrees {
-    use std::path::PathBuf;
-
     use fs::FakeFs;
     use gpui::TestAppContext;
+    use project::worktrees_directory_for_repo;
     use serde_json::json;
     use settings::SettingsStore;
+    use std::path::{Path, PathBuf};
     use util::path;
-
     fn init_test(cx: &mut gpui::TestAppContext) {
         zlog::init_test();
 
@@ -1191,6 +1190,48 @@ mod git_worktrees {
             let settings_store = SettingsStore::test(cx);
             cx.set_global(settings_store);
         });
+    }
+
+    #[test]
+    fn test_validate_worktree_directory() {
+        let work_dir = Path::new("/code/my-project");
+
+        // Valid: sibling
+        assert!(worktrees_directory_for_repo(work_dir, "../worktrees").is_ok());
+
+        // Valid: subdirectory
+        assert!(worktrees_directory_for_repo(work_dir, ".git/zed-worktrees").is_ok());
+        assert!(worktrees_directory_for_repo(work_dir, "my-worktrees").is_ok());
+
+        // Invalid: just ".." would resolve back to the working directory itself
+        let err = worktrees_directory_for_repo(work_dir, "..").unwrap_err();
+        assert!(err.to_string().contains("must not be \"..\""));
+
+        // Invalid: ".." with trailing separators
+        let err = worktrees_directory_for_repo(work_dir, "..\\").unwrap_err();
+        assert!(err.to_string().contains("must not be \"..\""));
+        let err = worktrees_directory_for_repo(work_dir, "../").unwrap_err();
+        assert!(err.to_string().contains("must not be \"..\""));
+
+        // Invalid: empty string would resolve to the working directory itself
+        let err = worktrees_directory_for_repo(work_dir, "").unwrap_err();
+        assert!(err.to_string().contains("must not be empty"));
+
+        // Invalid: absolute path
+        let err = worktrees_directory_for_repo(work_dir, "/tmp/worktrees").unwrap_err();
+        assert!(err.to_string().contains("relative path"));
+
+        // Invalid: "/" is absolute on Unix
+        let err = worktrees_directory_for_repo(work_dir, "/").unwrap_err();
+        assert!(err.to_string().contains("relative path"));
+
+        // Invalid: "///" is absolute
+        let err = worktrees_directory_for_repo(work_dir, "///").unwrap_err();
+        assert!(err.to_string().contains("relative path"));
+
+        // Invalid: escapes too far up
+        let err = worktrees_directory_for_repo(work_dir, "../../other-project/wt").unwrap_err();
+        assert!(err.to_string().contains("outside"));
     }
 
     #[gpui::test]

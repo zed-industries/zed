@@ -17,7 +17,7 @@ use gpui::SharedString;
 use std::borrow::Cow;
 #[cfg(unix)]
 use std::ffi::CString;
-use util::command::new_command;
+use util::{command::new_command, normalize_path};
 
 #[cfg(unix)]
 use std::os::fd::{AsFd, AsRawFd};
@@ -2875,10 +2875,6 @@ impl Fs for FakeFs {
     fn as_fake(&self) -> Arc<FakeFs> {
         self.this.upgrade().unwrap()
     }
-}
-
-pub fn normalize_path(path: &Path) -> PathBuf {
-    util::normalize_path(path)
 }
 
 pub async fn copy_recursive<'a>(

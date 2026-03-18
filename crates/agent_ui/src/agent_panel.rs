@@ -60,7 +60,6 @@ use editor::{Anchor, AnchorRangeExt as _, Editor, EditorEvent, MultiBuffer};
 use extension::ExtensionEvents;
 use extension_host::ExtensionStore;
 use fs::Fs;
-use git::repository::validate_worktree_directory;
 use gpui::{
     Action, Animation, AnimationExt, AnyElement, App, AsyncWindowContext, ClipboardItem, Corner,
     DismissEvent, Entity, EventEmitter, ExternalPaths, FocusHandle, Focusable, KeyContext, Pixels,
@@ -2595,13 +2594,8 @@ impl AgentPanel {
 
         for repo in git_repos {
             let (work_dir, new_path, receiver) = repo.update(cx, |repo, _cx| {
-                let original_repo = repo.original_repo_abs_path.clone();
-                let project_name = original_repo
-                    .file_name()
-                    .ok_or_else(|| anyhow!("git repo must have a directory name"))?;
-                let directory =
-                    validate_worktree_directory(&original_repo, worktree_directory_setting)?;
-                let new_path = directory.join(branch_name).join(project_name);
+                let new_path =
+                    repo.worktree_checkout_path(branch_name, worktree_directory_setting)?;
                 let receiver =
                     repo.create_worktree(branch_name.to_string(), new_path.clone(), None);
                 let work_dir = repo.work_directory_abs_path.clone();

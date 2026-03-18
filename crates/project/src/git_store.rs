@@ -5728,6 +5728,19 @@ impl Repository {
         })
     }
 
+    pub fn worktree_checkout_path(
+        &self,
+        branch_name: &str,
+        worktree_directory_setting: &str,
+    ) -> Result<PathBuf> {
+        let original_repo = self.original_repo_abs_path.clone();
+        let project_name = original_repo
+            .file_name()
+            .ok_or_else(|| anyhow!("git repo must have a directory name"))?;
+        let directory = worktrees_directory_for_repo(&original_repo, worktree_directory_setting)?;
+        Ok(directory.join(branch_name).join(project_name))
+    }
+
     pub fn worktrees(&mut self) -> oneshot::Receiver<Result<Vec<GitWorktree>>> {
         let id = self.id;
         self.send_job(None, move |repo, _| async move {
@@ -5758,18 +5771,16 @@ impl Repository {
     pub fn create_worktree(
         &mut self,
         branch_name: String,
-        directory: PathBuf,
+        path: PathBuf,
         commit: Option<String>,
     ) -> oneshot::Receiver<Result<()>> {
         let id = self.id;
         self.send_job(
-            Some(format!("git worktree add - {}", branch_name).into()),
+            Some(format!("git worktree add: {}", branch_name).into()),
             move |repo, _cx| async move {
                 match repo {
                     RepositoryState::Local(LocalRepositoryState { backend, .. }) => {
-                        backend
-                            .create_worktree(branch_name, directory, commit)
-                            .await
+                        backend.create_worktree(branch_name, path, commit).await
                     }
                     RepositoryState::Remote(RemoteRepositoryState { project_id, client }) => {
                         client
@@ -5777,7 +5788,7 @@ impl Repository {
                                 project_id: project_id.0,
                                 repository_id: id.to_proto(),
                                 name: branch_name,
-                                directory: directory.to_string_lossy().to_string(),
+                                directory: path.to_string_lossy().to_string(),
                                 commit,
                             })
                             .await?;
@@ -6675,6 +6686,64 @@ impl Repository {
             .clone()
             .or(self.remote_origin_url.clone())
     }
+}
+
+/// Validates that the resolved worktree directory is acceptable:
+/// - The setting must not be an absolute path.
+/// - The resolved path must be either a subdirectory of the working
+///   directory or a subdirectory of its parent (i.e., a sibling).
+///
+/// Returns `Ok(resolved_path)` or an error with a user-facing message.
+pub fn worktrees_directory_for_repo(
+    original_repo_abs_path: &Path,
+    worktree_directory_setting: &str,
+) -> Result<PathBuf> {
+    // Check the original setting before trimming, since a path like "///"
+    // is absolute but becomes "" after stripping trailing separators.
+    // Also check for leading `/` or `\` explicitly, because on Windows
+    // `Path::is_absolute()` requires a drive letter — so `/tmp/worktrees`
+    // would slip through even though it's clearly not a relative path.
+    if Path::new(worktree_directory_setting).is_absolute()
+        || worktree_directory_setting.starts_with('/')
+        || worktree_directory_setting.starts_with('\\')
+    {
+        anyhow::bail!(
+            "git.worktree_directory must be a relative path, got: {worktree_directory_setting:?}"
+        );
+    }
+
+    if worktree_directory_setting.is_empty() {
+        anyhow::bail!("git.worktree_directory must not be empty");
+    }
+
+    let trimmed = worktree_directory_setting.trim_end_matches(['/', '\\']);
+    if trimmed == ".." {
+        anyhow::bail!("git.worktree_directory must not be \"..\" (use \"../some-name\" instead)");
+    }
+
+    let joined = original_repo_abs_path.join(trimmed);
+    let resolved = util::normalize_path(&joined);
+    let resolved = if resolved.starts_with(original_repo_abs_path) {
+        resolved
+    } else if let Some(repo_dir_name) = original_repo_abs_path.file_name() {
+        resolved.join(repo_dir_name)
+    } else {
+        resolved
+    };
+
+    let parent = original_repo_abs_path
+        .parent()
+        .unwrap_or(original_repo_abs_path);
+
+    if !resolved.starts_with(parent) {
+        anyhow::bail!(
+            "git.worktree_directory resolved to {resolved:?}, which is outside \
+             the project root and its parent directory. It must resolve to a \
+             subdirectory of {original_repo_abs_path:?} or a sibling of it."
+        );
+    }
+
+    Ok(resolved)
 }
 
 fn get_permalink_in_rust_registry_src(

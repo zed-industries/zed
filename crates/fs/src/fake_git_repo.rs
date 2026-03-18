@@ -436,7 +436,7 @@ impl GitRepository for FakeGitRepository {
 
     fn create_worktree(
         &self,
-        name: String,
+        branch_name: String,
         path: PathBuf,
         from_commit: Option<String>,
     ) -> BoxFuture<'_, Result<()>> {
@@ -458,10 +458,10 @@ impl GitRepository for FakeGitRepository {
             fs.with_git_state(&dot_git_path, true, {
                 let path = path.clone();
                 move |state| {
-                    if state.branches.contains(&name) {
-                        bail!("a branch named '{}' already exists", name);
+                    if state.branches.contains(&branch_name) {
+                        bail!("a branch named '{}' already exists", branch_name);
                     }
-                    let ref_name = format!("refs/heads/{name}");
+                    let ref_name = format!("refs/heads/{branch_name}");
                     let sha = from_commit.unwrap_or_else(|| "fake-sha".to_string());
                     state.refs.insert(ref_name.clone(), sha.clone());
                     state.worktrees.push(Worktree {
@@ -469,7 +469,7 @@ impl GitRepository for FakeGitRepository {
                         ref_name: ref_name.into(),
                         sha: sha.into(),
                     });
-                    state.branches.insert(name);
+                    state.branches.insert(branch_name);
                     Ok::<(), anyhow::Error>(())
                 }
             })??;

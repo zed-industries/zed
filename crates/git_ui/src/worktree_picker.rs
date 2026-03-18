@@ -2,7 +2,7 @@ use anyhow::Context as _;
 use collections::HashSet;
 use fuzzy::StringMatchCandidate;
 
-use git::repository::{Worktree as GitWorktree, validate_worktree_directory};
+use git::repository::Worktree as GitWorktree;
 use gpui::{
     Action, App, AsyncWindowContext, Context, DismissEvent, Entity, EventEmitter, FocusHandle,
     Focusable, InteractiveElement, IntoElement, Modifiers, ModifiersChangedEvent, ParentElement,
@@ -300,13 +300,8 @@ impl WorktreeListDelegate {
                     .git
                     .worktree_directory
                     .clone();
-                let original_repo = repo.original_repo_abs_path.clone();
-                let project_name = original_repo
-                    .file_name()
-                    .ok_or_else(|| anyhow::anyhow!("git repo must have a directory name"))?;
-                let directory =
-                    validate_worktree_directory(&original_repo, &worktree_directory_setting)?;
-                let new_worktree_path = directory.join(&branch).join(project_name);
+                let new_worktree_path =
+                    repo.worktree_checkout_path(&branch, &worktree_directory_setting)?;
                 let receiver =
                     repo.create_worktree(branch.clone(), new_worktree_path.clone(), commit);
                 anyhow::Ok((receiver, new_worktree_path))
