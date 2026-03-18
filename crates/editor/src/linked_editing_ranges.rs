@@ -50,7 +50,7 @@ pub(super) fn refresh_linked_ranges(
     window: &mut Window,
     cx: &mut Context<Editor>,
 ) -> Option<()> {
-    if !editor.mode().is_full() || editor.pending_rename.is_some() {
+    if !editor.lsp_data_enabled() || editor.pending_rename.is_some() {
         return None;
     }
     let project = editor.project()?.downgrade();

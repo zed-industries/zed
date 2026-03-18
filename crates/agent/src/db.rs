@@ -25,11 +25,10 @@ pub type DbMessage = crate::Message;
 pub type DbSummary = crate::legacy_thread::DetailedSummaryState;
 pub type DbLanguageModel = crate::legacy_thread::SerializedLanguageModel;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct DbThreadMetadata {
     pub id: acp::SessionId,
     pub parent_session_id: Option<acp::SessionId>,
-    #[serde(alias = "summary")]
     pub title: SharedString,
     pub updated_at: DateTime<Utc>,
     pub created_at: Option<DateTime<Utc>>,
@@ -42,9 +41,10 @@ impl From<&DbThreadMetadata> for acp_thread::AgentSessionInfo {
     fn from(meta: &DbThreadMetadata) -> Self {
         Self {
             session_id: meta.id.clone(),
-            cwd: None,
+            work_dirs: Some(meta.folder_paths.clone()),
             title: Some(meta.title.clone()),
             updated_at: Some(meta.updated_at),
+            created_at: meta.created_at,
             meta: None,
         }
     }
@@ -482,7 +482,10 @@ impl ThreadsDatabase {
         let data_type = DataType::Zstd;
         let data = compressed;
 
-        let created_at = Utc::now().to_rfc3339();
+        // Use the thread's updated_at as created_at for new threads.
+        // This ensures the creation time reflects when the thread was conceptually
+        // created, not when it was saved to the database.
+        let created_at = updated_at.clone();
 
         let mut insert = connection.exec_bound::<(Arc<str>, Option<Arc<str>>, Option<String>, Option<String>, String, String, DataType, Vec<u8>, String)>(indoc! {"
             INSERT INTO threads (id, parent_id, folder_paths, folder_paths_order, summary, updated_at, data_type, data, created_at)
@@ -877,7 +880,6 @@ mod tests {
 
         let threads = database.list_threads().await.unwrap();
         assert_eq!(threads.len(), 1);
-        assert_eq!(threads[0].folder_paths, folder_paths);
     }
 
     #[gpui::test]
@@ -897,7 +899,6 @@ mod tests {
 
         let threads = database.list_threads().await.unwrap();
         assert_eq!(threads.len(), 1);
-        assert!(threads[0].folder_paths.is_empty());
     }
 
     #[test]

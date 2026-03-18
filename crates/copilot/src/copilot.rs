@@ -949,7 +949,7 @@ impl Copilot {
             && let Some(registered_buffer) = server.registered_buffers.get_mut(&buffer.entity_id())
         {
             match event {
-                language::BufferEvent::Edited => {
+                language::BufferEvent::Edited { .. } => {
                     drop(registered_buffer.report_changes(&buffer, cx));
                 }
                 language::BufferEvent::Saved => {
@@ -1779,6 +1779,7 @@ mod tests {
         fn disk_state(&self) -> language::DiskState {
             language::DiskState::Present {
                 mtime: ::fs::MTime::from_seconds_and_nanos(100, 42),
+                size: 0,
             }
         }
 

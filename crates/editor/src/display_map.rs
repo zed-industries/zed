@@ -107,7 +107,7 @@ use project::{InlayId, lsp_store::LspFoldingRange, lsp_store::TokenType};
 use serde::Deserialize;
 use smallvec::SmallVec;
 use sum_tree::{Bias, TreeMap};
-use text::{BufferId, LineIndent, Patch, ToOffset as _};
+use text::{BufferId, LineIndent, Patch};
 use ui::{SharedString, px};
 use unicode_segmentation::UnicodeSegmentation;
 use ztracing::instrument;
@@ -1977,56 +1977,10 @@ impl DisplaySnapshot {
     /// Returned ranges are 0-based relative to `buffer_range.start`.
     pub(super) fn combined_highlights(
         &self,
-        buffer_id: BufferId,
-        buffer_range: Range<usize>,
+        multibuffer_range: Range<MultiBufferOffset>,
         syntax_theme: &theme::SyntaxTheme,
     ) -> Vec<(Range<usize>, HighlightStyle)> {
         let multibuffer = self.buffer_snapshot();
-
-        let multibuffer_range = multibuffer
-            .excerpts()
-            .find_map(|(excerpt_id, buffer, range)| {
-                if buffer.remote_id() != buffer_id {
-                    return None;
-                }
-                let context_start = range.context.start.to_offset(buffer);
-                let context_end = range.context.end.to_offset(buffer);
-                if buffer_range.start < context_start || buffer_range.end > context_end {
-                    return None;
-                }
-                let start_anchor = buffer.anchor_before(buffer_range.start);
-                let end_anchor = buffer.anchor_after(buffer_range.end);
-                let mb_range =
-                    multibuffer.anchor_range_in_excerpt(excerpt_id, start_anchor..end_anchor)?;
-                Some(mb_range.start.to_offset(multibuffer)..mb_range.end.to_offset(multibuffer))
-            });
-
-        let Some(multibuffer_range) = multibuffer_range else {
-            // Range is outside all excerpts (e.g. symbol name not in a
-            // multi-buffer excerpt). Fall back to buffer-level syntax highlights.
-            let buffer_snapshot = multibuffer.excerpts().find_map(|(_, buffer, _)| {
-                (buffer.remote_id() == buffer_id).then(|| buffer.clone())
-            });
-            let Some(buffer_snapshot) = buffer_snapshot else {
-                return Vec::new();
-            };
-            let mut highlights = Vec::new();
-            let mut offset = 0usize;
-            for chunk in buffer_snapshot.chunks(buffer_range, true) {
-                let chunk_len = chunk.text.len();
-                if chunk_len == 0 {
-                    continue;
-                }
-                if let Some(style) = chunk
-                    .syntax_highlight_id
-                    .and_then(|id| id.style(syntax_theme))
-                {
-                    highlights.push((offset..offset + chunk_len, style));
-                }
-                offset += chunk_len;
-            }
-            return highlights;
-        };
 
         let chunks = custom_highlights::CustomHighlightsChunks::new(
             multibuffer_range,

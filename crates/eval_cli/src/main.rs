@@ -50,6 +50,7 @@ use gpui::{AppContext as _, AsyncApp, Entity, UpdateGlobal};
 use language_model::{LanguageModelRegistry, SelectedModel};
 use project::Project;
 use settings::SettingsStore;
+use util::path_list::PathList;
 
 use crate::headless::AgentCliAppState;
 
@@ -357,24 +358,24 @@ async fn run_agent(
         Err(e) => return (Err(e), None),
     };
 
-    let thread_store = cx.new(|cx| ThreadStore::new(cx));
-    let agent = match NativeAgent::new(
-        project.clone(),
-        thread_store,
-        Templates::new(),
-        None,
-        app_state.fs.clone(),
-        cx,
-    )
-    .await
-    {
-        Ok(a) => a,
-        Err(e) => return (Err(e).context("creating agent"), None),
-    };
+    let agent = cx.update(|cx| {
+        let thread_store = cx.new(|cx| ThreadStore::new(cx));
+        NativeAgent::new(
+            thread_store,
+            Templates::new(),
+            None,
+            app_state.fs.clone(),
+            cx,
+        )
+    });
 
     let connection = Rc::new(NativeAgentConnection(agent.clone()));
     let acp_thread = match cx
-        .update(|cx| connection.clone().new_session(project, workdir, cx))
+        .update(|cx| {
+            connection
+                .clone()
+                .new_session(project, PathList::new(&[workdir]), cx)
+        })
         .await
     {
         Ok(t) => t,

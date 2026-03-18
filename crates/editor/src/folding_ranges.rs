@@ -13,7 +13,7 @@ impl Editor {
         _window: &Window,
         cx: &mut Context<Self>,
     ) {
-        if !self.mode().is_full() || !self.use_document_folding_ranges {
+        if !self.lsp_data_enabled() || !self.use_document_folding_ranges {
             return;
         }
         let Some(project) = self.project.clone() else {

@@ -486,28 +486,24 @@ impl BranchListDelegate {
         let workspace = self.workspace.clone();
 
         cx.spawn_in(window, async move |picker, cx| {
-            let mut is_remote = false;
+            let is_remote;
             let result = match &entry {
-                Entry::Branch { branch, .. } => match branch.remote_name() {
-                    Some(remote_name) => {
-                        is_remote = true;
-                        repo.update(cx, |repo, _| repo.remove_remote(remote_name.to_string()))
-                            .await?
-                    }
-                    None => {
-                        repo.update(cx, |repo, _| repo.delete_branch(branch.name().to_string()))
-                            .await?
-                    }
-                },
+                Entry::Branch { branch, .. } => {
+                    is_remote = branch.is_remote();
+                    repo.update(cx, |repo, _| {
+                        repo.delete_branch(is_remote, branch.name().to_string())
+                    })
+                    .await?
+                }
                 _ => {
-                    log::error!("Failed to delete remote: wrong entry to delete");
+                    log::error!("Failed to delete entry: wrong entry to delete");
                     return Ok(());
                 }
             };
 
             if let Err(e) = result {
                 if is_remote {
-                    log::error!("Failed to delete remote: {}", e);
+                    log::error!("Failed to delete remote branch: {}", e);
                 } else {
                     log::error!("Failed to delete branch: {}", e);
                 }
@@ -517,7 +513,7 @@ impl BranchListDelegate {
                         if is_remote {
                             show_error_toast(
                                 workspace,
-                                format!("remote remove {}", entry.name()),
+                                format!("branch -dr {}", entry.name()),
                                 e,
                                 cx,
                             )
@@ -1513,6 +1509,30 @@ mod tests {
         });
         cx.run_until_parked();
 
+        let expected_branches = ["main", "feature-auth", "feature-ui", "develop"]
+            .into_iter()
+            .filter(|name| name != &branch_to_delete)
+            .collect::<HashSet<_>>();
+        let repo_branches = branch_list
+            .update(cx, |branch_list, cx| {
+                branch_list.picker.update(cx, |picker, cx| {
+                    picker
+                        .delegate
+                        .repo
+                        .as_ref()
+                        .unwrap()
+                        .update(cx, |repo, _cx| repo.branches())
+                })
+            })
+            .await
+            .unwrap()
+            .unwrap();
+        let repo_branches = repo_branches
+            .iter()
+            .map(|b| b.name())
+            .collect::<HashSet<_>>();
+        assert_eq!(&repo_branches, &expected_branches);
+
         branch_list.update(cx, move |branch_list, cx| {
             branch_list.picker.update(cx, move |picker, _cx| {
                 assert_eq!(picker.delegate.matches.len(), 3);
@@ -1522,19 +1542,13 @@ mod tests {
                     .iter()
                     .map(|be| be.name())
                     .collect::<HashSet<_>>();
-                assert_eq!(
-                    branches,
-                    ["main", "feature-auth", "feature-ui", "develop"]
-                        .into_iter()
-                        .filter(|name| name != &branch_to_delete)
-                        .collect::<HashSet<_>>()
-                );
+                assert_eq!(branches, expected_branches);
             })
         });
     }
 
     #[gpui::test]
-    async fn test_delete_remote(cx: &mut TestAppContext) {
+    async fn test_delete_remote_branch(cx: &mut TestAppContext) {
         init_test(cx);
         let (_project, repository) = init_fake_repository(cx).await;
         let branches = vec![
@@ -1544,19 +1558,17 @@ mod tests {
             create_test_branch("develop", false, Some("private"), Some(700)),
         ];
 
-        let remote_names = branches
+        let branch_names = branches
             .iter()
-            .filter_map(|branch| branch.remote_name().map(|r| r.to_string()))
+            .map(|branch| branch.name().to_string())
             .collect::<Vec<String>>();
         let repo = repository.clone();
         cx.spawn(async move |mut cx| {
-            for branch in remote_names {
-                repo.update(&mut cx, |repo, _| {
-                    repo.create_remote(branch, String::from("test"))
-                })
-                .await
-                .unwrap()
-                .unwrap();
+            for branch in branch_names {
+                repo.update(&mut cx, |repo, _| repo.create_branch(branch, None))
+                    .await
+                    .unwrap()
+                    .unwrap();
             }
         })
         .await;
@@ -1583,6 +1595,35 @@ mod tests {
         });
         cx.run_until_parked();
 
+        let expected_branches = [
+            "origin/main",
+            "origin/feature-auth",
+            "fork/feature-ui",
+            "private/develop",
+        ]
+        .into_iter()
+        .filter(|name| name != &branch_to_delete)
+        .collect::<HashSet<_>>();
+        let repo_branches = branch_list
+            .update(cx, |branch_list, cx| {
+                branch_list.picker.update(cx, |picker, cx| {
+                    picker
+                        .delegate
+                        .repo
+                        .as_ref()
+                        .unwrap()
+                        .update(cx, |repo, _cx| repo.branches())
+                })
+            })
+            .await
+            .unwrap()
+            .unwrap();
+        let repo_branches = repo_branches
+            .iter()
+            .map(|b| b.name())
+            .collect::<HashSet<_>>();
+        assert_eq!(&repo_branches, &expected_branches);
+
         // Check matches, it should match one less branch than before
         branch_list.update(cx, move |branch_list, cx| {
             branch_list.picker.update(cx, move |picker, _cx| {
@@ -1593,18 +1634,7 @@ mod tests {
                     .iter()
                     .map(|be| be.name())
                     .collect::<HashSet<_>>();
-                assert_eq!(
-                    branches,
-                    [
-                        "origin/main",
-                        "origin/feature-auth",
-                        "fork/feature-ui",
-                        "private/develop"
-                    ]
-                    .into_iter()
-                    .filter(|name| name != &branch_to_delete)
-                    .collect::<HashSet<_>>()
-                );
+                assert_eq!(branches, expected_branches);
             })
         });
     }

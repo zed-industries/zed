@@ -14,6 +14,7 @@ use std::{
     time::Duration,
 };
 use util::path;
+use util::path_list::PathList;
 
 pub async fn test_basic<T, F>(server: F, cx: &mut TestAppContext)
 where
@@ -431,13 +432,15 @@ pub async fn new_test_thread(
     cx: &mut TestAppContext,
 ) -> Entity<AcpThread> {
     let store = project.read_with(cx, |project, _| project.agent_server_store().clone());
-    let delegate = AgentServerDelegate::new(store, project.clone(), None, None);
+    let delegate = AgentServerDelegate::new(store, None);
 
     let connection = cx.update(|cx| server.connect(delegate, cx)).await.unwrap();
 
-    cx.update(|cx| connection.new_session(project.clone(), current_dir.as_ref(), cx))
-        .await
-        .unwrap()
+    cx.update(|cx| {
+        connection.new_session(project.clone(), PathList::new(&[current_dir.as_ref()]), cx)
+    })
+    .await
+    .unwrap()
 }
 
 pub async fn run_until_first_tool_call(

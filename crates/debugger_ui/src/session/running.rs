@@ -1501,9 +1501,14 @@ impl RunningState {
                     return;
                 };
 
-                persistence::serialize_pane_layout(adapter_name, pane_layout)
-                    .await
-                    .log_err();
+                let kvp = this
+                    .read_with(cx, |_, cx| db::kvp::KeyValueStore::global(cx))
+                    .ok();
+                if let Some(kvp) = kvp {
+                    persistence::serialize_pane_layout(adapter_name, pane_layout, kvp)
+                        .await
+                        .log_err();
+                }
 
                 this.update(cx, |this, _| {
                     this._schedule_serialize.take();

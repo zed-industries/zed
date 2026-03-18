@@ -10,7 +10,6 @@ use extension_host::ExtensionStore;
 use futures::{FutureExt as _, channel::oneshot, select};
 use gpui::{AppContext, AsyncApp, PromptLevel, WindowHandle};
 
-use language::Point;
 use project::trusted_worktrees;
 use remote::{
     DockerConnectionOptions, Interactive, RemoteConnection, RemoteConnectionOptions,
@@ -458,7 +457,12 @@ pub fn navigate_to_positions(
                     active_editor.update(cx, |editor, cx| {
                         let row = row.saturating_sub(1);
                         let col = path.column.unwrap_or(0).saturating_sub(1);
-                        editor.go_to_singleton_buffer_point(Point::new(row, col), window, cx);
+                        let Some(buffer) = editor.buffer().read(cx).as_singleton() else {
+                            return;
+                        };
+                        let buffer_snapshot = buffer.read(cx).snapshot();
+                        let point = buffer_snapshot.point_from_external_input(row, col);
+                        editor.go_to_singleton_buffer_point(point, window, cx);
                     });
                 })
                 .ok();
