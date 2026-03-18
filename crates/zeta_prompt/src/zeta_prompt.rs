@@ -25,6 +25,11 @@ fn estimate_tokens(bytes: usize) -> usize {
     bytes / 3
 }
 
+/// Leave some slack to avoid overflow.
+fn apply_prompt_budget_margin(max_tokens: usize) -> usize {
+    (max_tokens as f64 * 0.9).floor() as usize
+}
+
 #[derive(Clone, Debug, PartialEq, Hash, Serialize, Deserialize)]
 pub struct ZetaPromptInput {
     pub cursor_path: Arc<Path>,
@@ -557,13 +562,14 @@ pub fn format_prompt_with_budget_for_format(
                 cursor_offset,
             );
 
+            let budget_with_margin = apply_prompt_budget_margin(max_tokens);
             seed_coder::assemble_fim_prompt(
                 context,
                 &editable_range,
                 &cursor_section,
                 &input.events,
                 related_files,
-                max_tokens,
+                budget_with_margin,
             )
         }
         _ => {
@@ -577,24 +583,25 @@ pub fn format_prompt_with_budget_for_format(
                 cursor_offset,
             );
 
+            let mut remaining_budget = apply_prompt_budget_margin(max_tokens);
             let cursor_tokens = estimate_tokens(cursor_section.len());
-            let budget_after_cursor = max_tokens.saturating_sub(cursor_tokens);
+            remaining_budget = remaining_budget.saturating_sub(cursor_tokens);
 
             let edit_history_section = format_edit_history_within_budget(
                 &input.events,
                 "<|file_sep|>",
                 "edit history",
-                budget_after_cursor,
+                remaining_budget,
                 max_edit_event_count_for_format(&format),
             );
             let edit_history_tokens = estimate_tokens(edit_history_section.len());
-            let budget_after_edit_history = budget_after_cursor.saturating_sub(edit_history_tokens);
+            remaining_budget = remaining_budget.saturating_sub(edit_history_tokens);
 
             let related_files_section = format_related_files_within_budget(
                 &related_files,
                 "<|file_sep|>",
                 "",
-                budget_after_edit_history,
+                remaining_budget,
             );
 
             let mut prompt = String::new();
