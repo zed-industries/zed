@@ -2595,7 +2595,7 @@ impl AgentPanel {
         for repo in git_repos {
             let (work_dir, new_path, receiver) = repo.update(cx, |repo, _cx| {
                 let new_path =
-                    repo.worktree_checkout_path(branch_name, worktree_directory_setting)?;
+                    repo.path_for_new_linked_worktree(branch_name, worktree_directory_setting)?;
                 let receiver =
                     repo.create_worktree(branch_name.to_string(), new_path.clone(), None);
                 let work_dir = repo.work_directory_abs_path.clone();

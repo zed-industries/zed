@@ -5728,7 +5728,19 @@ impl Repository {
         })
     }
 
-    pub fn worktree_checkout_path(
+    /// If this is a linked worktree (*NOT* the main checkout of a repository),
+    /// returns the pathed for the linked worktree.
+    ///
+    /// Returns None if this is the main checkout.
+    pub fn linked_worktree_path(&self) -> Option<&Arc<Path>> {
+        if self.work_directory_abs_path != self.original_repo_abs_path {
+            Some(&self.work_directory_abs_path)
+        } else {
+            None
+        }
+    }
+
+    pub fn path_for_new_linked_worktree(
         &self,
         branch_name: &str,
         worktree_directory_setting: &str,

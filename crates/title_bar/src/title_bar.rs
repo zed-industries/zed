@@ -167,6 +167,28 @@ impl Render for TitleBar {
 
         let mut children = Vec::new();
 
+        let mut project_name = None;
+        let mut repository = None;
+        let mut linked_worktree_name = None;
+        if let Some(worktree) = self.effective_active_worktree(cx) {
+            project_name = worktree
+                .read(cx)
+                .root_name()
+                .file_name()
+                .map(|name| SharedString::from(name.to_string()));
+            repository = self.get_repository_for_worktree(&worktree, cx);
+            linked_worktree_name = repository.as_ref().and_then(|repo| {
+                let path = repo.read(cx).linked_worktree_path()?;
+                let directory_name = path.file_name()?.to_str()?;
+                let unique_worktree_name = if directory_name != project_name.as_ref()?.as_str() {
+                    directory_name.to_string()
+                } else {
+                    path.parent()?.file_name()?.to_str()?.to_string()
+                };
+                Some(SharedString::from(unique_worktree_name))
+            });
+        }
+
         children.push(
             h_flex()
                 .gap_0p5()
@@ -189,11 +211,18 @@ impl Render for TitleBar {
                                 .when(title_bar_settings.show_project_items, |title_bar| {
                                     title_bar
                                         .children(self.render_project_host(cx))
-                                        .child(self.render_project_name(window, cx))
+                                        .child(self.render_project_name(project_name, window, cx))
                                 })
-                                .when(title_bar_settings.show_branch_name, |title_bar| {
-                                    title_bar.children(self.render_project_branch(cx))
-                                })
+                                .when_some(
+                                    repository.filter(|_| title_bar_settings.show_branch_name),
+                                    |title_bar, repository| {
+                                        title_bar.children(self.render_project_branch(
+                                            repository,
+                                            linked_worktree_name,
+                                            cx,
+                                        ))
+                                    },
+                                )
                         })
                 })
                 .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
@@ -725,13 +754,13 @@ impl TitleBar {
         )
     }
 
-    pub fn render_project_name(&self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render_project_name(
+        &self,
+        name: Option<SharedString>,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
         let workspace = self.workspace.clone();
-
-        let name = self.effective_active_worktree(cx).map(|worktree| {
-            let worktree = worktree.read(cx);
-            SharedString::from(worktree.root_name().as_unix_str().to_string())
-        });
 
         let is_project_selected = name.is_some();
 
@@ -782,26 +811,16 @@ impl TitleBar {
             .into_any_element()
     }
 
-    pub fn render_project_branch(&self, cx: &mut Context<Self>) -> Option<impl IntoElement> {
-        let effective_worktree = self.effective_active_worktree(cx)?;
-        let repository = self.get_repository_for_worktree(&effective_worktree, cx)?;
+    fn render_project_branch(
+        &self,
+        repository: Entity<project::git_store::Repository>,
+        linked_worktree_name: Option<SharedString>,
+        cx: &mut Context<Self>,
+    ) -> Option<impl IntoElement> {
         let workspace = self.workspace.upgrade()?;
 
-        let (branch_name, icon_info, worktree_name) = {
+        let (branch_name, icon_info) = {
             let repo = repository.read(cx);
-
-            let mut worktree_name = None;
-            if repo.work_directory_abs_path != repo.original_repo_abs_path {
-                if let Some(main_repo_name) = repo.original_repo_abs_path.file_name() {
-                    if repo.work_directory_abs_path.ends_with(&main_repo_name) {
-                        worktree_name = repo
-                            .work_directory_abs_path
-                            .parent()
-                            .and_then(|p| p.file_name())
-                            .and_then(|n| n.to_str());
-                    }
-                }
-            }
 
             let branch_name = repo
                 .branch
@@ -832,11 +851,11 @@ impl TitleBar {
                 (IconName::GitBranch, Color::Muted)
             };
 
-            (branch_name, icon_info, worktree_name)
+            (branch_name, icon_info)
         };
 
         let branch_name = branch_name?;
-        let button_text = if let Some(worktree_name) = worktree_name {
+        let button_text = if let Some(worktree_name) = linked_worktree_name {
             format!("{}/{}", worktree_name, branch_name)
         } else {
             branch_name
