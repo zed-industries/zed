@@ -72,7 +72,6 @@ pub struct Picker<D: PickerDelegate> {
     ///
     /// Set this to `false` when rendering the `Picker` as part of a larger modal.
     is_modal: bool,
-
     /// Bounds tracking for the picker container (for aside positioning)
     picker_bounds: Rc<Cell<Option<Bounds<Pixels>>>>,
     /// Bounds tracking for items (for aside positioning) - maps item index to bounds
@@ -341,7 +340,6 @@ impl<D: PickerDelegate> Picker<D> {
             max_height: Some(rems(24.).into()),
             show_scrollbar: false,
             is_modal: true,
-
             picker_bounds: Rc::new(Cell::new(None)),
             item_bounds: Rc::new(RefCell::new(HashMap::default())),
         };
@@ -802,7 +800,6 @@ impl<D: PickerDelegate> Picker<D> {
                 window,
                 cx,
             ))
-
             .when(
                 self.delegate.separators_after_indices().contains(&ix),
                 |picker| {
