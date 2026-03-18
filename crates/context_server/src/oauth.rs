@@ -61,6 +61,72 @@ fn require_https_or_loopback(url: &Url) -> Result<()> {
     )
 }
 
+/// Validate that a URL is safe to use as an OAuth endpoint, including SSRF
+/// protections against private/reserved IP ranges.
+///
+/// This wraps [`require_https_or_loopback`] and adds IP-range checks to prevent
+/// an attacker-controlled MCP server from directing Zed to fetch internal
+/// network resources via metadata URLs.
+///
+/// **Known limitation:** Domain-name URLs that resolve to private IPs are *not*
+/// blocked here — full mitigation requires resolver-level validation (e.g. a
+/// custom `Resolve` implementation). This function only blocks IP-literal URLs.
+fn validate_oauth_url(url: &Url) -> Result<()> {
+    require_https_or_loopback(url)?;
+
+    if let Some(host) = url.host() {
+        match host {
+            url::Host::Ipv4(ip) => {
+                // Loopback is already allowed by require_https_or_loopback.
+                if ip.is_private() || ip.is_link_local() || ip.is_broadcast() || ip.is_unspecified()
+                {
+                    bail!(
+                        "OAuth endpoint must not point to private/reserved IP: {}",
+                        ip
+                    );
+                }
+            }
+            url::Host::Ipv6(ip) => {
+                // Check for IPv4-mapped IPv6 addresses (::ffff:a.b.c.d) which
+                // could bypass the IPv4 checks above.
+                if let Some(mapped_v4) = ip.to_ipv4_mapped() {
+                    if mapped_v4.is_private()
+                        || mapped_v4.is_link_local()
+                        || mapped_v4.is_broadcast()
+                        || mapped_v4.is_unspecified()
+                    {
+                        bail!(
+                            "OAuth endpoint must not point to private/reserved IP: ::ffff:{}",
+                            mapped_v4
+                        );
+                    }
+                }
+
+                if ip.is_unspecified() || ip.is_multicast() {
+                    bail!(
+                        "OAuth endpoint must not point to reserved IPv6 address: {}",
+                        ip
+                    );
+                }
+                // IPv6 Unique Local Addresses (fc00::/7). is_unique_local() is
+                // nightly-only, so check the prefix manually.
+                if (ip.segments()[0] & 0xfe00) == 0xfc00 {
+                    bail!(
+                        "OAuth endpoint must not point to IPv6 unique-local address: {}",
+                        ip
+                    );
+                }
+            }
+            url::Host::Domain(_) => {
+                // Domain-based SSRF prevention requires resolver-level checks.
+                // See known limitation in the doc comment above.
+            }
+        }
+    }
+
+    Ok(())
+}
+
 /// Parsed from the MCP server's WWW-Authenticate header or well-known endpoint
 /// per RFC 9728 (OAuth 2.0 Protected Resource Metadata).
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -718,7 +784,7 @@ pub async fn perform_dcr(
     registration_endpoint: &Url,
     redirect_uri: &str,
 ) -> Result<OAuthClientRegistration> {
-    require_https_or_loopback(registration_endpoint)?;
+    validate_oauth_url(registration_endpoint)?;
 
     let body = dcr_registration_body(redirect_uri);
     let body_bytes = serde_json::to_vec(&body)?;
@@ -791,7 +857,7 @@ async fn post_token_request(
     token_endpoint: &Url,
     params: &[(&str, String)],
 ) -> Result<OAuthTokens> {
-    require_https_or_loopback(token_endpoint)?;
+    validate_oauth_url(token_endpoint)?;
 
     let body = url::form_urlencoded::Serializer::new(String::new())
         .extend_pairs(params.iter().map(|(k, v)| (*k, v.as_str())))
@@ -1003,7 +1069,7 @@ async fn fetch_json<T: serde::de::DeserializeOwned>(
     http_client: &Arc<dyn HttpClient>,
     url: &Url,
 ) -> Result<T> {
-    require_https_or_loopback(url)?;
+    validate_oauth_url(url)?;
 
     let request = Request::builder()
         .method(http_client::http::Method::GET)
@@ -1217,6 +1283,75 @@ mod tests {
     fn test_require_https_or_loopback_rejects_ftp() {
         let url = Url::parse("ftp://auth.example.com/token").unwrap();
         assert!(require_https_or_loopback(&url).is_err());
+    }
+
+    // -- validate_oauth_url (SSRF) tests ------------------------------------
+
+    #[test]
+    fn test_validate_oauth_url_accepts_https_public() {
+        let url = Url::parse("https://auth.example.com/token").unwrap();
+        assert!(validate_oauth_url(&url).is_ok());
+    }
+
+    #[test]
+    fn test_validate_oauth_url_rejects_private_ipv4_10() {
+        let url = Url::parse("https://10.0.0.1/token").unwrap();
+        assert!(validate_oauth_url(&url).is_err());
+    }
+
+    #[test]
+    fn test_validate_oauth_url_rejects_private_ipv4_172() {
+        let url = Url::parse("https://172.16.0.1/token").unwrap();
+        assert!(validate_oauth_url(&url).is_err());
+    }
+
+    #[test]
+    fn test_validate_oauth_url_rejects_private_ipv4_192() {
+        let url = Url::parse("https://192.168.1.1/token").unwrap();
+        assert!(validate_oauth_url(&url).is_err());
+    }
+
+    #[test]
+    fn test_validate_oauth_url_rejects_link_local() {
+        let url = Url::parse("https://169.254.169.254/latest/meta-data/").unwrap();
+        assert!(validate_oauth_url(&url).is_err());
+    }
+
+    #[test]
+    fn test_validate_oauth_url_rejects_ipv6_ula() {
+        let url = Url::parse("https://[fd12:3456:789a::1]/token").unwrap();
+        assert!(validate_oauth_url(&url).is_err());
+    }
+
+    #[test]
+    fn test_validate_oauth_url_rejects_ipv6_unspecified() {
+        let url = Url::parse("https://[::]/token").unwrap();
+        assert!(validate_oauth_url(&url).is_err());
+    }
+
+    #[test]
+    fn test_validate_oauth_url_rejects_ipv4_mapped_ipv6_private() {
+        let url = Url::parse("https://[::ffff:10.0.0.1]/token").unwrap();
+        assert!(validate_oauth_url(&url).is_err());
+    }
+
+    #[test]
+    fn test_validate_oauth_url_rejects_ipv4_mapped_ipv6_link_local() {
+        let url = Url::parse("https://[::ffff:169.254.169.254]/token").unwrap();
+        assert!(validate_oauth_url(&url).is_err());
+    }
+
+    #[test]
+    fn test_validate_oauth_url_allows_http_loopback() {
+        // Loopback is permitted (it's our callback server).
+        let url = Url::parse("http://127.0.0.1:8080/callback").unwrap();
+        assert!(validate_oauth_url(&url).is_ok());
+    }
+
+    #[test]
+    fn test_validate_oauth_url_allows_https_public_ip() {
+        let url = Url::parse("https://93.184.216.34/token").unwrap();
+        assert!(validate_oauth_url(&url).is_ok());
     }
 
     // -- parse_www_authenticate tests ----------------------------------------
