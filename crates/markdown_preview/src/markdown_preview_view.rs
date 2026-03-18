@@ -584,6 +584,7 @@ impl MarkdownPreviewView {
 
         if let Some(active_editor) = active_editor {
             let editor_for_checkbox = active_editor.clone();
+            let view_handle = cx.entity().downgrade();
             markdown_element = markdown_element
                 .on_source_click(move |source_index, click_count, window, cx| {
                     if click_count == 2 {
@@ -593,7 +594,7 @@ impl MarkdownPreviewView {
                         false
                     }
                 })
-                .on_checkbox_toggle(move |source_range, new_checked, _window, cx| {
+                .on_checkbox_toggle(move |source_range, new_checked, window, cx| {
                     let task_marker = if new_checked { "[x]" } else { "[ ]" };
                     editor_for_checkbox.update(cx, |editor, cx| {
                         editor.edit(
@@ -605,6 +606,11 @@ impl MarkdownPreviewView {
                             cx,
                         );
                     });
+                    if let Some(view) = view_handle.upgrade() {
+                        cx.update_entity(&view, |this, cx| {
+                            this.update_markdown_from_active_editor(false, window, cx);
+                        });
+                    }
                 });
         }
 
