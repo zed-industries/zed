@@ -528,6 +528,49 @@ mod tests {
         .await;
     }
 
+    #[gpui::test]
+    async fn test_diffing_clipboard_trailing_newline_in_selection(cx: &mut TestAppContext) {
+        base_test(
+            path!("/test"),
+            path!("/test/text.txt"),
+            "line 1\nline 2\n√√√√√",
+            "«line 1\nline 2\n√√√√√\nˇ»",
+            &unindent(
+                "
+                  ˇline 1
+                  line 2
+                - √√√√√
+                + √√√√√
+                ",
+            ),
+            "Clipboard ↔ text.txt @ L1:1-L4:1",
+            &format!("Clipboard ↔ {} @ L1:1-L4:1", path!("test/text.txt")),
+            cx,
+        )
+        .await;
+    }
+
+    #[gpui::test]
+    async fn test_diffing_clipboard_trailing_newline_in_clipboard(cx: &mut TestAppContext) {
+        base_test(
+            path!("/test"),
+            path!("/test/text.txt"),
+            "line 1\nline 2\n√√√√√\n",
+            "«line 1\nline 2\n√√√√√ˇ»",
+            &unindent(
+                "
+                  ˇline 1
+                  line 2
+                - √√√√√
+                + √√√√√",
+            ),
+            "Clipboard ↔ text.txt @ L1:1-L3:16",
+            &format!("Clipboard ↔ {} @ L1:1-L3:16", path!("test/text.txt")),
+            cx,
+        )
+        .await;
+    }
+
     async fn base_test(
         project_root: &str,
         file_path: &str,
