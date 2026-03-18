@@ -1230,6 +1230,9 @@
   {
     "context": "MarkdownPreview",
     "bindings": {
+      "copy": "markdown::Copy",
+      "ctrl-insert": "markdown::Copy",
+      "ctrl-c": "markdown::Copy",
       "pageup": "markdown::ScrollPageUp",
       "pagedown": "markdown::ScrollPageDown",
       "up": "markdown::ScrollUp",

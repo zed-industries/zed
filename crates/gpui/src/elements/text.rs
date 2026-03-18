@@ -1,8 +1,8 @@
 use crate::{
     ActiveTooltip, AnyView, App, Bounds, DispatchPhase, Element, ElementId, GlobalElementId,
-    HighlightStyle, Hitbox, HitboxBehavior, InspectorElementId, IntoElement, LayoutId,
+    HighlightStyle, Hitbox, HitboxBehavior, Hsla, InspectorElementId, IntoElement, LayoutId,
     MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point, SharedString, Size, TextOverflow,
-    TextRun, TextStyle, TooltipId, TruncateFrom, WhiteSpace, Window, WrappedLine,
+    TextRun, TextStyle, TooltipId, TruncateFrom, WhiteSpace, Window, WrappedLine, fill, point,
     WrappedLineLayout, register_tooltip_mouse_handlers, set_tooltip_on_window,
 };
 use anyhow::Context as _;
@@ -657,11 +657,25 @@ pub struct InteractiveText {
     tooltip_builder: Option<Rc<dyn Fn(usize, &mut Window, &mut App) -> Option<AnyView>>>,
     tooltip_id: Option<TooltipId>,
     clickable_ranges: Vec<Range<usize>>,
+    selection_id: Option<SharedString>,
+    active_selection_id: Option<SharedString>,
+    selection_color: Option<Hsla>,
+    selection_listener:
+        Option<Rc<dyn Fn(InteractiveTextSelectionEvent, &mut Window, &mut App) + 'static>>,
 }
 
 struct InteractiveTextClickEvent {
     mouse_down_index: usize,
     mouse_up_index: usize,
+}
+
+#[derive(Clone)]
+/// Selection updates emitted by [`InteractiveText`] when text selection is enabled.
+pub struct InteractiveTextSelectionEvent {
+    /// The stable id of the text element that owns the selection.
+    pub selection_id: SharedString,
+    /// The currently selected text, if the selection is non-empty.
+    pub selected_text: Option<SharedString>,
 }
 
 #[doc(hidden)]
@@ -670,6 +684,9 @@ pub struct InteractiveTextState {
     mouse_down_index: Rc<Cell<Option<usize>>>,
     hovered_index: Rc<Cell<Option<usize>>>,
     active_tooltip: Rc<RefCell<Option<ActiveTooltip>>>,
+    selection_anchor: Rc<Cell<Option<usize>>>,
+    selection_head: Rc<Cell<Option<usize>>>,
+    selection_pending: Rc<Cell<bool>>,
 }
 
 /// InteractiveTest is a wrapper around StyledText that adds mouse interactions.
@@ -684,6 +701,10 @@ impl InteractiveText {
             tooltip_builder: None,
             tooltip_id: None,
             clickable_ranges: Vec::new(),
+            selection_id: None,
+            active_selection_id: None,
+            selection_color: None,
+            selection_listener: None,
         }
     }
 
@@ -723,6 +744,79 @@ impl InteractiveText {
     ) -> Self {
         self.tooltip_builder = Some(Rc::new(builder));
         self
+    }
+
+    /// Enables drag-selection for this text while preserving clickable ranges.
+    pub fn selectable(
+        mut self,
+        selection_id: SharedString,
+        active_selection_id: Option<SharedString>,
+        selection_color: Hsla,
+        listener: impl Fn(InteractiveTextSelectionEvent, &mut Window, &mut App) + 'static,
+    ) -> Self {
+        self.selection_id = Some(selection_id);
+        self.active_selection_id = active_selection_id;
+        self.selection_color = Some(selection_color);
+        self.selection_listener = Some(Rc::new(listener));
+        self
+    }
+}
+
+fn normalized_interactive_text_selection(
+    anchor: Option<usize>,
+    head: Option<usize>,
+) -> Option<Range<usize>> {
+    let anchor = anchor?;
+    let head = head?;
+    Some(anchor.min(head)..anchor.max(head))
+}
+
+fn paint_interactive_text_selection(
+    text_layout: &TextLayout,
+    selection: Range<usize>,
+    selection_color: Hsla,
+    window: &mut Window,
+) {
+    let selection_start = text_layout.position_for_index(selection.start);
+    let selection_end = text_layout.position_for_index(selection.end);
+    if let Some((start_position, end_position)) = selection_start.zip(selection_end) {
+        let bounds = text_layout.bounds();
+        let line_height = text_layout.line_height();
+        if start_position.y == end_position.y {
+            window.paint_quad(fill(
+                Bounds::from_corners(
+                    start_position,
+                    point(end_position.x, end_position.y + line_height),
+                ),
+                selection_color,
+            ));
+        } else {
+            window.paint_quad(fill(
+                Bounds::from_corners(
+                    start_position,
+                    point(bounds.right(), start_position.y + line_height),
+                ),
+                selection_color,
+            ));
+
+            if end_position.y > start_position.y + line_height {
+                window.paint_quad(fill(
+                    Bounds::from_corners(
+                        point(bounds.left(), start_position.y + line_height),
+                        point(bounds.right(), end_position.y),
+                    ),
+                    selection_color,
+                ));
+            }
+
+            window.paint_quad(fill(
+                Bounds::from_corners(
+                    point(bounds.left(), end_position.y),
+                    point(end_position.x, end_position.y + line_height),
+                ),
+                selection_color,
+            ));
+        }
     }
 }
 
@@ -797,6 +891,30 @@ impl Element for InteractiveText {
             global_id.unwrap(),
             |interactive_state, window| {
                 let mut interactive_state = interactive_state.unwrap_or_default();
+                if self.selection_id.as_ref() != self.active_selection_id.as_ref() {
+                    interactive_state.selection_anchor.take();
+                    interactive_state.selection_head.take();
+                    interactive_state.selection_pending.set(false);
+                }
+
+                let selected_range = normalized_interactive_text_selection(
+                    interactive_state.selection_anchor.get(),
+                    interactive_state.selection_head.get(),
+                );
+
+                if let (Some(selection_color), Some(selected_range)) =
+                    (self.selection_color, selected_range.clone())
+                    && !selected_range.is_empty()
+                {
+                    paint_interactive_text_selection(
+                        &text_layout,
+                        selected_range,
+                        selection_color,
+                        window,
+                    );
+                }
+
+                let is_selectable = self.selection_listener.is_some();
                 if let Some(click_listener) = self.click_listener.take() {
                     let mouse_position = window.mouse_position();
                     if let Ok(ix) = text_layout.index_for_position(mouse_position)
@@ -804,49 +922,175 @@ impl Element for InteractiveText {
                             .clickable_ranges
                             .iter()
                             .any(|range| range.contains(&ix))
+                        && !interactive_state.selection_pending.get()
+                        && selected_range.as_ref().is_none_or(|range| range.is_empty())
                     {
                         window.set_cursor_style(crate::CursorStyle::PointingHand, hitbox)
+                    } else if is_selectable && hitbox.is_hovered(window) {
+                        window.set_cursor_style(crate::CursorStyle::IBeam, hitbox)
                     }
 
-                    let text_layout = text_layout.clone();
                     let mouse_down = interactive_state.mouse_down_index.clone();
-                    if let Some(mouse_down_index) = mouse_down.get() {
-                        let hitbox = hitbox.clone();
-                        let clickable_ranges = mem::take(&mut self.clickable_ranges);
-                        window.on_mouse_event(
-                            move |event: &MouseUpEvent, phase, window: &mut Window, cx| {
-                                if phase == DispatchPhase::Bubble && hitbox.is_hovered(window) {
-                                    if let Ok(mouse_up_index) =
-                                        text_layout.index_for_position(event.position)
-                                    {
-                                        click_listener(
-                                            &clickable_ranges,
-                                            InteractiveTextClickEvent {
-                                                mouse_down_index,
-                                                mouse_up_index,
-                                            },
-                                            window,
-                                            cx,
-                                        )
-                                    }
+                    let selection_anchor = interactive_state.selection_anchor.clone();
+                    let selection_head = interactive_state.selection_head.clone();
+                    let selection_pending = interactive_state.selection_pending.clone();
+                    let selection_listener = self.selection_listener.take();
+                    let selection_id = self.selection_id.clone();
+                    let text = self.text.text.clone();
+                    let clickable_ranges = mem::take(&mut self.clickable_ranges);
 
-                                    mouse_down.take();
-                                    window.refresh();
+                    let mouse_down_for_down = mouse_down.clone();
+                    let selection_anchor_for_down = selection_anchor.clone();
+                    let selection_head_for_down = selection_head.clone();
+                    let selection_pending_for_down = selection_pending.clone();
+                    let selection_listener_for_down = selection_listener.clone();
+                    let selection_id_for_down = selection_id.clone();
+                    let text_layout_for_down = text_layout.clone();
+                    let hitbox_for_down = hitbox.clone();
+                    window.on_mouse_event(move |event: &MouseDownEvent, phase, window, cx| {
+                        if phase == DispatchPhase::Bubble
+                            && hitbox_for_down.is_hovered(window)
+                            && let Ok(mouse_down_index) =
+                                text_layout_for_down.index_for_position(event.position)
+                        {
+                            mouse_down_for_down.set(Some(mouse_down_index));
+                            if let Some(selection_id) = selection_id_for_down.clone() {
+                                selection_anchor_for_down.set(Some(mouse_down_index));
+                                selection_head_for_down.set(Some(mouse_down_index));
+                                selection_pending_for_down.set(true);
+                                if let Some(selection_listener) = selection_listener_for_down.as_ref()
+                                {
+                                    selection_listener(
+                                        InteractiveTextSelectionEvent {
+                                            selection_id,
+                                            selected_text: None,
+                                        },
+                                        window,
+                                        cx,
+                                    );
                                 }
-                            },
-                        );
-                    } else {
-                        let hitbox = hitbox.clone();
-                        window.on_mouse_event(move |event: &MouseDownEvent, phase, window, _| {
-                            if phase == DispatchPhase::Bubble
-                                && hitbox.is_hovered(window)
-                                && let Ok(mouse_down_index) =
-                                    text_layout.index_for_position(event.position)
-                            {
-                                mouse_down.set(Some(mouse_down_index));
-                                window.refresh();
                             }
-                        });
+                            window.refresh();
+                        }
+                    });
+
+                    let text_layout_for_move = text_layout.clone();
+                    let hitbox_for_move = hitbox.clone();
+                    let mouse_down_for_move = mouse_down.clone();
+                    let selection_anchor_for_move = selection_anchor.clone();
+                    let selection_head_for_move = selection_head.clone();
+                    let selection_pending_for_move = selection_pending.clone();
+                    let selection_listener_for_move = selection_listener.clone();
+                    let selection_id_for_move = selection_id.clone();
+                    let text_for_move = text.clone();
+                    window.on_mouse_event(move |event: &MouseMoveEvent, phase, window, cx| {
+                        if phase == DispatchPhase::Bubble
+                            && selection_pending_for_move.get()
+                            && (hitbox_for_move.is_hovered(window)
+                                || mouse_down_for_move.get().is_some())
+                        {
+                            let selection_index = match text_layout_for_move
+                                .index_for_position(event.position)
+                            {
+                                Ok(ix) | Err(ix) => ix,
+                            };
+                            selection_head_for_move.set(Some(selection_index));
+                            if let Some(selection_id) = selection_id_for_move.clone()
+                                && let Some(selection_listener) =
+                                    selection_listener_for_move.as_ref()
+                            {
+                                let selected_text = normalized_interactive_text_selection(
+                                    selection_anchor_for_move.get(),
+                                    selection_head_for_move.get(),
+                                )
+                                .filter(|range| !range.is_empty())
+                                .map(|range| SharedString::from(text_for_move[range].to_string()));
+                                selection_listener(
+                                    InteractiveTextSelectionEvent {
+                                        selection_id,
+                                        selected_text,
+                                    },
+                                    window,
+                                    cx,
+                                );
+                            }
+                            window.refresh();
+                        }
+                    });
+
+                    let text_layout_for_up = text_layout.clone();
+                    let hitbox_for_up = hitbox.clone();
+                    let mouse_down_for_up = mouse_down.clone();
+                    let selection_anchor_for_up = selection_anchor.clone();
+                    let selection_head_for_up = selection_head.clone();
+                    let selection_pending_for_up = selection_pending.clone();
+                    let selection_listener_for_up = selection_listener.clone();
+                    let selection_id_for_up = selection_id.clone();
+                    let text_for_up = text.clone();
+                    let clickable_ranges_for_up = clickable_ranges.clone();
+                    window.on_mouse_event(move |event: &MouseUpEvent, phase, window, cx| {
+                        if phase == DispatchPhase::Bubble
+                            && (hitbox_for_up.is_hovered(window)
+                                || mouse_down_for_up.get().is_some())
+                        {
+                            let mouse_up_index =
+                                match text_layout_for_up.index_for_position(event.position) {
+                                    Ok(ix) | Err(ix) => ix,
+                                };
+                            if let Some(selection_id) = selection_id_for_up.clone() {
+                                selection_head_for_up.set(Some(mouse_up_index));
+                                if let Some(selection_listener) = selection_listener_for_up.as_ref() {
+                                    let selected_range = normalized_interactive_text_selection(
+                                        selection_anchor_for_up.get(),
+                                        selection_head_for_up.get(),
+                                    );
+                                    let selected_text = selected_range
+                                        .filter(|range| !range.is_empty())
+                                        .map(|range| SharedString::from(text_for_up[range].to_string()));
+                                    selection_listener(
+                                        InteractiveTextSelectionEvent {
+                                            selection_id,
+                                            selected_text,
+                                        },
+                                        window,
+                                        cx,
+                                    );
+                                }
+                            }
+
+                            if let Some(mouse_down_index) = mouse_down_for_up.take() {
+                                let selected_range = normalized_interactive_text_selection(
+                                    selection_anchor_for_up.get(),
+                                    selection_head_for_up.get(),
+                                );
+                                if selected_range.as_ref().is_none_or(|range| range.is_empty()) {
+                                    click_listener(
+                                        &clickable_ranges_for_up,
+                                        InteractiveTextClickEvent {
+                                            mouse_down_index,
+                                            mouse_up_index,
+                                        },
+                                        window,
+                                        cx,
+                                    );
+                                }
+                            }
+
+                            selection_pending_for_up.set(false);
+                            window.refresh();
+                        }
+                    });
+                } else {
+                    let mouse_position = window.mouse_position();
+                    if is_selectable && hitbox.is_hovered(window) {
+                        window.set_cursor_style(crate::CursorStyle::IBeam, hitbox)
+                    } else if let Ok(ix) = text_layout.index_for_position(mouse_position)
+                        && self
+                            .clickable_ranges
+                            .iter()
+                            .any(|range| range.contains(&ix))
+                    {
+                        window.set_cursor_style(crate::CursorStyle::PointingHand, hitbox)
                     }
                 }
 
@@ -940,6 +1184,8 @@ impl IntoElement for InteractiveText {
 
 #[cfg(test)]
 mod tests {
+    use super::normalized_interactive_text_selection;
+
     #[test]
     fn test_into_element_for() {
         use crate::{ParentElement as _, SharedString, div};
@@ -949,5 +1195,18 @@ mod tests {
         let _ = div().child("String".to_string());
         let _ = div().child(Cow::Borrowed("Cow"));
         let _ = div().child(SharedString::from("SharedString"));
+    }
+
+    #[test]
+    fn test_normalized_interactive_text_selection() {
+        assert_eq!(
+            normalized_interactive_text_selection(Some(8), Some(3)),
+            Some(3..8)
+        );
+        assert_eq!(
+            normalized_interactive_text_selection(Some(3), Some(3)),
+            Some(3..3)
+        );
+        assert_eq!(normalized_interactive_text_selection(None, Some(3)), None);
     }
 }

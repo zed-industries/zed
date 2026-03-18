@@ -1336,6 +1336,7 @@
   {
     "context": "MarkdownPreview",
     "bindings": {
+      "cmd-c": "markdown::Copy",
       "pageup": "markdown::ScrollPageUp",
       "pagedown": "markdown::ScrollPageDown",
       "up": "markdown::ScrollUp",

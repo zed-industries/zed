@@ -7,11 +7,13 @@ use anyhow::Result;
 use editor::scroll::Autoscroll;
 use editor::{Editor, EditorEvent, MultiBufferOffset, SelectionEffects};
 use gpui::{
-    App, ClickEvent, Context, Entity, EventEmitter, FocusHandle, Focusable, InteractiveElement,
-    IntoElement, IsZero, ListOffset, ListState, ParentElement, Render, RetainAllImageCache, Styled,
-    Subscription, Task, WeakEntity, Window, list,
+    App, ClickEvent, ClipboardItem, Context, Entity, EventEmitter, FocusHandle, Focusable,
+    InteractiveElement, InteractiveTextSelectionEvent, IntoElement, IsZero, ListOffset, ListState,
+    ParentElement, Render, RetainAllImageCache, SharedString, Styled, Subscription, Task,
+    WeakEntity, Window, list,
 };
 use language::LanguageRegistry;
+use markdown::Copy as CopyMarkdownSelection;
 use settings::Settings;
 use theme::ThemeSettings;
 use ui::{WithScrollbar, prelude::*};
@@ -42,6 +44,8 @@ pub struct MarkdownPreviewView {
     mermaid_state: MermaidState,
     parsing_markdown_task: Option<Task<Result<()>>>,
     mode: MarkdownPreviewMode,
+    active_text_selection_id: Option<SharedString>,
+    selected_text_for_copy: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -219,6 +223,8 @@ impl MarkdownPreviewView {
                 parsing_markdown_task: None,
                 image_cache: RetainAllImageCache::new(cx),
                 mode,
+                active_text_selection_id: None,
+                selected_text_for_copy: None,
             };
 
             this.set_editor(active_editor, window, cx);
@@ -302,6 +308,8 @@ impl MarkdownPreviewView {
             editor,
             _subscription: subscription,
         });
+        self.active_text_selection_id = None;
+        self.selected_text_for_copy = None;
 
         self.parse_markdown_from_active_editor(false, window, cx);
     }
@@ -357,6 +365,8 @@ impl MarkdownPreviewView {
                 view.mermaid_state.update(&contents, cx);
                 let markdown_blocks_count = contents.children.len();
                 view.contents = Some(contents);
+                view.active_text_selection_id = None;
+                view.selected_text_for_copy = None;
                 let scroll_top = view.list_state.logical_scroll_top();
                 view.list_state.reset(markdown_blocks_count);
                 view.list_state.scroll_to(scroll_top);
@@ -535,6 +545,28 @@ impl MarkdownPreviewView {
         }
         cx.notify();
     }
+
+    fn update_text_selection(
+        &mut self,
+        event: &InteractiveTextSelectionEvent,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.active_text_selection_id = Some(event.selection_id.clone());
+        self.selected_text_for_copy = event.selected_text.as_ref().map(|text| text.to_string());
+        cx.notify();
+    }
+
+    fn copy_selection(
+        &mut self,
+        _: &CopyMarkdownSelection,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(text) = self.selected_text_for_copy.as_ref() {
+            cx.write_to_clipboard(ClipboardItem::new_string(text.clone()));
+        }
+    }
 }
 
 impl Focusable for MarkdownPreviewView {
@@ -588,6 +620,7 @@ impl Render for MarkdownPreviewView {
             .on_action(cx.listener(MarkdownPreviewView::scroll_down_by_item))
             .on_action(cx.listener(MarkdownPreviewView::scroll_to_top))
             .on_action(cx.listener(MarkdownPreviewView::scroll_to_bottom))
+            .on_action(cx.listener(MarkdownPreviewView::copy_selection))
             .size_full()
             .bg(cx.theme().colors().editor_background)
             .p_4()
@@ -630,7 +663,11 @@ impl Render for MarkdownPreviewView {
                                         cx.notify();
                                     }
                                 },
-                            ));
+                            ))
+                            .with_selection_changed_callback(
+                                this.active_text_selection_id.clone(),
+                                cx.listener(MarkdownPreviewView::update_text_selection),
+                            );
 
                             let block = contents.children.get(ix).unwrap();
                             let rendered_block = render_markdown_block(block, &mut render_cx);

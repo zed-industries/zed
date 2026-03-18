@@ -12,9 +12,10 @@ use collections::HashMap;
 use fs::normalize_path;
 use gpui::{
     AbsoluteLength, Animation, AnimationExt, AnyElement, App, AppContext as _, Context, Div,
-    Element, ElementId, Entity, HighlightStyle, Hsla, ImageSource, InteractiveText, IntoElement,
-    Keystroke, Modifiers, ParentElement, Render, RenderImage, Resource, SharedString, Styled,
-    StyledText, Task, TextStyle, WeakEntity, Window, div, img, pulsating_between, rems,
+    Element, ElementId, Entity, HighlightStyle, Hsla, ImageSource, InteractiveText,
+    InteractiveTextSelectionEvent, IntoElement, Keystroke, Modifiers, ParentElement, Render,
+    RenderImage, Resource, SharedString, Styled, StyledText, Task, TextStyle, WeakEntity, Window,
+    div, img, pulsating_between, rems,
 };
 use settings::Settings;
 use std::{
@@ -43,6 +44,8 @@ impl CheckboxClickedEvent {
 }
 
 type CheckboxClickedCallback = Arc<Box<dyn Fn(&CheckboxClickedEvent, &mut Window, &mut App)>>;
+type TextSelectionCallback =
+    Arc<dyn Fn(&InteractiveTextSelectionEvent, &mut Window, &mut App) + 'static>;
 
 type MermaidDiagramCache = HashMap<ParsedMarkdownMermaidDiagramContents, CachedMermaidDiagram>;
 
@@ -186,9 +189,12 @@ pub struct RenderContext<'a> {
     text_muted_color: Hsla,
     code_block_background_color: Hsla,
     code_span_background_color: Hsla,
+    selection_background_color: Hsla,
     syntax_theme: Arc<SyntaxTheme>,
     indent: usize,
     checkbox_clicked_callback: Option<CheckboxClickedCallback>,
+    active_selection_id: Option<SharedString>,
+    selection_changed_callback: Option<TextSelectionCallback>,
     is_last_child: bool,
     mermaid_state: &'a MermaidState,
 }
@@ -227,7 +233,10 @@ impl<'a> RenderContext<'a> {
             text_muted_color: theme.colors().text_muted,
             code_block_background_color: theme.colors().surface_background,
             code_span_background_color: theme.colors().editor_document_highlight_read_background,
+            selection_background_color: theme.colors().element_selection_background,
             checkbox_clicked_callback: None,
+            active_selection_id: None,
+            selection_changed_callback: None,
             is_last_child: false,
             mermaid_state,
         }
@@ -238,6 +247,16 @@ impl<'a> RenderContext<'a> {
         callback: impl Fn(&CheckboxClickedEvent, &mut Window, &mut App) + 'static,
     ) -> Self {
         self.checkbox_clicked_callback = Some(Arc::new(Box::new(callback)));
+        self
+    }
+
+    pub fn with_selection_changed_callback(
+        mut self,
+        active_selection_id: Option<SharedString>,
+        callback: impl Fn(&InteractiveTextSelectionEvent, &mut Window, &mut App) + 'static,
+    ) -> Self {
+        self.active_selection_id = active_selection_id;
+        self.selection_changed_callback = Some(Arc::new(callback));
         self
     }
 
@@ -892,6 +911,10 @@ fn render_markdown_text(parsed_new: &MarkdownParagraph, cx: &mut RenderContext) 
         match parsed_region {
             MarkdownParagraphChunk::Text(parsed) => {
                 let element_id = cx.next_id(&parsed.source_range);
+                let selection_id = SharedString::from(format!(
+                    "markdown-selection-{}-{}",
+                    parsed.source_range.start, parsed.source_range.end
+                ));
 
                 let highlights = gpui::combine_highlights(
                     parsed.highlights.iter().filter_map(|(range, highlight)| {
@@ -936,6 +959,19 @@ fn render_markdown_text(parsed_new: &MarkdownParagraph, cx: &mut RenderContext) 
                             element_id,
                             StyledText::new(parsed.contents.clone())
                                 .with_default_highlights(&text_style, highlights),
+                        )
+                        .when_some(
+                            cx.selection_changed_callback.clone(),
+                            |this, selection_changed_callback| {
+                                this.selectable(
+                                    selection_id.clone(),
+                                    cx.active_selection_id.clone(),
+                                    cx.selection_background_color,
+                                    move |event, window, cx| {
+                                        selection_changed_callback(&event, window, cx)
+                                    },
+                                )
+                            },
                         )
                         .tooltip({
                             let links = links.clone();
