@@ -517,7 +517,7 @@ impl RecentProjects {
                 .await
                 .log_err()
                 .unwrap_or_default();
-            let workspaces = workspace::filter_worktree_workspaces(workspaces, fs.as_ref()).await;
+            let workspaces = workspace::resolve_worktree_workspaces(workspaces, fs.as_ref()).await;
             this.update_in(cx, move |this, window, cx| {
                 this.picker.update(cx, move |picker, cx| {
                     picker.delegate.set_workspaces(workspaces);
@@ -1512,7 +1512,7 @@ impl RecentProjectsDelegate {
                     .await
                     .unwrap_or_default();
                 let workspaces =
-                    workspace::filter_worktree_workspaces(workspaces, fs.as_ref()).await;
+                    workspace::resolve_worktree_workspaces(workspaces, fs.as_ref()).await;
                 this.update_in(cx, move |picker, window, cx| {
                     picker.delegate.set_workspaces(workspaces);
                     picker

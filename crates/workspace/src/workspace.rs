@@ -77,12 +77,12 @@ pub use pane_group::{
 };
 use persistence::{SerializedWindowBounds, model::SerializedWorkspace};
 pub use persistence::{
-    WorkspaceDb, delete_unloaded_items, filter_worktree_workspaces,
+    WorkspaceDb, delete_unloaded_items,
     model::{
         DockStructure, ItemId, SerializedMultiWorkspace, SerializedWorkspaceLocation,
         SessionWorkspace,
     },
-    read_serialized_multi_workspaces,
+    read_serialized_multi_workspaces, resolve_worktree_workspaces,
 };
 use postage::stream::Stream;
 use project::{

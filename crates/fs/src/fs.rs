@@ -2984,6 +2984,36 @@ pub async fn is_git_worktree_checkout(fs: &dyn Fs, path: &Path) -> bool {
     }
 }
 
+/// If `path` is a git linked worktree checkout, resolves it to the main
+/// repository's working directory path. Returns `None` if `path` is a normal
+/// repository, not a git repo, or if resolution fails.
+///
+/// Resolution works by:
+/// 1. Reading the `.git` file to get the `gitdir:` pointer
+/// 2. Following that to the worktree-specific git directory
+/// 3. Reading the `commondir` file to find the shared `.git` directory
+/// 4. Deriving the main repo's working directory from the common dir
+pub async fn resolve_git_worktree_to_main_repo(fs: &dyn Fs, path: &Path) -> Option<PathBuf> {
+    let dot_git = path.join(".git");
+    let metadata = fs.metadata(&dot_git).await.ok()??;
+    if metadata.is_dir {
+        return None; // Normal repo, not a linked worktree
+    }
+    // It's a .git file — parse the gitdir: pointer
+    let content = fs.load(&dot_git).await.ok()?;
+    let gitdir_rel = content.strip_prefix("gitdir:")?.trim();
+    let gitdir_abs = fs.canonicalize(&path.join(gitdir_rel)).await.ok()?;
+    // Read commondir to find the main .git directory
+    let commondir_content = fs.load(&gitdir_abs.join("commondir")).await.ok()?;
+    let common_dir = fs
+        .canonicalize(&gitdir_abs.join(commondir_content.trim()))
+        .await
+        .ok()?;
+    Some(git::repository::original_repo_path_from_common_dir(
+        &common_dir,
+    ))
+}
+
 // todo(windows)
 // can we get file id not open the file twice?
 // https://github.com/rust-lang/rust/issues/63010
@@ -3095,5 +3125,79 @@ mod tests {
         let fs = FakeFs::new(cx.executor());
 
         assert!(!is_git_worktree_checkout(fs.as_ref(), Path::new("/does-not-exist")).await);
+    }
+
+    #[gpui::test]
+    async fn test_resolve_git_worktree_to_main_repo(cx: &mut gpui::TestAppContext) {
+        let fs = FakeFs::new(cx.executor());
+        // Set up a main repo with a worktree entry
+        fs.insert_tree(
+            "/main-repo",
+            json!({
+                ".git": {
+                    "worktrees": {
+                        "feature": {
+                            "commondir": "../../",
+                            "HEAD": "ref: refs/heads/feature"
+                        }
+                    }
+                },
+                "src": { "main.rs": "" }
+            }),
+        )
+        .await;
+        // Set up a worktree checkout pointing back to the main repo
+        fs.insert_tree(
+            "/worktree-checkout",
+            json!({
+                ".git": "gitdir: /main-repo/.git/worktrees/feature",
+                "src": { "main.rs": "" }
+            }),
+        )
+        .await;
+
+        let result =
+            resolve_git_worktree_to_main_repo(fs.as_ref(), Path::new("/worktree-checkout")).await;
+        assert_eq!(result, Some(PathBuf::from("/main-repo")));
+    }
+
+    #[gpui::test]
+    async fn test_resolve_git_worktree_normal_repo_returns_none(cx: &mut gpui::TestAppContext) {
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            "/repo",
+            json!({
+                ".git": {},
+                "src": { "main.rs": "" }
+            }),
+        )
+        .await;
+
+        let result = resolve_git_worktree_to_main_repo(fs.as_ref(), Path::new("/repo")).await;
+        assert_eq!(result, None);
+    }
+
+    #[gpui::test]
+    async fn test_resolve_git_worktree_no_git_returns_none(cx: &mut gpui::TestAppContext) {
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            "/plain",
+            json!({
+                "src": { "main.rs": "" }
+            }),
+        )
+        .await;
+
+        let result = resolve_git_worktree_to_main_repo(fs.as_ref(), Path::new("/plain")).await;
+        assert_eq!(result, None);
+    }
+
+    #[gpui::test]
+    async fn test_resolve_git_worktree_nonexistent_returns_none(cx: &mut gpui::TestAppContext) {
+        let fs = FakeFs::new(cx.executor());
+
+        let result =
+            resolve_git_worktree_to_main_repo(fs.as_ref(), Path::new("/does-not-exist")).await;
+        assert_eq!(result, None);
     }
 }
