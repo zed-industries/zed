@@ -184,6 +184,14 @@ impl ThreadMetadataStore {
         })
     }
 
+    pub fn list_sidebar_ids(&self, cx: &App) -> Task<Result<Vec<acp::SessionId>>> {
+        let db = self.db.clone();
+        cx.background_spawn(async move {
+            let s = db.list_sidebar_ids()?;
+            Ok(s)
+        })
+    }
+
     pub fn list(&self, cx: &App) -> Task<Result<Vec<ThreadMetadata>>> {
         let db = self.db.clone();
         cx.background_spawn(async move {
@@ -305,10 +313,20 @@ impl Domain for ThreadMetadataDb {
 db::static_connection!(ThreadMetadataDb, []);
 
 impl ThreadMetadataDb {
-    /// List allsidebar thread session IDs
+    /// List all sidebar thread session IDs.
     pub fn list_ids(&self) -> anyhow::Result<Vec<acp::SessionId>> {
         self.select::<Arc<str>>("SELECT session_id FROM sidebar_threads")?()
             .map(|ids| ids.into_iter().map(|id| acp::SessionId::new(id)).collect())
+    }
+
+    /// List session IDs of threads that belong to a real project workspace
+    /// (i.e. have non-empty folder_paths). These are the threads shown in
+    /// the sidebar, as opposed to threads created in empty workspaces.
+    pub fn list_sidebar_ids(&self) -> anyhow::Result<Vec<acp::SessionId>> {
+        self.select::<Arc<str>>(
+            "SELECT session_id FROM sidebar_threads WHERE folder_paths IS NOT NULL AND folder_paths != ''",
+        )?()
+        .map(|ids| ids.into_iter().map(|id| acp::SessionId::new(id)).collect())
     }
 
     /// List all sidebar thread metadata, ordered by updated_at descending.

@@ -137,6 +137,7 @@ pub struct ThreadsArchiveView {
     _refresh_history_task: Task<()>,
     _update_items_task: Option<Task<()>>,
     is_loading: bool,
+    has_open_project: bool,
 }
 
 impl ThreadsArchiveView {
@@ -145,6 +146,7 @@ impl ThreadsArchiveView {
         agent_server_store: Entity<AgentServerStore>,
         thread_store: Entity<ThreadStore>,
         fs: Arc<dyn Fs>,
+        has_open_project: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -182,6 +184,7 @@ impl ThreadsArchiveView {
             _refresh_history_task: Task::ready(()),
             _update_items_task: None,
             is_loading: true,
+            has_open_project,
         };
         this.set_selected_agent(Agent::NativeAgent, window, cx);
         this
@@ -244,7 +247,9 @@ impl ThreadsArchiveView {
         let today = Local::now().naive_local().date();
 
         self._update_items_task.take();
-        let unarchived_ids_task = ThreadMetadataStore::global(cx).read(cx).list_ids(cx);
+        let unarchived_ids_task = ThreadMetadataStore::global(cx)
+            .read(cx)
+            .list_sidebar_ids(cx);
         self._update_items_task = Some(cx.spawn(async move |this, cx| {
             let unarchived_session_ids = unarchived_ids_task.await.unwrap_or_default();
 
@@ -428,6 +433,12 @@ impl ThreadsArchiveView {
         let Some(ArchiveListItem::Entry { session, .. }) = self.items.get(ix) else {
             return;
         };
+
+        let thread_has_project = session.work_dirs.as_ref().is_some_and(|p| !p.is_empty());
+        if !thread_has_project && !self.has_open_project {
+            return;
+        }
+
         self.unarchive_thread(session.clone(), window, cx);
     }
 
@@ -476,6 +487,9 @@ impl ThreadsArchiveView {
                     }
                 });
 
+                let thread_has_project = session.work_dirs.as_ref().is_some_and(|p| !p.is_empty());
+                let can_unarchive = thread_has_project || self.has_open_project;
+
                 let supports_delete = self
                     .history
                     .as_ref()
@@ -518,7 +532,7 @@ impl ThreadsArchiveView {
                             .min_w_0()
                             .w_full()
                             .py_1()
-                            .pl_0p5()
+                            .pl_1()
                             .child(title_label)
                             .child(
                                 h_flex()
@@ -550,24 +564,30 @@ impl ThreadsArchiveView {
                             h_flex()
                                 .pr_2p5()
                                 .gap_0p5()
-                                .child(
-                                    Button::new("unarchive-thread", "Unarchive")
-                                        .style(ButtonStyle::OutlinedGhost)
-                                        .label_size(LabelSize::Small)
-                                        .when(is_focused, |this| {
-                                            this.key_binding(
-                                                KeyBinding::for_action_in(
-                                                    &menu::Confirm,
-                                                    &focus_handle,
-                                                    cx,
+                                .when(can_unarchive, |this| {
+                                    this.child(
+                                        Button::new("unarchive-thread", "Unarchive")
+                                            .style(ButtonStyle::OutlinedGhost)
+                                            .label_size(LabelSize::Small)
+                                            .when(is_focused, |this| {
+                                                this.key_binding(
+                                                    KeyBinding::for_action_in(
+                                                        &menu::Confirm,
+                                                        &focus_handle,
+                                                        cx,
+                                                    )
+                                                    .map(|kb| kb.size(rems_from_px(12.))),
                                                 )
-                                                .map(|kb| kb.size(rems_from_px(12.))),
-                                            )
-                                        })
-                                        .on_click(cx.listener(move |this, _, window, cx| {
-                                            this.unarchive_thread(session_info.clone(), window, cx);
-                                        })),
-                                )
+                                            })
+                                            .on_click(cx.listener(move |this, _, window, cx| {
+                                                this.unarchive_thread(
+                                                    session_info.clone(),
+                                                    window,
+                                                    cx,
+                                                );
+                                            })),
+                                    )
+                                })
                                 .when(supports_delete, |this| {
                                     this.child(
                                         IconButton::new("delete-thread", IconName::Trash)
@@ -767,9 +787,11 @@ impl ThreadsArchiveView {
                     .border_b_1()
                     .border_color(cx.theme().colors().border)
                     .child(
-                        Icon::new(IconName::MagnifyingGlass)
-                            .size(IconSize::Small)
-                            .color(Color::Muted),
+                        h_flex().size_4().flex_none().justify_center().child(
+                            Icon::new(IconName::MagnifyingGlass)
+                                .size(IconSize::Small)
+                                .color(Color::Muted),
+                        ),
                     )
                     .child(self.filter_editor.clone())
                     .when(has_query, |this| {
