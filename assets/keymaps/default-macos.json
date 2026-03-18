@@ -742,10 +742,12 @@
     "context": "ThreadsSidebar",
     "use_key_equivalents": true,
     "bindings": {
-      "cmd-n": "multi_workspace::NewWorkspaceInWindow",
+      "cmd-n": "agents_sidebar::NewThreadInGroup",
       "left": "agents_sidebar::CollapseSelectedEntry",
       "right": "agents_sidebar::ExpandSelectedEntry",
       "enter": "menu::Confirm",
+      "space": "menu::Confirm",
+      "cmd-f": "agents_sidebar::FocusSidebarFilter",
       "shift-backspace": "agent::RemoveSelectedThread",
     },
   },

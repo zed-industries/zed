@@ -25,6 +25,8 @@ pub(crate) fn extension_auto_bump() -> Workflow {
                 Push::default()
                     .add_branch("main")
                     .add_path("extensions/**")
+                    .add_path("!extensions/slash-commands-example/**")
+                    .add_path("!extensions/test-extension/**")
                     .add_path("!extensions/workflows/**")
                     .add_path("!extensions/*.md"),
             ),

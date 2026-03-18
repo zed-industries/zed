@@ -999,7 +999,10 @@ impl ThreadView {
                 let text: String = contents
                     .iter()
                     .filter_map(|block| match block {
-                        acp::ContentBlock::Text(text_content) => Some(text_content.text.as_str()),
+                        acp::ContentBlock::Text(text_content) => Some(text_content.text.clone()),
+                        acp::ContentBlock::ResourceLink(resource_link) => {
+                            Some(format!("@{}", resource_link.name))
+                        }
                         _ => None,
                     })
                     .collect::<Vec<_>>()
@@ -4027,6 +4030,13 @@ impl ThreadView {
                         .w_full()
                         .text_ui(cx)
                         .child(self.render_message_context_menu(entry_ix, message_body, cx))
+                        .when_some(
+                            self.entry_view_state
+                                .read(cx)
+                                .entry(entry_ix)
+                                .and_then(|entry| entry.focus_handle(cx)),
+                            |this, handle| this.track_focus(&handle),
+                        )
                         .into_any()
                 }
             }

@@ -82,7 +82,7 @@ use ui::{
 use util::{ResultExt as _, debug_panic};
 use workspace::{
     CollaboratorId, DraggedSelection, DraggedTab, OpenResult, PathList, SerializedPathList,
-    ToggleZoom, ToolbarItemView, Workspace, WorkspaceId,
+    ToggleWorkspaceSidebar, ToggleZoom, ToolbarItemView, Workspace, WorkspaceId,
     dock::{DockPosition, Panel, PanelEvent},
 };
 use zed_actions::{
@@ -601,8 +601,8 @@ impl From<Agent> for AgentType {
 impl StartThreadIn {
     fn label(&self) -> SharedString {
         match self {
-            Self::LocalProject => "Current Project".into(),
-            Self::NewWorktree => "New Worktree".into(),
+            Self::LocalProject => "Current Worktree".into(),
+            Self::NewWorktree => "New Git Worktree".into(),
         }
     }
 }
@@ -1949,6 +1949,21 @@ impl AgentPanel {
     /// Returns the primary thread views for all retained connections: the
     pub fn is_background_thread(&self, session_id: &acp::SessionId) -> bool {
         self.background_threads.contains_key(session_id)
+    }
+
+    pub fn cancel_thread(&self, session_id: &acp::SessionId, cx: &mut Context<Self>) -> bool {
+        let conversation_views = self
+            .active_conversation_view()
+            .into_iter()
+            .chain(self.background_threads.values());
+
+        for conversation_view in conversation_views {
+            if let Some(thread_view) = conversation_view.read(cx).thread_view(session_id) {
+                thread_view.update(cx, |view, cx| view.cancel_generation(cx));
+                return true;
+            }
+        }
+        false
     }
 
     /// active thread plus any background threads that are still running or
@@ -3432,6 +3447,7 @@ impl AgentPanel {
                             .action("Profiles", Box::new(ManageProfiles::default()))
                             .action("Settings", Box::new(OpenSettings))
                             .separator()
+                            .action("Toggle Threads Sidebar", Box::new(ToggleWorkspaceSidebar))
                             .action(full_screen_label, Box::new(ToggleZoom));
 
                         if has_auth_methods {
@@ -3563,7 +3579,7 @@ impl AgentPanel {
 
                     menu.header("Start Thread In…")
                         .item(
-                            ContextMenuEntry::new("Current Project")
+                            ContextMenuEntry::new("Current Worktree")
                                 .toggleable(IconPosition::End, is_local_selected)
                                 .documentation_aside(documentation_side, move |_| {
                                     HoldForDefault::new(is_local_default)
@@ -3591,7 +3607,7 @@ impl AgentPanel {
                                 }),
                         )
                         .item({
-                            let entry = ContextMenuEntry::new("New Worktree")
+                            let entry = ContextMenuEntry::new("New Git Worktree")
                                 .toggleable(IconPosition::End, is_new_worktree_selected)
                                 .disabled(new_worktree_disabled)
                                 .handler({

@@ -2543,11 +2543,12 @@ impl GitStore {
     ) -> Result<proto::Ack> {
         let repository_id = RepositoryId::from_proto(envelope.payload.repository_id);
         let repository_handle = Self::repository_for_request(&this, repository_id, &mut cx)?;
+        let is_remote = envelope.payload.is_remote;
         let branch_name = envelope.payload.branch_name;
 
         repository_handle
             .update(&mut cx, |repository_handle, _| {
-                repository_handle.delete_branch(branch_name)
+                repository_handle.delete_branch(is_remote, branch_name)
             })
             .await??;
 
@@ -5022,43 +5023,69 @@ impl Repository {
     }
 
     pub fn stage_all(&mut self, cx: &mut Context<Self>) -> Task<anyhow::Result<()>> {
-        let to_stage = self
-            .cached_status()
-            .filter_map(|entry| {
-                if let Some(ops) = self.pending_ops_for_path(&entry.repo_path) {
-                    if ops.staging() || ops.staged() {
+        let snapshot = self.snapshot.clone();
+        let pending_ops = self.pending_ops.clone();
+        let to_stage = cx.background_spawn(async move {
+            snapshot
+                .status()
+                .filter_map(|entry| {
+                    if let Some(ops) =
+                        pending_ops.get(&PathKey(entry.repo_path.as_ref().clone()), ())
+                    {
+                        if ops.staging() || ops.staged() {
+                            None
+                        } else {
+                            Some(entry.repo_path)
+                        }
+                    } else if entry.status.staging().is_fully_staged() {
                         None
                     } else {
                         Some(entry.repo_path)
                     }
-                } else if entry.status.staging().is_fully_staged() {
-                    None
-                } else {
-                    Some(entry.repo_path)
-                }
-            })
-            .collect();
-        self.stage_or_unstage_entries(true, to_stage, cx)
+                })
+                .collect()
+        });
+
+        cx.spawn(async move |this, cx| {
+            let to_stage = to_stage.await;
+            this.update(cx, |this, cx| {
+                this.stage_or_unstage_entries(true, to_stage, cx)
+            })?
+            .await
+        })
     }
 
     pub fn unstage_all(&mut self, cx: &mut Context<Self>) -> Task<anyhow::Result<()>> {
-        let to_unstage = self
-            .cached_status()
-            .filter_map(|entry| {
-                if let Some(ops) = self.pending_ops_for_path(&entry.repo_path) {
-                    if !ops.staging() && !ops.staged() {
+        let snapshot = self.snapshot.clone();
+        let pending_ops = self.pending_ops.clone();
+        let to_unstage = cx.background_spawn(async move {
+            snapshot
+                .status()
+                .filter_map(|entry| {
+                    if let Some(ops) =
+                        pending_ops.get(&PathKey(entry.repo_path.as_ref().clone()), ())
+                    {
+                        if !ops.staging() && !ops.staged() {
+                            None
+                        } else {
+                            Some(entry.repo_path)
+                        }
+                    } else if entry.status.staging().is_fully_unstaged() {
                         None
                     } else {
                         Some(entry.repo_path)
                     }
-                } else if entry.status.staging().is_fully_unstaged() {
-                    None
-                } else {
-                    Some(entry.repo_path)
-                }
-            })
-            .collect();
-        self.stage_or_unstage_entries(false, to_unstage, cx)
+                })
+                .collect()
+        });
+
+        cx.spawn(async move |this, cx| {
+            let to_unstage = to_unstage.await;
+            this.update(cx, |this, cx| {
+                this.stage_or_unstage_entries(false, to_unstage, cx)
+            })?
+            .await
+        })
     }
 
     pub fn stash_all(&mut self, cx: &mut Context<Self>) -> Task<anyhow::Result<()>> {
@@ -6018,18 +6045,32 @@ impl Repository {
         )
     }
 
-    pub fn delete_branch(&mut self, branch_name: String) -> oneshot::Receiver<Result<()>> {
+    pub fn delete_branch(
+        &mut self,
+        is_remote: bool,
+        branch_name: String,
+    ) -> oneshot::Receiver<Result<()>> {
         let id = self.id;
         self.send_job(
-            Some(format!("git branch -d {branch_name}").into()),
+            Some(
+                format!(
+                    "git branch {} {}",
+                    if is_remote { "-dr" } else { "-d" },
+                    branch_name
+                )
+                .into(),
+            ),
             move |repo, _cx| async move {
                 match repo {
-                    RepositoryState::Local(state) => state.backend.delete_branch(branch_name).await,
+                    RepositoryState::Local(state) => {
+                        state.backend.delete_branch(is_remote, branch_name).await
+                    }
                     RepositoryState::Remote(RemoteRepositoryState { project_id, client }) => {
                         client
                             .request(proto::GitDeleteBranch {
                                 project_id: project_id.0,
                                 repository_id: id.to_proto(),
+                                is_remote,
                                 branch_name,
                             })
                             .await?;
