@@ -1,8 +1,8 @@
 use crate::{
-    Capslock, KeyDownEvent, KeyUpEvent, Keystroke, Modifiers, ModifiersChangedEvent, MouseButton,
-    MouseDownEvent, MouseExitEvent, MouseMoveEvent, MousePressureEvent, MouseUpEvent,
-    NavigationDirection, Pixels, PlatformInput, PressureStage, ScrollDelta, ScrollWheelEvent,
-    TouchPhase,
+    Capslock, KeyDownEvent, KeyUpEvent, Keystroke, MagnifyEvent, Modifiers,
+    ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseExitEvent, MouseMoveEvent,
+    MousePressureEvent, MouseUpEvent, NavigationDirection, Pixels, PlatformInput, PressureStage,
+    ScrollDelta, ScrollWheelEvent, TouchPhase,
     platform::mac::{
         LMGetKbdType, NSStringExt, TISCopyCurrentKeyboardLayoutInputSource,
         TISGetInputSourceProperty, UCKeyTranslate, kTISPropertyUnicodeKeyLayoutData,
@@ -307,6 +307,23 @@ impl PlatformInput {
                         ),
 
                         pressed_button: None,
+                        modifiers: read_modifiers(native_event),
+                    })
+                }),
+                NSEventType::NSEventTypeMagnify => window_height.map(|window_height| {
+                    let phase = match native_event.phase() {
+                        NSEventPhase::NSEventPhaseMayBegin
+                        | NSEventPhase::NSEventPhaseBegan => TouchPhase::Started,
+                        NSEventPhase::NSEventPhaseEnded => TouchPhase::Ended,
+                        _ => TouchPhase::Moved,
+                    };
+                    Self::Magnify(MagnifyEvent {
+                        position: point(
+                            px(native_event.locationInWindow().x as f32),
+                            window_height - px(native_event.locationInWindow().y as f32),
+                        ),
+                        magnification: native_event.magnification() as f32,
+                        touch_phase: phase,
                         modifiers: read_modifiers(native_event),
                     })
                 }),
