@@ -1,6 +1,12 @@
 after next main merge, test this:
 - https://github.com/zed-industries/zed/pull/49802 (project_panel: Add diagnostic count badges and color priority)
 - outline UI ("document_symbols": "on"). (enable this and test) (https://github.com/zed-industries/zed/pull/48780)
+- https://github.com/zed-industries/zed/pull/49624 (git_ui: Show uncommitted change count badge on git panel icon)
+- https://github.com/zed-industries/zed/pull/51000 (git_ui: Add file and folder icons to the Git panel)
+- https://github.com/zed-industries/zed/pull/50777 (editor: Go to previous and next symbol actions)
+- Added scroll-to-top and scroll-to-bottom keybindings for markdown preview (gg /G in Vim mode,cmd-up /cmd-down on macOS,ctrl-home /ctrl-end on Linux/Windows). ([#50460](https://github.com/zed-industries/zed/pull/50460) ; thanks [dremnik](https://github.com/dremnik) )
+- WHAT HAPPENS IF IT IS OFF? IS IT WRAPPED? Added project_panel.scrollbar.horizontal_scroll setting to toggle horizontal scrolling in the project panel. ([#51143](https://github.com/zed-industries/zed/pull/51143) ; thanks [k4yt3x](https://github.com/k4yt3x) )
+
 
 try out Sweep AI edit predictions since they have 1k free each month
 once Mercury free 1 month runs out!
