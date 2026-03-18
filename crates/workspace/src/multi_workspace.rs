@@ -241,9 +241,11 @@ impl MultiWorkspace {
 
     pub fn open_sidebar(&mut self, cx: &mut Context<Self>) {
         self.sidebar_open = true;
+        let sidebar_focus_handle = self.sidebar.as_ref().map(|s| s.focus_handle(cx));
         for workspace in &self.workspaces {
             workspace.update(cx, |workspace, cx| {
                 workspace.set_workspace_sidebar_open(true, cx);
+                workspace.set_sidebar_focus_handle(sidebar_focus_handle.clone());
             });
         }
         self.serialize(cx);
@@ -255,6 +257,7 @@ impl MultiWorkspace {
         for workspace in &self.workspaces {
             workspace.update(cx, |workspace, cx| {
                 workspace.set_workspace_sidebar_open(false, cx);
+                workspace.set_sidebar_focus_handle(None);
             });
         }
         let pane = self.workspace().read(cx).active_pane().clone();
@@ -349,8 +352,11 @@ impl MultiWorkspace {
             index
         } else {
             if self.sidebar_open {
+                let sidebar_focus_handle =
+                    self.sidebar.as_ref().map(|s| s.focus_handle(cx));
                 workspace.update(cx, |workspace, cx| {
                     workspace.set_workspace_sidebar_open(true, cx);
+                    workspace.set_sidebar_focus_handle(sidebar_focus_handle);
                 });
             }
             Self::subscribe_to_workspace(&workspace, cx);
