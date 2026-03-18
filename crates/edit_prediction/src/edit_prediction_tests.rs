@@ -1013,6 +1013,81 @@ async fn test_irrelevant_collaborator_edits_in_different_files_are_omitted_from_
 }
 
 #[gpui::test]
+async fn test_large_edits_are_omitted_from_history(cx: &mut TestAppContext) {
+    let (ep_store, _requests) = init_test_with_fake_client(cx);
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        "/root",
+        json!({
+            "foo.rs": (0..20)
+                .map(|i| format!("line {i}\n"))
+                .collect::<String>()
+        }),
+    )
+    .await;
+    let project = Project::test(fs, vec![path!("/root").as_ref()], cx).await;
+
+    let buffer = project
+        .update(cx, |project, cx| {
+            let path = project.find_project_path(path!("root/foo.rs"), cx).unwrap();
+            project.set_active_path(Some(path.clone()), cx);
+            project.open_buffer(path, cx)
+        })
+        .await
+        .unwrap();
+
+    let cursor = buffer.read_with(cx, |buffer, _cx| buffer.anchor_before(Point::new(1, 0)));
+
+    ep_store.update(cx, |ep_store, cx| {
+        ep_store.register_buffer(&buffer, &project, cx);
+        let _ = ep_store.prediction_at(&buffer, Some(cursor), &project, cx);
+    });
+
+    buffer.update(cx, |buffer, cx| {
+        buffer.edit(vec![(0..6, "LOCAL ZERO")], None, cx);
+    });
+
+    let (collaborator, mut collaborator_version) = make_collaborator_replica(&buffer, cx);
+
+    let (line_three_start, line_three_len) = collaborator.read_with(cx, |buffer, _cx| {
+        (Point::new(3, 0).to_offset(buffer), buffer.line_len(3))
+    });
+    let large_edit = "X".repeat(EDIT_HISTORY_DIFF_SIZE_LIMIT + 1);
+
+    apply_collaborator_edit(
+        &collaborator,
+        &buffer,
+        &mut collaborator_version,
+        line_three_start..line_three_start + line_three_len as usize,
+        &large_edit,
+        cx,
+    )
+    .await;
+
+    buffer.update(cx, |buffer, cx| {
+        let line_seven_start = Point::new(7, 0).to_offset(buffer);
+        let line_seven_end = Point::new(7, 6).to_offset(buffer);
+        buffer.edit(
+            vec![(line_seven_start..line_seven_end, "LOCAL SEVEN")],
+            None,
+            cx,
+        );
+    });
+
+    let events = ep_store.update(cx, |ep_store, cx| {
+        ep_store.edit_history_for_project(&project, cx)
+    });
+
+    let rendered_events = render_events_with_predicted(&events);
+
+    assert_eq!(rendered_events.len(), 2);
+    assert!(rendered_events[0].contains("+LOCAL ZERO"));
+    assert!(!rendered_events[0].contains(&large_edit));
+    assert!(rendered_events[1].contains("+LOCAL SEVEN"));
+    assert!(!rendered_events[1].contains(&large_edit));
+}
+
+#[gpui::test]
 async fn test_predicted_flag_coalescing(cx: &mut TestAppContext) {
     let (ep_store, _requests) = init_test_with_fake_client(cx);
     let fs = FakeFs::new(cx.executor());
