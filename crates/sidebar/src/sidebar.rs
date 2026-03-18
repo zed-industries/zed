@@ -234,6 +234,7 @@ pub struct Sidebar {
     /// that should not reset the user's thread focus the way an explicit
     /// workspace switch does.
     pending_workspace_removal: bool,
+
     active_entry_index: Option<usize>,
     hovered_thread_index: Option<usize>,
     collapsed_groups: HashSet<PathList>,
@@ -2440,6 +2441,11 @@ impl WorkspaceSidebar for Sidebar {
     fn is_recent_projects_popover_deployed(&self) -> bool {
         self.recent_projects_popover_handle.is_deployed()
     }
+
+    fn prepare_for_focus(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
+        self.selection = None;
+        cx.notify();
+    }
 }
 
 impl Focusable for Sidebar {
@@ -4632,15 +4638,19 @@ mod tests {
             );
         });
 
-        sidebar.update_in(cx, |sidebar, window, cx| {
-            sidebar.activate_workspace(&workspace_b, window, cx);
+        // Switching workspaces via the multi_workspace (simulates clicking
+        // a workspace header) should clear focused_thread.
+        multi_workspace.update_in(cx, |mw, window, cx| {
+            if let Some(index) = mw.workspaces().iter().position(|w| w == &workspace_b) {
+                mw.activate_index(index, window, cx);
+            }
         });
         cx.run_until_parked();
 
         sidebar.read_with(cx, |sidebar, _cx| {
             assert_eq!(
                 sidebar.focused_thread, None,
-                "Clicking a workspace header should clear focused_thread"
+                "Switching workspace should clear focused_thread"
             );
             assert_eq!(
                 sidebar.active_entry_index, None,

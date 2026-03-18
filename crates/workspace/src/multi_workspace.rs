@@ -47,6 +47,8 @@ pub trait Sidebar: Focusable + Render + Sized {
     fn has_notifications(&self, cx: &App) -> bool;
     fn toggle_recent_projects_popover(&self, window: &mut Window, cx: &mut App);
     fn is_recent_projects_popover_deployed(&self) -> bool;
+    /// Makes focus reset bac to the search editor upon toggling the sidebar from outside
+    fn prepare_for_focus(&mut self, _window: &mut Window, _cx: &mut Context<Self>) {}
 }
 
 pub trait SidebarHandle: 'static + Send + Sync {
@@ -54,6 +56,7 @@ pub trait SidebarHandle: 'static + Send + Sync {
     fn set_width(&self, width: Option<Pixels>, cx: &mut App);
     fn focus_handle(&self, cx: &App) -> FocusHandle;
     fn focus(&self, window: &mut Window, cx: &mut App);
+    fn prepare_for_focus(&self, window: &mut Window, cx: &mut App);
     fn has_notifications(&self, cx: &App) -> bool;
     fn to_any(&self) -> AnyView;
     fn entity_id(&self) -> EntityId;
@@ -86,6 +89,10 @@ impl<T: Sidebar> SidebarHandle for Entity<T> {
     fn focus(&self, window: &mut Window, cx: &mut App) {
         let handle = self.read(cx).focus_handle(cx);
         window.focus(&handle, cx);
+    }
+
+    fn prepare_for_focus(&self, window: &mut Window, cx: &mut App) {
+        self.update(cx, |this, cx| this.prepare_for_focus(window, cx));
     }
 
     fn has_notifications(&self, cx: &App) -> bool {
@@ -207,6 +214,7 @@ impl MultiWorkspace {
         } else {
             self.open_sidebar(cx);
             if let Some(sidebar) = &self.sidebar {
+                sidebar.prepare_for_focus(window, cx);
                 sidebar.focus(window, cx);
             }
         }
@@ -228,11 +236,13 @@ impl MultiWorkspace {
                 let pane_focus = pane.read(cx).focus_handle(cx);
                 window.focus(&pane_focus, cx);
             } else if let Some(sidebar) = &self.sidebar {
+                sidebar.prepare_for_focus(window, cx);
                 sidebar.focus(window, cx);
             }
         } else {
             self.open_sidebar(cx);
             if let Some(sidebar) = &self.sidebar {
+                sidebar.prepare_for_focus(window, cx);
                 sidebar.focus(window, cx);
             }
         }
