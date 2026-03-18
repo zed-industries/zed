@@ -78,10 +78,14 @@ impl AppDatabase {
     /// Returns the per-App connection if set, otherwise falls back to
     /// the shared LazyLock.
     pub fn global(cx: &App) -> &ThreadSafeConnection {
+        #[allow(unreachable_code)]
         if let Some(db) = cx.try_global::<Self>() {
-            &db.0
+            return &db.0;
         } else {
-            &APP_DATABASE.0
+            #[cfg(any(feature = "test-support", test))]
+            return &TEST_APP_DATABASE.0;
+
+            panic!("database not initialized")
         }
     }
 }
@@ -116,10 +120,7 @@ fn topological_sort<'a>(registrations: &[&'a DomainMigration]) -> Vec<&'a Domain
 
 /// Shared fallback `AppDatabase` used when no per-App global is set.
 #[cfg(any(test, feature = "test-support"))]
-static APP_DATABASE: LazyLock<AppDatabase> = LazyLock::new(AppDatabase::test_new);
-
-#[cfg(not(any(test, feature = "test-support")))]
-static APP_DATABASE: LazyLock<AppDatabase> = LazyLock::new(AppDatabase::new);
+static TEST_APP_DATABASE: LazyLock<AppDatabase> = LazyLock::new(AppDatabase::test_new);
 
 const CONNECTION_INITIALIZE_QUERY: &str = sql!(
     PRAGMA foreign_keys=TRUE;
