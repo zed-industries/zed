@@ -9625,6 +9625,7 @@ dependencies = [
  "tree-sitter-rust",
  "tree-sitter-typescript",
  "tree-sitter-yaml",
+ "tree-sitter-zsh",
  "unindent",
  "url",
  "util",
@@ -18490,6 +18491,16 @@ dependencies = [
 name = "tree-sitter-yaml"
 version = "0.6.1"
 source = "git+https://github.com/zed-industries/tree-sitter-yaml?rev=baff0b51c64ef6a1fb1f8390f3ad6015b83ec13a#baff0b51c64ef6a1fb1f8390f3ad6015b83ec13a"
+dependencies = [
+ "cc",
+ "tree-sitter-language",
+]
+
+[[package]]
+name = "tree-sitter-zsh"
+version = "0.63.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fd0d613c4b13d1aaddbec78b4f0fae3de98bc82462b9153d8793a25d7387d4e6"
 dependencies = [
  "cc",
  "tree-sitter-language",
