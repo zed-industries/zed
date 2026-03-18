@@ -1859,6 +1859,16 @@ impl Sidebar {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        // Eagerly save thread metadata so that the sidebar is updated immediately
+        ThreadMetadataStore::global(cx)
+            .update(cx, |store, cx| {
+                store.save(
+                    ThreadMetadata::from_session_info(agent.id(), &session_info),
+                    cx,
+                )
+            })
+            .detach_and_log_err(cx);
+
         if let Some(path_list) = &session_info.work_dirs {
             if let Some(workspace) = self.find_current_workspace_for_path_list(path_list, cx) {
                 self.activate_thread_locally(agent, session_info, &workspace, window, cx);
