@@ -17,7 +17,7 @@ use gpui::SharedString;
 use std::borrow::Cow;
 #[cfg(unix)]
 use std::ffi::CString;
-use util::{command::new_command, normalize_path};
+use util::command::new_command;
 
 #[cfg(unix)]
 use std::os::fd::{AsFd, AsRawFd};
@@ -60,6 +60,8 @@ use git::{
     repository::{InitialGraphCommitData, RepoPath, repo_path},
     status::{FileStatus, StatusCode, TrackedStatus, UnmergedStatus},
 };
+#[cfg(feature = "test-support")]
+use util::normalize_path;
 
 #[cfg(feature = "test-support")]
 use smol::io::AsyncReadExt;
