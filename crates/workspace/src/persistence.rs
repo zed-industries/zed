@@ -4324,11 +4324,9 @@ mod tests {
             mw.set_random_database_id(cx);
         });
 
-        multi_workspace.update_in(cx, |mw, window, cx| {
-            mw.create_test_workspace(window, cx).detach();
-        });
-
-        cx.run_until_parked();
+        let task =
+            multi_workspace.update_in(cx, |mw, window, cx| mw.create_test_workspace(window, cx));
+        task.await;
 
         let new_workspace_db_id =
             multi_workspace.read_with(cx, |mw, cx| mw.workspace().read(cx).database_id());

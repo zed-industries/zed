@@ -5,7 +5,9 @@ use gpui::{
     ManagedView, MouseButton, Pixels, Render, Subscription, Task, Tiling, Window, WindowId,
     actions, deferred, px,
 };
-use project::{DisableAiSettings, Project};
+use project::DisableAiSettings;
+#[cfg(any(test, feature = "test-support"))]
+use project::Project;
 use settings::Settings;
 use std::future::Future;
 use std::path::PathBuf;

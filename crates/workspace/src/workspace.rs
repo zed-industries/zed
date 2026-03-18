@@ -8260,7 +8260,7 @@ pub async fn restore_multiworkspace(
                     Some(window_handle),
                     None,
                     None,
-                    true,
+                    false,
                     cx,
                 )
             })
