@@ -1,713 +1,417 @@
-# Wayland Screen Sharing — Implementation Plan
+# Wayland Screen Sharing — Revised Implementation Plan
 
 ## Goal
 
-Enable screen sharing on Wayland/Linux by adding a parallel code path that uses
-libwebrtc's `DesktopCapturer` (which supports Wayland via PipeWire + XDG Desktop
-Portal), while leaving the existing scap/macOS capture paths untouched.
+Enable screen sharing on Wayland/Linux by adding a Wayland-specific publish path that uses libwebrtc’s portal-backed desktop capture, while leaving the existing `scap` and macOS capture paths unchanged.
 
-## Background
+The key constraint is that Wayland does not expose application-controlled screen enumeration. The system XDG Desktop Portal owns the picker UI and provides frames over PipeWire. The implementation should reflect that model instead of trying to preserve the current X11-style source-selection flow.
 
-Screen sharing currently works on macOS (native ScreenCaptureKit) and X11/Windows
-(via `scap`). On Wayland the code explicitly returns an error:
+## Non-goals
 
-```rust
-// crates/gpui_linux/src/linux/wayland/client.rs, line ~710
-"Wayland screen capture not yet implemented."
-```
+This change does not attempt to:
 
-Wayland's security model forbids direct screen access. Capture must go through the
-XDG Desktop Portal, which shows a system picker dialog and streams frames via
-PipeWire. libwebrtc's `DesktopCapturer` already implements this pipeline.
+- replace `scap` on X11 or Windows
+- replace ScreenCaptureKit on macOS
+- add an application-controlled screen/window picker on Wayland
+- change the `gpui` platform capture traits for all platforms
+- unify all capture paths behind a single abstraction
+- solve system-audio sharing on Wayland
 
-## Prerequisite: DesktopCapturer availability
+## Codebase constraints confirmed in this repo
 
-Zed's LiveKit fork (`zed-industries/livekit-rust-sdks`, rev `c1209aa...`) already
-contains the full `desktop_capturer` module at `libwebrtc/src/desktop_capturer.rs`.
-The `libwebrtc` crate is already a dependency of `livekit_client`. **No fork update
-is needed.**
+The current codebase has three properties that drive this design:
 
-Available API:
+- `crates/gpui_linux/src/linux/wayland/client.rs` reports screen capture as unsupported on Wayland.
+- The main screen-share UI in `crates/title_bar/src/collab.rs` is gated on `cx.is_screen_capture_supported()`, so Wayland currently hides the control.
+- The live shared-screen state stored in `Room` only relies on `ScreenCaptureStream::metadata().id` for `shared_screen_id()`. It does not depend on full source metadata after publishing.
 
-- `DesktopCapturer::new(options) -> Option<Self>`
-- `DesktopCapturer::start_capture(source, callback)`
-- `DesktopCapturer::capture_frame()`
-- `DesktopCapturer::get_source_list() -> Vec<CaptureSource>`
-- `DesktopCapturerOptions::new(source_type)` / `.set_include_cursor(bool)`
-- `DesktopCaptureSourceType::{Screen, Window, Generic}` (`Generic` on Linux/macOS)
-- `CaptureSource` with `.id()`, `.title()`, `.display_id()`
-- `DesktopFrame` with `.width()`, `.height()`, `.stride()`, `.data()` (ARGB)
-- `CaptureError::{Temporary, Permanent}`
-- Default feature `glib-main-loop` starts a GLib event loop for GDBus (portal
-  communication)
+Those constraints mean the safest design is:
 
-## Why the Wayland path can't reuse the existing ScreenCaptureSource abstraction
+- keep the existing `gpui` capture path unchanged for X11/macOS
+- add a parallel Wayland publish path in `livekit_client`
+- keep storing a boxed `dyn ScreenCaptureStream` in `Room`
 
-The current architecture routes capture through gpui traits:
+## Phase 0: Validate the external API before changing behavior
 
-```
-gpui Platform trait
-  → screen_capture_sources() → Vec<Rc<dyn ScreenCaptureSource>>
-  → ScreenCaptureSource::stream(callback) → Box<dyn ScreenCaptureStream>
-  → callback(ScreenCaptureFrame(PlatformScreenCaptureFrame))
+Before writing the production code, verify the actual `libwebrtc` and `livekit` API exposed by the vendored dependency revision already pinned in `Cargo.lock`.
 
-PlatformScreenCaptureFrame = scap::frame::Frame on Linux
-playback.rs converts scap::frame::Frame → NV12Buffer for WebRTC
-```
+This validation step should confirm:
 
-Three things prevent plugging DesktopCapturer into this path:
+- the exact `DesktopCapturer` construction and start-capture API
+- the correct source type for Wayland portal capture, which is expected to be a generic desktop-capture mode rather than app-enumerated screens
+- the callback threading model, especially whether callback invocation is serialized
+- the available frame-conversion helpers for ARGB to I420
+- whether `NativeVideoSource` accepts frames whose resolution changes after initialization
+- how portal cancellation or permission denial is surfaced:
+  - explicit permanent error
+  - repeated temporary errors
+  - no frames arriving
+- whether a direct `tokio` dependency is needed for any code in `livekit_client`
 
-1. **Frame type mismatch** — `PlatformScreenCaptureFrame` is `scap::frame::Frame`
-   on Linux. DesktopCapturer produces ARGB `DesktopFrame`s. We'd have to either
-   change the type (breaks scap) or copy into a scap variant (wasteful).
-2. **Source enumeration doesn't work on Wayland** — the XDG Desktop Portal does not
-   expose available sources to the application. `get_source_list()` returns a single
-   dummy entry with an empty title. The real picker is shown by the portal when
-   capture starts.
-3. **Resolution unknown upfront** — `ScreenCaptureSource::metadata()` expects
-   resolution before capture starts, but on Wayland the resolution is only available
-   in the first `DesktopFrame`.
+Exit criteria for this phase:
 
-The solution: bypass the gpui `ScreenCaptureSource` abstraction for Wayland and talk
-to `DesktopCapturer` directly from `livekit_client`. The Wayland capture path does
-its own ARGB → I420 conversion and publishes directly to a `NativeVideoSource`.
+- the implementation team has a minimal compileable prototype or a short note documenting any API differences from this plan
+- the final code uses the verified external signatures rather than the placeholders in this document
 
-## Key simplification: `ScreenCaptureStreamHandle` implements `ScreenCaptureStream`
+## Design summary
 
-The existing `ScreenCaptureStream` trait is trivial:
+### High-level design
 
-```rust
-// crates/gpui/src/platform.rs
-pub trait ScreenCaptureStream {
-    fn metadata(&self) -> Result<SourceMetadata>;
-}
-```
+Add a Wayland-only screen-share path inside `livekit_client` that:
 
-And the **only consumer** of `metadata()` on a live stream is
-`Room::shared_screen_id()`, which only reads `meta.id`:
+- constructs a portal-backed desktop capturer
+- pumps capture frames on a scheduled interval
+- converts captured ARGB frames to WebRTC I420
+- initializes a `NativeVideoSource` when the first valid frame arrives
+- publishes a `LocalVideoTrack` with the same LiveKit publish options used by the current screen-share path
+- returns a `ScreenCaptureStreamHandle` that implements `ScreenCaptureStream`, so the rest of the call stack can keep storing a boxed stream handle without changing the `Room` data model
 
-```rust
-// crates/call/src/call_impl/room.rs
-pub fn shared_screen_id(&self) -> Option<u64> {
-    self.live_kit.as_ref().and_then(|lk| match lk.screen_track {
-        LocalTrack::Published { ref _stream, .. } => {
-            _stream.metadata().ok().map(|meta| meta.id)
-        }
-        _ => None,
-    })
-}
-```
+### Important design choices
 
-By implementing `ScreenCaptureStream` for our new `ScreenCaptureStreamHandle`, the
-Wayland handle can be boxed as `Box<dyn ScreenCaptureStream>` and stored in the same
-`LocalTrack<dyn ScreenCaptureStream>` field. This means:
+#### 1. Do not add a Wayland source-list API
 
-- `LiveKitRoom` struct — **no change**
-- `LocalTrack<dyn ScreenCaptureStream>` enum — **no change**
-- `shared_screen_id()` — **no change**
-- `is_sharing_screen()` — **no change**
-- `unshare_screen()` — **no change**
-- `stop_publishing()` — **no change**
+Do not add `wayland_screen_capture_sources()` or a parallel source-enumeration API.
 
----
+Reason:
 
-## Changes by file
+- the product UI will not use it
+- Wayland source enumeration is not app-controlled
+- a fake or dummy source list would make the abstraction more confusing, not less
 
-### 1. `crates/livekit_client/Cargo.toml`
+If future debugging or experiments need raw source enumeration from the dependency, that can be added later as an internal helper, not as part of the product-facing design.
 
-Add `tokio` for the frame-loop timer (it's a workspace dep but not currently listed
-here):
+#### 2. Do not expose `CaptureSource` above `livekit_client`
 
-```toml
-tokio.workspace = true
-```
+The `call` crate and the UI should not take a `libwebrtc::desktop_capturer::CaptureSource` parameter for the Wayland path.
 
-No other dependency changes. `libwebrtc` and `livekit` are already deps.
+Instead, use:
+
+- `LocalParticipant::publish_screenshare_track_wayland(&self, cx: &mut AsyncApp)`
+- `Room::share_screen_wayland(&mut self, cx: &mut Context<Self>)`
+
+Reason:
+
+- product UI always relies on the system portal picker on Wayland
+- this avoids adding a new `libwebrtc` dependency to `crates/call/Cargo.toml`
+- this keeps the portal-specific details localized to `livekit_client`
+
+#### 3. Use a synthetic screen-share ID on Wayland
+
+`ScreenCaptureStreamHandle::metadata().id` should return a synthetic, stable-per-share `u64`, not a real platform screen ID.
+
+Reason:
+
+- Wayland does not provide an app-controlled source identity comparable to the X11 path
+- `shared_screen_id()` only needs a stable token for the active share
+- the Wayland UI will not compare active shares to a source list
+
+Use a monotonic counter or similar nonzero synthetic ID in `livekit_client`.
+
+#### 4. Keep Wayland UX intentionally different
+
+On Wayland, the title bar should show a plain screen-share toggle button, not the existing split-button with a dropdown list.
+
+Reason:
+
+- there is no meaningful app-level list to show
+- the XDG Desktop Portal already provides the system picker
+- trying to mimic the X11 picker on Wayland would be misleading
+
+## Runtime and timeout model
+
+### Use GPUI for timeout handling
+
+Do not add `tokio` just for timeouts.
+
+`AsyncApp` already provides access to `cx.background_executor()`, and GPUI already supports:
+
+- `cx.background_executor().timer(duration)`
+- `FutureExt::with_timeout(duration, executor)`
+
+Use GPUI executor timers for:
+
+- the first-frame timeout
+- any other setup-time timeout in this path
+- simple delay-based coordination if no Tokio-specific scheduling behavior is required
+
+### Use Tokio only where the dependency already requires it
+
+Keep Tokio usage limited to places that already need it for the LiveKit SDK or related APIs, such as:
+
+- publishing tracks
+- unpublishing tracks
+- any API that already runs through `gpui_tokio::Tokio::spawn(...)`
+
+If the validated `DesktopCapturer` integration proves that the capture loop itself benefits from or requires Tokio context, that can be justified during implementation. But timeout handling alone is not a reason to add Tokio.
+
+## Capture lifecycle
+
+The Wayland capture flow should work like this:
+
+1. The user clicks the screen-share action on Wayland.
+2. `Room::share_screen_wayland()` marks the screen track as pending, exactly like the existing `share_screen()` flow.
+3. `LocalParticipant::publish_screenshare_track_wayland()` starts a portal-backed desktop capturer.
+4. A background task pumps `capture_frame()` on a fixed interval.
+5. The capturer callback ignores temporary pre-selection conditions, converts successful frames, and waits for the first valid frame.
+6. On the first valid frame:
+   - create or initialize the `NativeVideoSource`
+   - create the first WebRTC frame buffer
+   - send a one-time “ready” signal back to the publishing task
+7. The publishing task waits for that first-frame signal with a timeout using the GPUI executor.
+8. Once the video source is ready, publish the LiveKit track using the same publish options as the current screen-share path.
+9. On success, return the publication and the `ScreenCaptureStreamHandle`.
+10. On unshare or drop, the handle stops the capture loop.
+
+### First-frame timeout
+
+The initial publish must not wait forever.
+
+Use a bounded timeout while waiting for the first successful frame. A timeout around 10 to 15 seconds is reasonable for the initial implementation.
+
+If the timeout expires:
+
+- stop the capture loop
+- return a descriptive error
+- restore `Room` state back to no active screen share
+
+This timeout covers cases such as:
+
+- the portal dialog being dismissed
+- permissions being denied without a clean explicit error
+- no frames ever arriving because the portal session never became active
+
+### Frame cadence
+
+Use a scheduled interval for the frame pump rather than a manual busy loop.
+
+Initial cadence should be conservative, for example around 30 fps. If the current desktop-capturer implementation clearly expects a different cadence, follow the dependency’s guidance instead.
+
+This is a better starting point than assuming 60 fps:
+
+- it reduces CPU overhead
+- it is adequate for typical screen sharing
+- it is easier to tune later than an overly aggressive default
+
+### Resolution changes
+
+Resolution changes must be treated as an explicit acceptance criterion, not an afterthought.
+
+The implementation should verify whether `NativeVideoSource` supports variable-size frames after initialization.
+
+If it does:
+
+- recreate the reusable I420 buffer when width or height changes
+- continue publishing
+
+If it does not:
+
+- do not silently keep sending mismatched frames
+- treat size changes as a terminal condition for the first patch, or restart the capture/publish path in a controlled way
+- document the chosen behavior in the PR
+
+Manual testing for resizing and monitor changes is required.
+
+### Runtime terminal failures after publish
+
+Once the track is published, terminal capture failures should not be silently ignored.
+
+Minimum acceptable behavior:
+
+- log a descriptive error
+- stop the capture loop
+
+Preferred behavior, if the plumbing is straightforward:
+
+- have the capture path expose a one-shot terminal-failure signal
+- have `Room::share_screen_wayland()` spawn a small observer task that, if the same share is still active, resets the screen track state and unpublishes the track
+
+Setup-time failures must reach the user through the existing error-prompt path. Post-publish runtime failures should at least clean up local state, even if the first patch only logs the reason.
+
+## File-by-file plan
+
+### 1. `crates/livekit_client/src/livekit_client/playback.rs`
+
+Add the Wayland-specific capture helper here, near the existing local video capture logic.
+
+This helper should:
+
+- build desktop-capturer options appropriate for Wayland portal capture
+- start the capturer
+- run the frame-pump interval
+- convert ARGB frames to I420
+- initialize the `NativeVideoSource` on the first valid frame
+- handle resolution changes
+- enforce the first-frame timeout with GPUI executor timers
+- return the local video track plus the new `ScreenCaptureStreamHandle`
+- optionally expose a one-shot runtime-failure signal for the caller to observe
+
+Keeping this in `playback.rs` is preferable to putting all capture logic in `livekit_client.rs`, because capture setup and frame conversion already live here today.
 
 ### 2. `crates/livekit_client/src/livekit_client.rs`
 
-Add a new `ScreenCaptureStreamHandle` struct and implement `ScreenCaptureStream`:
+Add the public `ScreenCaptureStreamHandle` type and the `LocalParticipant::publish_screenshare_track_wayland()` method.
 
-```rust
-use std::sync::{Arc, atomic::{AtomicBool, Ordering}};
-use std::time::Duration;
-use gpui::{DevicePixels, ScreenCaptureStream, SourceMetadata, size};
-use libwebrtc::desktop_capturer::{
-    CaptureError, CaptureSource, DesktopCaptureSourceType,
-    DesktopCapturer, DesktopCapturerOptions, DesktopFrame,
-};
-use libwebrtc::native::yuv_helper;
-use livekit::options::{TrackPublishOptions, VideoCodec};
-use livekit::track::TrackSource;
-use livekit::webrtc::prelude::{I420Buffer, RtcVideoSource, VideoFrame, VideoResolution, VideoRotation};
-use livekit::webrtc::video_source::native::NativeVideoSource;
-use futures::{SinkExt, channel::mpsc};
+`ScreenCaptureStreamHandle` should:
 
-pub struct ScreenCaptureStreamHandle {
-    pub screen_id: u64,
-    stop_capture: Arc<AtomicBool>,
-    _task: gpui::Task<Result<(), gpui_tokio::JoinError>>,
-}
+- implement `ScreenCaptureStream`
+- hold the synthetic share ID
+- hold the stop flag
+- keep the background capture task alive for the lifetime of the share
+- stop capture in `Drop`
 
-impl Drop for ScreenCaptureStreamHandle {
-    fn drop(&mut self) {
-        self.stop_capture.store(true, Ordering::Release);
-    }
-}
+Its `metadata()` implementation should return:
 
-impl ScreenCaptureStream for ScreenCaptureStreamHandle {
-    fn metadata(&self) -> anyhow::Result<SourceMetadata> {
-        Ok(SourceMetadata {
-            id: self.screen_id,
-            label: None,
-            is_main: None,
-            resolution: size(DevicePixels(0), DevicePixels(0)),
-        })
-    }
-}
-```
+- synthetic `id`
+- `label: None`
+- `is_main: None`
+- a placeholder resolution
 
-Add a helper to get Wayland-compatible capturer options:
+Use a small placeholder resolution such as `1x1` unless later code is updated to surface real runtime resolution. The current caller only reads the ID.
 
-```rust
-fn wayland_capturer_options() -> DesktopCapturerOptions {
-    let mut options = DesktopCapturerOptions::new(DesktopCaptureSourceType::Generic);
-    options.set_include_cursor(true);
-    options
-}
-```
+`publish_screenshare_track_wayland()` should:
 
-Add a public function to list sources (returns a dummy entry on Wayland):
+- call the new playback helper
+- publish the returned track with the existing screen-share `TrackPublishOptions`
+- return the publication and handle
 
-```rust
-pub fn wayland_screen_capture_sources() -> Vec<CaptureSource> {
-    let Some(capturer) = DesktopCapturer::new(wayland_capturer_options()) else {
-        return Vec::new();
-    };
-    capturer.get_source_list()
-}
-```
+### 3. `crates/livekit_client/Cargo.toml`
 
-Add the Wayland publish method on `LocalParticipant`:
+Do not add `tokio` solely for timeout handling.
 
-```rust
-impl LocalParticipant {
-    pub async fn publish_screenshare_track_wayland(
-        &self,
-        source: Option<CaptureSource>,
-        cx: &mut AsyncApp,
-    ) -> Result<(LocalTrackPublication, ScreenCaptureStreamHandle)> {
-        let stop_capture = Arc::new(AtomicBool::new(false));
-        let (mut video_source_tx, mut video_source_rx) = mpsc::channel(0);
-
-        let screen_id = source.as_ref().map(|s| s.id()).unwrap_or(0);
-
-        let callback = {
-            let mut stream_width: u32 = 1920;
-            let mut stream_height: u32 = 1080;
-            let mut video_frame = VideoFrame {
-                rotation: VideoRotation::VideoRotation0,
-                buffer: I420Buffer::new(stream_width, stream_height),
-                timestamp_us: 0,
-            };
-            let mut video_source: Option<NativeVideoSource> = None;
-            let stop_capture = stop_capture.clone();
-
-            move |result: Result<DesktopFrame, CaptureError>| {
-                let frame = match result {
-                    Ok(frame) => frame,
-                    Err(CaptureError::Temporary) => return,
-                    Err(CaptureError::Permanent) => {
-                        log::error!("Permanent error capturing screen");
-                        stop_capture.store(true, Ordering::Release);
-                        return;
-                    }
-                };
-
-                let width = frame.width() as u32;
-                let height = frame.height() as u32;
-
-                if width != stream_width || height != stream_height {
-                    stream_width = width;
-                    stream_height = height;
-                    video_frame.buffer = I420Buffer::new(width, height);
-                }
-
-                let (s_y, s_u, s_v) = video_frame.buffer.strides();
-                let (y, u, v) = video_frame.buffer.data_mut();
-                yuv_helper::argb_to_i420(
-                    frame.data(), frame.stride(),
-                    y, s_y, u, s_u, v, s_v,
-                    frame.width(), frame.height(),
-                );
-
-                if let Some(ref vs) = video_source {
-                    vs.capture_frame(&video_frame);
-                } else {
-                    let vs = NativeVideoSource::new(VideoResolution {
-                        width: stream_width, height: stream_height,
-                    });
-                    video_source_tx.try_send(vs.clone()).ok();
-                    vs.capture_frame(&video_frame);
-                    video_source = Some(vs);
-                }
-            }
-        };
-
-        let mut capturer = DesktopCapturer::new(wayland_capturer_options())
-            .ok_or(anyhow!("Failed to create DesktopCapturer"))?;
-        capturer.start_capture(source, callback);
-
-        let task = gpui_tokio::Tokio::spawn(cx, {
-            let stop = stop_capture.clone();
-            async move {
-                loop {
-                    if stop.load(Ordering::Acquire) { break; }
-                    capturer.capture_frame();
-                    tokio::time::sleep(Duration::from_secs_f32(1.0 / 60.0)).await;
-                }
-            }
-        });
-
-        use futures::StreamExt;
-        let video_source = video_source_rx.next().await
-            .ok_or(anyhow!("No video source received from DesktopCapturer"))?;
-
-        let track = livekit::track::LocalVideoTrack::create_video_track(
-            "screen_share",
-            RtcVideoSource::Native(video_source),
-        );
-
-        let publication = self.publish_track(
-            livekit::track::LocalTrack::Video(track),
-            TrackPublishOptions {
-                source: TrackSource::Screenshare,
-                video_codec: VideoCodec::VP8,
-                ..Default::default()
-            },
-            cx,
-        ).await?;
-
-        Ok((publication, ScreenCaptureStreamHandle {
-            screen_id,
-            stop_capture,
-            _task: task,
-        }))
-    }
-}
-```
-
-### 3. `crates/livekit_client/src/lib.rs`
-
-Re-export the new types from the production module. Add near the existing
-`pub use livekit_client::*`:
-
-```rust
-// The ScreenCaptureStreamHandle and wayland_screen_capture_sources are
-// exported by livekit_client.rs via the existing `pub use livekit_client::*`.
-```
-
-No structural change needed — `pub use livekit_client::*` already re-exports
-everything public from that module.
+Only add `tokio.workspace = true` if the validated implementation needs direct Tokio APIs for the capture loop or other dependency-facing runtime requirements. If GPUI executors cover the scheduling needs, no dependency change is required.
 
 ### 4. `crates/livekit_client/src/mock_client/participant.rs`
 
-Add a matching mock method to `LocalParticipant`:
+Add a matching mock `publish_screenshare_track_wayland()` method.
 
-```rust
-pub async fn publish_screenshare_track_wayland(
-    &self,
-    _source: Option<libwebrtc::desktop_capturer::CaptureSource>,
-    _cx: &mut AsyncApp,
-) -> Result<(LocalTrackPublication, ScreenCaptureStreamHandle)> {
-    let this = self.clone();
-    let server = this.room.test_server();
-    let sid = server
-        .publish_video_track(this.room.token(), LocalVideoTrack {})
-        .await?;
-    Ok((
-        LocalTrackPublication {
-            room: self.room.downgrade(),
-            sid,
-        },
-        ScreenCaptureStreamHandle {
-            screen_id: 0,
-            stop_capture: Arc::new(AtomicBool::new(false)),
-            _task: gpui::Task::ready(Ok(())),
-        },
-    ))
-}
-```
+The mock implementation only needs to:
 
-Add necessary imports (`Arc`, `AtomicBool`, `ScreenCaptureStreamHandle`).
+- publish a fake local video track through the test server
+- return a stub `ScreenCaptureStreamHandle`
 
-### 5. `crates/livekit_client/src/mock_client.rs`
+No mock source-list function is needed.
 
-Add a mock `wayland_screen_capture_sources`:
+### 5. `crates/call/src/call_impl/room.rs`
 
-```rust
-pub fn wayland_screen_capture_sources() -> Vec<libwebrtc::desktop_capturer::CaptureSource> {
-    Vec::new()
-}
-```
+Add `Room::share_screen_wayland()` with the same pending/publish/cancel state machine used by `share_screen()`.
 
-### 6. `crates/call/Cargo.toml`
+It should:
 
-Add `libwebrtc` for the `CaptureSource` type used in the new method signature:
+- reject offline rooms
+- reject duplicate share attempts
+- mark `screen_track` as pending with a new `publish_id`
+- call `participant.publish_screenshare_track_wayland(cx)`
+- if the request was canceled while publishing, unpublish the new track and log any error
+- on success, box the returned handle as `Box<dyn ScreenCaptureStream>` and store it in `LocalTrack::Published`
+- on failure, reset the room state to `LocalTrack::None`
 
-```toml
-[dependencies]
-# ... existing ...
-libwebrtc.workspace = true
-```
+If the Wayland handle exposes a terminal-failure receiver, this is the place to spawn the observer task before boxing the handle.
 
-Note: `libwebrtc` is a workspace dependency gated on
-`cfg(not(any(all(target_os = "windows", target_env = "gnu"), target_os = "freebsd")))`.
-The new `share_screen_wayland` method should also be gated to only compile on Linux.
+Use `detach_and_log_err(cx)` rather than silently discarding unpublish errors in the new code path.
 
-### 7. `crates/call/src/call_impl/room.rs`
+### 6. `crates/title_bar/src/collab.rs`
 
-Add one new method. The existing `share_screen` is **not modified**:
+Add a small helper used by the call controls, such as a local `use_portal_screen_share()` predicate based on `gpui::guess_compositor()`.
 
-```rust
-/// Share screen on Wayland using libwebrtc's DesktopCapturer.
-/// The XDG Desktop Portal will show a system picker dialog.
-#[cfg(any(target_os = "linux", target_os = "freebsd"))]
-pub fn share_screen_wayland(
-    &mut self,
-    source: Option<libwebrtc::desktop_capturer::CaptureSource>,
-    cx: &mut Context<Self>,
-) -> Task<Result<()>> {
-    if self.status.is_offline() {
-        return Task::ready(Err(anyhow!("room is offline")));
-    }
-    if self.is_sharing_screen() {
-        return Task::ready(Err(anyhow!("screen was already shared")));
-    }
+Then update the render logic so that the screen-share control is shown when either:
 
-    let (participant, publish_id) = if let Some(live_kit) = self.live_kit.as_mut() {
-        let publish_id = post_inc(&mut live_kit.next_publish_id);
-        live_kit.screen_track = LocalTrack::Pending { publish_id };
-        cx.notify();
-        (live_kit.room.local_participant(), publish_id)
-    } else {
-        return Task::ready(Err(anyhow!("live-kit was not initialized")));
-    };
+- the legacy screen-capture path is supported, or
+- the app is running on Wayland and should use the portal path
 
-    cx.spawn(async move |this, cx| {
-        let publication = participant
-            .publish_screenshare_track_wayland(source, cx)
-            .await;
+Behavior by compositor:
 
-        this.update(cx, |this, cx| {
-            let live_kit = this
-                .live_kit
-                .as_mut()
-                .context("live-kit was not initialized")?;
+- on Wayland: render a plain toggle button that calls `share_screen_wayland()` or `unshare_screen()`
+- on non-Wayland platforms: keep the existing split-button and source-list dropdown unchanged
 
-            let canceled = if let LocalTrack::Pending {
-                publish_id: cur_publish_id,
-            } = &live_kit.screen_track
-            {
-                *cur_publish_id != publish_id
-            } else {
-                true
-            };
+Do not reuse the existing `pick_default_screen()` helper on Wayland.
 
-            match publication {
-                Ok((publication, handle)) => {
-                    if canceled {
-                        cx.spawn(async move |_, cx| {
-                            participant.unpublish_track(publication.sid(), cx).await
-                        })
-                        .detach()
-                    } else {
-                        live_kit.screen_track = LocalTrack::Published {
-                            track_publication: publication,
-                            _stream: Box::new(handle),
-                        };
-                        cx.notify();
-                    }
-                    Audio::play_sound(Sound::StartScreenshare, cx);
-                    Ok(())
-                }
-                Err(error) => {
-                    if canceled {
-                        Ok(())
-                    } else {
-                        live_kit.screen_track = LocalTrack::None;
-                        cx.notify();
-                        Err(error)
-                    }
-                }
-            }
-        })?
-    })
-}
-```
+### 7. `crates/collab_ui/src/collab_panel.rs`
 
-The only difference from the existing `share_screen` is the call to
-`publish_screenshare_track_wayland` and boxing the handle as
-`Box::new(handle)` (which works because `ScreenCaptureStreamHandle` implements
-`ScreenCaptureStream`).
+Update the `ScreenShare` action handler to branch the same way as the title bar:
 
-### 8. `crates/title_bar/src/collab.rs`
+- on Wayland, call `share_screen_wayland()` directly
+- on other platforms, keep the current source-enumeration path
 
-Add a Wayland-aware toggle function alongside the existing one:
+This keeps keyboard and command-palette behavior aligned with the title bar.
 
-```rust
-#[cfg(any(target_os = "linux", target_os = "freebsd"))]
-fn toggle_screen_sharing_wayland(window: &mut Window, cx: &mut App) {
-    let call = ActiveCall::global(cx).read(cx);
-    let Some(room) = call.room().cloned() else { return };
-    let task = room.update(cx, |room, cx| {
-        if room.is_sharing_screen() {
-            telemetry::event!(
-                "Screen Share Disabled",
-                room_id = room.id(),
-                channel_id = room.channel_id(),
-            );
-            room.unshare_screen(true, cx).ok();
-            Task::ready(Ok(()))
-        } else {
-            telemetry::event!(
-                "Screen Share Enabled",
-                room_id = room.id(),
-                channel_id = room.channel_id(),
-            );
-            // source = None: the XDG Desktop Portal will show its own picker
-            room.share_screen_wayland(None, cx)
-        }
-    });
-    task.detach_and_prompt_err(
-        "Sharing Screen Failed", window, cx,
-        |e, _, _| Some(format!("{e:?}\n\nPlease check that screen sharing \
-            permissions are granted.")),
-    );
-}
-```
+### 8. `script/linux`
 
-In `render_call_controls`, where the screen share button is built, branch on
-compositor:
+Treat distro package updates as a validation-driven follow-up, not a mandatory part of the initial patch.
 
-```rust
-if can_use_microphone && screen_sharing_supported {
-    // ... existing trigger building ...
+After the feature compiles on at least one supported Wayland distro, update `script/linux` only for packages that are confirmed to be required and missing from the install flow.
 
-    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
-    let is_wayland = gpui::guess_compositor() == "Wayland";
-    #[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
-    let is_wayland = false;
+## What does not change
 
-    if is_wayland {
-        // On Wayland: simple toggle button, no picker dropdown.
-        // The XDG Desktop Portal shows the system picker dialog.
-        let trigger = trigger.on_click(move |_, window, cx| {
-            toggle_screen_sharing_wayland(window, cx);
-        });
-        children.push(trigger.into_any_element());
-    } else {
-        // Existing code: SplitButton with screen list dropdown
-        // ... unchanged ...
-    }
-}
-```
+The revised plan intentionally leaves these areas alone:
 
-On Wayland, `is_screen_capture_supported()` currently returns `false`, so we also
-need to remove that guard, or make the Wayland path bypass it:
+- `gpui` `ScreenCaptureSource` and `ScreenCaptureStream` traits
+- `gpui` `Platform::screen_capture_sources()` and `Platform::is_screen_capture_supported()`
+- existing X11 and Windows `scap` capture
+- macOS screen capture
+- `Room::share_screen()` for the legacy source-selection flow
+- `pick_default_screen()` for non-Wayland platforms
+- any product-facing source list on Wayland
 
-```rust
-// Change this:
-if can_use_microphone && screen_sharing_supported {
-// To this:
-let wayland_can_share = cfg!(any(target_os = "linux", target_os = "freebsd"))
-    && gpui::guess_compositor() == "Wayland";
-if can_use_microphone && (screen_sharing_supported || wayland_can_share) {
-```
+## Testing plan
 
-### 9. `crates/collab_ui/src/collab_panel.rs`
+## Automated tests
 
-In the `ScreenShare` action handler, add a Wayland branch:
+Add or update tests for the new `call` and `livekit_client` behavior:
 
-```rust
-workspace.register_action(|_, _: &ScreenShare, window, cx| {
-    let room = ActiveCall::global(cx).read(cx).room().cloned();
-    if let Some(room) = room {
-        window.defer(cx, move |_window, cx| {
-            room.update(cx, |room, cx| {
-                if room.is_sharing_screen() {
-                    room.unshare_screen(true, cx).ok();
-                } else {
-                    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
-                    if gpui::guess_compositor() == "Wayland" {
-                        room.share_screen_wayland(None, cx)
-                            .detach_and_log_err(cx);
-                        return;
-                    }
+- successful `share_screen_wayland()` publish through the mock client
+- cancellation while publish is pending
+- first-frame timeout resets the room state
+- `shared_screen_id()` returns a synthetic ID while a Wayland share is active
+- unshare stops the active Wayland stream handle
+- Wayland UI branching selects the portal path instead of source enumeration
 
-                    // Existing scap path (unchanged)
-                    let sources = cx.screen_capture_sources();
-                    cx.spawn(async move |room, cx| {
-                        let sources = sources.await??;
-                        let first = sources.into_iter().next();
-                        if let Some(first) = first {
-                            room.update(cx, |room, cx| room.share_screen(first, cx))?
-                                .await
-                        } else {
-                            Ok(())
-                        }
-                    })
-                    .detach_and_log_err(cx);
-                };
-            });
-        });
-    }
-});
-```
+Use existing test infrastructure where possible. Do not add large new test-only abstractions unless necessary.
 
-### 10. `script/linux`
+For tests that need timeouts or scheduler-driven waiting, prefer GPUI executor timers over unrelated timer implementations.
 
-Add system libraries needed by libwebrtc's desktop capture on Linux. These are
-already present in `nix/build.nix` but missing from the distro install scripts.
+## Manual validation
 
-**apt** (Debian/Ubuntu/Mint/etc.) — add to `deps` array:
+Manual testing is required on a real Wayland compositor.
 
-```bash
-libxfixes-dev
-libxdamage-dev
-libxrandr-dev
-libxcomposite-dev
-libxext-dev
-libdrm-dev
-libgbm-dev
-```
+Primary validation:
 
-**dnf** (Fedora/RHEL/etc.) — add to `deps` array:
+- start sharing from the title bar on Wayland
+- start sharing from the `ScreenShare` action
+- accept the portal picker and confirm the remote participant receives video
+- cancel the picker and confirm the UI returns to the non-sharing state with a useful error
+- deny permissions and confirm the UI returns to the non-sharing state with a useful error
 
-```bash
-libXfixes-devel
-libXdamage-devel
-libXrandr-devel
-libXcomposite-devel
-libXext-devel
-libdrm-devel
-mesa-libgbm-devel
-```
+Resolution and lifecycle validation:
 
-**zypper** (openSUSE) — add to `deps` array:
+- resize the shared window if window capture is used
+- share a monitor, then change resolution or scaling if practical
+- stop sharing and confirm the capture loop exits cleanly
+- if possible, close the portal session externally and observe cleanup behavior
 
-```bash
-libXfixes-devel
-libXdamage-devel
-libXrandr-devel
-libXcomposite-devel
-libXext-devel
-libdrm-devel
-Mesa-libgbm-devel
-```
+Regression validation:
 
-**pacman** (Arch) — these are typically pulled in by existing deps but can be
-listed explicitly:
+- X11 screen sharing still works through the existing source-list path
+- macOS behavior is unchanged
 
-```bash
-libxfixes
-libxdamage
-libxrandr
-libxcomposite
-libxext
-libdrm
-mesa
-```
+## Open questions to resolve during implementation
 
-**xbps** (Void) — add to `deps` array:
+These questions should be answered in Phase 0 and in the implementation PR:
 
-```bash
-libXfixes-devel
-libXdamage-devel
-libXrandr-devel
-libXcomposite-devel
-libXext-devel
-libdrm-devel
-MesaLib-devel
-```
+- Does the vendored `DesktopCapturer` callback run serially?
+- What exact source type should be used for Wayland portal capture?
+- How does the dependency surface portal cancellation and permission denial?
+- Does `NativeVideoSource` support runtime resolution changes?
+- Does the capture loop need Tokio context for dependency-facing reasons, or can GPUI executors own the full loop?
+- Is there an existing room-level notification path suitable for post-publish capture failure, or should the initial patch log and auto-clean up only?
 
-**emerge** (Gentoo) — add to `deps` array:
+## Acceptance criteria
 
-```bash
-x11-libs/libXfixes
-x11-libs/libXdamage
-x11-libs/libXrandr
-x11-libs/libXcomposite
-x11-libs/libXext
-x11-libs/libdrm
-media-libs/mesa
-```
+This change is complete when all of the following are true:
 
----
-
-## What does NOT change
-
-| Area | Why |
-|---|---|
-| `gpui` `ScreenCaptureSource` / `ScreenCaptureStream` traits | Kept as-is; Wayland path bypasses them |
-| `gpui` `Platform` trait (`screen_capture_sources`, `is_screen_capture_supported`) | Kept; Wayland client still returns "not supported" for legacy path |
-| `scap` dependency and all scap-based capture code | Untouched; used on X11 and Windows |
-| macOS `ScreenCaptureKit` code (`gpui_macos/src/screen_capture.rs`) | Untouched |
-| `scap_screen_capture.rs` in gpui | Untouched |
-| `video_frame_buffer_to_webrtc()` in `playback.rs` | Untouched; Wayland path does its own ARGB→I420 |
-| `Room::share_screen()` (existing scap method) | Untouched |
-| `Room::unshare_screen()` | Untouched; works on `dyn ScreenCaptureStream` |
-| `Room::shared_screen_id()` | Untouched; works via `ScreenCaptureStream::metadata()` |
-| `LiveKitRoom` struct / `LocalTrack` enum | Untouched; `Box<dyn ScreenCaptureStream>` fits both |
-| `guess_compositor()` return type | Stays `&'static str` |
-| LiveKit fork / revision | No update needed |
-| CI workflows | Already have `CC=clang` / `CXX=clang++` |
-| Nix build (`nix/build.nix`, `nix/livekit-libwebrtc/`) | Already has all needed deps |
-
-## File change summary
-
-| File | Change |
-|---|---|
-| `crates/livekit_client/Cargo.toml` | Add `tokio.workspace = true` |
-| `crates/livekit_client/src/livekit_client.rs` | Add `ScreenCaptureStreamHandle`, `wayland_screen_capture_sources`, `publish_screenshare_track_wayland` |
-| `crates/livekit_client/src/mock_client/participant.rs` | Add mock `publish_screenshare_track_wayland` |
-| `crates/livekit_client/src/mock_client.rs` | Add mock `wayland_screen_capture_sources` |
-| `crates/call/Cargo.toml` | Add `libwebrtc.workspace = true` |
-| `crates/call/src/call_impl/room.rs` | Add `share_screen_wayland` method |
-| `crates/title_bar/src/collab.rs` | Add `toggle_screen_sharing_wayland`, branch in `render_call_controls` |
-| `crates/collab_ui/src/collab_panel.rs` | Branch on Wayland in `ScreenShare` handler |
-| `script/linux` | Add system library packages for all distros |
-
-**9 files touched. Zero modifications to existing capture paths.**
-
-## Testing
-
-1. **Wayland (GNOME/KDE/Sway):** Start a call, click "Share Screen". The XDG
-   Desktop Portal picker should appear. After selecting a screen/window, the remote
-   participant should see the shared content.
-2. **X11:** Verify existing screen sharing still works (scap path unchanged).
-3. **macOS:** Verify existing screen sharing still works (native path unchanged).
-4. **Integration tests:** Existing tests use `share_screen()` with mock sources and
-   should pass without modification. The `share_screen_wayland` path uses the same
-   `LocalTrack` machinery and can be tested with the mock.
-
-## Wayland UX notes
-
-- On Wayland, there is **no application-controlled screen picker**. The system's XDG
-  Desktop Portal presents its own dialog. This is by design — Wayland forbids apps
-  from enumerating screens/windows for privacy.
-- The title bar shows a **simple toggle button** (no dropdown picker) on Wayland.
-- `DesktopCapturer::get_source_list()` returns a dummy entry on Wayland. The
-  `wayland_screen_capture_sources()` function is provided for completeness but the
-  primary UX is the portal dialog.
-- `CaptureError::Temporary` is expected while the portal picker is open and should be
-  silently ignored. `CaptureError::Permanent` stops capture.
-
-## Future work (out of scope)
-
-- Replace scap entirely with `DesktopCapturer` on all platforms (eliminates the dual
-  code path).
-- Support window-specific capture on Wayland (already partially supported by
-  `DesktopCaptureSourceType::Generic`).
-- System audio sharing on Wayland.
-- Persistent portal permissions / screen share tokens.
+- the screen-share button appears on Wayland
+- starting a share opens the system portal picker
+- accepting the picker publishes a visible screen-share track to remote participants
+- canceling or denying the picker returns a clear error and leaves the room in a non-sharing state
+- unsharing stops the capture loop cleanly
+- X11/macOS screen-share behavior is unchanged
+- the implementation does not add a fake Wayland source list or broaden platform traits unnecessarily
