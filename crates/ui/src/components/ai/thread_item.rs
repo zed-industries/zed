@@ -1,6 +1,6 @@
 use crate::{
     CommonAnimationExt, DecoratedIcon, DiffStat, GradientFade, HighlightedLabel, IconDecoration,
-    IconDecorationKind, prelude::*,
+    IconDecorationKind, Tooltip, prelude::*,
 };
 
 use gpui::{
@@ -206,12 +206,7 @@ impl RenderOnce for ThreadItem {
                 })
         };
 
-        let decoration = if self.status == AgentThreadStatus::WaitingForConfirmation {
-            Some(decoration(
-                IconDecorationKind::Triangle,
-                cx.theme().status().warning,
-            ))
-        } else if self.status == AgentThreadStatus::Error {
+        let decoration = if self.status == AgentThreadStatus::Error {
             Some(decoration(IconDecorationKind::X, cx.theme().status().error))
         } else if self.notified {
             Some(decoration(IconDecorationKind::Dot, color.text_accent))
@@ -219,22 +214,31 @@ impl RenderOnce for ThreadItem {
             None
         };
 
-        let is_running = matches!(
-            self.status,
-            AgentThreadStatus::Running | AgentThreadStatus::WaitingForConfirmation
-        );
-
-        let icon = if is_running {
-            icon_container().child(
-                Icon::new(IconName::LoadCircle)
-                    .size(IconSize::Small)
-                    .color(Color::Muted)
-                    .with_rotate_animation(2),
-            )
+        let icon = if self.status == AgentThreadStatus::Running {
+            icon_container()
+                .child(
+                    Icon::new(IconName::LoadCircle)
+                        .size(IconSize::Small)
+                        .color(Color::Muted)
+                        .with_rotate_animation(2),
+                )
+                .into_any_element()
+        } else if self.status == AgentThreadStatus::WaitingForConfirmation {
+            icon_container()
+                .id("waiting-for-confirmation")
+                .child(
+                    Icon::new(IconName::Warning)
+                        .size(IconSize::Small)
+                        .color(Color::Warning),
+                )
+                .tooltip(Tooltip::text("Waiting for confirmation"))
+                .into_any_element()
         } else if let Some(decoration) = decoration {
-            icon_container().child(DecoratedIcon::new(agent_icon, Some(decoration)))
+            icon_container()
+                .child(DecoratedIcon::new(agent_icon, Some(decoration)))
+                .into_any_element()
         } else {
-            icon_container().child(agent_icon)
+            icon_container().child(agent_icon).into_any_element()
         };
 
         let title = self.title;

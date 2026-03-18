@@ -119,6 +119,7 @@ enum ListEntry {
         workspace: Entity<Workspace>,
         highlight_positions: Vec<usize>,
         has_running_threads: bool,
+        waiting_thread_count: usize,
     },
     Thread(ThreadEntry),
     ViewMore {
@@ -720,12 +721,13 @@ impl Sidebar {
             let should_load_threads = !is_collapsed || !query.is_empty();
 
             let live_infos = Self::all_thread_infos_for_workspace(workspace, cx);
-            let has_running_threads = live_infos.iter().any(|info| {
-                matches!(
-                    info.status,
-                    AgentThreadStatus::Running | AgentThreadStatus::WaitingForConfirmation
-                )
-            });
+            let has_running_threads = live_infos
+                .iter()
+                .any(|info| info.status == AgentThreadStatus::Running);
+            let waiting_thread_count = live_infos
+                .iter()
+                .filter(|info| info.status == AgentThreadStatus::WaitingForConfirmation)
+                .count();
 
             let mut threads: Vec<ThreadEntry> = Vec::new();
 
@@ -950,6 +952,7 @@ impl Sidebar {
                     workspace: workspace.clone(),
                     highlight_positions: workspace_highlight_positions,
                     has_running_threads,
+                    waiting_thread_count,
                 });
 
                 // Track session IDs and compute active_entry_index as we add
@@ -972,6 +975,7 @@ impl Sidebar {
                     workspace: workspace.clone(),
                     highlight_positions: Vec::new(),
                     has_running_threads,
+                    waiting_thread_count,
                 });
 
                 if is_collapsed {
@@ -1124,6 +1128,7 @@ impl Sidebar {
                 workspace,
                 highlight_positions,
                 has_running_threads,
+                waiting_thread_count,
             } => self.render_project_header(
                 ix,
                 false,
@@ -1132,6 +1137,7 @@ impl Sidebar {
                 workspace,
                 highlight_positions,
                 *has_running_threads,
+                *waiting_thread_count,
                 is_selected,
                 cx,
             ),
@@ -1175,6 +1181,7 @@ impl Sidebar {
         workspace: &Entity<Workspace>,
         highlight_positions: &[usize],
         has_running_threads: bool,
+        waiting_thread_count: usize,
         is_selected: bool,
         cx: &mut Context<Self>,
     ) -> AnyElement {
@@ -1233,6 +1240,23 @@ impl Sidebar {
                                 .size(IconSize::XSmall)
                                 .color(Color::Muted)
                                 .with_rotate_animation(2),
+                        )
+                    })
+                    .when(is_collapsed && waiting_thread_count > 0, |this| {
+                        let tooltip_text = if waiting_thread_count == 1 {
+                            "1 thread is waiting for confirmation".to_string()
+                        } else {
+                            format!("{waiting_thread_count} threads are waiting for confirmation",)
+                        };
+                        this.child(
+                            div()
+                                .id(format!("{id_prefix}waiting-indicator-{ix}"))
+                                .child(
+                                    Icon::new(IconName::Warning)
+                                        .size(IconSize::XSmall)
+                                        .color(Color::Warning),
+                                )
+                                .tooltip(Tooltip::text(tooltip_text)),
                         )
                     }),
             )
@@ -1319,6 +1343,7 @@ impl Sidebar {
             workspace,
             highlight_positions,
             has_running_threads,
+            waiting_thread_count,
         } = self.contents.entries.get(header_idx)?
         else {
             return None;
@@ -1335,6 +1360,7 @@ impl Sidebar {
             &workspace,
             &highlight_positions,
             *has_running_threads,
+            *waiting_thread_count,
             is_selected,
             cx,
         );
@@ -3119,6 +3145,7 @@ mod tests {
                     workspace: workspace.clone(),
                     highlight_positions: Vec::new(),
                     has_running_threads: false,
+                    waiting_thread_count: 0,
                 },
                 // Thread with default (Completed) status, not active
                 ListEntry::Thread(ThreadEntry {
@@ -3248,6 +3275,7 @@ mod tests {
                     workspace: workspace.clone(),
                     highlight_positions: Vec::new(),
                     has_running_threads: false,
+                    waiting_thread_count: 0,
                 },
             ];
             // Select the Running thread (index 2)
