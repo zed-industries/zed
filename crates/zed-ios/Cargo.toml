@@ -16,6 +16,7 @@ assets.workspace = true
 client.workspace = true
 env_logger.workspace = true
 fs.workspace = true
+futures.workspace = true
 gpui.workspace = true
 gpui_ios.workspace = true
 http_client.workspace = true

@@ -350,6 +350,18 @@ mod ios {
                 });
 
                 workspace::init(app_state.clone(), cx);
+
+                // Register no-op path prompts. The thin client doesn't open local
+                // projects — all file access goes through the remote host. Without
+                // this, clicking "Open Project" panics on unwrap().
+                cx.observe_new(|workspace: &mut workspace::Workspace, _window, _cx| {
+                    workspace.set_prompt_for_open_path(Box::new(|_, _, _, _| {
+                        let (_tx, rx) = futures::channel::oneshot::channel();
+                        rx
+                    }));
+                })
+                .detach();
+
                 APP_STATE.with(|cell| *cell.borrow_mut() = Some(app_state.clone()));
                 log::info!("[zed-ios] Zed initialized successfully");
 
