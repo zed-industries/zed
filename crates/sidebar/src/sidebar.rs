@@ -1,6 +1,5 @@
 use acp_thread::ThreadStatus;
 use action_log::DiffStats;
-use agent::ThreadStore;
 use agent_client_protocol::{self as acp};
 use agent_ui::thread_metadata_store::{ThreadMetadata, ThreadMetadataStore};
 use agent_ui::threads_archive_view::{
@@ -1968,13 +1967,13 @@ impl Sidebar {
         }
     }
 
-    fn delete_thread(
+    fn archive_thread(
         &mut self,
         session_id: &acp::SessionId,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        // If we're deleting the currently focused thread, move focus to the
+        // If we're archiving the currently focused thread, move focus to the
         // nearest thread within the same project group. We never cross group
         // boundaries — if the group has no other threads, clear focus and open
         // a blank new thread in the panel instead.
@@ -1986,7 +1985,7 @@ impl Sidebar {
             // Find the workspace that owns this thread's project group by
             // walking backwards to the nearest ProjectHeader. We must use
             // *this* workspace (not the active workspace) because the user
-            // might be deleting a thread in a non-active group.
+            // might be archiving a thread in a non-active group.
             let group_workspace = current_pos.and_then(|pos| {
                 self.contents.entries[..pos]
                     .iter()
@@ -2061,15 +2060,6 @@ impl Sidebar {
             }
         }
 
-        let Some(thread_store) = ThreadStore::try_global(cx) else {
-            return;
-        };
-        thread_store.update(cx, |store, cx| {
-            store
-                .delete_thread(session_id.clone(), cx)
-                .detach_and_log_err(cx);
-        });
-
         ThreadMetadataStore::global(cx)
             .update(cx, |store, cx| store.delete(session_id.clone(), cx))
             .detach_and_log_err(cx);
@@ -2091,7 +2081,7 @@ impl Sidebar {
             return;
         }
         let session_id = thread.session_info.session_id.clone();
-        self.delete_thread(&session_id, window, cx);
+        self.archive_thread(&session_id, window, cx);
     }
 
     fn render_thread(
@@ -2179,14 +2169,14 @@ impl Sidebar {
             })
             .when(is_hovered && can_delete && !is_running, |this| {
                 this.action_slot(
-                    IconButton::new("delete-thread", IconName::Trash)
+                    IconButton::new("archive-thread", IconName::Archive)
                         .icon_size(IconSize::Small)
                         .icon_color(Color::Muted)
                         .tooltip({
                             let focus_handle = focus_handle.clone();
                             move |_window, cx| {
                                 Tooltip::for_action_in(
-                                    "Delete Thread",
+                                    "Archive Thread",
                                     &RemoveSelectedThread,
                                     &focus_handle,
                                     cx,
@@ -2196,7 +2186,7 @@ impl Sidebar {
                         .on_click({
                             let session_id = session_id_for_delete.clone();
                             cx.listener(move |this, _, window, cx| {
-                                this.delete_thread(&session_id, window, cx);
+                                this.archive_thread(&session_id, window, cx);
                             })
                         }),
                 )
