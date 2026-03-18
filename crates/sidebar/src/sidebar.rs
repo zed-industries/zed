@@ -1433,6 +1433,10 @@ impl Sidebar {
     }
 
     fn focus_in(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if matches!(self.view, SidebarView::Archive) {
+            return;
+        }
+
         if self.selection.is_none() {
             self.filter_editor.focus_handle(cx).focus(window, cx);
         }
