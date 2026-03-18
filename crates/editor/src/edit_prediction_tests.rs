@@ -17,7 +17,8 @@ use text::{Point, ToOffset};
 use ui::prelude::*;
 
 use crate::{
-    AcceptEditPrediction, EditPrediction, MenuEditPredictionsPolicy,
+    AcceptEditPrediction, EditPrediction, EditPredictionKeybindAction,
+    EditPredictionKeybindSurface, MenuEditPredictionsPolicy,
     editor_tests::{init_test, update_test_language_settings},
     test::editor_test_context::EditorTestContext,
 };
@@ -508,12 +509,15 @@ async fn test_tab_is_preferred_accept_binding_over_alt_tab(cx: &mut gpui::TestAp
 
     cx.update_editor(|editor, window, cx| {
         assert!(editor.has_active_edit_prediction());
-        let binding = editor.accept_edit_prediction_keybind(
-            edit_prediction_types::EditPredictionGranularity::Full,
+        let keybind_display = editor.edit_prediction_keybind_display(
+            EditPredictionKeybindSurface::Inline,
             window,
             cx,
         );
-        let keystroke = binding.keystroke().expect("should have an accept binding");
+        let keystroke = keybind_display
+            .accept_keystroke
+            .as_ref()
+            .expect("should have an accept binding");
         assert!(
             !keystroke.modifiers().modified(),
             "preferred accept binding should be unmodified (tab), got modifiers: {:?}",
@@ -550,28 +554,32 @@ async fn test_subtle_in_code_indicator_prefers_preview_binding(cx: &mut gpui::Te
             "subtle mode should require a modifier"
         );
 
-        let accept_binding = editor.accept_edit_prediction_keybind(
-            edit_prediction_types::EditPredictionGranularity::Full,
+        let inline_keybind_display = editor.edit_prediction_keybind_display(
+            EditPredictionKeybindSurface::Inline,
             window,
             cx,
         );
-        let preview_binding = editor.preview_edit_prediction_keybind(window, cx);
-        let in_code_binding = editor.in_code_edit_prediction_keybind(window, cx);
+        let compact_keybind_display = editor.edit_prediction_keybind_display(
+            EditPredictionKeybindSurface::CursorPopoverCompact,
+            window,
+            cx,
+        );
 
-        let accept_keystroke = accept_binding
-            .keystroke()
+        let accept_keystroke = inline_keybind_display
+            .accept_keystroke
+            .as_ref()
             .expect("should have an accept binding");
-        let preview_keystroke = preview_binding
-            .keystroke()
+        let preview_keystroke = inline_keybind_display
+            .preview_keystroke
+            .as_ref()
             .expect("should have a preview binding");
-        let in_code_keystroke = in_code_binding
-            .keystroke()
+        let in_code_keystroke = inline_keybind_display
+            .displayed_keystroke
+            .as_ref()
             .expect("should have an in-code binding");
-        let compact_cursor_popover_keystroke = editor
-            .compact_edit_prediction_cursor_popover_keystroke(
-                Some(accept_keystroke),
-                Some(preview_keystroke),
-            )
+        let compact_cursor_popover_keystroke = compact_keybind_display
+            .displayed_keystroke
+            .as_ref()
             .expect("should have a compact cursor popover binding");
 
         assert_eq!(accept_keystroke.key(), "tab");
@@ -648,30 +656,24 @@ async fn test_single_line_prediction_uses_accept_cursor_popover_action(
     cx.update_editor(|editor, window, cx| {
         assert!(editor.has_active_edit_prediction());
 
-        let accept_binding = editor.accept_edit_prediction_keybind(
-            edit_prediction_types::EditPredictionGranularity::Full,
+        let keybind_display = editor.edit_prediction_keybind_display(
+            EditPredictionKeybindSurface::CursorPopoverExpanded,
             window,
             cx,
         );
-        let preview_binding = editor.preview_edit_prediction_keybind(window, cx);
 
-        let accept_keystroke = accept_binding
-            .keystroke()
+        let accept_keystroke = keybind_display
+            .accept_keystroke
+            .as_ref()
             .expect("should have an accept binding");
-        let preview_keystroke = preview_binding
-            .keystroke()
+        let preview_keystroke = keybind_display
+            .preview_keystroke
+            .as_ref()
             .expect("should have a preview binding");
 
-        let should_show_preview =
-            editor
-                .active_edit_prediction
-                .as_ref()
-                .is_some_and(|prediction| {
-                    editor.edit_prediction_cursor_popover_shows_preview(prediction, cx)
-                });
-
-        assert!(
-            !should_show_preview,
+        assert_eq!(
+            keybind_display.action,
+            EditPredictionKeybindAction::Accept,
             "single-line prediction should show the accept action"
         );
         assert_eq!(accept_keystroke.key(), "tab");
@@ -697,21 +699,19 @@ async fn test_multi_line_prediction_uses_preview_cursor_popover_action(
     cx.update_editor(|editor, window, cx| {
         assert!(editor.has_active_edit_prediction());
 
-        let preview_binding = editor.preview_edit_prediction_keybind(window, cx);
-        let preview_keystroke = preview_binding
-            .keystroke()
+        let keybind_display = editor.edit_prediction_keybind_display(
+            EditPredictionKeybindSurface::CursorPopoverExpanded,
+            window,
+            cx,
+        );
+        let preview_keystroke = keybind_display
+            .preview_keystroke
+            .as_ref()
             .expect("should have a preview binding");
 
-        let should_show_preview =
-            editor
-                .active_edit_prediction
-                .as_ref()
-                .is_some_and(|prediction| {
-                    editor.edit_prediction_cursor_popover_shows_preview(prediction, cx)
-                });
-
-        assert!(
-            should_show_preview,
+        assert_eq!(
+            keybind_display.action,
+            EditPredictionKeybindAction::Preview,
             "multi-line prediction should show the preview action"
         );
         assert!(preview_keystroke.modifiers().modified());
@@ -736,30 +736,24 @@ async fn test_single_line_prediction_with_preview_uses_accept_cursor_popover_act
     cx.update_editor(|editor, window, cx| {
         assert!(editor.has_active_edit_prediction());
 
-        let accept_binding = editor.accept_edit_prediction_keybind(
-            edit_prediction_types::EditPredictionGranularity::Full,
+        let keybind_display = editor.edit_prediction_keybind_display(
+            EditPredictionKeybindSurface::CursorPopoverExpanded,
             window,
             cx,
         );
-        let preview_binding = editor.preview_edit_prediction_keybind(window, cx);
 
-        let accept_keystroke = accept_binding
-            .keystroke()
+        let accept_keystroke = keybind_display
+            .accept_keystroke
+            .as_ref()
             .expect("should have an accept binding");
-        let preview_keystroke = preview_binding
-            .keystroke()
+        let preview_keystroke = keybind_display
+            .preview_keystroke
+            .as_ref()
             .expect("should have a preview binding");
 
-        let should_show_preview =
-            editor
-                .active_edit_prediction
-                .as_ref()
-                .is_some_and(|prediction| {
-                    editor.edit_prediction_cursor_popover_shows_preview(prediction, cx)
-                });
-
-        assert!(
-            !should_show_preview,
+        assert_eq!(
+            keybind_display.action,
+            EditPredictionKeybindAction::Accept,
             "single-line prediction should show the accept action even with edit_preview"
         );
         assert_eq!(accept_keystroke.key(), "tab");
@@ -784,21 +778,19 @@ async fn test_multi_line_prediction_with_preview_uses_preview_cursor_popover_act
     cx.update_editor(|editor, window, cx| {
         assert!(editor.has_active_edit_prediction());
 
-        let preview_binding = editor.preview_edit_prediction_keybind(window, cx);
-        let preview_keystroke = preview_binding
-            .keystroke()
+        let keybind_display = editor.edit_prediction_keybind_display(
+            EditPredictionKeybindSurface::CursorPopoverExpanded,
+            window,
+            cx,
+        );
+        let preview_keystroke = keybind_display
+            .preview_keystroke
+            .as_ref()
             .expect("should have a preview binding");
 
-        let should_show_preview =
-            editor
-                .active_edit_prediction
-                .as_ref()
-                .is_some_and(|prediction| {
-                    editor.edit_prediction_cursor_popover_shows_preview(prediction, cx)
-                });
-
-        assert!(
-            should_show_preview,
+        assert_eq!(
+            keybind_display.action,
+            EditPredictionKeybindAction::Preview,
             "multi-line prediction should show the preview action with edit_preview"
         );
         assert!(preview_keystroke.modifiers().modified());
@@ -832,30 +824,24 @@ async fn test_single_line_deletion_of_newline_uses_accept_cursor_popover_action(
     cx.update_editor(|editor, window, cx| {
         assert!(editor.has_active_edit_prediction());
 
-        let accept_binding = editor.accept_edit_prediction_keybind(
-            edit_prediction_types::EditPredictionGranularity::Full,
+        let keybind_display = editor.edit_prediction_keybind_display(
+            EditPredictionKeybindSurface::CursorPopoverExpanded,
             window,
             cx,
         );
-        let preview_binding = editor.preview_edit_prediction_keybind(window, cx);
 
-        let accept_keystroke = accept_binding
-            .keystroke()
+        let accept_keystroke = keybind_display
+            .accept_keystroke
+            .as_ref()
             .expect("should have an accept binding");
-        let preview_keystroke = preview_binding
-            .keystroke()
+        let preview_keystroke = keybind_display
+            .preview_keystroke
+            .as_ref()
             .expect("should have a preview binding");
 
-        let should_show_preview =
-            editor
-                .active_edit_prediction
-                .as_ref()
-                .is_some_and(|prediction| {
-                    editor.edit_prediction_cursor_popover_shows_preview(prediction, cx)
-                });
-
-        assert!(
-            !should_show_preview,
+        assert_eq!(
+            keybind_display.action,
+            EditPredictionKeybindAction::Accept,
             "deleting one newline plus adjacent text should show the accept action"
         );
         assert_eq!(accept_keystroke.key(), "tab");
@@ -891,24 +877,19 @@ async fn test_stale_single_line_prediction_does_not_force_preview_cursor_popover
     cx.update_editor(|editor, window, cx| {
         assert!(editor.has_active_edit_prediction());
 
-        let accept_binding = editor.accept_edit_prediction_keybind(
-            edit_prediction_types::EditPredictionGranularity::Full,
+        let keybind_display = editor.edit_prediction_keybind_display(
+            EditPredictionKeybindSurface::CursorPopoverExpanded,
             window,
             cx,
         );
-        let accept_keystroke = accept_binding
-            .keystroke()
+        let accept_keystroke = keybind_display
+            .accept_keystroke
+            .as_ref()
             .expect("should have an accept binding");
 
-        let active_should_show_preview =
-            editor
-                .active_edit_prediction
-                .as_ref()
-                .is_some_and(|prediction| {
-                    editor.edit_prediction_cursor_popover_shows_preview(prediction, cx)
-                });
-        assert!(
-            !active_should_show_preview,
+        assert_eq!(
+            keybind_display.action,
+            EditPredictionKeybindAction::Accept,
             "single-line active prediction should show the accept action"
         );
         assert!(
@@ -979,7 +960,7 @@ async fn propose_edits_with_preview<T: ToOffset + Clone>(
         .into_iter()
         .map(|(range, text)| {
             let anchor_range = snapshot.anchor_after(range.start.clone())
-                ..snapshot.anchor_before(range.end.clone());
+                ..snapshot.anchor_before(range.end);
             (anchor_range, Arc::<str>::from(text))
         })
         .collect::<Vec<_>>();
