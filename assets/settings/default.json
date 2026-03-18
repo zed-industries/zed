@@ -1629,6 +1629,10 @@
     // 2. hour24
     "hour_format": "hour12",
   },
+  // The locale to use for UI translations.
+  // Set to "system" to detect the locale from the operating system,
+  // or provide a specific locale identifier such as "en", "ja", "de".
+  "locale": "system",
   // Status bar-related settings.
   "status_bar": {
     // Whether to show the status bar.

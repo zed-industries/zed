@@ -151,6 +151,14 @@ pub struct SettingsContent {
 
     pub journal: Option<JournalSettingsContent>,
 
+    /// The locale to use for UI translations.
+    ///
+    /// Set to "system" to detect the locale from the operating system,
+    /// or provide a specific locale identifier such as "en", "ja", "de".
+    ///
+    /// Default: system
+    pub locale: Option<String>,
+
     /// A map of log scopes to the desired log level.
     /// Useful for filtering out noisy logs or enabling more verbose logging.
     ///

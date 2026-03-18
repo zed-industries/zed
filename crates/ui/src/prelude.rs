@@ -32,4 +32,5 @@ pub use crate::{h_flex, v_flex};
 pub use crate::{
     h_group, h_group_lg, h_group_sm, h_group_xl, v_group, v_group_lg, v_group_sm, v_group_xl,
 };
+pub use i18n::Localize;
 pub use theme::ActiveTheme;

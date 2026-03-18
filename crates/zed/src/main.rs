@@ -477,6 +477,7 @@ fn main() {
             cx,
         );
         handle_keymap_file_changes(user_keymap_file_rx, user_keymap_watcher, cx);
+        i18n::init(cx);
 
         let user_agent = format!(
             "Zed/{} ({}; {})",
