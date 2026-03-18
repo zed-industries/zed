@@ -99,16 +99,13 @@ impl LlmApiToken {
             Err(err) => {
                 *lock = None;
                 match err {
-                ClientApiError::Unauthorized => {
-                    client.request_sign_out();
-                    Err(err).context("Failed to create LLM token")
+                    ClientApiError::Unauthorized => {
+                        client.request_sign_out();
+                        Err(err).context("Failed to create LLM token")
+                    }
+                    ClientApiError::Other(err) => Err(err),
                 }
-                ClientApiError::Other(err) => {
-                    *lock = None;
-
-                    Err(err)
-                }
-            },
+            }
         }
     }
 }
@@ -165,8 +162,6 @@ impl RefreshLlmTokenListener {
 
         let subscription = cx.subscribe(&user_store, |this, _user_store, event, cx| {
             if matches!(event, client::user::Event::OrganizationChanged) {
-                // Clear the existing token before refreshing, so that a failed refresh
-                // doesn't leave a token for the wrong organization.
                 this.refresh(TokenRefreshMode::ClearAndRefresh, cx);
             }
         });
