@@ -2,12 +2,24 @@ use anyhow::{Context as _, Result, anyhow};
 
 pub const MARKER_TAG_PREFIX: &str = "<|marker_";
 pub const MARKER_TAG_SUFFIX: &str = "|>";
+pub const RELATIVE_MARKER_TAG_PREFIX: &str = "<|marker";
 const MIN_BLOCK_LINES: usize = 3;
 const MAX_BLOCK_LINES: usize = 8;
 pub const V0316_END_MARKER: &str = "<[end▁of▁sentence]>";
+pub const V0317_END_MARKER: &str = "<[end▁of▁sentence]>";
 
 pub fn marker_tag(number: usize) -> String {
     format!("{MARKER_TAG_PREFIX}{number}{MARKER_TAG_SUFFIX}")
+}
+
+pub fn marker_tag_relative(delta: isize) -> String {
+    if delta > 0 {
+        format!("<|marker+{delta}|>")
+    } else if delta == 0 {
+        String::from("<|marker-0|>")
+    } else {
+        format!("<|marker{delta}|>")
+    }
 }
 
 /// Compute byte offsets within `editable_text` where marker boundaries should
@@ -374,6 +386,12 @@ struct MarkerTag {
     tag_end: usize,
 }
 
+struct RelativeMarkerTag {
+    delta: isize,
+    tag_start: usize,
+    tag_end: usize,
+}
+
 fn collect_marker_tags(text: &str) -> Vec<MarkerTag> {
     let mut markers = Vec::new();
     let mut search_from = 0;
@@ -398,6 +416,31 @@ fn collect_marker_tags(text: &str) -> Vec<MarkerTag> {
     markers
 }
 
+fn collect_relative_marker_tags(text: &str) -> Vec<RelativeMarkerTag> {
+    let mut markers = Vec::new();
+    let mut search_from = 0;
+    while let Some(rel_pos) = text[search_from..].find(RELATIVE_MARKER_TAG_PREFIX) {
+        let tag_start = search_from + rel_pos;
+        let payload_start = tag_start + RELATIVE_MARKER_TAG_PREFIX.len();
+        if let Some(suffix_rel) = text[payload_start..].find(MARKER_TAG_SUFFIX) {
+            let payload_end = payload_start + suffix_rel;
+            let payload = &text[payload_start..payload_end];
+            if let Ok(delta) = payload.parse::<isize>() {
+                let tag_end = payload_end + MARKER_TAG_SUFFIX.len();
+                markers.push(RelativeMarkerTag {
+                    delta,
+                    tag_start,
+                    tag_end,
+                });
+                search_from = tag_end;
+                continue;
+            }
+        }
+        search_from = tag_start + RELATIVE_MARKER_TAG_PREFIX.len();
+    }
+    markers
+}
+
 pub fn nearest_marker_number(cursor_offset: Option<usize>, marker_offsets: &[usize]) -> usize {
     let cursor = cursor_offset.unwrap_or(0);
     marker_offsets
@@ -406,6 +449,48 @@ pub fn nearest_marker_number(cursor_offset: Option<usize>, marker_offsets: &[usi
         .min_by_key(|(_, offset)| (**offset as isize - cursor as isize).unsigned_abs())
         .map(|(idx, _)| idx + 1)
         .unwrap_or(1)
+}
+
+fn cursor_block_index(cursor_offset: Option<usize>, marker_offsets: &[usize]) -> usize {
+    let cursor = cursor_offset.unwrap_or(0);
+    marker_offsets
+        .windows(2)
+        .position(|window| cursor >= window[0] && cursor < window[1])
+        .unwrap_or_else(|| marker_offsets.len().saturating_sub(2))
+}
+
+/// Write the editable region content with V0317 byte-exact marker tags, where
+/// marker numbers are relative to the cursor block.
+pub fn write_editable_with_markers_v0317(
+    output: &mut String,
+    editable_text: &str,
+    cursor_offset_in_editable: usize,
+    cursor_marker: &str,
+) {
+    let marker_offsets = compute_marker_offsets(editable_text);
+    let anchor_idx = cursor_block_index(Some(cursor_offset_in_editable), &marker_offsets);
+    let mut cursor_placed = false;
+
+    for (i, &offset) in marker_offsets.iter().enumerate() {
+        let marker_delta = i as isize - anchor_idx as isize;
+        output.push_str(&marker_tag_relative(marker_delta));
+
+        if let Some(&next_offset) = marker_offsets.get(i + 1) {
+            let block = &editable_text[offset..next_offset];
+            if !cursor_placed
+                && cursor_offset_in_editable >= offset
+                && cursor_offset_in_editable <= next_offset
+            {
+                cursor_placed = true;
+                let cursor_in_block = cursor_offset_in_editable - offset;
+                output.push_str(&block[..cursor_in_block]);
+                output.push_str(cursor_marker);
+                output.push_str(&block[cursor_in_block..]);
+            } else {
+                output.push_str(block);
+            }
+        }
+    }
 }
 
 /// Write the editable region content with V0316 byte-exact marker tags.
@@ -462,8 +547,14 @@ pub fn apply_marker_span_v0316(old_editable: &str, output: &str) -> Result<Strin
         ));
     }
 
-    let start_num = markers.first().unwrap().number;
-    let end_num = markers.last().unwrap().number;
+    let start_num = markers
+        .first()
+        .map(|marker| marker.number)
+        .context("missing first marker")?;
+    let end_num = markers
+        .last()
+        .map(|marker| marker.number)
+        .context("missing last marker")?;
 
     // No-edit signal: start_num == end_num
     if start_num == end_num {
@@ -511,6 +602,81 @@ pub fn apply_marker_span_v0316(old_editable: &str, output: &str) -> Result<Strin
     }
 
     // Splice into old_editable
+    let mut result = String::new();
+    result.push_str(&old_editable[..start_byte]);
+    result.push_str(&new_content);
+    result.push_str(&old_editable[end_byte..]);
+
+    Ok(result)
+}
+
+/// Parse V0317 model output and reconstruct the full new editable region.
+///
+/// V0317 differences from V0316:
+/// - Marker ids are relative to the cursor block (e.g. -2, -1, 0, +1, +2).
+/// - No-edit signal is any repeated relative marker tag.
+pub fn apply_marker_span_v0317(
+    old_editable: &str,
+    output: &str,
+    cursor_offset_in_old: Option<usize>,
+) -> Result<String> {
+    let markers = collect_relative_marker_tags(output);
+
+    if markers.is_empty() {
+        return Err(anyhow!("no marker tags found in output"));
+    }
+
+    if markers.len() == 1 {
+        return Err(anyhow!(
+            "only one marker tag found in output, expected at least two"
+        ));
+    }
+
+    let marker_offsets = compute_marker_offsets(old_editable);
+    let anchor_idx = cursor_block_index(cursor_offset_in_old, &marker_offsets);
+
+    let start_delta = markers
+        .first()
+        .map(|marker| marker.delta)
+        .context("missing first marker")?;
+    let end_delta = markers
+        .last()
+        .map(|marker| marker.delta)
+        .context("missing last marker")?;
+
+    if start_delta == end_delta {
+        return Ok(old_editable.to_string());
+    }
+
+    let start_idx_isize = anchor_idx as isize + start_delta;
+    let end_idx_isize = anchor_idx as isize + end_delta;
+    if start_idx_isize < 0 || end_idx_isize < 0 {
+        return Err(anyhow!("relative marker maps before first marker"));
+    }
+
+    let start_idx = usize::try_from(start_idx_isize).context("invalid start marker index")?;
+    let end_idx = usize::try_from(end_idx_isize).context("invalid end marker index")?;
+
+    let start_byte = *marker_offsets
+        .get(start_idx)
+        .context("start marker number out of range")?;
+    let end_byte = *marker_offsets
+        .get(end_idx)
+        .context("end marker number out of range")?;
+
+    if start_byte > end_byte {
+        return Err(anyhow!("start marker must come before end marker"));
+    }
+
+    let mut new_content = String::new();
+    for i in 0..markers.len() - 1 {
+        let content_start = markers[i].tag_end;
+        let content_end = markers[i + 1].tag_start;
+        if content_start <= content_end {
+            new_content.push_str(&output[content_start..content_end]);
+        }
+    }
+
     let mut result = String::new();
     result.push_str(&old_editable[..start_byte]);
     result.push_str(&new_content);
@@ -658,6 +824,141 @@ pub fn encode_from_old_and_new_v0316(
     // Final closing marker
     let end_marker_num = end_marker_idx + 1;
     result.push_str(&marker_tag(end_marker_num));
+    result.push_str(end_marker);
+
+    Ok(result)
+}
+
+/// Encode the V0317 training target from old and new editable text.
+///
+/// V0317 differences from V0316:
+/// - Marker ids are relative to cursor block (..., -2, -1, 0, +1, +2, ...).
+/// - No-edit signal: repeated cursor-relative marker.
+pub fn encode_from_old_and_new_v0317(
+    old_editable: &str,
+    new_editable: &str,
+    cursor_offset_in_new: Option<usize>,
+    cursor_marker: &str,
+    end_marker: &str,
+) -> Result<String> {
+    let marker_offsets = compute_marker_offsets(old_editable);
+    let anchor_idx = cursor_block_index(cursor_offset_in_new, &marker_offsets);
+
+    if old_editable == new_editable {
+        let tag = marker_tag_relative(0);
+        return Ok(format!("{tag}{tag}{end_marker}"));
+    }
+
+    let common_prefix = old_editable
+        .bytes()
+        .zip(new_editable.bytes())
+        .take_while(|(a, b)| a == b)
+        .count();
+
+    let old_remaining = old_editable.len() - common_prefix;
+    let new_remaining = new_editable.len() - common_prefix;
+    let max_suffix = old_remaining.min(new_remaining);
+    let common_suffix = old_editable.as_bytes()[old_editable.len() - max_suffix..]
+        .iter()
+        .rev()
+        .zip(
+            new_editable.as_bytes()[new_editable.len() - max_suffix..]
+                .iter()
+                .rev(),
+        )
+        .take_while(|(a, b)| a == b)
+        .count();
+
+    let change_end_in_old = old_editable.len() - common_suffix;
+
+    let start_marker_idx = marker_offsets
+        .iter()
+        .rposition(|&offset| offset <= common_prefix)
+        .unwrap_or(0);
+    let end_marker_idx = marker_offsets
+        .iter()
+        .position(|&offset| offset >= change_end_in_old)
+        .unwrap_or(marker_offsets.len() - 1);
+
+    let old_start = marker_offsets[start_marker_idx];
+    let old_end = marker_offsets[end_marker_idx];
+
+    let new_start = old_start;
+    let new_end = new_editable
+        .len()
+        .saturating_sub(old_editable.len().saturating_sub(old_end));
+
+    let new_span = &new_editable[new_start..new_end];
+    let old_span = &old_editable[old_start..old_end];
+
+    let span_common_prefix = old_span
+        .bytes()
+        .zip(new_span.bytes())
+        .take_while(|(a, b)| a == b)
+        .count();
+
+    let span_old_remaining = old_span.len() - span_common_prefix;
+    let span_new_remaining = new_span.len() - span_common_prefix;
+    let span_max_suffix = span_old_remaining.min(span_new_remaining);
+    let span_common_suffix = old_span.as_bytes()[old_span.len() - span_max_suffix..]
+        .iter()
+        .rev()
+        .zip(
+            new_span.as_bytes()[new_span.len() - span_max_suffix..]
+                .iter()
+                .rev(),
+        )
+        .take_while(|(a, b)| a == b)
+        .count();
+
+    let mut result = String::new();
+    let mut prev_new_rel = 0usize;
+    let mut cursor_placed = false;
+
+    for block_idx in start_marker_idx..end_marker_idx {
+        let marker_delta = block_idx as isize - anchor_idx as isize;
+        result.push_str(&marker_tag_relative(marker_delta));
+
+        let new_rel_end = if block_idx + 1 == end_marker_idx {
+            new_span.len()
+        } else {
+            let old_rel = marker_offsets[block_idx + 1] - old_start;
+            let mapped = map_boundary_offset(
+                old_rel,
+                old_span.len(),
+                new_span.len(),
+                span_common_prefix,
+                span_common_suffix,
+            );
+            new_span.floor_char_boundary(mapped)
+        };
+
+        let new_rel_end = new_rel_end.max(prev_new_rel);
+        let block_content = &new_span[prev_new_rel..new_rel_end];
+
+        if !cursor_placed {
+            if let Some(cursor_offset) = cursor_offset_in_new {
+                let abs_start = new_start + prev_new_rel;
+                let abs_end = new_start + new_rel_end;
+                if cursor_offset >= abs_start && cursor_offset <= abs_end {
+                    cursor_placed = true;
+                    let cursor_in_block = cursor_offset - abs_start;
+                    let bounded = cursor_in_block.min(block_content.len());
+                    result.push_str(&block_content[..bounded]);
+                    result.push_str(cursor_marker);
+                    result.push_str(&block_content[bounded..]);
+                    prev_new_rel = new_rel_end;
+                    continue;
+                }
+            }
+        }
+
+        result.push_str(block_content);
+        prev_new_rel = new_rel_end;
+    }
+
+    let end_marker_delta = end_marker_idx as isize - anchor_idx as isize;
+    result.push_str(&marker_tag_relative(end_marker_delta));
     result.push_str(end_marker);
 
     Ok(result)
@@ -1031,5 +1332,84 @@ mod tests {
         assert_eq!(nearest_marker_number(Some(25), &offsets), 3);
         assert_eq!(nearest_marker_number(Some(30), &offsets), 4);
         assert_eq!(nearest_marker_number(None, &offsets), 1);
+    }
+
+    #[test]
+    fn test_marker_tag_relative_formats_as_expected() {
+        assert_eq!(marker_tag_relative(-2), "<|marker-2|>");
+        assert_eq!(marker_tag_relative(-1), "<|marker-1|>");
+        assert_eq!(marker_tag_relative(0), "<|marker-0|>");
+        assert_eq!(marker_tag_relative(1), "<|marker+1|>");
+        assert_eq!(marker_tag_relative(2), "<|marker+2|>");
+    }
+
+    #[test]
+    fn test_write_editable_with_markers_v0317_includes_relative_markers_and_cursor() {
+        let editable = "aaa\nbbb\nccc\n";
+        let mut output = String::new();
+        write_editable_with_markers_v0317(&mut output, editable, 4, "<|user_cursor|>");
+
+        assert!(output.contains("<|marker-0|>"));
+        assert!(output.contains("<|user_cursor|>"));
+
+        let stripped = output.replace("<|user_cursor|>", "");
+        let stripped =
+            collect_relative_marker_tags(&stripped)
+                .iter()
+                .fold(stripped.clone(), |acc, marker| {
+                    let tag = &stripped[marker.tag_start..marker.tag_end];
+                    acc.replace(tag, "")
+                });
+        assert_eq!(stripped, editable);
+    }
+
+    #[test]
+    fn test_apply_marker_span_v0317_basic() {
+        let old = "aaa\nbbb\nccc\n";
+        let output = "<|marker-0|>aaa\nBBB\nccc\n<|marker+1|>";
+        let result = apply_marker_span_v0317(old, output, Some(0)).unwrap();
+        assert_eq!(result, "aaa\nBBB\nccc\n");
+    }
+
+    #[test]
+    fn test_apply_marker_span_v0317_no_edit() {
+        let old = "aaa\nbbb\nccc\n";
+        let output = "<|marker-0|><|marker-0|>";
+        let result = apply_marker_span_v0317(old, output, Some(0)).unwrap();
+        assert_eq!(result, old);
+    }
+
+    #[test]
+    fn test_encode_v0317_no_edits() {
+        let old = "aaa\nbbb\nccc\n";
+        let result =
+            encode_from_old_and_new_v0317(old, old, Some(5), "<|user_cursor|>", "<|end|>").unwrap();
+        assert_eq!(result, "<|marker-0|><|marker-0|><|end|>");
+    }
+
+    #[test]
+    fn test_roundtrip_v0317() {
+        let old = "line1\nline2\nline3\n\nline5\nline6\nline7\nline8\n";
+        let new = "line1\nLINE2\nline3\n\nline5\nLINE6\nline7\nline8\n";
+        let cursor = Some(6);
+
+        let encoded =
+            encode_from_old_and_new_v0317(old, new, cursor, "<|user_cursor|>", "<|end|>").unwrap();
+        let stripped = encoded
+            .strip_suffix("<|end|>")
+            .expect("should have end marker");
+        let stripped = stripped.replace("<|user_cursor|>", "");
+        let reconstructed = apply_marker_span_v0317(old, &stripped, cursor).unwrap();
+        assert_eq!(reconstructed, new);
+    }
+
+    #[test]
+    fn test_roundtrip_v0317_with_cursor_marker() {
+        let old = "aaa\nbbb\nccc\n";
+        let new = "aaa\nBBB\nccc\n";
+        let result =
+            encode_from_old_and_new_v0317(old, new, Some(5), "<|user_cursor|>", "<|end|>").unwrap();
+        assert!(result.contains("<|user_cursor|>"), "result: {result}");
+        assert!(result.contains("<|marker-0|>"), "result: {result}");
     }
 }

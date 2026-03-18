@@ -82,8 +82,12 @@ pub enum ZetaFormat {
     v0226Hashline,
     V0304VariableEdit,
     V0304SeedNoEdits,
+    /// Multi-block marker spans with NO_EDITS sentinel.
     V0306SeedMultiRegions,
+    /// Byte-exact marker spans; all intermediate markers emitted; repeated marker means no-edit.
     V0316SeedMultiRegions,
+    /// V0316, but marker numbers are relative to the cursor block (e.g. -1, -0, +1).
+    V0317SeedMultiRegions,
 }
 
 impl std::fmt::Display for ZetaFormat {
@@ -233,6 +237,18 @@ pub fn special_tokens_for_format(format: ZetaFormat) -> &'static [&'static str] 
             ];
             TOKENS
         }
+        ZetaFormat::V0317SeedMultiRegions => {
+            static TOKENS: &[&str] = &[
+                seed_coder::FIM_SUFFIX,
+                seed_coder::FIM_PREFIX,
+                seed_coder::FIM_MIDDLE,
+                seed_coder::FILE_MARKER,
+                multi_region::V0317_END_MARKER,
+                CURSOR_MARKER,
+                multi_region::RELATIVE_MARKER_TAG_PREFIX,
+            ];
+            TOKENS
+        }
         ZetaFormat::V0306SeedMultiRegions => {
             static TOKENS: &[&str] = &[
                 seed_coder::FIM_SUFFIX,
@@ -262,6 +278,7 @@ pub fn token_limits_for_format(format: ZetaFormat) -> (usize, usize) {
         | ZetaFormat::v0226Hashline
         | ZetaFormat::V0306SeedMultiRegions
         | ZetaFormat::V0316SeedMultiRegions
+        | ZetaFormat::V0317SeedMultiRegions
         | ZetaFormat::V0304SeedNoEdits => (350, 150),
         ZetaFormat::V0304VariableEdit => (1024, 0),
     }
@@ -281,6 +298,7 @@ pub fn stop_tokens_for_format(format: ZetaFormat) -> &'static [&'static str] {
         | ZetaFormat::V0306SeedMultiRegions
         | ZetaFormat::V0304SeedNoEdits => &[],
         ZetaFormat::V0316SeedMultiRegions => &[multi_region::V0316_END_MARKER],
+        ZetaFormat::V0317SeedMultiRegions => &[multi_region::V0317_END_MARKER],
     }
 }
 
@@ -304,7 +322,8 @@ pub fn excerpt_ranges_for_format(
         | ZetaFormat::v0226Hashline
         | ZetaFormat::V0304SeedNoEdits
         | ZetaFormat::V0306SeedMultiRegions
-        | ZetaFormat::V0316SeedMultiRegions => (
+        | ZetaFormat::V0316SeedMultiRegions
+        | ZetaFormat::V0317SeedMultiRegions => (
             ranges.editable_350.clone(),
             ranges.editable_350_context_150.clone(),
         ),
@@ -395,6 +414,14 @@ pub fn write_cursor_excerpt_section_for_format(
                 cursor_offset,
             ));
         }
+        ZetaFormat::V0317SeedMultiRegions => {
+            prompt.push_str(&build_v0317_cursor_prefix(
+                path,
+                context,
+                editable_range,
+                cursor_offset,
+            ));
+        }
     }
 }
 
@@ -454,6 +481,33 @@ fn build_v0316_cursor_prefix(
     section
 }
 
+fn build_v0317_cursor_prefix(
+    path: &Path,
+    context: &str,
+    editable_range: &Range<usize>,
+    cursor_offset: usize,
+) -> String {
+    let mut section = String::new();
+    let path_str = path.to_string_lossy();
+    write!(section, "{}{}\n", seed_coder::FILE_MARKER, path_str).ok();
+
+    section.push_str(&context[..editable_range.start]);
+
+    let editable_text = &context[editable_range.clone()];
+    let cursor_in_editable = cursor_offset - editable_range.start;
+    multi_region::write_editable_with_markers_v0317(
+        &mut section,
+        editable_text,
+        cursor_in_editable,
+        CURSOR_MARKER,
+    );
+
+    if !section.ends_with('\n') {
+        section.push('\n');
+    }
+    section
+}
+
 fn offset_range_to_row_range(text: &str, range: Range<usize>) -> Range<u32> {
     let start_row = text[0..range.start].matches('\n').count() as u32;
     let mut end_row = start_row + text[range.clone()].matches('\n').count() as u32;
@@ -491,7 +545,8 @@ pub fn format_prompt_with_budget_for_format(
         ZetaFormat::V0211SeedCoder
         | ZetaFormat::V0304SeedNoEdits
         | ZetaFormat::V0306SeedMultiRegions
-        | ZetaFormat::V0316SeedMultiRegions => {
+        | ZetaFormat::V0316SeedMultiRegions
+        | ZetaFormat::V0317SeedMultiRegions => {
             let mut cursor_section = String::new();
             write_cursor_excerpt_section_for_format(
                 format,
@@ -586,7 +641,8 @@ pub fn max_edit_event_count_for_format(format: &ZetaFormat) -> usize {
         | ZetaFormat::V0304SeedNoEdits
         | ZetaFormat::V0304VariableEdit
         | ZetaFormat::V0306SeedMultiRegions
-        | ZetaFormat::V0316SeedMultiRegions => 6,
+        | ZetaFormat::V0316SeedMultiRegions
+        | ZetaFormat::V0317SeedMultiRegions => 6,
     }
 }
 
@@ -607,7 +663,8 @@ pub fn get_prefill_for_format(
         | ZetaFormat::V0304VariableEdit => String::new(),
         ZetaFormat::V0304SeedNoEdits
         | ZetaFormat::V0306SeedMultiRegions
-        | ZetaFormat::V0316SeedMultiRegions => String::new(),
+        | ZetaFormat::V0316SeedMultiRegions
+        | ZetaFormat::V0317SeedMultiRegions => String::new(),
     }
 }
 
@@ -620,6 +677,7 @@ pub fn output_end_marker_for_format(format: ZetaFormat) -> Option<&'static str> 
         | ZetaFormat::V0304SeedNoEdits
         | ZetaFormat::V0306SeedMultiRegions => Some(seed_coder::END_MARKER),
         ZetaFormat::V0316SeedMultiRegions => Some(multi_region::V0316_END_MARKER),
+        ZetaFormat::V0317SeedMultiRegions => Some(multi_region::V0317_END_MARKER),
         ZetaFormat::V0112MiddleAtEnd
         | ZetaFormat::V0113Ordered
         | ZetaFormat::V0114180EditableRegion
@@ -662,6 +720,18 @@ pub fn encode_patch_as_output_for_format(
                 Ok(None)
             }
         }
+        ZetaFormat::V0317SeedMultiRegions => {
+            let empty_patch = patch.lines().count() <= 3;
+            if empty_patch {
+                let tag = multi_region::marker_tag_relative(0);
+                Ok(Some(format!(
+                    "{tag}{tag}{}",
+                    multi_region::V0317_END_MARKER
+                )))
+            } else {
+                Ok(None)
+            }
+        }
         _ => Ok(None),
     }
 }
@@ -684,10 +754,11 @@ pub fn parse_zeta2_model_output(
         None => output,
     };
 
-    let (context, editable_range_in_context, context_range, _) =
+    let (context, editable_range_in_context, context_range, cursor_offset) =
         resolve_cursor_region(prompt_inputs, format);
     let context_start = context_range.start;
     let old_editable_region = &context[editable_range_in_context.clone()];
+    let cursor_offset_in_editable = cursor_offset.saturating_sub(editable_range_in_context.start);
 
     let (range_in_context, output) = match format {
         ZetaFormat::v0226Hashline => (
@@ -718,6 +789,14 @@ pub fn parse_zeta2_model_output(
         ZetaFormat::V0316SeedMultiRegions => (
             editable_range_in_context,
             multi_region::apply_marker_span_v0316(old_editable_region, output)?,
+        ),
+        ZetaFormat::V0317SeedMultiRegions => (
+            editable_range_in_context,
+            multi_region::apply_marker_span_v0317(
+                old_editable_region,
+                output,
+                Some(cursor_offset_in_editable),
+            )?,
         ),
         _ => (editable_range_in_context, output.to_string()),
     };
