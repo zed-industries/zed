@@ -150,19 +150,44 @@ pub struct AuthServerMetadata {
 }
 
 /// The result of client registration — either CIMD or DCR.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct OAuthClientRegistration {
     pub client_id: String,
     /// Only present for DCR-minted registrations.
     pub client_secret: Option<String>,
 }
 
+impl std::fmt::Debug for OAuthClientRegistration {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("OAuthClientRegistration")
+            .field("client_id", &self.client_id)
+            .field(
+                "client_secret",
+                &self.client_secret.as_ref().map(|_| "[redacted]"),
+            )
+            .finish()
+    }
+}
+
 /// Access and refresh tokens obtained from the token endpoint.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct OAuthTokens {
     pub access_token: String,
     pub refresh_token: Option<String>,
     pub expires_at: Option<SystemTime>,
+}
+
+impl std::fmt::Debug for OAuthTokens {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("OAuthTokens")
+            .field("access_token", &"[redacted]")
+            .field(
+                "refresh_token",
+                &self.refresh_token.as_ref().map(|_| "[redacted]"),
+            )
+            .field("expires_at", &self.expires_at)
+            .finish()
+    }
 }
 
 /// Everything discovered before the browser flow starts. Client registration is
@@ -179,12 +204,23 @@ pub struct OAuthDiscovery {
 /// Stored in the keychain so startup can restore a refresh-capable provider
 /// without another browser flow. Deliberately excludes the full discovery
 /// metadata to keep the serialized size well within keychain item limits.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct OAuthSession {
     pub token_endpoint: Url,
     pub resource: Url,
     pub client_registration: OAuthClientRegistration,
     pub tokens: OAuthTokens,
+}
+
+impl std::fmt::Debug for OAuthSession {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("OAuthSession")
+            .field("token_endpoint", &self.token_endpoint)
+            .field("resource", &self.resource)
+            .field("client_registration", &self.client_registration)
+            .field("tokens", &self.tokens)
+            .finish()
+    }
 }
 
 /// Error codes defined by RFC 6750 Section 3.1 for Bearer token authentication.
@@ -490,10 +526,19 @@ pub fn determine_registration_strategy(
 // -- PKCE (RFC 7636) ---------------------------------------------------------
 
 /// A PKCE code verifier and its S256 challenge.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct PkceChallenge {
     pub verifier: String,
     pub challenge: String,
+}
+
+impl std::fmt::Debug for PkceChallenge {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PkceChallenge")
+            .field("verifier", &"[redacted]")
+            .field("challenge", &self.challenge)
+            .finish()
+    }
 }
 
 /// Generate a PKCE code verifier and S256 challenge per RFC 7636.
@@ -547,7 +592,7 @@ pub fn build_authorization_url(
 // -- Token endpoint request bodies -------------------------------------------
 
 /// The JSON body returned by the token endpoint on success.
-#[derive(Debug, Deserialize)]
+#[derive(Deserialize)]
 pub struct TokenResponse {
     pub access_token: String,
     #[serde(default)]
@@ -556,6 +601,20 @@ pub struct TokenResponse {
     pub expires_in: Option<u64>,
     #[serde(default)]
     pub token_type: Option<String>,
+}
+
+impl std::fmt::Debug for TokenResponse {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("TokenResponse")
+            .field("access_token", &"[redacted]")
+            .field(
+                "refresh_token",
+                &self.refresh_token.as_ref().map(|_| "[redacted]"),
+            )
+            .field("expires_in", &self.expires_in)
+            .field("token_type", &self.token_type)
+            .finish()
+    }
 }
 
 impl TokenResponse {
@@ -914,10 +973,18 @@ async fn post_token_request(
 // -- Loopback HTTP callback server -------------------------------------------
 
 /// An OAuth authorization callback received via the loopback HTTP server.
-#[derive(Debug)]
 pub struct OAuthCallback {
     pub code: String,
     pub state: String,
+}
+
+impl std::fmt::Debug for OAuthCallback {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("OAuthCallback")
+            .field("code", &"[redacted]")
+            .field("state", &"[redacted]")
+            .finish()
+    }
 }
 
 impl OAuthCallback {
