@@ -11,8 +11,8 @@ use crate::{
 use anyhow::Context as _;
 use collections::HashMap;
 use editor::{
-    Anchor, Editor, EditorEvent, EditorSettings, ExcerptId, MAX_TAB_TITLE_LEN, MultiBuffer, PathKey,
-    SelectionEffects,
+    Anchor, Editor, EditorEvent, EditorSettings, ExcerptId, MAX_TAB_TITLE_LEN, MultiBuffer,
+    PathKey, SelectionEffects,
     actions::{Backtab, FoldAll, SelectAll, Tab, UnfoldAll},
     items::active_match_index,
     multibuffer_context_lines,
@@ -4984,9 +4984,12 @@ pub mod tests {
             .unwrap();
 
         // Delete file_b.txt
-        fs.remove_file(path!("/dir/file_b.txt").as_ref(), fs::RemoveOptions::default())
-            .await
-            .unwrap();
+        fs.remove_file(
+            path!("/dir/file_b.txt").as_ref(),
+            fs::RemoveOptions::default(),
+        )
+        .await
+        .unwrap();
         cx.run_until_parked();
 
         // Verify deleted file's results are removed proactively
