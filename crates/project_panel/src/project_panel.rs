@@ -5,7 +5,7 @@ use anyhow::{Context as _, Result};
 use client::{ErrorCode, ErrorExt};
 use collections::{BTreeSet, HashMap, hash_map};
 use command_palette_hooks::CommandPaletteFilter;
-use db::kvp::KEY_VALUE_STORE;
+use db::kvp::KeyValueStore;
 use editor::{
     Editor, EditorEvent, MultiBufferOffset,
     items::{
@@ -999,16 +999,18 @@ impl ProjectPanel {
             .ok()
             .flatten()
         {
-            Some(serialization_key) => cx
-                .background_spawn(async move { KEY_VALUE_STORE.read_kvp(&serialization_key) })
-                .await
-                .context("loading project panel")
-                .log_err()
-                .flatten()
-                .map(|panel| serde_json::from_str::<SerializedProjectPanel>(&panel))
-                .transpose()
-                .log_err()
-                .flatten(),
+            Some(serialization_key) => {
+                let kvp = cx.update(|_, cx| KeyValueStore::global(cx))?;
+                cx.background_spawn(async move { kvp.read_kvp(&serialization_key) })
+                    .await
+                    .context("loading project panel")
+                    .log_err()
+                    .flatten()
+                    .map(|panel| serde_json::from_str::<SerializedProjectPanel>(&panel))
+                    .transpose()
+                    .log_err()
+                    .flatten()
+            }
             None => None,
         };
 
@@ -1114,14 +1116,14 @@ impl ProjectPanel {
             return;
         };
         let width = self.width;
+        let kvp = KeyValueStore::global(cx);
         self.pending_serialization = cx.background_spawn(
             async move {
-                KEY_VALUE_STORE
-                    .write_kvp(
-                        serialization_key,
-                        serde_json::to_string(&SerializedProjectPanel { width })?,
-                    )
-                    .await?;
+                kvp.write_kvp(
+                    serialization_key,
+                    serde_json::to_string(&SerializedProjectPanel { width })?,
+                )
+                .await?;
                 anyhow::Ok(())
             }
             .log_err(),

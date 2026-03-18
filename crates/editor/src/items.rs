@@ -4,7 +4,7 @@ use crate::{
     NavigationData, ReportEditorEvent, SelectionEffects, ToPoint as _,
     display_map::HighlightKey,
     editor_settings::SeedQuerySetting,
-    persistence::{DB, SerializedEditor},
+    persistence::{EditorDb, SerializedEditor},
     scroll::{ScrollAnchor, ScrollOffset},
 };
 use anyhow::{Context as _, Result, anyhow};
@@ -1135,7 +1135,13 @@ impl SerializableItem for Editor {
         _window: &mut Window,
         cx: &mut App,
     ) -> Task<Result<()>> {
-        workspace::delete_unloaded_items(alive_items, workspace_id, "editors", &DB, cx)
+        workspace::delete_unloaded_items(
+            alive_items,
+            workspace_id,
+            "editors",
+            &EditorDb::global(cx),
+            cx,
+        )
     }
 
     fn deserialize(
@@ -1146,7 +1152,7 @@ impl SerializableItem for Editor {
         window: &mut Window,
         cx: &mut App,
     ) -> Task<Result<Entity<Self>>> {
-        let serialized_editor = match DB
+        let serialized_editor = match EditorDb::global(cx)
             .get_serialized_editor(item_id, workspace_id)
             .context("Failed to query editor state")
         {
@@ -1361,6 +1367,7 @@ impl SerializableItem for Editor {
 
         let snapshot = buffer.read(cx).snapshot();
 
+        let db = EditorDb::global(cx);
         Some(cx.spawn_in(window, async move |_this, cx| {
             cx.background_spawn(async move {
                 let (contents, language) = if serialize_dirty_buffers && is_dirty {
@@ -1378,7 +1385,7 @@ impl SerializableItem for Editor {
                     mtime,
                 };
                 log::debug!("Serializing editor {item_id:?} in workspace {workspace_id:?}");
-                DB.save_serialized_editor(item_id, workspace_id, editor)
+                db.save_serialized_editor(item_id, workspace_id, editor)
                     .await
                     .context("failed to save serialized editor")
             })

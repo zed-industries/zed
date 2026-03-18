@@ -1,6 +1,6 @@
 use anyhow::{Context as _, Result};
 use client::Client;
-use db::kvp::KEY_VALUE_STORE;
+use db::kvp::KeyValueStore;
 use futures_lite::StreamExt;
 use gpui::{
     App, AppContext as _, AsyncApp, BackgroundExecutor, Context, Entity, Global, Task, Window,
@@ -762,17 +762,16 @@ impl AutoUpdater {
         should_show: bool,
         cx: &App,
     ) -> Task<Result<()>> {
+        let kvp = KeyValueStore::global(cx);
         cx.background_spawn(async move {
             if should_show {
-                KEY_VALUE_STORE
-                    .write_kvp(
-                        SHOULD_SHOW_UPDATE_NOTIFICATION_KEY.to_string(),
-                        "".to_string(),
-                    )
-                    .await?;
+                kvp.write_kvp(
+                    SHOULD_SHOW_UPDATE_NOTIFICATION_KEY.to_string(),
+                    "".to_string(),
+                )
+                .await?;
             } else {
-                KEY_VALUE_STORE
-                    .delete_kvp(SHOULD_SHOW_UPDATE_NOTIFICATION_KEY.to_string())
+                kvp.delete_kvp(SHOULD_SHOW_UPDATE_NOTIFICATION_KEY.to_string())
                     .await?;
             }
             Ok(())
@@ -780,10 +779,9 @@ impl AutoUpdater {
     }
 
     pub fn should_show_update_notification(&self, cx: &App) -> Task<Result<bool>> {
+        let kvp = KeyValueStore::global(cx);
         cx.background_spawn(async move {
-            Ok(KEY_VALUE_STORE
-                .read_kvp(SHOULD_SHOW_UPDATE_NOTIFICATION_KEY)?
-                .is_some())
+            Ok(kvp.read_kvp(SHOULD_SHOW_UPDATE_NOTIFICATION_KEY)?.is_some())
         })
     }
 }

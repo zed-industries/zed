@@ -45,7 +45,7 @@ use ui::{
 use util::{ResultExt, paths::PathExt};
 use workspace::{
     HistoryManager, ModalView, MultiWorkspace, OpenOptions, OpenVisible, PathList,
-    SerializedWorkspaceLocation, WORKSPACE_DB, Workspace, WorkspaceId,
+    SerializedWorkspaceLocation, Workspace, WorkspaceDb, WorkspaceId,
     notifications::DetachAndPromptErr, with_active_or_new_workspace,
 };
 use zed_actions::{OpenDevContainer, OpenRecent, OpenRemote};
@@ -87,8 +87,9 @@ pub async fn get_recent_projects(
     current_workspace_id: Option<WorkspaceId>,
     limit: Option<usize>,
     fs: Arc<dyn fs::Fs>,
+    db: &WorkspaceDb,
 ) -> Vec<RecentProjectEntry> {
-    let workspaces = WORKSPACE_DB
+    let workspaces = db
         .recent_workspaces_on_disk(fs.as_ref())
         .await
         .unwrap_or_default();
@@ -137,8 +138,8 @@ pub async fn get_recent_projects(
     }
 }
 
-pub async fn delete_recent_project(workspace_id: WorkspaceId) {
-    let _ = WORKSPACE_DB.delete_workspace_by_id(workspace_id).await;
+pub async fn delete_recent_project(workspace_id: WorkspaceId, db: &WorkspaceDb) {
+    let _ = db.delete_workspace_by_id(workspace_id).await;
 }
 
 fn get_open_folders(workspace: &Workspace, cx: &App) -> Vec<OpenFolderEntry> {
@@ -507,9 +508,10 @@ impl RecentProjects {
         let _subscription = cx.subscribe(&picker, |_, _, _, cx| cx.emit(DismissEvent));
         // We do not want to block the UI on a potentially lengthy call to DB, so we're gonna swap
         // out workspace locations once the future runs to completion.
+        let db = WorkspaceDb::global(cx);
         cx.spawn_in(window, async move |this, cx| {
             let Some(fs) = fs else { return };
-            let workspaces = WORKSPACE_DB
+            let workspaces = db
                 .recent_workspaces_on_disk(fs.as_ref())
                 .await
                 .log_err()
@@ -1511,13 +1513,11 @@ impl RecentProjectsDelegate {
                 .workspace
                 .upgrade()
                 .map(|ws| ws.read(cx).app_state().fs.clone());
+            let db = WorkspaceDb::global(cx);
             cx.spawn_in(window, async move |this, cx| {
-                WORKSPACE_DB
-                    .delete_workspace_by_id(workspace_id)
-                    .await
-                    .log_err();
+                db.delete_workspace_by_id(workspace_id).await.log_err();
                 let Some(fs) = fs else { return };
-                let workspaces = WORKSPACE_DB
+                let workspaces = db
                     .recent_workspaces_on_disk(fs.as_ref())
                     .await
                     .unwrap_or_default();

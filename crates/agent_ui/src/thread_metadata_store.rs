@@ -95,7 +95,7 @@ impl ThreadMetadataStore {
             return;
         }
 
-        let db = THREAD_METADATA_DB.clone();
+        let db = ThreadMetadataDb::global(cx);
         let thread_store = cx.new(|cx| Self::new(db, cx));
         cx.set_global(GlobalThreadMetadataStore(thread_store));
     }
@@ -251,7 +251,6 @@ impl ThreadMetadataStore {
 
 impl Global for ThreadMetadataStore {}
 
-#[derive(Clone)]
 struct ThreadMetadataDb(ThreadSafeConnection);
 
 impl Domain for ThreadMetadataDb {
@@ -270,7 +269,7 @@ impl Domain for ThreadMetadataDb {
     )];
 }
 
-db::static_connection!(THREAD_METADATA_DB, ThreadMetadataDb, []);
+db::static_connection!(ThreadMetadataDb, []);
 
 impl ThreadMetadataDb {
     /// List all sidebar thread metadata, ordered by updated_at descending.

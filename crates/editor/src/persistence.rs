@@ -226,7 +226,7 @@ impl Domain for EditorDb {
     ];
 }
 
-db::static_connection!(DB, EditorDb, [WorkspaceDb]);
+db::static_connection!(EditorDb, [WorkspaceDb]);
 
 // https://www.sqlite.org/limits.html
 // > <..> the maximum value of a host parameter number is SQLITE_MAX_VARIABLE_NUMBER,

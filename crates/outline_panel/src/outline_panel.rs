@@ -2,7 +2,7 @@ mod outline_panel_settings;
 
 use anyhow::Context as _;
 use collections::{BTreeSet, HashMap, HashSet, hash_map};
-use db::kvp::KEY_VALUE_STORE;
+use db::kvp::KeyValueStore;
 use editor::{
     AnchorRangeExt, Bias, DisplayPoint, Editor, EditorEvent, ExcerptId, ExcerptRange,
     MultiBufferSnapshot, RangeToAnchorExt, SelectionEffects,
@@ -693,16 +693,18 @@ impl OutlinePanel {
             .ok()
             .flatten()
         {
-            Some(serialization_key) => cx
-                .background_spawn(async move { KEY_VALUE_STORE.read_kvp(&serialization_key) })
-                .await
-                .context("loading outline panel")
-                .log_err()
-                .flatten()
-                .map(|panel| serde_json::from_str::<SerializedOutlinePanel>(&panel))
-                .transpose()
-                .log_err()
-                .flatten(),
+            Some(serialization_key) => {
+                let kvp = cx.update(|_, cx| KeyValueStore::global(cx))?;
+                cx.background_spawn(async move { kvp.read_kvp(&serialization_key) })
+                    .await
+                    .context("loading outline panel")
+                    .log_err()
+                    .flatten()
+                    .map(|panel| serde_json::from_str::<SerializedOutlinePanel>(&panel))
+                    .transpose()
+                    .log_err()
+                    .flatten()
+            }
             None => None,
         };
 
@@ -958,14 +960,14 @@ impl OutlinePanel {
         };
         let width = self.width;
         let active = Some(self.active);
+        let kvp = KeyValueStore::global(cx);
         self.pending_serialization = cx.background_spawn(
             async move {
-                KEY_VALUE_STORE
-                    .write_kvp(
-                        serialization_key,
-                        serde_json::to_string(&SerializedOutlinePanel { width, active })?,
-                    )
-                    .await?;
+                kvp.write_kvp(
+                    serialization_key,
+                    serde_json::to_string(&SerializedOutlinePanel { width, active })?,
+                )
+                .await?;
                 anyhow::Ok(())
             }
             .log_err(),

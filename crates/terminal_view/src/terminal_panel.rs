@@ -8,7 +8,7 @@ use crate::{
 };
 use breadcrumbs::Breadcrumbs;
 use collections::HashMap;
-use db::kvp::KEY_VALUE_STORE;
+use db::kvp::KeyValueStore;
 use futures::{channel::oneshot, future::join_all};
 use gpui::{
     Action, AnyView, App, AsyncApp, AsyncWindowContext, Context, Corner, Entity, EventEmitter,
@@ -250,16 +250,17 @@ impl TerminalPanel {
     ) -> Result<Entity<Self>> {
         let mut terminal_panel = None;
 
-        if let Some((database_id, serialization_key)) = workspace
-            .read_with(&cx, |workspace, _| {
+        if let Some((database_id, serialization_key, kvp)) = workspace
+            .read_with(&cx, |workspace, cx| {
                 workspace
                     .database_id()
                     .zip(TerminalPanel::serialization_key(workspace))
+                    .map(|(id, key)| (id, key, KeyValueStore::global(cx)))
             })
             .ok()
             .flatten()
             && let Some(serialized_panel) = cx
-                .background_spawn(async move { KEY_VALUE_STORE.read_kvp(&serialization_key) })
+                .background_spawn(async move { kvp.read_kvp(&serialization_key) })
                 .await
                 .log_err()
                 .flatten()
@@ -939,6 +940,7 @@ impl TerminalPanel {
         else {
             return;
         };
+        let kvp = KeyValueStore::global(cx);
         self.pending_serialization = cx.spawn(async move |terminal_panel, cx| {
             cx.background_executor()
                 .timer(Duration::from_millis(50))
@@ -953,17 +955,16 @@ impl TerminalPanel {
             });
             cx.background_spawn(
                 async move {
-                    KEY_VALUE_STORE
-                        .write_kvp(
-                            serialization_key,
-                            serde_json::to_string(&SerializedTerminalPanel {
-                                items,
-                                active_item_id: None,
-                                height,
-                                width,
-                            })?,
-                        )
-                        .await?;
+                    kvp.write_kvp(
+                        serialization_key,
+                        serde_json::to_string(&SerializedTerminalPanel {
+                            items,
+                            active_item_id: None,
+                            height,
+                            width,
+                        })?,
+                    )
+                    .await?;
                     anyhow::Ok(())
                 }
                 .log_err(),

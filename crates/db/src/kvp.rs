@@ -11,6 +11,12 @@ use crate::{
 
 pub struct KeyValueStore(crate::sqlez::thread_safe_connection::ThreadSafeConnection);
 
+impl KeyValueStore {
+    pub fn from_app_db(db: &crate::AppDatabase) -> Self {
+        Self(db.0.clone())
+    }
+}
+
 impl Domain for KeyValueStore {
     const NAME: &str = stringify!(KeyValueStore);
 
