@@ -689,8 +689,17 @@ pub async fn fetch_auth_server_metadata(
     for url in &candidate_urls {
         match fetch_json::<AuthServerMetadataResponse>(http_client, url).await {
             Ok(response) => {
+                let reported_issuer = response.issuer.unwrap_or_else(|| issuer.clone());
+                if reported_issuer != *issuer {
+                    bail!(
+                        "Auth server metadata issuer mismatch: expected {}, got {}",
+                        issuer,
+                        reported_issuer
+                    );
+                }
+
                 return Ok(AuthServerMetadata {
-                    issuer: response.issuer.unwrap_or_else(|| issuer.clone()),
+                    issuer: reported_issuer,
                     authorization_endpoint: response
                         .authorization_endpoint
                         .ok_or_else(|| anyhow!("missing authorization_endpoint"))?,
@@ -2077,6 +2086,42 @@ mod tests {
                 "https://auth.example.com/authorize"
             );
             assert!(!metadata.client_id_metadata_document_supported);
+        });
+    }
+
+    #[test]
+    fn test_fetch_auth_server_metadata_rejects_issuer_mismatch() {
+        smol::block_on(async {
+            let client = make_fake_http_client(|req| {
+                Box::pin(async move {
+                    let uri = req.uri().to_string();
+                    if uri.contains(".well-known/oauth-authorization-server") {
+                        // Response claims to be a different issuer.
+                        json_response(
+                            200,
+                            r#"{
+                                "issuer": "https://evil.example.com",
+                                "authorization_endpoint": "https://evil.example.com/authorize",
+                                "token_endpoint": "https://evil.example.com/token",
+                                "code_challenge_methods_supported": ["S256"]
+                            }"#,
+                        )
+                    } else {
+                        json_response(404, "{}")
+                    }
+                })
+            });
+
+            let issuer = Url::parse("https://auth.example.com").unwrap();
+            let result = fetch_auth_server_metadata(&client, &issuer).await;
+
+            assert!(result.is_err());
+            let err_msg = result.unwrap_err().to_string();
+            assert!(
+                err_msg.contains("issuer mismatch"),
+                "unexpected error: {}",
+                err_msg
+            );
         });
     }
 
