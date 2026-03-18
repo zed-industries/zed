@@ -96,7 +96,9 @@ impl LlmApiToken {
                 *lock = Some(response.token.0.clone());
                 Ok(response.token.0)
             }
-            Err(err) => match err {
+            Err(err) => {
+                *lock = None;
+                match err {
                 ClientApiError::Unauthorized => {
                     client.request_sign_out();
                     Err(err).context("Failed to create LLM token")
