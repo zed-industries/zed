@@ -2412,6 +2412,18 @@ impl AcpThread {
 
             let buffer = load.await?;
 
+            // If the buffer has no unsaved user edits, reload it from disk to
+            // ensure we return fresh content. This avoids returning stale data
+            // when an ACP agent modifies files via terminal before reading them
+            // back, as the file watcher may not have picked up the change yet.
+            let needs_reload = buffer.update(cx, |buffer, _| {
+                !buffer.has_unsaved_edits() && buffer.file().is_some()
+            });
+            if needs_reload {
+                let reload_rx = buffer.update(cx, |buffer, cx| buffer.reload(cx));
+                reload_rx.await.ok();
+            }
+
             let snapshot = if reuse_shared_snapshot {
                 this.read_with(cx, |this, _| {
                     this.shared_buffers.get(&buffer.clone()).cloned()
