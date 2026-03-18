@@ -399,8 +399,9 @@ impl MultiWorkspace {
             active_workspace_id: self.workspace().read(cx).database_id(),
             sidebar_open: self.sidebar_open,
         };
+        let kvp = db::kvp::KeyValueStore::global(cx);
         self._serialize_task = Some(cx.background_spawn(async move {
-            crate::persistence::write_multi_workspace_state(window_id, state).await;
+            crate::persistence::write_multi_workspace_state(&kvp, window_id, state).await;
         }));
     }
 
@@ -578,8 +579,9 @@ impl MultiWorkspace {
         self.focus_active_workspace(window, cx);
 
         let weak_workspace = new_workspace.downgrade();
+        let db = crate::persistence::WorkspaceDb::global(cx);
         self._create_task = Some(cx.spawn_in(window, async move |this, cx| {
-            let result = crate::persistence::DB.next_id().await;
+            let result = db.next_id().await;
             this.update_in(cx, |this, window, cx| match result {
                 Ok(workspace_id) => {
                     if let Some(workspace) = weak_workspace.upgrade() {
@@ -588,19 +590,17 @@ impl MultiWorkspace {
                         workspace.update(cx, |workspace, _cx| {
                             workspace.set_database_id(workspace_id);
                         });
+                        let db = db.clone();
                         cx.background_spawn(async move {
-                            crate::persistence::DB
-                                .set_session_binding(workspace_id, session_id, Some(window_id))
+                            db.set_session_binding(workspace_id, session_id, Some(window_id))
                                 .await
                                 .log_err();
                         })
                         .detach();
                     } else {
+                        let db = db.clone();
                         cx.background_spawn(async move {
-                            crate::persistence::DB
-                                .delete_workspace_by_id(workspace_id)
-                                .await
-                                .log_err();
+                            db.delete_workspace_by_id(workspace_id).await.log_err();
                         })
                         .detach();
                     }
@@ -641,13 +641,11 @@ impl MultiWorkspace {
         }
 
         if let Some(workspace_id) = removed_workspace.read(cx).database_id() {
+            let db = crate::persistence::WorkspaceDb::global(cx);
             self.pending_removal_tasks.retain(|task| !task.is_ready());
             self.pending_removal_tasks
                 .push(cx.background_spawn(async move {
-                    crate::persistence::DB
-                        .delete_workspace_by_id(workspace_id)
-                        .await
-                        .log_err();
+                    db.delete_workspace_by_id(workspace_id).await.log_err();
                 }));
         }
 

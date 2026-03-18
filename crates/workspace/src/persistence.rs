@@ -14,7 +14,7 @@ use fs::Fs;
 use anyhow::{Context as _, Result, bail};
 use collections::{HashMap, HashSet, IndexSet};
 use db::{
-    kvp::KEY_VALUE_STORE,
+    kvp::KeyValueStore,
     query,
     sqlez::{connection::Connection, domain::Domain},
     sqlez_macros::sql,
@@ -174,8 +174,8 @@ impl Column for SerializedWindowBounds {
 
 const DEFAULT_WINDOW_BOUNDS_KEY: &str = "default_window_bounds";
 
-pub fn read_default_window_bounds() -> Option<(Uuid, WindowBounds)> {
-    let json_str = KEY_VALUE_STORE
+pub fn read_default_window_bounds(kvp: &KeyValueStore) -> Option<(Uuid, WindowBounds)> {
+    let json_str = kvp
         .read_kvp(DEFAULT_WINDOW_BOUNDS_KEY)
         .log_err()
         .flatten()?;
@@ -186,13 +186,13 @@ pub fn read_default_window_bounds() -> Option<(Uuid, WindowBounds)> {
 }
 
 pub async fn write_default_window_bounds(
+    kvp: &KeyValueStore,
     bounds: WindowBounds,
     display_uuid: Uuid,
 ) -> anyhow::Result<()> {
     let persisted = WindowBoundsJson::from(bounds);
     let json_str = serde_json::to_string(&(display_uuid, persisted))?;
-    KEY_VALUE_STORE
-        .write_kvp(DEFAULT_WINDOW_BOUNDS_KEY.to_string(), json_str)
+    kvp.write_kvp(DEFAULT_WINDOW_BOUNDS_KEY.to_string(), json_str)
         .await?;
     Ok(())
 }
@@ -290,12 +290,9 @@ impl From<WindowBoundsJson> for WindowBounds {
     }
 }
 
-fn multi_workspace_states() -> db::kvp::ScopedKeyValueStore<'static> {
-    KEY_VALUE_STORE.scoped("multi_workspace_state")
-}
-
-fn read_multi_workspace_state(window_id: WindowId) -> model::MultiWorkspaceState {
-    multi_workspace_states()
+fn read_multi_workspace_state(window_id: WindowId, cx: &App) -> model::MultiWorkspaceState {
+    let kvp = KeyValueStore::global(cx);
+    kvp.scoped("multi_workspace_state")
         .read(&window_id.as_u64().to_string())
         .log_err()
         .flatten()
@@ -303,9 +300,13 @@ fn read_multi_workspace_state(window_id: WindowId) -> model::MultiWorkspaceState
         .unwrap_or_default()
 }
 
-pub async fn write_multi_workspace_state(window_id: WindowId, state: model::MultiWorkspaceState) {
+pub async fn write_multi_workspace_state(
+    kvp: &KeyValueStore,
+    window_id: WindowId,
+    state: model::MultiWorkspaceState,
+) {
     if let Ok(json_str) = serde_json::to_string(&state) {
-        multi_workspace_states()
+        kvp.scoped("multi_workspace_state")
             .write(window_id.as_u64().to_string(), json_str)
             .await
             .log_err();
@@ -314,6 +315,7 @@ pub async fn write_multi_workspace_state(window_id: WindowId, state: model::Mult
 
 pub fn read_serialized_multi_workspaces(
     session_workspaces: Vec<model::SessionWorkspace>,
+    cx: &App,
 ) -> Vec<model::SerializedMultiWorkspace> {
     let mut window_groups: Vec<Vec<model::SessionWorkspace>> = Vec::new();
     let mut window_id_to_group: HashMap<WindowId, usize> = HashMap::default();
@@ -338,7 +340,7 @@ pub fn read_serialized_multi_workspaces(
         .map(|group| {
             let window_id = group.first().and_then(|sw| sw.window_id);
             let state = window_id
-                .map(read_multi_workspace_state)
+                .map(|wid| read_multi_workspace_state(wid, cx))
                 .unwrap_or_default();
             model::SerializedMultiWorkspace {
                 workspaces: group,
@@ -350,19 +352,18 @@ pub fn read_serialized_multi_workspaces(
 
 const DEFAULT_DOCK_STATE_KEY: &str = "default_dock_state";
 
-pub fn read_default_dock_state() -> Option<DockStructure> {
-    let json_str = KEY_VALUE_STORE
-        .read_kvp(DEFAULT_DOCK_STATE_KEY)
-        .log_err()
-        .flatten()?;
+pub fn read_default_dock_state(kvp: &KeyValueStore) -> Option<DockStructure> {
+    let json_str = kvp.read_kvp(DEFAULT_DOCK_STATE_KEY).log_err().flatten()?;
 
     serde_json::from_str::<DockStructure>(&json_str).ok()
 }
 
-pub async fn write_default_dock_state(docks: DockStructure) -> anyhow::Result<()> {
+pub async fn write_default_dock_state(
+    kvp: &KeyValueStore,
+    docks: DockStructure,
+) -> anyhow::Result<()> {
     let json_str = serde_json::to_string(&docks)?;
-    KEY_VALUE_STORE
-        .write_kvp(DEFAULT_DOCK_STATE_KEY.to_string(), json_str)
+    kvp.write_kvp(DEFAULT_DOCK_STATE_KEY.to_string(), json_str)
         .await?;
     Ok(())
 }
@@ -980,7 +981,7 @@ impl Domain for WorkspaceDb {
     }
 }
 
-db::static_connection!(DB, WorkspaceDb, []);
+db::static_connection!(WorkspaceDb, []);
 
 impl WorkspaceDb {
     /// Returns a serialized workspace for the given worktree_roots. If the passed array
@@ -2252,7 +2253,7 @@ impl WorkspaceDb {
         use db::sqlez::statement::Statement;
         use itertools::Itertools as _;
 
-        DB.clear_trusted_worktrees()
+        self.clear_trusted_worktrees()
             .await
             .context("clearing previous trust state")?;
 
@@ -2319,7 +2320,7 @@ VALUES {placeholders};"#
     }
 
     pub fn fetch_trusted_worktrees(&self) -> Result<DbTrustedPaths> {
-        let trusted_worktrees = DB.trusted_worktrees()?;
+        let trusted_worktrees = self.trusted_worktrees()?;
         Ok(trusted_worktrees
             .into_iter()
             .filter_map(|(abs_path, user_name, host_name)| {
@@ -2442,7 +2443,7 @@ mod tests {
         cx.run_until_parked();
 
         // Read back the persisted state and check that the active workspace ID was written.
-        let state_after_add = read_multi_workspace_state(window_id);
+        let state_after_add = cx.update(|_, cx| read_multi_workspace_state(window_id, cx));
         let active_workspace2_db_id = workspace2.read_with(cx, |ws, _| ws.database_id());
         assert_eq!(
             state_after_add.active_workspace_id, active_workspace2_db_id,
@@ -2457,7 +2458,7 @@ mod tests {
 
         cx.run_until_parked();
 
-        let state_after_remove = read_multi_workspace_state(window_id);
+        let state_after_remove = cx.update(|_, cx| read_multi_workspace_state(window_id, cx));
         let remaining_db_id =
             multi_workspace.read_with(cx, |mw, cx| mw.workspace().read(cx).database_id());
         assert_eq!(
@@ -3874,14 +3875,17 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_read_serialized_multi_workspaces_with_state() {
+    async fn test_read_serialized_multi_workspaces_with_state(cx: &mut gpui::TestAppContext) {
         use crate::persistence::model::MultiWorkspaceState;
 
         // Write multi-workspace state for two windows via the scoped KVP.
         let window_10 = WindowId::from(10u64);
         let window_20 = WindowId::from(20u64);
 
+        let kvp = cx.update(|cx| KeyValueStore::global(cx));
+
         write_multi_workspace_state(
+            &kvp,
             window_10,
             MultiWorkspaceState {
                 active_workspace_id: Some(WorkspaceId(2)),
@@ -3891,6 +3895,7 @@ mod tests {
         .await;
 
         write_multi_workspace_state(
+            &kvp,
             window_20,
             MultiWorkspaceState {
                 active_workspace_id: Some(WorkspaceId(3)),
@@ -3927,7 +3932,7 @@ mod tests {
             },
         ];
 
-        let results = read_serialized_multi_workspaces(session_workspaces);
+        let results = cx.update(|cx| read_serialized_multi_workspaces(session_workspaces, cx));
 
         // Should produce 3 groups: window 10, window 20, and the orphan.
         assert_eq!(results.len(), 3);
@@ -3973,14 +3978,16 @@ mod tests {
 
         let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
 
+        let db = cx.update(|_, cx| WorkspaceDb::global(cx));
+
         // Assign a database_id so serialization will actually persist.
-        let workspace_id = DB.next_id().await.unwrap();
+        let workspace_id = db.next_id().await.unwrap();
         workspace.update(cx, |ws, _cx| {
             ws.set_database_id(workspace_id);
         });
 
         // Mutate some workspace state.
-        DB.set_centered_layout(workspace_id, true).await.unwrap();
+        db.set_centered_layout(workspace_id, true).await.unwrap();
 
         // Call flush_serialization and await the returned task directly
         // (without run_until_parked — the point is that awaiting the task
@@ -3992,7 +3999,7 @@ mod tests {
         task.await;
 
         // Read the workspace back from the DB and verify serialization happened.
-        let serialized = DB.workspace_for_id(workspace_id);
+        let serialized = db.workspace_for_id(workspace_id);
         assert!(
             serialized.is_some(),
             "flush_serialization should have persisted the workspace to DB"
@@ -4039,7 +4046,7 @@ mod tests {
         cx.run_until_parked();
 
         // Read back the multi-workspace state.
-        let state = read_multi_workspace_state(window_id);
+        let state = cx.update(|_, cx| read_multi_workspace_state(window_id, cx));
 
         // The new workspace should now have a database_id, and the multi-workspace
         // state should record it as the active workspace.
@@ -4098,7 +4105,8 @@ mod tests {
 
         // The workspace should have been serialized to the DB with real data
         // (not just the bare DEFAULT VALUES row from next_id).
-        let serialized = DB.workspace_for_id(workspace_id);
+        let db = cx.update(|_, cx| WorkspaceDb::global(cx));
+        let serialized = db.workspace_for_id(workspace_id);
         assert!(
             serialized.is_some(),
             "Newly created workspace should be fully serialized in the DB after database_id assignment"
@@ -4130,8 +4138,10 @@ mod tests {
             mw.set_random_database_id(cx);
         });
 
+        let db = cx.update(|_, cx| WorkspaceDb::global(cx));
+
         // Get a real DB id for workspace2 so the row actually exists.
-        let workspace2_db_id = DB.next_id().await.unwrap();
+        let workspace2_db_id = db.next_id().await.unwrap();
 
         multi_workspace.update_in(cx, |mw, window, cx| {
             let workspace = cx.new(|cx| crate::Workspace::test_new(project2.clone(), window, cx));
@@ -4142,7 +4152,7 @@ mod tests {
         });
 
         // Save a full workspace row to the DB directly.
-        DB.save_workspace(SerializedWorkspace {
+        db.save_workspace(SerializedWorkspace {
             id: workspace2_db_id,
             paths: PathList::new(&["/tmp/remove_test"]),
             location: SerializedWorkspaceLocation::Local,
@@ -4159,7 +4169,7 @@ mod tests {
         .await;
 
         assert!(
-            DB.workspace_for_id(workspace2_db_id).is_some(),
+            db.workspace_for_id(workspace2_db_id).is_some(),
             "Workspace2 should exist in DB before removal"
         );
 
@@ -4172,7 +4182,7 @@ mod tests {
 
         // The row should be deleted, not just have session_id cleared.
         assert!(
-            DB.workspace_for_id(workspace2_db_id).is_none(),
+            db.workspace_for_id(workspace2_db_id).is_none(),
             "Removed workspace's DB row should be deleted entirely"
         );
     }
@@ -4200,9 +4210,11 @@ mod tests {
         let project1 = Project::test(fs.clone(), [], cx).await;
         let project2 = Project::test(fs.clone(), [], cx).await;
 
+        let db = cx.update(|cx| WorkspaceDb::global(cx));
+
         // Get real DB ids so the rows actually exist.
-        let ws1_id = DB.next_id().await.unwrap();
-        let ws2_id = DB.next_id().await.unwrap();
+        let ws1_id = db.next_id().await.unwrap();
+        let ws2_id = db.next_id().await.unwrap();
 
         let (multi_workspace, cx) =
             cx.add_window_view(|window, cx| MultiWorkspace::test_new(project1.clone(), window, cx));
@@ -4224,7 +4236,7 @@ mod tests {
         let session_id = "test-zombie-session";
         let window_id_val: u64 = 42;
 
-        DB.save_workspace(SerializedWorkspace {
+        db.save_workspace(SerializedWorkspace {
             id: ws1_id,
             paths: PathList::new(&[dir1.path()]),
             location: SerializedWorkspaceLocation::Local,
@@ -4240,7 +4252,7 @@ mod tests {
         })
         .await;
 
-        DB.save_workspace(SerializedWorkspace {
+        db.save_workspace(SerializedWorkspace {
             id: ws2_id,
             paths: PathList::new(&[dir2.path()]),
             location: SerializedWorkspaceLocation::Local,
@@ -4264,7 +4276,7 @@ mod tests {
         cx.run_until_parked();
 
         // The removed workspace should NOT appear in session restoration.
-        let locations = DB
+        let locations = db
             .last_session_workspace_locations(session_id, None, fs.as_ref())
             .await
             .unwrap();
@@ -4299,8 +4311,10 @@ mod tests {
         let project1 = Project::test(fs.clone(), [], cx).await;
         let project2 = Project::test(fs.clone(), [], cx).await;
 
+        let db = cx.update(|cx| WorkspaceDb::global(cx));
+
         // Get a real DB id for workspace2 so the row actually exists.
-        let workspace2_db_id = DB.next_id().await.unwrap();
+        let workspace2_db_id = db.next_id().await.unwrap();
 
         let (multi_workspace, cx) =
             cx.add_window_view(|window, cx| MultiWorkspace::test_new(project1.clone(), window, cx));
@@ -4318,7 +4332,7 @@ mod tests {
         });
 
         // Save a full workspace row to the DB directly and let it settle.
-        DB.save_workspace(SerializedWorkspace {
+        db.save_workspace(SerializedWorkspace {
             id: workspace2_db_id,
             paths: PathList::new(&["/tmp/pending_removal_test"]),
             location: SerializedWorkspaceLocation::Local,
@@ -4363,7 +4377,7 @@ mod tests {
 
         // After awaiting, the DB row should be deleted.
         assert!(
-            DB.workspace_for_id(workspace2_db_id).is_none(),
+            db.workspace_for_id(workspace2_db_id).is_none(),
             "Pending removal task should have deleted the workspace row when awaited"
         );
     }
@@ -4406,8 +4420,10 @@ mod tests {
 
         let workspace_id = new_workspace_db_id.unwrap();
 
+        let db = cx.update(|_, cx| WorkspaceDb::global(cx));
+
         assert!(
-            DB.workspace_for_id(workspace_id).is_some(),
+            db.workspace_for_id(workspace_id).is_some(),
             "The workspace row should exist in the DB"
         );
 
@@ -4418,7 +4434,7 @@ mod tests {
         cx.executor().advance_clock(Duration::from_millis(200));
         cx.run_until_parked();
 
-        let serialized = DB
+        let serialized = db
             .workspace_for_id(workspace_id)
             .expect("workspace row should still exist");
         assert!(
@@ -4451,7 +4467,8 @@ mod tests {
         let (multi_workspace, cx) =
             cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
 
-        let workspace_id = DB.next_id().await.unwrap();
+        let db = cx.update(|_, cx| WorkspaceDb::global(cx));
+        let workspace_id = db.next_id().await.unwrap();
         multi_workspace.update_in(cx, |mw, _, cx| {
             mw.workspace().update(cx, |ws, _cx| {
                 ws.set_database_id(workspace_id);
@@ -4464,7 +4481,7 @@ mod tests {
         });
         task.await;
 
-        let after = DB
+        let after = db
             .workspace_for_id(workspace_id)
             .expect("workspace row should exist after flush_serialization");
         assert!(

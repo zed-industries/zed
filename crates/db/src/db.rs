@@ -115,6 +115,10 @@ fn topological_sort<'a>(registrations: &[&'a DomainMigration]) -> Vec<&'a Domain
 }
 
 /// Shared fallback `AppDatabase` used when no per-App global is set.
+#[cfg(any(test, feature = "test-support"))]
+static APP_DATABASE: LazyLock<AppDatabase> = LazyLock::new(AppDatabase::test_new);
+
+#[cfg(not(any(test, feature = "test-support")))]
 static APP_DATABASE: LazyLock<AppDatabase> = LazyLock::new(AppDatabase::new);
 
 const CONNECTION_INITIALIZE_QUERY: &str = sql!(
