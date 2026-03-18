@@ -583,14 +583,28 @@ impl MarkdownPreviewView {
         });
 
         if let Some(active_editor) = active_editor {
-            markdown_element =
-                markdown_element.on_source_click(move |source_index, click_count, window, cx| {
+            let editor_for_checkbox = active_editor.clone();
+            markdown_element = markdown_element
+                .on_source_click(move |source_index, click_count, window, cx| {
                     if click_count == 2 {
                         Self::move_cursor_to_source_index(&active_editor, source_index, window, cx);
                         true
                     } else {
                         false
                     }
+                })
+                .on_checkbox_toggle(move |source_range, new_checked, _window, cx| {
+                    let task_marker = if new_checked { "[x]" } else { "[ ]" };
+                    editor_for_checkbox.update(cx, |editor, cx| {
+                        editor.edit(
+                            [(
+                                MultiBufferOffset(source_range.start)
+                                    ..MultiBufferOffset(source_range.end),
+                                task_marker,
+                            )],
+                            cx,
+                        );
+                    });
                 });
         }
 

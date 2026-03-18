@@ -49,6 +49,7 @@ use crate::parser::CodeBlockKind;
 /// If the callback returns `None`, the default link style will be used.
 type LinkStyleCallback = Rc<dyn Fn(&str, &App) -> Option<TextStyleRefinement>>;
 type SourceClickCallback = Box<dyn Fn(usize, usize, &mut Window, &mut App) -> bool>;
+type CheckboxToggleCallback = Rc<dyn Fn(Range<usize>, bool, &mut Window, &mut App)>;
 /// Defines custom style refinements for each heading level (H1-H6)
 #[derive(Clone, Default)]
 pub struct HeadingLevelStyles {
@@ -776,6 +777,7 @@ pub struct MarkdownElement {
     code_block_renderer: CodeBlockRenderer,
     on_url_click: Option<Box<dyn Fn(SharedString, &mut Window, &mut App)>>,
     on_source_click: Option<SourceClickCallback>,
+    on_checkbox_toggle: Option<CheckboxToggleCallback>,
     image_resolver: Option<Box<dyn Fn(&str) -> Option<ImageSource>>>,
     show_root_block_markers: bool,
     autoscroll: AutoscrollBehavior,
@@ -793,6 +795,7 @@ impl MarkdownElement {
             },
             on_url_click: None,
             on_source_click: None,
+            on_checkbox_toggle: None,
             image_resolver: None,
             show_root_block_markers: false,
             autoscroll: AutoscrollBehavior::Propagate,
@@ -838,6 +841,14 @@ impl MarkdownElement {
         handler: impl Fn(usize, usize, &mut Window, &mut App) -> bool + 'static,
     ) -> Self {
         self.on_source_click = Some(Box::new(handler));
+        self
+    }
+
+    pub fn on_checkbox_toggle(
+        mut self,
+        handler: impl Fn(Range<usize>, bool, &mut Window, &mut App) + 'static,
+    ) -> Self {
+        self.on_checkbox_toggle = Some(Rc::new(handler));
         self
     }
 
@@ -1371,27 +1382,44 @@ impl Element for MarkdownElement {
                             builder.push_div(div().pl_2p5(), range, markdown_end);
                         }
                         MarkdownTag::Item => {
-                            let bullet = if let Some((_, MarkdownEvent::TaskListMarker(checked))) =
-                                parsed_markdown.events.get(index.saturating_add(1))
-                            {
-                                let source = &parsed_markdown.source()[range.clone()];
-
-                                Checkbox::new(
-                                    ElementId::Name(source.to_string().into()),
-                                    if *checked {
+                            let bullet =
+                                if let Some((task_range, MarkdownEvent::TaskListMarker(checked))) =
+                                    parsed_markdown.events.get(index.saturating_add(1))
+                                {
+                                    let source = &parsed_markdown.source()[range.clone()];
+                                    let checked = *checked;
+                                    let toggle_state = if checked {
                                         ToggleState::Selected
                                     } else {
                                         ToggleState::Unselected
-                                    },
-                                )
-                                .fill()
-                                .visualization_only(true)
-                                .into_any_element()
-                            } else if let Some(bullet_index) = builder.next_bullet_index() {
-                                div().child(format!("{}.", bullet_index)).into_any_element()
-                            } else {
-                                div().child("•").into_any_element()
-                            };
+                                    };
+
+                                    let checkbox = Checkbox::new(
+                                        ElementId::Name(source.to_string().into()),
+                                        toggle_state,
+                                    )
+                                    .fill();
+
+                                    if let Some(on_toggle) = self.on_checkbox_toggle.clone() {
+                                        let task_source_range = task_range.clone();
+                                        checkbox
+                                            .on_click(move |_state, window, cx| {
+                                                on_toggle(
+                                                    task_source_range.clone(),
+                                                    !checked,
+                                                    window,
+                                                    cx,
+                                                );
+                                            })
+                                            .into_any_element()
+                                    } else {
+                                        checkbox.visualization_only(true).into_any_element()
+                                    }
+                                } else if let Some(bullet_index) = builder.next_bullet_index() {
+                                    div().child(format!("{}.", bullet_index)).into_any_element()
+                                } else {
+                                    div().child("•").into_any_element()
+                                };
                             builder.push_div(
                                 div()
                                     .when(!self.style.height_is_multiple_of_line_height, |el| {
