@@ -15,13 +15,13 @@ use gpui::{
     Render, SharedString, WeakEntity, Window, WindowHandle, list, prelude::*, px,
 };
 use menu::{
-    Cancel, Confirm, SelectChild, SelectFirst, SelectLast, SelectNext, SelectParent,
-    SelectPrevious,
+    Cancel, Confirm, SelectChild, SelectFirst, SelectLast, SelectNext, SelectParent, SelectPrevious,
 };
 use project::{AgentId, Event as ProjectEvent};
 use recent_projects::RecentProjects;
 use ui::utils::platform_title_bar_height;
 
+use settings::Settings as _;
 use std::collections::{HashMap, HashSet};
 use std::mem;
 use std::path::Path;
@@ -32,7 +32,6 @@ use ui::{
     ListItem, PopoverMenu, PopoverMenuHandle, Tab, ThreadItem, TintColor, Tooltip, WithScrollbar,
     prelude::*,
 };
-use settings::Settings as _;
 use util::ResultExt as _;
 use util::path_list::PathList;
 use workspace::{

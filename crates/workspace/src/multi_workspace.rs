@@ -352,8 +352,7 @@ impl MultiWorkspace {
             index
         } else {
             if self.sidebar_open {
-                let sidebar_focus_handle =
-                    self.sidebar.as_ref().map(|s| s.focus_handle(cx));
+                let sidebar_focus_handle = self.sidebar.as_ref().map(|s| s.focus_handle(cx));
                 workspace.update(cx, |workspace, cx| {
                     workspace.set_workspace_sidebar_open(true, cx);
                     workspace.set_sidebar_focus_handle(sidebar_focus_handle);
