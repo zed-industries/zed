@@ -10236,7 +10236,6 @@ dependencies = [
  "async-recursion",
  "collections",
  "editor",
- "fs",
  "gpui",
  "html5ever 0.27.0",
  "language",
