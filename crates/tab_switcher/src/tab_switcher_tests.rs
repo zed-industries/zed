@@ -1,11 +1,15 @@
 use super::*;
 use editor::Editor;
-use gpui::{TestAppContext, VisualTestContext};
+use gpui::{TestAppContext, UpdateGlobal, VisualTestContext};
 use menu::SelectPrevious;
 use project::{Project, ProjectPath};
 use serde_json::json;
+use settings::SettingsStore;
 use util::{path, rel_path::rel_path};
-use workspace::{ActivatePreviousItem, AppState, MultiWorkspace, Workspace, item::test::TestItem};
+use workspace::{
+    ActivatePreviousItem, AppState, AutosaveSetting, MultiWorkspace, Workspace,
+    item::test::{TestItem, TestProjectItem},
+};
 
 #[ctor::ctor]
 fn init_logger() {
@@ -188,6 +192,65 @@ async fn test_open_with_single_item(cx: &mut gpui::TestAppContext) {
     tab_switcher.update(cx, |tab_switcher, _| {
         assert_eq!(tab_switcher.delegate.matches.len(), 1);
         assert_match_selection(tab_switcher, 0, tab);
+    });
+}
+
+#[gpui::test]
+async fn test_confirm_switch_autosaves_initial_item_after_switch(cx: &mut gpui::TestAppContext) {
+    let app_state = init_test(cx);
+    let project = Project::test(app_state.fs.clone(), [], cx).await;
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
+
+    let first_item = cx.new(|cx| {
+        TestItem::new(cx)
+            .with_label("first")
+            .with_dirty(true)
+            .with_project_items(&[TestProjectItem::new(1, "1.txt", cx)])
+    });
+    let second_item = cx.new(|cx| {
+        TestItem::new(cx)
+            .with_label("second")
+            .with_project_items(&[TestProjectItem::new(2, "2.txt", cx)])
+    });
+
+    workspace.update_in(cx, |workspace, window, cx| {
+        SettingsStore::update_global(cx, |settings, cx| {
+            settings.update_user_settings(cx, |settings| {
+                settings.workspace.autosave = Some(AutosaveSetting::OnFocusChange);
+            })
+        });
+
+        workspace.add_item_to_active_pane(Box::new(first_item.clone()), None, true, window, cx);
+        workspace.add_item_to_active_pane(Box::new(second_item.clone()), None, true, window, cx);
+        workspace.active_pane().update(cx, |pane, cx| {
+            pane.activate_item(0, true, true, window, cx);
+        });
+    });
+    cx.run_until_parked();
+
+    open_tab_switcher(false, &workspace, cx);
+    cx.run_until_parked();
+
+    first_item.read_with(cx, |item, _| {
+        assert_eq!(
+            item.save_count, 0,
+            "opening TabSwitcher should not autosave"
+        );
+    });
+
+    cx.dispatch_action(menu::Confirm);
+    cx.run_until_parked();
+
+    first_item.read_with(cx, |item, _| {
+        assert_eq!(
+            item.save_count, 1,
+            "confirming the switch should autosave the old tab"
+        );
+    });
+    second_item.read_with(cx, |item, _| {
+        assert_eq!(item.save_count, 0);
     });
 }
 

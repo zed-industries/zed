@@ -23,7 +23,7 @@ use ui::{
 };
 use util::ResultExt;
 use workspace::{
-    Event as WorkspaceEvent, ModalView, Pane, SaveIntent, Workspace,
+    AutosaveSetting, Event as WorkspaceEvent, ModalView, Pane, SaveIntent, Workspace,
     item::{ItemHandle, ItemSettings, ShowDiagnostics, TabContentParams},
     pane::{render_item_indicator, tab_details},
 };
@@ -58,7 +58,7 @@ pub struct TabSwitcher {
 
 impl ModalView for TabSwitcher {
     fn blocks_focus_change_autosave(&self) -> bool {
-        false
+        true
     }
 }
 
@@ -140,6 +140,7 @@ impl TabSwitcher {
         let weak_workspace = workspace.weak_handle();
 
         let project = workspace.project().clone();
+        let initially_focused_item = workspace.active_item(cx);
         let original_items: Vec<_> = workspace
             .panes()
             .iter()
@@ -154,6 +155,7 @@ impl TabSwitcher {
                 weak_workspace,
                 is_global,
                 open_in_active_pane,
+                initially_focused_item,
                 window,
                 cx,
                 original_items,
@@ -258,6 +260,7 @@ pub struct TabSwitcherDelegate {
     is_all_panes: bool,
     open_in_active_pane: bool,
     restored_items: bool,
+    initially_focused_item: Option<Box<dyn ItemHandle>>,
 }
 
 impl TabMatch {
@@ -341,6 +344,7 @@ impl TabSwitcherDelegate {
         workspace: WeakEntity<Workspace>,
         is_all_panes: bool,
         open_in_active_pane: bool,
+        initially_focused_item: Option<Box<dyn ItemHandle>>,
         window: &mut Window,
         cx: &mut Context<TabSwitcher>,
         original_items: Vec<(Entity<Pane>, usize)>,
@@ -358,7 +362,27 @@ impl TabSwitcherDelegate {
             open_in_active_pane,
             original_items,
             restored_items: false,
+            initially_focused_item,
         }
+    }
+
+    fn initially_focused_item_to_autosave(
+        &self,
+        selected_item_id: EntityId,
+        cx: &App,
+    ) -> Option<Box<dyn ItemHandle>> {
+        let item = self
+            .initially_focused_item
+            .as_ref()
+            .filter(|item| item.item_id() != selected_item_id)
+            .filter(|item| item.workspace_settings(cx).autosave == AutosaveSetting::OnFocusChange)?
+            .boxed_clone();
+
+        Some(item)
+    }
+
+    fn autosave_item(&self, item: &dyn ItemHandle, window: &mut Window, cx: &mut App) {
+        Pane::autosave_item(item, self.project.clone(), window, cx).detach_and_log_err(cx);
     }
 
     fn subscribe_to_updates(
@@ -646,6 +670,7 @@ impl TabSwitcherDelegate {
     fn confirm_open_in_active_pane(
         &mut self,
         selected_match: TabMatch,
+        autosave_item: Option<Box<dyn ItemHandle>>,
         window: &mut Window,
         cx: &mut Context<Picker<TabSwitcherDelegate>>,
     ) {
@@ -676,6 +701,9 @@ impl TabSwitcherDelegate {
             current_pane.update(cx, |pane, cx| {
                 pane.activate_item(index, true, true, window, cx);
             });
+            if let Some(item) = autosave_item.as_ref() {
+                self.autosave_item(item.as_ref(), window, cx);
+            }
         } else if selected_match.item.project_path(cx).is_some()
             && selected_match.item.can_split(cx)
         {
@@ -685,11 +713,16 @@ impl TabSwitcherDelegate {
             let database_id = workspace.read(cx).database_id();
             let task = selected_match.item.clone_on_split(database_id, window, cx);
             let current_pane = current_pane.downgrade();
+            let project = self.project.clone();
             cx.spawn_in(window, async move |_, cx| {
                 if let Some(clone) = task.await {
                     current_pane
                         .update_in(cx, |pane, window, cx| {
                             pane.add_item(clone, true, true, None, window, cx);
+                            if let Some(item) = autosave_item.as_ref() {
+                                Pane::autosave_item(item.as_ref(), project.clone(), window, cx)
+                                    .detach_and_log_err(cx);
+                            }
                         })
                         .log_err();
                 }
@@ -708,6 +741,9 @@ impl TabSwitcherDelegate {
                 window,
                 cx,
             );
+            if let Some(item) = autosave_item.as_ref() {
+                self.autosave_item(item.as_ref(), window, cx);
+            }
         }
     }
 }
@@ -778,6 +814,8 @@ impl PickerDelegate for TabSwitcherDelegate {
         let Some(selected_match) = self.matches.get(self.selected_index()).cloned() else {
             return;
         };
+        let selected_item_id = selected_match.item.item_id();
+        let autosave_item = self.initially_focused_item_to_autosave(selected_item_id, cx);
 
         self.restored_items = true;
         for (pane, index) in self.original_items.iter() {
@@ -787,7 +825,7 @@ impl PickerDelegate for TabSwitcherDelegate {
         }
 
         if self.open_in_active_pane {
-            self.confirm_open_in_active_pane(selected_match, window, cx);
+            self.confirm_open_in_active_pane(selected_match, autosave_item, window, cx);
         } else {
             selected_match
                 .pane
@@ -797,6 +835,9 @@ impl PickerDelegate for TabSwitcherDelegate {
                     }
                 })
                 .ok();
+            if let Some(item) = autosave_item.as_ref() {
+                self.autosave_item(item.as_ref(), window, cx);
+            }
         }
     }
 
