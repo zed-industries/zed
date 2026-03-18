@@ -372,7 +372,6 @@ impl MessageEditor {
             .is_some_and(|menu| matches!(menu, CodeContextMenu::Completions(_)) && menu.visible())
     }
 
-    #[cfg(test)]
     pub fn mention_set(&self) -> &Entity<MentionSet> {
         &self.mention_set
     }

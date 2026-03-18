@@ -823,11 +823,17 @@ impl ThreadView {
 
         if intercept_first_send {
             let content_task = self.resolve_message_contents(&message_editor, cx);
+            let selection_context =
+                self.active_editor_selection_context(&message_editor, cx);
 
             cx.spawn(async move |this, cx| match content_task.await {
-                Ok((content, _tracked_buffers)) => {
+                Ok((mut content, _tracked_buffers)) => {
                     if content.is_empty() {
                         return;
+                    }
+
+                    if let Some(selection_block) = selection_context {
+                        content.insert(0, selection_block);
                     }
 
                     this.update(cx, |_, cx| {
@@ -912,6 +918,7 @@ impl ThreadView {
         cx: &mut Context<Self>,
     ) {
         let contents = self.resolve_message_contents(&message_editor, cx);
+        let selection_context = self.active_editor_selection_context(&message_editor, cx);
 
         self.thread_error.take();
         self.thread_feedback.clear();
@@ -926,10 +933,14 @@ impl ThreadView {
         }
 
         let contents_task = cx.spawn_in(window, async move |_this, cx| {
-            let (contents, tracked_buffers) = contents.await?;
+            let (mut contents, tracked_buffers) = contents.await?;
 
             if contents.is_empty() {
                 return Ok(None);
+            }
+
+            if let Some(selection_block) = selection_context {
+                contents.insert(0, selection_block);
             }
 
             let _ = cx.update(|window, cx| {
@@ -942,6 +953,88 @@ impl ThreadView {
         });
 
         self.send_content(contents_task, window, cx);
+    }
+
+    fn active_editor_selection_context(
+        &self,
+        message_editor: &Entity<MessageEditor>,
+        cx: &mut App,
+    ) -> Option<acp::ContentBlock> {
+        let has_selection_mention = message_editor
+            .read(cx)
+            .mention_set()
+            .read(cx)
+            .mentions()
+            .iter()
+            .any(|uri| {
+                matches!(
+                    uri,
+                    MentionUri::Selection { .. } | MentionUri::TerminalSelection { .. }
+                )
+            });
+        if has_selection_mention {
+            return None;
+        }
+
+        let workspace = self.workspace.upgrade()?;
+        let active_editor = workspace
+            .read(cx)
+            .active_item(cx)?
+            .act_as::<Editor>(cx)?;
+
+        let selections_with_context = active_editor.update(cx, |editor, cx| {
+            let snapshot = editor.buffer().read(cx).snapshot(cx);
+            let selections = editor.selections.all_adjusted(&editor.display_snapshot(cx));
+
+            let mut result = Vec::new();
+            for selection in &selections {
+                if selection.is_empty() {
+                    continue;
+                }
+
+                let start_offset = snapshot.point_to_offset(selection.start);
+                let end_offset = snapshot.point_to_offset(selection.end);
+                if start_offset == end_offset {
+                    continue;
+                }
+
+                let selected_text: String =
+                    snapshot.text_for_range(start_offset..end_offset).collect();
+                if selected_text.trim().is_empty() {
+                    continue;
+                }
+
+                let start_line = selection.start.row + 1;
+                let end_line = selection.end.row + 1;
+
+                let file_path = snapshot
+                    .file_at(start_offset)
+                    .and_then(|file| file.as_local())
+                    .map(|file| file.abs_path(cx).to_string_lossy().to_string());
+
+                let header = if let Some(path) = &file_path {
+                    format!("{path}:{start_line}-{end_line}")
+                } else {
+                    format!("Untitled:{start_line}-{end_line}")
+                };
+
+                result.push(format!("```{header}\n{selected_text}\n```"));
+            }
+            result
+        });
+
+        if selections_with_context.is_empty() {
+            return None;
+        }
+
+        let context_text = format!(
+            "<active_editor_selection>\nThe user has the following code selected in their active editor:\n\n{}\n</active_editor_selection>\n",
+            selections_with_context.join("\n\n")
+        );
+
+        Some(acp::ContentBlock::Text(acp::TextContent::new(
+            context_text,
+        )))
     }
 
     pub fn send_content(
@@ -1271,12 +1364,17 @@ impl ThreadView {
         }
 
         let contents = self.resolve_message_contents(&message_editor, cx);
+        let selection_context = self.active_editor_selection_context(&message_editor, cx);
 
         cx.spawn_in(window, async move |this, cx| {
-            let (content, tracked_buffers) = contents.await?;
+            let (mut content, tracked_buffers) = contents.await?;
 
             if content.is_empty() {
                 return Ok::<(), anyhow::Error>(());
+            }
+
+            if let Some(selection_block) = selection_context {
+                content.insert(0, selection_block);
             }
 
             this.update_in(cx, |this, window, cx| {
