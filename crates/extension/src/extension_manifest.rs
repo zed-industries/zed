@@ -124,6 +124,11 @@ pub struct ExtensionManifest {
     pub dev: Option<DevManifestEntry>,
 }
 
+pub enum GrammarSource<'a> {
+    Dev(&'a DevGrammarManifestEntry),
+    Published(&'a GrammarManifestEntry),
+}
+
 #[derive(Deserialize)]
 struct RawExtensionManifest {
     id: Arc<str>,
@@ -180,6 +185,14 @@ impl TryFrom<RawExtensionManifest> for ExtensionManifest {
             );
         }
 
+        if raw.dev.as_ref().is_some_and(|d| d.grammars.is_empty()) && raw.grammars.is_empty() {
+            return Err(
+                "manifest with a [dev] section must specify at least one grammar in \
+                 [dev.grammars] or [grammars]"
+                    .to_string(),
+            );
+        }
+
         Ok(ExtensionManifest {
             id: raw.id,
             name: raw.name,
@@ -226,8 +239,26 @@ impl ExtensionManifest {
         dev
     }
 
+    pub fn grammar_source(&self, grammar_name: &str) -> Option<GrammarSource<'_>> {
+        if let Some(dev_grammar) = self
+            .dev
+            .as_ref()
+            .and_then(|dev| dev.grammars.get(grammar_name))
+        {
+            return Some(GrammarSource::Dev(dev_grammar));
+        }
+
+        self.grammars
+            .get(grammar_name)
+            .map(GrammarSource::Published)
+    }
+
     pub fn grammar_names(&self) -> Box<dyn Iterator<Item = &Arc<str>> + '_> {
-        if self.is_dev() {
+        if self
+            .dev
+            .as_ref()
+            .is_some_and(|dev| !dev.grammars.is_empty())
+        {
             let dev = self.get_dev();
             return Box::new(dev.grammars.keys());
         }
@@ -841,25 +872,69 @@ mod tests {
     }
 
     #[test]
-    fn grammar_names_are_empty_for_empty_dev_grammars() {
-        let manifest = ExtensionManifest {
-            dev: Some(DevManifestEntry {
-                grammars: BTreeMap::default(),
-            }),
-            grammars: [(
-                "html".into(),
-                GrammarManifestEntry {
-                    repository: "https://github.com/tree-sitter/tree-sitter-html".into(),
-                    rev: "abc123".into(),
-                    path: None,
-                },
-            )]
-            .into_iter()
-            .collect(),
-            ..extension_manifest()
-        };
+    fn grammar_names_fall_back_to_published_grammars_when_dev_grammars_are_empty() {
+        let manifest: ExtensionManifest = toml::from_str(indoc! {r#"
+            id = "example.fallback"
+            name = "Fallback Example"
+            version = "1.0.0"
+            schema_version = 0
 
-        assert!(manifest.grammar_names().next().is_none());
+            [grammars.html]
+            repository = "https://github.com/tree-sitter/tree-sitter-html"
+            commit = "abc123"
+
+            [dev]
+        "#})
+        .expect("manifest should parse");
+
+        let grammar_names: Vec<&str> = manifest.grammar_names().map(|name| name.as_ref()).collect();
+        assert_eq!(grammar_names, vec!["html"]);
+    }
+
+    #[test]
+    fn grammar_source_falls_back_to_published_grammar_when_dev_grammars_are_empty() {
+        let manifest: ExtensionManifest = toml::from_str(indoc! {r#"
+            id = "example.fallback"
+            name = "Fallback Example"
+            version = "1.0.0"
+            schema_version = 0
+
+            [grammars.html]
+            repository = "https://github.com/tree-sitter/tree-sitter-html"
+            commit = "abc123"
+            path = "vendor/html"
+
+            [dev]
+        "#})
+        .expect("manifest should parse");
+
+        match manifest.grammar_source("html") {
+            Some(GrammarSource::Published(grammar)) => {
+                assert_eq!(grammar.path.as_deref(), Some("vendor/html"));
+            }
+            Some(GrammarSource::Dev(_)) => panic!("expected published grammar source"),
+            None => panic!("expected grammar source"),
+        }
+    }
+
+    #[test]
+    fn parse_manifest_rejects_empty_dev_section_without_any_grammars() {
+        let toml_src = indoc! {r#"
+            id = "example.invalid-dev"
+            name = "Invalid Dev Extension"
+            version = "1.0.0"
+            schema_version = 0
+
+            [dev]
+        "#};
+
+        let result: std::result::Result<ExtensionManifest, _> = toml::from_str(toml_src);
+        assert!(result.is_err());
+        let error_message = result.unwrap_err().to_string();
+        assert!(
+            error_message.contains("must specify at least one grammar"),
+            "unexpected error message: {error_message}"
+        );
     }
 
     #[test]

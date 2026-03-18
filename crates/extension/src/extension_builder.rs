@@ -1,6 +1,6 @@
 use crate::{
-    ExtensionLibraryKind, ExtensionManifest, GrammarManifestEntry, build_debug_adapter_schema_path,
-    parse_wasm_extension_version,
+    ExtensionLibraryKind, ExtensionManifest, GrammarManifestEntry, GrammarSource,
+    build_debug_adapter_schema_path, parse_wasm_extension_version,
 };
 use ::fs::Fs;
 use anyhow::{Context as _, Result, bail};
@@ -137,19 +137,22 @@ impl ExtensionBuilder {
             let mut grammar_wasm_path = grammar_repo_dir.clone();
             grammar_wasm_path.set_extension("wasm");
 
-            let grammar_root_path = if extension_manifest.is_dev() {
-                self.get_local_grammar_path(
-                    extension_manifest,
-                    extension_dir,
-                    grammar_name.as_ref(),
-                )
-            } else {
-                self.get_remote_grammar_path(
-                    extension_manifest,
-                    grammar_name.as_ref(),
-                    &grammar_repo_dir,
-                )
-                .await?
+            let grammar_root_path = match extension_manifest
+                .grammar_source(grammar_name.as_ref())
+                .with_context(|| {
+                format!("missing grammar source for '{grammar_name}'")
+            })? {
+                GrammarSource::Dev(dev_grammar) => {
+                    self.get_local_grammar_path(extension_dir, &dev_grammar.path)
+                }
+                GrammarSource::Published(grammar_metadata) => {
+                    self.get_remote_grammar_path(
+                        grammar_metadata,
+                        grammar_name.as_ref(),
+                        &grammar_repo_dir,
+                    )
+                    .await?
+                }
             };
 
             log::info!(
@@ -169,17 +172,8 @@ impl ExtensionBuilder {
         Ok(())
     }
 
-    fn get_local_grammar_path(
-        &self,
-        extension_manifest: &ExtensionManifest,
-        extension_dir: &Path,
-        grammar_name: &str,
-    ) -> PathBuf {
-        let dev = extension_manifest.get_dev();
-        let dev_grammar = dev.grammars.get(grammar_name).unwrap_or_else(|| {
-            panic!("dev grammar '{grammar_name}' must exist in the manifest dev section")
-        });
-        let local_path = Path::new(&dev_grammar.path);
+    fn get_local_grammar_path(&self, extension_dir: &Path, grammar_path: &str) -> PathBuf {
+        let local_path = Path::new(grammar_path);
         if local_path.is_absolute() {
             local_path.to_path_buf()
         } else {
@@ -189,17 +183,10 @@ impl ExtensionBuilder {
 
     async fn get_remote_grammar_path(
         &self,
-        extension_manifest: &ExtensionManifest,
+        grammar_metadata: &GrammarManifestEntry,
         grammar_name: &str,
         grammar_repo_dir: &Path,
     ) -> Result<PathBuf> {
-        let grammar_metadata = extension_manifest
-            .grammars
-            .get(grammar_name)
-            .unwrap_or_else(|| {
-                panic!("grammar '{grammar_name}' must exist in the manifest grammar section")
-            });
-
         log::info!("checking out {grammar_name} parser");
         self.checkout_repo(
             grammar_repo_dir,
@@ -307,6 +294,16 @@ impl ExtensionBuilder {
         let src_path = grammar_root_path.join("src");
         let parser_path = src_path.join("parser.c");
         let scanner_path = src_path.join("scanner.c");
+
+        let parent = grammar_wasm_path
+            .parent()
+            .context("grammar wasm output path has no parent directory")?;
+        fs::create_dir_all(parent).with_context(|| {
+            format!(
+                "failed to create grammar output directory '{}'",
+                parent.display()
+            )
+        })?;
 
         // Skip recompiling if the WASM object is already newer than the source files
         if file_newer_than_deps(&grammar_wasm_path, &[&parser_path, &scanner_path]).unwrap_or(false)
