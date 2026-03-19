@@ -8,7 +8,9 @@ It is the Rust-side entry point for everything iOS-specific that doesn't belong 
 - `ios_main()` initializes GPUI with the iOS platform + embedded assets, then boots the
   real Zed workspace (settings, themes, fonts, client, workspace) via `init_zed()`.
 - `Session::new` is async, so workspace window opening is deferred to a `cx.spawn`.
-- The old `TextSmokeView` demo is still in the file but unused.
+- `connection_landing.rs` — connection manager UI with saved hosts list, add/remove/edit
+  mode, Tab navigation, focus indicators, and JSON persistence to `~/.config/zed/ssh_hosts.json`.
+- `TextSmokeView` in `lib.rs` is a legacy demo, still present but unused.
 - `keychain.rs`, `network_monitor.rs`, `ssh_transport.rs` are planned for Phase 2 (commented out).
 
 ## Responsibilities
