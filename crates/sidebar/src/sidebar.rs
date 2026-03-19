@@ -244,6 +244,7 @@ pub struct Sidebar {
     /// loading. User actions may write directly for immediate feedback.
     focused_thread: Option<acp::SessionId>,
     agent_panel_visible: bool,
+    active_thread_is_draft: bool,
     hovered_thread_index: Option<usize>,
     collapsed_groups: HashSet<PathList>,
     expanded_groups: HashMap<PathList, usize>,
@@ -335,6 +336,7 @@ impl Sidebar {
             selection: None,
             focused_thread: None,
             agent_panel_visible: false,
+            active_thread_is_draft: false,
             hovered_thread_index: None,
             collapsed_groups: HashSet::new(),
             expanded_groups: HashMap::new(),
@@ -619,6 +621,11 @@ impl Sidebar {
         self.agent_panel_visible = active_workspace
             .as_ref()
             .map_or(false, |ws| AgentPanel::is_visible(ws, cx));
+
+        self.active_thread_is_draft = active_workspace
+            .as_ref()
+            .and_then(|ws| ws.read(cx).panel::<AgentPanel>(cx))
+            .map_or(false, |panel| panel.read(cx).active_thread_is_draft(cx));
 
         let previous = mem::take(&mut self.contents);
 
@@ -2624,14 +2631,8 @@ impl Sidebar {
         is_selected: bool,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let focused_thread_in_list = self.focused_thread.as_ref().is_some_and(|focused_id| {
-            self.contents.entries.iter().any(|entry| {
-                matches!(entry, ListEntry::Thread(t) if &t.session_info.session_id == focused_id)
-            })
-        });
-
         let is_active = self.agent_panel_visible
-            && !focused_thread_in_list
+            && self.active_thread_is_draft
             && self
                 .multi_workspace
                 .upgrade()
@@ -5151,6 +5152,93 @@ mod tests {
             assert!(
                 has_thread_entry(sidebar, &session_id_b2),
                 "The focused thread should be present in the entries"
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_new_thread_button_works_after_adding_folder(cx: &mut TestAppContext) {
+        let project = init_test_project_with_agent_panel("/project-a", cx).await;
+        let fs = cx.update(|cx| <dyn fs::Fs>::global(cx));
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let (sidebar, panel) = setup_sidebar_with_agent_panel(&multi_workspace, &project, cx);
+
+        let path_list_a = PathList::new(&[std::path::PathBuf::from("/project-a")]);
+
+        // Start a thread and send a message so it has history.
+        let connection = StubAgentConnection::new();
+        connection.set_next_prompt_updates(vec![acp::SessionUpdate::AgentMessageChunk(
+            acp::ContentChunk::new("Done".into()),
+        )]);
+        open_thread_with_connection(&panel, connection, cx);
+        send_message(&panel, cx);
+        let session_id = active_session_id(&panel, cx);
+        save_test_thread_metadata(&session_id, path_list_a.clone(), cx).await;
+        cx.run_until_parked();
+
+        // Verify the thread appears in the sidebar.
+        assert_eq!(
+            visible_entries_as_strings(&sidebar, cx),
+            vec!["v [project-a]", "  [+ New Thread]", "  Hello *",]
+        );
+
+        // The "New Thread" button should NOT be in "active/draft" state
+        // because the panel has a thread with messages.
+        sidebar.read_with(cx, |sidebar, _cx| {
+            assert!(
+                !sidebar.active_thread_is_draft,
+                "Panel has a thread with messages, so it should not be a draft"
+            );
+        });
+
+        // Now add a second folder to the workspace, changing the path_list.
+        fs.as_fake()
+            .insert_tree("/project-b", serde_json::json!({ "src": {} }))
+            .await;
+        project
+            .update(cx, |project, cx| {
+                project.find_or_create_worktree("/project-b", true, cx)
+            })
+            .await
+            .expect("should add worktree");
+        cx.run_until_parked();
+
+        // The workspace path_list is now [project-a, project-b]. The old
+        // thread was stored under [project-a], so it no longer appears in
+        // the sidebar list for this workspace.
+        let entries = visible_entries_as_strings(&sidebar, cx);
+        assert!(
+            !entries.iter().any(|e| e.contains("Hello")),
+            "Thread stored under the old path_list should not appear: {:?}",
+            entries
+        );
+
+        // The "New Thread" button must still be clickable (not stuck in
+        // "active/draft" state). Verify that `active_thread_is_draft` is
+        // false — the panel still has the old thread with messages.
+        sidebar.read_with(cx, |sidebar, _cx| {
+            assert!(
+                !sidebar.active_thread_is_draft,
+                "After adding a folder the panel still has a thread with messages, \
+                 so active_thread_is_draft should be false"
+            );
+        });
+
+        // Actually click "New Thread" by calling create_new_thread and
+        // verify a new draft is created.
+        let workspace = multi_workspace.read_with(cx, |mw, _cx| mw.workspace().clone());
+        sidebar.update_in(cx, |sidebar, window, cx| {
+            sidebar.create_new_thread(&workspace, window, cx);
+        });
+        cx.run_until_parked();
+
+        // After creating a new thread, the panel should now be in draft
+        // state (no messages on the new thread).
+        sidebar.read_with(cx, |sidebar, _cx| {
+            assert!(
+                sidebar.active_thread_is_draft,
+                "After creating a new thread the panel should be in draft state"
             );
         });
     }

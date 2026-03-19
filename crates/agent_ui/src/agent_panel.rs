@@ -2511,6 +2511,10 @@ impl AgentPanel {
             .is_some_and(|thread| !thread.read(cx).entries().is_empty())
     }
 
+    pub fn active_thread_is_draft(&self, cx: &App) -> bool {
+        self.active_conversation().is_some() && !self.active_thread_has_messages(cx)
+    }
+
     fn handle_first_send_requested(
         &mut self,
         thread_view: Entity<ThreadView>,
