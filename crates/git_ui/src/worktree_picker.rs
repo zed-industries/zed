@@ -96,9 +96,12 @@ impl WorktreeList {
         });
 
         cx.spawn_in(window, async move |this, cx| {
-            let all_worktrees = all_worktrees_request
+            let all_worktrees: Vec<_> = all_worktrees_request
                 .context("No active repository")?
-                .await??;
+                .await??
+                .into_iter()
+                .filter(|worktree| worktree.ref_name.is_some()) // hide worktrees without a branch
+                .collect();
 
             let default_branch = default_branch_request
                 .context("No active repository")?
